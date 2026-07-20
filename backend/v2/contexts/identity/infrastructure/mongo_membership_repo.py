@@ -46,29 +46,29 @@ class MongoMembershipRepository:
         if isinstance(roles_raw, str):
             roles: tuple[Role, ...] = (roles_raw,)  # type: ignore[assignment]
         else:
-            roles = tuple(roles_raw)  # type: ignore[assignment]
+            roles = tuple(roles_raw)
 
         return AcademyMembership(
             membership_id=str(doc.get("membership_id") or doc["_id"]),
             academy_id=str(doc["academy_id"]),
             user_id=str(doc["user_id"]),
             roles=roles,
-            status=str(doc.get("status", "active")),  # type: ignore[arg-type]
-            invited_by=doc.get("invited_by"),  # type: ignore[arg-type]
-            invited_at=doc.get("invited_at"),  # type: ignore[arg-type]
-            accepted_at=doc.get("accepted_at"),  # type: ignore[arg-type]
-            created_at=doc.get("created_at"),  # type: ignore[arg-type]
-            updated_at=doc.get("updated_at"),  # type: ignore[arg-type]
+            status=str(doc.get("status", "active")),
+            invited_by=doc.get("invited_by"),
+            invited_at=doc.get("invited_at"),
+            accepted_at=doc.get("accepted_at"),
+            created_at=doc.get("created_at"),
+            updated_at=doc.get("updated_at"),
         )
 
     def _to_platform_role(self, doc: dict[str, object]) -> PlatformRole:
         return PlatformRole(
             platform_role_id=str(doc.get("platform_role_id") or doc["_id"]),
             user_id=str(doc["user_id"]),
-            role=str(doc["role"]),  # type: ignore[arg-type]
-            status=str(doc.get("status", "active")),  # type: ignore[arg-type]
-            granted_by=doc.get("granted_by"),  # type: ignore[arg-type]
-            granted_at=doc.get("granted_at"),  # type: ignore[arg-type]
+            role=str(doc["role"]),
+            status=str(doc.get("status", "active")),
+            granted_by=doc.get("granted_by"),
+            granted_at=doc.get("granted_at"),
         )
 
     # ------------------------------------------------------------------

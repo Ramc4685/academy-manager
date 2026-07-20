@@ -169,7 +169,7 @@ async def create_level(
                 sequence=body.sequence,
                 name=body.name,
                 description=body.description,
-                completion_rule=body.completion_rule,  # type: ignore[arg-type]
+                completion_rule=body.completion_rule,
                 requires_coach_recommendation=body.requires_coach_recommendation,
                 requires_admin_approval=body.requires_admin_approval,
                 created_by=claims.user_id,
@@ -195,7 +195,7 @@ async def update_level(
                 level_id=level_id,
                 name=body.name,
                 description=body.description,
-                completion_rule=body.completion_rule,  # type: ignore[arg-type]
+                completion_rule=body.completion_rule,
                 requires_coach_recommendation=body.requires_coach_recommendation,
                 requires_admin_approval=body.requires_admin_approval,
                 updated_by=claims.user_id,
@@ -224,7 +224,7 @@ async def create_skill(
                 name=body.name,
                 description=body.description,
                 is_required=body.is_required,
-                scoring_type=body.scoring_type,  # type: ignore[arg-type]
+                scoring_type=body.scoring_type,
                 pass_threshold_pct=body.pass_threshold_pct,
                 coach_override_allowed=body.coach_override_allowed,
                 created_by=claims.user_id,
@@ -251,7 +251,7 @@ async def update_skill(
                 name=body.name,
                 description=body.description,
                 is_required=body.is_required,
-                scoring_type=body.scoring_type,  # type: ignore[arg-type]
+                scoring_type=body.scoring_type,
                 pass_threshold_pct=body.pass_threshold_pct,
                 coach_override_allowed=body.coach_override_allowed,
                 updated_by=claims.user_id,
@@ -300,7 +300,7 @@ async def add_external_ref(
         ref = await use_cases.curriculum.add_external_ref.execute(
             AddExternalReferenceCommand(
                 skill_id=skill_id,
-                source=body.source,  # type: ignore[arg-type]
+                source=body.source,
                 source_title=body.source_title,
                 module_name=body.module_name,
                 lesson_range=body.lesson_range,
@@ -324,7 +324,7 @@ async def seed_badminton(
     if use_cases.curriculum is None:
         raise HTTPException(status_code=503, detail="Curriculum service not configured")
     program = await use_cases.curriculum.seed_badminton.execute(created_by=claims.user_id)
-    return {"program_id": program.program_id, "name": program.name}  # type: ignore[union-attr]
+    return {"program_id": program.program_id, "name": program.name}
 
 
 @router.post("/seed-lesson-cards")

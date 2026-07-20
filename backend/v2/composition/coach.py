@@ -245,9 +245,7 @@ def compose_coach(
         academy_id = request_academy_id()
         today = datetime.now(UTC).date()
         today_sessions = await sessions_repo.for_coach_on_date(coach_id, today)
-        session_cursor = sessions_repo._find_many(  # type: ignore[attr-defined]
-            {"coach_id": coach_id, "status": "scheduled"}
-        )
+        session_cursor = sessions_repo._find_many({"coach_id": coach_id, "status": "scheduled"})
         session_ids = [str(doc["session_id"]) async for doc in session_cursor]
         student_ids = (
             await enrollments_repo.collection.distinct(
@@ -300,7 +298,7 @@ def compose_coach(
         academy_id: str,
     ) -> CoachProfileResponse | None:
         command = UpdateAdminUserCommand(
-            email=body.email,  # type: ignore[arg-type]
+            email=body.email,
             display_name=body.display_name,
             phone=body.phone,
             actor_id=user_id,

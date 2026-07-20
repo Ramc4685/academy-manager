@@ -63,7 +63,7 @@ class RealStripeGateway(StripeGateway):
     ) -> None:
         # Lazy import keeps the rest of the app importable without stripe
         # installed (tests use a fake gateway).
-        import stripe  # type: ignore[import-not-found]
+        import stripe
 
         stripe.api_key = api_key
         self._stripe = stripe

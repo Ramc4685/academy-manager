@@ -64,7 +64,7 @@ def _event_field(event: object, field_name: str, default: object = None) -> obje
 async def _coach_has_percent_rate(use_cases: AdminUseCases, coach_id: str) -> bool:
     if use_cases.list_coach_pay_rates is None:
         return False
-    rates = await use_cases.list_coach_pay_rates.execute(coach_id=coach_id)  # type: ignore[union-attr]
+    rates = await use_cases.list_coach_pay_rates.execute(coach_id=coach_id)
     return any(
         getattr(rate, "billing_unit", None) == "percent_of_revenue"
         and getattr(rate, "status", "active") == "active"
@@ -381,12 +381,12 @@ async def get_enrollment_events(
                 effective_date=str(
                     _event_field(e, "effective_date", None) or _event_field(e, "effective_at", "")
                 )[:10],
-                reason=_event_field(e, "reason"),  # type: ignore[arg-type]
-                billing_policy=_event_field(e, "billing_policy"),  # type: ignore[arg-type]
-                billing_result=_event_field(e, "billing_result"),  # type: ignore[arg-type]
-                credit_id=_event_field(e, "credit_id"),  # type: ignore[arg-type]
-                refund_id=_event_field(e, "refund_id"),  # type: ignore[arg-type]
-                metadata=_event_field(e, "metadata", {}) or {},  # type: ignore[arg-type]
+                reason=_event_field(e, "reason"),
+                billing_policy=_event_field(e, "billing_policy"),
+                billing_result=_event_field(e, "billing_result"),
+                credit_id=_event_field(e, "credit_id"),
+                refund_id=_event_field(e, "refund_id"),
+                metadata=_event_field(e, "metadata", {}) or {},
             )
             for e in events
         ],

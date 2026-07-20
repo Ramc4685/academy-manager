@@ -75,7 +75,7 @@ class _Audited:
                 academy_id=period.academy_id,
                 period_id=period.period_id,
                 occurrence_id=occurrence_id,
-                action=action,  # type: ignore[arg-type]
+                action=action,
                 actor_id=actor_id,
                 at=self._clock(),
                 reason=reason,

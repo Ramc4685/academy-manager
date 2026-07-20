@@ -150,7 +150,7 @@ class GetTeachingFocus:
                             name=str(getattr(selected, "name", "")),
                             sequence=int(getattr(selected, "sequence", 0)),
                             level_id=level_id,
-                            status=status,  # type: ignore[arg-type]
+                            status=status,
                             is_review=is_review,
                         ),
                     )

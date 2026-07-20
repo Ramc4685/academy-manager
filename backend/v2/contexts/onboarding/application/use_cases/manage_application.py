@@ -269,7 +269,7 @@ class TransitionApplication:
         No-ops (returns None) if no application is associated with the
         payment (e.g., admin-issued payment without onboarding context).
         """
-        app = await self._apps.get_by_payment_id(payment_id)  # type: ignore[attr-defined]
+        app = await self._apps.get_by_payment_id(payment_id)
         if app is None:
             return None
         return await self.execute(app.application_id, to)  # type: ignore[arg-type]

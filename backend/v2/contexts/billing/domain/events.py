@@ -22,9 +22,9 @@ class PaymentSucceededPayload(BaseModel):
 
 
 class PaymentSucceeded(DomainEvent):
-    name: Literal["Billing.PaymentSucceeded"] = "Billing.PaymentSucceeded"  # type: ignore[assignment]
-    schema_version: Literal[1] = 1  # type: ignore[assignment]
-    payload: PaymentSucceededPayload  # type: ignore[assignment]
+    name: Literal["Billing.PaymentSucceeded"] = "Billing.PaymentSucceeded"
+    schema_version: Literal[1] = 1
+    payload: PaymentSucceededPayload
 
 
 class PaymentFailedPayload(BaseModel):
@@ -37,9 +37,9 @@ class PaymentFailedPayload(BaseModel):
 
 
 class PaymentFailed(DomainEvent):
-    name: Literal["Billing.PaymentFailed"] = "Billing.PaymentFailed"  # type: ignore[assignment]
-    schema_version: Literal[1] = 1  # type: ignore[assignment]
-    payload: PaymentFailedPayload  # type: ignore[assignment]
+    name: Literal["Billing.PaymentFailed"] = "Billing.PaymentFailed"
+    schema_version: Literal[1] = 1
+    payload: PaymentFailedPayload
 
 
 class PaymentRefundedPayload(BaseModel):
@@ -52,9 +52,9 @@ class PaymentRefundedPayload(BaseModel):
 
 
 class PaymentRefunded(DomainEvent):
-    name: Literal["Billing.PaymentRefunded"] = "Billing.PaymentRefunded"  # type: ignore[assignment]
-    schema_version: Literal[1] = 1  # type: ignore[assignment]
-    payload: PaymentRefundedPayload  # type: ignore[assignment]
+    name: Literal["Billing.PaymentRefunded"] = "Billing.PaymentRefunded"
+    schema_version: Literal[1] = 1
+    payload: PaymentRefundedPayload
 
 
 class CheckoutExpiredPayload(BaseModel):
@@ -66,9 +66,9 @@ class CheckoutExpiredPayload(BaseModel):
 
 
 class CheckoutExpired(DomainEvent):
-    name: Literal["Billing.CheckoutExpired"] = "Billing.CheckoutExpired"  # type: ignore[assignment]
-    schema_version: Literal[1] = 1  # type: ignore[assignment]
-    payload: CheckoutExpiredPayload  # type: ignore[assignment]
+    name: Literal["Billing.CheckoutExpired"] = "Billing.CheckoutExpired"
+    schema_version: Literal[1] = 1
+    payload: CheckoutExpiredPayload
 
 
 class SubscriptionUpdatedPayload(BaseModel):
@@ -80,9 +80,9 @@ class SubscriptionUpdatedPayload(BaseModel):
 
 
 class SubscriptionUpdated(DomainEvent):
-    name: Literal["Billing.SubscriptionUpdated"] = "Billing.SubscriptionUpdated"  # type: ignore[assignment]
-    schema_version: Literal[1] = 1  # type: ignore[assignment]
-    payload: SubscriptionUpdatedPayload  # type: ignore[assignment]
+    name: Literal["Billing.SubscriptionUpdated"] = "Billing.SubscriptionUpdated"
+    schema_version: Literal[1] = 1
+    payload: SubscriptionUpdatedPayload
 
 
 class AutopayConsentCapturedPayload(BaseModel):
@@ -100,9 +100,9 @@ class AutopayConsentCapturedPayload(BaseModel):
 
 
 class AutopayConsentCaptured(DomainEvent):
-    name: Literal["Billing.AutopayConsentCaptured"] = "Billing.AutopayConsentCaptured"  # type: ignore[assignment]
-    schema_version: Literal[1] = 1  # type: ignore[assignment]
-    payload: AutopayConsentCapturedPayload  # type: ignore[assignment]
+    name: Literal["Billing.AutopayConsentCaptured"] = "Billing.AutopayConsentCaptured"
+    schema_version: Literal[1] = 1
+    payload: AutopayConsentCapturedPayload
 
 
 class InvoiceLifecyclePayload(BaseModel):
@@ -118,18 +118,18 @@ class InvoiceLifecyclePayload(BaseModel):
 
 
 class InvoiceIssued(DomainEvent):
-    name: Literal["Billing.InvoiceIssued"] = "Billing.InvoiceIssued"  # type: ignore[assignment]
-    schema_version: Literal[1] = 1  # type: ignore[assignment]
-    payload: InvoiceLifecyclePayload  # type: ignore[assignment]
+    name: Literal["Billing.InvoiceIssued"] = "Billing.InvoiceIssued"
+    schema_version: Literal[1] = 1
+    payload: InvoiceLifecyclePayload
 
 
 class InvoicePaid(DomainEvent):
-    name: Literal["Billing.InvoicePaid"] = "Billing.InvoicePaid"  # type: ignore[assignment]
-    schema_version: Literal[1] = 1  # type: ignore[assignment]
-    payload: InvoiceLifecyclePayload  # type: ignore[assignment]
+    name: Literal["Billing.InvoicePaid"] = "Billing.InvoicePaid"
+    schema_version: Literal[1] = 1
+    payload: InvoiceLifecyclePayload
 
 
 class InvoiceFailed(DomainEvent):
-    name: Literal["Billing.InvoiceFailed"] = "Billing.InvoiceFailed"  # type: ignore[assignment]
-    schema_version: Literal[1] = 1  # type: ignore[assignment]
-    payload: InvoiceLifecyclePayload  # type: ignore[assignment]
+    name: Literal["Billing.InvoiceFailed"] = "Billing.InvoiceFailed"
+    schema_version: Literal[1] = 1
+    payload: InvoiceLifecyclePayload

@@ -19,16 +19,16 @@ class MongoScheduledEnrollmentActionRepository(TenantScopedRepository):
         return ScheduledEnrollmentAction(
             action_id=str(doc["action_id"]),
             academy_id=str(doc["academy_id"]),
-            action_type=doc["action_type"],  # type: ignore[arg-type]
+            action_type=doc["action_type"],
             enrollment_id=str(doc["enrollment_id"]),
             pause_request_id=str(doc["pause_request_id"]),
-            run_at=doc["run_at"],  # type: ignore[arg-type]
-            status=doc.get("status", "pending"),  # type: ignore[arg-type]
+            run_at=doc["run_at"],
+            status=doc.get("status", "pending"),
             attempt_count=int(doc.get("attempt_count") or 0),
-            last_attempt_at=doc.get("last_attempt_at"),  # type: ignore[arg-type]
-            last_error=doc.get("last_error"),  # type: ignore[arg-type]
-            created_at=doc["created_at"],  # type: ignore[arg-type]
-            updated_at=doc["updated_at"],  # type: ignore[arg-type]
+            last_attempt_at=doc.get("last_attempt_at"),
+            last_error=doc.get("last_error"),
+            created_at=doc["created_at"],
+            updated_at=doc["updated_at"],
         )
 
     async def add(self, action: ScheduledEnrollmentAction) -> None:

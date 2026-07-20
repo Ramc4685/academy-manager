@@ -217,7 +217,7 @@ async def _seed_video_refs(
             ref_id=existing.ref_id if existing else str(new_ulid()),
             academy_id=academy_id,
             program_id=program_id,
-            scope=scope,  # type: ignore[arg-type]
+            scope=scope,
             level_id=level_id,
             skill_id=skill_id,
             title=entry["title"],

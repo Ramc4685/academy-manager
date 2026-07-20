@@ -19,7 +19,7 @@ class MongoCriterionRepository(TenantScopedRepository):
             academy_id=str(doc["academy_id"]),
             description=str(doc["description"]),
             display_order=int(doc.get("display_order", 0)),
-            created_at=doc["created_at"],  # type: ignore[arg-type]
+            created_at=doc["created_at"],
             created_by=str(doc.get("created_by", "")),
         )
 

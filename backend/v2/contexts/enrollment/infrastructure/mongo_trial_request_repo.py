@@ -15,20 +15,20 @@ class MongoTrialRequestRepository(TenantScopedRepository):
             request_id=str(doc["request_id"]),
             academy_id=str(doc["academy_id"]),
             parent_user_id=str(doc["parent_user_id"]),
-            student_ref=doc["student_ref"],  # type: ignore[arg-type]
+            student_ref=doc["student_ref"],
             student_id=_optional_str(doc.get("student_id")),
             prospective_child_name=_optional_str(doc.get("prospective_child_name")),
             prospective_child_dob=_optional_str(doc.get("prospective_child_dob")),
             requested_session_id=str(doc["requested_session_id"]),
             preferred_start=str(doc["preferred_start"]),
             preferred_end=str(doc["preferred_end"]),
-            status=doc.get("status", "pending"),  # type: ignore[arg-type]
+            status=doc.get("status", "pending"),
             assigned_occurrence_id=_optional_str(doc.get("assigned_occurrence_id")),
             linked_application_id=_optional_str(doc.get("linked_application_id")),
             denial_reason=_optional_str(doc.get("denial_reason")),
             decided_by=_optional_str(doc.get("decided_by")),
-            decided_at=doc.get("decided_at"),  # type: ignore[arg-type]
-            created_at=doc["created_at"],  # type: ignore[arg-type]
+            decided_at=doc.get("decided_at"),
+            created_at=doc["created_at"],
         )
 
     @staticmethod

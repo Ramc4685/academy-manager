@@ -15,14 +15,14 @@ class MongoSubscriptionRepository(TenantScopedRepository):
             subscription_id=str(doc["subscription_id"]),
             academy_id=str(doc["academy_id"]),
             parent_id=str(doc["parent_id"]),
-            enrollment_id=doc.get("enrollment_id"),  # type: ignore[arg-type]
-            session_id=doc.get("session_id"),  # type: ignore[arg-type]
+            enrollment_id=doc.get("enrollment_id"),
+            session_id=doc.get("session_id"),
             stripe_subscription_id=str(doc.get("stripe_subscription_id") or ""),
-            stripe_checkout_session_id=doc.get("stripe_checkout_session_id"),  # type: ignore[arg-type]
-            status=doc.get("status", "incomplete"),  # type: ignore[arg-type]
-            payment_mode=doc.get("payment_mode", "monthly"),  # type: ignore[arg-type]
-            created_at=doc["created_at"],  # type: ignore[arg-type]
-            updated_at=doc["updated_at"],  # type: ignore[arg-type]
+            stripe_checkout_session_id=doc.get("stripe_checkout_session_id"),
+            status=doc.get("status", "incomplete"),
+            payment_mode=doc.get("payment_mode", "monthly"),
+            created_at=doc["created_at"],
+            updated_at=doc["updated_at"],
         )
 
     async def save(self, subscription: Subscription) -> None:

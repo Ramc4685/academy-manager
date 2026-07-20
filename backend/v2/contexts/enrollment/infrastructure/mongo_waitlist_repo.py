@@ -17,8 +17,8 @@ class MongoWaitlistRepository(TenantScopedRepository):
             session_id=str(doc["session_id"]),
             student_id=str(doc["student_id"]),
             parent_id=str(doc["parent_id"]),
-            joined_at=doc["joined_at"],  # type: ignore[arg-type]
-            status=doc.get("status", "waiting"),  # type: ignore[arg-type]
+            joined_at=doc["joined_at"],
+            status=doc.get("status", "waiting"),
         )
 
     async def add(self, entry: WaitlistEntry) -> None:

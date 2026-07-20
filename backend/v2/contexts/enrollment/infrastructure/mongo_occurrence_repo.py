@@ -20,9 +20,9 @@ class MongoSessionOccurrenceRepository(TenantScopedRepository):
             occurrence_id=str(doc["occurrence_id"]),
             academy_id=str(doc["academy_id"]),
             session_id=str(doc["session_id"]),
-            start_at=doc["start_at"],  # type: ignore[arg-type]
-            end_at=doc["end_at"],  # type: ignore[arg-type]
-            status=doc.get("status", "scheduled"),  # type: ignore[arg-type]
+            start_at=doc["start_at"],
+            end_at=doc["end_at"],
+            status=doc.get("status", "scheduled"),
             scheduled_coach_id=str(doc["scheduled_coach_id"]),
             actual_coach_id=_optional_str(doc.get("actual_coach_id")),
             substitute_coach_id=_optional_str(doc.get("substitute_coach_id")),
@@ -135,7 +135,7 @@ class MongoSessionOccurrenceRepository(TenantScopedRepository):
         )
         if doc is None:
             return None
-        return doc["start_at"]  # type: ignore[return-value]
+        return doc["start_at"]
 
     async def list_upcoming_scheduled_between(
         self,

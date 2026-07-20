@@ -1,0 +1,935 @@
+backend/v2/migrations/0091_billing_ledger_indexes.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/migrations/0071_account_credit_ledger_indexes.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/migrations/0070_billing_proration_indexes.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/student_progress/infrastructure/curriculum_lookup_adapter.py:0: error: Returning Any from function declared to return "list[Any]"  [no-any-return]
+backend/v2/contexts/communications/application/digest_renderer.py:0: error: Returning Any from function declared to return "str"  [no-any-return]
+backend/v2/contexts/identity/application/update_academy_use_case.py:0: error: Incompatible types in assignment (expression has type "dict[str, Any] | None", variable has type "dict[str, Any]")  [assignment]
+backend/v2/contexts/identity/application/update_academy_notifications_use_case.py:0: error: Incompatible types in assignment (expression has type "dict[str, Any] | None", variable has type "dict[str, Any]")  [assignment]
+backend/v2/contexts/identity/application/update_academy_fees_use_case.py:0: error: Incompatible types in assignment (expression has type "dict[str, Any] | None", variable has type "dict[str, Any]")  [assignment]
+backend/v2/shared/http/rate_limit.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/identity/infrastructure/mongo_bootstrap_store.py:0: error: Returning Any from function declared to return "dict[str, Any] | None"  [no-any-return]
+backend/v2/contexts/identity/infrastructure/mongo_bootstrap_store.py:0: error: Returning Any from function declared to return "dict[str, Any] | None"  [no-any-return]
+backend/v2/contexts/identity/infrastructure/mongo_bootstrap_store.py:0: error: Returning Any from function declared to return "dict[str, Any]"  [no-any-return]
+backend/v2/contexts/identity/infrastructure/mongo_bootstrap_store.py:0: error: Returning Any from function declared to return "dict[str, Any]"  [no-any-return]
+backend/v2/contexts/identity/infrastructure/mongo_bootstrap_store.py:0: error: Returning Any from function declared to return "dict[str, Any]"  [no-any-return]
+backend/v2/contexts/identity/infrastructure/mongo_bootstrap_store.py:0: error: Returning Any from function declared to return "dict[str, Any]"  [no-any-return]
+backend/v2/contexts/identity/infrastructure/mongo_bootstrap_store.py:0: error: Returning Any from function declared to return "dict[str, Any]"  [no-any-return]
+backend/v2/contexts/identity/infrastructure/mongo_bootstrap_store.py:0: error: Returning Any from function declared to return "dict[str, Any]"  [no-any-return]
+backend/v2/contexts/identity/infrastructure/mongo_bootstrap_store.py:0: error: Returning Any from function declared to return "dict[str, Any]"  [no-any-return]
+backend/v2/shared/idempotency/decorator.py:0: error: Returning Any from function declared to return "_T"  [no-any-return]
+backend/v2/interfaces/admin/views.py:0: error: Name "line_type" already defined on line 0  [no-redef]
+backend/v2/interfaces/admin/views.py:0: error: Name "quantity" already defined on line 0  [no-redef]
+backend/v2/interfaces/admin/views.py:0: error: Name "unit_amount_cents" already defined on line 0  [no-redef]
+backend/v2/contexts/student_progress/application/use_cases/get_coach_engagement_stats.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/student_progress/application/use_cases/get_coach_engagement_stats.py:0: note: Possible overload variants:
+backend/v2/contexts/student_progress/application/use_cases/get_coach_engagement_stats.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/student_progress/application/use_cases/get_coach_engagement_stats.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/coaching/application/use_cases/compute_payout.py:0: error: Item "None" of "CoachRate | None" has no attribute "percent_bps"  [union-attr]
+backend/v2/contexts/billing/domain/ledger.py:0: error: Missing type arguments for generic type "dict"  [type-arg]
+backend/v2/contexts/identity/infrastructure/mongo_membership_repo.py:0: error: Argument 1 to "tuple" has incompatible type "object"; expected "Iterable[Literal['admin', 'coach', 'parent']]"  [arg-type]
+backend/v2/contexts/communications/application/use_cases/send_campaign.py:0: error: Argument "recipient" to "queued" of "Delivery" has incompatible type "ResolvedRecipient"; expected "ResolvedRecipientLike"  [arg-type]
+backend/v2/contexts/coaching/application/use_cases/manage_coach_rates.py:0: error: Missing type arguments for generic type "dict"  [type-arg]
+backend/v2/contexts/coaching/application/use_cases/manage_coach_rates.py:0: error: Missing type arguments for generic type "dict"  [type-arg]
+backend/v2/contexts/coaching/application/use_cases/manage_coach_rates.py:0: error: Missing type arguments for generic type "dict"  [type-arg]
+backend/v2/contexts/coaching/application/use_cases/manage_coach_rates.py:0: error: Missing type arguments for generic type "dict"  [type-arg]
+backend/v2/contexts/coaching/application/use_cases/manage_coach_rates.py:0: error: Missing type arguments for generic type "dict"  [type-arg]
+backend/v2/contexts/curriculum/application/use_cases/seed_lesson_cards.py:0: error: Returning Any from function declared to return "dict[str, Any]"  [no-any-return]
+backend/v2/contexts/curriculum/application/use_cases/seed_curriculum.py:0: error: Missing type arguments for generic type "dict"  [type-arg]
+backend/v2/contexts/coaching/application/use_cases/skill_notes.py:0: error: Incompatible return value type (got "list[object]", expected "list[CoachSkillNote]")  [return-value]
+backend/v2/contexts/billing/application/use_cases/process_dunning_retries.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/billing/application/use_cases/process_dunning_retries.py:0: error: Returning Any from function declared to return "dict[str, Any]"  [no-any-return]
+backend/v2/contexts/billing/application/ports.py:0: error: Missing type arguments for generic type "dict"  [type-arg]
+backend/v2/contexts/billing/application/ports.py:0: error: Missing type arguments for generic type "dict"  [type-arg]
+backend/v2/contexts/billing/application/use_cases/match_legacy_invoices.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/billing/infrastructure/fake_stripe_gateway.py:0: error: Returning Any from function declared to return "dict[str, object]"  [no-any-return]
+backend/v2/contexts/billing/application/use_cases/send_invoice.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/billing/application/use_cases/send_invoice.py:0: error: Value of type "str | None" is not indexable  [index]
+backend/v2/contexts/billing/application/use_cases/remove_invoice_line.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/billing/application/use_cases/record_manual_payment.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/billing/application/use_cases/charge_invoice_via_autopay.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/billing/application/use_cases/charge_invoice_via_autopay.py:0: error: Item "None" of "BillingSettings | None" has no attribute "ach_discount_label"  [union-attr]
+backend/v2/contexts/billing/application/use_cases/charge_invoice_via_autopay.py:0: error: Item "None" of "BillingSettings | None" has no attribute "disclosure_version"  [union-attr]
+backend/v2/contexts/billing/application/use_cases/charge_invoice_via_autopay.py:0: error: Item "None" of "BillingSettings | None" has no attribute "ach_discount_percent"  [union-attr]
+backend/v2/contexts/billing/application/use_cases/charge_invoice_via_autopay.py:0: error: Item "None" of "BillingSettings | None" has no attribute "disclosure_version"  [union-attr]
+backend/v2/contexts/billing/application/use_cases/charge_invoice_via_autopay.py:0: error: Item "None" of "BillingSettings | None" has no attribute "ach_discount_label"  [union-attr]
+backend/v2/contexts/billing/application/use_cases/charge_invoice_via_autopay.py:0: error: Item "None" of "BillingSettings | None" has no attribute "disclosure_version"  [union-attr]
+backend/v2/contexts/billing/application/use_cases/charge_invoice_via_autopay.py:0: error: Item "None" of "BillingSettings | None" has no attribute "ach_discount_percent"  [union-attr]
+backend/v2/contexts/billing/application/use_cases/charge_invoice_via_autopay.py:0: error: Item "None" of "BillingSettings | None" has no attribute "disclosure_version"  [union-attr]
+backend/v2/shared/tenancy/repository.py:0: error: Missing type arguments for generic type "AsyncIOMotorCollection"  [type-arg]
+backend/v2/shared/tenancy/repository.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/shared/tenancy/repository.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/shared/tenancy/repository.py:0: error: Returning Any from function declared to return "dict[str, Any] | None"  [no-any-return]
+backend/v2/shared/tenancy/repository.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/shared/tenancy/repository.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/shared/tenancy/repository.py:0: error: Returning Any from function declared to return "dict[str, Any] | None"  [no-any-return]
+backend/v2/shared/tenancy/repository.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/shared/idempotency/mongo_store.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/shared/events/outbox.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/shared/events/dispatcher.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/shared/events/dispatcher.py:0: error: Returning Any from function declared to return "dict[str, Any] | None"  [no-any-return]
+backend/v2/migrations/runner.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/runner.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0147_registration_student_lock.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0146_registration_enrollment_dates.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0145_parent_self_service.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0145_backfill_student_billing_enrollments.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0145_backfill_student_billing_enrollments.py:0: error: Missing type arguments for generic type "dict"  [type-arg]
+backend/v2/migrations/0145_backfill_student_billing_enrollments.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0144_parent_payment_method_display.py:0: error: Returning Any from function declared to return "dict[str, Any]"  [no-any-return]
+backend/v2/migrations/0144_parent_payment_method_display.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0143_dunning_states.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0143_dunning_states.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0142_ach_lifecycle.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0142_ach_lifecycle.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0141_autopay_consents.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0141_autopay_consents.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0140_ledger_payment_metadata.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0140_ledger_payment_metadata.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0139_connected_accounts.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0139_connected_accounts.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0138_invoice_numbering.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0138_invoice_numbering.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0137_autopay_status_split.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0137_autopay_status_split.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0137_autopay_status_split.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0137_autopay_status_split.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0136_billing_settings_and_counters.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0136_billing_settings_and_counters.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0135_billing_p0_hardening.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0134_enrollment_billing_deferrals.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0133_broader_validators_and_outbox_retry_lock.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0133_broader_validators_and_outbox_retry_lock.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0133_broader_validators_and_outbox_retry_lock.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0133_broader_validators_and_outbox_retry_lock.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0132_launch_indexes_and_validators.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0132_launch_indexes_and_validators.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0132_launch_indexes_and_validators.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0130_stripe_subscription_ledger_indexes.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0129_parent_billing_customers.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0128_ledger_payments_storage.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0127_student_progress_engagement_indexes.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0126_stripe_webhook_event_pipeline_indexes.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0123_subscriptions_unset_empty_stripe_sub.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0113_scheduled_enrollment_actions.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0112_phase1_portal.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0111_session_type_billing.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0110_login_attempts_ttl.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0109_platform_audit_indexes.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0108_platform_governance_indexes.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0107_platform_billing_indexes.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0106_occurrence_template_session_id.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0105_academy_slug.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0104_reporting_snapshot_indexes.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0103_payout_period_indexes.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0102_coach_rate_indexes.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0101_message_campaign_indexes.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0100_waiver_template_signature_indexes.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0090_enrollment_event_indexes.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0081_session_occurrences_indexes.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0080_identity_membership_indexes.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0070_admin_student_directory_indexes.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0060_admin_indexes.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0050_waitlist_indexes.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0040_onboarding_indexes.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0030_billing_indexes.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/migrations/0030_billing_indexes.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/migrations/0030_billing_indexes.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0020_coaching_attendance_indexes.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0010_enrollment_indexes.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/migrations/0010_enrollment_indexes.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0002_outbox_events.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/migrations/0001_idempotency_keys.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/contexts/identity/infrastructure/mongo_academy_repo.py:0: error: Returning Any from function declared to return "dict[str, Any] | None"  [no-any-return]
+backend/v2/contexts/identity/infrastructure/mongo_academy_repo.py:0: error: Returning Any from function declared to return "dict[str, Any] | None"  [no-any-return]
+backend/v2/contexts/identity/infrastructure/mongo_academy_repo.py:0: error: Returning Any from function declared to return "dict[str, Any]"  [no-any-return]
+backend/v2/contexts/communications/infrastructure/mongo_audience_resolver.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/contexts/billing/infrastructure/mongo_stripe_dedup.py:0: error: Missing type arguments for generic type "AsyncIOMotorDatabase"  [type-arg]
+backend/v2/contexts/billing/infrastructure/mongo_stripe_dedup.py:0: error: Returning Any from function declared to return "dict[str, Any] | None"  [no-any-return]
+backend/v2/contexts/billing/infrastructure/stripe_gateway.py:0: error: Call to untyped function "construct_event" of "Webhook" in typed context  [no-untyped-call]
+backend/v2/contexts/billing/infrastructure/stripe_gateway.py:0: error: Argument "params" to "create" of "AccountService" has incompatible type "dict[str, Any]"; expected "AccountCreateParams | None"  [arg-type]
+backend/v2/contexts/billing/infrastructure/stripe_gateway.py:0: error: Returning Any from function declared to return "dict[str, Any]"  [no-any-return]
+backend/v2/contexts/billing/infrastructure/stripe_gateway.py:0: error: Returning Any from function declared to return "dict[str, Any]"  [no-any-return]
+backend/v2/contexts/student_progress/infrastructure/mongo_test_attempt_repo.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/student_progress/infrastructure/mongo_test_attempt_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/student_progress/infrastructure/mongo_test_attempt_repo.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/student_progress/infrastructure/mongo_test_attempt_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/student_progress/infrastructure/mongo_test_attempt_repo.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/student_progress/infrastructure/mongo_test_attempt_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/student_progress/infrastructure/mongo_test_attempt_repo.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/student_progress/infrastructure/mongo_test_attempt_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/onboarding/infrastructure/mongo_application_repo.py:0: error: Returning Any from function declared to return "bool"  [no-any-return]
+backend/v2/contexts/onboarding/infrastructure/mongo_application_repo.py:0: error: Returning Any from function declared to return "bool"  [no-any-return]
+backend/v2/contexts/onboarding/infrastructure/mongo_admin_waiver_repo.py:0: error: Returning Any from function declared to return "dict[str, Any] | None"  [no-any-return]
+backend/v2/contexts/onboarding/infrastructure/mongo_admin_waiver_repo.py:0: error: Returning Any from function declared to return "dict[str, Any] | None"  [no-any-return]
+backend/v2/contexts/enrollment/infrastructure/mongo_session_repo.py:0: error: Returning Any from function declared to return "datetime"  [no-any-return]
+backend/v2/contexts/enrollment/infrastructure/mongo_session_repo.py:0: error: Returning Any from function declared to return "datetime"  [no-any-return]
+backend/v2/contexts/enrollment/infrastructure/mongo_session_repo.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/enrollment/infrastructure/mongo_session_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/enrollment/infrastructure/mongo_session_repo.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/enrollment/infrastructure/mongo_session_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/enrollment/infrastructure/mongo_session_repo.py:0: error: No overload variant of "list" matches argument type "object"  [call-overload]
+backend/v2/contexts/enrollment/infrastructure/mongo_session_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/enrollment/infrastructure/mongo_session_repo.py:0: note: def [_T] list() -> list[_T]
+backend/v2/contexts/enrollment/infrastructure/mongo_session_repo.py:0: note: def [_T] list(Iterable[_T], /) -> list[_T]
+backend/v2/contexts/enrollment/infrastructure/mongo_session_repo.py:0: error: Returning Any from function declared to return "int"  [no-any-return]
+backend/v2/contexts/enrollment/infrastructure/mongo_session_repo.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/enrollment/infrastructure/mongo_session_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/enrollment/infrastructure/mongo_session_repo.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/enrollment/infrastructure/mongo_session_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/enrollment/infrastructure/mongo_session_repo.py:0: error: Returning Any from function declared to return "int"  [no-any-return]
+backend/v2/contexts/enrollment/infrastructure/mongo_session_repo.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/enrollment/infrastructure/mongo_session_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/enrollment/infrastructure/mongo_session_repo.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/enrollment/infrastructure/mongo_session_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/enrollment/infrastructure/mongo_session_repo.py:0: error: Returning Any from function declared to return "int | None"  [no-any-return]
+backend/v2/contexts/enrollment/infrastructure/mongo_session_repo.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/enrollment/infrastructure/mongo_session_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/enrollment/infrastructure/mongo_session_repo.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/enrollment/infrastructure/mongo_session_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/enrollment/infrastructure/mongo_session_repo.py:0: error: Returning Any from function declared to return "int | None"  [no-any-return]
+backend/v2/contexts/enrollment/infrastructure/mongo_session_repo.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/enrollment/infrastructure/mongo_session_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/enrollment/infrastructure/mongo_session_repo.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/enrollment/infrastructure/mongo_session_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/enrollment/infrastructure/mongo_session_repo.py:0: error: No overload variant of "list" matches argument type "object"  [call-overload]
+backend/v2/contexts/enrollment/infrastructure/mongo_session_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/enrollment/infrastructure/mongo_session_repo.py:0: note: def [_T] list() -> list[_T]
+backend/v2/contexts/enrollment/infrastructure/mongo_session_repo.py:0: note: def [_T] list(Iterable[_T], /) -> list[_T]
+backend/v2/contexts/enrollment/infrastructure/mongo_scheduled_action_repo.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/enrollment/infrastructure/mongo_scheduled_action_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/enrollment/infrastructure/mongo_scheduled_action_repo.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/enrollment/infrastructure/mongo_scheduled_action_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/enrollment/infrastructure/mongo_occurrence_repo.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/enrollment/infrastructure/mongo_occurrence_repo.py:0: error: Returning Any from function declared to return "datetime | None"  [no-any-return]
+backend/v2/contexts/curriculum/infrastructure/mongo_skill_repo.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/curriculum/infrastructure/mongo_skill_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/curriculum/infrastructure/mongo_skill_repo.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/curriculum/infrastructure/mongo_skill_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/curriculum/infrastructure/mongo_skill_repo.py:0: error: Argument 1 to "float" has incompatible type "object"; expected "str | Buffer | SupportsFloat | SupportsIndex"  [arg-type]
+backend/v2/contexts/curriculum/infrastructure/mongo_level_repo.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/curriculum/infrastructure/mongo_level_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/curriculum/infrastructure/mongo_level_repo.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/curriculum/infrastructure/mongo_level_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/curriculum/infrastructure/mongo_criterion_repo.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/curriculum/infrastructure/mongo_criterion_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/curriculum/infrastructure/mongo_criterion_repo.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/curriculum/infrastructure/mongo_criterion_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/communications/infrastructure/mongo_parent_digest_send_repo.py:0: error: Argument "created_at" to "DigestSend" has incompatible type "Any | None"; expected "datetime"  [arg-type]
+backend/v2/contexts/communications/infrastructure/mongo_digest_send_repo.py:0: error: Argument "created_at" to "DigestSend" has incompatible type "Any | None"; expected "datetime"  [arg-type]
+backend/v2/contexts/billing/infrastructure/mongo_session_type_repo.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/billing/infrastructure/mongo_session_type_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/billing/infrastructure/mongo_session_type_repo.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/billing/infrastructure/mongo_session_type_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/billing/infrastructure/mongo_product_repo.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/billing/infrastructure/mongo_product_repo.py:0: error: Returning Any from function declared to return "dict[str, Any]"  [no-any-return]
+backend/v2/contexts/billing/infrastructure/mongo_dunning_state_repo.py:0: error: "object" has no attribute "tzinfo"  [attr-defined]
+backend/v2/contexts/billing/infrastructure/mongo_dunning_state_repo.py:0: error: "object" has no attribute "replace"  [attr-defined]
+backend/v2/contexts/billing/infrastructure/mongo_credit_ledger_repo.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/billing/infrastructure/mongo_credit_ledger_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/billing/infrastructure/mongo_credit_ledger_repo.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/billing/infrastructure/mongo_credit_ledger_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/billing/infrastructure/mongo_credit_ledger_repo.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/billing/infrastructure/mongo_credit_ledger_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/billing/infrastructure/mongo_credit_ledger_repo.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/billing/infrastructure/mongo_credit_ledger_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/billing/infrastructure/mongo_connected_account_repo.py:0: error: Missing type arguments for generic type "dict"  [type-arg]
+backend/v2/contexts/billing/infrastructure/mongo_billing_ledger_repo.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/billing/infrastructure/mongo_billing_ledger_repo.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/billing/infrastructure/mongo_billing_ledger_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/billing/infrastructure/mongo_billing_ledger_repo.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/billing/infrastructure/mongo_billing_ledger_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/billing/infrastructure/mongo_billing_ledger_repo.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/billing/infrastructure/mongo_billing_ledger_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/billing/infrastructure/mongo_billing_ledger_repo.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/billing/infrastructure/mongo_billing_ledger_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/billing/infrastructure/mongo_billing_ledger_repo.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/billing/infrastructure/mongo_billing_ledger_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/billing/infrastructure/mongo_billing_ledger_repo.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/billing/infrastructure/mongo_billing_ledger_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/billing/infrastructure/mongo_billing_ledger_repo.py:0: error: Returning Any from function declared to return "bool"  [no-any-return]
+backend/v2/contexts/billing/infrastructure/mongo_billing_ledger_repo.py:0: error: Returning Any from function declared to return "dict[str, Any]"  [no-any-return]
+backend/v2/contexts/billing/application/use_cases/tuition_discounts.py:0: error: Missing type arguments for generic type "dict"  [type-arg]
+backend/v2/contexts/billing/application/use_cases/reconcile_stripe_payment_intents.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/billing/application/use_cases/add_invoice_line.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/billing/application/use_cases/add_invoice_line.py:0: error: Incompatible types in assignment (expression has type "str | None", variable has type "str")  [assignment]
+backend/v2/contexts/onboarding/infrastructure/mongo_parent_waiver_repo.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/contexts/onboarding/infrastructure/mongo_parent_waiver_repo.py:0: error: Returning Any from function declared to return "dict[str, Any] | None"  [no-any-return]
+backend/v2/contexts/identity/infrastructure/firebase_admin_adapter.py:0: error: Incompatible types in assignment (expression has type "None", variable has type Module)  [assignment]
+backend/v2/contexts/identity/infrastructure/firebase_admin_adapter.py:0: error: Incompatible types in assignment (expression has type "None", variable has type Module)  [assignment]
+backend/v2/contexts/identity/infrastructure/firebase_admin_adapter.py:0: error: Incompatible types in assignment (expression has type "None", variable has type Module)  [assignment]
+backend/v2/contexts/identity/infrastructure/firebase_admin_adapter.py:0: error: Call to untyped function "verify_firebase_token" in typed context  [no-untyped-call]
+backend/v2/contexts/billing/application/use_cases/finance.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/billing/application/use_cases/finance.py:0: note: Possible overload variants:
+backend/v2/contexts/billing/application/use_cases/finance.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/billing/application/use_cases/finance.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/billing/application/use_cases/finance.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/billing/application/use_cases/finance.py:0: note: Possible overload variants:
+backend/v2/contexts/billing/application/use_cases/finance.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/billing/application/use_cases/finance.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/billing/application/use_cases/finance.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/billing/application/use_cases/finance.py:0: note: Possible overload variants:
+backend/v2/contexts/billing/application/use_cases/finance.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/billing/application/use_cases/finance.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/billing/application/use_cases/finance.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/billing/application/use_cases/finance.py:0: note: Possible overload variants:
+backend/v2/contexts/billing/application/use_cases/finance.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/billing/application/use_cases/finance.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/billing/application/use_cases/finance.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/billing/application/use_cases/finance.py:0: note: Possible overload variants:
+backend/v2/contexts/billing/application/use_cases/finance.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/billing/application/use_cases/finance.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/billing/application/use_cases/finance.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/billing/application/use_cases/finance.py:0: note: Possible overload variants:
+backend/v2/contexts/billing/application/use_cases/finance.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/billing/application/use_cases/finance.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/shared/http/persona.py:0: error: Incompatible return value type (got "Callable[[AuthClaims], Coroutine[Any, Any, AuthClaims]]", expected "Callable[..., AuthClaims]")  [return-value]
+backend/v2/shared/auth/middleware.py:0: error: Returning Any from function declared to return "Response"  [no-any-return]
+backend/v2/contexts/student_progress/application/use_cases/record_test_attempt.py:0: error: "object" has no attribute "skill_id"  [attr-defined]
+backend/v2/contexts/student_progress/application/use_cases/recommend_level_up.py:0: error: "object" has no attribute "skill_id"  [attr-defined]
+backend/v2/contexts/onboarding/application/use_cases/manage_application.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/onboarding/application/use_cases/manage_application.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/onboarding/application/use_cases/manage_application.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/composition/admin_registration_review.py:0: error: Non-overlapping equality check (left operand type: "Literal['DRAFT', 'CHECKOUT_PENDING', 'CHECKOUT_EXPIRED', 'APPROVING', 'WAITLISTING', 'DECLINING', 'APPROVED', 'WAITLISTED', 'DECLINED', 'CAPACITY_FAILED_REFUNDING', 'REFUNDED', 'CAPACITY_FAILED_REFUND_FAILED', 'ABANDONED']", right operand type: "Literal['PENDING_APPROVAL']")  [comparison-overlap]
+backend/v2/contexts/identity/application/use_cases/load_auth_claims.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/identity/application/use_cases/load_auth_claims.py:0: error: Returning Any from function declared to return "bool"  [no-any-return]
+backend/v2/contexts/enrollment/application/use_cases/makeup_requests.py:0: error: Missing type arguments for generic type "list"  [type-arg]
+backend/v2/contexts/enrollment/application/use_cases/confirm_enrollment.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/enrollment/application/use_cases/admin_writes.py:0: error: No overload variant of "list" matches argument type "object"  [call-overload]
+backend/v2/contexts/enrollment/application/use_cases/admin_writes.py:0: note: Possible overload variants:
+backend/v2/contexts/enrollment/application/use_cases/admin_writes.py:0: note: def [_T] list() -> list[_T]
+backend/v2/contexts/enrollment/application/use_cases/admin_writes.py:0: note: def [_T] list(Iterable[_T], /) -> list[_T]
+backend/v2/contexts/enrollment/application/use_cases/admin_writes.py:0: error: No overload variant of "list" matches argument type "object"  [call-overload]
+backend/v2/contexts/enrollment/application/use_cases/admin_writes.py:0: note: Possible overload variants:
+backend/v2/contexts/enrollment/application/use_cases/admin_writes.py:0: note: def [_T] list() -> list[_T]
+backend/v2/contexts/enrollment/application/use_cases/admin_writes.py:0: note: def [_T] list(Iterable[_T], /) -> list[_T]
+backend/v2/contexts/enrollment/application/use_cases/admin_writes.py:0: error: Need type annotation for "billing_decision"  [var-annotated]
+backend/v2/contexts/enrollment/application/use_cases/admin_writes.py:0: error: Argument "billing_policy" to "_record_lifecycle_event" has incompatible type "dict[Any, Any] | None"; expected "str | None"  [arg-type]
+backend/v2/contexts/enrollment/application/use_cases/admin_writes.py:0: error: Argument "billing_result" to "_record_lifecycle_event" has incompatible type "dict[Any, Any] | None"; expected "str | None"  [arg-type]
+backend/v2/contexts/enrollment/application/use_cases/admin_writes.py:0: error: Argument "billing_policy" to "_record_lifecycle_event" has incompatible type "Collection[str] | None"; expected "str | None"  [arg-type]
+backend/v2/contexts/enrollment/application/use_cases/admin_writes.py:0: error: Argument "billing_result" to "_record_lifecycle_event" has incompatible type "Collection[str] | None"; expected "str | None"  [arg-type]
+backend/v2/contexts/enrollment/application/use_cases/admin_writes.py:0: error: Argument "credit_id" to "_record_lifecycle_event" has incompatible type "Collection[str] | None"; expected "str | None"  [arg-type]
+backend/v2/contexts/enrollment/application/use_cases/admin_writes.py:0: error: Argument "refund_id" to "_record_lifecycle_event" has incompatible type "Collection[str] | None"; expected "str | None"  [arg-type]
+backend/v2/contexts/enrollment/application/use_cases/admin_writes.py:0: error: Argument "metadata" to "_record_lifecycle_event" has incompatible type "Collection[str]"; expected "dict[str, str] | None"  [arg-type]
+backend/v2/contexts/coaching/infrastructure/mongo_attendance_repo.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/coaching/infrastructure/mongo_attendance_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/coaching/infrastructure/mongo_attendance_repo.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/coaching/infrastructure/mongo_attendance_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/coaching/application/use_cases/session_feedback.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/coaching/application/use_cases/session_feedback.py:0: error: Missing named argument "aggregate_id" for "SessionFeedbackPosted"  [call-arg]
+backend/v2/contexts/coaching/application/use_cases/session_feedback.py:0: error: Missing named argument "payload" for "SessionFeedbackPosted"  [call-arg]
+backend/v2/contexts/coaching/application/use_cases/mark_attendance.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/coaching/application/use_cases/mark_attendance.py:0: error: Item "None" of "OccurrenceDetails | None" has no attribute "status"  [union-attr]
+backend/v2/contexts/coaching/application/use_cases/mark_attendance.py:0: error: Item "None" of "OccurrenceDetails | None" has no attribute "scheduled_coach_id"  [union-attr]
+backend/v2/contexts/coaching/application/use_cases/mark_attendance.py:0: error: Item "None" of "OccurrenceDetails | None" has no attribute "actual_coach_id"  [union-attr]
+backend/v2/contexts/coaching/application/use_cases/mark_attendance.py:0: error: Item "None" of "OccurrenceDetails | None" has no attribute "substitute_coach_id"  [union-attr]
+backend/v2/contexts/coaching/application/use_cases/mark_attendance.py:0: error: Item "None" of "OccurrenceDetails | None" has no attribute "template_session_id"  [union-attr]
+backend/v2/contexts/coaching/application/use_cases/mark_attendance.py:0: error: Item "None" of "OccurrenceDetails | None" has no attribute "template_session_id"  [union-attr]
+backend/v2/contexts/coaching/application/use_cases/bulk_mark_attendance.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/coaching/application/use_cases/bulk_mark_attendance.py:0: error: Item "None" of "OccurrenceDetails | None" has no attribute "scheduled_coach_id"  [union-attr]
+backend/v2/contexts/coaching/application/use_cases/bulk_mark_attendance.py:0: error: Item "None" of "OccurrenceDetails | None" has no attribute "actual_coach_id"  [union-attr]
+backend/v2/contexts/coaching/application/use_cases/bulk_mark_attendance.py:0: error: Item "None" of "OccurrenceDetails | None" has no attribute "substitute_coach_id"  [union-attr]
+backend/v2/contexts/coaching/application/use_cases/bulk_mark_attendance.py:0: error: Item "None" of "OccurrenceDetails | None" has no attribute "status"  [union-attr]
+backend/v2/contexts/coaching/application/use_cases/bulk_mark_attendance.py:0: error: Item "None" of "OccurrenceDetails | None" has no attribute "template_session_id"  [union-attr]
+backend/v2/contexts/coaching/application/use_cases/bulk_mark_attendance.py:0: error: Item "None" of "OccurrenceDetails | None" has no attribute "template_session_id"  [union-attr]
+backend/v2/contexts/billing/infrastructure/mongo_monthly_billing.py:0: error: "object" has no attribute "items"  [attr-defined]
+backend/v2/contexts/billing/infrastructure/mongo_monthly_billing.py:0: error: Returning Any from function declared to return "int"  [no-any-return]
+backend/v2/contexts/billing/infrastructure/mongo_monthly_billing.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/billing/infrastructure/mongo_monthly_billing.py:0: note: Possible overload variants:
+backend/v2/contexts/billing/infrastructure/mongo_monthly_billing.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/billing/infrastructure/mongo_monthly_billing.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/billing/infrastructure/mongo_monthly_billing.py:0: error: Returning Any from function declared to return "int"  [no-any-return]
+backend/v2/contexts/billing/infrastructure/mongo_monthly_billing.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/billing/infrastructure/mongo_monthly_billing.py:0: note: Possible overload variants:
+backend/v2/contexts/billing/infrastructure/mongo_monthly_billing.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/billing/infrastructure/mongo_monthly_billing.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/billing/infrastructure/mongo_monthly_billing.py:0: error: "object" has no attribute "__iter__"; maybe "__dir__" or "__str__"? (not iterable)  [attr-defined]
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: error: Argument 1 to "float" has incompatible type "object"; expected "str | Buffer | SupportsFloat | SupportsIndex"  [arg-type]
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: error: Returning Any from function declared to return "int"  [no-any-return]
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: error: Returning Any from function declared to return "int"  [no-any-return]
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: error: Returning Any from function declared to return "int"  [no-any-return]
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: error: Returning Any from function declared to return "int"  [no-any-return]
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: error: Missing type arguments for generic type "dict"  [type-arg]
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: error: Returning Any from function declared to return "dict[Any, Any] | None"  [no-any-return]
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: error: Missing type arguments for generic type "dict"  [type-arg]
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/billing/infrastructure/mongo_payment_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/billing/application/use_cases/withdrawal_credit.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/contexts/billing/application/use_cases/withdrawal_credit.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/billing/application/use_cases/withdrawal_credit.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/billing/application/use_cases/start_checkout.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/billing/application/use_cases/session_type_ops.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/billing/application/use_cases/session_type_ops.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/billing/application/use_cases/session_type_ops.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/billing/application/use_cases/session_type_ops.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/billing/application/use_cases/quote_enrollment.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/billing/application/use_cases/quote_enrollment.py:0: error: Missing type arguments for generic type "dict"  [type-arg]
+backend/v2/contexts/billing/application/use_cases/parent_billing.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/billing/application/use_cases/parent_billing.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/billing/application/use_cases/parent_billing.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/billing/application/use_cases/issue_refund.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/billing/application/use_cases/enroll_child_in_session_type.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/billing/application/use_cases/enroll_child_in_session_type.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/interfaces/platform/governance_routes.py:0: error: Module "backend.v2.contexts.platform.governance.application.use_cases" does not explicitly export attribute "GovernanceActor"  [attr-defined]
+backend/v2/interfaces/platform/bootstrap_routes.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/enrollment/infrastructure/mongo_student_repo.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/enrollment/infrastructure/mongo_student_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/enrollment/infrastructure/mongo_student_repo.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/enrollment/infrastructure/mongo_student_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/enrollment/infrastructure/mongo_student_repo.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/enrollment/infrastructure/mongo_student_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/enrollment/infrastructure/mongo_student_repo.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/enrollment/infrastructure/mongo_student_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/enrollment/infrastructure/mongo_student_repo.py:0: error: Returning Any from function declared to return "int"  [no-any-return]
+backend/v2/contexts/enrollment/infrastructure/mongo_student_repo.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/enrollment/infrastructure/mongo_student_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/enrollment/infrastructure/mongo_student_repo.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/enrollment/infrastructure/mongo_student_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/enrollment/infrastructure/mongo_student_repo.py:0: error: Returning Any from function declared to return "int"  [no-any-return]
+backend/v2/contexts/enrollment/infrastructure/mongo_student_repo.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/enrollment/infrastructure/mongo_student_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/enrollment/infrastructure/mongo_student_repo.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/enrollment/infrastructure/mongo_student_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/enrollment/infrastructure/mongo_student_repo.py:0: error: Returning Any from function declared to return "int | None"  [no-any-return]
+backend/v2/contexts/enrollment/infrastructure/mongo_student_repo.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/contexts/enrollment/infrastructure/mongo_student_repo.py:0: note: Possible overload variants:
+backend/v2/contexts/enrollment/infrastructure/mongo_student_repo.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/contexts/enrollment/infrastructure/mongo_student_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/contexts/enrollment/infrastructure/mongo_student_repo.py:0: error: Returning Any from function declared to return "dict[str, Any] | None"  [no-any-return]
+backend/v2/composition/pathway.py:0: error: Argument "level_progress" to "PlaceStudentInLevel" has incompatible type "MongoStudentLevelProgressRepository"; expected "StudentLevelProgressRepository"  [arg-type]
+backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoStudentLevelProgressRepository" have conflicts:
+backend/v2/composition/pathway.py:0: note: Expected:
+backend/v2/composition/pathway.py:0: note: def complete(self, progress_id: str, completed_at: object) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: note: Got:
+backend/v2/composition/pathway.py:0: note: def complete(self, progress_id: str, completed_at: datetime) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: error: Argument "skill_progress" to "PlaceStudentInLevel" has incompatible type "MongoStudentSkillProgressRepository"; expected "StudentSkillProgressRepository"  [arg-type]
+backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoStudentSkillProgressRepository" have conflicts:
+backend/v2/composition/pathway.py:0: note: Expected:
+backend/v2/composition/pathway.py:0: note: def count_updates_by_coach(self, *, start_at: datetime, end_at: datetime) -> Coroutine[Any, Any, list[object]]
+backend/v2/composition/pathway.py:0: note: Got:
+backend/v2/composition/pathway.py:0: note: def count_updates_by_coach(self, *, start_at: datetime, end_at: datetime) -> Coroutine[Any, Any, list[dict[str, object]]]
+backend/v2/composition/pathway.py:0: error: Argument "level_progress" to "UpdateSkillStatus" has incompatible type "MongoStudentLevelProgressRepository"; expected "StudentLevelProgressRepository"  [arg-type]
+backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoStudentLevelProgressRepository" have conflicts:
+backend/v2/composition/pathway.py:0: note: Expected:
+backend/v2/composition/pathway.py:0: note: def complete(self, progress_id: str, completed_at: object) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: note: Got:
+backend/v2/composition/pathway.py:0: note: def complete(self, progress_id: str, completed_at: datetime) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: error: Argument "skill_progress" to "UpdateSkillStatus" has incompatible type "MongoStudentSkillProgressRepository"; expected "StudentSkillProgressRepository"  [arg-type]
+backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoStudentSkillProgressRepository" have conflicts:
+backend/v2/composition/pathway.py:0: note: Expected:
+backend/v2/composition/pathway.py:0: note: def count_updates_by_coach(self, *, start_at: datetime, end_at: datetime) -> Coroutine[Any, Any, list[object]]
+backend/v2/composition/pathway.py:0: note: Got:
+backend/v2/composition/pathway.py:0: note: def count_updates_by_coach(self, *, start_at: datetime, end_at: datetime) -> Coroutine[Any, Any, list[dict[str, object]]]
+backend/v2/composition/pathway.py:0: error: Argument "skill_progress" to "RecordTestAttempt" has incompatible type "MongoStudentSkillProgressRepository"; expected "StudentSkillProgressRepository"  [arg-type]
+backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoStudentSkillProgressRepository" have conflicts:
+backend/v2/composition/pathway.py:0: note: Expected:
+backend/v2/composition/pathway.py:0: note: def count_updates_by_coach(self, *, start_at: datetime, end_at: datetime) -> Coroutine[Any, Any, list[object]]
+backend/v2/composition/pathway.py:0: note: Got:
+backend/v2/composition/pathway.py:0: note: def count_updates_by_coach(self, *, start_at: datetime, end_at: datetime) -> Coroutine[Any, Any, list[dict[str, object]]]
+backend/v2/composition/pathway.py:0: error: Argument "level_progress" to "RecordTestAttempt" has incompatible type "MongoStudentLevelProgressRepository"; expected "StudentLevelProgressRepository"  [arg-type]
+backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoStudentLevelProgressRepository" have conflicts:
+backend/v2/composition/pathway.py:0: note: Expected:
+backend/v2/composition/pathway.py:0: note: def complete(self, progress_id: str, completed_at: object) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: note: Got:
+backend/v2/composition/pathway.py:0: note: def complete(self, progress_id: str, completed_at: datetime) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: error: Argument "level_progress" to "RecommendLevelUp" has incompatible type "MongoStudentLevelProgressRepository"; expected "StudentLevelProgressRepository"  [arg-type]
+backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoStudentLevelProgressRepository" have conflicts:
+backend/v2/composition/pathway.py:0: note: Expected:
+backend/v2/composition/pathway.py:0: note: def complete(self, progress_id: str, completed_at: object) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: note: Got:
+backend/v2/composition/pathway.py:0: note: def complete(self, progress_id: str, completed_at: datetime) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: error: Argument "skill_progress" to "RecommendLevelUp" has incompatible type "MongoStudentSkillProgressRepository"; expected "StudentSkillProgressRepository"  [arg-type]
+backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoStudentSkillProgressRepository" have conflicts:
+backend/v2/composition/pathway.py:0: note: Expected:
+backend/v2/composition/pathway.py:0: note: def count_updates_by_coach(self, *, start_at: datetime, end_at: datetime) -> Coroutine[Any, Any, list[object]]
+backend/v2/composition/pathway.py:0: note: Got:
+backend/v2/composition/pathway.py:0: note: def count_updates_by_coach(self, *, start_at: datetime, end_at: datetime) -> Coroutine[Any, Any, list[dict[str, object]]]
+backend/v2/composition/pathway.py:0: error: Argument "recommendations" to "RecommendLevelUp" has incompatible type "MongoLevelUpRecommendationRepository"; expected "LevelUpRecommendationRepository"  [arg-type]
+backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoLevelUpRecommendationRepository" have conflicts:
+backend/v2/composition/pathway.py:0: note: Expected:
+backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: object | None, rejection_reason: str | None) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: note: Got:
+backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: datetime | None, rejection_reason: str | None) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: error: Argument "recommendations" to "ReviewLevelUpRecommendation" has incompatible type "MongoLevelUpRecommendationRepository"; expected "LevelUpRecommendationRepository"  [arg-type]
+backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoLevelUpRecommendationRepository" have conflicts:
+backend/v2/composition/pathway.py:0: note: Expected:
+backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: object | None, rejection_reason: str | None) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: note: Got:
+backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: datetime | None, rejection_reason: str | None) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: error: Argument "level_progress" to "ReviewLevelUpRecommendation" has incompatible type "MongoStudentLevelProgressRepository"; expected "StudentLevelProgressRepository"  [arg-type]
+backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoStudentLevelProgressRepository" have conflicts:
+backend/v2/composition/pathway.py:0: note: Expected:
+backend/v2/composition/pathway.py:0: note: def complete(self, progress_id: str, completed_at: object) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: note: Got:
+backend/v2/composition/pathway.py:0: note: def complete(self, progress_id: str, completed_at: datetime) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: error: Argument "skill_progress" to "ReviewLevelUpRecommendation" has incompatible type "MongoStudentSkillProgressRepository"; expected "StudentSkillProgressRepository"  [arg-type]
+backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoStudentSkillProgressRepository" have conflicts:
+backend/v2/composition/pathway.py:0: note: Expected:
+backend/v2/composition/pathway.py:0: note: def count_updates_by_coach(self, *, start_at: datetime, end_at: datetime) -> Coroutine[Any, Any, list[object]]
+backend/v2/composition/pathway.py:0: note: Got:
+backend/v2/composition/pathway.py:0: note: def count_updates_by_coach(self, *, start_at: datetime, end_at: datetime) -> Coroutine[Any, Any, list[dict[str, object]]]
+backend/v2/composition/pathway.py:0: error: Argument "level_progress" to "GetStudentPathwayPlacement" has incompatible type "MongoStudentLevelProgressRepository"; expected "StudentLevelProgressRepository"  [arg-type]
+backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoStudentLevelProgressRepository" have conflicts:
+backend/v2/composition/pathway.py:0: note: Expected:
+backend/v2/composition/pathway.py:0: note: def complete(self, progress_id: str, completed_at: object) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: note: Got:
+backend/v2/composition/pathway.py:0: note: def complete(self, progress_id: str, completed_at: datetime) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: error: Argument "skill_progress" to "GetStudentPathwayPlacement" has incompatible type "MongoStudentSkillProgressRepository"; expected "StudentSkillProgressRepository"  [arg-type]
+backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoStudentSkillProgressRepository" have conflicts:
+backend/v2/composition/pathway.py:0: note: Expected:
+backend/v2/composition/pathway.py:0: note: def count_updates_by_coach(self, *, start_at: datetime, end_at: datetime) -> Coroutine[Any, Any, list[object]]
+backend/v2/composition/pathway.py:0: note: Got:
+backend/v2/composition/pathway.py:0: note: def count_updates_by_coach(self, *, start_at: datetime, end_at: datetime) -> Coroutine[Any, Any, list[dict[str, object]]]
+backend/v2/composition/pathway.py:0: error: Argument "level_progress" to "GetStudentProgress" has incompatible type "MongoStudentLevelProgressRepository"; expected "StudentLevelProgressRepository"  [arg-type]
+backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoStudentLevelProgressRepository" have conflicts:
+backend/v2/composition/pathway.py:0: note: Expected:
+backend/v2/composition/pathway.py:0: note: def complete(self, progress_id: str, completed_at: object) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: note: Got:
+backend/v2/composition/pathway.py:0: note: def complete(self, progress_id: str, completed_at: datetime) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: error: Argument "skill_progress" to "GetStudentProgress" has incompatible type "MongoStudentSkillProgressRepository"; expected "StudentSkillProgressRepository"  [arg-type]
+backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoStudentSkillProgressRepository" have conflicts:
+backend/v2/composition/pathway.py:0: note: Expected:
+backend/v2/composition/pathway.py:0: note: def count_updates_by_coach(self, *, start_at: datetime, end_at: datetime) -> Coroutine[Any, Any, list[object]]
+backend/v2/composition/pathway.py:0: note: Got:
+backend/v2/composition/pathway.py:0: note: def count_updates_by_coach(self, *, start_at: datetime, end_at: datetime) -> Coroutine[Any, Any, list[dict[str, object]]]
+backend/v2/composition/pathway.py:0: error: Argument "recommendations" to "GetStudentProgress" has incompatible type "MongoLevelUpRecommendationRepository"; expected "LevelUpRecommendationRepository"  [arg-type]
+backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoLevelUpRecommendationRepository" have conflicts:
+backend/v2/composition/pathway.py:0: note: Expected:
+backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: object | None, rejection_reason: str | None) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: note: Got:
+backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: datetime | None, rejection_reason: str | None) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: error: Argument "level_progress" to "GetProgressSummary" has incompatible type "MongoStudentLevelProgressRepository"; expected "StudentLevelProgressRepository"  [arg-type]
+backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoStudentLevelProgressRepository" have conflicts:
+backend/v2/composition/pathway.py:0: note: Expected:
+backend/v2/composition/pathway.py:0: note: def complete(self, progress_id: str, completed_at: object) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: note: Got:
+backend/v2/composition/pathway.py:0: note: def complete(self, progress_id: str, completed_at: datetime) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: error: Argument "skill_progress" to "GetProgressSummary" has incompatible type "MongoStudentSkillProgressRepository"; expected "StudentSkillProgressRepository"  [arg-type]
+backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoStudentSkillProgressRepository" have conflicts:
+backend/v2/composition/pathway.py:0: note: Expected:
+backend/v2/composition/pathway.py:0: note: def count_updates_by_coach(self, *, start_at: datetime, end_at: datetime) -> Coroutine[Any, Any, list[object]]
+backend/v2/composition/pathway.py:0: note: Got:
+backend/v2/composition/pathway.py:0: note: def count_updates_by_coach(self, *, start_at: datetime, end_at: datetime) -> Coroutine[Any, Any, list[dict[str, object]]]
+backend/v2/composition/pathway.py:0: error: Argument "recommendations" to "GetProgressSummary" has incompatible type "MongoLevelUpRecommendationRepository"; expected "LevelUpRecommendationRepository"  [arg-type]
+backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoLevelUpRecommendationRepository" have conflicts:
+backend/v2/composition/pathway.py:0: note: Expected:
+backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: object | None, rejection_reason: str | None) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: note: Got:
+backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: datetime | None, rejection_reason: str | None) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: error: Argument "level_progress" to "GetStudentPassport" has incompatible type "MongoStudentLevelProgressRepository"; expected "StudentLevelProgressRepository"  [arg-type]
+backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoStudentLevelProgressRepository" have conflicts:
+backend/v2/composition/pathway.py:0: note: Expected:
+backend/v2/composition/pathway.py:0: note: def complete(self, progress_id: str, completed_at: object) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: note: Got:
+backend/v2/composition/pathway.py:0: note: def complete(self, progress_id: str, completed_at: datetime) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: error: Argument "skill_progress" to "GetStudentPassport" has incompatible type "MongoStudentSkillProgressRepository"; expected "StudentSkillProgressRepository"  [arg-type]
+backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoStudentSkillProgressRepository" have conflicts:
+backend/v2/composition/pathway.py:0: note: Expected:
+backend/v2/composition/pathway.py:0: note: def count_updates_by_coach(self, *, start_at: datetime, end_at: datetime) -> Coroutine[Any, Any, list[object]]
+backend/v2/composition/pathway.py:0: note: Got:
+backend/v2/composition/pathway.py:0: note: def count_updates_by_coach(self, *, start_at: datetime, end_at: datetime) -> Coroutine[Any, Any, list[dict[str, object]]]
+backend/v2/composition/pathway.py:0: error: Argument "level_progress" to "GetLevelUpQueue" has incompatible type "MongoStudentLevelProgressRepository"; expected "StudentLevelProgressRepository"  [arg-type]
+backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoStudentLevelProgressRepository" have conflicts:
+backend/v2/composition/pathway.py:0: note: Expected:
+backend/v2/composition/pathway.py:0: note: def complete(self, progress_id: str, completed_at: object) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: note: Got:
+backend/v2/composition/pathway.py:0: note: def complete(self, progress_id: str, completed_at: datetime) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: error: Argument "skill_progress" to "GetLevelUpQueue" has incompatible type "MongoStudentSkillProgressRepository"; expected "StudentSkillProgressRepository"  [arg-type]
+backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoStudentSkillProgressRepository" have conflicts:
+backend/v2/composition/pathway.py:0: note: Expected:
+backend/v2/composition/pathway.py:0: note: def count_updates_by_coach(self, *, start_at: datetime, end_at: datetime) -> Coroutine[Any, Any, list[object]]
+backend/v2/composition/pathway.py:0: note: Got:
+backend/v2/composition/pathway.py:0: note: def count_updates_by_coach(self, *, start_at: datetime, end_at: datetime) -> Coroutine[Any, Any, list[dict[str, object]]]
+backend/v2/composition/pathway.py:0: error: Argument "recommendations" to "GetLevelUpQueue" has incompatible type "MongoLevelUpRecommendationRepository"; expected "LevelUpRecommendationRepository"  [arg-type]
+backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoLevelUpRecommendationRepository" have conflicts:
+backend/v2/composition/pathway.py:0: note: Expected:
+backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: object | None, rejection_reason: str | None) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: note: Got:
+backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: datetime | None, rejection_reason: str | None) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: error: Argument "level_progress" to "GetSkillBoard" has incompatible type "MongoStudentLevelProgressRepository"; expected "StudentLevelProgressRepository"  [arg-type]
+backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoStudentLevelProgressRepository" have conflicts:
+backend/v2/composition/pathway.py:0: note: Expected:
+backend/v2/composition/pathway.py:0: note: def complete(self, progress_id: str, completed_at: object) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: note: Got:
+backend/v2/composition/pathway.py:0: note: def complete(self, progress_id: str, completed_at: datetime) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: error: Argument "skill_progress" to "GetSkillBoard" has incompatible type "MongoStudentSkillProgressRepository"; expected "StudentSkillProgressRepository"  [arg-type]
+backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoStudentSkillProgressRepository" have conflicts:
+backend/v2/composition/pathway.py:0: note: Expected:
+backend/v2/composition/pathway.py:0: note: def count_updates_by_coach(self, *, start_at: datetime, end_at: datetime) -> Coroutine[Any, Any, list[object]]
+backend/v2/composition/pathway.py:0: note: Got:
+backend/v2/composition/pathway.py:0: note: def count_updates_by_coach(self, *, start_at: datetime, end_at: datetime) -> Coroutine[Any, Any, list[dict[str, object]]]
+backend/v2/composition/pathway.py:0: error: Argument "recommendations" to "GetSkillBoard" has incompatible type "MongoLevelUpRecommendationRepository"; expected "LevelUpRecommendationRepository"  [arg-type]
+backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoLevelUpRecommendationRepository" have conflicts:
+backend/v2/composition/pathway.py:0: note: Expected:
+backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: object | None, rejection_reason: str | None) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: note: Got:
+backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: datetime | None, rejection_reason: str | None) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: error: Argument "level_progress" to "GetTeachingFocus" has incompatible type "MongoStudentLevelProgressRepository"; expected "StudentLevelProgressRepository"  [arg-type]
+backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoStudentLevelProgressRepository" have conflicts:
+backend/v2/composition/pathway.py:0: note: Expected:
+backend/v2/composition/pathway.py:0: note: def complete(self, progress_id: str, completed_at: object) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: note: Got:
+backend/v2/composition/pathway.py:0: note: def complete(self, progress_id: str, completed_at: datetime) -> Coroutine[Any, Any, None]
+backend/v2/composition/pathway.py:0: error: Argument "skill_progress" to "GetTeachingFocus" has incompatible type "MongoStudentSkillProgressRepository"; expected "StudentSkillProgressRepository"  [arg-type]
+backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoStudentSkillProgressRepository" have conflicts:
+backend/v2/composition/pathway.py:0: note: Expected:
+backend/v2/composition/pathway.py:0: note: def count_updates_by_coach(self, *, start_at: datetime, end_at: datetime) -> Coroutine[Any, Any, list[object]]
+backend/v2/composition/pathway.py:0: note: Got:
+backend/v2/composition/pathway.py:0: note: def count_updates_by_coach(self, *, start_at: datetime, end_at: datetime) -> Coroutine[Any, Any, list[dict[str, object]]]
+backend/v2/composition/pathway.py:0: error: Argument "skill_progress" to "GetRecentSkillUpdates" has incompatible type "MongoStudentSkillProgressRepository"; expected "StudentSkillProgressRepository"  [arg-type]
+backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoStudentSkillProgressRepository" have conflicts:
+backend/v2/composition/pathway.py:0: note: Expected:
+backend/v2/composition/pathway.py:0: note: def count_updates_by_coach(self, *, start_at: datetime, end_at: datetime) -> Coroutine[Any, Any, list[object]]
+backend/v2/composition/pathway.py:0: note: Got:
+backend/v2/composition/pathway.py:0: note: def count_updates_by_coach(self, *, start_at: datetime, end_at: datetime) -> Coroutine[Any, Any, list[dict[str, object]]]
+backend/v2/composition/pathway.py:0: error: Argument "skill_progress" to "GetInProgressSkills" has incompatible type "MongoStudentSkillProgressRepository"; expected "StudentSkillProgressRepository"  [arg-type]
+backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoStudentSkillProgressRepository" have conflicts:
+backend/v2/composition/pathway.py:0: note: Expected:
+backend/v2/composition/pathway.py:0: note: def count_updates_by_coach(self, *, start_at: datetime, end_at: datetime) -> Coroutine[Any, Any, list[object]]
+backend/v2/composition/pathway.py:0: note: Got:
+backend/v2/composition/pathway.py:0: note: def count_updates_by_coach(self, *, start_at: datetime, end_at: datetime) -> Coroutine[Any, Any, list[dict[str, object]]]
+backend/v2/contexts/coaching/infrastructure/mongo_session_notes_repo.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/billing/application/use_cases/handle_webhook_event.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/contexts/billing/application/use_cases/handle_webhook_event.py:0: error: "AccountAcademyResolver" has no attribute "get_by_stripe_account_id"  [attr-defined]
+backend/v2/contexts/billing/application/use_cases/handle_webhook_event.py:0: error: Item "None" of "Any | None" has no attribute "parent_id"  [union-attr]
+backend/v2/contexts/billing/application/use_cases/handle_webhook_event.py:0: error: Item "None" of "LedgerRepository | None" has no attribute "list_allocations_for_payment"  [union-attr]
+backend/v2/contexts/billing/application/use_cases/handle_webhook_event.py:0: error: Item "None" of "LedgerRepository | None" has no attribute "get_invoice"  [union-attr]
+backend/v2/contexts/billing/application/use_cases/handle_webhook_event.py:0: error: Item "None" of "LedgerRepository | None" has no attribute "apply_invoice_refund"  [union-attr]
+backend/v2/contexts/billing/application/use_cases/handle_webhook_event.py:0: error: Item "None" of "LedgerRepository | None" has no attribute "get_payment_allocation_by_idempotency_key"  [union-attr]
+backend/v2/contexts/billing/application/use_cases/handle_webhook_event.py:0: error: Value of type "PaymentAllocation | Any" is not indexable  [index]
+backend/v2/contexts/billing/application/use_cases/handle_webhook_event.py:0: error: Item "None" of "LedgerRepository | None" has no attribute "get_invoice"  [union-attr]
+backend/v2/contexts/billing/application/use_cases/handle_webhook_event.py:0: error: Item "None" of "LedgerRepository | None" has no attribute "record_payment_attempt"  [union-attr]
+backend/v2/contexts/billing/application/use_cases/handle_webhook_event.py:0: error: Item "None" of "LedgerRepository | None" has no attribute "get_payment_allocation_by_idempotency_key"  [union-attr]
+backend/v2/contexts/billing/application/use_cases/handle_webhook_event.py:0: error: Item "None" of "LedgerRepository | None" has no attribute "mark_payment_refunded"  [union-attr]
+backend/v2/contexts/billing/application/use_cases/handle_webhook_event.py:0: error: Item "None" of "LedgerRepository | None" has no attribute "reverse_payment_allocation"  [union-attr]
+backend/v2/contexts/billing/application/use_cases/handle_webhook_event.py:0: error: Item "None" of "LedgerRepository | None" has no attribute "record_payment_attempt"  [union-attr]
+backend/v2/composition/event_handlers.py:0: error: Argument 1 has incompatible type "Callable[[StudentPlacedInLevel], Coroutine[Any, Any, None]]"; expected "Callable[[DomainEvent], Awaitable[None]]"  [arg-type]
+backend/v2/composition/event_handlers.py:0: error: Argument 1 has incompatible type "Callable[[PaymentSucceeded], Coroutine[Any, Any, None]]"; expected "Callable[[DomainEvent], Awaitable[None]]"  [arg-type]
+backend/v2/composition/event_handlers.py:0: error: Argument 1 has incompatible type "Callable[[CheckoutExpired], Coroutine[Any, Any, None]]"; expected "Callable[[DomainEvent], Awaitable[None]]"  [arg-type]
+backend/v2/composition/event_handlers.py:0: error: Argument 1 has incompatible type "Callable[[CapacityExceeded], Coroutine[Any, Any, None]]"; expected "Callable[[DomainEvent], Awaitable[None]]"  [arg-type]
+backend/v2/composition/event_handlers.py:0: error: Argument 1 has incompatible type "Callable[[EnrollmentCancelled], Coroutine[Any, Any, None]]"; expected "Callable[[DomainEvent], Awaitable[None]]"  [arg-type]
+backend/v2/composition/event_handlers.py:0: error: Argument 1 has incompatible type "Callable[[WelcomeEmailRequested], Coroutine[Any, Any, None]]"; expected "Callable[[DomainEvent], Awaitable[None]]"  [arg-type]
+backend/v2/interfaces/platform/connect_routes.py:0: error: Missing type arguments for generic type "dict"  [type-arg]
+backend/v2/composition/coach.py:0: error: Argument "sessions" to "CoachAddStudentToRoster" has incompatible type "MongoSessionRepository"; expected "SessionWriter"  [arg-type]
+backend/v2/composition/coach.py:0: error: Argument "enrollments" to "CoachAddStudentToRoster" has incompatible type "MongoEnrollmentRepository"; expected "EnrollmentWriter"  [arg-type]
+backend/v2/composition/coach.py:0: error: Argument "students" to "CoachAddStudentToRoster" has incompatible type "MongoStudentRepository"; expected "StudentWriter"  [arg-type]
+backend/v2/composition/coach.py:0: error: Argument "enrollments" to "CoachRemoveStudentFromRoster" has incompatible type "MongoEnrollmentRepository"; expected "EnrollmentWriter"  [arg-type]
+backend/v2/composition/coach.py:0: error: Argument "notes" to "CreateSkillNote" has incompatible type "MongoSkillNoteRepository"; expected "SkillNoteRepository"  [arg-type]
+backend/v2/composition/coach.py:0: note: Following member(s) of "MongoSkillNoteRepository" have conflicts:
+backend/v2/composition/coach.py:0: note: Expected:
+backend/v2/composition/coach.py:0: note: def list_for_student_skill(self, student_id: str, skill_id: str) -> Coroutine[Any, Any, list[object]]
+backend/v2/composition/coach.py:0: note: Got:
+backend/v2/composition/coach.py:0: note: def list_for_student_skill(self, student_id: str, skill_id: str) -> Coroutine[Any, Any, list[CoachSkillNote]]
+backend/v2/composition/coach.py:0: note: Expected:
+backend/v2/composition/coach.py:0: note: def save(self, note: object) -> Coroutine[Any, Any, None]
+backend/v2/composition/coach.py:0: note: Got:
+backend/v2/composition/coach.py:0: note: def save(self, note: CoachSkillNote) -> Coroutine[Any, Any, None]
+backend/v2/composition/coach.py:0: error: Argument "notes" to "ListSkillNotes" has incompatible type "MongoSkillNoteRepository"; expected "SkillNoteRepository"  [arg-type]
+backend/v2/composition/coach.py:0: note: Following member(s) of "MongoSkillNoteRepository" have conflicts:
+backend/v2/composition/coach.py:0: note: Expected:
+backend/v2/composition/coach.py:0: note: def list_for_student_skill(self, student_id: str, skill_id: str) -> Coroutine[Any, Any, list[object]]
+backend/v2/composition/coach.py:0: note: Got:
+backend/v2/composition/coach.py:0: note: def list_for_student_skill(self, student_id: str, skill_id: str) -> Coroutine[Any, Any, list[CoachSkillNote]]
+backend/v2/composition/coach.py:0: note: Expected:
+backend/v2/composition/coach.py:0: note: def save(self, note: object) -> Coroutine[Any, Any, None]
+backend/v2/composition/coach.py:0: note: Got:
+backend/v2/composition/coach.py:0: note: def save(self, note: CoachSkillNote) -> Coroutine[Any, Any, None]
+backend/v2/composition/parent.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/composition/parent.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/composition/parent.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/composition/parent.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/composition/parent.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/composition/parent.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/composition/parent.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/composition/parent.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/composition/parent.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/composition/parent.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/composition/parent.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/composition/parent.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/composition/parent.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/composition/parent.py:0: error: Argument "status" to "update_status" of "MongoConnectedAccountRepository" has incompatible type "str"; expected "Literal['pending', 'active', 'restricted', 'disabled']"  [arg-type]
+backend/v2/composition/parent.py:0: error: Returning Any from function declared to return "int"  [no-any-return]
+backend/v2/composition/parent.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/composition/parent.py:0: note: Possible overload variants:
+backend/v2/composition/parent.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/composition/parent.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/composition/parent.py:0: error: Returning Any from function declared to return "int"  [no-any-return]
+backend/v2/composition/parent.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/composition/parent.py:0: note: Possible overload variants:
+backend/v2/composition/parent.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/composition/parent.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/interfaces/coach/teaching_plan_routes.py:0: error: Incompatible types in assignment (expression has type "Program | None", variable has type "Program")  [assignment]
+backend/v2/interfaces/coach/teaching_plan_routes.py:0: error: "object" has no attribute "execute"  [attr-defined]
+backend/v2/interfaces/coach/teaching_plan_routes.py:0: error: Returning Any from function declared to return "dict[str, Any]"  [no-any-return]
+backend/v2/interfaces/coach/teaching_plan_routes.py:0: error: "object" has no attribute "is_coach_assigned"  [attr-defined]
+backend/v2/interfaces/coach/teaching_plan_routes.py:0: error: "object" has no attribute "build_session_groups"  [attr-defined]
+backend/v2/interfaces/coach/skill_routes.py:0: error: Module "backend.v2.contexts.student_progress.application.use_cases.get_skill_board" does not explicitly export attribute "SkillBoardStudentRef"  [attr-defined]
+backend/v2/interfaces/coach/skill_routes.py:0: error: "object" has no attribute "is_coach_assigned"  [attr-defined]
+backend/v2/interfaces/coach/skill_routes.py:0: error: "object" has no attribute "is_coach_assigned"  [attr-defined]
+backend/v2/interfaces/coach/skill_routes.py:0: error: "object" has no attribute "session_id"  [attr-defined]
+backend/v2/interfaces/coach/skill_routes.py:0: error: "object" has no attribute "is_coach_assigned"  [attr-defined]
+backend/v2/interfaces/coach/skill_routes.py:0: error: "object" has no attribute "append"  [attr-defined]
+backend/v2/interfaces/coach/skill_routes.py:0: error: "object" has no attribute "append"  [attr-defined]
+backend/v2/interfaces/coach/skill_routes.py:0: error: "object" has no attribute "__iter__"; maybe "__dir__" or "__str__"? (not iterable)  [attr-defined]
+backend/v2/interfaces/coach/skill_routes.py:0: error: Generator has incompatible item type "int"; expected "bool"  [misc]
+backend/v2/interfaces/coach/skill_routes.py:0: error: Argument 1 to "len" has incompatible type "object"; expected "Sized"  [arg-type]
+backend/v2/interfaces/coach/skill_routes.py:0: error: "object" has no attribute "session_id"  [attr-defined]
+backend/v2/interfaces/coach/skill_routes.py:0: error: "object" has no attribute "is_coach_assigned"  [attr-defined]
+backend/v2/interfaces/coach/skill_routes.py:0: error: "object" has no attribute "execute"  [attr-defined]
+backend/v2/interfaces/coach/skill_routes.py:0: error: "object" has no attribute "execute"  [attr-defined]
+backend/v2/interfaces/coach/skill_routes.py:0: error: "object" has no attribute "is_coach_assigned"  [attr-defined]
+backend/v2/interfaces/coach/skill_routes.py:0: error: "object" has no attribute "is_coach_assigned"  [attr-defined]
+backend/v2/interfaces/coach/roster_routes.py:0: error: "object" has no attribute "is_coach_assigned"  [attr-defined]
+backend/v2/interfaces/coach/profile_routes.py:0: error: Returning Any from function declared to return "CoachProfileResponse"  [no-any-return]
+backend/v2/interfaces/coach/profile_routes.py:0: error: Returning Any from function declared to return "CoachProfileResponse"  [no-any-return]
+backend/v2/interfaces/coach/feedback_routes.py:0: error: "object" has no attribute "is_coach_assigned"  [attr-defined]
+backend/v2/interfaces/coach/billing_enrollment_routes.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/interfaces/coach/billing_enrollment_routes.py:0: error: "object" has no attribute "is_coach_assigned"  [attr-defined]
+backend/v2/interfaces/admin/waitlist_routes.py:0: error: "object" has no attribute "__iter__"; maybe "__dir__" or "__str__"? (not iterable)  [attr-defined]
+backend/v2/interfaces/admin/sessions_routes.py:0: error: Module "backend.v2.contexts.enrollment.application.use_cases.admin_writes" does not explicitly export attribute "DuplicateSessionSeries"  [attr-defined]
+backend/v2/interfaces/admin/sessions_routes.py:0: error: "object" has no attribute "execute"  [attr-defined]
+backend/v2/interfaces/admin/sessions_routes.py:0: error: "object" not callable  [operator]
+backend/v2/interfaces/admin/sessions_routes.py:0: error: "object" not callable  [operator]
+backend/v2/interfaces/admin/sessions_routes.py:0: error: "object" not callable  [operator]
+backend/v2/interfaces/admin/session_type_routes.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/interfaces/admin/session_type_routes.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/interfaces/admin/self_service_request_routes.py:0: error: Item "None" of "ListAbsencesForAdmin | None" has no attribute "execute"  [union-attr]
+backend/v2/interfaces/admin/self_service_request_routes.py:0: error: Item "None" of "ListMakeupRequestsForAdmin | None" has no attribute "execute"  [union-attr]
+backend/v2/interfaces/admin/self_service_request_routes.py:0: error: Item "None" of "ApproveMakeupRequest | None" has no attribute "execute"  [union-attr]
+backend/v2/interfaces/admin/self_service_request_routes.py:0: error: Item "None" of "DenyMakeupRequest | None" has no attribute "execute"  [union-attr]
+backend/v2/interfaces/admin/self_service_request_routes.py:0: error: Item "None" of "ListTrialRequestsForAdmin | None" has no attribute "execute"  [union-attr]
+backend/v2/interfaces/admin/self_service_request_routes.py:0: error: Item "None" of "ApproveTrialRequest | None" has no attribute "execute"  [union-attr]
+backend/v2/interfaces/admin/self_service_request_routes.py:0: error: Item "None" of "DenyTrialRequest | None" has no attribute "execute"  [union-attr]
+backend/v2/interfaces/admin/self_service_request_routes.py:0: error: Item "None" of "ListSelfCancellationsForAdmin | None" has no attribute "execute"  [union-attr]
+backend/v2/interfaces/admin/self_service_policy_routes.py:0: error: Item "None" of "GetSelfServicePolicy | None" has no attribute "execute"  [union-attr]
+backend/v2/interfaces/admin/self_service_policy_routes.py:0: error: Item "None" of "UpdateSelfServicePolicy | None" has no attribute "execute"  [union-attr]
+backend/v2/interfaces/admin/progress_routes.py:0: error: Module "backend.v2.contexts.student_progress.application.use_cases.get_skill_board" does not explicitly export attribute "SkillBoardStudentRef"  [attr-defined]
+backend/v2/interfaces/admin/progress_routes.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/interfaces/admin/progress_routes.py:0: note: Possible overload variants:
+backend/v2/interfaces/admin/progress_routes.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/interfaces/admin/progress_routes.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/interfaces/admin/progress_routes.py:0: error: "object" has no attribute "next_action"  [attr-defined]
+backend/v2/interfaces/admin/progress_routes.py:0: error: "object" has no attribute "model_dump"  [attr-defined]
+backend/v2/interfaces/admin/progress_routes.py:0: error: Item "None" of "StudentProgressComposition | None" has no attribute "get_progress_summary"  [union-attr]
+backend/v2/interfaces/admin/progress_routes.py:0: error: "object" has no attribute "student_id"  [attr-defined]
+backend/v2/interfaces/admin/progress_routes.py:0: error: "object" has no attribute "full_name"  [attr-defined]
+backend/v2/interfaces/admin/payroll_routes.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/interfaces/admin/payout_period_routes.py:0: error: Module "backend.v2.contexts.finance.application.use_cases.manage_payout_period" does not explicitly export attribute "PayoutPeriodStateError"  [attr-defined]
+backend/v2/interfaces/admin/payout_period_routes.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/interfaces/admin/pathway_routes.py:0: error: "object" has no attribute "program_id"  [attr-defined]
+backend/v2/interfaces/admin/pathway_routes.py:0: error: "object" has no attribute "name"  [attr-defined]
+backend/v2/interfaces/admin/directory_routes.py:0: error: Missing type arguments for generic type "dict"  [type-arg]
+backend/v2/interfaces/admin/dashboard_routes.py:0: error: Argument 2 to "_read_attention_source" has incompatible type "object"; expected "Callable[..., Awaitable[Any]]"  [arg-type]
+backend/v2/interfaces/admin/dashboard_routes.py:0: error: Argument 2 to "_read_attention_source" has incompatible type "object"; expected "Callable[..., Awaitable[Any]]"  [arg-type]
+backend/v2/interfaces/admin/dashboard_routes.py:0: error: Argument 2 to "_read_attention_source" has incompatible type "object"; expected "Callable[..., Awaitable[Any]]"  [arg-type]
+backend/v2/interfaces/admin/dashboard_routes.py:0: error: Argument 2 to "_read_attention_source" has incompatible type "object"; expected "Callable[..., Awaitable[Any]]"  [arg-type]
+backend/v2/interfaces/admin/dashboard_routes.py:0: error: Argument 2 to "_read_attention_source" has incompatible type "object"; expected "Callable[..., Awaitable[Any]]"  [arg-type]
+backend/v2/interfaces/admin/dashboard_routes.py:0: error: Argument 2 to "_read_attention_source" has incompatible type "object"; expected "Callable[..., Awaitable[Any]]"  [arg-type]
+backend/v2/interfaces/admin/dashboard_routes.py:0: error: Name "blocked_resumes" already defined on line 0  [no-redef]
+backend/v2/interfaces/admin/comms_routes.py:0: error: Incompatible types in assignment (expression has type "timezone", variable has type "ZoneInfo")  [assignment]
+backend/v2/interfaces/admin/comms_routes.py:0: error: Incompatible types in assignment (expression has type "AcademyAudience", variable has type "SessionAudience")  [assignment]
+backend/v2/interfaces/admin/comms_routes.py:0: error: "object" has no attribute "execute"  [attr-defined]
+backend/v2/interfaces/admin/comms_routes.py:0: error: "object" has no attribute "execute"  [attr-defined]
+backend/v2/interfaces/admin/coach_pay_rate_routes.py:0: error: Module "backend.v2.contexts.coaching.application.use_cases.manage_coach_rates" does not explicitly export attribute "CoachRate"  [attr-defined]
+backend/v2/interfaces/admin/coach_pay_rate_routes.py:0: error: Missing type arguments for generic type "dict"  [type-arg]
+backend/v2/interfaces/admin/billing_routes.py:0: error: "object" not callable  [operator]
+backend/v2/interfaces/admin/billing_routes.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/interfaces/admin/billing_routes.py:0: error: "object" has no attribute "execute"  [attr-defined]
+backend/v2/interfaces/admin/billing_routes.py:0: error: "object" has no attribute "execute"  [attr-defined]
+backend/v2/interfaces/admin/billing_routes.py:0: error: "object" not callable  [operator]
+backend/v2/interfaces/admin/billing_routes.py:0: error: "object" not callable  [operator]
+backend/v2/interfaces/admin/billing_routes.py:0: error: "object" not callable  [operator]
+backend/v2/interfaces/admin/billing_routes.py:0: error: Missing type arguments for generic type "dict"  [type-arg]
+backend/v2/interfaces/admin/billing_routes.py:0: error: Returning Any from function declared to return "dict[Any, Any]"  [no-any-return]
+backend/v2/interfaces/admin/billing_routes.py:0: note: Error code "no-any-return" not covered by "type: ignore[operator]" comment
+backend/v2/interfaces/admin/billing_routes.py:0: error: "object" has no attribute "amount_cents"  [attr-defined]
+backend/v2/interfaces/admin/billing_routes.py:0: error: "object" has no attribute "payment_id"  [attr-defined]
+backend/v2/interfaces/admin/billing_routes.py:0: error: "object" has no attribute "parent_id"  [attr-defined]
+backend/v2/interfaces/admin/billing_routes.py:0: error: "object" has no attribute "session_id"  [attr-defined]
+backend/v2/interfaces/admin/billing_routes.py:0: error: "object" has no attribute "status"  [attr-defined]
+backend/v2/interfaces/admin/billing_routes.py:0: error: "object" has no attribute "status"  [attr-defined]
+backend/v2/interfaces/admin/billing_routes.py:0: error: "object" has no attribute "status"  [attr-defined]
+backend/v2/interfaces/admin/billing_routes.py:0: error: "object" has no attribute "currency"  [attr-defined]
+backend/v2/interfaces/admin/billing_routes.py:0: error: "object" has no attribute "status"  [attr-defined]
+backend/v2/interfaces/admin/billing_routes.py:0: error: "object" has no attribute "refunded_cents"  [attr-defined]
+backend/v2/interfaces/admin/billing_routes.py:0: error: "object" has no attribute "created_at"  [attr-defined]
+backend/v2/interfaces/admin/billing_products_routes.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/interfaces/admin/billing_products_routes.py:0: note: Possible overload variants:
+backend/v2/interfaces/admin/billing_products_routes.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/interfaces/admin/billing_products_routes.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/composition/admin.py:0: error: Argument 1 to "aggregate" of "AsyncIOMotorCollection" has incompatible type "list[object]"; expected "Sequence[Mapping[str, Any]]"  [arg-type]
+backend/v2/composition/admin.py:0: error: Argument 1 to "aggregate" of "AsyncIOMotorCollection" has incompatible type "list[object]"; expected "Sequence[Mapping[str, Any]]"  [arg-type]
+backend/v2/composition/admin.py:0: error: Argument 1 to "aggregate" of "AsyncIOMotorCollection" has incompatible type "list[object]"; expected "Sequence[Mapping[str, Any]]"  [arg-type]
+backend/v2/composition/admin.py:0: error: Generator has incompatible item type "object"; expected "bool"  [misc]
+backend/v2/composition/admin.py:0: error: Generator has incompatible item type "object"; expected "bool"  [misc]
+backend/v2/composition/admin.py:0: error: "object" not callable  [operator]
+backend/v2/composition/admin.py:0: error: "object" not callable  [operator]
+backend/v2/composition/admin.py:0: error: "object" not callable  [operator]
+backend/v2/composition/admin.py:0: error: "object" not callable  [operator]
+backend/v2/composition/admin.py:0: error: "object" not callable  [operator]
+backend/v2/composition/admin.py:0: error: "object" not callable  [operator]
+backend/v2/composition/admin.py:0: error: Incompatible types in assignment (expression has type "str | None", variable has type "str")  [assignment]
+backend/v2/composition/admin.py:0: error: Incompatible types in assignment (expression has type "str | None", variable has type "str")  [assignment]
+backend/v2/composition/admin.py:0: error: Incompatible types in assignment (expression has type "str | None", variable has type "str")  [assignment]
+backend/v2/composition/admin.py:0: error: Missing type arguments for generic type "dict"  [type-arg]
+backend/v2/composition/admin.py:0: error: Argument "skill_progress" to "GetCoachEngagementStats" has incompatible type "MongoStudentSkillProgressRepository"; expected "CoachEngagementStatsRepository"  [arg-type]
+backend/v2/composition/admin.py:0: note: Following member(s) of "MongoStudentSkillProgressRepository" have conflicts:
+backend/v2/composition/admin.py:0: note: Expected:
+backend/v2/composition/admin.py:0: note: def count_updates_by_coach(self, *, start_at: datetime, end_at: datetime) -> Coroutine[Any, Any, list[object]]
+backend/v2/composition/admin.py:0: note: Got:
+backend/v2/composition/admin.py:0: note: def count_updates_by_coach(self, *, start_at: datetime, end_at: datetime) -> Coroutine[Any, Any, list[dict[str, object]]]
+backend/v2/composition/admin.py:0: error: Argument "calculator" to "GeneratePayoutPeriod" has incompatible type "_FinancePayoutCalculator"; expected "PayoutCalculator"  [arg-type]
+backend/v2/composition/admin.py:0: note: Following member(s) of "_FinancePayoutCalculator" have conflicts:
+backend/v2/composition/admin.py:0: note: Expected:
+backend/v2/composition/admin.py:0: note: def calculate(self, *, coach_id: str, academy_id: str, period_start: datetime, period_end: datetime) -> Coroutine[Any, Any, PayoutCalculation]
+backend/v2/composition/admin.py:0: note: Got:
+backend/v2/composition/admin.py:0: note: def calculate(self, *, coach_id: str, academy_id: str, period_start: datetime, period_end: datetime) -> Coroutine[Any, Any, object]
+backend/v2/composition/admin.py:0: error: Argument "calculator" to "RecomputePayoutPeriod" has incompatible type "_FinancePayoutCalculator"; expected "PayoutCalculator"  [arg-type]
+backend/v2/composition/admin.py:0: note: Following member(s) of "_FinancePayoutCalculator" have conflicts:
+backend/v2/composition/admin.py:0: note: Expected:
+backend/v2/composition/admin.py:0: note: def calculate(self, *, coach_id: str, academy_id: str, period_start: datetime, period_end: datetime) -> Coroutine[Any, Any, PayoutCalculation]
+backend/v2/composition/admin.py:0: note: Got:
+backend/v2/composition/admin.py:0: note: def calculate(self, *, coach_id: str, academy_id: str, period_start: datetime, period_end: datetime) -> Coroutine[Any, Any, object]
+backend/v2/composition/admin.py:0: error: Incompatible types in assignment (expression has type "StubEmailSendPort", variable has type "ResendEmailSendPort")  [assignment]
+backend/v2/composition/admin.py:0: error: Argument "enrollment_autopay" to "ChargeInvoiceViaAutopay" has incompatible type "MongoStudentBillingEnrollmentRepository"; expected "EnrollmentAutopayGateway | None"  [arg-type]
+backend/v2/composition/admin.py:0: note: Following member(s) of "MongoStudentBillingEnrollmentRepository" have conflicts:
+backend/v2/composition/admin.py:0: note: Expected:
+backend/v2/composition/admin.py:0: note: def record_attempt_outcome(self, *, enrollment_id: str, outcome: str, occurred_at: datetime, failure_code: str | None) -> Coroutine[Any, Any, None]
+backend/v2/composition/admin.py:0: note: Got:
+backend/v2/composition/admin.py:0: note: def record_attempt_outcome(self, *, enrollment_id: str, outcome: Literal['succeeded', 'declined', 'requires_action', 'error'], occurred_at: datetime, failure_code: str | None) -> Coroutine[Any, Any, None]
+backend/v2/composition/admin.py:0: error: Argument "enrollment_autopay" to "ChargeInvoiceViaAutopay" has incompatible type "MongoStudentBillingEnrollmentRepository"; expected "EnrollmentAutopayGateway | None"  [arg-type]
+backend/v2/composition/admin.py:0: note: Following member(s) of "MongoStudentBillingEnrollmentRepository" have conflicts:
+backend/v2/composition/admin.py:0: note: Expected:
+backend/v2/composition/admin.py:0: note: def record_attempt_outcome(self, *, enrollment_id: str, outcome: str, occurred_at: datetime, failure_code: str | None) -> Coroutine[Any, Any, None]
+backend/v2/composition/admin.py:0: note: Got:
+backend/v2/composition/admin.py:0: note: def record_attempt_outcome(self, *, enrollment_id: str, outcome: Literal['succeeded', 'declined', 'requires_action', 'error'], occurred_at: datetime, failure_code: str | None) -> Coroutine[Any, Any, None]
+backend/v2/composition/admin.py:0: error: Argument "enrollment_autopay" to "ProcessDunningRetries" has incompatible type "MongoStudentBillingEnrollmentRepository"; expected "DunningEnrollmentAutopayPort | None"  [arg-type]
+backend/v2/composition/admin.py:0: note: Following member(s) of "MongoStudentBillingEnrollmentRepository" have conflicts:
+backend/v2/composition/admin.py:0: note: Expected:
+backend/v2/composition/admin.py:0: note: def set_autopay_enrollment_status(self, *, enrollment_id: str, status: str) -> Coroutine[Any, Any, bool]
+backend/v2/composition/admin.py:0: note: Got:
+backend/v2/composition/admin.py:0: note: def set_autopay_enrollment_status(self, *, enrollment_id: str, status: Literal['not_offered', 'offered', 'setup_started', 'active', 'paused', 'disabled'], session: Any | None = ...) -> Coroutine[Any, Any, bool]
+backend/v2/composition/admin.py:0: error: Returning Any from function declared to return "dict[str, Any]"  [no-any-return]
+backend/v2/composition/admin.py:0: error: Returning Any from function declared to return "dict[str, Any]"  [no-any-return]
+backend/v2/composition/admin.py:0: error: Argument "amount_cents" to "apply_invoice_refund" of "MongoBillingLedgerRepository" has incompatible type "int | None"; expected "int"  [arg-type]
+backend/v2/composition/admin.py:0: error: Argument "amount_cents" to "reverse_invoice_refund" of "MongoBillingLedgerRepository" has incompatible type "int | None"; expected "int"  [arg-type]
+backend/v2/composition/admin.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/composition/admin.py:0: error: Argument 1 to "int" has incompatible type "int | str | None"; expected "str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc"  [arg-type]
+backend/v2/composition/admin.py:0: error: Argument 1 to "int" has incompatible type "int | str | None"; expected "str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc"  [arg-type]
+backend/v2/composition/admin.py:0: error: Argument 1 to "int" has incompatible type "int | str | None"; expected "str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc"  [arg-type]
+backend/v2/composition/admin.py:0: error: Argument 1 to "int" has incompatible type "int | str | None"; expected "str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc"  [arg-type]
+backend/v2/composition/admin.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/composition/admin.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/composition/admin.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/composition/admin.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/composition/admin.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/composition/admin.py:0: error: Returning Any from function declared to return "dict[str, Any]"  [no-any-return]
+backend/v2/composition/admin.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/composition/admin.py:0: error: Returning Any from function declared to return "dict[str, Any] | None"  [no-any-return]
+backend/v2/composition/admin.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/composition/admin.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/composition/admin.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/composition/admin.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/composition/admin.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/composition/admin.py:0: error: Missing type arguments for generic type "dict"  [type-arg]
+backend/v2/composition/admin.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/composition/admin.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/composition/admin.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/composition/admin.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/composition/admin.py:0: error: Incompatible types in assignment (expression has type "Any | None", variable has type "str")  [assignment]
+backend/v2/composition/admin.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/composition/admin.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/composition/admin.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/composition/admin.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/composition/admin.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/composition/admin.py:0: note: Possible overload variants:
+backend/v2/composition/admin.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/composition/admin.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/composition/admin.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/composition/admin.py:0: note: Possible overload variants:
+backend/v2/composition/admin.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/composition/admin.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/composition/admin.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
+backend/v2/composition/admin.py:0: note: Possible overload variants:
+backend/v2/composition/admin.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
+backend/v2/composition/admin.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
+backend/v2/composition/admin.py:0: error: Argument 1 to "int" has incompatible type "object | Any"; expected "str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc"  [arg-type]
+backend/v2/composition/admin.py:0: error: Argument 1 to "int" has incompatible type "Any | object"; expected "str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc"  [arg-type]
+backend/v2/composition/admin.py:0: error: Argument 1 to "int" has incompatible type "Any | object"; expected "str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc"  [arg-type]
+backend/v2/composition/admin.py:0: error: Call to untyped function "list_dues_followup" in typed context  [no-untyped-call]
+backend/v2/composition/admin.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/composition/admin.py:0: error: Call to untyped function "list_dues_followup" in typed context  [no-untyped-call]
+backend/v2/composition/admin.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/composition/admin.py:0: error: "object" not callable  [operator]
+backend/v2/composition/admin.py:0: error: Argument "calculator" to "ListMonthlyPayroll" has incompatible type "_FinancePayoutCalculator"; expected "PayoutCalculator"  [arg-type]
+backend/v2/composition/admin.py:0: note: Following member(s) of "_FinancePayoutCalculator" have conflicts:
+backend/v2/composition/admin.py:0: note: Expected:
+backend/v2/composition/admin.py:0: note: def calculate(self, *, coach_id: str, academy_id: str, period_start: datetime, period_end: datetime) -> Coroutine[Any, Any, PayoutCalculation]
+backend/v2/composition/admin.py:0: note: Got:
+backend/v2/composition/admin.py:0: note: def calculate(self, *, coach_id: str, academy_id: str, period_start: datetime, period_end: datetime) -> Coroutine[Any, Any, object]
+backend/v2/composition/admin.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/composition/admin.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/composition/admin.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/interfaces/parent/self_cancel_routes.py:0: error: Item "None" of "PreviewSelfCancel | None" has no attribute "execute"  [union-attr]
+backend/v2/interfaces/parent/self_cancel_routes.py:0: error: Item "None" of "SelfCancelEnrollment | None" has no attribute "execute"  [union-attr]
+backend/v2/interfaces/parent/progress_skill_routes.py:0: error: Returning Any from function declared to return "dict[str, Any]"  [no-any-return]
+backend/v2/interfaces/parent/progress_skill_routes.py:0: error: Item "None" of "StudentProgressComposition | None" has no attribute "get_passport"  [union-attr]
+backend/v2/interfaces/parent/progress_skill_routes.py:0: error: Item "None" of "StudentProgressComposition | None" has no attribute "get_certificates"  [union-attr]
+backend/v2/interfaces/parent/payment_routes.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/interfaces/parent/onboarding_routes.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/interfaces/parent/onboarding_routes.py:0: error: "object" not callable  [operator]
+backend/v2/interfaces/parent/invoice_routes.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/interfaces/parent/invoice_routes.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/interfaces/parent/invoice_routes.py:0: error: "object" not callable  [operator]
+backend/v2/interfaces/parent/invoice_routes.py:0: error: "object" not callable  [operator]
+backend/v2/main.py:0: error: Need type annotation for "client"  [var-annotated]
+backend/v2/main.py:0: error: Incompatible types in assignment (expression has type "_LegacyUserMembershipAdapter", variable has type "MongoMembershipRepository")  [assignment]
+backend/v2/main.py:0: error: Item "None" of "Any | None" has no attribute "timezone"  [union-attr]
+backend/v2/main.py:0: error: Function is missing a type annotation  [no-untyped-def]
+backend/v2/main.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/main.py:0: error: Function is missing a type annotation  [no-untyped-def]
+backend/v2/main.py:0: error: Function is missing a return type annotation  [no-untyped-def]
+backend/v2/main.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
+backend/v2/main.py:0: error: Returning Any from function declared to return "str | None"  [no-any-return]

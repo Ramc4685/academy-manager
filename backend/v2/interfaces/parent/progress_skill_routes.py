@@ -78,7 +78,7 @@ async def _resolve_program_id(use_cases: ParentUseCases, program_id: str | None)
 
 def _model_dict(value: object) -> dict[str, Any]:
     if hasattr(value, "model_dump"):
-        return value.model_dump(mode="json")  # type: ignore[no-any-return,union-attr]
+        return value.model_dump(mode="json")
     if isinstance(value, dict):
         return value
     return dict(getattr(value, "__dict__", {}))

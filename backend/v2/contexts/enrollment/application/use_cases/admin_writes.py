@@ -79,7 +79,7 @@ async def _record_lifecycle_event(
         EnrollmentLifecycleEvent(
             event_id=str(new_ulid()),
             academy_id=academy_id,
-            event_type=event_type,  # type: ignore[arg-type]
+            event_type=event_type,
             enrollment_id=enrollment_id,
             waitlist_id=waitlist_id,
             session_id=session_id,
