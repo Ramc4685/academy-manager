@@ -534,6 +534,8 @@ async def test_ach_processing_records_pending_attempt_without_allocation() -> No
     assert result.invoice_id == "inv-1"
     assert result.status == "open"
     assert result.balance_due_cents == 10_000
+    assert result.attempted_amount_cents == 10_000
+    assert result.processing is True
     assert result.requires_action is False
     assert result.decline_code is None
     assert repo.recorded_payments == []
@@ -572,6 +574,7 @@ async def test_ach_payment_method_adds_discount_line_before_charge_amount_and_ke
     result = await _uc(repo, stripe, settings=settings).execute("inv-1")
 
     assert result.success is True
+    assert result.attempted_amount_cents == 9_750
     assert stripe.retrieve_payment_method_calls == ["pm_1"]
     assert stripe.create_calls[0]["amount_cents"] == 9_750
     assert stripe.create_calls[0]["idempotency_key"] == "autopay:inv-1:2026-06:9750"
@@ -1159,6 +1162,21 @@ async def test_saved_card_lookup_uses_invoice_academy_and_parent() -> None:
         "parent_id": "parent-shared-id",
         "source": "autopay",
     }
+
+
+async def test_admin_charge_source_and_actor_are_recorded_in_stripe_metadata() -> None:
+    repo = FakeLedgerRepo(invoices=[_invoice(invoice_id="inv-admin", status="open")])
+    stripe = FakeStripeSucceeds()
+
+    await _uc(repo, stripe).execute(
+        "inv-admin",
+        source="admin_billing_setup",
+        actor_id="admin-1",
+    )
+
+    metadata = stripe.create_calls[0]["metadata"]
+    assert metadata["source"] == "admin_billing_setup"
+    assert metadata["actor_id"] == "admin-1"
 
 
 async def test_idempotency_key_same_on_retry_with_same_period_and_balance() -> None:

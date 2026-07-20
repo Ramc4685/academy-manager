@@ -30,6 +30,7 @@ def _invoice(
     sent_at: datetime | None = None,
     last_sent_at: datetime | None = None,
     enrollment_id: str | None = None,
+    email_provider_message_id: str | None = None,
 ) -> LedgerInvoice:
     total = 10_000
     return LedgerInvoice(
@@ -49,6 +50,7 @@ def _invoice(
         delivery_status=delivery_status,  # type: ignore[arg-type]
         sent_at=sent_at,
         last_sent_at=last_sent_at,
+        email_provider_message_id=email_provider_message_id,
         created_at=FIRST_SEND,
         updated_at=FIRST_SEND,
     )
@@ -78,6 +80,11 @@ class FakeLedgerRepository:
     async def get_lines_for_invoice(self, invoice_id: str) -> list[InvoiceLine]:
         return [ln for ln in self._lines.values() if ln.invoice_id == invoice_id]
 
+    async def list_invoices_for_student(
+        self, student_id: str, *, limit: int = 100
+    ) -> list[LedgerInvoice]:
+        return [inv for inv in self._invoices.values() if inv.student_id == student_id][:limit]
+
     async def save_invoice(self, invoice: LedgerInvoice) -> LedgerInvoice:
         self._invoices[invoice.invoice_id] = invoice
         self.save_calls.append(invoice)
@@ -99,14 +106,16 @@ class FakeLedgerRepository:
 
 
 class FakeInvoiceEmail:
-    def __init__(self, *, fail: bool = False) -> None:
+    def __init__(self, *, fail: bool = False, message_id: str | None = "re_test_1") -> None:
         self.fail = fail
+        self.message_id = message_id
         self.calls: list[dict] = []
 
-    async def send_invoice_email(self, **kwargs) -> None:
+    async def send_invoice_email(self, **kwargs) -> str | None:
         self.calls.append(kwargs)
         if self.fail:
             raise RuntimeError("email provider unavailable")
+        return self.message_id
 
 
 class FakeInvoiceStripe:
@@ -183,6 +192,34 @@ async def test_send_draft_invoice_finalizes_then_records_delivery_after_email() 
             "checkout_url": None,
         }
     ]
+
+
+async def test_successful_send_persists_provider_message_id() -> None:
+    """Resend's provider message id is stored on the invoice for deep-linking."""
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open")])
+    result = await _uc(repo, email=FakeInvoiceEmail(message_id="re_abc123")).execute("inv-1")
+
+    assert result.invoice.email_provider_message_id == "re_abc123"
+
+
+async def test_send_without_provider_id_leaves_field_none() -> None:
+    """A provider that returns no id (or a stub) leaves the field unset."""
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open")])
+    result = await _uc(repo, email=FakeInvoiceEmail(message_id=None)).execute("inv-1")
+
+    assert result.invoice.delivery_status == "sent"
+    assert result.invoice.email_provider_message_id is None
+
+
+async def test_failed_send_preserves_previous_provider_message_id() -> None:
+    """A later failed send must not wipe the last good Resend id (link stays valid)."""
+    repo = FakeLedgerRepository(
+        invoices=[_invoice(status="open", email_provider_message_id="re_first")]
+    )
+    result = await _uc(repo, email=FakeInvoiceEmail(fail=True)).execute("inv-1")
+
+    assert result.invoice.delivery_status == "delivery_failed"
+    assert result.invoice.email_provider_message_id == "re_first"
 
 
 async def test_send_open_invoice_records_delivery_without_changing_status() -> None:
@@ -517,3 +554,124 @@ async def test_platform_fallback_settings_lookup_failure_fails_closed() -> None:
 
     assert stripe.calls == []
     assert result.checkout_url is None
+
+
+# ---------------------------------------------------------------------------
+# bundle_student_balance — the admin "Send" link should cover every unpaid
+# invoice for the student, not just the one clicked.
+# ---------------------------------------------------------------------------
+
+
+def _uc_with_stripe(repo: FakeLedgerRepository, stripe: FakeInvoiceStripe) -> SendInvoice:
+    return SendInvoice(
+        ledger=repo,
+        stripe=stripe,
+        email=None,
+        connected_accounts=_FakeConnectedAccounts(_StubConnectedAccount(ready=True)),  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    )
+
+
+async def test_bundle_student_balance_covers_all_open_invoices_for_student() -> None:
+    stripe = FakeInvoiceStripe()
+    repo = FakeLedgerRepository(
+        invoices=[
+            _invoice(invoice_id="inv-1", status="open", balance_due_cents=7_000),
+            _invoice(invoice_id="inv-2", status="open", balance_due_cents=7_000),
+            _invoice(invoice_id="inv-3", status="open", balance_due_cents=7_000),
+        ]
+    )
+    uc = _uc_with_stripe(repo, stripe)
+
+    result = await uc.execute("inv-1", bundle_student_balance=True)
+
+    assert result.checkout_url == "https://checkout.stripe.com/pay/test"
+    call = stripe.calls[0]
+    assert call["amount_cents"] == 21_000
+    assert call["metadata"]["invoice_ids"] == "inv-1,inv-2,inv-3"
+    assert call["metadata"]["type"] == "balance_payment"
+    assert call["metadata"]["source"] == "invoice_balance"
+    assert "invoice_id" not in call["metadata"]
+
+
+async def test_bundle_student_balance_noop_when_only_one_payable_invoice() -> None:
+    """Single unpaid invoice: identical gateway call to the non-bundled path."""
+    stripe = FakeInvoiceStripe()
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open", balance_due_cents=10_000)])
+    uc = _uc_with_stripe(repo, stripe)
+
+    result = await uc.execute("inv-1", bundle_student_balance=True)
+
+    assert result.checkout_url == "https://checkout.stripe.com/pay/test"
+    call = stripe.calls[0]
+    assert call["amount_cents"] == 10_000
+    assert call["metadata"]["invoice_id"] == "inv-1"
+    assert call["metadata"]["source"] == "invoice_pay_link"
+    assert call["idempotency_key"] == "invoice-checkout:inv-1:10000"
+
+
+async def test_bundle_student_balance_excludes_other_students_invoices() -> None:
+    stripe = FakeInvoiceStripe()
+    repo = FakeLedgerRepository(
+        invoices=[
+            _invoice(invoice_id="inv-1", status="open", balance_due_cents=7_000),
+            _invoice(
+                invoice_id="inv-other-student",
+                status="open",
+                balance_due_cents=9_000,
+            ),
+        ]
+    )
+    repo._invoices["inv-other-student"] = repo._invoices["inv-other-student"].model_copy(
+        update={"student_id": "s-2"}
+    )
+    uc = _uc_with_stripe(repo, stripe)
+
+    result = await uc.execute("inv-1", bundle_student_balance=True)
+
+    assert result.checkout_url == "https://checkout.stripe.com/pay/test"
+    call = stripe.calls[0]
+    assert call["amount_cents"] == 7_000
+    assert call["metadata"]["invoice_id"] == "inv-1"
+
+
+async def test_bundle_student_balance_email_reflects_combined_balance() -> None:
+    stripe = FakeInvoiceStripe()
+    email = FakeInvoiceEmail()
+    repo = FakeLedgerRepository(
+        invoices=[
+            _invoice(invoice_id="inv-1", status="open", balance_due_cents=7_000),
+            _invoice(invoice_id="inv-2", status="open", balance_due_cents=7_000),
+        ]
+    )
+    uc = SendInvoice(
+        ledger=repo,
+        stripe=stripe,
+        email=email,  # type: ignore[arg-type]
+        connected_accounts=_FakeConnectedAccounts(_StubConnectedAccount(ready=True)),  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    )
+
+    await uc.execute("inv-1", bundle_student_balance=True)
+
+    assert email.calls[0]["balance_due_cents"] == 14_000
+    assert email.calls[0]["total_cents"] == 20_000
+
+
+async def test_bundle_student_balance_ignored_when_not_requested() -> None:
+    """Without the flag (parent's own single-invoice pay), behavior is unchanged."""
+    stripe = FakeInvoiceStripe()
+    repo = FakeLedgerRepository(
+        invoices=[
+            _invoice(invoice_id="inv-1", status="open", balance_due_cents=7_000),
+            _invoice(invoice_id="inv-2", status="open", balance_due_cents=7_000),
+        ]
+    )
+    uc = _uc_with_stripe(repo, stripe)
+
+    result = await uc.execute("inv-1")
+
+    assert result.checkout_url == "https://checkout.stripe.com/pay/test"
+    call = stripe.calls[0]
+    assert call["amount_cents"] == 7_000
+    assert call["metadata"]["invoice_id"] == "inv-1"

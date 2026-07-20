@@ -955,6 +955,55 @@
       ]
     },
     {
+      "route": "/admin/billing-setup",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/billing-setup/page.tsx",
+      "workflows": [
+        "Filter and search families by registration status",
+        "Send a context-aware invite (login invite or add-card reminder)",
+        "Charge a card-on-file parent's outstanding balance",
+        "Enable autopay for a parent's eligible (paused) enrollments"
+      ],
+      "controls": {
+        "buttons": [
+          "All",
+          "Not invited",
+          "No card",
+          "Chargeable",
+          "Send invite",
+          "Remind: add card",
+          "Charge now",
+          "Enable autopay",
+          "Refresh"
+        ],
+        "inputs": [
+          "Search parent name or email"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty state",
+        "error state",
+        "charge declined",
+        "invite failed"
+      ],
+      "risk_edges": [
+        "Charging without an active autopay enrollment must fail closed, not silently succeed",
+        "Enabling autopay must never skip the Stripe consent flow by jumping offered straight to active",
+        "Invite action must not create a duplicate login account on resend"
+      ],
+      "acceptance": [
+        "Workflow evidence: \"Filter and search families\" completes for the admin route /admin/billing-setup with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Send a context-aware invite\" completes for the admin route /admin/billing-setup with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Charge a card-on-file parent's outstanding balance\" completes for the admin route /admin/billing-setup with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Enable autopay for eligible enrollments\" completes for the admin route /admin/billing-setup with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Charge without active autopay\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Autopay enable must not skip Stripe consent\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Duplicate invite on resend\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
       "route": "/admin/dues",
       "role": "admin",
       "source": "frontend/app/(admin)/admin/dues/page.tsx",

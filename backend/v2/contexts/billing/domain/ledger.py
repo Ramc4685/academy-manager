@@ -54,6 +54,11 @@ class LedgerInvoice(BaseModel):
     delivery_status: Literal["not_sent", "sent", "delivery_failed"] = "not_sent"
     sent_at: datetime | None = None
     last_sent_at: datetime | None = None
+    # Resend provider message id from the most recent successful send. Lets the
+    # admin panel deep-link to the Resend record (open/click/bounce lives only
+    # in the Resend dashboard). Only overwritten on a successful send; a later
+    # delivery_failed leaves the last good id in place so the link still works.
+    email_provider_message_id: str | None = None
     # audit
     finalized_at: datetime | None = None
     # optimistic-concurrency token; bumped by the repository on each persisted write
@@ -322,8 +327,15 @@ def record_delivery(
     *,
     outcome: Literal["sent", "delivery_failed"],
     now: datetime,
+    provider_message_id: str | None = None,
 ) -> LedgerInvoice:
-    """Update delivery tracking only. Financial status is never changed by this op."""
+    """Update delivery tracking only. Financial status is never changed by this op.
+
+    ``provider_message_id`` is the id the email provider (Resend) returns for a
+    successful send. It is only stored on a ``sent`` outcome and only when a
+    non-empty id is supplied — a failed send, or a send by a provider that does
+    not return an id, leaves any previously stored id untouched.
+    """
     if invoice.status == "draft":
         raise ValueError("cannot record delivery on a draft invoice")
     updates: dict = {
@@ -333,6 +345,8 @@ def record_delivery(
     }
     if outcome == "sent" and invoice.sent_at is None:
         updates["sent_at"] = now
+    if outcome == "sent" and provider_message_id:
+        updates["email_provider_message_id"] = provider_message_id
     return invoice.model_copy(update=updates)
 
 

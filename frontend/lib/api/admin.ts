@@ -524,6 +524,9 @@ export interface AdminInvoiceDetail {
   delivery_status: "not_sent" | "sent" | "delivery_failed" | string;
   sent_at: string | null;
   last_sent_at: string | null;
+  // Resend provider message id for the latest successful send; used to
+  // deep-link to the Resend delivery record from the invoice panel.
+  email_provider_message_id?: string | null;
   allocations: InvoiceAllocationView[];
   credit_usage: InvoiceCreditUsageView[];
   invoice_pdf_artifact_id: string | null;
@@ -1836,6 +1839,117 @@ export function replayWebhookEvent(
   return apiFetch<{ replayed: boolean; event_id: string }>(
     `/admin/billing/webhook-events/${encodeURIComponent(eventId)}/replay`,
     { method: "POST" },
+  );
+}
+
+// --- Billing Setup: Stripe registration status + invite/charge/autopay ---- //
+
+export type BillingSetupRegistrationState = "no_account" | "account_no_card" | "card_on_file";
+
+export interface BillingSetupStudent {
+  student_id: string;
+  full_name: string;
+}
+
+export interface BillingSetupRow {
+  parent_id: string;
+  parent_name: string;
+  parent_email: string | null;
+  students: BillingSetupStudent[];
+  registration_state: BillingSetupRegistrationState;
+  card_label: string | null;
+  card_last4: string | null;
+  autopay_active_count: number;
+  autopay_eligible_count: number;
+  outstanding_balance_cents: number;
+  charge_invoice_id: string | null;
+  charge_amount_cents: number;
+  charge_autopay_eligible: boolean;
+  last_invited_at: string | null;
+}
+
+export interface BillingSetupSummary {
+  families_total: number;
+  families_registered: number;
+  families_no_card: number;
+  outstanding_total_cents: number;
+}
+
+export interface BillingSetupPageResponse {
+  rows: BillingSetupRow[];
+  summary: BillingSetupSummary;
+  next_cursor: string | null;
+}
+
+export interface BillingSetupListParams {
+  status?: "all" | BillingSetupRegistrationState;
+  q?: string;
+  cursor?: string;
+  limit?: number;
+}
+
+export function fetchBillingSetup(
+  params: BillingSetupListParams = {},
+): Promise<BillingSetupPageResponse> {
+  const search = new URLSearchParams();
+  if (params.status) search.set("status", params.status);
+  if (params.q) search.set("q", params.q);
+  if (params.cursor) search.set("cursor", params.cursor);
+  if (params.limit) search.set("limit", String(params.limit));
+  const qs = search.toString();
+  return apiFetch<BillingSetupPageResponse>(`/admin/billing/setup${qs ? `?${qs}` : ""}`, {
+    method: "GET",
+  });
+}
+
+export interface BillingSetupInviteResponse {
+  action: "login_invite" | "add_card_reminder" | "not_applicable";
+  ok: boolean;
+  failed_reason: string | null;
+  invited_at: string | null;
+}
+
+export function inviteBillingSetupParent(parentId: string): Promise<BillingSetupInviteResponse> {
+  return apiFetch<BillingSetupInviteResponse>(
+    `/admin/billing/setup/${encodeURIComponent(parentId)}/invite`,
+    { method: "POST" },
+  );
+}
+
+export interface BillingSetupChargeResponse {
+  invoice_id: string;
+  success: boolean;
+  status: string;
+  balance_due_cents: number;
+  charged_amount_cents: number;
+  attempted_amount_cents: number;
+  processing: boolean;
+  requires_action: boolean;
+  decline_code: string | null;
+}
+
+export function chargeBillingSetupParent(
+  parentId: string,
+  payload: { invoice_id: string; expected_amount_cents: number; request_id: string },
+): Promise<BillingSetupChargeResponse> {
+  return apiFetch<BillingSetupChargeResponse>(
+    `/admin/billing/setup/${encodeURIComponent(parentId)}/charge`,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
+export interface BillingSetupAutopayEnableResponse {
+  eligible_count: number;
+  enabled_count: number;
+}
+
+export function enableBillingSetupAutopay(
+  parentId: string,
+  requestId: string,
+): Promise<BillingSetupAutopayEnableResponse> {
+  return apiFetch<BillingSetupAutopayEnableResponse>(
+    `/admin/billing/setup/${encodeURIComponent(parentId)}/autopay/enable`,
+    { method: "POST", body: JSON.stringify({ request_id: requestId }) },
   );
 }
 

@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Check for (and auto-generate a stub) release-notes entry for a PR.
+"""Check for or explicitly generate a release-notes entry for a PR.
 
 Used by .github/workflows/release-notes.yml. See the "Release Notes"
 section of AGENTS.md for the process this enforces.
 
 Exit codes:
-  0 - nothing required, or a valid release-notes file already exists, or a
-      stub was generated (outputs.created=true; the workflow commits it).
-  1 - a release-notes file exists for this PR but is missing/placeholder
-      content in a required section.
+  0 - nothing required, a valid release-notes file already exists, or a stub
+      was explicitly generated for local author review.
+  1 - required release notes are missing, or an existing file contains
+      missing/placeholder content.
 """
 
 from __future__ import annotations
@@ -26,6 +26,11 @@ NOTES_DIR = REPO_ROOT / "docs" / "release-notes"
 REQUIRED_SECTIONS = ["## What changed", "## Deploy notes", "## Risk / rollback"]
 CODE_PREFIXES = ("backend/", "frontend/")
 BODY_HEADING_CANDIDATES = ["## What", "## Summary", "## What changed"]
+PLACEHOLDER_MARKERS = (
+    "auto-generated stub",
+    "author: fill in",
+    "confirm no manual env var or manual step",
+)
 
 
 def changed_files(base_ref: str) -> list[str]:
@@ -89,7 +94,12 @@ def validate_note(path: Path) -> list[str]:
             problems.append(f"missing section: {heading}")
             continue
         body = section_body(text, heading)
-        if not body or body.startswith("<"):
+        normalized_body = body.casefold()
+        if (
+            not body
+            or body.startswith("<")
+            or any(marker in normalized_body for marker in PLACEHOLDER_MARKERS)
+        ):
             problems.append(f"section not filled in: {heading}")
     return problems
 
@@ -168,6 +178,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--pr-number", required=True)
     parser.add_argument("--base-ref", default="origin/main")
+    parser.add_argument(
+        "--generate",
+        action="store_true",
+        help="Generate a local stub when required notes are missing.",
+    )
     args = parser.parse_args()
 
     title = os.environ.get("PR_TITLE", "")
@@ -179,7 +194,9 @@ def main() -> int:
     if existing is not None:
         problems = validate_note(existing)
         if problems:
-            print(f"Release notes file {existing.relative_to(REPO_ROOT)} is incomplete:")
+            print(
+                f"Release notes file {existing.relative_to(REPO_ROOT)} is incomplete:"
+            )
             for problem in problems:
                 print(f"  - {problem}")
             set_output("created", "false")
@@ -189,15 +206,32 @@ def main() -> int:
         return 0
 
     if not requires_release_notes(files):
-        print("SKIP: no backend/ or frontend/ changes in this PR; no release notes required.")
+        print(
+            "SKIP: no backend/ or frontend/ changes in this PR; no release notes required."
+        )
         set_output("created", "false")
         return 0
 
-    path = generate_note(args.pr_number, title, body, files)
-    print(f"CREATED: {path.relative_to(REPO_ROOT)} (stub — needs author review before merge).")
-    set_output("created", "true")
-    set_output("path", str(path.relative_to(REPO_ROOT)))
-    return 0
+    if args.generate:
+        path = generate_note(args.pr_number, title, body, files)
+        print(
+            f"CREATED: {path.relative_to(REPO_ROOT)} "
+            "(stub — needs author review before merge)."
+        )
+        set_output("created", "true")
+        set_output("path", str(path.relative_to(REPO_ROOT)))
+        return 0
+
+    print(
+        "ERROR: this PR changes backend/ or frontend/ but has no complete "
+        f"release note containing `PR: #{args.pr_number}`.\n"
+        "Generate a starting point locally with:\n"
+        f"  python3 scripts/dev/release_notes_check.py --generate "
+        f"--pr-number {args.pr_number}\n"
+        "Then replace every generated placeholder before pushing."
+    )
+    set_output("created", "false")
+    return 1
 
 
 if __name__ == "__main__":

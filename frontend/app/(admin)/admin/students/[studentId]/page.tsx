@@ -956,6 +956,18 @@ function BillingWorkflowPanel({
                   ]}
                 />
 
+                {invoice?.email_provider_message_id ? (
+                  <a
+                    href={`https://resend.com/emails/${invoice.email_provider_message_id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    data-testid="admin-invoice-resend-link"
+                    className="inline-flex items-center gap-1 text-xs font-medium text-rally-primary underline underline-offset-2 hover:opacity-80"
+                  >
+                    View delivery in Resend ↗
+                  </a>
+                ) : null}
+
                 {invoiceQuery.isPending ? (
                   <div
                     className="h-20 animate-pulse rounded-lg bg-neutral-100"

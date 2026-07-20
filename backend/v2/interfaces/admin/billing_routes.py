@@ -235,6 +235,7 @@ async def get_billing_invoice_detail(
         delivery_status=str(raw.get("delivery_status") or "not_sent"),
         sent_at=raw.get("sent_at"),  # type: ignore[arg-type]
         last_sent_at=raw.get("last_sent_at"),  # type: ignore[arg-type]
+        email_provider_message_id=raw.get("email_provider_message_id"),  # type: ignore[arg-type]
     )
 
 

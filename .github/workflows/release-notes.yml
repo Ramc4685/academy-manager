@@ -2,12 +2,11 @@ name: Release Notes
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, edited]
+    types: [opened, synchronize, reopened]
     branches: [main]
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 concurrency:
   group: release-notes-${{ github.event.pull_request.number }}
@@ -15,21 +14,18 @@ concurrency:
 
 jobs:
   check:
-    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: false
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Check / generate release notes
-        id: notes
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_TITLE: ${{ github.event.pull_request.title }}
@@ -38,45 +34,3 @@ jobs:
           python scripts/dev/release_notes_check.py \
             --pr-number "$PR_NUMBER" \
             --base-ref origin/main
-
-      - name: Commit generated release notes
-        if: steps.notes.outputs.created == 'true'
-        env:
-          NOTE_PATH: ${{ steps.notes.outputs.path }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "$NOTE_PATH"
-          git commit -m "docs(release-notes): add stub for PR #${PR_NUMBER}"
-          git push origin "HEAD:${HEAD_REF}"
-
-      - name: Comment on PR
-        if: steps.notes.outputs.created == 'true'
-        uses: actions/github-script@v7
-        env:
-          NOTE_PATH: ${{ steps.notes.outputs.path }}
-        with:
-          script: |
-            const notePath = process.env.NOTE_PATH;
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: `📝 Auto-generated a release-notes stub at \`${notePath}\`. Please review/edit the **Deploy notes** and **Risk / rollback** sections before merge.`,
-            });
-
-  remind-fork:
-    if: github.event.pull_request.head.repo.full_name != github.repository
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/github-script@v7
-        with:
-          script: |
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: "This PR is from a fork, so release notes can't be auto-generated here. Please add `docs/release-notes/YYYY-MM-DD-<slug>.md` per AGENTS.md before merge.",
-            });

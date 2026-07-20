@@ -191,10 +191,69 @@ class FirebaseAdminAdapter:
         )
         return str(user.uid)
 
-    async def generate_password_reset_link(self, email: str) -> str:
+    async def ensure_user(self, *, uid: str, email: str, display_name: str) -> tuple[str, bool]:
+        """Idempotently create a Firebase user with the roster's stable id."""
         if firebase_admin_auth is None:
             raise RuntimeError("firebase-admin is required for Firebase auth")
         _ensure_firebase_app()
+        try:
+            user = await asyncio.to_thread(firebase_admin_auth.get_user, uid)
+        except Exception as exc:
+            if not _is_firebase_auth_error(exc, "UserNotFoundError"):
+                raise
+            try:
+                created_uid = await self.create_user(
+                    uid=uid, email=email, display_name=display_name
+                )
+                return created_uid, True
+            except Exception as create_exc:
+                if _is_firebase_auth_error(create_exc, "UidAlreadyExistsError"):
+                    user = await asyncio.to_thread(firebase_admin_auth.get_user, uid)
+                elif _is_firebase_auth_error(create_exc, "EmailAlreadyExistsError"):
+                    user = await asyncio.to_thread(firebase_admin_auth.get_user_by_email, email)
+                else:
+                    raise
+        if str(user.email or "").strip().lower() != email.strip().lower():
+            raise RuntimeError("Firebase uid is already assigned to a different email")
+        return str(user.uid), False
+
+    async def generate_password_reset_link(
+        self, email: str, *, uid: str | None = None, display_name: str | None = None
+    ) -> str:
+        """Generate a Firebase password-reset link for `email`.
+
+        If no Firebase Auth account exists for this email (e.g. a directory
+        record that predates this feature, or was never provisioned in
+        Firebase), self-heal by creating a passwordless account — same as
+        admin-created users. `uid`/`display_name` are required for the
+        self-heal path; omit them to fail instead of provisioning a new
+        account.
+
+        We check account existence *up front* with `get_user_by_email`
+        rather than dispatching on the link-generation exception type: when
+        email enumeration protection is enabled on the Firebase project,
+        `accounts:sendOobCode` does not report EMAIL_NOT_FOUND for a missing
+        account — it returns 200 without an `oobLink`, and the Admin SDK
+        surfaces an opaque "unexpected response" error instead of
+        `EmailNotFoundError`. `get_user_by_email` is an admin lookup
+        unaffected by enumeration protection and reliably raises
+        `UserNotFoundError`.
+        """
+        if firebase_admin_auth is None:
+            raise RuntimeError("firebase-admin is required for Firebase auth")
+        _ensure_firebase_app()
+        if uid is not None:
+            try:
+                await asyncio.to_thread(firebase_admin_auth.get_user_by_email, email)
+            except firebase_admin_auth.UserNotFoundError:
+                await asyncio.to_thread(
+                    firebase_admin_auth.create_user,
+                    uid=uid,
+                    email=email,
+                    display_name=display_name or "",
+                    email_verified=False,
+                    disabled=False,
+                )
         link = await asyncio.to_thread(firebase_admin_auth.generate_password_reset_link, email)
         return str(link)
 

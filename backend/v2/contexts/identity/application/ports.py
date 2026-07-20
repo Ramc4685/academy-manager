@@ -19,6 +19,20 @@ class UserRepository(Protocol):
     async def get_by_firebase_uid(self, firebase_uid: str) -> User | None: ...
 
 
+class ParentLoginProvisioner(Protocol):
+    """Create/link the Firebase identity for an academy roster parent."""
+
+    async def ensure_parent_login(
+        self,
+        *,
+        parent_id: str,
+        email: str,
+        display_name: str,
+        academy_id: str,
+        actor_id: str,
+    ) -> str: ...
+
+
 class PublicParentRegistrationRepository(UserRepository, Protocol):
     """Write port for first-time parent self-registration.
 

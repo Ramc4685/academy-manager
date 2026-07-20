@@ -10,6 +10,7 @@ login path requires.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from html import escape
 from typing import Protocol
 
 from pydantic import BaseModel
@@ -24,7 +25,9 @@ from backend.v2.contexts.identity.domain.errors import (
 
 
 class PasswordResetLinkPort(Protocol):
-    async def generate_password_reset_link(self, email: str) -> str: ...
+    async def generate_password_reset_link(
+        self, email: str, *, uid: str | None = None, display_name: str | None = None
+    ) -> str: ...
 
 
 class InviteEmailOutcome(BaseModel):
@@ -73,14 +76,17 @@ class LoginInviteResult(BaseModel):
 
 
 def _invite_body(*, display_name: str, academy_name: str, reset_link: str) -> str:
+    safe_display_name = escape(display_name)
+    safe_academy_name = escape(academy_name)
+    safe_reset_link = escape(reset_link, quote=True)
     return f"""
 <div style="font-family: -apple-system, 'Segoe UI', sans-serif; max-width: 520px; margin: 0 auto;">
-  <h2 style="color: #0a0f1c;">Your {academy_name} account is ready</h2>
-  <p>Hi {display_name},</p>
-  <p>Your account at <strong>{academy_name}</strong> has been set up. Set your
+  <h2 style="color: #0a0f1c;">Your {safe_academy_name} account is ready</h2>
+  <p>Hi {safe_display_name},</p>
+  <p>Your account at <strong>{safe_academy_name}</strong> has been set up. Set your
   password to log in, see your children's enrollment, and make payments.</p>
   <p style="margin: 24px 0;">
-    <a href="{reset_link}"
+    <a href="{safe_reset_link}"
        style="background: #2545d3; color: #ffffff; padding: 12px 20px;
               border-radius: 8px; text-decoration: none; font-weight: 600;">
       Set your password
@@ -112,8 +118,13 @@ class SendLoginInvite:
         if user is None:
             raise UserNotFound(user_id)
 
-        reset_link = await self._links.generate_password_reset_link(str(user.email))
-        academy_name = await self._academies.get_academy_name(academy_id) or "your academy"
+        try:
+            reset_link = await self._links.generate_password_reset_link(
+                str(user.email), uid=user.user_id, display_name=user.display_name
+            )
+            academy_name = await self._academies.get_academy_name(academy_id) or "your academy"
+        except Exception as exc:
+            raise LoginInviteSendFailed(f"could not prepare invite: {exc}") from exc
 
         outcome = await self._sender.send_invite_email(
             user_id=user.user_id,

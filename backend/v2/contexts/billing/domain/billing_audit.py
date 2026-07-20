@@ -24,6 +24,8 @@ BillingAuditAction = Literal[
     # platform-charge fallback changes where money settles, so it gets the
     # same actor/before/after trail.
     "platform_fallback_toggled",
+    "admin_charge_initiated",
+    "autopay_resumed",
 ]
 
 

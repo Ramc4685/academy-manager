@@ -66,6 +66,7 @@ export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
         match: startsWith("/admin/payments"),
       },
       { href: "/admin/billing-health", label: "Billing Health", icon: "signal", match: startsWith("/admin/billing-health") },
+      { href: "/admin/billing-setup", label: "Billing Setup", icon: "user", match: startsWith("/admin/billing-setup") },
       { href: "/admin/dues", label: "Dues follow-up", icon: "bell", match: startsWith("/admin/dues") },
       {
         href: "/admin/expenses",
@@ -117,6 +118,7 @@ export const SCREEN_META: Record<string, AdminScreenMeta> = {
   "/admin/requests": { title: "Requests", subtitle: "Makeups, trials, absences, cancellations", breadcrumbs: ["Admin", "Requests"] },
   "/admin/payments": { title: "Payments", subtitle: "Transactions and refunds", breadcrumbs: ["Admin", "Money", "Payments"] },
   "/admin/billing-health": { title: "Billing Health", subtitle: "Reconciliation, failed payments, webhook recovery", breadcrumbs: ["Admin", "Money", "Billing Health"] },
+  "/admin/billing-setup": { title: "Billing Setup", subtitle: "Stripe registration status, invites, and charging", breadcrumbs: ["Admin", "Money", "Billing Setup"] },
   "/admin/dues": { title: "Dues follow-up", subtitle: "Outstanding balances", breadcrumbs: ["Admin", "Money", "Dues"] },
   "/admin/expenses": { title: "Expenses", subtitle: "Categorised academy spend", breadcrumbs: ["Admin", "Money", "Expenses"] },
   "/admin/payouts": { title: "Coach payouts", subtitle: "Payout cycles", breadcrumbs: ["Admin", "Money", "Payouts"] },
