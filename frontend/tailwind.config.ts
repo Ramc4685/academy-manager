@@ -22,13 +22,25 @@ const config: Config = {
         mono: ["var(--font-jetbrains-mono)", "ui-monospace", "monospace"],
       },
       colors: {
-        // Rally design palette — cobalt + volt yellow + slate
+        // Rally design palette — cobalt + volt yellow + slate.
+        // Single source of truth: globals.css derives --rally-* from these
+        // via theme(); never hand-copy hex values elsewhere.
         rally: {
           ink: "#0f172a",
           paper: "#f8fafc",
           line: "#e2e8f0",
           muted: "#64748b",
-          subtle: "#94a3b8",
+          // AA on white (4.76:1) and paper (4.6:1); the old #94a3b8 was 2.9:1.
+          subtle: "#64748b",
+          // Decorative marks and text on night surfaces only (7.1:1 on night);
+          // fails AA as text on light — use `subtle` there instead.
+          "subtle-ink": "#94a3b8",
+          // Dark admin-shell surfaces
+          night: "#0a0f1c",
+          "night-line": "#1e293b",
+          "night-panel": "#101a2e",
+          "night-card": "#0b1220",
+          bright: "#cbd5e1",
           cobalt: {
             50: "#eff6ff",
             100: "#dbeafe",

@@ -299,6 +299,32 @@ was prone to long/stalled runs. Push only after the review is clean or every
 finding is dispositioned. This is in addition to
 `scripts/dev/pre-push-checks.sh` (run automatically by the pre-push hook).
 
+### Required: clean up after your PR lands
+
+Once your PR is pushed (and especially once it merges), reclaim the disk your
+session used. Forgotten worktree caches (~1.3 GB of `frontend/node_modules`
+plus `backend/.venv` each) have filled the disk before and broken local e2e
+runs and Docker with ENOSPC.
+
+```bash
+scripts/dev/cleanup_worktrees.sh                 # dry run — report what would be freed
+scripts/dev/cleanup_worktrees.sh --apply         # delete gitignored caches (keeps worktrees)
+scripts/dev/cleanup_worktrees.sh --prune-merged  # also remove worktrees whose branch merged
+```
+
+Concretely, after your PR merges:
+
+- Remove the worktree you created: `git worktree remove <path>` (from the main
+  checkout), then `git worktree prune`.
+- If the PR is pushed but not yet merged, at minimum delete the worktree's
+  `frontend/node_modules` and `backend/.venv` if you won't return to it soon —
+  `pnpm install` and a venv symlink restore them in minutes.
+- Never leave a temp checkout under `.claude/worktrees/` or `.worktrees/`
+  carrying caches after its branch is merged.
+
+The cleanup script only touches gitignored, regenerable artifacts; it is the
+sanctioned path and does not need the `rm -rf` approval below.
+
 Never run without explicit approval:
 
 ```bash

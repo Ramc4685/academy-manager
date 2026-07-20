@@ -151,9 +151,9 @@ function DesktopSidebar({
     <aside
       className="hidden lg:flex lg:flex-col lg:w-60 lg:shrink-0 lg:h-screen lg:sticky lg:top-0 lg:overflow-y-auto"
       style={{
-        background: "#0a0f1c",
-        color: "#cbd5e1",
-        borderRight: "1px solid #1e293b",
+        background: "var(--rally-night)",
+        color: "var(--rally-bright)",
+        borderRight: "1px solid var(--rally-night-line)",
       }}
       aria-label="Admin navigation"
     >
@@ -170,15 +170,15 @@ function DesktopSidebar({
 
 function SidebarBrand({ academyName }: { academyName: string }) {
   return (
-    <div className="px-5 py-5 border-b" style={{ borderColor: "#1e293b" }}>
+    <div className="px-5 py-5 border-b" style={{ borderColor: "var(--rally-night-line)" }}>
       <div className="flex items-center gap-2.5">
         <div
           className="relative flex h-8 w-8 items-center justify-center overflow-hidden rounded-md"
-          style={{ background: "#0f172a", border: "1px solid #1e293b" }}
+          style={{ background: "var(--rally-ink)", border: "1px solid var(--rally-night-line)" }}
         >
           <span
             className="absolute left-0 right-0"
-            style={{ top: "50%", height: 2, background: "#facc15", transform: "translateY(-50%)" }}
+            style={{ top: "50%", height: 2, background: "var(--rally-volt)", transform: "translateY(-50%)" }}
           />
           <ShuttleMark size={18} />
         </div>
@@ -186,7 +186,7 @@ function SidebarBrand({ academyName }: { academyName: string }) {
           <div className="font-display font-bold text-[15px] text-white tracking-[-0.01em] truncate max-w-[160px]" title={academyName}>
             {academyName}
           </div>
-          <div className="font-mono text-[9px] font-bold tracking-lane mt-0.5" style={{ color: "#64748b" }}>
+          <div className="font-mono text-[9px] font-bold tracking-lane mt-0.5" style={{ color: "var(--rally-subtle-ink)" }}>
             Academy Manager
           </div>
         </div>
@@ -208,7 +208,7 @@ function NavGroup({
     <div className="pt-3.5 pb-1">
       <div
         className="px-[18px] pb-2 font-mono text-[9px] font-bold tracking-[0.22em]"
-        style={{ color: "#475569" }}
+        style={{ color: "var(--rally-subtle-ink)" }}
       >
         {group}
       </div>
@@ -226,13 +226,13 @@ function NavRow({ item, active }: { item: AdminNavItem; active: boolean }) {
       data-testid={`admin-nav-${slug(item.label)}`}
       className="flex items-center gap-2.5 px-[18px] py-[9px] text-[13px] transition-colors"
       style={{
-        background: active ? "#1e293b" : "transparent",
-        borderLeft: `2px solid ${active ? "#facc15" : "transparent"}`,
-        color: active ? "#fff" : "#94a3b8",
+        background: active ? "var(--rally-night-line)" : "transparent",
+        borderLeft: `2px solid ${active ? "var(--rally-volt)" : "transparent"}`,
+        color: active ? "#fff" : "var(--rally-subtle-ink)",
         fontWeight: active ? 600 : 500,
       }}
     >
-      <span className="flex" style={{ color: active ? "#facc15" : "#64748b" }}>
+      <span className="flex" style={{ color: active ? "var(--rally-volt)" : "var(--rally-muted)" }}>
         {renderNavIcon(item.icon, 16, "currentColor")}
       </span>
       <span className="flex-1">{item.label}</span>
@@ -240,8 +240,8 @@ function NavRow({ item, active }: { item: AdminNavItem; active: boolean }) {
         <span
           className="font-mono text-[10px] font-bold tracking-[0.05em] px-1.5 rounded-[3px]"
           style={{
-            background: item.urgent ? "#facc15" : "rgba(255,255,255,0.08)",
-            color: item.urgent ? "#0f172a" : "#cbd5e1",
+            background: item.urgent ? "var(--rally-volt)" : "rgba(255,255,255,0.08)",
+            color: item.urgent ? "var(--rally-ink)" : "var(--rally-bright)",
             padding: "1px 6px",
           }}
         >
@@ -264,17 +264,17 @@ function slug(label: string): string {
 
 function SidebarUserPill({ name, role }: { name: string; role: string }) {
   return (
-    <div className="p-3.5 border-t" style={{ borderColor: "#1e293b" }}>
+    <div className="p-3.5 border-t" style={{ borderColor: "var(--rally-night-line)" }}>
       <div
         className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg"
-        style={{ background: "#101a2e" }}
+        style={{ background: "var(--rally-night-panel)" }}
       >
         <Avatar name={name} size={32} />
         <div className="flex-1 min-w-0">
           <div className="text-[13px] font-semibold text-white tracking-[-0.005em] truncate">{name}</div>
           <div
             className="font-mono text-[9px] font-bold tracking-[0.15em] mt-0.5"
-            style={{ color: "#64748b" }}
+            style={{ color: "var(--rally-subtle-ink)" }}
           >
             {role}
           </div>
@@ -310,17 +310,17 @@ function MobileDrawer({
       />
       <aside
         className="relative z-50 flex flex-col w-64 h-full shadow-xl overflow-y-auto"
-        style={{ background: "#0a0f1c", color: "#cbd5e1" }}
+        style={{ background: "var(--rally-night)", color: "var(--rally-bright)" }}
         aria-label="Admin navigation"
         data-testid="admin-mobile-drawer"
       >
-        <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: "#1e293b" }}>
+        <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: "var(--rally-night-line)" }}>
           <SidebarBrand academyName={academyName} />
           <button
             aria-label="Close menu"
             onClick={onClose}
             className="min-h-touch min-w-touch flex items-center justify-center rounded-md"
-            style={{ color: "#94a3b8" }}
+            style={{ color: "var(--rally-subtle-ink)" }}
           >
             ✕
           </button>
