@@ -24,6 +24,9 @@ const IS_DEV = process.env.NODE_ENV === "development";
 // `location.href` redirect — a top-level navigation CSP does not restrict —
 // so no js.stripe.com script-src or frame-src is needed; form-action lists
 // checkout.stripe.com only as defense-in-depth for future <form> posts.
+// Cloudflare Web Analytics is auto-injected at the zone level (see the
+// beacon.min.js handler in app/sw.ts): its loader needs script-src and its
+// RUM POST (cloudflareinsights.com/cdn-cgi/rum) needs connect-src.
 // Dev additions: 'unsafe-eval' (React refresh), ws:/localhost (HMR, emulators).
 // frame-ancestors is intentionally absent: it is spec-ignored in report-only
 // policies (WebKit logs a console error for it) — X-Frame-Options: DENY covers
@@ -32,11 +35,11 @@ const IS_DEV = process.env.NODE_ENV === "development";
 // with no reporting destination as a no-op and logs a console error).
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
-  `script-src 'self' 'unsafe-inline'${IS_DEV ? " 'unsafe-eval'" : ""}`,
+  `script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com${IS_DEV ? " 'unsafe-eval'" : ""}`,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https://firebasestorage.googleapis.com",
   "font-src 'self' data:",
-  `connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firebasestorage.googleapis.com${
+  `connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firebasestorage.googleapis.com https://cloudflareinsights.com${
     IS_DEV ? " ws: http://localhost:* http://127.0.0.1:*" : ""
   }`,
   "base-uri 'self'",
