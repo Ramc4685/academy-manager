@@ -159,6 +159,63 @@ async def test_get_academy_notifications_uses_digest_env_fallback_when_override_
 
 
 @pytest.mark.asyncio
+async def test_get_academy_notifications_uses_parent_digest_env_fallback_when_override_unset():
+    repo = AsyncMock()
+    repo.find_by_id.return_value = {
+        "_id": "acad-1",
+        "notifications": {
+            "dues_reminders": False,
+            "attendance_alerts": False,
+            "daily_digest_to_admin": False,
+        },
+    }
+    use_case = GetAcademyNotificationsUseCase(
+        academy_repo=repo,
+        default_parent_digest_enabled=True,
+        default_parent_digest_hour=7,
+    )
+
+    output = await use_case.execute("acad-1")
+
+    assert output.parent_digest_enabled is True
+    assert output.parent_digest_hour == 7
+
+
+@pytest.mark.asyncio
+async def test_update_academy_notifications_persists_parent_digest_fields():
+    repo = AsyncMock()
+    repo.update_by_id.return_value = {
+        "_id": "acad-1",
+        "notifications": {
+            "parent_digest_enabled": True,
+            "parent_digest_hour": 8,
+        },
+    }
+    use_case = UpdateAcademyNotificationsUseCase(academy_repo=repo)
+    output = await use_case.execute(
+        "acad-1", {"parent_digest_enabled": True, "parent_digest_hour": 8}
+    )
+    assert output.parent_digest_enabled is True
+    assert output.parent_digest_hour == 8
+    repo.update_by_id.assert_awaited_once_with(
+        "acad-1",
+        {
+            "notifications.parent_digest_enabled": True,
+            "notifications.parent_digest_hour": 8,
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_update_academy_notifications_rejects_bad_parent_digest_hour():
+    repo = AsyncMock()
+    use_case = UpdateAcademyNotificationsUseCase(academy_repo=repo)
+    with pytest.raises(ValueError):
+        await use_case.execute("acad-1", {"parent_digest_hour": 24})
+    repo.update_by_id.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_update_academy_notifications():
     repo = AsyncMock()
     repo.update_by_id.return_value = {

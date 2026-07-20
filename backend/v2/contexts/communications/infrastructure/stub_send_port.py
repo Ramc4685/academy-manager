@@ -28,6 +28,9 @@ class StubEmailSendPort(EmailSendPort):
         recipient: ResolvedRecipient,
         subject: str,
         body: str,
+        cc: list[str] | None = None,
+        bcc: list[str] | None = None,
+        reply_to: str | None = None,
     ) -> SendOutcome:
         record_id = f"stub-{len(self.sent) + 1:06d}"
         self.sent.append(
@@ -37,6 +40,9 @@ class StubEmailSendPort(EmailSendPort):
                 "email": recipient.email,
                 "subject": subject,
                 "body": body,
+                "cc": list(cc) if cc else [],
+                "bcc": list(bcc) if bcc else [],
+                "reply_to": reply_to,
             }
         )
         return SendOutcome(

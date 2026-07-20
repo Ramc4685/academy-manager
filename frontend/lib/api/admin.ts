@@ -1264,6 +1264,8 @@ export interface AdminNotificationsView {
   daily_digest_to_admin: boolean;
   coach_digest_enabled: boolean;
   coach_digest_hour: number;
+  parent_digest_enabled: boolean;
+  parent_digest_hour: number;
 }
 
 export type UpdateAdminNotificationsRequest = Partial<AdminNotificationsView>;

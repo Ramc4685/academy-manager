@@ -126,6 +126,9 @@ def test_get_and_patch_notifications_contract(admin_client):
         # New per-academy coach-digest fields default off / hour 6.
         "coach_digest_enabled": False,
         "coach_digest_hour": 6,
+        # New per-academy parent-digest fields default off / hour 6.
+        "parent_digest_enabled": False,
+        "parent_digest_hour": 6,
     }
     assert patch_response.status_code == 200, patch_response.text
     admin_client.use_cases.update_academy_notifications_use_case.execute.assert_awaited_once_with(

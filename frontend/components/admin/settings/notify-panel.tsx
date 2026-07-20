@@ -28,6 +28,8 @@ function normalize(data: AdminNotificationsView | null | undefined): AdminNotifi
     daily_digest_to_admin: data?.daily_digest_to_admin ?? false,
     coach_digest_enabled: data?.coach_digest_enabled ?? false,
     coach_digest_hour: data?.coach_digest_hour ?? 6,
+    parent_digest_enabled: data?.parent_digest_enabled ?? false,
+    parent_digest_hour: data?.parent_digest_hour ?? 6,
   };
 }
 
@@ -116,6 +118,34 @@ export function NotifyPanel() {
                 setForm((prev) => ({
                   ...prev,
                   coach_digest_hour: Number(event.target.value),
+                }))
+              }
+              className="rounded-md border border-rally-line bg-white px-2 py-1 text-sm disabled:opacity-50"
+            >
+              {HOURS.map((h) => (
+                <option key={h} value={h}>
+                  {formatHour(h)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <Toggle
+            label="Parent daily digest"
+            checked={form.parent_digest_enabled}
+            onChange={(checked) =>
+              setForm((prev) => ({ ...prev, parent_digest_enabled: checked }))
+            }
+          />
+          <label className="flex min-h-12 items-center justify-between gap-4 rounded-md border border-rally-line px-4 text-sm font-medium text-rally-ink">
+            Parent digest send time
+            <select
+              data-testid="parent-digest-hour"
+              value={form.parent_digest_hour}
+              disabled={!form.parent_digest_enabled}
+              onChange={(event) =>
+                setForm((prev) => ({
+                  ...prev,
+                  parent_digest_hour: Number(event.target.value),
                 }))
               }
               className="rounded-md border border-rally-line bg-white px-2 py-1 text-sm disabled:opacity-50"

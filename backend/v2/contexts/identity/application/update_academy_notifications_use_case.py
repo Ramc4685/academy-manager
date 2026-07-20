@@ -24,18 +24,23 @@ class UpdateAcademyNotificationsUseCase:
         *,
         default_coach_digest_enabled: bool = False,
         default_coach_digest_hour: int = 6,
+        default_parent_digest_enabled: bool = False,
+        default_parent_digest_hour: int = 6,
     ) -> None:
         self._repo = academy_repo
         self._default_coach_digest_enabled = default_coach_digest_enabled
         self._default_coach_digest_hour = default_coach_digest_hour
+        self._default_parent_digest_enabled = default_parent_digest_enabled
+        self._default_parent_digest_hour = default_parent_digest_hour
 
     async def execute(
         self, academy_id: str, fields: dict[str, Any]
     ) -> GetAcademyNotificationsOutput:
-        if "coach_digest_hour" in fields and fields["coach_digest_hour"] is not None:
-            hour = fields["coach_digest_hour"]
-            if not isinstance(hour, int) or isinstance(hour, bool) or not (0 <= hour <= 23):
-                raise ValueError("coach_digest_hour must be an integer between 0 and 23")
+        for hour_key in ("coach_digest_hour", "parent_digest_hour"):
+            if hour_key in fields and fields[hour_key] is not None:
+                hour = fields[hour_key]
+                if not isinstance(hour, int) or isinstance(hour, bool) or not (0 <= hour <= 23):
+                    raise ValueError(f"{hour_key} must be an integer between 0 and 23")
         # Nest under "notifications" subdocument.
         patch = {f"notifications.{k}": v for k, v in fields.items() if v is not None}
         if not patch:
@@ -49,4 +54,6 @@ class UpdateAcademyNotificationsUseCase:
             notifs,
             default_coach_digest_enabled=self._default_coach_digest_enabled,
             default_coach_digest_hour=self._default_coach_digest_hour,
+            default_parent_digest_enabled=self._default_parent_digest_enabled,
+            default_parent_digest_hour=self._default_parent_digest_hour,
         )

@@ -82,6 +82,9 @@ class EmailSendPort(Protocol):
         recipient: ResolvedRecipient,
         subject: str,
         body: str,
+        cc: list[str] | None = None,
+        bcc: list[str] | None = None,
+        reply_to: str | None = None,
     ) -> SendOutcome: ...
 
 

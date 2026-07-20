@@ -300,8 +300,11 @@ async function expectShellLogout(
   await expect(page.getByTestId(readyTestId)).toBeVisible();
   const logout = page.getByTestId("persona-logout-button");
   await expect(logout).toBeEnabled();
+  await logout.scrollIntoViewIfNeeded();
+  // WebKit mobile in CI is slow to settle the post-logout redirect; a 10s cap
+  // flaked here. Wait up to the test-level budget instead of racing the click.
   await Promise.all([
-    page.waitForURL(/\/login$/, { timeout: 10_000 }),
+    page.waitForURL(/\/login$/, { timeout: 20_000 }),
     logout.click(),
   ]);
 }

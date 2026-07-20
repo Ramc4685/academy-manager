@@ -43,6 +43,10 @@ class PlanProvider(Protocol):
 class SendCoachDailyDigestCommand:
     academy_id: str
     digest_date: date
+    # Per-academy override, sourced from ``notifications.daily_digest_to_admin``
+    # (see GetAcademyNotificationsUseCase). Resolved by the caller so this use
+    # case stays free of an identity-context import (ADR-0005).
+    admin_cc_enabled: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +88,10 @@ class SendCoachDailyDigest:
     async def execute(self, command: SendCoachDailyDigestCommand) -> SendCoachDailyDigestResult:
         digest_date = command.digest_date.isoformat()
         coaches = await self.resolver.resolve_academy_audience(AcademyAudience(role="coach"))
+        admin_emails: list[str] = []
+        if command.admin_cc_enabled:
+            admins = await self.resolver.resolve_academy_audience(AcademyAudience(role="admin"))
+            admin_emails = sorted({a.email for a in admins if a.email})
 
         claimed = already_claimed = sent = skipped_empty = failed = 0
         for coach in coaches:
@@ -116,7 +124,11 @@ class SendCoachDailyDigest:
                 email=coach.email,
                 display_name=coach.display_name,
             )
-            outcome = await self.sender.send(recipient=recipient, subject=subject, body=body)
+            # BCC (not CC) so no coach sees the other admins' addresses.
+            bcc = [e for e in admin_emails if e != coach.email]
+            outcome = await self.sender.send(
+                recipient=recipient, subject=subject, body=body, bcc=bcc or None
+            )
             if outcome.ok:
                 await self.digests.mark_sent(claim.digest_id, outcome.provider_message_id)
                 sent += 1

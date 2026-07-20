@@ -4363,11 +4363,15 @@ def compose_admin(
         academy_repo,
         default_coach_digest_enabled=settings.coach_digest_enabled,
         default_coach_digest_hour=settings.coach_digest_hour,
+        default_parent_digest_enabled=settings.parent_digest_enabled,
+        default_parent_digest_hour=settings.parent_digest_hour,
     )
     update_academy_notifications_use_case = UpdateAcademyNotificationsUseCase(
         academy_repo,
         default_coach_digest_enabled=settings.coach_digest_enabled,
         default_coach_digest_hour=settings.coach_digest_hour,
+        default_parent_digest_enabled=settings.parent_digest_enabled,
+        default_parent_digest_hour=settings.parent_digest_hour,
     )
     get_academy_gateway_use_case = GetAcademyGatewayUseCase(
         academy_repo,

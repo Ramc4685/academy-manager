@@ -29,6 +29,9 @@ class ResendEmailSendPort(EmailSendPort):
         recipient: ResolvedRecipient,
         subject: str,
         body: str,
+        cc: list[str] | None = None,
+        bcc: list[str] | None = None,
+        reply_to: str | None = None,
     ) -> SendOutcome:
         if not recipient.email:
             return SendOutcome(ok=False, provider_message_id=None, failed_reason="no email address")
@@ -39,6 +42,12 @@ class ResendEmailSendPort(EmailSendPort):
                 "subject": subject,
                 "html": body,
             }
+            if cc:
+                params["cc"] = cc
+            if bcc:
+                params["bcc"] = bcc
+            if reply_to:
+                params["reply_to"] = reply_to
             response = await asyncio.to_thread(resend.Emails.send, params)
             msg_id = response.get("id") if isinstance(response, dict) else str(response)
             return SendOutcome(ok=True, provider_message_id=msg_id, failed_reason=None)

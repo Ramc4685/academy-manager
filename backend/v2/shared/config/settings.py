@@ -101,6 +101,16 @@ class Settings(BaseSettings):
         le=23,
         description="Hour (scheduler TZ) at which the daily coach digest job runs.",
     )
+    parent_digest_enabled: bool = Field(
+        default=False,
+        description="Deprecated env default for the parent daily digest; per-academy override wins.",
+    )
+    parent_digest_hour: int = Field(
+        default=6,
+        ge=0,
+        le=23,
+        description="Hour (scheduler TZ) at which the daily parent digest job runs.",
+    )
 
     @field_validator("cors_origins", mode="before")
     @classmethod
