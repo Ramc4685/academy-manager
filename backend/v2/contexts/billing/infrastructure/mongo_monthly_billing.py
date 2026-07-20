@@ -727,9 +727,9 @@ class MongoMonthlyBillingGenerator:
 
 def _session_amount_cents(doc: dict[str, object]) -> int:
     if doc.get("amount_cents") is not None:
-        return int(doc["amount_cents"])  # type: ignore[arg-type]
+        return int(doc["amount_cents"])
     if doc.get("monthly_price_cents") is not None:
-        return int(doc["monthly_price_cents"])  # type: ignore[arg-type]
+        return int(doc["monthly_price_cents"])
     if doc.get("monthly_price") is not None:
         return round(float(doc["monthly_price"]) * 100)  # type: ignore[arg-type]
     return 0
@@ -799,7 +799,7 @@ def _session_occurrences(
             end_at=end_at,
             status="scheduled"
             if str(doc.get("status") or "scheduled") == "active"
-            else str(doc.get("status") or "scheduled"),  # type: ignore[arg-type]
+            else str(doc.get("status") or "scheduled"),
             is_billable=True,
             timezone=timezone_name,
         )

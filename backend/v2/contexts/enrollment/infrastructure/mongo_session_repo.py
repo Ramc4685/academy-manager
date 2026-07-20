@@ -25,7 +25,7 @@ def session_start_sort_key(doc: dict[str, Any]) -> datetime:
     value = doc["start_at"]
     if getattr(value, "tzinfo", None) is None:
         return value.replace(tzinfo=UTC)
-    return value  # type: ignore[return-value]
+    return value
 
 
 _DOW_MAP = {"Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3, "Fri": 4, "Sat": 5, "Sun": 6}
@@ -118,11 +118,11 @@ class MongoSessionRepository(TenantScopedRepository):
             coach_id=str(doc.get("coach_id") or ""),
             title=str(doc.get("title") or doc.get("name") or "Session"),
             location=str(doc.get("location") or ""),
-            start_at=start_at,  # type: ignore[arg-type]
-            end_at=end_at,  # type: ignore[arg-type]
-            capacity=int(doc.get("capacity") or doc.get("max_students") or 15),  # type: ignore[arg-type]
+            start_at=start_at,
+            end_at=end_at,
+            capacity=int(doc.get("capacity") or doc.get("max_students") or 15),
             amount_cents=_optional_amount_cents(doc),
-            status=status,  # type: ignore[arg-type]
+            status=status,
             days_of_week=list(doc.get("days_of_week") or []),
             start_time=None if doc.get("start_time") is None else str(doc.get("start_time")),
             end_time=None if doc.get("end_time") is None else str(doc.get("end_time")),
@@ -206,8 +206,8 @@ class MongoSessionRepository(TenantScopedRepository):
                     session_id=session_id,
                     title=str(doc.get("title") or doc.get("name") or "Academy session"),
                     location=str(doc.get("location") or ""),
-                    start_at=doc["start_at"],  # type: ignore[arg-type]
-                    end_at=doc["end_at"],  # type: ignore[arg-type]
+                    start_at=doc["start_at"],
+                    end_at=doc["end_at"],
                     capacity=capacity,
                     enrolled_count=enrolled_count,
                     available_seats=available_seats,
@@ -221,9 +221,9 @@ class MongoSessionRepository(TenantScopedRepository):
 
 def _amount_cents(doc: dict[str, object], default_amount_cents: int) -> int:
     if doc.get("amount_cents") is not None:
-        return int(doc["amount_cents"])  # type: ignore[arg-type]
+        return int(doc["amount_cents"])
     if doc.get("monthly_price_cents") is not None:
-        return int(doc["monthly_price_cents"])  # type: ignore[arg-type]
+        return int(doc["monthly_price_cents"])
     if doc.get("monthly_price") is not None:
         return round(float(doc["monthly_price"]) * 100)  # type: ignore[arg-type]
     return default_amount_cents
@@ -231,9 +231,9 @@ def _amount_cents(doc: dict[str, object], default_amount_cents: int) -> int:
 
 def _optional_amount_cents(doc: dict[str, object]) -> int | None:
     if doc.get("amount_cents") is not None:
-        return int(doc["amount_cents"])  # type: ignore[arg-type]
+        return int(doc["amount_cents"])
     if doc.get("monthly_price_cents") is not None:
-        return int(doc["monthly_price_cents"])  # type: ignore[arg-type]
+        return int(doc["monthly_price_cents"])
     if doc.get("monthly_price") is not None:
         return round(float(doc["monthly_price"]) * 100)  # type: ignore[arg-type]
     return None

@@ -190,8 +190,11 @@ make saas-down / saas-reset / saas-nuke
 # Backend
 cd backend && pytest v2/tests -n auto -q            # the test suite (~2280 tests)
 cd backend && ruff check v2 && ruff format --check v2
-cd backend && lint-imports --config pyproject.toml   # DDD boundary contracts (CI-blocking)
-cd backend && mypy --config-file pyproject.toml v2   # advisory only
+cd backend && PYTHONPATH=.. lint-imports --config pyproject.toml   # DDD boundary contracts (CI-blocking)
+
+# Mypy — CI-blocking at a frozen baseline (audit C1). Run from the REPO ROOT:
+mypy --config-file backend/pyproject.toml -p backend.v2 | mypy-baseline filter --baseline-path backend/mypy-baseline.txt --allow-unsynced
+# Fixed pre-existing errors? Shrink the baseline with: ... | mypy-baseline sync --baseline-path backend/mypy-baseline.txt
 
 # Frontend (pnpm, from frontend/)
 pnpm dev           # port 3001
@@ -229,7 +232,7 @@ Run backend commands from `backend/` (or repo root with `PYTHONPATH=.`); modules
 - Bearer tokens are accepted from three headers: `Authorization`, `x-courtmastr-auth`, `x-courtmastr-identity` (the frontend proxy bridge translates the latter).
 - Migration `0128` is imported via `importlib` by string name (digit-leading module) — not greppable as a normal import.
 - E2E runs with `NEXT_PUBLIC_E2E_AUTH_BYPASS=1` (fake Firebase user) — passing e2e does NOT prove auth works; use the local-auth config for that.
-- CI coverage gate only covers `v2/shared` (70%); mypy is advisory; `backend/scripts/` is excluded from ruff/mypy entirely. Green CI ≠ typed/covered.
+- CI coverage gate only covers `v2/shared` (70%); mypy blocks only NEW errors (559 pre-existing errors frozen in `backend/mypy-baseline.txt`, burn-down tracked in `docs/audit/mypy-baseline.md`); `backend/scripts/` is excluded from ruff/mypy entirely. Green CI ≠ typed/covered.
 - Scheduler, outbox dispatcher, and rate limiting assume a **single Fly machine**. Do not scale out without adding distributed locking.
 - Seeding is idempotent-by-count (skips if `academies` non-empty) — a partially seeded DB silently stays partial; use `saas-reset`.
 - `.worktrees/` and `.claude/worktrees/` are parallel in-flight branches — not canonical source.

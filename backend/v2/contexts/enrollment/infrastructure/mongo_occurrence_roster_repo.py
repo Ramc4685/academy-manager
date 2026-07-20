@@ -21,9 +21,9 @@ class MongoOccurrenceRosterRepository(TenantScopedRepository):
             academy_id=str(doc["academy_id"]),
             occurrence_id=str(doc["occurrence_id"]),
             student_id=str(doc["student_id"]),
-            source=doc["source"],  # type: ignore[arg-type]
+            source=doc["source"],
             origin_request_id=str(doc["origin_request_id"]),
-            created_at=doc["created_at"],  # type: ignore[arg-type]
+            created_at=doc["created_at"],
         )
 
     @staticmethod

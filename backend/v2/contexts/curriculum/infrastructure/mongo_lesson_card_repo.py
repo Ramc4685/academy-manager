@@ -27,7 +27,7 @@ class MongoLessonCardRepository(TenantScopedRepository):
             equipment=[str(e) for e in doc.get("equipment", [])],
             activity_summary=str(doc.get("activity_summary", "")),
             safety_notes=[str(s) for s in doc.get("safety_notes", [])],
-            source=doc.get("source", "BWF_SHUTTLE_TIME"),  # type: ignore[arg-type]
+            source=doc.get("source", "BWF_SHUTTLE_TIME"),
             module_name=str(doc.get("module_name", "")),
             lesson_range=str(doc.get("lesson_range", "")),
             page_hint=doc.get("page_hint"),

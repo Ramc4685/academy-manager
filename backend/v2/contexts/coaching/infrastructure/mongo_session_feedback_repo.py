@@ -21,8 +21,8 @@ class MongoSessionFeedbackRepository(TenantScopedRepository):
             coach_id=str(doc["coach_id"]),
             student_id=str(doc["student_id"]),
             body=str(doc.get("body") or ""),
-            rating=doc.get("rating"),  # type: ignore[arg-type]
-            created_at=doc["created_at"],  # type: ignore[arg-type]
+            rating=doc.get("rating"),
+            created_at=doc["created_at"],
         )
 
     async def save(self, feedback: SessionFeedback) -> None:

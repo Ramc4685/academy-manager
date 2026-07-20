@@ -29,17 +29,17 @@ class MongoPauseRequestRepository(TenantScopedRepository):
             session_id=_optional_str(doc.get("session_id")),
             session_title=_optional_str(doc.get("session_title")),
             session_location=_optional_str(doc.get("session_location")),
-            session_start_at=doc.get("session_start_at"),  # type: ignore[arg-type]
-            session_end_at=doc.get("session_end_at"),  # type: ignore[arg-type]
+            session_start_at=doc.get("session_start_at"),
+            session_end_at=doc.get("session_end_at"),
             period=str(doc.get("period") or ""),
-            pause_kind=doc.get("pause_kind", "fixed"),  # type: ignore[arg-type]
-            resume_on=doc.get("resume_on"),  # type: ignore[arg-type]
-            review_on=doc.get("review_on"),  # type: ignore[arg-type]
+            pause_kind=doc.get("pause_kind", "fixed"),
+            resume_on=doc.get("resume_on"),
+            review_on=doc.get("review_on"),
             reason=str(doc.get("reason") or ""),
-            status=doc.get("status", "pending"),  # type: ignore[arg-type]
-            created_at=doc["created_at"],  # type: ignore[arg-type]
-            decided_at=doc.get("decided_at"),  # type: ignore[arg-type]
-            decided_by=doc.get("decided_by"),  # type: ignore[arg-type]
+            status=doc.get("status", "pending"),
+            created_at=doc["created_at"],
+            decided_at=doc.get("decided_at"),
+            decided_by=doc.get("decided_by"),
         )
 
     async def add(self, request: PauseRequest) -> None:

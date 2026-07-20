@@ -3979,7 +3979,7 @@ def compose_admin(
         if not hasattr(stripe, "search_app_owned_payment_intents"):
             raise RuntimeError("Stripe reconciliation not configured")
         return await ReconcileStripePaymentIntents(
-            stripe=stripe,  # type: ignore[arg-type]
+            stripe=stripe,
             ledger=billing_ledger_repo,
             run_recorder=MongoBillingReconciliationRunRepository(db),
             academy_id=current_academy_id(),
@@ -4050,7 +4050,7 @@ def compose_admin(
             raise RuntimeError("Stripe charge matching not configured")
         rows = await ListLegacyMatchQueue(
             ledger=billing_ledger_repo,
-            stripe=stripe,  # type: ignore[arg-type]
+            stripe=stripe,
             parent_customers=parent_customers_repo,
         ).execute()
         result = [row.model_dump(mode="python") for row in rows]
@@ -4151,7 +4151,7 @@ def compose_admin(
             RecordManualPaymentCommand(
                 invoice_id=invoice_id,
                 amount_cents=amount_cents,
-                payment_method=payment_method,  # type: ignore[arg-type]
+                payment_method=payment_method,
                 reference_number=reference_number,
                 notes=notes,
             )
@@ -5084,7 +5084,7 @@ def compose_admin(
             return None
         timezone_name = session.timezone or "America/Chicago"
         tz = ZoneInfo(timezone_name)
-        cursor = sessions_r._find_many(  # type: ignore[attr-defined]
+        cursor = sessions_r._find_many(
             {
                 "coach_id": session.coach_id,
                 "location": session.location,
@@ -5112,7 +5112,7 @@ def compose_admin(
         target_signature = _session_series_signature(_session_domain_row(session))
         if target_signature is None:
             return [session.session_id]
-        cursor = sessions_r._find_many(  # type: ignore[attr-defined]
+        cursor = sessions_r._find_many(
             {
                 "coach_id": session.coach_id,
                 "location": session.location,
@@ -5253,12 +5253,12 @@ def compose_admin(
                 seconds=59,
                 microseconds=999999,
             )
-            v2_cursor = sessions_r._find_many(  # type: ignore[attr-defined]
+            v2_cursor = sessions_r._find_many(
                 _dated_session_range_filter(start, end),
                 sort=[("start_at", 1)],
             )
             upcoming_docs = [doc async for doc in v2_cursor]
-            template_cursor = sessions_r._find_many(  # type: ignore[attr-defined]
+            template_cursor = sessions_r._find_many(
                 {"days_of_week": {"$exists": True}},
             )
             template_docs = [doc async for doc in template_cursor]
@@ -5292,14 +5292,14 @@ def compose_admin(
         all_docs: list[dict[str, Any]] = []
 
         # v2 schema: individual session instances with start_at/end_at
-        v2_cursor = sessions_r._find_many(  # type: ignore[attr-defined]
+        v2_cursor = sessions_r._find_many(
             _dated_session_range_filter(start, end),
             sort=[("start_at", 1)],
         )
         async for doc in v2_cursor:
             all_docs.append(doc)
 
-        legacy_cursor = sessions_r._find_many(  # type: ignore[attr-defined]
+        legacy_cursor = sessions_r._find_many(
             {"days_of_week": {"$exists": True}},
         )
         template_docs = [doc async for doc in legacy_cursor]
@@ -5327,14 +5327,14 @@ def compose_admin(
         return rows
 
     async def list_admin_enrollments_for_session(session_id: str):
-        cursor = enrollments_r._find_many(  # type: ignore[attr-defined]
+        cursor = enrollments_r._find_many(
             {"session_id": session_id, "status": "active"},
             sort=[("created_at", 1), ("enrollment_id", 1)],
         )
         enrollment_docs = [doc async for doc in cursor]
         if not enrollment_docs:
             return []
-        active = [enrollments_r._to_domain(doc) for doc in enrollment_docs]  # type: ignore[attr-defined]
+        active = [enrollments_r._to_domain(doc) for doc in enrollment_docs]
         student_ids = [e.student_id for e in active]
         students = await students_r.by_ids(student_ids)
         by_id = {s.student_id: s for s in students}
@@ -5346,7 +5346,7 @@ def compose_admin(
                 student_detail_by_id[str(student_doc.get("student_id"))] = student_doc
         dues_status_by_id: dict[str, str] = {}
         if hasattr(students_r, "_dues_statuses"):
-            dues_status_by_id = await students_r._dues_statuses(academy_id, student_ids)  # type: ignore[attr-defined]
+            dues_status_by_id = await students_r._dues_statuses(academy_id, student_ids)
         default_program_id: str | None = None
         try:
             default_program = await curriculum.resolve_default_program.execute()
@@ -5606,11 +5606,11 @@ def compose_admin(
     )
 
     async def list_waitlist_for_session(session_id: str):
-        cursor = waitlist._find_many(  # type: ignore[attr-defined]
+        cursor = waitlist._find_many(
             {"session_id": session_id},
             sort=[("joined_at", 1)],
         )
-        entries = [waitlist._to_domain(doc) async for doc in cursor]  # type: ignore[attr-defined]
+        entries = [waitlist._to_domain(doc) async for doc in cursor]
         students = await students_r.by_ids([e.student_id for e in entries])
         by_id = {s.student_id: s for s in students}
         rows = []
@@ -6564,7 +6564,7 @@ def compose_admin(
             }
             if payment_keys & invoice_keys:
                 continue
-            row = payments_repo._to_admin_row(payment, None)  # type: ignore[attr-defined]
+            row = payments_repo._to_admin_row(payment, None)
             parent_id = str(row["parent_id"])
             entry = totals.setdefault(
                 parent_id,
@@ -6692,7 +6692,7 @@ def compose_admin(
             from backend.v2.contexts.billing.domain.errors import PaymentNotFound
 
             raise PaymentNotFound("invoice not found", payment_id=invoice_id)
-        row = payments_repo._to_admin_row(payment, None)  # type: ignore[attr-defined]
+        row = payments_repo._to_admin_row(payment, None)
         final_amount = int(row["final_amount_cents"])
         paid_amount = int(row.get("paid_amount_cents") or 0)
         if paid_amount == 0 and str(row["status"]) == "succeeded":
@@ -7113,12 +7113,12 @@ def compose_admin(
             academy_id=current_academy_id(),
         ).execute(periods)
 
-    admin.get_enrollment_funnel = get_enrollment_funnel  # type: ignore[attr-defined]
-    admin.get_attendance_trends = get_attendance_trends  # type: ignore[attr-defined]
-    admin.get_coach_utilization = get_coach_utilization  # type: ignore[attr-defined]
+    admin.get_enrollment_funnel = get_enrollment_funnel
+    admin.get_attendance_trends = get_attendance_trends
+    admin.get_coach_utilization = get_coach_utilization
 
-    admin.curriculum = curriculum  # type: ignore[attr-defined]
-    admin.student_progress = student_progress  # type: ignore[attr-defined]
+    admin.curriculum = curriculum
+    admin.student_progress = student_progress
 
     return admin
 

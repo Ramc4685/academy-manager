@@ -20,23 +20,23 @@ class MongoCreditLedgerRepository(TenantScopedRepository):
             credit_id=str(doc["credit_id"]),
             academy_id=str(doc["academy_id"]),
             parent_id=str(doc["parent_id"]),
-            student_id=doc.get("student_id"),  # type: ignore[arg-type]
-            enrollment_id=doc.get("enrollment_id"),  # type: ignore[arg-type]
-            invoice_id=doc.get("invoice_id"),  # type: ignore[arg-type]
-            type=doc.get("type", "MANUAL_CREDIT"),  # type: ignore[arg-type]
-            status=doc.get("status", "APPROVED"),  # type: ignore[arg-type]
+            student_id=doc.get("student_id"),
+            enrollment_id=doc.get("enrollment_id"),
+            invoice_id=doc.get("invoice_id"),
+            type=doc.get("type", "MANUAL_CREDIT"),
+            status=doc.get("status", "APPROVED"),
             amount_cents=int(doc.get("amount_cents", 0)),
             remaining_amount_cents=int(doc.get("remaining_amount_cents", 0)),
             currency=str(doc.get("currency", "usd")),
             reason=str(doc.get("reason", "")),
-            calculation_snapshot_id=doc.get("calculation_snapshot_id"),  # type: ignore[arg-type]
-            approved_by=doc.get("approved_by"),  # type: ignore[arg-type]
-            approved_at=doc.get("approved_at"),  # type: ignore[arg-type]
-            expires_at=doc.get("expires_at"),  # type: ignore[arg-type]
-            stripe_credit_note_id=doc.get("stripe_credit_note_id"),  # type: ignore[arg-type]
-            stripe_customer_balance_txn_id=doc.get("stripe_customer_balance_txn_id"),  # type: ignore[arg-type]
-            created_at=doc["created_at"],  # type: ignore[arg-type]
-            updated_at=doc["updated_at"],  # type: ignore[arg-type]
+            calculation_snapshot_id=doc.get("calculation_snapshot_id"),
+            approved_by=doc.get("approved_by"),
+            approved_at=doc.get("approved_at"),
+            expires_at=doc.get("expires_at"),
+            stripe_credit_note_id=doc.get("stripe_credit_note_id"),
+            stripe_customer_balance_txn_id=doc.get("stripe_customer_balance_txn_id"),
+            created_at=doc["created_at"],
+            updated_at=doc["updated_at"],
         )
 
     async def create(self, entry: CreditLedgerEntry) -> None:

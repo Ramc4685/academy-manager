@@ -272,7 +272,7 @@ async def update_admin_skill_status(
                 skill_id=skill_id,
                 level_id=body.level_id,
                 program_id=body.program_id,
-                new_status=body.status,  # type: ignore[arg-type]
+                new_status=body.status,
                 updated_by=claims.user_id,
             )
         )

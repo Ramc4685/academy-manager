@@ -39,7 +39,7 @@ async def create_pause_request(
             parent_id=claims.user_id,
             enrollment_id=body.enrollment_id,
             period=body.period,
-            pause_kind=body.pause_kind,  # type: ignore[arg-type]
+            pause_kind=body.pause_kind,
             resume_on=body.resume_on,
             review_on=body.review_on,
             reason=body.reason,

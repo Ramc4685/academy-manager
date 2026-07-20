@@ -16,11 +16,11 @@ class MongoEnrollmentRepository(TenantScopedRepository):
             academy_id=str(doc["academy_id"]),
             session_id=str(doc["session_id"]),
             student_id=str(doc["student_id"]),
-            status=doc.get("status", "active"),  # type: ignore[arg-type]
-            enrolled_at=doc.get("enrolled_at"),  # type: ignore[arg-type]
-            created_at=doc.get("created_at"),  # type: ignore[arg-type]
-            registration_application_id=doc.get("registration_application_id"),  # type: ignore[arg-type]
-            registration_student_lock=doc.get("registration_student_lock"),  # type: ignore[arg-type]
+            status=doc.get("status", "active"),
+            enrolled_at=doc.get("enrolled_at"),
+            created_at=doc.get("created_at"),
+            registration_application_id=doc.get("registration_application_id"),
+            registration_student_lock=doc.get("registration_student_lock"),
         )
 
     async def active_for_session(self, session_id: str) -> list[Enrollment]:

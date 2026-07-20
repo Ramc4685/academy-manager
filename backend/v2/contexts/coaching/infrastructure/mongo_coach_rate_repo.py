@@ -56,7 +56,7 @@ def coach_rate_from_mongo_doc(doc: dict[str, Any]) -> CoachRate:
         rate_id=str(doc.get("rate_id") or doc.get("_id")),
         academy_id=str(doc["academy_id"]),
         coach_id=str(doc["coach_id"]),
-        billing_unit=_legacy_billing_unit(doc),  # type: ignore[arg-type]
+        billing_unit=_legacy_billing_unit(doc),
         amount_minor=_amount_minor(doc),
         percent_bps=_percent_bps(doc),
         currency=str(doc.get("currency", "USD")).upper(),

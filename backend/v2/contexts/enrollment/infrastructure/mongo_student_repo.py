@@ -273,9 +273,9 @@ class MongoStudentRepository(TenantScopedRepository):
             parent_email=parent_email,
             status=str(doc.get("status") or "active"),
             active_session_count=active_session_count,
-            last_seen_at=last_seen_at,  # type: ignore[arg-type]
+            last_seen_at=last_seen_at,
             attendance_rate=attendance_rate,
-            dues_status=dues_status,  # type: ignore[arg-type]
+            dues_status=dues_status,
         )
 
     @classmethod
@@ -329,7 +329,7 @@ class MongoStudentRepository(TenantScopedRepository):
             emergency_contact_name=cls._optional_str(doc.get("emergency_contact_name")),
             emergency_contact_phone=cls._optional_str(doc.get("emergency_contact_phone")),
             t_shirt_size=cls._optional_str(doc.get("t_shirt_size")),
-            waiver_status=waiver_status,  # type: ignore[arg-type]
+            waiver_status=waiver_status,
             waiver_signed_at=waiver_signed_at,
             waiver_version=waiver_version,
             recent_attendance=recent_attendance or [],
@@ -633,7 +633,7 @@ class MongoStudentRepository(TenantScopedRepository):
 
         students: list[AdminStudentSummary] = []
         for row in page_rows:
-            doc = row["doc"]  # type: ignore[assignment]
+            doc = row["doc"]
             student_id = str(row["student_id"])
             att = attendance.get(student_id, {})
             students.append(
@@ -1126,7 +1126,7 @@ class MongoStudentRepository(TenantScopedRepository):
     def _paid_amount_cents(cls, doc: dict[str, object], amount_cents: int) -> int:
         for key in ("paid_amount_cents", "amount_received_cents"):
             if doc.get(key) is not None:
-                return max(int(doc[key]), 0)  # type: ignore[arg-type]
+                return max(int(doc[key]), 0)
         if str(doc.get("status") or "") in {"paid", "succeeded"}:
             return max(amount_cents - cls._refunded_cents(doc), 0)
         return 0
@@ -1140,7 +1140,7 @@ class MongoStudentRepository(TenantScopedRepository):
         if str(doc.get("status") or "") in {"paid", "succeeded"}:
             return 0
         if doc.get("balance_due_cents") is not None:
-            return max(int(doc["balance_due_cents"]), 0)  # type: ignore[arg-type]
+            return max(int(doc["balance_due_cents"]), 0)
         return max(amount_cents - paid_amount_cents, 0)
 
     @staticmethod
@@ -1151,7 +1151,7 @@ class MongoStudentRepository(TenantScopedRepository):
     ) -> int | None:
         for key in cents_keys:
             if doc.get(key) is not None:
-                return int(doc[key])  # type: ignore[arg-type]
+                return int(doc[key])
         for key in decimal_keys:
             if doc.get(key) is not None:
                 return round(float(doc[key]) * 100)  # type: ignore[arg-type]

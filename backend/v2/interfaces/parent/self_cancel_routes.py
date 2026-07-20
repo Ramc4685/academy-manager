@@ -59,7 +59,7 @@ async def preview_cancellation(
     claims: AuthClaims = Depends(require_persona("parent")),
     use_cases: ParentUseCases = Depends(get_parent_use_cases),
 ) -> CancellationPreviewResponse:
-    view = await use_cases.preview_self_cancel.execute(  # type: ignore[attr-defined]
+    view = await use_cases.preview_self_cancel.execute(
         enrollment_id=enrollment_id,
         parent_id=claims.user_id,
     )
@@ -76,7 +76,7 @@ async def self_cancel_enrollment(
     claims: AuthClaims = Depends(require_persona("parent")),
     use_cases: ParentUseCases = Depends(get_parent_use_cases),
 ) -> SelfCancelResponse:
-    result = await use_cases.self_cancel_enrollment.execute(  # type: ignore[attr-defined]
+    result = await use_cases.self_cancel_enrollment.execute(
         SelfCancelEnrollmentCommand(
             enrollment_id=enrollment_id,
             parent_id=claims.user_id,

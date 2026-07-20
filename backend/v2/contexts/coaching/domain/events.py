@@ -23,9 +23,9 @@ class AttendanceMarkedPayload(BaseModel):
 
 
 class AttendanceMarked(DomainEvent):
-    name: Literal["Coaching.AttendanceMarked"] = "Coaching.AttendanceMarked"  # type: ignore[assignment]
-    schema_version: Literal[1] = 1  # type: ignore[assignment]
-    payload: AttendanceMarkedPayload  # type: ignore[assignment]
+    name: Literal["Coaching.AttendanceMarked"] = "Coaching.AttendanceMarked"
+    schema_version: Literal[1] = 1
+    payload: AttendanceMarkedPayload
 
 
 class SessionFeedbackPosted(DomainEvent):
@@ -37,13 +37,13 @@ class SessionFeedbackPosted(DomainEvent):
     the event with the flat fields alone.
     """
 
-    name: Literal["Coaching.SessionFeedbackPosted"] = "Coaching.SessionFeedbackPosted"  # type: ignore[assignment]
-    schema_version: Literal[1] = 1  # type: ignore[assignment]
+    name: Literal["Coaching.SessionFeedbackPosted"] = "Coaching.SessionFeedbackPosted"
+    schema_version: Literal[1] = 1
     feedback_id: str
     session_id: str
     student_id: str
     coach_id: str
-    academy_id: str  # type: ignore[assignment]
+    academy_id: str
 
     @model_validator(mode="before")
     @classmethod

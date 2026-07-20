@@ -223,7 +223,7 @@ def _payout_periods(use_cases: AdminUseCases) -> PayoutPeriodRepository:
     repo = use_cases.payout_periods
     if repo is None:
         raise HTTPException(status_code=503, detail="Payout periods are not configured")
-    return repo  # type: ignore[return-value]
+    return repo
 
 
 def _generate_payout_period(use_cases: AdminUseCases) -> GeneratePayoutPeriod:
