@@ -551,7 +551,7 @@ class AdminRegistrationReview:
             try:
                 await self._registration_student_id(app)
             except ApplicationNotEditable:
-                display_app = app.model_copy(update={"status": "MANUAL_REVIEW"})  # type: ignore[arg-type]
+                display_app = app.model_copy(update={"status": "MANUAL_REVIEW"})
         row = await self._row(display_app)
         template = await self._registration_template()
         session: Session | None = None

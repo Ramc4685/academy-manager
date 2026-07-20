@@ -15,14 +15,14 @@ class MongoExternalRefRepository(TenantScopedRepository):
             ref_id=str(doc["ref_id"]),
             skill_id=str(doc["skill_id"]),
             academy_id=str(doc["academy_id"]),
-            source=doc["source"],  # type: ignore[arg-type]
+            source=doc["source"],
             source_title=str(doc["source_title"]),
             module_name=str(doc["module_name"]),
             lesson_range=str(doc["lesson_range"]),
             reference_title=str(doc["reference_title"]),
-            page_hint=doc.get("page_hint"),  # type: ignore[arg-type]
+            page_hint=doc.get("page_hint"),
             internal_note=str(doc.get("internal_note", "")),
-            created_at=doc["created_at"],  # type: ignore[arg-type]
+            created_at=doc["created_at"],
             created_by=str(doc.get("created_by", "")),
         )
 

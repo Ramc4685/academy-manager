@@ -35,7 +35,7 @@ async def send_dues_reminders(
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> SendDuesRemindersResponse:
-    result = await use_cases.send_dues_reminders.execute(  # type: ignore[operator]
+    result = await use_cases.send_dues_reminders.execute(
         SendDuesRemindersCommand(parent_ids=(body.parent_ids if body else None))
     )
     return SendDuesRemindersResponse(**result)

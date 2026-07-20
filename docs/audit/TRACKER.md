@@ -17,7 +17,7 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 
 | ID | Item | Plan | Size | Depends on | Status | PR/Issue |
 |---|---|---|---|---|---|---|
-| C1 | Un-break the mypy gate (also quick-win #2) | [plans/C1-mypy-gate.md](plans/C1-mypy-gate.md) | M | — | TODO | |
+| C1 | Un-break the mypy gate (also quick-win #2) | [plans/C1-mypy-gate.md](plans/C1-mypy-gate.md) | M | — | DONE | #311 |
 | C2 | Observability: error tracking + request correlation | [plans/C2-observability.md](plans/C2-observability.md) | M | — | TODO | |
 | C3 | Rate limiter: real client IP + webhook coverage | [plans/C3-rate-limiter.md](plans/C3-rate-limiter.md) | S | — | DONE | #312 |
 | C4 | Kill boot-time academy_id closures (parent reads + coach writes) | [plans/C4-tenant-boot-closure.md](plans/C4-tenant-boot-closure.md) | M | — | TODO | |
@@ -27,7 +27,7 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 | ID | Item | Plan | Size | Depends on | Status | PR/Issue |
 |---|---|---|---|---|---|---|
 | QW1 | Re-point pnpm security overrides | [plans/QW1-pnpm-overrides.md](plans/QW1-pnpm-overrides.md) | XS | — | DONE | #310 |
-| QW2 | (merged into C1) | — | — | C1 | — | |
+| QW2 | (merged into C1) | — | — | C1 | DONE | #311 |
 | QW3 | Scrub weak example credentials | [plans/QW3-env-example-creds.md](plans/QW3-env-example-creds.md) | XS | — | DONE | #310 |
 | QW4 | Delete orphaned legacy bytecode dirs | [plans/QW4-orphaned-bytecode.md](plans/QW4-orphaned-bytecode.md) | XS | — | TODO | |
 | QW5 | Add CSP + HSTS headers | [plans/QW5-csp-hsts.md](plans/QW5-csp-hsts.md) | S | — | TODO | |

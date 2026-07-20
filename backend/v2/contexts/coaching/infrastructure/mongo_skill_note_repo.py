@@ -19,7 +19,7 @@ class MongoSkillNoteRepository(TenantScopedRepository):
             coach_id=str(doc["coach_id"]),
             session_id=str(doc["session_id"]) if doc.get("session_id") is not None else None,
             body=str(doc.get("body") or ""),
-            created_at=doc["created_at"],  # type: ignore[arg-type]
+            created_at=doc["created_at"],
         )
 
     async def save(self, note: CoachSkillNote) -> None:

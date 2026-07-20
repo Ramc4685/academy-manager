@@ -17,7 +17,7 @@ class MongoCurriculumVideoRefRepository(TenantScopedRepository):
             ref_id=str(doc["ref_id"]),
             academy_id=str(doc["academy_id"]),
             program_id=str(doc["program_id"]),
-            scope=doc["scope"],  # type: ignore[arg-type]
+            scope=doc["scope"],
             level_id=str(doc["level_id"]),
             skill_id=(str(doc["skill_id"]) if doc.get("skill_id") is not None else None),
             title=str(doc["title"]),

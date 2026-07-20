@@ -2203,7 +2203,7 @@ class HandleWebhookEvent:
             stripe_payment_intent_id=stripe_pi,
             amount_cents=int(invoice.get(amount_key) or invoice.get("amount_due") or 0),
             currency=str(invoice.get("currency") or "usd").lower(),
-            status=status,  # type: ignore[arg-type]
+            status=status,
             created_at=now,
             updated_at=now,
         )

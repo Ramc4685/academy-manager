@@ -523,7 +523,7 @@ class CompleteAutopaySetup:
             consent_text_version=consent_text_version,
             ach_mandate_version=ach_mandate_version,
             card_disclosure_version=card_disclosure_version,
-            source=context.source,  # type: ignore[arg-type]
+            source=context.source,
             actor_id=context.actor_id or parent_id,
             ip=context.ip,
             user_agent=context.user_agent,

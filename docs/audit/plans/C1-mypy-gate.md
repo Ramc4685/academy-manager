@@ -1,5 +1,5 @@
 # C1 — Un-break the mypy gate
-Status: TODO
+Status: DONE (PR #311, 2026-07-20) — shipped via Alternative B: deleting `backend/__init__.py` does NOT fix the abort (`explicit_package_bases` makes `__init__.py` irrelevant to module-name mapping); fix = repo-root invocation `-p backend.v2` with `files`/`mypy_path` removed. 376 stale ignores stripped; 559 errors frozen with mypy-baseline (burn-down: ../mypy-baseline.md).
 Size: M · Depends on: none · Tracker: ../TRACKER.md
 
 ## Problem

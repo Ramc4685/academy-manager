@@ -21,9 +21,9 @@ class MongoSkillCertificateRepository(TenantScopedRepository):
             student_name=str(doc["student_name"]),
             level_name=str(doc["level_name"]),
             program_name=str(doc["program_name"]),
-            completed_at=doc["completed_at"],  # type: ignore[arg-type]
+            completed_at=doc["completed_at"],
             issued_by=str(doc["issued_by"]),
-            issued_at=doc["issued_at"],  # type: ignore[arg-type]
+            issued_at=doc["issued_at"],
         )
 
     async def save(self, cert: SkillCertificate) -> None:

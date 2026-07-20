@@ -54,9 +54,9 @@ class EnrollmentConfirmedPayload(BaseModel):
 
 
 class EnrollmentConfirmed(DomainEvent):
-    name: Literal["Enrollment.EnrollmentConfirmed"] = "Enrollment.EnrollmentConfirmed"  # type: ignore[assignment]
-    schema_version: Literal[1] = 1  # type: ignore[assignment]
-    payload: EnrollmentConfirmedPayload  # type: ignore[assignment]
+    name: Literal["Enrollment.EnrollmentConfirmed"] = "Enrollment.EnrollmentConfirmed"
+    schema_version: Literal[1] = 1
+    payload: EnrollmentConfirmedPayload
 
 
 class EnrollmentCancelledPayload(BaseModel):
@@ -68,9 +68,9 @@ class EnrollmentCancelledPayload(BaseModel):
 
 
 class EnrollmentCancelled(DomainEvent):
-    name: Literal["Enrollment.EnrollmentCancelled"] = "Enrollment.EnrollmentCancelled"  # type: ignore[assignment]
-    schema_version: Literal[1] = 1  # type: ignore[assignment]
-    payload: EnrollmentCancelledPayload  # type: ignore[assignment]
+    name: Literal["Enrollment.EnrollmentCancelled"] = "Enrollment.EnrollmentCancelled"
+    schema_version: Literal[1] = 1
+    payload: EnrollmentCancelledPayload
 
 
 class WaitlistPromotedPayload(BaseModel):
@@ -82,9 +82,9 @@ class WaitlistPromotedPayload(BaseModel):
 
 
 class WaitlistPromoted(DomainEvent):
-    name: Literal["Enrollment.WaitlistPromoted"] = "Enrollment.WaitlistPromoted"  # type: ignore[assignment]
-    schema_version: Literal[1] = 1  # type: ignore[assignment]
-    payload: WaitlistPromotedPayload  # type: ignore[assignment]
+    name: Literal["Enrollment.WaitlistPromoted"] = "Enrollment.WaitlistPromoted"
+    schema_version: Literal[1] = 1
+    payload: WaitlistPromotedPayload
 
 
 class CapacityExceededPayload(BaseModel):
@@ -98,9 +98,9 @@ class CapacityExceededPayload(BaseModel):
 class CapacityExceeded(DomainEvent):
     """Emitted when ConfirmEnrollment fails capacity; triggers auto-refund."""
 
-    name: Literal["Enrollment.CapacityExceeded"] = "Enrollment.CapacityExceeded"  # type: ignore[assignment]
-    schema_version: Literal[1] = 1  # type: ignore[assignment]
-    payload: CapacityExceededPayload  # type: ignore[assignment]
+    name: Literal["Enrollment.CapacityExceeded"] = "Enrollment.CapacityExceeded"
+    schema_version: Literal[1] = 1
+    payload: CapacityExceededPayload
 
 
 class StudentSessionTypeChangedPayload(BaseModel):
@@ -117,6 +117,6 @@ class StudentSessionTypeChangedPayload(BaseModel):
 
 
 class StudentSessionTypeChanged(DomainEvent):
-    name: Literal["Enrollment.SessionTypeChanged"] = "Enrollment.SessionTypeChanged"  # type: ignore[assignment]
-    schema_version: Literal[1] = 1  # type: ignore[assignment]
-    payload: StudentSessionTypeChangedPayload  # type: ignore[assignment]
+    name: Literal["Enrollment.SessionTypeChanged"] = "Enrollment.SessionTypeChanged"
+    schema_version: Literal[1] = 1
+    payload: StudentSessionTypeChangedPayload

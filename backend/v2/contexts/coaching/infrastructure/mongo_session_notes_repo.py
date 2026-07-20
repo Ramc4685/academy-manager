@@ -20,7 +20,7 @@ class MongoLessonPlanRepository(TenantScopedRepository):
             coach_id=str(doc["coach_id"]),
             title=str(doc.get("title") or ""),
             body=str(doc.get("body") or ""),
-            created_at=doc["created_at"],  # type: ignore[arg-type]
+            created_at=doc["created_at"],
         )
 
     async def add_lesson_plan(self, plan: LessonPlan) -> None:
@@ -46,7 +46,7 @@ class MongoProgressNoteRepository(TenantScopedRepository):
             student_id=str(doc["student_id"]),
             coach_id=str(doc["coach_id"]),
             body=str(doc.get("body") or doc.get("note") or ""),
-            created_at=doc["created_at"],  # type: ignore[arg-type]
+            created_at=doc["created_at"],
         )
 
     async def add_progress_note(self, note: ProgressNote) -> None:

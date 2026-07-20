@@ -29,7 +29,7 @@ class MongoBillingDeferralRepository(TenantScopedRepository):
             deferral_id=str(doc["deferral_id"]),
             enrollment_id=str(doc["enrollment_id"]),
             student_id=str(doc["student_id"]),
-            deferral_type=doc["deferral_type"],  # type: ignore[arg-type]
+            deferral_type=doc["deferral_type"],
             reason=str(doc.get("reason") or ""),
             source=str(doc["source"]),
             source_id=_optional_str(doc.get("source_id")),
@@ -39,10 +39,10 @@ class MongoBillingDeferralRepository(TenantScopedRepository):
             resume_on=cls._date_value(doc.get("resume_on")),
             review_on=cls._date_value(doc.get("review_on")),
             expires_on=cls._date_value(doc.get("expires_on")),
-            status=doc.get("status", "active"),  # type: ignore[arg-type]
-            created_at=doc["created_at"],  # type: ignore[arg-type]
-            updated_at=doc.get("updated_at"),  # type: ignore[arg-type]
-            closed_at=doc.get("closed_at"),  # type: ignore[arg-type]
+            status=doc.get("status", "active"),
+            created_at=doc["created_at"],
+            updated_at=doc.get("updated_at"),
+            closed_at=doc.get("closed_at"),
             closed_by=_optional_str(doc.get("closed_by")),
             closure_reason=_optional_str(doc.get("closure_reason")),
             metadata=_str_dict(doc.get("metadata")),

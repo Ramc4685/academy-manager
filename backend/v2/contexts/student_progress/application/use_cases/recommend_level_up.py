@@ -67,11 +67,7 @@ class RecommendLevelUp:
 
         # Check all required skills are passed
         all_skills = await self._skill_lookup.list_skills_for_level(active.level_id)
-        required_ids = [
-            s.skill_id
-            for s in all_skills  # type: ignore[attr-defined]
-            if getattr(s, "is_required", True)
-        ]
+        required_ids = [s.skill_id for s in all_skills if getattr(s, "is_required", True)]
         passed_records = await self._skill_progress.list_passed_for_student_level(
             cmd.student_id, active.level_id
         )

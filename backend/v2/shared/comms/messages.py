@@ -47,12 +47,12 @@ class MongoMessageRepository(TenantScopedRepository):
         return Message(
             message_id=str(doc["message_id"]),
             academy_id=str(doc["academy_id"]),
-            kind=doc.get("kind", "dm"),  # type: ignore[arg-type]
+            kind=doc.get("kind", "dm"),
             sender_id=str(doc["sender_id"]),
-            sender_persona=doc.get("sender_persona", "admin"),  # type: ignore[arg-type]
-            recipient_id=doc.get("recipient_id"),  # type: ignore[arg-type]
+            sender_persona=doc.get("sender_persona", "admin"),
+            recipient_id=doc.get("recipient_id"),
             body=str(doc.get("body", "")),
-            created_at=doc["created_at"],  # type: ignore[arg-type]
+            created_at=doc["created_at"],
             read_by=list(doc.get("read_by", [])),
             scope_type=(str(doc["scope_type"]) if doc.get("scope_type") else None),
             scope_label=(str(doc["scope_label"]) if doc.get("scope_label") else None),

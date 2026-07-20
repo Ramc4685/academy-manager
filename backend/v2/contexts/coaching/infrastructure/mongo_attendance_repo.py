@@ -21,9 +21,9 @@ class MongoAttendanceRepository(TenantScopedRepository):
             session_id=str(doc["session_id"]),
             student_id=str(doc["student_id"]),
             marked_by=str(doc["marked_by"]),
-            marked_at=doc["marked_at"],  # type: ignore[arg-type]
-            marked_at_client=doc.get("marked_at_client"),  # type: ignore[arg-type]
-            status=doc["status"],  # type: ignore[arg-type]
+            marked_at=doc["marked_at"],
+            marked_at_client=doc.get("marked_at_client"),
+            status=doc["status"],
             client_app_version=str(doc.get("client_app_version", "unknown")),
         )
 
@@ -83,11 +83,11 @@ class MongoCoachAttendanceRepository(TenantScopedRepository):
             academy_id=str(doc["academy_id"]),
             occurrence_id=str(doc["occurrence_id"]),
             coach_id=str(doc["coach_id"]),
-            status=doc["status"],  # type: ignore[arg-type]
-            role=doc.get("role", "lead"),  # type: ignore[arg-type]
-            source=doc["source"],  # type: ignore[arg-type]
+            status=doc["status"],
+            role=doc.get("role", "lead"),
+            source=doc["source"],
             marked_by=str(doc["marked_by"]),
-            marked_at=doc["marked_at"],  # type: ignore[arg-type]
+            marked_at=doc["marked_at"],
             rate_override_minor=(
                 None if doc.get("rate_override_minor") is None else int(doc["rate_override_minor"])
             ),

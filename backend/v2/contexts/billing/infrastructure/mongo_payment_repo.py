@@ -74,9 +74,9 @@ class MongoPaymentRepository(TenantScopedRepository):
     @classmethod
     def _amount_cents(cls, doc: dict[str, object]) -> int:
         if doc.get("amount_cents") is not None:
-            return int(doc["amount_cents"])  # type: ignore[arg-type]
+            return int(doc["amount_cents"])
         if doc.get("final_amount_cents") is not None:
-            return int(doc["final_amount_cents"])  # type: ignore[arg-type]
+            return int(doc["final_amount_cents"])
         if doc.get("amount") is not None:
             return cls._money_to_cents(doc.get("amount"))
         if doc.get("final_amount") is not None:
@@ -86,13 +86,13 @@ class MongoPaymentRepository(TenantScopedRepository):
     @classmethod
     def _discount_cents(cls, doc: dict[str, object]) -> int:
         if doc.get("discount_cents") is not None:
-            return int(doc["discount_cents"])  # type: ignore[arg-type]
+            return int(doc["discount_cents"])
         return cls._money_to_cents(doc.get("discount"))
 
     @staticmethod
     def _refunded_cents(doc: dict[str, object]) -> int:
         if doc.get("refunded_cents") is not None:
-            return int(doc["refunded_cents"])  # type: ignore[arg-type]
+            return int(doc["refunded_cents"])
         if doc.get("refunded_amount") is not None:
             return round(float(doc["refunded_amount"]) * 100)  # type: ignore[arg-type]
         return 0
@@ -126,19 +126,19 @@ class MongoPaymentRepository(TenantScopedRepository):
             payment_id=cls._payment_id(doc),
             academy_id=str(doc["academy_id"]),
             parent_id=str(doc.get("parent_id") or doc.get("parent_user_id") or ""),
-            enrollment_id=doc.get("enrollment_id"),  # type: ignore[arg-type]
-            session_id=doc.get("session_id"),  # type: ignore[arg-type]
-            subscription_id=doc.get("subscription_id"),  # type: ignore[arg-type]
+            enrollment_id=doc.get("enrollment_id"),
+            session_id=doc.get("session_id"),
+            subscription_id=doc.get("subscription_id"),
             stripe_payment_intent_id=doc.get("stripe_payment_intent_id")
-            or doc.get("stripe_payment_intent"),  # type: ignore[arg-type]
-            stripe_checkout_session_id=doc.get("stripe_checkout_session_id"),  # type: ignore[arg-type]
-            calculation_snapshot_id=doc.get("calculation_snapshot_id"),  # type: ignore[arg-type]
+            or doc.get("stripe_payment_intent"),
+            stripe_checkout_session_id=doc.get("stripe_checkout_session_id"),
+            calculation_snapshot_id=doc.get("calculation_snapshot_id"),
             amount_cents=cls._amount_cents(doc),
             currency=str(doc.get("currency", "usd")),
-            status=cls._normalize_status(doc.get("status")),  # type: ignore[arg-type]
+            status=cls._normalize_status(doc.get("status")),
             refunded_cents=cls._refunded_cents(doc),
-            created_at=created_at,  # type: ignore[arg-type]
-            updated_at=doc.get("updated_at", created_at),  # type: ignore[arg-type]
+            created_at=created_at,
+            updated_at=doc.get("updated_at", created_at),
         )
 
     async def save(self, payment: Payment) -> None:
@@ -721,8 +721,8 @@ class MongoPaymentRepository(TenantScopedRepository):
                         credit_id=str(new_ulid()),
                         academy_id=current_academy_id(),
                         parent_id=str(doc.get("parent_id") or doc.get("parent_user_id") or ""),
-                        student_id=doc.get("student_id"),  # type: ignore[arg-type]
-                        enrollment_id=doc.get("enrollment_id"),  # type: ignore[arg-type]
+                        student_id=doc.get("student_id"),
+                        enrollment_id=doc.get("enrollment_id"),
                         invoice_id=payment_id,
                         type="MANUAL_CREDIT",
                         status="APPROVED",

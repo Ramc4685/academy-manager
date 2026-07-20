@@ -57,8 +57,8 @@ def _product_view(product: dict[str, object]) -> ProductView:
         default_unit_amount_cents=int(product["default_unit_amount_cents"]),
         line_type=str(product["line_type"]),
         active=bool(product["active"]),
-        created_at=product["created_at"],  # type: ignore[arg-type]
-        updated_at=product["updated_at"],  # type: ignore[arg-type]
+        created_at=product["created_at"],
+        updated_at=product["updated_at"],
     )
 
 

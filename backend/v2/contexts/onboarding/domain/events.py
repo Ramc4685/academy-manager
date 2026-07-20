@@ -16,9 +16,9 @@ class ApplicationStartedPayload(BaseModel):
 
 
 class ApplicationStarted(DomainEvent):
-    name: Literal["Onboarding.ApplicationStarted"] = "Onboarding.ApplicationStarted"  # type: ignore[assignment]
-    schema_version: Literal[1] = 1  # type: ignore[assignment]
-    payload: ApplicationStartedPayload  # type: ignore[assignment]
+    name: Literal["Onboarding.ApplicationStarted"] = "Onboarding.ApplicationStarted"
+    schema_version: Literal[1] = 1
+    payload: ApplicationStartedPayload
 
 
 class ApplicationApprovedPayload(BaseModel):
@@ -30,6 +30,6 @@ class ApplicationApprovedPayload(BaseModel):
 
 
 class ApplicationApproved(DomainEvent):
-    name: Literal["Onboarding.ApplicationApproved"] = "Onboarding.ApplicationApproved"  # type: ignore[assignment]
-    schema_version: Literal[1] = 1  # type: ignore[assignment]
-    payload: ApplicationApprovedPayload  # type: ignore[assignment]
+    name: Literal["Onboarding.ApplicationApproved"] = "Onboarding.ApplicationApproved"
+    schema_version: Literal[1] = 1
+    payload: ApplicationApprovedPayload

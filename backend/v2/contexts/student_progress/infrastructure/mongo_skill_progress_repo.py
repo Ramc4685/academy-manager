@@ -30,9 +30,9 @@ class MongoStudentSkillProgressRepository(TenantScopedRepository):
             skill_id=str(doc["skill_id"]),
             level_id=str(doc["level_id"]),
             program_id=str(doc["program_id"]),
-            status=doc["status"],  # type: ignore[arg-type]
-            introduced_at=doc.get("introduced_at"),  # type: ignore[arg-type]
-            last_updated_at=doc["last_updated_at"],  # type: ignore[arg-type]
+            status=doc["status"],
+            introduced_at=doc.get("introduced_at"),
+            last_updated_at=doc["last_updated_at"],
             last_updated_by=str(doc["last_updated_by"]),
         )
 

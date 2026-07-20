@@ -23,17 +23,28 @@ ignore = [
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["v2"]
+# Run from the repo root: `mypy --config-file backend/pyproject.toml -p backend.v2`.
+# `files`/`mypy_path` are deliberately absent — a second package base made every
+# module discoverable under two names and aborted the run (audit item C1).
 exclude = ["legacy", "scripts", "tests"]
 plugins = ["pydantic.mypy"]
-mypy_path = ".."
 namespace_packages = true
 explicit_package_bases = true
 follow_imports = "normal"
 # Third-party libs without type stubs — declared explicitly so the
 # `import-untyped` warnings stop dominating the output.
 [[tool.mypy.overrides]]
-module = ["motor.*", "mongomock_motor.*", "stripe.*", "firebase_admin.*", "cachecontrol.*"]
+module = [
+    "motor.*",
+    "mongomock_motor.*",
+    "stripe.*",
+    "firebase_admin.*",
+    "cachecontrol.*",
+    "opentelemetry.*",
+    "openpyxl.*",
+    "requests.*",
+    "apscheduler.*",
+]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
