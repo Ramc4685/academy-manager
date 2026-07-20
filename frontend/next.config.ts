@@ -23,6 +23,11 @@ const IS_DEV = process.env.NODE_ENV === "development";
 // until nonces are wired. Stripe is hosted-Checkout via full-page redirect
 // (form-action), so no js.stripe.com script-src or frame-src is needed.
 // Dev additions: 'unsafe-eval' (React refresh), ws:/localhost (HMR, emulators).
+// frame-ancestors is intentionally absent: it is spec-ignored in report-only
+// policies (WebKit logs a console error for it) — X-Frame-Options: DENY covers
+// framing until enforcement; add `frame-ancestors 'none'` back when flipping.
+// report-uri makes the policy observable (WebKit treats a report-only policy
+// with no reporting destination as a no-op and logs a console error).
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
   `script-src 'self' 'unsafe-inline'${IS_DEV ? " 'unsafe-eval'" : ""}`,
@@ -32,10 +37,10 @@ const CONTENT_SECURITY_POLICY = [
   `connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firebasestorage.googleapis.com${
     IS_DEV ? " ws: http://localhost:* http://127.0.0.1:*" : ""
   }`,
-  "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self' https://checkout.stripe.com",
   "object-src 'none'",
+  "report-uri /api/csp-report",
 ].join("; ");
 
 const config: NextConfig = {
