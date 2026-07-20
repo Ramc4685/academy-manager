@@ -40,9 +40,9 @@ or prove production readiness.
 
 | Persona | Local login | Password source |
 | --- | --- | --- |
-| Admin | `ramchand4685@gmail.com` | Local seed output; current known local seed password is `Admin@12345`. |
-| Coach | `gowtham@blno.academy` or `kishore@blno.academy` | Local seed output; current known local seed password is `Coach@12345`. |
-| Parent | Seeded BLNO parent email, for example `manojedward.btech@gmail.com` when present | Local seed output; current known local seed password is `Parent@12345`. |
+| Admin | `ramchand4685@gmail.com` | Local seed output; password is the value you set via `SEED_ADMIN_PASSWORD` (defaults to `CHANGE_ME`). |
+| Coach | `gowtham@blno.academy` or `kishore@blno.academy` | Local seed output; password is the value you set via `SEED_COACH_PASSWORD` (defaults to `CHANGE_ME`). |
+| Parent | Seeded BLNO parent email, for example `manojedward.btech@gmail.com` when present | Local seed output; password is the value you set via `SEED_PARENT_PASSWORD` (defaults to `CHANGE_ME`). |
 
 If any login fails, inspect the Firebase Auth emulator UI at
 `http://localhost:4000`, then rerun the seed before filing an app bug.

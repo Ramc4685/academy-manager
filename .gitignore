@@ -110,3 +110,8 @@ firebase-emulator/data/
 .omo/
 output/playwright/*-staging-*/
 frontend/.autopay-*.mjs
+
+# ── Test/CI artifacts (QW9: keep out of git; regenerated at runtime) ─────────────
+output/
+test_reports/
+/*.png
