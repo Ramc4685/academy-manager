@@ -30,7 +30,7 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 | QW2 | (merged into C1) | — | — | C1 | DONE | #311 |
 | QW3 | Scrub weak example credentials | [plans/QW3-env-example-creds.md](plans/QW3-env-example-creds.md) | XS | — | DONE | #310 |
 | QW4 | Delete orphaned legacy bytecode dirs | [plans/QW4-orphaned-bytecode.md](plans/QW4-orphaned-bytecode.md) | XS | — | TODO | |
-| QW5 | Add CSP + HSTS headers | [plans/QW5-csp-hsts.md](plans/QW5-csp-hsts.md) | S | — | TODO | |
+| QW5 | Add CSP + HSTS headers | [plans/QW5-csp-hsts.md](plans/QW5-csp-hsts.md) | S | — | DONE | #TBD |
 | QW6 | Fix local pnpm typecheck (stale .next/types) | [plans/QW6-local-typecheck.md](plans/QW6-local-typecheck.md) | XS | — | DONE | #310 |
 | QW7 | Widen CI coverage gate to v2 | [plans/QW7-coverage-gate.md](plans/QW7-coverage-gate.md) | XS | — | DONE | #310 |
 | QW8 | Dedupe mapRoleToStatus | [plans/QW8-dedupe-maprole.md](plans/QW8-dedupe-maprole.md) | XS | — | DONE | #310 |
