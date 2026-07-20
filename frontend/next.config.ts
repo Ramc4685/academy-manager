@@ -20,8 +20,10 @@ const IS_DEV = process.env.NODE_ENV === "development";
 // Report-Only rollout first (QW5): watch for violations in staging/prod, then
 // flip the header name to Content-Security-Policy once clean.
 // 'unsafe-inline' in script-src is required by the Next.js inline bootstrap
-// until nonces are wired. Stripe is hosted-Checkout via full-page redirect
-// (form-action), so no js.stripe.com script-src or frame-src is needed.
+// until nonces are wired. Stripe is hosted-Checkout via a full-page
+// `location.href` redirect — a top-level navigation CSP does not restrict —
+// so no js.stripe.com script-src or frame-src is needed; form-action lists
+// checkout.stripe.com only as defense-in-depth for future <form> posts.
 // Dev additions: 'unsafe-eval' (React refresh), ws:/localhost (HMR, emulators).
 // frame-ancestors is intentionally absent: it is spec-ignored in report-only
 // policies (WebKit logs a console error for it) — X-Frame-Options: DENY covers
