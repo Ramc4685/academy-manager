@@ -26,7 +26,7 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 
 | ID | Item | Plan | Size | Depends on | Status | PR/Issue |
 |---|---|---|---|---|---|---|
-| QW1 | Re-point pnpm security overrides | [plans/QW1-pnpm-overrides.md](plans/QW1-pnpm-overrides.md) | XS | — | TODO | |
+| QW1 | Re-point pnpm security overrides | [plans/QW1-pnpm-overrides.md](plans/QW1-pnpm-overrides.md) | XS | — | DONE | fix/audit-first-wave |
 | QW2 | (merged into C1) | — | — | C1 | — | |
 | QW3 | Scrub weak example credentials | [plans/QW3-env-example-creds.md](plans/QW3-env-example-creds.md) | XS | — | TODO | |
 | QW4 | Delete orphaned legacy bytecode dirs | [plans/QW4-orphaned-bytecode.md](plans/QW4-orphaned-bytecode.md) | XS | — | TODO | |
