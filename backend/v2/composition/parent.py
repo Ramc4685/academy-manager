@@ -401,11 +401,14 @@ def compose_parent(
 
     def request_academy_id() -> str:
         # Request-time tenant for use cases that stamp academy_id at execute
-        # time. Falls back to the boot academy so non-HTTP callers (outbox
-        # event handlers, schedulers) behave exactly as today.
+        # time. In multi-academy mode missing context is always a bug — fail
+        # closed. The boot fallback only exists so single-academy non-HTTP
+        # callers (outbox event handlers, schedulers) behave exactly as today.
         try:
             return current_academy_id()
         except TenantContextUnset:
+            if settings.tenancy_mode == "multi_academy":
+                raise
             return academy_id
 
     # Billing

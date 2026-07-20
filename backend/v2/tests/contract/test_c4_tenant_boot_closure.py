@@ -515,22 +515,52 @@ async def test_list_enrollments_returns_only_request_tenant_rows(db) -> None:
     assert [row["enrollment_id"] for row in rows] == ["enr-b"]
 
 
-# --- composition wiring: providers resolve request-time, fall back to boot ---
+# --- reads fail closed without tenant context --------------------------------
 
 
-def test_compose_parent_providers_resolve_request_tenant_and_fall_back(db) -> None:
+@pytest.mark.asyncio
+async def test_list_payments_without_context_raises(db) -> None:
     parent = _compose_parent(db)
-    provider = parent.start_application._academy_id
-    assert callable(provider)
-    with tenant_scope(REQUEST):
-        assert provider() == REQUEST
-    assert provider() == BOOT
-    assert parent.accept_parent_waiver._academy_id() == BOOT
+    with pytest.raises(TenantContextUnset):
+        await parent.list_payments_for_parent("par-1")
 
 
-def test_compose_coach_providers_resolve_request_tenant_and_fall_back(db) -> None:
-    from backend.v2.composition.coach import compose_coach
+# --- composition wiring: providers resolve request-time; fallback is mode-aware
+
+
+def test_compose_parent_providers_resolve_request_tenant(db) -> None:
+    parent = _compose_parent(db)
+    for provider in (
+        parent.start_application._academy_id,
+        parent.accept_parent_waiver._academy_id,
+    ):
+        assert callable(provider)
+        with tenant_scope(REQUEST):
+            assert provider() == REQUEST
+        # Default test settings run multi_academy: no context must fail closed.
+        with pytest.raises(TenantContextUnset):
+            provider()
+
+
+def test_compose_parent_provider_falls_back_to_boot_in_single_academy_mode(
+    db, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from backend.v2.shared.config import get_settings
+
+    monkeypatch.setenv("V2_TENANCY_MODE", "single_academy")
+    monkeypatch.setenv("V2_PRIMARY_ACADEMY_ID", BOOT)
+    get_settings.cache_clear()
+    try:
+        parent = _compose_parent(db)
+        assert parent.start_application._academy_id() == BOOT
+        with tenant_scope(REQUEST):
+            assert parent.start_application._academy_id() == REQUEST
+    finally:
+        get_settings.cache_clear()
+
+
+def test_compose_coach_providers_resolve_request_tenant(db) -> None:
+    from backend.v2.composition.coach import compose_coach
 
     coach = compose_coach(
         db,
@@ -546,4 +576,6 @@ def test_compose_coach_providers_resolve_request_tenant_and_fall_back(db) -> Non
         assert callable(provider)
         with tenant_scope(REQUEST):
             assert provider() == REQUEST
-        assert provider() == get_settings().default_academy_id
+        # Default test settings run multi_academy: no context must fail closed.
+        with pytest.raises(TenantContextUnset):
+            provider()

@@ -9,8 +9,9 @@ attendance/progress`, invoice detail, autopay/balance checkout ownership
 checks, billing portal) resolve the tenant per request via `current_academy_id()`;
 `MarkAttendance`, `BulkMarkAttendance`, `CoachAddStudentToRoster`,
 `ConfirmEnrollment`, `PromoteFromWaitlist`, `AcceptParentWaiver`, and
-`StartApplication` now take a request-time tenant provider with a boot-value
-fallback. Per-path tenant-isolation tests added (audit item C4).
+`StartApplication` now take a request-time tenant provider. The provider fails
+closed in multi-academy mode; the boot-value fallback applies only in
+single-academy mode. Per-path tenant-isolation tests added (audit item C4).
 
 ## Deploy notes
 none — no migrations, no env changes. Single-academy behavior is unchanged

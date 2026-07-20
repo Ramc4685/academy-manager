@@ -3323,12 +3323,15 @@ def compose_admin(
     academy_id = settings.primary_academy_id or settings.default_academy_id
 
     def request_academy_id() -> str:
-        # Request-time tenant for use cases converted in C4; falls back to the
-        # boot academy so non-HTTP callers behave exactly as today. The rest of
+        # Request-time tenant for use cases converted in C4. In multi-academy
+        # mode missing context is always a bug — fail closed; the boot fallback
+        # only exists for single-academy non-HTTP callers. The rest of
         # compose_admin's boot-time closures are tracked as C4 follow-up work.
         try:
             return current_academy_id()
         except TenantContextUnset:
+            if settings.tenancy_mode == "multi_academy":
+                raise
             return academy_id
 
     # Enrollment repos
