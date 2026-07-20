@@ -636,7 +636,10 @@ def create_app() -> FastAPI:
     # lifespan. We expose it via app.state and the middleware reads it
     # lazily on the first request.
     app.add_middleware(_LazyTenancyMiddleware)
-    app.add_middleware(InMemoryRateLimitMiddleware)
+    app.add_middleware(
+        InMemoryRateLimitMiddleware,
+        proxy_shared_secret=settings.proxy_shared_secret,
+    )
     _add_cors_middleware(app, settings)
 
     @app.get("/api/v2/healthz")

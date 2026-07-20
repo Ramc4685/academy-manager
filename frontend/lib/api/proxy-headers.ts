@@ -1,6 +1,7 @@
 const BFF_IDENTITY_HEADER = "x-courtmastr-identity";
 const BACKEND_AUTH_HEADER = "x-courtmastr-auth";
 const BFF_IDENTITY_COOKIE = "__cm_identity";
+const PROXY_AUTH_HEADER = "x-cm-proxy-auth";
 
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
@@ -38,6 +39,14 @@ export function buildProxyHeaders(requestHeaders: Headers, protocol: string): He
   headers.delete(BFF_IDENTITY_HEADER);
   stripCookie(headers, BFF_IDENTITY_COOKIE);
   headers.delete("host");
+
+  // Never forward a client-supplied proxy-auth header; only the server-held
+  // secret may vouch for CF-Connecting-IP to the backend rate limiter.
+  headers.delete(PROXY_AUTH_HEADER);
+  const proxySecret = process.env.BFF_PROXY_SHARED_SECRET;
+  if (proxySecret) {
+    headers.set(PROXY_AUTH_HEADER, proxySecret);
+  }
   return headers;
 }
 
