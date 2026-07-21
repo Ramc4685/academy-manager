@@ -72,6 +72,17 @@ class Settings(BaseSettings):
     otel_exporter_otlp_endpoint: str | None = Field(default=None)
     otel_sampling_ratio: float = Field(default=0.1, ge=0.0, le=1.0)
 
+    sentry_dsn: str | None = Field(
+        default=None,
+        description="Sentry DSN. Unset ⇒ error tracking disabled (dev/test/CI default).",
+    )
+    sentry_traces_sample_rate: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Sentry performance-tracing sample rate. Errors-first: 0.0 by default.",
+    )
+
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = Field(default="INFO")
     log_format: Literal["json", "console"] = Field(default="json")
 
@@ -185,6 +196,8 @@ class Settings(BaseSettings):
             self.firebase_project_id = os.environ.get(
                 "FIREBASE_PROJECT_ID", self.firebase_project_id
             )
+        if "V2_SENTRY_DSN" not in os.environ:
+            self.sentry_dsn = os.environ.get("SENTRY_DSN", self.sentry_dsn)
         if "V2_CORS_ORIGINS" not in os.environ:
             self.cors_origins = os.environ.get("CORS_ORIGINS", self.cors_origins)
         if "V2_FRONTEND_URL" not in os.environ:

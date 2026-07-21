@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from backend.v2.shared.config import get_settings
+from backend.v2.shared.observability.request_context import ContextLogFilter
 
 
 class _JsonFormatter(logging.Formatter):
@@ -23,7 +24,8 @@ class _JsonFormatter(logging.Formatter):
             "logger": record.name,
             "message": record.getMessage(),
         }
-        # OpenTelemetry attaches these as record attributes when a span is active.
+        # ContextLogFilter stamps request_id/academy_id; OpenTelemetry attaches
+        # trace_id/span_id when a span is active.
         for attr in ("trace_id", "span_id", "academy_id", "user_id", "request_id"):
             value = getattr(record, attr, None)
             if value is not None:
@@ -40,6 +42,7 @@ def configure_logging() -> None:
     # Reset handlers so reconfiguration is safe under reload.
     root.handlers.clear()
     handler = logging.StreamHandler(stream=sys.stdout)
+    handler.addFilter(ContextLogFilter())
     if settings.log_format == "json":
         handler.setFormatter(_JsonFormatter())
     else:
