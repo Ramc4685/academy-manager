@@ -114,7 +114,12 @@ from backend.v2.shared.config import Settings, get_settings
 from backend.v2.shared.events import EventDispatcher, MongoOutbox
 from backend.v2.shared.http import InMemoryRateLimitMiddleware, register_exception_handlers
 from backend.v2.shared.idempotency.mongo_store import MongoIdempotencyStore
-from backend.v2.shared.observability import configure_logging, configure_tracing
+from backend.v2.shared.observability import (
+    RequestContextMiddleware,
+    configure_error_tracking,
+    configure_logging,
+    configure_tracing,
+)
 from backend.v2.shared.tenancy.context import tenant_scope
 from backend.v2.shared.tenancy.resolver import (
     TenantResolutionError,
@@ -629,6 +634,7 @@ def create_app() -> FastAPI:
         version="2.0.0",
         lifespan=_lifespan,
     )
+    configure_error_tracking(settings)
     configure_tracing(app)
     register_exception_handlers(app)
 
@@ -641,6 +647,9 @@ def create_app() -> FastAPI:
         proxy_shared_secret=settings.proxy_shared_secret,
     )
     _add_cors_middleware(app, settings)
+    # Added last ⇒ runs first (outermost): the request id exists before
+    # tenancy/rate-limit run and is stamped on their 401/429 responses too.
+    app.add_middleware(RequestContextMiddleware)
 
     @app.get("/api/v2/healthz")
     async def healthz() -> dict[str, str]:

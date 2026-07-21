@@ -1,5 +1,5 @@
 # C2 — Error tracking + request correlation
-Status: TODO
+Status: DONE (PR #314, 2026-07-20)
 Size: M · Depends on: none · Tracker: ../TRACKER.md
 
 ## Problem
