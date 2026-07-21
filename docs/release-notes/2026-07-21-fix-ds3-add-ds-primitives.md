@@ -1,6 +1,6 @@
 # fix-ds3-add-ds-primitives
 
-PR: TBD
+PR: #323
 
 ## What changed
 New accessible design-system primitives in `frontend/components/ds/`, each
@@ -48,6 +48,6 @@ app router) are the primary risk area; revert the PR if a dialog misbehaves —
 no data or API surface touched.
 
 ## Verification
-`pnpm typecheck` and `pnpm lint` pass. `pnpm e2e` was not run in this session
-due to a full-disk condition in the dev environment; must be run green before
-merge (parent-self-service.spec covers the migrated cancel flow).
+Full pre-push suite green (mirrors CI): backend `ruff` + `pytest v2/tests`,
+frontend node unit tests + `pnpm typecheck` + `pnpm lint` + `pnpm e2e`
+(parent-self-service.spec covers the migrated cancel flow).
