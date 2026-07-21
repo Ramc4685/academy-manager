@@ -397,6 +397,38 @@ test.describe("Rally admin shell", () => {
     });
   }
 
+  test("/admin/coaches redirects into the Users directory on the coach tab", async ({
+    page,
+  }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    await page.goto("/admin/coaches");
+    await expect(page).toHaveURL(/\/admin\/users\?role=coach$/);
+    await expect(page.getByTestId("admin-users")).toBeVisible();
+    // The coach engagement strip only renders while the Coaches tab is active.
+    await expect(page.getByTestId("coach-engagement-stats")).toBeVisible();
+    expect(
+      errors,
+      `App console errors on /admin/coaches redirect: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  test("/admin/parents redirects into the Users directory on the parent tab", async ({
+    page,
+  }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    await page.goto("/admin/parents");
+    await expect(page).toHaveURL(/\/admin\/users\?role=parent$/);
+    await expect(page.getByTestId("admin-users")).toBeVisible();
+    // Parent tab must NOT show the coach-only engagement strip.
+    await expect(page.getByTestId("coach-engagement-stats")).toHaveCount(0);
+    expect(
+      errors,
+      `App console errors on /admin/parents redirect: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
   test("pause requests identify parent, student, and session", async ({ page }) => {
     const errors = collectConsoleErrors(page);
     await stubAdminBff(page);

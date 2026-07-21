@@ -1,5 +1,5 @@
-import { AdminUsersDirectory } from "@/components/admin/AdminUsersDirectory";
+import { redirect } from "next/navigation";
 
 export default function AdminParentsPage() {
-  return <AdminUsersDirectory fixedRole="parent" />;
+  redirect("/admin/users?role=parent");
 }
