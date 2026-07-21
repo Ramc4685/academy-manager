@@ -409,7 +409,10 @@ test.describe("parent self-service — self-cancel enrollment", () => {
     await dialog.getByPlaceholder("Why are you cancelling?").fill("Schedule conflict");
     await dialog.getByRole("button", { name: "Confirm cancellation" }).click();
 
-    await expect(dialog.getByRole("status")).toContainText("Enrollment cancelled");
-    await expect(dialog.getByRole("status")).toContainText("$25.00");
+    // Success is surfaced as a toast; the dialog closes.
+    const toast = page.getByRole("status").filter({ hasText: "Enrollment cancelled" });
+    await expect(toast).toBeVisible();
+    await expect(toast).toContainText("$25.00");
+    await expect(dialog).not.toBeVisible();
   });
 });

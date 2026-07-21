@@ -1,5 +1,5 @@
 # DS3 — Add missing DS primitives (FormField, Skeleton, EmptyState, Modal, Toast)
-Status: TODO
+Status: IN PROGRESS — code complete on `fix/DS3-primitives`; typecheck + lint green; `pnpm e2e` pending (dev-env disk-full). Flip to DONE (PR #NNN, date) once e2e passes and the PR merges.
 Size: M · Depends on: DS2 · Tracker: ../TRACKER.md
 
 Third step of DS1→DS4. Requires DS2 merged (primitives must be built on token classes, not hex). DS4 (parent-surface migration) consumes every primitive added here and must not start first.

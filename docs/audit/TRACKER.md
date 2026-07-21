@@ -84,7 +84,7 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 |---|---|---|---|---|---|---|
 | DS1 | Single-source color tokens + contrast fixes | [plans/DS1-tokens.md](plans/DS1-tokens.md) | S | — | DONE | #313 |
 | DS2 | De-hex design-system components | [plans/DS2-dehex-ds.md](plans/DS2-dehex-ds.md) | S | DS1 | DONE | #316 |
-| DS3 | Add missing DS primitives (FormField, Skeleton, EmptyState, Modal, Toast) | [plans/DS3-primitives.md](plans/DS3-primitives.md) | M | DS2 | TODO | |
+| DS3 | Add missing DS primitives (FormField, Skeleton, EmptyState, Modal, Toast) | [plans/DS3-primitives.md](plans/DS3-primitives.md) | M | DS2 | IN PROGRESS (e2e pending) | branch `fix/DS3-primitives` |
 | DS4 | Migrate parent surface onto DS | [plans/DS4-parent-migration.md](plans/DS4-parent-migration.md) | L | DS1-3 | TODO | |
 | DS5 | Desktop Chromium Playwright project | [plans/DS5-desktop-e2e.md](plans/DS5-desktop-e2e.md) | S | — | TODO | |
 | DS6 | Polish: server-side gating, nav restructure, dead offline code, manifest colors | [plans/DS6-polish.md](plans/DS6-polish.md) | M | UIC merges help | TODO | |
