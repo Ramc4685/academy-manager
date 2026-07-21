@@ -97,9 +97,9 @@ GLOBAL_COLLECTIONS = {
     "academy_domains",
 }
 
-assert not (TENANT_OWNED_COLLECTIONS & GLOBAL_COLLECTIONS), (
-    "A collection cannot be both tenant-owned and global"
-)
+assert not (
+    TENANT_OWNED_COLLECTIONS & GLOBAL_COLLECTIONS
+), "A collection cannot be both tenant-owned and global"
 
 MONGO_METHODS = {
     "aggregate",
@@ -162,8 +162,7 @@ def test_no_unapproved_raw_mongo_access_to_tenant_owned_collections() -> None:
         "Raw Mongo access to tenant-owned collections must be tenant-scoped "
         "(academy_id filter / _scoped() helper) or go through "
         "TenantScopedRepository. Fix the call site or add a documented entry — "
-        "do not re-add a directory blanket.\n"
-        + "\n".join(access.format() for access in violations)
+        "do not re-add a directory blanket.\n" + "\n".join(access.format() for access in violations)
     )
 
 
@@ -178,9 +177,7 @@ def test_composition_exceptions_are_explicit_and_documented() -> None:
 def test_infrastructure_and_transitional_composition_are_no_longer_blanket_exempt() -> None:
     # Guard the ratchet itself: the risky directories the audit flagged must be
     # scanned, and the C4-hardened composition paths must no longer be exempt.
-    assert not _is_approved_path(
-        Path("contexts/enrollment/infrastructure/mongo_student_repo.py")
-    )
+    assert not _is_approved_path(Path("contexts/enrollment/infrastructure/mongo_student_repo.py"))
     assert not _is_approved_path(Path("composition/parent.py"))
     assert not _is_approved_path(Path("composition/coach.py"))
     assert Path("composition/parent.py") not in APPROVED_COMPOSITION_EXCEPTIONS
