@@ -57,6 +57,17 @@ const config: Config = {
             700: "#a16207",
           },
         },
+        // Status hues for DS chips/buttons, frozen at the Tailwind v3 hex the
+        // app shipped with — the v4 default palette moved to OKLCH and no
+        // longer matches, so `bg-emerald-50` etc. would drift these surfaces.
+        status: {
+          green: { 50: "#ecfdf5", 500: "#10b981", 800: "#065f46" },
+          amber: { 50: "#fffbeb", 500: "#f59e0b", 800: "#92400e" },
+          red: { 50: "#fef2f2", 200: "#fecaca", 500: "#ef4444", 600: "#dc2626", 800: "#991b1b" },
+          yellow: { 50: "#fefce8", 800: "#854d0e" },
+          blue: { 400: "#60a5fa", 800: "#1e40af" },
+          slate: { 100: "#f1f5f9", 600: "#475569", 700: "#334155" },
+        },
       },
       letterSpacing: {
         chip: "0.08em",
