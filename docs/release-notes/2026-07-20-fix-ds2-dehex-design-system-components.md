@@ -1,6 +1,6 @@
 # fix-ds2-dehex-design-system-components
 
-PR: #NNN
+PR: #316
 
 ## What changed
 Design-system `Button`, `Chip`, and `Card` now use theme token classes

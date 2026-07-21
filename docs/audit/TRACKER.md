@@ -7,7 +7,7 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 
 1. Pick an item (respect the **Depends on** column). Read its plan file.
 2. Create a branch/PR (or GitHub issue) named after the item ID, e.g. `fix/C1-mypy-gate`.
-3. When the PR merges: update the **Status** and **PR/Issue** columns here, and flip the `Status:` line at the top of the plan file to `DONE (PR #NNN, YYYY-MM-DD)`.
+3. When the PR merges: update the **Status** and **PR/Issue** columns here, and flip the `Status:` line at the top of the plan file to `DONE (PR #316, YYYY-MM-DD)`.
 4. If an item is rejected/obsoleted, mark it `WONT-FIX` with a one-line reason here — don't delete the plan.
 5. Statuses: `TODO` · `IN PROGRESS` · `DONE` · `WONT-FIX` · `BLOCKED (by <id>)`.
 
@@ -83,7 +83,7 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 | ID | Item | Plan | Size | Depends on | Status | PR/Issue |
 |---|---|---|---|---|---|---|
 | DS1 | Single-source color tokens + contrast fixes | [plans/DS1-tokens.md](plans/DS1-tokens.md) | S | — | DONE | #313 |
-| DS2 | De-hex design-system components | [plans/DS2-dehex-ds.md](plans/DS2-dehex-ds.md) | S | DS1 | DONE | #NNN |
+| DS2 | De-hex design-system components | [plans/DS2-dehex-ds.md](plans/DS2-dehex-ds.md) | S | DS1 | DONE | #316 |
 | DS3 | Add missing DS primitives (FormField, Skeleton, EmptyState, Modal, Toast) | [plans/DS3-primitives.md](plans/DS3-primitives.md) | M | DS2 | TODO | |
 | DS4 | Migrate parent surface onto DS | [plans/DS4-parent-migration.md](plans/DS4-parent-migration.md) | L | DS1-3 | TODO | |
 | DS5 | Desktop Chromium Playwright project | [plans/DS5-desktop-e2e.md](plans/DS5-desktop-e2e.md) | S | — | TODO | |
