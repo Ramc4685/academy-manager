@@ -1,5 +1,5 @@
 # UIC2 — Pause requests → 5th tab of /admin/requests
-Status: TODO
+Status: DONE (PR #TBD, 2026-07-21)
 Size: S · Depends on: none · Tracker: ../TRACKER.md
 
 ## Problem

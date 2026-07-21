@@ -1,5 +1,5 @@
 # UIC7 — Self-service policy → panel of /admin/settings
-Status: TODO
+Status: DONE (2026-07-21)
 Size: XS · Depends on: none · Tracker: ../TRACKER.md
 
 ## Problem

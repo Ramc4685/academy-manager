@@ -35,7 +35,7 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 | QW7 | Widen CI coverage gate to v2 | [plans/QW7-coverage-gate.md](plans/QW7-coverage-gate.md) | XS | — | DONE | #310 |
 | QW8 | Dedupe mapRoleToStatus | [plans/QW8-dedupe-maprole.md](plans/QW8-dedupe-maprole.md) | XS | — | DONE | #310 |
 | QW9 | Move tracked repo-root clutter | [plans/QW9-root-clutter.md](plans/QW9-root-clutter.md) | XS | — | DONE | #310 |
-| QW10 | Lease-lock scheduler jobs | [plans/QW10-scheduler-lease.md](plans/QW10-scheduler-lease.md) | S | — | TODO | |
+| QW10 | Lease-lock scheduler jobs | [plans/QW10-scheduler-lease.md](plans/QW10-scheduler-lease.md) | S | — | DONE | |
 
 ## Medium-term
 
@@ -44,7 +44,7 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 | MT1 | Drain the composition root (billing math → application layer) | [plans/MT1-drain-composition-root.md](plans/MT1-drain-composition-root.md) | L | — | TODO | |
 | MT2 | Split runtime vs dev requirements | [plans/MT2-split-requirements.md](plans/MT2-split-requirements.md) | S | — | TODO | |
 | MT3 | Real-auth e2e job in CI | [plans/MT3-real-auth-e2e.md](plans/MT3-real-auth-e2e.md) | M | — | TODO | |
-| MT4 | Structural tenancy test | [plans/MT4-structural-tenancy-test.md](plans/MT4-structural-tenancy-test.md) | S | C4 (ideally after) | TODO | |
+| MT4 | Structural tenancy test | [plans/MT4-structural-tenancy-test.md](plans/MT4-structural-tenancy-test.md) | S | C4 (ideally after) | DONE | [#321](https://github.com/Ramc4685/academy-manager/pull/321) |
 | MT5 | Split frontend monolith pages | [plans/MT5-split-monolith-pages.md](plans/MT5-split-monolith-pages.md) | L | DS3 (dialog primitives help) | TODO | |
 
 ## UI — Combine screens
@@ -52,12 +52,12 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 | ID | Item | Plan | Size | Depends on | Status | PR/Issue |
 |---|---|---|---|---|---|---|
 | UIC1 | Users directory: coaches+parents+users → role tabs | [plans/UIC1-users-directory.md](plans/UIC1-users-directory.md) | S | — | TODO | |
-| UIC2 | Pause requests → 5th tab of Requests | [plans/UIC2-pause-into-requests.md](plans/UIC2-pause-into-requests.md) | S | — | TODO | |
+| UIC2 | Pause requests → 5th tab of Requests | [plans/UIC2-pause-into-requests.md](plans/UIC2-pause-into-requests.md) | S | — | DONE | #TBD |
 | UIC3 | Session economics + Dues → Reports tabs | [plans/UIC3-reports-consolidation.md](plans/UIC3-reports-consolidation.md) | M | — | TODO | |
 | UIC4 | Coach payslip → Payouts tab | [plans/UIC4-payslip-into-payouts.md](plans/UIC4-payslip-into-payouts.md) | S | — | TODO | |
 | UIC5 | Progress → tab of student/session detail | [plans/UIC5-progress-tabs.md](plans/UIC5-progress-tabs.md) | S | — | TODO | |
 | UIC6 | Registrations + Waitlist + Level-up queue → Admissions | [plans/UIC6-admissions-queues.md](plans/UIC6-admissions-queues.md) | M | — | TODO | |
-| UIC7 | Self-service policy → Settings section | [plans/UIC7-settings-selfservice.md](plans/UIC7-settings-selfservice.md) | XS | — | TODO | |
+| UIC7 | Self-service policy → Settings section | [plans/UIC7-settings-selfservice.md](plans/UIC7-settings-selfservice.md) | XS | — | DONE | Moved into `/admin/settings?panel=self-service`; old URL redirects |
 | UIC8 | Delete shared Calendar/Messages stubs | [plans/UIC8-delete-shared-stubs.md](plans/UIC8-delete-shared-stubs.md) | XS | UIM13 decision | TODO | |
 
 ## UI — Missing features

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -28,15 +29,21 @@ import { Modal } from "@/components/ds/modal";
 import { TableSkeleton } from "@/components/ds/skeleton";
 import { EmptyState } from "@/components/ds/empty-state";
 import { FormField, fieldDescribedBy } from "@/components/ds/form-field";
+import { PausesTab } from "@/components/admin/requests/PausesTab";
 
-type RequestTab = "makeups" | "trials" | "absences" | "cancellations";
+type RequestTab = "makeups" | "trials" | "absences" | "cancellations" | "pauses";
 
 const TABS: { id: RequestTab; label: string }[] = [
   { id: "makeups", label: "Makeups" },
   { id: "trials", label: "Trials" },
   { id: "absences", label: "Absences" },
   { id: "cancellations", label: "Cancellations" },
+  { id: "pauses", label: "Pauses" },
 ];
+
+function coerceTab(value: string | null): RequestTab {
+  return value && TABS.some((t) => t.id === value) ? (value as RequestTab) : "makeups";
+}
 
 type StatusFilter = "all" | "pending" | "approved" | "denied" | "expired" | "converted";
 
@@ -59,14 +66,15 @@ function statusChipVariant(status: string): ChipVariant {
 }
 
 export default function AdminRequestsPage() {
-  const [tab, setTab] = useState<RequestTab>("makeups");
+  const searchParams = useSearchParams();
+  const [tab, setTab] = useState<RequestTab>(() => coerceTab(searchParams.get("tab")));
 
   return (
     <section data-testid="admin-requests" className="space-y-6">
       <div>
         <h1 className="font-display text-2xl font-bold tracking-tight text-rally-ink">Requests</h1>
         <p className="mt-0.5 text-sm text-rally-subtle">
-          Makeup, trial, absence, and cancellation requests from parents
+          Makeup, trial, absence, cancellation, and pause requests from parents
         </p>
       </div>
 
@@ -94,6 +102,7 @@ export default function AdminRequestsPage() {
       {tab === "trials" && <TrialsTab />}
       {tab === "absences" && <AbsencesTab />}
       {tab === "cancellations" && <CancellationsTab />}
+      {tab === "pauses" && <PausesTab />}
     </section>
   );
 }
