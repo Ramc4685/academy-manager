@@ -44,6 +44,6 @@ The design system itself hardcodes hex:
 - Rollback: single revert; components keep identical props (minus unused `dark` on Button).
 
 ## PR checklist
-- [ ] Release note: "Design-system Button/Chip/Card now use theme tokens (no visual change intended)."
-- [ ] Update `docs/audit/TRACKER.md` DS2 row
-- [ ] Flip this plan's Status → DONE (PR #316, date)
+- [x] Release note: "Design-system Button/Chip/Card now use theme tokens (no visual change intended)."
+- [x] Update `docs/audit/TRACKER.md` DS2 row
+- [x] Flip this plan's Status → DONE (PR #316, 2026-07-20)

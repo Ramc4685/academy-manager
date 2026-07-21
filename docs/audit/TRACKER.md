@@ -7,7 +7,7 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 
 1. Pick an item (respect the **Depends on** column). Read its plan file.
 2. Create a branch/PR (or GitHub issue) named after the item ID, e.g. `fix/C1-mypy-gate`.
-3. When the PR merges: update the **Status** and **PR/Issue** columns here, and flip the `Status:` line at the top of the plan file to `DONE (PR #316, YYYY-MM-DD)`.
+3. When the PR merges: update the **Status** and **PR/Issue** columns here, and flip the `Status:` line at the top of the plan file to `DONE (PR #NNN, YYYY-MM-DD)`.
 4. If an item is rejected/obsoleted, mark it `WONT-FIX` with a one-line reason here — don't delete the plan.
 5. Statuses: `TODO` · `IN PROGRESS` · `DONE` · `WONT-FIX` · `BLOCKED (by <id>)`.
 
