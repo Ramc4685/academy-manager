@@ -35,7 +35,7 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 | QW7 | Widen CI coverage gate to v2 | [plans/QW7-coverage-gate.md](plans/QW7-coverage-gate.md) | XS | — | DONE | #310 |
 | QW8 | Dedupe mapRoleToStatus | [plans/QW8-dedupe-maprole.md](plans/QW8-dedupe-maprole.md) | XS | — | DONE | #310 |
 | QW9 | Move tracked repo-root clutter | [plans/QW9-root-clutter.md](plans/QW9-root-clutter.md) | XS | — | DONE | #310 |
-| QW10 | Lease-lock scheduler jobs | [plans/QW10-scheduler-lease.md](plans/QW10-scheduler-lease.md) | S | — | TODO | |
+| QW10 | Lease-lock scheduler jobs | [plans/QW10-scheduler-lease.md](plans/QW10-scheduler-lease.md) | S | — | DONE | |
 
 ## Medium-term
 

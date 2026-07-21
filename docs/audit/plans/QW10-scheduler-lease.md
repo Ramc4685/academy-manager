@@ -1,5 +1,5 @@
 # QW10 — Lease-lock scheduler jobs
-Status: TODO
+Status: DONE
 Size: S · Depends on: none · Tracker: ../TRACKER.md
 
 ## Problem

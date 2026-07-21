@@ -12,9 +12,11 @@ Run standalone::
 from __future__ import annotations
 
 import logging
+import os
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
@@ -120,6 +122,7 @@ from backend.v2.shared.observability import (
     configure_logging,
     configure_tracing,
 )
+from backend.v2.shared.scheduling import job_lease
 from backend.v2.shared.tenancy.context import tenant_scope
 from backend.v2.shared.tenancy.resolver import (
     TenantResolutionError,
@@ -268,7 +271,19 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     scheduler: AsyncIOScheduler | None = None
 
+    # Distributed job lease: identifies this machine so exactly one machine runs
+    # each scheduled job per tick (max_instances=1 only guards within a process).
+    scheduler_worker_id = os.environ.get("FLY_MACHINE_ID") or f"scheduler:{uuid.uuid4()}"
+
     async def _process_scheduled_resumes() -> None:
+        async with job_lease(
+            db, "process_scheduled_resume_actions", timedelta(minutes=5), scheduler_worker_id
+        ) as acquired:
+            if not acquired:
+                return
+            await _process_scheduled_resumes_body()
+
+    async def _process_scheduled_resumes_body() -> None:
         totals = {
             "processed": 0,
             "succeeded": 0,
@@ -291,6 +306,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             log.info("scheduled_resume_actions_processed", extra=totals)
 
     async def _expire_makeup_requests() -> None:
+        async with job_lease(
+            db, "expire_makeup_requests", timedelta(minutes=5), scheduler_worker_id
+        ) as acquired:
+            if not acquired:
+                return
+            await _expire_makeup_requests_body()
+
+    async def _expire_makeup_requests_body() -> None:
         totals = {"academy_count": 0, "expired": 0}
         for academy_id in await _scheduler_academy_ids(
             MongoAcademyRepository(db),
@@ -307,6 +330,16 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             log.info("makeup_requests_expired", extra=totals)
 
     async def _process_stripe_webhook_events() -> None:
+        # 60s interval: keep TTL just under the interval so a clean run's early
+        # release lets the next tick reclaim, and a crash frees the lease fast.
+        async with job_lease(
+            db, "process_stripe_webhook_events", timedelta(seconds=55), scheduler_worker_id
+        ) as acquired:
+            if not acquired:
+                return
+            await _process_stripe_webhook_events_body()
+
+    async def _process_stripe_webhook_events_body() -> None:
         totals = {"processed": 0, "failed": 0}
         for academy_id in await _scheduler_academy_ids(
             MongoAcademyRepository(db),
@@ -335,6 +368,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             log.info("stripe_webhook_events_processed", extra=totals)
 
     async def _reconcile_stripe_payment_intents() -> None:
+        async with job_lease(
+            db, "reconcile_stripe_payment_intents", timedelta(minutes=5), scheduler_worker_id
+        ) as acquired:
+            if not acquired:
+                return
+            await _reconcile_stripe_payment_intents_body()
+
+    async def _reconcile_stripe_payment_intents_body() -> None:
         totals = {
             "academy_count": 0,
             "scanned": 0,
@@ -365,6 +406,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             log.info("stripe_payment_intent_reconciliation_processed", extra=totals)
 
     async def _process_dunning_retries() -> None:
+        async with job_lease(
+            db, "process_dunning_retries", timedelta(minutes=10), scheduler_worker_id
+        ) as acquired:
+            if not acquired:
+                return
+            await _process_dunning_retries_body()
+
+    async def _process_dunning_retries_body() -> None:
         totals = {
             "academy_count": 0,
             "prepared": 0,
@@ -411,6 +460,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             log.info("dunning_retries_processed", extra=totals)
 
     async def _send_coach_daily_digests() -> None:
+        async with job_lease(
+            db, "send_coach_daily_digests", timedelta(minutes=10), scheduler_worker_id
+        ) as acquired:
+            if not acquired:
+                return
+            await _send_coach_daily_digests_body()
+
+    async def _send_coach_daily_digests_body() -> None:
         # Hourly tick. The job runs every hour and only sends for academies whose
         # *effective* digest hour matches the current scheduler-TZ hour. The env
         # vars (settings.coach_digest_enabled/hour) are now deprecated defaults:
@@ -468,6 +525,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             log.info("coach_daily_digests_processed", extra=totals)
 
     async def _send_parent_daily_digests() -> None:
+        async with job_lease(
+            db, "send_parent_daily_digests", timedelta(minutes=10), scheduler_worker_id
+        ) as acquired:
+            if not acquired:
+                return
+            await _send_parent_daily_digests_body()
+
+    async def _send_parent_daily_digests_body() -> None:
         # Hourly tick, mirroring _send_coach_daily_digests: only sends for
         # academies whose *effective* parent-digest hour matches the current
         # scheduler-TZ hour. The env vars (settings.parent_digest_enabled/hour)
