@@ -833,7 +833,10 @@ async def test_billing_portal_does_not_fall_back_to_global_email_customer_lookup
             academy_id="acad",
         )
 
-        with pytest.raises(CheckoutCreationFailed, match="missing stored stripe customer"):
+        with (
+            tenant_scope("acad"),
+            pytest.raises(CheckoutCreationFailed, match="missing stored stripe customer"),
+        ):
             await parent.open_billing_portal(
                 parent_id="parent-1",
                 return_url="https://app.example.com/parent/payments",

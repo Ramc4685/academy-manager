@@ -132,7 +132,7 @@ def _build(**overrides) -> MarkAttendance:
         enrollment_lookup=enrollments,
         outbox=outbox,
         idempotency_store=idem,
-        academy_id="test-academy",
+        academy_id=lambda: "test-academy",
         clock=lambda: FIXED_NOW,
     )
 

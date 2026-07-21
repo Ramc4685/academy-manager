@@ -239,7 +239,12 @@ def compose_coach(
         try:
             return current_academy_id()
         except TenantContextUnset:
-            return settings.default_academy_id
+            # Fail closed in multi-academy mode: reaching here without tenant
+            # context is always a bug there. The boot fallback only exists so
+            # single-academy non-HTTP callers behave exactly as today.
+            if settings.tenancy_mode == "multi_academy":
+                raise
+            return settings.primary_academy_id or settings.default_academy_id
 
     async def get_dashboard_metrics(coach_id: str) -> dict[str, int | float]:
         academy_id = request_academy_id()
@@ -345,7 +350,7 @@ def compose_coach(
             enrollment_lookup=EnrollmentLookupAdapter(enrollments_repo),
             outbox=outbox,
             idempotency_store=idempotency_store,
-            academy_id=settings.default_academy_id,
+            academy_id=request_academy_id,
         ),
         bulk_mark_attendance=BulkMarkAttendance(
             attendance_repo=attendance_repo,
@@ -353,7 +358,7 @@ def compose_coach(
             enrollment_lookup=EnrollmentLookupAdapter(enrollments_repo),
             outbox=outbox,
             idempotency_store=idempotency_store,
-            academy_id=settings.default_academy_id,
+            academy_id=request_academy_id,
         ),
         list_attendance_for_occurrence=attendance_repo.list_for_occurrence,
         get_dashboard_metrics=get_dashboard_metrics,
@@ -366,15 +371,12 @@ def compose_coach(
         ),
         list_progress_notes=ListProgressNotes(notes=notes_repo, sessions=assigned_sessions),
         assigned_sessions=assigned_sessions,
-        # TODO: academy_id is baked in at startup from default_academy_id.
-        # This must be replaced with per-request tenant resolution before multi-tenant rollout.
-        # See SaaS migration work: interfaces should derive academy_id from the authenticated user's membership.
         add_student_to_roster=CoachAddStudentToRoster(
             sessions=sessions_repo,
             enrollments=enrollments_repo,
             students=students_repo,
             assigned_sessions=assigned_sessions,
-            academy_id=settings.default_academy_id,
+            academy_id=request_academy_id,
         ),
         remove_student_from_roster=CoachRemoveStudentFromRoster(
             enrollments=enrollments_repo,

@@ -8,11 +8,9 @@ Severity legend: **P0** = money/tenant-isolation/security risk, fix before scali
 
 ## P0 — Security / money / tenant isolation
 
-### 1. Coach write paths bake `default_academy_id` in at boot
-- **What:** `MarkAttendance`, `BulkMarkAttendance`, and `CoachAddStudentToRoster` are composed with `academy_id` captured in a boot-time closure from `settings.default_academy_id` (explicit TODO in code). Reads on the coach surface already use the request ContextVar; these writes don't.
-- **Where:** `backend/v2/composition/coach.py` (~lines 222, 242, 350–379; TODO at :371). Same pattern residue in `backend/v2/composition/admin.py` (~:2560, :2941).
-- **Why it matters:** In any multi-academy process, coach attendance/roster writes would land in the wrong tenant. This exact bug class already happened once (self-cancel fee line, fixed in PR #289). It is the single biggest blocker to flipping `APP_TENANCY_MODE=multi_academy`.
-- **Fix (single task):** Replace the closure-captured `academy_id` in those three use cases with request-time `current_academy_id()` (mirror the fix in `composition/parent.py:645`), then delete the TODO and add a tenant-isolation test per write path.
+### 1. Coach write paths bake `default_academy_id` in at boot — FIXED for coach/parent (audit C4)
+- **Status:** Resolved for the coach and parent compositions by audit item C4: `MarkAttendance`, `BulkMarkAttendance`, `CoachAddStudentToRoster`, `ConfirmEnrollment`, `PromoteFromWaitlist`, `AcceptParentWaiver`, and `StartApplication` now take a `Callable[[], str]` tenant provider (request ContextVar first, boot value fallback), and the parent inline reads resolve `current_academy_id()` per request. Tenant-isolation tests: `backend/v2/tests/contract/test_c4_tenant_boot_closure.py`.
+- **Residue:** `backend/v2/composition/admin.py` still captures the boot academy in closures/use-case args (beyond the `PromoteFromWaitlist` call site converted in C4), and `MongoUserRepository(default_academy_id=...)` keeps its default-tenant convention. Structural enforcement is tracker item MT4.
 
 ### 2. Parent read models bypass `TenantScopedRepository` with hand-rolled filters
 - **What:** Large inline functions in the parent composition (`list_payments_for_parent`, `list_children_for_parent`, `list_enrollments_for_parent`, `list_attendance_for_parent`, `list_progress_for_parent`, `get_academy_info`, …) query `db["students"]`, `db["enrollments"]`, `db["ledger_payments"]`, etc. directly with manually copied `{"academy_id": ...}` filters.

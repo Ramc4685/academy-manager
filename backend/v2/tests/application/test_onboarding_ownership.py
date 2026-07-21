@@ -281,7 +281,7 @@ async def test_start_application_prefills_parent_profile_from_prior_application(
         }
     )
     repo = FakeAppRepo(prior)
-    uc = StartApplication(apps=repo, academy_id="acad")
+    uc = StartApplication(apps=repo, academy_id=lambda: "acad")
 
     fresh = await uc.execute(
         StartApplicationCommand(parent_user_id="alice", parent_email="alice@example.com")

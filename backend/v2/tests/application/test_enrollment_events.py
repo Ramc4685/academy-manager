@@ -285,7 +285,7 @@ async def test_waitlist_and_promotion_record_lifecycle_events() -> None:
         enrollments=FakeEnrollments(rows={}),
         outbox=FakeOutbox(),
         enrollment_events=events,
-        academy_id="acad",
+        academy_id=lambda: "acad",
         clock=_clock,
     )
     promoted_id = await promote.execute("sess-1", actor_id="admin-1")

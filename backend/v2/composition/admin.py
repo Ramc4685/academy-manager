@@ -459,7 +459,7 @@ from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore
 from backend.v2.shared.ids import new_ulid
-from backend.v2.shared.tenancy import tenant_scope
+from backend.v2.shared.tenancy import TenantContextUnset, current_academy_id, tenant_scope
 
 
 class _LoginInviteEmailAdapter:
@@ -3322,6 +3322,18 @@ def compose_admin(
     settings = get_settings()
     academy_id = settings.primary_academy_id or settings.default_academy_id
 
+    def request_academy_id() -> str:
+        # Request-time tenant for use cases converted in C4. In multi-academy
+        # mode missing context is always a bug — fail closed; the boot fallback
+        # only exists for single-academy non-HTTP callers. The rest of
+        # compose_admin's boot-time closures are tracked as C4 follow-up work.
+        try:
+            return current_academy_id()
+        except TenantContextUnset:
+            if settings.tenancy_mode == "multi_academy":
+                raise
+            return academy_id
+
     # Enrollment repos
     users_r = MongoUserRepository(db, default_academy_id=academy_id)
     sessions_w = MongoSessionWriter(db)
@@ -3438,7 +3450,7 @@ def compose_admin(
         enrollments=enrollments_w,
         outbox=outbox,
         enrollment_events=enrollment_events,
-        academy_id=academy_id,
+        academy_id=request_academy_id,
     )
     skip = SkipFromWaitlist(waitlist=waitlist)
     remove = RemoveFromWaitlist(waitlist=waitlist)

@@ -98,14 +98,14 @@ async def _wire(
         students=students_w,
         outbox=outbox,
         idempotency_store=idem,
-        academy_id="acad",
+        academy_id=lambda: "acad",
     )
     promote = PromoteFromWaitlist(
         waitlist=waitlist,
         sessions=sessions_w,
         enrollments=enrollments_w,
         outbox=outbox,
-        academy_id="acad",
+        academy_id=lambda: "acad",
     )
     issue_refund = IssueRefund(
         payment_repo=payments_repo,
