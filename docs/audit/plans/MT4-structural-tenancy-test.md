@@ -1,6 +1,6 @@
 # MT4 — Extend the structural tenancy test to composition and infrastructure
 
-Status: TODO
+Status: DONE (PR #321, 2026-07-21)
 Size: S · Depends on: C4 (do after — the tightened test should pass when added, not carry new exemptions) · Tracker: ../TRACKER.md
 
 ## Problem
