@@ -720,10 +720,10 @@
         "submitting",
         "validation error",
         "create failed (email exists)",
-        "created → redirect to user detail"
+        "created \u2192 redirect to user detail"
       ],
       "risk_edges": [
-        "duplicate email → creation fails, surfaced inline",
+        "duplicate email \u2192 creation fails, surfaced inline",
         "parent auto-invite send failure is best-effort (user created, invite re-sendable)"
       ],
       "acceptance": [
@@ -2695,6 +2695,36 @@
         "Workflow evidence: \"Open role-scoped messages handoff\" completes for the authenticated route /messages with real-user evidence and no framework or runtime errors.",
         "Risk evidence: \"Non-admin gets admin message destination\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"Loading state persists after auth resolves\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/api/csp-report",
+      "role": "public",
+      "source": "frontend/app/api/csp-report/route.ts",
+      "workflows": [
+        "Collect CSP violation reports"
+      ],
+      "controls": {
+        "buttons": [],
+        "inputs": [
+          "CSP violation report body"
+        ],
+        "modals": []
+      },
+      "states": [
+        "report logged",
+        "empty body ignored",
+        "malformed body ignored"
+      ],
+      "risk_edges": [
+        "Oversized report body",
+        "Log noise from malicious reports"
+      ],
+      "acceptance": [
+        "Browser-sent CSP violation reports return 204 and are logged truncated server-side",
+        "Workflow evidence: \"Collect CSP violation reports\" completes for the public route /api/csp-report with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Oversized report body\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Log noise from malicious reports\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     },
     {

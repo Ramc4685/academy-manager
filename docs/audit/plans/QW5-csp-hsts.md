@@ -1,5 +1,5 @@
 # QW5 — Add CSP + HSTS headers
-Status: TODO
+Status: DONE (PR #315 — report-only rollout; enforcement flip is a follow-up)
 Size: S · Depends on: none · Tracker: ../TRACKER.md
 
 ## Problem
@@ -29,6 +29,6 @@ Size: S · Depends on: none · Tracker: ../TRACKER.md
 - An over-tight CSP can break auth popups or the SW — Report-Only rollout (step 1/4) makes it observational until proven. Rollback = revert `next.config.ts` (config-only change, instant redeploy).
 
 ## PR checklist
-- [ ] Release note if backend/ or frontend/ changed (per AGENTS.md)
-- [ ] TRACKER.md updated
-- [ ] Plan Status flipped to DONE
+- [x] Release note if backend/ or frontend/ changed (per AGENTS.md)
+- [x] TRACKER.md updated
+- [x] Plan Status flipped to DONE
