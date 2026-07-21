@@ -44,7 +44,7 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 | MT1 | Drain the composition root (billing math → application layer) | [plans/MT1-drain-composition-root.md](plans/MT1-drain-composition-root.md) | L | — | TODO | |
 | MT2 | Split runtime vs dev requirements | [plans/MT2-split-requirements.md](plans/MT2-split-requirements.md) | S | — | TODO | |
 | MT3 | Real-auth e2e job in CI | [plans/MT3-real-auth-e2e.md](plans/MT3-real-auth-e2e.md) | M | — | TODO | |
-| MT4 | Structural tenancy test | [plans/MT4-structural-tenancy-test.md](plans/MT4-structural-tenancy-test.md) | S | C4 (ideally after) | TODO | |
+| MT4 | Structural tenancy test | [plans/MT4-structural-tenancy-test.md](plans/MT4-structural-tenancy-test.md) | S | C4 (ideally after) | DONE | PR pending |
 | MT5 | Split frontend monolith pages | [plans/MT5-split-monolith-pages.md](plans/MT5-split-monolith-pages.md) | L | DS3 (dialog primitives help) | TODO | |
 
 ## UI — Combine screens
