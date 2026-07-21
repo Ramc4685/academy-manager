@@ -10,7 +10,8 @@ export type SettingsPanelKey =
   | "notify"
   | "roles"
   | "branding"
-  | "data";
+  | "data"
+  | "self-service";
 
 export const SETTINGS_TABS: Array<{ key: SettingsPanelKey; label: string }> = [
   { key: "academy", label: "Academy" },
@@ -20,6 +21,7 @@ export const SETTINGS_TABS: Array<{ key: SettingsPanelKey; label: string }> = [
   { key: "roles", label: "Roles" },
   { key: "branding", label: "Branding" },
   { key: "data", label: "Data" },
+  { key: "self-service", label: "Self-service" },
 ];
 
 interface SettingsTabsProps {

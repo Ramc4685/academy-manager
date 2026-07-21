@@ -86,7 +86,6 @@ export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
       { href: "/admin/messages", label: "Messages", icon: "msg", match: startsWith("/admin/messages") },
       { href: "/admin/waivers", label: "Waivers", icon: "check", match: startsWith("/admin/waivers") },
       { href: "/admin/settings", label: "Settings", icon: "cog", match: startsWith("/admin/settings") },
-      { href: "/admin/settings/self-service", label: "Self-service", icon: "cog", match: startsWith("/admin/settings/self-service") },
       { href: "/admin/audit-logs", label: "Audit logs", icon: "filter", match: startsWith("/admin/audit-logs") },
     ],
   },
@@ -131,7 +130,6 @@ export const SCREEN_META: Record<string, AdminScreenMeta> = {
   "/admin/messages": { title: "Messages", subtitle: "Inbox and broadcasts", breadcrumbs: ["Admin", "Comms", "Messages"] },
   "/admin/waivers": { title: "Waivers", subtitle: "Student signatures and expiry", breadcrumbs: ["Admin", "Comms", "Waivers"] },
   "/admin/settings": { title: "Settings", subtitle: "Academy preferences", breadcrumbs: ["Admin", "Settings"] },
-  "/admin/settings/self-service": { title: "Self-service policy", subtitle: "Absence, makeup, and cancellation rules", breadcrumbs: ["Admin", "Settings", "Self-service"] },
   "/admin/audit-logs": { title: "Audit logs", subtitle: "Recent admin actions", breadcrumbs: ["Admin", "Audit logs"] },
 };
 
