@@ -96,7 +96,7 @@ const ADMIN_ROUTE_MATRIX = [
   { label: "waitlist", href: "/admin/waitlist", testId: "admin-waitlist" },
   {
     label: "pause requests",
-    href: "/admin/pause-requests",
+    href: "/admin/requests?tab=pauses",
     testId: "admin-pause-requests",
   },
   { label: "payments", href: "/admin/payments", testId: "admin-payments" },

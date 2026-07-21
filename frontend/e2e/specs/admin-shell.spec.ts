@@ -77,7 +77,7 @@ const ADMIN_ROUTES = [
   { href: "/admin/users", testid: "admin-users" },
   { href: "/admin/registrations", testid: "admin-registrations" },
   { href: "/admin/waitlist", testid: "admin-waitlist" },
-  { href: "/admin/pause-requests", testid: "admin-pause-requests" },
+  { href: "/admin/requests?tab=pauses", testid: "admin-pause-requests" },
   { href: "/admin/payments", testid: "admin-payments" },
   { href: "/admin/dues", testid: "admin-dues" },
   { href: "/admin/reports", testid: "admin-reports" },
@@ -429,7 +429,9 @@ test.describe("Rally admin shell", () => {
       }),
     );
 
+    // Old URL now redirects into Requests → Pauses tab (UIC2); bookmarks keep working.
     await page.goto("/admin/pause-requests");
+    await expect(page).toHaveURL(/\/admin\/requests\?tab=pauses/);
     const row = page.getByTestId("admin-pause-requests-row-pause-1");
     await expect(row).toContainText("Abhishek Ajithkumar");
     await expect(row).toContainText("Student: Aadhya Abhishek");
