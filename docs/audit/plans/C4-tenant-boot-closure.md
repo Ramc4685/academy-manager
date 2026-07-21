@@ -1,5 +1,5 @@
 # C4 — Kill boot-time academy_id closures (parent reads + coach writes)
-Status: DONE (PR #TBD, 2026-07-20)
+Status: DONE (PR #317, 2026-07-20)
 Size: M · Depends on: none · Tracker: ../TRACKER.md
 
 ## Problem
