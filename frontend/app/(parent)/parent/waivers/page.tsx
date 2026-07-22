@@ -8,6 +8,8 @@ import {
   getParentCurrentWaiver,
   type ParentWaiverStatus,
 } from "@/lib/api/parent";
+import { Skeleton } from "@/components/ds/skeleton";
+import { EmptyState } from "@/components/ds/empty-state";
 
 export default function ParentWaiversPage() {
   const queryClient = useQueryClient();
@@ -36,9 +38,9 @@ export default function ParentWaiversPage() {
   if (waiverQuery.isPending) {
     return (
       <section className="space-y-4 animate-fade-in-up">
-        <div className="mb-4">
-          <div className="h-7 w-40 rounded shimmer" />
-          <div className="h-3 w-24 rounded mt-2 shimmer" />
+        <div className="mb-4 space-y-2">
+          <Skeleton variant="line" width="10rem" height="1.75rem" />
+          <Skeleton variant="line" width="6rem" />
         </div>
         <div className="rounded-2xl overflow-hidden" style={{ background: "white", border: "1px solid var(--rally-line)" }}>
           <div className="p-4 space-y-3">
@@ -50,7 +52,7 @@ export default function ParentWaiversPage() {
             ))}
           </div>
         </div>
-        <div className="rounded-2xl h-40 shimmer" style={{ border: "1px solid var(--rally-line)" }} />
+        <Skeleton variant="block" height="10rem" className="rounded-2xl border border-rally-line" />
         <div className="rounded-2xl overflow-hidden" style={{ background: "white", border: "1px solid var(--rally-line)" }}>
           <div className="p-4 space-y-3">
             <div className="h-3 w-20 rounded shimmer" />
@@ -92,12 +94,10 @@ export default function ParentWaiversPage() {
             Liability &amp; consent forms
           </p>
         </div>
-        <div
-          className="rounded-2xl p-4 text-sm"
-          style={{ background: "#e1f5ee", border: "1px solid #b6e8d4", color: "#0f6e56" }}
-        >
-          No waiver is required right now.
-        </div>
+        <EmptyState
+          title="No waiver required"
+          description="You're all set — there are no forms to sign right now."
+        />
       </section>
     );
   }

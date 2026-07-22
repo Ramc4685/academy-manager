@@ -9,6 +9,7 @@ import { useServiceWorkerUpdate } from "@/lib/pwa/update-flow";
 import { PersonaSwitcher } from "@/components/persona/persona-switcher";
 import { AccessDeniedNotice } from "@/components/persona/access-denied-notice";
 import { PersonaLogoutButton } from "@/components/persona/logout-button";
+import { ToastProvider } from "@/components/ds/toast";
 
 export default function ParentLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -32,6 +33,7 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
   }
 
   return (
+    <ToastProvider>
     <div className="min-h-screen flex flex-col pb-20" style={{ background: "var(--rally-paper)" }}>
       {/* Header */}
       <header
@@ -95,6 +97,7 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
         </div>
       </nav>
     </div>
+    </ToastProvider>
   );
 }
 

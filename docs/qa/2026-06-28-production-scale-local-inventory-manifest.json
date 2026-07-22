@@ -2514,7 +2514,8 @@
         "signed",
         "outdated",
         "error",
-        "validation error"
+        "validation error",
+        "empty"
       ],
       "risk_edges": [
         "Signer name blank",
@@ -2553,7 +2554,8 @@
       "states": [
         "loading",
         "empty",
-        "error"
+        "error",
+        "validation"
       ],
       "risk_edges": [
         "Empty after prior enrollment",
@@ -2840,7 +2842,8 @@
         "loading",
         "empty",
         "mutation error",
-        "status filters"
+        "status filters",
+        "validation"
       ],
       "risk_edges": [
         "Approve into full occurrence",

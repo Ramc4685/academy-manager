@@ -4,6 +4,10 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Button } from "@/components/ds/button";
+import { Modal } from "@/components/ds/modal";
+import { Skeleton } from "@/components/ds/skeleton";
+import { FormField, fieldDescribedBy } from "@/components/ds/form-field";
+import { useToast } from "@/components/ds/toast";
 import { queryKeys } from "@/lib/query/keys";
 import {
   getCancellationPreview,
@@ -321,8 +325,8 @@ function CancelEnrollmentDialog({
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
+  const { toast } = useToast();
   const [reason, setReason] = useState("");
-  const [result, setResult] = useState<{ status: string; fee_cents: number } | null>(null);
 
   const previewQuery = useQuery({
     queryKey: queryKeys.parent.cancellationPreview(enrollment.enrollment_id),
@@ -332,83 +336,76 @@ function CancelEnrollmentDialog({
   const cancelMutation = useMutation({
     mutationFn: () => selfCancelEnrollment(enrollment.enrollment_id, { reason }),
     onSuccess: (res) => {
-      setResult({ status: res.status, fee_cents: res.fee_cents });
       void queryClient.invalidateQueries({ queryKey: ["parent", "enrollments"] });
+      toast({
+        kind: "success",
+        title: `Enrollment ${res.status}`,
+        description: res.fee_cents > 0 ? `Fee charged: ${money(res.fee_cents)}` : "No fee charged",
+      });
+      onClose();
     },
   });
 
   const preview = previewQuery.data;
+  const cancelError = cancelMutation.isError
+    ? cancelMutation.error instanceof Error
+      ? cancelMutation.error.message
+      : "Could not cancel enrollment."
+    : null;
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={`Cancel enrollment in ${enrollment.session_title}`}
-      className="mt-3 rounded-xl border p-3"
-      style={{ borderColor: "#fecaca", background: "#fff5f5" }}
+    <Modal
+      open
+      onClose={onClose}
+      title={`Cancel enrollment in ${enrollment.session_title}`}
+      dismissable={!cancelMutation.isPending}
     >
-      {result ? (
+      {previewQuery.isError ? (
         <div className="space-y-3">
-          <p role="status" className="text-sm font-semibold" style={{ color: "var(--rally-ink)" }}>
-            Enrollment {result.status}
-            {result.fee_cents > 0 ? ` — fee charged: ${money(result.fee_cents)}` : " — no fee charged"}
-          </p>
-          <Button variant="secondary" size="sm" onClick={onClose}>
-            Close
-          </Button>
-        </div>
-      ) : previewQuery.isError ? (
-        <div className="space-y-3">
-          <p role="alert" className="text-sm" style={{ color: "#991b1b" }}>
+          <p role="alert" className="text-sm text-status-red-800">
             Could not load cancellation details.
           </p>
-          <Button variant="secondary" size="sm" onClick={onClose}>
-            Close
-          </Button>
+          <div className="flex justify-end">
+            <Button variant="secondary" size="sm" onClick={onClose}>
+              Close
+            </Button>
+          </div>
         </div>
       ) : previewQuery.isLoading ? (
-        <div className="space-y-2">
-          <div className="h-4 w-40 rounded shimmer" />
-          <div className="h-4 w-56 rounded shimmer" />
-        </div>
+        <Skeleton variant="line" lines={2} />
       ) : preview ? (
         <div className="space-y-3">
-          <div className="text-sm" style={{ color: "var(--rally-ink)" }}>
+          <div className="text-sm text-rally-ink">
             <p className="font-semibold">Cancellation fee: {money(preview.fee_cents)}</p>
-            <p className="mt-1 text-xs" style={{ color: "var(--rally-muted)" }}>
+            <p className="mt-1 text-xs text-rally-muted">
               Effective timing: {preview.effective_timing}
             </p>
-            <p className="mt-1 text-xs" style={{ color: "var(--rally-muted)" }}>
+            <p className="mt-1 text-xs text-rally-muted">
               {preview.notice_met ? "Notice period met" : "Notice period not met"}
             </p>
             {!preview.allowed && preview.blocked_reason && (
-              <p role="alert" className="mt-2 text-xs font-semibold" style={{ color: "#991b1b" }}>
+              <p role="alert" className="mt-2 text-xs font-semibold text-status-red-800">
                 {preview.blocked_reason}
               </p>
             )}
           </div>
 
-          {preview.allowed && (
+          {preview.allowed ? (
             <>
-              <label className="block text-xs font-semibold" style={{ color: "var(--rally-muted)" }}>
-                Reason
+              <FormField label="Reason" htmlFor="cancel-reason" error={cancelError}>
                 <textarea
-                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
-                  style={{ borderColor: "var(--rally-line)" }}
+                  id="cancel-reason"
+                  aria-describedby={fieldDescribedBy("cancel-reason", { error: cancelError })}
+                  aria-invalid={cancelError ? true : undefined}
+                  className="mt-1 w-full rounded-lg border border-rally-line px-3 py-2 text-sm"
                   rows={2}
                   value={reason}
                   onChange={(e) => setReason(e.target.value)}
                   placeholder="Why are you cancelling?"
                 />
-              </label>
+              </FormField>
 
-              {cancelMutation.isError && (
-                <p role="alert" className="text-xs" style={{ color: "#991b1b" }}>
-                  {cancelMutation.error instanceof Error ? cancelMutation.error.message : "Could not cancel enrollment."}
-                </p>
-              )}
-
-              <div className="flex gap-2">
+              <div className="flex justify-end gap-2">
                 <Button variant="secondary" size="sm" onClick={onClose} disabled={cancelMutation.isPending}>
                   Keep enrollment
                 </Button>
@@ -422,16 +419,16 @@ function CancelEnrollmentDialog({
                 </Button>
               </div>
             </>
-          )}
-
-          {!preview.allowed && (
-            <Button variant="secondary" size="sm" onClick={onClose}>
-              Close
-            </Button>
+          ) : (
+            <div className="flex justify-end">
+              <Button variant="secondary" size="sm" onClick={onClose}>
+                Close
+              </Button>
+            </div>
           )}
         </div>
       ) : null}
-    </div>
+    </Modal>
   );
 }
 
