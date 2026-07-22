@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
@@ -19,6 +20,7 @@ import { Chip } from "@/components/ds/chip";
 import { roleToChipVariant } from "@/lib/admin/role-chip";
 import { Avatar } from "@/components/ds/avatar";
 import { Button } from "@/components/ds/button";
+import { CoachEngagementStatsStrip } from "@/components/admin/CoachEngagementStatsStrip";
 
 const roles: Array<{ label: string; value: AdminUserRole | undefined }> = [
   { label: "All", value: undefined },
@@ -27,15 +29,33 @@ const roles: Array<{ label: string; value: AdminUserRole | undefined }> = [
   { label: "Admins", value: "admin" },
 ];
 
+function parseRoleParam(value: string | null): AdminUserRole | undefined {
+  return value === "coach" || value === "parent" || value === "admin"
+    ? value
+    : undefined;
+}
+
 export function AdminUsersDirectory({
   fixedRole,
 }: {
   fixedRole?: Extract<AdminUserRole, "coach" | "parent">;
 }) {
   const queryClient = useQueryClient();
-  const [selectedRole, setSelectedRole] = useState<AdminUserRole | undefined>();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [createOpen, setCreateOpen] = useState(false);
-  const role = fixedRole ?? selectedRole;
+
+  // URL is the single source of truth for the active role tab.
+  const role = fixedRole ?? parseRoleParam(searchParams.get("role"));
+
+  function selectRole(next: AdminUserRole | undefined) {
+    const params = new URLSearchParams(searchParams.toString());
+    if (next) params.set("role", next);
+    else params.delete("role");
+    const query = params.toString();
+    router.replace(query ? `?${query}` : "?", { scroll: false });
+  }
+
   const { data, isLoading, isError } = useQuery({
     queryKey: queryKeys.admin.users(role),
     queryFn: () => listAdminUsers(role),
@@ -53,7 +73,7 @@ export function AdminUsersDirectory({
               <button
                 key={r.label}
                 type="button"
-                onClick={() => setSelectedRole(r.value)}
+                onClick={() => selectRole(r.value)}
                 className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
                   role === r.value
                     ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
@@ -77,6 +97,8 @@ export function AdminUsersDirectory({
           {createLabel}
         </Button>
       </div>
+
+      {!fixedRole && role === "coach" && <CoachEngagementStatsStrip />}
 
       <CreateUserDialog
         open={createOpen}
