@@ -25,6 +25,10 @@ import { formatAcademyDateTime } from "@/lib/format/academy-time";
 import { Card } from "@/components/ds/card";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { Button } from "@/components/ds/button";
+import { Modal } from "@/components/ds/modal";
+import { TableSkeleton } from "@/components/ds/skeleton";
+import { EmptyState } from "@/components/ds/empty-state";
+import { FormField, fieldDescribedBy } from "@/components/ds/form-field";
 import { PausesTab } from "@/components/admin/requests/PausesTab";
 
 type RequestTab = "makeups" | "trials" | "absences" | "cancellations" | "pauses";
@@ -172,9 +176,9 @@ function MakeupsTab() {
       {isError ? (
         <ErrorState message="Could not load makeup requests." />
       ) : isLoading ? (
-        <Skeleton />
+        <TableSkeleton rows={3} />
       ) : makeups.length === 0 ? (
-        <EmptyState message="No makeup requests." testId="admin-makeups-empty" />
+        <EmptyState title="No makeup requests." data-testid="admin-makeups-empty" compact />
       ) : (
         <Card p={20}>
           <div className="overflow-x-auto">
@@ -355,9 +359,9 @@ function TrialsTab() {
       {isError ? (
         <ErrorState message="Could not load trial requests." />
       ) : isLoading ? (
-        <Skeleton />
+        <TableSkeleton rows={3} />
       ) : trials.length === 0 ? (
-        <EmptyState message="No trial requests." testId="admin-trials-empty" />
+        <EmptyState title="No trial requests." data-testid="admin-trials-empty" compact />
       ) : (
         <Card p={20}>
           <div className="overflow-x-auto">
@@ -524,8 +528,8 @@ function AbsencesTab() {
   const absences = data?.absences ?? [];
 
   if (isError) return <ErrorState message="Could not load absence notices." />;
-  if (isLoading) return <Skeleton />;
-  if (absences.length === 0) return <EmptyState message="No absence notices." testId="admin-absences-empty" />;
+  if (isLoading) return <TableSkeleton rows={3} />;
+  if (absences.length === 0) return <EmptyState title="No absence notices." data-testid="admin-absences-empty" compact />;
 
   return (
     <Card p={20}>
@@ -571,9 +575,9 @@ function CancellationsTab() {
   const cancellations = data?.cancellations ?? [];
 
   if (isError) return <ErrorState message="Could not load cancellations." />;
-  if (isLoading) return <Skeleton />;
+  if (isLoading) return <TableSkeleton rows={3} />;
   if (cancellations.length === 0)
-    return <EmptyState message="No self-service cancellations." testId="admin-cancellations-empty" />;
+    return <EmptyState title="No self-service cancellations." data-testid="admin-cancellations-empty" compact />;
 
   return (
     <Card p={20}>
@@ -647,21 +651,9 @@ function DialogShell({
   children: React.ReactNode;
 }) {
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={title}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={onCancel}
-    >
-      <div
-        className="w-full max-w-md space-y-3 rounded-xl bg-white p-5 shadow-xl dark:bg-neutral-900"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h3 className="text-sm font-bold text-rally-ink">{title}</h3>
-        {children}
-      </div>
-    </div>
+    <Modal open onClose={onCancel} title={title}>
+      {children}
+    </Modal>
   );
 }
 
@@ -681,19 +673,19 @@ function DenyDialog({
   const [reason, setReason] = useState("");
   return (
     <DialogShell title={title} onCancel={onCancel}>
-      <label className="block text-xs font-semibold text-rally-muted">
-        Reason
+      <FormField label="Reason" htmlFor="deny-reason" error={error?.message}>
         <textarea
-          className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
-          style={{ borderColor: "var(--rally-line)" }}
+          id="deny-reason"
+          aria-describedby={fieldDescribedBy("deny-reason", { error: error?.message })}
+          aria-invalid={error ? true : undefined}
+          className="mt-1 w-full rounded-lg border border-rally-line px-3 py-2 text-sm"
           rows={3}
           value={reason}
           onChange={(e) => setReason(e.target.value)}
           placeholder="Explain why this request is being denied…"
           data-testid="deny-reason-textarea"
         />
-      </label>
-      {error && <p role="alert" className="text-sm text-red-700">{error.message}</p>}
+      </FormField>
       <div className="flex justify-end gap-2 pt-2">
         <Button variant="secondary" size="sm" onClick={onCancel} disabled={pending}>
           Cancel
@@ -708,24 +700,6 @@ function DenyDialog({
         </Button>
       </div>
     </DialogShell>
-  );
-}
-
-function Skeleton() {
-  return (
-    <div className="space-y-2">
-      {[0, 1, 2].map((i) => (
-        <div key={i} className="h-14 animate-pulse rounded-lg bg-neutral-100 dark:bg-neutral-800" />
-      ))}
-    </div>
-  );
-}
-
-function EmptyState({ message, testId }: { message: string; testId: string }) {
-  return (
-    <p className="text-sm text-rally-subtle" data-testid={testId}>
-      {message}
-    </p>
   );
 }
 
