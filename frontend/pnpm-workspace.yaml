@@ -27,6 +27,11 @@ onlyBuiltDependencies:
   - workerd
 
 allowBuilds:
+  # firebase 12.x ships a postinstall in @firebase/util that only writes a
+  # config file when FIREBASE_WEBAPP_CONFIG is set (Firebase App Hosting
+  # auto-init). This project configures Firebase via NEXT_PUBLIC_* env vars
+  # and never sets that variable, so the script is a no-op — keep it denied.
+  '@firebase/util': false
   esbuild: true
   protobufjs: true
   sharp: true
