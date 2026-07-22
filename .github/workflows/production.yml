@@ -305,7 +305,7 @@ jobs:
   frontend-e2e-webkit:
     name: Frontend E2E WebKit
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 20
     needs: [changes]
     if: >
       needs.changes.outputs.frontend == 'true' ||
@@ -333,8 +333,19 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-webkit-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+
+      - name: Install Playwright system dependencies
+        run: pnpm exec playwright install-deps webkit
+
       - name: Install Playwright browsers
-        run: pnpm exec playwright install --with-deps webkit
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: pnpm exec playwright install webkit
 
       - name: Playwright E2E WebKit
         env:
