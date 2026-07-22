@@ -1,6 +1,6 @@
 # chore-consolidated-dependency-bumps
 
-PR: TBD
+PR: #326
 
 Consolidates the eleven open Dependabot PRs (#267, #271–#280) into a single
 change. Three of them could not go green individually — they only resolve when
