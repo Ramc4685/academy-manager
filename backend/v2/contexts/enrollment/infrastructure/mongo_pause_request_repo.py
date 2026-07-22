@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 
 from bson import ObjectId as BsonObjectId
+from pydantic import ValidationError
 
 from backend.v2.contexts.enrollment.application.use_cases.pause_requests import (
     PauseRequest,
@@ -12,13 +14,15 @@ from backend.v2.contexts.enrollment.application.use_cases.pause_requests import 
 from backend.v2.contexts.enrollment.domain.errors import EnrollmentNotFound
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 
+log = logging.getLogger(__name__)
+
 
 class MongoPauseRequestRepository(TenantScopedRepository):
     collection_name = "pause_requests"
 
     @staticmethod
     def _to_domain(doc: dict[str, object]) -> PauseRequest:
-        return PauseRequest(
+        kwargs: dict[str, object] = dict(
             pause_request_id=str(doc["pause_request_id"]),
             enrollment_id=str(doc["enrollment_id"]),
             parent_id=str(doc["parent_id"]),
@@ -41,6 +45,26 @@ class MongoPauseRequestRepository(TenantScopedRepository):
             decided_at=doc.get("decided_at"),
             decided_by=doc.get("decided_by"),
         )
+        try:
+            return PauseRequest(**kwargs)
+        except ValidationError:
+            # The pause-window invariant (fixed needs resume_on, indefinite
+            # needs review_on) is a *write*-time rule enforced by
+            # RequestEnrollmentPauseCommand. A stored doc can still violate it
+            # — legacy rows predating the invariant, or shapes the looser Mongo
+            # $jsonSchema (migration 0133) permits. Reads must never let one
+            # such row 500 the whole list, so we coerce it into a valid,
+            # displayable indefinite pause and keep it visible for admins to
+            # action. See test_pause_request_repo_resilient.
+            log.warning(
+                "pause_request %s failed window validation on read; "
+                "surfacing as an indefinite pause for display",
+                kwargs.get("pause_request_id"),
+            )
+            kwargs["pause_kind"] = "indefinite"
+            kwargs["resume_on"] = None
+            kwargs["review_on"] = _display_review_date(kwargs)
+            return PauseRequest(**kwargs)
 
     async def add(self, request: PauseRequest) -> None:
         doc = request.model_dump(mode="python")
@@ -225,6 +249,24 @@ def _optional_str(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _display_review_date(kwargs: dict[str, object]) -> object:
+    """Pick a non-null review date so an invalid stored pause can still be
+    reconstructed as an indefinite pause for display. Prefer any date already
+    on the doc, then the pause period (``YYYY-MM`` → first of month), then the
+    created-at date. ``PauseRequest`` coerces strings/datetimes to ``date``.
+    """
+    for candidate in (kwargs.get("review_on"), kwargs.get("resume_on")):
+        if candidate:
+            return candidate
+    period = str(kwargs.get("period") or "")
+    if len(period) >= 7:
+        return f"{period[:7]}-01"
+    created_at = kwargs.get("created_at")
+    if isinstance(created_at, datetime):
+        return created_at.date()
+    return created_at
 
 
 def _id_or_value_filters(value: str, *fields: str) -> list[dict[str, object]]:
