@@ -1,5 +1,5 @@
 # UIC1 — Users directory: coaches + parents + users → one directory with role tabs
-Status: DONE (PR #NNN, 2026-07-22)
+Status: DONE (PR #324, 2026-07-22)
 Size: S · Depends on: none · Tracker: ../TRACKER.md
 
 ## Problem
@@ -48,4 +48,4 @@ Canonical route: **`/admin/users`** — one "Users" screen rendering `AdminUsers
 ## PR checklist
 - [x] Release note: "Coaches and Parents directories merged into Users (old URLs redirect)" — docs/release-notes/2026-07-21-fix-uic1-users-directory.md
 - [x] TRACKER.md: UIC1 → DONE + PR link (QW8 was already DONE in #310 — the gutted /admin/users page used the shared roleToChipVariant, not a local mapRoleToStatus, so nothing to re-tick)
-- [x] This plan: Status → DONE (PR #NNN, 2026-07-22)
+- [x] This plan: Status → DONE (PR #324, 2026-07-22)

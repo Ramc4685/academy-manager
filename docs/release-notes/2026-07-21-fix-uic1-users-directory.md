@@ -1,6 +1,6 @@
 # fix-uic1-users-directory
 
-PR: #NNN
+PR: #324
 
 ## What changed
 The Coaches and Parents admin directories are merged into a single **Users**
