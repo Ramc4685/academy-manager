@@ -52,7 +52,7 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 | ID | Item | Plan | Size | Depends on | Status | PR/Issue |
 |---|---|---|---|---|---|---|
 | UIC1 | Users directory: coaches+parents+users → role tabs | [plans/UIC1-users-directory.md](plans/UIC1-users-directory.md) | S | — | DONE | [#324](https://github.com/Ramc4685/academy-manager/pull/324) |
-| UIC2 | Pause requests → 5th tab of Requests | [plans/UIC2-pause-into-requests.md](plans/UIC2-pause-into-requests.md) | S | — | DONE | #330 |
+| UIC2 | Pause requests → 5th tab of Requests | [plans/UIC2-pause-into-requests.md](plans/UIC2-pause-into-requests.md) | S | — | DONE | #322 |
 | UIC3 | Session economics + Dues → Reports tabs | [plans/UIC3-reports-consolidation.md](plans/UIC3-reports-consolidation.md) | M | — | TODO | |
 | UIC4 | Coach payslip → Payouts tab | [plans/UIC4-payslip-into-payouts.md](plans/UIC4-payslip-into-payouts.md) | S | — | TODO | |
 | UIC5 | Progress → tab of student/session detail | [plans/UIC5-progress-tabs.md](plans/UIC5-progress-tabs.md) | S | — | TODO | |
