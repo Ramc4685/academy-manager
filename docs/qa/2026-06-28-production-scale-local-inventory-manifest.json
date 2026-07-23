@@ -1390,6 +1390,80 @@
       ]
     },
     {
+      "route": "/admin/reports/session-economics",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/reports/session-economics/page.tsx",
+      "workflows": [
+        "Review session profitability"
+      ],
+      "controls": {
+        "buttons": [
+          "Refresh",
+          "Export"
+        ],
+        "inputs": [
+          "Period",
+          "Session filter"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty",
+        "partial unavailable",
+        "error state"
+      ],
+      "risk_edges": [
+        "Revenue/payroll disagree",
+        "Scale query slow"
+      ],
+      "acceptance": [
+        "Report distinguishes unavailable payroll from zero payroll",
+        "Workflow evidence: \"Review session profitability\" completes for the admin route /admin/reports/session-economics with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Revenue/payroll disagree\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Scale query slow\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/reports/dues",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/reports/dues/page.tsx",
+      "workflows": [
+        "Review dues",
+        "Send reminders"
+      ],
+      "controls": {
+        "buttons": [
+          "Select all",
+          "Send reminders",
+          "Refresh"
+        ],
+        "inputs": [
+          "Family checkboxes",
+          "Period"
+        ],
+        "modals": [
+          "Reminder confirmation"
+        ]
+      },
+      "states": [
+        "loading",
+        "empty",
+        "email disabled",
+        "send failed",
+        "error state"
+      ],
+      "risk_edges": [
+        "Local email disabled but UI claims sent"
+      ],
+      "acceptance": [
+        "Disabled email state is truthful",
+        "Workflow evidence: \"Review dues\" completes for the admin route /admin/reports/dues with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Send reminders\" completes for the admin route /admin/reports/dues with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Local email disabled but UI claims sent\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
       "route": "/admin/coach-payslip",
       "role": "admin",
       "source": "frontend/app/(admin)/admin/coach-payslip/page.tsx",
