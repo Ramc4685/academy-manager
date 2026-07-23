@@ -1,5 +1,5 @@
 # DS4 — Migrate the parent surface onto the design system
-Status: IN PROGRESS (PR #TBD, 2026-07-23) — waivers, dashboard, children,
+Status: IN PROGRESS (PR #330, 2026-07-23) — waivers, dashboard, children,
 requests migrated; progress and payments remain (see below).
 Size: L · Depends on: DS1, DS2, DS3 (all merged first) · Tracker: ../TRACKER.md
 
