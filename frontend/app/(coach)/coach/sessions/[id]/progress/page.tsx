@@ -10,11 +10,20 @@ import {
   type SkillStatus,
 } from "@/lib/api/curriculum";
 import { SkillBoardView, type SkillBoardActions } from "@/components/pathway/skill-board";
+import { SessionDetailTabs } from "@/components/coach/SessionDetailTabs";
+
+function todayISO(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
+    now.getDate(),
+  ).padStart(2, "0")}`;
+}
 
 export default function CoachSessionProgressPage() {
   const { id: sessionId } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
   const programId = searchParams.get("program_id") ?? "";
+  const date = searchParams.get("date") ?? todayISO();
   const queryClient = useQueryClient();
 
   const boardKey = ["coach", "skill-board", sessionId, programId || "default"];
@@ -74,6 +83,8 @@ export default function CoachSessionProgressPage() {
 
   return (
     <section data-testid="coach-session-progress" className="space-y-4">
+      <SessionDetailTabs sessionOrOccurrenceId={sessionId} date={date} active="progress" />
+
       <div>
         <h1 className="text-xl font-semibold">Session skill board</h1>
         <p className="text-sm text-neutral-500">{board?.program_name ?? ""}</p>
