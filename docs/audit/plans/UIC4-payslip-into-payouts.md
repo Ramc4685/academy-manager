@@ -1,5 +1,5 @@
 # UIC4 — Coach payslip → tab of /admin/payouts
-Status: TODO
+Status: DONE (PR #TBD, 2026-07-23)
 Size: S · Depends on: none · Tracker: ../TRACKER.md
 
 ## Problem
@@ -36,6 +36,6 @@ Size: S · Depends on: none · Tracker: ../TRACKER.md
 - Two different API generations coexist on one screen (`lib/api/admin` listPayouts vs `lib/api/v2/payroll`) — acceptable; note for future ledger-convergence work.
 
 ## PR checklist
-- [ ] Release note: "Coach payslips are now a tab on Payroll & payouts (old URL redirects)"
-- [ ] TRACKER.md: UIC4 → DONE + PR link
-- [ ] This plan: Status → DONE (PR #NNN, date)
+- [x] Release note: "Coach payslips are now a tab on Payroll & payouts (old URL redirects)"
+- [x] TRACKER.md: UIC4 → DONE + PR link
+- [x] This plan: Status → DONE (PR #NNN, date)
