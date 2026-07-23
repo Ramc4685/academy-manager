@@ -27,6 +27,11 @@ export default function PayoutsPage() {
   const [tab, setTab] = useState<PayoutsTab>(
     searchParams.get("tab") === "payslips" ? "payslips" : "payroll",
   );
+
+  function selectTab(next: PayoutsTab) {
+    setTab(next);
+    router.replace(next === "payslips" ? "/admin/payouts?tab=payslips" : "/admin/payouts");
+  }
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
 
   const { data, isLoading } = useQuery({
@@ -81,7 +86,7 @@ export default function PayoutsPage() {
             type="button"
             role="tab"
             aria-selected={tab === t.id}
-            onClick={() => setTab(t.id)}
+            onClick={() => selectTab(t.id)}
             className="min-h-touch flex-1 rounded-lg px-3 text-sm font-semibold transition-all duration-150"
             style={
               tab === t.id
