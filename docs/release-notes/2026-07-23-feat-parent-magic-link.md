@@ -1,6 +1,6 @@
 # feat-parent-magic-link
 
-PR: #TBD
+PR: #332
 
 ## What changed
 The parent daily practice digest now signs provisioned-but-never-activated
@@ -51,3 +51,14 @@ CTA, so a digest never crashes on this.
 Runs migration `0149_parent_magic_link_indexes` on boot (creates the
 `parent_magic_links` unique + TTL indexes). No config changes. Takes effect on
 the next daily digest send.
+
+## Risk / rollback
+Low blast radius. The new consume route and `/auth/magic` page are additive; no
+existing route or auth path changes. The digest's Variant B CTA is the only
+behavioural change, and token minting is wrapped in try/except so any failure
+degrades to the previous `/login` CTA — the digest cannot crash on this.
+
+To roll back, revert this PR: the digest returns to linking `/login`, and the
+unused `parent_magic_links` collection self-empties via its TTL index (no data
+migration needed). The additive `0149` indexes are harmless if left in place.
+
