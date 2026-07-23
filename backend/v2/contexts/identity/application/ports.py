@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Protocol
 
 from backend.v2.contexts.identity.domain.models import (
     AcademyMembership,
+    MagicLinkRecord,
     PlatformRole,
     User,
 )
@@ -104,3 +106,40 @@ class PlatformRoleRepository(Protocol):
     async def list_active_for_user(self, user_id: str) -> list[PlatformRole]:
         """Return all active platform-role grants for the user."""
         ...
+
+
+class MagicLinkRepository(Protocol):
+    """Read/write port for single-use parent auto-login tokens.
+
+    The Mongo implementation lives in
+    ``infrastructure/mongo_magic_link_repo.py`` on the ``parent_magic_links``
+    collection. ``get_by_hash`` is intentionally NOT academy-scoped: tenant
+    binding is enforced in the consume use case by comparing the stored
+    ``academy_id`` to the resolved tenant, so a lookup that silently filtered by
+    tenant could not distinguish "wrong tenant" (attack) from "no such token".
+    """
+
+    async def insert(self, record: MagicLinkRecord) -> None: ...
+
+    async def get_by_hash(self, token_hash: str) -> MagicLinkRecord | None: ...
+
+    async def mark_used(self, token_hash: str, *, used_at: datetime) -> bool:
+        """Atomically stamp ``used_at`` iff still unused.
+
+        Returns ``True`` when this call claimed the token and ``False`` when it
+        was already consumed (or gone). The conditional (``used_at=None``
+        filter) makes redemption single-use and race-safe: of two concurrent
+        consumers, exactly one gets ``True``.
+        """
+        ...
+
+
+class CustomTokenPort(Protocol):
+    """Mint a Firebase custom token the browser can exchange for a session.
+
+    Implemented by ``FirebaseAdminAdapter.create_custom_token`` in
+    infrastructure. The returned token is a short-lived credential that the
+    frontend passes to ``signInWithCustomToken``.
+    """
+
+    async def create_custom_token(self, uid: str) -> str: ...
