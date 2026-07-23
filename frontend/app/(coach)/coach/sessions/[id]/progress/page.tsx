@@ -83,7 +83,12 @@ export default function CoachSessionProgressPage() {
 
   return (
     <section data-testid="coach-session-progress" className="space-y-4">
-      <SessionDetailTabs sessionOrOccurrenceId={sessionId} date={date} active="progress" />
+      <SessionDetailTabs
+        attendanceSkillsId={sessionId}
+        progressSessionId={sessionId}
+        date={date}
+        active="progress"
+      />
 
       <div>
         <h1 className="text-xl font-semibold">Session skill board</h1>

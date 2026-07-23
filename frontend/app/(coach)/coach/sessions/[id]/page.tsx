@@ -256,7 +256,8 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
       </header>
 
       <SessionDetailTabs
-        sessionOrOccurrenceId={session.occurrence_id}
+        attendanceSkillsId={session.occurrence_id}
+        progressSessionId={session.session_id}
         date={date}
         active="attendance"
       />

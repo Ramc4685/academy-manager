@@ -9,7 +9,7 @@
 
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
@@ -68,7 +68,11 @@ import { getActiveAcademyId } from "@/lib/api/client";
 import { getStudentProgress, listPrograms } from "@/lib/api/curriculum";
 import { buildStudentProgressHref } from "@/lib/navigation/admin-student-progress-return";
 import { queryKeys } from "@/lib/query/keys";
-import { StudentDetailTabs, type StudentDetailTabId } from "@/components/admin/StudentDetailTabs";
+import {
+  StudentDetailTabs,
+  parseStudentDetailTabId,
+  type StudentDetailTabId,
+} from "@/components/admin/StudentDetailTabs";
 import { Avatar } from "@/components/ds/avatar";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
@@ -93,8 +97,11 @@ const OPEN_BILLING_STATUSES = new Set([
 export default function AdminStudentDetailPage() {
   const params = useParams<{ studentId: string }>();
   const studentId = params?.studentId ?? "";
+  const searchParams = useSearchParams();
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<StudentTab>("overview");
+  const [activeTab, setActiveTab] = useState<StudentTab>(
+    parseStudentDetailTabId(searchParams.get("tab")),
+  );
 
   const studentQuery = useQuery({
     queryKey: queryKeys.admin.studentDetail(studentId),

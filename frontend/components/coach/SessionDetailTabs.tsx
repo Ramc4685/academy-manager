@@ -11,36 +11,46 @@ const TAB_BUTTON_UNSELECTED = "border-transparent text-rally-muted hover:text-ra
 
 /**
  * Shared tab strip for coach session detail and its skills/progress
- * subroutes. The skills backend route accepts either an occurrence_id or a
- * session_id (see backend/v2/interfaces/coach/skill_routes.py), so either id
- * is safe to link with here. See docs/audit/plans/UIC5-progress-tabs.md.
+ * subroutes.
+ *
+ * The Attendance and Skills routes accept either a session's occurrence_id
+ * or its session_id (see backend/v2/interfaces/coach/skill_routes.py's
+ * `session_or_occurrence_id` param and the detail page's own occurrence_id
+ * || session_id lookup), so `attendanceSkillsId` can be either. The Progress
+ * route's skill-board endpoint matches on true session_id only
+ * (MongoSessionRepository._session_filter), so `progressSessionId` MUST be
+ * the session's session_id — passing occurrence_id there 404s for recurring
+ * sessions. See docs/audit/plans/UIC5-progress-tabs.md.
  */
 export function SessionDetailTabs({
-  sessionOrOccurrenceId,
+  attendanceSkillsId,
+  progressSessionId,
   date,
   active,
 }: {
-  sessionOrOccurrenceId: string;
+  attendanceSkillsId: string;
+  progressSessionId: string;
   date: string;
   active: SessionDetailTab;
 }) {
-  const encodedId = encodeURIComponent(sessionOrOccurrenceId);
+  const encodedAttendanceSkillsId = encodeURIComponent(attendanceSkillsId);
+  const encodedProgressSessionId = encodeURIComponent(progressSessionId);
   const encodedDate = encodeURIComponent(date);
   const tabs: Array<{ id: SessionDetailTab; label: string; href: string }> = [
     {
       id: "attendance",
       label: "Attendance",
-      href: `/coach/sessions/${encodedId}?date=${encodedDate}`,
+      href: `/coach/sessions/${encodedAttendanceSkillsId}?date=${encodedDate}`,
     },
     {
       id: "skills",
       label: "Skills",
-      href: `/coach/sessions/${encodedId}/skills?date=${encodedDate}`,
+      href: `/coach/sessions/${encodedAttendanceSkillsId}/skills?date=${encodedDate}`,
     },
     {
       id: "progress",
       label: "Progress",
-      href: `/coach/sessions/${encodedId}/progress?date=${encodedDate}`,
+      href: `/coach/sessions/${encodedProgressSessionId}/progress?date=${encodedDate}`,
     },
   ];
 

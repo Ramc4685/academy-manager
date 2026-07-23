@@ -63,7 +63,12 @@ export default function CoachSessionSkillsPage({ params, searchParams }: PagePro
 
   return (
     <section data-testid="coach-session-skills" className="space-y-4">
-      <SessionDetailTabs sessionOrOccurrenceId={occurrenceId} date={date} active="skills" />
+      <SessionDetailTabs
+        attendanceSkillsId={occurrenceId}
+        progressSessionId={data?.session_id ?? occurrenceId}
+        date={date}
+        active="skills"
+      />
 
       <header className="space-y-2">
         <Link
