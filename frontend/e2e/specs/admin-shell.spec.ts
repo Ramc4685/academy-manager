@@ -79,7 +79,8 @@ const ADMIN_ROUTES = [
   { href: "/admin/waitlist", testid: "admin-waitlist" },
   { href: "/admin/requests?tab=pauses", testid: "admin-pause-requests" },
   { href: "/admin/payments", testid: "admin-payments" },
-  { href: "/admin/dues", testid: "admin-dues" },
+  { href: "/admin/reports/dues", testid: "admin-dues" },
+  { href: "/admin/reports/session-economics", testid: "admin-session-economics" },
   { href: "/admin/reports", testid: "admin-reports" },
   { href: "/admin/coach-payslip", testid: "admin-coach-payslip" },
   { href: "/admin/expenses", testid: "admin-expenses" },
@@ -225,6 +226,23 @@ async function stubAdminBff(page: Page) {
   );
   await page.route("**/api/v2/admin/dues-followup*", (route) =>
     fulfillJson(route, { parents: [] }),
+  );
+  await page.route("**/api/v2/admin/reports/session-economics*", (route) =>
+    fulfillJson(route, {
+      period: "2026-05",
+      summary: {
+        expected_revenue_cents: 0,
+        paid_cents: 0,
+        unpaid_cents: 0,
+        coach_payroll_cents: 0,
+        rent_cents: 0,
+        other_expenses_cents: 0,
+        expected_profit_cents: 0,
+        profit_margin: null,
+      },
+      sessions: [],
+      empty_states: [],
+    }),
   );
   const financeBff = "**/api/v2/admin/" + "finance/";
   await page.route(`${financeBff}payouts*`, (route) =>

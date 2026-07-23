@@ -1,5 +1,5 @@
 # UIC3 — Session economics + Dues follow-up → /admin/reports
-Status: TODO
+Status: DONE (PR #TBD, 2026-07-23)
 Size: M · Depends on: none · Tracker: ../TRACKER.md
 
 ## Problem
@@ -44,6 +44,6 @@ Follow the **existing reports children pattern: sub-routes, not tabs** (the hub 
 - Rollback: revert restores old routes; redirect stubs are additive.
 
 ## PR checklist
-- [ ] Release note: "Session economics and Dues follow-up now live under Reports (old URLs redirect)"
-- [ ] TRACKER.md: UIC3 → DONE + PR link
-- [ ] This plan: Status → DONE (PR #NNN, date)
+- [x] Release note: "Session economics and Dues follow-up now live under Reports (old URLs redirect)"
+- [x] TRACKER.md: UIC3 → DONE + PR link
+- [x] This plan: Status → DONE (PR #NNN, date)

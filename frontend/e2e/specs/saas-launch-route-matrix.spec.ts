@@ -100,7 +100,8 @@ const ADMIN_ROUTE_MATRIX = [
     testId: "admin-pause-requests",
   },
   { label: "payments", href: "/admin/payments", testId: "admin-payments" },
-  { label: "dues", href: "/admin/dues", testId: "admin-dues" },
+  { label: "dues", href: "/admin/reports/dues", testId: "admin-dues" },
+  { label: "session economics", href: "/admin/reports/session-economics", testId: "admin-session-economics" },
   { label: "expenses", href: "/admin/expenses", testId: "admin-expenses" },
   { label: "payouts", href: "/admin/payouts", testId: "admin-payouts" },
   { label: "reports", href: "/admin/reports", testId: "admin-reports" },
@@ -153,6 +154,23 @@ async function stubAdminLaunchBff(page: Page): Promise<void> {
   );
   await page.route("**/api/v2/admin/dues-followup*", (route) =>
     fulfillJson(route, { parents: [] })
+  );
+  await page.route("**/api/v2/admin/reports/session-economics*", (route) =>
+    fulfillJson(route, {
+      period: "2026-05",
+      summary: {
+        expected_revenue_cents: 0,
+        paid_cents: 0,
+        unpaid_cents: 0,
+        coach_payroll_cents: 0,
+        rent_cents: 0,
+        other_expenses_cents: 0,
+        expected_profit_cents: 0,
+        profit_margin: null,
+      },
+      sessions: [],
+      empty_states: [],
+    })
   );
   await page.route("**/api/v2/admin/finance/expenses*", (route) =>
     fulfillJson(route, { expenses: [] })

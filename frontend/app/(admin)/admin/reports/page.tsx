@@ -63,6 +63,16 @@ const FINANCIAL_REPORTS = [
     title: "Deposit slip",
     description: "Payments received by day and method for bank reconciliation.",
   },
+  {
+    href: "/admin/reports/session-economics",
+    title: "Session economics",
+    description: "Revenue, cost and profit by session.",
+  },
+  {
+    href: "/admin/reports/dues",
+    title: "Dues follow-up",
+    description: "Outstanding balances and reminders.",
+  },
 ] as const;
 
 export default function AdminReportsPage() {
