@@ -1,6 +1,6 @@
 # fix-mt5-split-monolith-pages
 
-PR: (pending)
+PR: #331
 
 ## What changed
 Audit item MT5: the three largest admin frontend monoliths were split into
