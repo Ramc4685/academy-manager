@@ -1,5 +1,6 @@
 # DS4 — Migrate the parent surface onto the design system
-Status: TODO
+Status: IN PROGRESS (PR #TBD, 2026-07-23) — waivers, dashboard, children,
+requests migrated; progress and payments remain (see below).
 Size: L · Depends on: DS1, DS2, DS3 (all merged first) · Tracker: ../TRACKER.md
 
 Final step of DS1→DS4. Hard-gated: tokens (DS1), de-hexed components (DS2), and primitives (DS3) must all exist, otherwise this sweep just relocates hex. 234 of the repo's 404 inline-style occurrences live in these 6 files — highest-leverage cleanup in the frontend.
