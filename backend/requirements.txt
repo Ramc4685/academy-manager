@@ -124,7 +124,7 @@ tenacity==9.1.4
 tiktoken==0.13.0
 tokenizers==0.23.1
 tqdm==4.68.3
-typer==0.26.8
+typer==0.27.0
 typing-inspection==0.4.2
 typing_extensions==4.15.0
 tzdata==2026.2
