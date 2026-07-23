@@ -173,6 +173,12 @@ function DashboardSkeleton() {
   );
 }
 
+// The progress hero's teal->cobalt gradient is a decorative brand accent
+// outside the two-hue (cobalt/volt) token system — kept inline per the
+// DS4 plan's allowance for values a utility class can't reach.
+const PROGRESS_HERO_GRADIENT = "linear-gradient(135deg,#042f2e 0%,#0f766e 42%,#2563eb 100%)";
+const PROGRESS_HERO_TEAL = "#0f766e";
+
 function ProgressHero({
   academy,
   model,
@@ -191,11 +197,8 @@ function ProgressHero({
 
   return (
     <div
-      className="overflow-hidden rounded-2xl animate-fade-in-up"
-      style={{
-        background: "linear-gradient(135deg,#042f2e 0%,#0f766e 42%,#2563eb 100%)",
-        boxShadow: "0 18px 45px rgba(15,23,42,0.18)",
-      }}
+      className="overflow-hidden rounded-2xl animate-fade-in-up shadow-[0_18px_45px_rgba(15,23,42,0.18)]"
+      style={{ background: PROGRESS_HERO_GRADIENT }}
     >
       <div className="px-4 py-4 text-white">
         <div className="mb-4 flex items-center justify-between gap-3">
@@ -218,12 +221,10 @@ function ProgressHero({
                 key={option.student_id}
                 type="button"
                 onClick={() => onSelectChild(option.student_id)}
-                className="min-h-touch shrink-0 rounded-full px-3 text-xs font-bold transition-all duration-200 active:scale-95"
-                style={
-                  active
-                    ? { background: "white", color: "#0f766e" }
-                    : { background: "rgba(255,255,255,0.14)", color: "white" }
-                }
+                className={`min-h-touch shrink-0 rounded-full px-3 text-xs font-bold transition-all duration-200 active:scale-95 ${
+                  active ? "bg-white" : "bg-white/14 text-white"
+                }`}
+                style={active ? { color: PROGRESS_HERO_TEAL } : undefined}
               >
                 {firstName(option.full_name)}
               </button>
@@ -231,21 +232,14 @@ function ProgressHero({
           })}
           <Link
             href="/parent/onboarding"
-            className="min-h-touch shrink-0 rounded-full px-3 text-xs font-bold transition-all duration-200 active:scale-95"
-            style={{ background: "rgba(255,255,255,0.1)", color: "#d1fae5" }}
+            className="min-h-touch shrink-0 rounded-full bg-white/10 px-3 text-xs font-bold text-emerald-100 transition-all duration-200 active:scale-95"
           >
             + Add
           </Link>
         </div>
 
         <div className="flex items-center gap-4">
-          <div
-            className="flex h-[72px] w-[72px] shrink-0 items-center justify-center rounded-2xl border text-3xl font-bold hero-pop"
-            style={{
-              background: "rgba(255,255,255,0.16)",
-              borderColor: "rgba(255,255,255,0.22)",
-            }}
-          >
+          <div className="flex h-[72px] w-[72px] shrink-0 items-center justify-center rounded-2xl border border-white/22 bg-white/16 text-3xl font-bold hero-pop">
             {child.full_name[0]?.toUpperCase() ?? "S"}
           </div>
           <div className="min-w-0 flex-1">
@@ -255,16 +249,10 @@ function ProgressHero({
             <p className="mt-1.5 truncate text-xs font-medium text-emerald-50/85">
               {model.hero.subtitle}
             </p>
-            <div
-              className="mt-3 h-2 overflow-hidden rounded-full"
-              style={{ background: "rgba(255,255,255,0.18)" }}
-            >
+            <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/18">
               <div
                 className="h-full rounded-full progress-fill"
-                style={{
-                  width: `${model.hero.percent ?? 0}%`,
-                  background: "var(--rally-volt)",
-                }}
+                style={{ width: `${model.hero.percent ?? 0}%`, background: "var(--rally-volt)" }}
               />
             </div>
             {!progressEnabled && (
@@ -282,11 +270,8 @@ function ProgressHero({
 function RegistrationHero({ academy }: { academy?: ParentAcademy }) {
   return (
     <div
-      className="rounded-2xl p-5 animate-fade-in-up"
-      style={{
-        background: "linear-gradient(135deg,#0a0f1c 0%,#1d4ed8 100%)",
-        color: "white",
-      }}
+      className="rounded-2xl p-5 text-white animate-fade-in-up"
+      style={{ background: "linear-gradient(135deg,var(--rally-night) 0%,var(--rally-cobalt-hover) 100%)" }}
     >
       <div className="mb-6 flex items-center justify-between gap-3">
         <div>
@@ -305,7 +290,7 @@ function RegistrationHero({ academy }: { academy?: ParentAcademy }) {
       </p>
       <Link
         href="/parent/onboarding"
-        className="mt-5 inline-flex min-h-touch items-center gap-2 rounded-xl bg-white px-4 text-sm font-bold text-blue-700 transition-all duration-200 active:scale-95"
+        className="mt-5 inline-flex min-h-touch items-center gap-2 rounded-xl bg-white px-4 text-sm font-bold text-rally-cobalt-700 transition-all duration-200 active:scale-95"
       >
         <UserPlus size={16} />
         Register a child
@@ -317,11 +302,10 @@ function RegistrationHero({ academy }: { academy?: ParentAcademy }) {
 function AcademyMark({ academy }: { academy?: ParentAcademy }) {
   return (
     <div
-      className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border-2 bg-white font-display text-base font-bold"
-      style={{ color: "#0f766e", borderColor: "rgba(255,255,255,0.55)" }}
+      className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border-2 border-white/55 bg-white font-display text-base font-bold"
+      style={{ color: PROGRESS_HERO_TEAL }}
     >
       {academy?.logo_url ? (
-        // eslint-disable-next-line @next/next/no-img-element
         <img
           src={academy.logo_url}
           alt=""
@@ -334,29 +318,46 @@ function AcademyMark({ academy }: { academy?: ParentAcademy }) {
   );
 }
 
+const METRIC_TONE_CLASS: Record<ParentHomeMetric["tone"], string> = {
+  green: "text-status-green-800",
+  amber: "text-status-amber-800",
+  blue: "text-rally-cobalt-600",
+};
+
 function MetricGrid({ metrics }: { metrics: ParentHomeMetric[] }) {
   return (
     <div className="grid grid-cols-3 gap-2 stagger-children">
       {metrics.map((metric) => (
         <div
           key={metric.label}
-          className="rounded-xl border bg-white px-3 py-3 text-center animate-fade-in-up"
-          style={{ borderColor: "var(--rally-line)" }}
+          className="rounded-xl border border-rally-line bg-white px-3 py-3 text-center animate-fade-in-up"
         >
-          <p
-            className="font-display text-xl font-bold"
-            style={{ color: metricColor(metric.tone) }}
-          >
+          <p className={`font-display text-xl font-bold ${METRIC_TONE_CLASS[metric.tone] ?? METRIC_TONE_CLASS.blue}`}>
             {metric.value}
           </p>
-          <p className="mt-0.5 text-[10px] font-semibold" style={{ color: "var(--rally-muted)" }}>
-            {metric.label}
-          </p>
+          <p className="mt-0.5 text-[10px] font-semibold text-rally-muted">{metric.label}</p>
         </div>
       ))}
     </div>
   );
 }
+
+type AccentKey = "green" | "cobalt";
+
+const INFO_CARD_ACCENT: Record<AccentKey, { overline: string; iconBg: string; iconText: string; borderLeft: string }> = {
+  green: {
+    overline: "text-status-green-800",
+    iconBg: "bg-status-green-50",
+    iconText: "text-status-green-800",
+    borderLeft: "border-l-status-green-500",
+  },
+  cobalt: {
+    overline: "text-rally-cobalt-600",
+    iconBg: "bg-rally-cobalt-50",
+    iconText: "text-rally-cobalt-600",
+    borderLeft: "border-l-rally-cobalt-600",
+  },
+};
 
 function LatestNoteCard({
   note,
@@ -372,7 +373,7 @@ function LatestNoteCard({
       body={note?.body ?? "Coach updates and encouragement will show up after class."}
       meta={note ? `${note.coach_name ?? "Coach"} · ${formatShortDate(note.created_at, academyTimezone)}` : "Progress"}
       icon={<MessageSquare size={17} />}
-      accent="#059669"
+      accent="green"
       href="/parent/progress"
     />
   );
@@ -393,29 +394,54 @@ function NextClassCard({
       body={enrollmentTitle ?? action.body}
       meta={isNext ? "Current enrollment" : action.title}
       icon={<CalendarDays size={17} />}
-      accent="#2563eb"
+      accent="cobalt"
       href={isNext ? "/parent/children" : action.href}
     />
   );
 }
 
+const ACTION_THEME: Record<ParentHomeAction["kind"], { icon: typeof FileSignature; className: string; iconClassName: string }> = {
+  waiver: {
+    icon: FileSignature,
+    className: "bg-status-amber-50 border-status-amber-500/30 text-status-amber-800",
+    iconClassName: "bg-status-amber-500/15",
+  },
+  credit: {
+    icon: CreditCard,
+    className: "bg-rally-cobalt-50 border-rally-cobalt-100 text-rally-cobalt-700",
+    iconClassName: "bg-rally-cobalt-100",
+  },
+  payment: {
+    icon: CreditCard,
+    className: "bg-rally-cobalt-50 border-rally-cobalt-100 text-rally-cobalt-700",
+    iconClassName: "bg-rally-cobalt-100",
+  },
+  progress: {
+    icon: Trophy,
+    className: "bg-status-green-50 border-status-green-500/30 text-status-green-800",
+    iconClassName: "bg-status-green-500/15",
+  },
+  next_class: {
+    icon: BookOpen,
+    className: "bg-rally-cobalt-50 border-rally-cobalt-100 text-status-blue-800",
+    iconClassName: "bg-rally-cobalt-100",
+  },
+  register: {
+    icon: UserPlus,
+    className: "bg-rally-volt-100 border-rally-volt-400/30 text-status-amber-800",
+    iconClassName: "bg-rally-volt-100",
+  },
+};
+
 function PrimaryActionCard({ action }: { action: ParentHomeAction }) {
-  const theme = actionTheme(action.kind);
+  const theme = ACTION_THEME[action.kind] ?? ACTION_THEME.register;
   const Icon = theme.icon;
   return (
     <Link
       href={action.href as Parameters<typeof Link>[0]["href"]}
-      className="flex items-center gap-3 rounded-xl border p-4 animate-fade-in-up transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.98]"
-      style={{
-        background: theme.background,
-        borderColor: theme.border,
-        color: theme.color,
-      }}
+      className={`flex items-center gap-3 rounded-xl border p-4 animate-fade-in-up transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.98] ${theme.className}`}
     >
-      <div
-        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
-        style={{ background: theme.iconBackground }}
-      >
+      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${theme.iconClassName}`}>
         <Icon size={18} />
       </div>
       <div className="min-w-0 flex-1">
@@ -435,42 +461,31 @@ function RecentActivityCard({
   academyTimezone: string | null;
 }) {
   return (
-    <div
-      className="rounded-xl border bg-white p-4 animate-fade-in-up"
-      style={{ borderColor: "var(--rally-line)" }}
-    >
+    <div className="rounded-xl border border-rally-line bg-white p-4 animate-fade-in-up">
       <div className="mb-3 flex items-center justify-between gap-3">
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: "var(--rally-cobalt)" }}>
+          <p className="text-[10px] font-bold uppercase tracking-widest text-rally-cobalt-600">
             Recent activity
           </p>
-          <p className="mt-0.5 text-xs" style={{ color: "var(--rally-muted)" }}>
-            Notes, attendance, and billing updates
-          </p>
+          <p className="mt-0.5 text-xs text-rally-muted">Notes, attendance, and billing updates</p>
         </div>
-        <Activity size={18} style={{ color: "var(--rally-cobalt)" }} />
+        <Activity size={18} className="text-rally-cobalt-600" />
       </div>
       {activity.length === 0 ? (
-        <p className="rounded-lg px-3 py-3 text-sm" style={{ background: "var(--rally-paper)", color: "var(--rally-muted)" }}>
+        <p className="rounded-lg bg-rally-paper px-3 py-3 text-sm text-rally-muted">
           Activity will appear after classes, notes, or payments are recorded.
         </p>
       ) : (
         <ul className="space-y-2">
           {activity.map((item) => (
             <li key={item.id} className="flex items-center gap-3 text-sm">
-              <span
-                className="h-2.5 w-2.5 shrink-0 rounded-full"
-                style={{ background: item.accent }}
-              />
+              {/* item.accent is a per-item computed color from lib/parent-home.ts — genuinely dynamic. */}
+              <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: item.accent }} />
               <div className="min-w-0 flex-1">
-                <p className="truncate font-semibold" style={{ color: "var(--rally-ink)" }}>
-                  {item.title}
-                </p>
-                <p className="truncate text-xs" style={{ color: "var(--rally-muted)" }}>
-                  {item.body}
-                </p>
+                <p className="truncate font-semibold text-rally-ink">{item.title}</p>
+                <p className="truncate text-xs text-rally-muted">{item.body}</p>
               </div>
-              <time className="shrink-0 text-[11px]" style={{ color: "var(--rally-subtle)" }}>
+              <time className="shrink-0 text-[11px] text-rally-subtle">
                 {formatShortDate(item.at, academyTimezone)}
               </time>
             </li>
@@ -495,35 +510,24 @@ function InfoCard({
   body: string;
   meta: string;
   icon: React.ReactNode;
-  accent: string;
+  accent: AccentKey;
   href: string;
 }) {
+  const theme = INFO_CARD_ACCENT[accent];
   return (
     <Link
       href={href as Parameters<typeof Link>[0]["href"]}
-      className="block rounded-xl border bg-white p-4 animate-fade-in-up transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.98]"
-      style={{ borderColor: "var(--rally-line)", borderLeft: `4px solid ${accent}` }}
+      className={`block rounded-xl border border-rally-line border-l-4 bg-white p-4 animate-fade-in-up transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.98] ${theme.borderLeft}`}
     >
       <div className="mb-3 flex items-center justify-between gap-3">
-        <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: accent }}>
-          {overline}
-        </p>
-        <span
-          className="flex h-8 w-8 items-center justify-center rounded-lg"
-          style={{ background: `${accent}18`, color: accent }}
-        >
+        <p className={`text-[10px] font-bold uppercase tracking-widest ${theme.overline}`}>{overline}</p>
+        <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${theme.iconBg} ${theme.iconText}`}>
           {icon}
         </span>
       </div>
-      <p className="truncate text-sm font-bold" style={{ color: "var(--rally-ink)" }}>
-        {title}
-      </p>
-      <p className="mt-1 line-clamp-2 text-xs leading-5" style={{ color: "var(--rally-muted)" }}>
-        {body}
-      </p>
-      <p className="mt-2 text-[11px] font-semibold" style={{ color: "var(--rally-subtle)" }}>
-        {meta}
-      </p>
+      <p className="truncate text-sm font-bold text-rally-ink">{title}</p>
+      <p className="mt-1 line-clamp-2 text-xs leading-5 text-rally-muted">{body}</p>
+      <p className="mt-2 text-[11px] font-semibold text-rally-subtle">{meta}</p>
     </Link>
   );
 }
@@ -532,24 +536,18 @@ function RequestsCard() {
   return (
     <Link
       href="/parent/requests"
-      className="flex items-center gap-3 rounded-xl border bg-white p-4 animate-fade-in-up transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.98]"
-      style={{ borderColor: "var(--rally-line)" }}
+      className="flex items-center gap-3 rounded-xl border border-rally-line bg-white p-4 animate-fade-in-up transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.98]"
     >
-      <div
-        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
-        style={{ background: "#eef2ff", color: "#4338ca" }}
-      >
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-rally-cobalt-50 text-status-blue-800">
         <ClipboardList size={18} />
       </div>
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-bold" style={{ color: "var(--rally-ink)" }}>
-          Requests
-        </p>
-        <p className="mt-0.5 line-clamp-2 text-xs" style={{ color: "var(--rally-muted)" }}>
+        <p className="text-sm font-bold text-rally-ink">Requests</p>
+        <p className="mt-0.5 line-clamp-2 text-xs text-rally-muted">
           Report an absence, request a makeup, or ask for a trial class
         </p>
       </div>
-      <ChevronRight className="shrink-0" size={18} style={{ color: "var(--rally-muted)" }} />
+      <ChevronRight className="shrink-0 text-rally-muted" size={18} />
     </Link>
   );
 }
@@ -560,17 +558,10 @@ function AcademyContact({ academy }: { academy?: ParentAcademy }) {
   }
 
   return (
-    <div
-      className="rounded-xl border bg-white p-4 animate-fade-in-up"
-      style={{ borderColor: "var(--rally-line)" }}
-    >
-      <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: "var(--rally-cobalt)" }}>
-        Academy
-      </p>
-      <p className="mt-1 text-sm font-bold" style={{ color: "var(--rally-ink)" }}>
-        {academy.display_name}
-      </p>
-      <div className="mt-3 space-y-2 text-xs" style={{ color: "var(--rally-muted)" }}>
+    <div className="rounded-xl border border-rally-line bg-white p-4 animate-fade-in-up">
+      <p className="text-[10px] font-bold uppercase tracking-widest text-rally-cobalt-600">Academy</p>
+      <p className="mt-1 text-sm font-bold text-rally-ink">{academy.display_name}</p>
+      <div className="mt-3 space-y-2 text-xs text-rally-muted">
         {academy.address && (
           <p className="flex gap-2">
             <MapPin className="mt-0.5 shrink-0" size={14} />
@@ -582,8 +573,7 @@ function AcademyContact({ academy }: { academy?: ParentAcademy }) {
           {academy.contact_email && (
             <a
               href={`mailto:${academy.contact_email}`}
-              className="inline-flex min-h-touch items-center gap-1.5 rounded-lg px-3 text-xs font-bold text-white"
-              style={{ background: "var(--rally-cobalt)" }}
+              className="inline-flex min-h-touch items-center gap-1.5 rounded-lg bg-rally-cobalt-600 px-3 text-xs font-bold text-white"
             >
               <Mail size={13} />
               Email
@@ -592,12 +582,7 @@ function AcademyContact({ academy }: { academy?: ParentAcademy }) {
           {academy.contact_phone && (
             <a
               href={`tel:${academy.contact_phone}`}
-              className="inline-flex min-h-touch items-center gap-1.5 rounded-lg border px-3 text-xs font-bold"
-              style={{
-                background: "#f0fdf4",
-                borderColor: "#bbf7d0",
-                color: "#047857",
-              }}
+              className="inline-flex min-h-touch items-center gap-1.5 rounded-lg border border-status-green-500/30 bg-status-green-50 px-3 text-xs font-bold text-status-green-800"
             >
               <Phone size={13} />
               {academy.contact_phone}
@@ -615,8 +600,7 @@ function IssueStrip({ issues }: { issues: string[] }) {
       {issues.map((issue) => (
         <span
           key={issue}
-          className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold"
-          style={{ background: "#fff7ed", color: "#9a3412", border: "1px solid #fed7aa" }}
+          className="inline-flex items-center gap-1.5 rounded-full border border-status-amber-500/30 bg-status-amber-50 px-2.5 py-1 text-[11px] font-semibold text-status-amber-800"
         >
           <AlertCircle size={12} />
           {issue}
@@ -624,59 +608,6 @@ function IssueStrip({ issues }: { issues: string[] }) {
       ))}
     </div>
   );
-}
-
-function actionTheme(kind: ParentHomeAction["kind"]) {
-  switch (kind) {
-    case "waiver":
-      return {
-        icon: FileSignature,
-        background: "#fff7ed",
-        border: "#fed7aa",
-        color: "#9a3412",
-        iconBackground: "#fed7aa",
-      };
-    case "credit":
-    case "payment":
-      return {
-        icon: CreditCard,
-        background: "#eff6ff",
-        border: "#bfdbfe",
-        color: "#1d4ed8",
-        iconBackground: "#dbeafe",
-      };
-    case "progress":
-      return {
-        icon: Trophy,
-        background: "#f0fdf4",
-        border: "#bbf7d0",
-        color: "#047857",
-        iconBackground: "#dcfce7",
-      };
-    case "next_class":
-      return {
-        icon: BookOpen,
-        background: "#eef2ff",
-        border: "#c7d2fe",
-        color: "#4338ca",
-        iconBackground: "#e0e7ff",
-      };
-    case "register":
-    default:
-      return {
-        icon: UserPlus,
-        background: "#fef9c3",
-        border: "#fde68a",
-        color: "#92400e",
-        iconBackground: "#fde68a",
-      };
-  }
-}
-
-function metricColor(tone: ParentHomeMetric["tone"]): string {
-  if (tone === "green") return "#059669";
-  if (tone === "amber") return "#d97706";
-  return "var(--rally-cobalt)";
 }
 
 function firstName(name: string): string {
