@@ -1,5 +1,5 @@
 # UIC8 — Delete/redirect the shared Calendar and Messages stubs
-Status: DONE (PR #TBD, 2026-07-23)
+Status: DONE (PR #327, 2026-07-23)
 Size: XS · Depends on: UIM13 decision (see below) · Tracker: ../TRACKER.md
 
 ## Problem

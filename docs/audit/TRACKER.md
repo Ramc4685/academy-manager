@@ -58,7 +58,7 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 | UIC5 | Progress → tab of student/session detail | [plans/UIC5-progress-tabs.md](plans/UIC5-progress-tabs.md) | S | — | TODO | |
 | UIC6 | Registrations + Waitlist + Level-up queue → Admissions | [plans/UIC6-admissions-queues.md](plans/UIC6-admissions-queues.md) | M | — | TODO | |
 | UIC7 | Self-service policy → Settings section | [plans/UIC7-settings-selfservice.md](plans/UIC7-settings-selfservice.md) | XS | — | DONE | Moved into `/admin/settings?panel=self-service`; old URL redirects |
-| UIC8 | Delete shared Calendar/Messages stubs | [plans/UIC8-delete-shared-stubs.md](plans/UIC8-delete-shared-stubs.md) | XS | UIM13 decision | DONE | #TBD |
+| UIC8 | Delete shared Calendar/Messages stubs | [plans/UIC8-delete-shared-stubs.md](plans/UIC8-delete-shared-stubs.md) | XS | UIM13 decision | DONE | [#327](https://github.com/Ramc4685/academy-manager/pull/327) |
 
 ## UI — Missing features
 

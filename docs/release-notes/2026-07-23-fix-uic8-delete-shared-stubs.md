@@ -1,6 +1,6 @@
 # fix-uic8-delete-shared-stubs
 
-PR: #TBD
+PR: #327
 
 ## What changed
 `/calendar` and `/messages` now jump straight to your workspace. Both
