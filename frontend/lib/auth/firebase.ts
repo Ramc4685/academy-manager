@@ -17,6 +17,7 @@ import {
   onAuthStateChanged,
   sendEmailVerification,
   sendPasswordResetEmail,
+  signInWithCustomToken,
   signInWithEmailAndPassword,
   signInWithPopup,
   signInWithRedirect,
@@ -99,6 +100,12 @@ export async function getIdToken(): Promise<string | null> {
 export async function signInWithEmail(email: string, password: string): Promise<User> {
   if (E2E_BYPASS) return fakeE2EUser(email, true);
   const { user } = await signInWithEmailAndPassword(auth(), email, password);
+  return user;
+}
+
+export async function signInWithCustomTokenValue(token: string): Promise<User> {
+  if (E2E_BYPASS) return fakeE2EUser("magic@example.com", true);
+  const { user } = await signInWithCustomToken(auth(), token);
   return user;
 }
 

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from backend.v2.tests._route_paths import route_paths
+
 REPO_ROOT = Path(__file__).resolve().parents[4]
 
 
@@ -167,16 +169,12 @@ def test_registered_business_routes_are_v2_only() -> None:
 
     app = create_app()
     framework_paths = {"/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
-    route_paths = {
-        getattr(route, "path", "")
-        for route in app.routes
-        if getattr(route, "path", "").startswith("/")
-    }
-    business_paths = route_paths - framework_paths
+    all_route_paths = {path for path in route_paths(app) if path.startswith("/")}
+    business_paths = all_route_paths - framework_paths
 
     assert "/api/v2/healthz" in business_paths
     assert "/api/v2/parent/webhooks/stripe" in business_paths
     assert business_paths
     assert all(path.startswith("/api/v2/") or path == "/api/v2/me" for path in business_paths)
-    assert "/api/health" not in route_paths
-    assert "/api/webhook/stripe" not in route_paths
+    assert "/api/health" not in all_route_paths
+    assert "/api/webhook/stripe" not in all_route_paths

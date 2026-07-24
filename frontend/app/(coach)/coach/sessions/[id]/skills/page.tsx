@@ -13,6 +13,7 @@ import {
 } from "@/lib/api/coach";
 import { updateSkillStatus, type SkillStatus } from "@/lib/api/curriculum";
 import { queryKeys } from "@/lib/query/keys";
+import { SessionDetailTabs } from "@/components/coach/SessionDetailTabs";
 
 const STATUS_OPTIONS: SkillStatus[] = [
   "INTRODUCED",
@@ -62,6 +63,13 @@ export default function CoachSessionSkillsPage({ params, searchParams }: PagePro
 
   return (
     <section data-testid="coach-session-skills" className="space-y-4">
+      <SessionDetailTabs
+        attendanceSkillsId={occurrenceId}
+        progressSessionId={data?.session_id ?? occurrenceId}
+        date={date}
+        active="skills"
+      />
+
       <header className="space-y-2">
         <Link
           href={`/coach/sessions/${encodeURIComponent(occurrenceId)}?date=${date}` as Parameters<

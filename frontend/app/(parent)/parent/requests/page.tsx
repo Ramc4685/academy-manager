@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Button } from "@/components/ds/button";
+import { EmptyState } from "@/components/ds/empty-state";
 import { queryKeys } from "@/lib/query/keys";
 import { requestStatusChipVariant } from "@/lib/parent-requests";
 import {
@@ -47,20 +48,11 @@ export default function ParentRequestsPage() {
   return (
     <section data-testid="parent-requests" className="space-y-4">
       <div className="animate-fade-in-up">
-        <h1 className="font-display text-2xl font-bold tracking-tight" style={{ color: "var(--rally-ink)" }}>
-          Requests
-        </h1>
-        <p className="text-sm mt-0.5" style={{ color: "var(--rally-muted)" }}>
-          Absences, makeups &amp; trial classes
-        </p>
+        <h1 className="font-display text-2xl font-bold tracking-tight text-rally-ink">Requests</h1>
+        <p className="text-sm mt-0.5 text-rally-muted">Absences, makeups &amp; trial classes</p>
       </div>
 
-      <div
-        role="tablist"
-        aria-label="Request type"
-        className="flex gap-1 rounded-xl p-1"
-        style={{ background: "var(--rally-line)" }}
-      >
+      <div role="tablist" aria-label="Request type" className="flex gap-1 rounded-xl bg-rally-line p-1">
         {TABS.map((t) => (
           <button
             key={t.id}
@@ -68,12 +60,11 @@ export default function ParentRequestsPage() {
             role="tab"
             aria-selected={tab === t.id}
             onClick={() => setTab(t.id)}
-            className="min-h-touch flex-1 rounded-lg text-sm font-semibold transition-all duration-150"
-            style={
+            className={`min-h-touch flex-1 rounded-lg text-sm font-semibold transition-all duration-150 ${
               tab === t.id
-                ? { background: "white", color: "var(--rally-ink)", boxShadow: "0 1px 2px rgba(0,0,0,0.06)" }
-                : { background: "transparent", color: "var(--rally-muted)" }
-            }
+                ? "bg-white text-rally-ink shadow-[0_1px_2px_rgba(0,0,0,0.06)]"
+                : "bg-transparent text-rally-muted"
+            }`}
           >
             {t.label}
           </button>
@@ -130,24 +121,22 @@ function AbsencesPanel() {
   return (
     <div className="space-y-4">
       <Card p={16}>
-        <h2 className="text-sm font-bold mb-3" style={{ color: "var(--rally-ink)" }}>
-          Report an absence
-        </h2>
+        <h2 className="text-sm font-bold mb-3 text-rally-ink">Report an absence</h2>
 
         {submitMutation.isError ? (
-          <p role="alert" className="mb-3 rounded-md bg-red-50 p-3 text-sm text-red-700">
+          <p role="alert" className="mb-3 rounded-md bg-status-red-50 p-3 text-sm text-status-red-800">
             {submitMutation.error instanceof Error
               ? submitMutation.error.message
               : "Could not submit absence notice."}
           </p>
         ) : null}
         {lastWarning === true && (
-          <p role="alert" className="mb-3 rounded-md bg-amber-50 p-3 text-sm text-amber-800">
+          <p role="alert" className="mb-3 rounded-md bg-status-amber-50 p-3 text-sm text-status-amber-800">
             Submitted inside the notice window — makeup eligibility may be affected.
           </p>
         )}
         {lastWarning === false && submitMutation.isSuccess ? (
-          <p role="status" className="mb-3 rounded-md bg-green-50 p-3 text-sm text-green-700">
+          <p role="status" className="mb-3 rounded-md bg-status-green-50 p-3 text-sm text-status-green-800">
             Absence notice submitted.
           </p>
         ) : null}
@@ -161,11 +150,10 @@ function AbsencesPanel() {
             submitMutation.mutate({ student_id: studentId, occurrence_id: occurrenceId });
           }}
         >
-          <label className="block text-xs font-semibold" style={{ color: "var(--rally-muted)" }}>
+          <label className="block text-xs font-semibold text-rally-muted">
             Child
             <select
-              className="mt-1 min-h-touch w-full rounded-lg border px-3 text-sm"
-              style={{ borderColor: "var(--rally-line)" }}
+              className="mt-1 min-h-touch w-full rounded-lg border border-rally-line px-3 text-sm"
               value={studentId}
               onChange={(e) => {
                 setStudentId(e.target.value);
@@ -182,11 +170,10 @@ function AbsencesPanel() {
             </select>
           </label>
 
-          <label className="block text-xs font-semibold" style={{ color: "var(--rally-muted)" }}>
+          <label className="block text-xs font-semibold text-rally-muted">
             Upcoming class
             <select
-              className="mt-1 min-h-touch w-full rounded-lg border px-3 text-sm"
-              style={{ borderColor: "var(--rally-line)" }}
+              className="mt-1 min-h-touch w-full rounded-lg border border-rally-line px-3 text-sm"
               value={occurrenceId}
               onChange={(e) => setOccurrenceId(e.target.value)}
               disabled={!studentId || scheduleQuery.isLoading}
@@ -220,17 +207,15 @@ function AbsencesPanel() {
       </Card>
 
       <div>
-        <h2 className="text-sm font-bold mb-2" style={{ color: "var(--rally-ink)" }}>
-          My absence notices
-        </h2>
+        <h2 className="text-sm font-bold mb-2 text-rally-ink">My absence notices</h2>
         {absencesQuery.isError ? (
-          <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+          <p role="alert" className="rounded-md bg-status-red-50 p-3 text-sm text-status-red-800">
             Could not load absence notices.
           </p>
         ) : absencesQuery.isLoading ? (
           <ListSkeleton />
         ) : notices.length === 0 ? (
-          <EmptyState message="No absence notices yet." />
+          <PanelEmptyState message="No absence notices yet." />
         ) : (
           <ul className="space-y-2">
             {notices.map((n: AbsenceNoticeView) => (
@@ -238,11 +223,11 @@ function AbsencesPanel() {
                 <Card p={12}>
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <p className="text-sm font-semibold" style={{ color: "var(--rally-ink)" }}>
+                      <p className="text-sm font-semibold text-rally-ink">
                         {formatAcademyDateTime(n.submitted_at, academyTimezone)}
                       </p>
                       {n.notice_window_met === false && (
-                        <p className="mt-1 text-xs" style={{ color: "#d97706" }}>
+                        <p className="mt-1 text-xs text-status-amber-800">
                           Submitted inside the notice window
                         </p>
                       )}
@@ -311,12 +296,10 @@ function MakeupsPanel() {
   return (
     <div className="space-y-4">
       <Card p={16}>
-        <h2 className="text-sm font-bold mb-3" style={{ color: "var(--rally-ink)" }}>
-          Request a makeup
-        </h2>
+        <h2 className="text-sm font-bold mb-3 text-rally-ink">Request a makeup</h2>
 
         {submitMutation.isError ? (
-          <p role="alert" className="mb-3 rounded-md bg-red-50 p-3 text-sm text-red-700">
+          <p role="alert" className="mb-3 rounded-md bg-status-red-50 p-3 text-sm text-status-red-800">
             {submitMutation.error instanceof Error
               ? submitMutation.error.message
               : "Could not submit makeup request."}
@@ -326,7 +309,7 @@ function MakeupsPanel() {
         {absencesQuery.isLoading ? (
           <ListSkeleton />
         ) : eligibleAbsences.length === 0 ? (
-          <EmptyState message="No missed classes available for a makeup request." />
+          <PanelEmptyState message="No missed classes available for a makeup request." />
         ) : (
           <form
             className="space-y-3"
@@ -340,11 +323,10 @@ function MakeupsPanel() {
               });
             }}
           >
-            <label className="block text-xs font-semibold" style={{ color: "var(--rally-muted)" }}>
+            <label className="block text-xs font-semibold text-rally-muted">
               Missed class
               <select
-                className="mt-1 min-h-touch w-full rounded-lg border px-3 text-sm"
-                style={{ borderColor: "var(--rally-line)" }}
+                className="mt-1 min-h-touch w-full rounded-lg border border-rally-line px-3 text-sm"
                 value={selectedAbsence?.occurrence_id ?? ""}
                 onChange={(e) => {
                   const found = eligibleAbsences.find((a) => a.occurrence_id === e.target.value) ?? null;
@@ -362,11 +344,10 @@ function MakeupsPanel() {
             </label>
 
             {selectedAbsence && (
-              <label className="block text-xs font-semibold" style={{ color: "var(--rally-muted)" }}>
+              <label className="block text-xs font-semibold text-rally-muted">
                 Preferred makeup class (optional)
                 <select
-                  className="mt-1 min-h-touch w-full rounded-lg border px-3 text-sm"
-                  style={{ borderColor: "var(--rally-line)" }}
+                  className="mt-1 min-h-touch w-full rounded-lg border border-rally-line px-3 text-sm"
                   value={targetOccurrenceId}
                   onChange={(e) => setTargetOccurrenceId(e.target.value)}
                   disabled={targetsQuery.isLoading}
@@ -395,17 +376,15 @@ function MakeupsPanel() {
       </Card>
 
       <div>
-        <h2 className="text-sm font-bold mb-2" style={{ color: "var(--rally-ink)" }}>
-          My makeup requests
-        </h2>
+        <h2 className="text-sm font-bold mb-2 text-rally-ink">My makeup requests</h2>
         {makeupsQuery.isError ? (
-          <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+          <p role="alert" className="rounded-md bg-status-red-50 p-3 text-sm text-status-red-800">
             Could not load makeup requests.
           </p>
         ) : makeupsQuery.isLoading ? (
           <ListSkeleton />
         ) : makeups.length === 0 ? (
-          <EmptyState message="No makeup requests yet." />
+          <PanelEmptyState message="No makeup requests yet." />
         ) : (
           <ul className="space-y-2">
             {makeups.map((m: MakeupRequestView) => (
@@ -413,14 +392,14 @@ function MakeupsPanel() {
                 <Card p={12}>
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <p className="text-sm font-semibold" style={{ color: "var(--rally-ink)" }}>
+                      <p className="text-sm font-semibold text-rally-ink">
                         Requested {formatAcademyDate(m.created_at, academyTimezone)}
                       </p>
-                      <p className="mt-1 text-xs" style={{ color: "var(--rally-muted)" }}>
+                      <p className="mt-1 text-xs text-rally-muted">
                         Expires {formatAcademyDate(m.expires_at, academyTimezone)}
                       </p>
                       {m.status === "denied" && m.denial_reason && (
-                        <p className="mt-1 text-xs" style={{ color: "#dc2626" }}>{m.denial_reason}</p>
+                        <p className="mt-1 text-xs text-status-red-600">{m.denial_reason}</p>
                       )}
                     </div>
                     <Chip variant={requestStatusChipVariant(m.status)} label={m.status.toUpperCase()} />
@@ -491,12 +470,10 @@ function TrialsPanel() {
   return (
     <div className="space-y-4">
       <Card p={16}>
-        <h2 className="text-sm font-bold mb-3" style={{ color: "var(--rally-ink)" }}>
-          Request a trial class
-        </h2>
+        <h2 className="text-sm font-bold mb-3 text-rally-ink">Request a trial class</h2>
 
         {submitMutation.isError ? (
-          <p role="alert" className="mb-3 rounded-md bg-red-50 p-3 text-sm text-red-700">
+          <p role="alert" className="mb-3 rounded-md bg-status-red-50 p-3 text-sm text-status-red-800">
             {submitMutation.error instanceof Error
               ? submitMutation.error.message
               : "Could not submit trial request."}
@@ -519,7 +496,7 @@ function TrialsPanel() {
             });
           }}
         >
-          <fieldset className="flex gap-4 text-xs font-semibold" style={{ color: "var(--rally-muted)" }}>
+          <fieldset className="flex gap-4 text-xs font-semibold text-rally-muted">
             <legend className="sr-only">Who is this trial for?</legend>
             <label className="flex items-center gap-1.5">
               <input
@@ -542,11 +519,10 @@ function TrialsPanel() {
           </fieldset>
 
           {studentRef === "existing_student" ? (
-            <label className="block text-xs font-semibold" style={{ color: "var(--rally-muted)" }}>
+            <label className="block text-xs font-semibold text-rally-muted">
               Child
               <select
-                className="mt-1 min-h-touch w-full rounded-lg border px-3 text-sm"
-                style={{ borderColor: "var(--rally-line)" }}
+                className="mt-1 min-h-touch w-full rounded-lg border border-rally-line px-3 text-sm"
                 value={studentId}
                 onChange={(e) => setStudentId(e.target.value)}
               >
@@ -560,23 +536,21 @@ function TrialsPanel() {
             </label>
           ) : (
             <div className="space-y-3">
-              <label className="block text-xs font-semibold" style={{ color: "var(--rally-muted)" }}>
+              <label className="block text-xs font-semibold text-rally-muted">
                 Child&apos;s name
                 <input
                   type="text"
-                  className="mt-1 min-h-touch w-full rounded-lg border px-3 text-sm"
-                  style={{ borderColor: "var(--rally-line)" }}
+                  className="mt-1 min-h-touch w-full rounded-lg border border-rally-line px-3 text-sm"
                   value={prospectiveName}
                   onChange={(e) => setProspectiveName(e.target.value)}
                   placeholder="Full name"
                 />
               </label>
-              <label className="block text-xs font-semibold" style={{ color: "var(--rally-muted)" }}>
+              <label className="block text-xs font-semibold text-rally-muted">
                 Date of birth (optional)
                 <input
                   type="date"
-                  className="mt-1 min-h-touch w-full rounded-lg border px-3 text-sm"
-                  style={{ borderColor: "var(--rally-line)" }}
+                  className="mt-1 min-h-touch w-full rounded-lg border border-rally-line px-3 text-sm"
                   value={prospectiveDob}
                   onChange={(e) => setProspectiveDob(e.target.value)}
                 />
@@ -584,11 +558,10 @@ function TrialsPanel() {
             </div>
           )}
 
-          <label className="block text-xs font-semibold" style={{ color: "var(--rally-muted)" }}>
+          <label className="block text-xs font-semibold text-rally-muted">
             Session
             <select
-              className="mt-1 min-h-touch w-full rounded-lg border px-3 text-sm"
-              style={{ borderColor: "var(--rally-line)" }}
+              className="mt-1 min-h-touch w-full rounded-lg border border-rally-line px-3 text-sm"
               value={sessionId}
               onChange={(e) => setSessionId(e.target.value)}
               disabled={sessionsQuery.isLoading}
@@ -605,22 +578,20 @@ function TrialsPanel() {
           </label>
 
           <div className="grid grid-cols-2 gap-3">
-            <label className="block text-xs font-semibold" style={{ color: "var(--rally-muted)" }}>
+            <label className="block text-xs font-semibold text-rally-muted">
               Preferred start
               <input
                 type="date"
-                className="mt-1 min-h-touch w-full rounded-lg border px-3 text-sm"
-                style={{ borderColor: "var(--rally-line)" }}
+                className="mt-1 min-h-touch w-full rounded-lg border border-rally-line px-3 text-sm"
                 value={preferredStart}
                 onChange={(e) => setPreferredStart(e.target.value)}
               />
             </label>
-            <label className="block text-xs font-semibold" style={{ color: "var(--rally-muted)" }}>
+            <label className="block text-xs font-semibold text-rally-muted">
               Preferred end
               <input
                 type="date"
-                className="mt-1 min-h-touch w-full rounded-lg border px-3 text-sm"
-                style={{ borderColor: "var(--rally-line)" }}
+                className="mt-1 min-h-touch w-full rounded-lg border border-rally-line px-3 text-sm"
                 value={preferredEnd}
                 onChange={(e) => setPreferredEnd(e.target.value)}
               />
@@ -634,17 +605,15 @@ function TrialsPanel() {
       </Card>
 
       <div>
-        <h2 className="text-sm font-bold mb-2" style={{ color: "var(--rally-ink)" }}>
-          My trial requests
-        </h2>
+        <h2 className="text-sm font-bold mb-2 text-rally-ink">My trial requests</h2>
         {trialsQuery.isError ? (
-          <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+          <p role="alert" className="rounded-md bg-status-red-50 p-3 text-sm text-status-red-800">
             Could not load trial requests.
           </p>
         ) : trialsQuery.isLoading ? (
           <ListSkeleton />
         ) : trials.length === 0 ? (
-          <EmptyState message="No trial requests yet." />
+          <PanelEmptyState message="No trial requests yet." />
         ) : (
           <ul className="space-y-2">
             {trials.map((t: TrialRequestView) => (
@@ -652,14 +621,14 @@ function TrialsPanel() {
                 <Card p={12}>
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <p className="text-sm font-semibold" style={{ color: "var(--rally-ink)" }}>
+                      <p className="text-sm font-semibold text-rally-ink">
                         {t.prospective_child_name ?? "Existing child"}
                       </p>
-                      <p className="mt-1 text-xs" style={{ color: "var(--rally-muted)" }}>
+                      <p className="mt-1 text-xs text-rally-muted">
                         Requested {formatAcademyDate(t.created_at, academyTimezone)} · {t.preferred_start} – {t.preferred_end}
                       </p>
                       {t.status === "denied" && t.denial_reason && (
-                        <p className="mt-1 text-xs" style={{ color: "#dc2626" }}>{t.denial_reason}</p>
+                        <p className="mt-1 text-xs text-status-red-600">{t.denial_reason}</p>
                       )}
                     </div>
                     <Chip variant={requestStatusChipVariant(t.status)} label={t.status.toUpperCase()} />
@@ -686,10 +655,10 @@ function ListSkeleton() {
   );
 }
 
-function EmptyState({ message }: { message: string }) {
+function PanelEmptyState({ message }: { message: string }) {
   return (
-    <div className="rounded-xl p-6 text-center" style={{ background: "white", border: "1px solid var(--rally-line)" }}>
-      <p className="text-sm" style={{ color: "var(--rally-muted)" }}>{message}</p>
+    <div className="rounded-xl border border-rally-line bg-white p-6">
+      <EmptyState title={message} compact />
     </div>
   );
 }
