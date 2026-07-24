@@ -13,6 +13,7 @@ import {
   type AttendanceStatus,
   type CoachRosterEntry,
 } from "@/lib/api/coach";
+import { SessionDetailTabs } from "@/components/coach/SessionDetailTabs";
 import { Chip } from "@/components/ds/chip";
 import { queryKeys } from "@/lib/query/keys";
 import { useOnline } from "@/lib/pwa/online";
@@ -237,9 +238,6 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
     );
   }
 
-  const progressHref = `/coach/sessions/${encodeURIComponent(session.session_id)}/progress`;
-  const skillsHref = `/coach/sessions/${encodeURIComponent(session.occurrence_id)}/skills?date=${date}`;
-
   return (
     <section data-testid="session-detail">
       <header className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -255,21 +253,14 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
             {formatSessionTimeRange(session.start_at, session.end_at, session.timezone)}
           </p>
         </div>
-        <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap">
-          <Link
-            href={skillsHref as Parameters<typeof Link>[0]["href"]}
-            className="inline-flex min-h-9 items-center justify-center rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
-          >
-            Skill updates
-          </Link>
-          <Link
-            href={progressHref as Parameters<typeof Link>[0]["href"]}
-            className="inline-flex min-h-9 items-center justify-center rounded-md border border-neutral-300 px-3 py-2 text-sm font-semibold text-neutral-700 transition-colors hover:bg-neutral-50"
-          >
-            Skill Progress
-          </Link>
-        </div>
       </header>
+
+      <SessionDetailTabs
+        attendanceSkillsId={session.occurrence_id}
+        progressSessionId={session.session_id}
+        date={date}
+        active="attendance"
+      />
 
       {!online && (
         <p className="mb-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
