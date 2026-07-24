@@ -1,6 +1,6 @@
 # fix-uic4-payslip-into-payouts
 
-PR: #TBD
+PR: #346
 
 ## What changed
 Coach payslips moved into a **Payslips** tab on `/admin/payouts`. The page

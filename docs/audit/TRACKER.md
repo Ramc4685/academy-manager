@@ -54,7 +54,7 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 | UIC1 | Users directory: coaches+parents+users → role tabs | [plans/UIC1-users-directory.md](plans/UIC1-users-directory.md) | S | — | DONE | [#324](https://github.com/Ramc4685/academy-manager/pull/324) |
 | UIC2 | Pause requests → 5th tab of Requests | [plans/UIC2-pause-into-requests.md](plans/UIC2-pause-into-requests.md) | S | — | DONE | #322 |
 | UIC3 | Session economics + Dues → Reports tabs | [plans/UIC3-reports-consolidation.md](plans/UIC3-reports-consolidation.md) | M | — | TODO | |
-| UIC4 | Coach payslip → Payouts tab | [plans/UIC4-payslip-into-payouts.md](plans/UIC4-payslip-into-payouts.md) | S | — | DONE | #TBD |
+| UIC4 | Coach payslip → Payouts tab | [plans/UIC4-payslip-into-payouts.md](plans/UIC4-payslip-into-payouts.md) | S | — | DONE | [#346](https://github.com/Ramc4685/academy-manager/pull/346) |
 | UIC5 | Progress → tab of student/session detail | [plans/UIC5-progress-tabs.md](plans/UIC5-progress-tabs.md) | S | — | DONE | [#328](https://github.com/Ramc4685/academy-manager/pull/328) |
 | UIC6 | Registrations + Waitlist + Level-up queue → Admissions | [plans/UIC6-admissions-queues.md](plans/UIC6-admissions-queues.md) | M | — | TODO | |
 | UIC7 | Self-service policy → Settings section | [plans/UIC7-settings-selfservice.md](plans/UIC7-settings-selfservice.md) | XS | — | DONE | Moved into `/admin/settings?panel=self-service`; old URL redirects |

@@ -1,5 +1,5 @@
 # UIC4 — Coach payslip → tab of /admin/payouts
-Status: DONE (PR #TBD, 2026-07-23)
+Status: DONE (PR #346, 2026-07-24)
 Size: S · Depends on: none · Tracker: ../TRACKER.md
 
 ## Problem
@@ -38,4 +38,4 @@ Size: S · Depends on: none · Tracker: ../TRACKER.md
 ## PR checklist
 - [x] Release note: "Coach payslips are now a tab on Payroll & payouts (old URL redirects)"
 - [x] TRACKER.md: UIC4 → DONE + PR link
-- [x] This plan: Status → DONE (PR #NNN, date)
+- [x] This plan: Status → DONE (PR #346, 2026-07-24)
