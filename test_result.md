@@ -67,9 +67,10 @@ Use the per-task ledgers under `docs/test-results/active/` for current handoffs.
 - [2026-07-07-parent-self-service](docs/test-results/active/2026-07-07-parent-self-service.md)
 - [2026-07-08-payment-visibility-phase-3-financial-reports](docs/test-results/active/2026-07-08-payment-visibility-phase-3-financial-reports.md)
 - [2026-07-20-c1-mypy-gate](docs/test-results/active/2026-07-20-c1-mypy-gate.md)
-- [2026-07-20-c4-tenant-boot-closure](docs/test-results/active/2026-07-20-c4-tenant-boot-closure.md)
 - [2026-07-20-c2-observability](docs/test-results/active/2026-07-20-c2-observability.md)
+- [2026-07-20-c4-tenant-boot-closure](docs/test-results/active/2026-07-20-c4-tenant-boot-closure.md)
 - [2026-07-20-ci-production-release-automation](docs/test-results/active/2026-07-20-ci-production-release-automation.md)
+- [2026-07-24-pr-346-frontend-static-fix](docs/test-results/active/2026-07-24-pr-346-frontend-static-fix.md)
 - [slice-i-connect](docs/test-results/active/slice-i-connect.md)
 
 ## Required Workflow
