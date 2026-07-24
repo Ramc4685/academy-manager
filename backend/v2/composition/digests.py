@@ -16,6 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from typing import Any
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -400,12 +401,17 @@ class _ParentDigestProvider:
             dues=dues,
             autopay_enabled=autopay_enabled,
             portal_url=(f"{frontend}/parent/dashboard" if frontend else ""),
-            # Variant B activation CTA. The real password-set link is a per-user
-            # Firebase reset link generated server-side (see identity
-            # SendLoginInvite); minting one per parent inside build_view would be
-            # too heavy and side-effectful, so we deep-link the login page with a
-            # continue target of the payments page (matches the DuesView pay_url).
-            activate_url=(f"{frontend}/parent/login?continue=/parent/payments" if frontend else ""),
+            # Variant B activation CTA. These parents already exist — admin
+            # provisioning creates the Firebase account (MongoUserRepo
+            # `_create_firebase_user`); they simply never set a password. So
+            # they go to sign-in, not signup: /register would collide with
+            # `auth/email-already-in-use`. The email is prefilled so "Forgot
+            # password" sends them a set-password link without retyping it.
+            #
+            # NOTE: must stay a real Next.js route. The original
+            # `/parent/login?continue=/parent/payments` 404'd in production —
+            # login lives at /login and no `continue` param is read anywhere.
+            activate_url=self._login_url(frontend, user_doc),
             reply_to=reply_to,
         )
 
@@ -613,6 +619,20 @@ class _ParentDigestProvider:
             return await self._students.get_parent_user_doc(parent_id)
         except Exception:
             return None
+
+    @staticmethod
+    def _login_url(frontend: str, user_doc: dict[str, Any] | None) -> str:
+        """Sign-in deep link for a provisioned-but-never-activated parent.
+
+        Email is prefilled when known so the parent can go straight to
+        "Forgot password" and receive a set-password link.
+        """
+        if not frontend:
+            return ""
+        email = str((user_doc or {}).get("email") or "").strip()
+        if not email:
+            return f"{frontend}/login"
+        return f"{frontend}/login?email={quote(email, safe='')}"
 
     @staticmethod
     def _is_on_portal(user_doc: dict[str, Any] | None) -> bool:
