@@ -18,6 +18,11 @@ overrides:
   brace-expansion@5: ^5.0.7
   js-yaml@3: ^3.15.0
   js-yaml@4: ^4.3.0
+  # GHSA-6g55-p6wh-862q (postcss arbitrary file read via attacker-controlled
+  # sourceMappingURL); patched in >=8.5.12. next pins postcss@8.4.31 exactly, so
+  # bumping next alone can't clear it — floor the transitive copy. postcss 8.5.x
+  # is API-compatible with 8.4.x, so next's build pipeline is unaffected.
+  postcss@<8.5.12: '>=8.5.12'
 
 onlyBuiltDependencies:
   - esbuild
