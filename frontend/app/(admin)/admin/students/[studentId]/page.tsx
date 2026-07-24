@@ -9,7 +9,7 @@
 
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
@@ -68,6 +68,11 @@ import { getActiveAcademyId } from "@/lib/api/client";
 import { getStudentProgress, listPrograms } from "@/lib/api/curriculum";
 import { buildStudentProgressHref } from "@/lib/navigation/admin-student-progress-return";
 import { queryKeys } from "@/lib/query/keys";
+import {
+  StudentDetailTabs,
+  parseStudentDetailTabId,
+  type StudentDetailTabId,
+} from "@/components/admin/StudentDetailTabs";
 import { Avatar } from "@/components/ds/avatar";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
@@ -75,17 +80,9 @@ import { Chip } from "@/components/ds/chip";
 import { Overline } from "@/components/ds/typography";
 
 type EditableStatus = "active" | "paused" | "inactive" | "cancelled";
-type StudentTab = "overview" | "training" | "sessions" | "billing" | "family";
+type StudentTab = StudentDetailTabId;
 type StudentEditMode = "overview" | "training" | "family";
 type BillingModal = "add-line" | "manual-payment" | "void" | "create-invoice" | null;
-
-const STUDENT_TABS: Array<{ id: StudentTab; label: string }> = [
-  { id: "overview", label: "Overview" },
-  { id: "training", label: "Training" },
-  { id: "sessions", label: "Sessions" },
-  { id: "billing", label: "Billing" },
-  { id: "family", label: "Family & Compliance" },
-];
 
 const OPEN_BILLING_STATUSES = new Set([
   "open",
@@ -100,8 +97,11 @@ const OPEN_BILLING_STATUSES = new Set([
 export default function AdminStudentDetailPage() {
   const params = useParams<{ studentId: string }>();
   const studentId = params?.studentId ?? "";
+  const searchParams = useSearchParams();
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<StudentTab>("overview");
+  const [activeTab, setActiveTab] = useState<StudentTab>(
+    parseStudentDetailTabId(searchParams.get("tab")),
+  );
 
   const studentQuery = useQuery({
     queryKey: queryKeys.admin.studentDetail(studentId),
@@ -174,7 +174,7 @@ export default function AdminStudentDetailPage() {
       <BackLink />
       <Header student={student} />
       <StudentSummaryStrip student={student} />
-      <StudentTabs activeTab={activeTab} onChange={setActiveTab} />
+      <StudentDetailTabs studentId={studentId} active={activeTab} onChangeTab={setActiveTab} />
 
       {activeTab === "overview" && (
         <TabPanel id="overview">
@@ -391,44 +391,6 @@ function SummaryMetric({
         {value}
       </div>
       <div className="mt-1 truncate text-xs text-rally-muted">{detail}</div>
-    </div>
-  );
-}
-
-function StudentTabs({
-  activeTab,
-  onChange,
-}: {
-  activeTab: StudentTab;
-  onChange: (tab: StudentTab) => void;
-}) {
-  return (
-    <div
-      role="tablist"
-      aria-label="Student record sections"
-      className="flex gap-1 overflow-x-auto border-b border-neutral-200"
-    >
-      {STUDENT_TABS.map((tab) => {
-        const selected = activeTab === tab.id;
-        return (
-          <button
-            key={tab.id}
-            type="button"
-            role="tab"
-            aria-selected={selected}
-            aria-controls={`student-tabpanel-${tab.id}`}
-            id={`student-tab-${tab.id}`}
-            className={`whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600 ${
-              selected
-                ? "border-rally-blue text-rally-ink"
-                : "border-transparent text-rally-muted hover:text-rally-ink"
-            }`}
-            onClick={() => onChange(tab.id)}
-          >
-            {tab.label}
-          </button>
-        );
-      })}
     </div>
   );
 }

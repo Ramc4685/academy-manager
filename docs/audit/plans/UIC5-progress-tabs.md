@@ -1,5 +1,5 @@
 # UIC5 — Progress as a tab of student detail / coach session detail
-Status: TODO
+Status: DONE (PR #328, 2026-07-23)
 Size: S · Depends on: none (MT5 monolith split benefits later) · Tracker: ../TRACKER.md
 
 ## Problem
@@ -42,6 +42,6 @@ Skill-progress lives on separate routes one hop away from the detail screens tha
 - Keep an eye on MT5: do not inline any progress logic into the 3,026L detail page.
 
 ## PR checklist
-- [ ] Release note: "Student and session skill progress now appear as tabs on their detail screens"
-- [ ] TRACKER.md: UIC5 → DONE + PR link
-- [ ] This plan: Status → DONE (PR #NNN, date)
+- [x] Release note: "Student and session skill progress now appear as tabs on their detail screens"
+- [x] TRACKER.md: UIC5 → DONE + PR link
+- [x] This plan: Status → DONE (PR #328, 2026-07-23)
