@@ -14,6 +14,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from backend.v2.shared.config import get_settings
+from backend.v2.tests._route_paths import route_paths
 
 
 @asynccontextmanager
@@ -54,7 +55,7 @@ def test_platform_routes_are_mounted_by_default(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(v2_main, "_lifespan", _noop_lifespan)
     app = v2_main.create_app()
 
-    paths = {route.path for route in app.routes}
+    paths = route_paths(app)
     assert any(path.startswith("/api/v2/platform") for path in paths)
 
 
@@ -66,5 +67,5 @@ def test_platform_routes_can_be_disabled(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(v2_main, "_lifespan", _noop_lifespan)
     app = v2_main.create_app()
 
-    paths = {route.path for route in app.routes}
+    paths = route_paths(app)
     assert not any(path.startswith("/api/v2/platform") for path in paths)
