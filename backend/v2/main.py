@@ -59,6 +59,9 @@ from backend.v2.contexts.identity.application.use_cases.bootstrap_academy import
 from backend.v2.contexts.identity.application.use_cases.load_auth_claims import (
     LoadAuthClaims,
 )
+from backend.v2.contexts.identity.application.use_cases.magic_link import (
+    ConsumeMagicLink,
+)
 from backend.v2.contexts.identity.application.use_cases.register_public_parent import (
     RegisterPublicParent,
 )
@@ -66,6 +69,9 @@ from backend.v2.contexts.identity.domain.models import (
     AcademyMembership,
     PlatformRole,
     User,
+)
+from backend.v2.contexts.identity.infrastructure.firebase_admin_adapter import (
+    get_firebase_admin_adapter,
 )
 from backend.v2.contexts.identity.infrastructure.firebase_token_verifier import (
     FirebaseTokenVerifier,
@@ -75,6 +81,9 @@ from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
 )
 from backend.v2.contexts.identity.infrastructure.mongo_bootstrap_store import (
     MongoTenantBootstrapStore,
+)
+from backend.v2.contexts.identity.infrastructure.mongo_magic_link_repo import (
+    MongoMagicLinkRepository,
 )
 from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
     MongoMembershipRepository,
@@ -106,6 +115,7 @@ from backend.v2.contexts.platform.infrastructure.mongo_tenant_lifecycle_repo imp
 )
 from backend.v2.interfaces.admin.router import router as admin_router
 from backend.v2.interfaces.coach.router import router as coach_router
+from backend.v2.interfaces.magic_link_routes import router as magic_link_router
 from backend.v2.interfaces.me_routes import router as me_router
 from backend.v2.interfaces.parent.router import router as parent_router
 from backend.v2.interfaces.platform.router import router as platform_router
@@ -197,6 +207,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     app.state.bootstrap_academy = BootstrapAcademy(
         store=MongoTenantBootstrapStore(db),
+    )
+    # Public parent magic-link consume. Tenant is resolved per-request from the
+    # host; the use case itself checks the token's academy binding against it.
+    app.state.consume_magic_link = ConsumeMagicLink(
+        links=MongoMagicLinkRepository(db),
+        tokens=get_firebase_admin_adapter(),
     )
 
     # Tenant resolver — wired only in SaaS mode. In non-SaaS mode the
@@ -723,6 +739,7 @@ def create_app() -> FastAPI:
     # Persona route packages.
     app.include_router(me_router, prefix="/api/v2")
     app.include_router(registration_router, prefix="/api/v2")
+    app.include_router(magic_link_router, prefix="/api/v2")
     if settings.enable_platform_routes:
         app.include_router(platform_router, prefix="/api/v2")
     app.include_router(coach_router, prefix="/api/v2")
