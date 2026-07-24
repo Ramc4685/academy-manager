@@ -1,5 +1,5 @@
 # UIC8 — Delete/redirect the shared Calendar and Messages stubs
-Status: TODO
+Status: DONE (PR #327, 2026-07-23)
 Size: XS · Depends on: UIM13 decision (see below) · Tracker: ../TRACKER.md
 
 ## Problem
@@ -37,6 +37,6 @@ If UIM13 gets scheduled within the same milestone, skip this item (WONT-FIX) and
 - Coordinate with UIM13: when real screens ship, they replace these redirect pages at the same paths (note this in UIM13's plan).
 
 ## PR checklist
-- [ ] Release note: "/calendar and /messages now jump straight to your workspace"
-- [ ] TRACKER.md: UIC8 → DONE + PR link (or WONT-FIX if UIM13 supersedes)
-- [ ] This plan: Status → DONE (PR #NNN, date)
+- [x] Release note: "/calendar and /messages now jump straight to your workspace"
+- [x] TRACKER.md: UIC8 → DONE + PR link (or WONT-FIX if UIM13 supersedes)
+- [x] This plan: Status → DONE (PR #NNN, date)
