@@ -197,7 +197,24 @@ async def test_build_view_variant_b_when_never_signed_in() -> None:
     assert view is not None
     assert view.on_portal is False
     assert view.children[0].cant_make_it_url is None  # no portal to deep-link into
-    assert view.activate_url == "https://app.test/parent/login?continue=/parent/payments"
+    # Must be a real frontend route: /parent/login does not exist and 404s.
+    # These parents already have an account, so they go to sign-in.
+    assert view.activate_url == "https://app.test/login"
+
+
+@pytest.mark.asyncio
+async def test_build_view_variant_b_prefills_login_email() -> None:
+    provider = _full_family_provider(
+        user_doc={"display_name": "Parent One", "email": "parent.one+a@example.test"},
+        consents=[SimpleNamespace(consent_id="c1")],
+    )
+
+    with tenant_scope(ACADEMY_ID):
+        view = await provider.build_view("p1", ON_DATE)
+
+    assert view is not None
+    assert view.on_portal is False
+    assert view.activate_url == ("https://app.test/login?email=parent.one%2Ba%40example.test")
 
 
 @pytest.mark.asyncio
