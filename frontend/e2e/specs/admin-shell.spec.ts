@@ -415,6 +415,19 @@ test.describe("Rally admin shell", () => {
     });
   }
 
+  test("coach payslip redirects into Payouts → Payslips tab (UIC4)", async ({ page }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    await page.goto("/admin/coach-payslip");
+    await expect(page).toHaveURL(/\/admin\/payouts\?tab=payslips/);
+    await expect(page.getByTestId("admin-payouts")).toBeVisible();
+    await expect(page.getByTestId("admin-coach-payslip")).toBeVisible();
+    expect(
+      errors,
+      `App console errors on coach payslip redirect: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
   test("/admin/coaches redirects into the Users directory on the coach tab", async ({
     page,
   }) => {

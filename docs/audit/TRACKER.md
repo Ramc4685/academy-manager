@@ -29,8 +29,8 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 | QW1 | Re-point pnpm security overrides | [plans/QW1-pnpm-overrides.md](plans/QW1-pnpm-overrides.md) | XS | — | DONE | #310 |
 | QW2 | (merged into C1) | — | — | C1 | DONE | #311 |
 | QW3 | Scrub weak example credentials | [plans/QW3-env-example-creds.md](plans/QW3-env-example-creds.md) | XS | — | DONE | #310 |
-| QW4 | Delete orphaned legacy bytecode dirs | [plans/QW4-orphaned-bytecode.md](plans/QW4-orphaned-bytecode.md) | XS | — | TODO | |
-| QW5 | Add CSP + HSTS headers | [plans/QW5-csp-hsts.md](plans/QW5-csp-hsts.md) | S | — | DONE | #315 |
+| QW4 | Delete orphaned legacy bytecode dirs | [plans/QW4-orphaned-bytecode.md](plans/QW4-orphaned-bytecode.md) | XS | — | DONE | verified 2026-07-24: backend/routers, backend/services, backend/tests gone from origin/main |
+| QW5 | Add CSP + HSTS headers | [plans/QW5-csp-hsts.md](plans/QW5-csp-hsts.md) | S | — | PARTIAL | #315 — HSTS live; CSP still Content-Security-Policy-Report-Only, not enforcing (see next.config.ts comment) |
 | QW6 | Fix local pnpm typecheck (stale .next/types) | [plans/QW6-local-typecheck.md](plans/QW6-local-typecheck.md) | XS | — | DONE | #310 |
 | QW7 | Widen CI coverage gate to v2 | [plans/QW7-coverage-gate.md](plans/QW7-coverage-gate.md) | XS | — | DONE | #310 |
 | QW8 | Dedupe mapRoleToStatus | [plans/QW8-dedupe-maprole.md](plans/QW8-dedupe-maprole.md) | XS | — | DONE | #310 |
@@ -45,20 +45,20 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 | MT2 | Split runtime vs dev requirements | [plans/MT2-split-requirements.md](plans/MT2-split-requirements.md) | S | — | TODO | |
 | MT3 | Real-auth e2e job in CI | [plans/MT3-real-auth-e2e.md](plans/MT3-real-auth-e2e.md) | M | — | TODO | |
 | MT4 | Structural tenancy test | [plans/MT4-structural-tenancy-test.md](plans/MT4-structural-tenancy-test.md) | S | C4 (ideally after) | DONE | [#321](https://github.com/Ramc4685/academy-manager/pull/321) |
-| MT5 | Split frontend monolith pages | [plans/MT5-split-monolith-pages.md](plans/MT5-split-monolith-pages.md) | L | DS3 (dialog primitives help) | TODO | |
+| MT5 | Split frontend monolith pages | [plans/MT5-split-monolith-pages.md](plans/MT5-split-monolith-pages.md) | L | DS3 (dialog primitives help) | DONE | #331 |
 
 ## UI — Combine screens
 
 | ID | Item | Plan | Size | Depends on | Status | PR/Issue |
 |---|---|---|---|---|---|---|
 | UIC1 | Users directory: coaches+parents+users → role tabs | [plans/UIC1-users-directory.md](plans/UIC1-users-directory.md) | S | — | DONE | [#324](https://github.com/Ramc4685/academy-manager/pull/324) |
-| UIC2 | Pause requests → 5th tab of Requests | [plans/UIC2-pause-into-requests.md](plans/UIC2-pause-into-requests.md) | S | — | DONE | #TBD |
+| UIC2 | Pause requests → 5th tab of Requests | [plans/UIC2-pause-into-requests.md](plans/UIC2-pause-into-requests.md) | S | — | DONE | #322 |
 | UIC3 | Session economics + Dues → Reports tabs | [plans/UIC3-reports-consolidation.md](plans/UIC3-reports-consolidation.md) | M | — | DONE | #TBD |
-| UIC4 | Coach payslip → Payouts tab | [plans/UIC4-payslip-into-payouts.md](plans/UIC4-payslip-into-payouts.md) | S | — | TODO | |
-| UIC5 | Progress → tab of student/session detail | [plans/UIC5-progress-tabs.md](plans/UIC5-progress-tabs.md) | S | — | TODO | |
+| UIC4 | Coach payslip → Payouts tab | [plans/UIC4-payslip-into-payouts.md](plans/UIC4-payslip-into-payouts.md) | S | — | DONE | [#346](https://github.com/Ramc4685/academy-manager/pull/346) |
+| UIC5 | Progress → tab of student/session detail | [plans/UIC5-progress-tabs.md](plans/UIC5-progress-tabs.md) | S | — | DONE | [#328](https://github.com/Ramc4685/academy-manager/pull/328) |
 | UIC6 | Registrations + Waitlist + Level-up queue → Admissions | [plans/UIC6-admissions-queues.md](plans/UIC6-admissions-queues.md) | M | — | TODO | |
 | UIC7 | Self-service policy → Settings section | [plans/UIC7-settings-selfservice.md](plans/UIC7-settings-selfservice.md) | XS | — | DONE | Moved into `/admin/settings?panel=self-service`; old URL redirects |
-| UIC8 | Delete shared Calendar/Messages stubs | [plans/UIC8-delete-shared-stubs.md](plans/UIC8-delete-shared-stubs.md) | XS | UIM13 decision | TODO | |
+| UIC8 | Delete shared Calendar/Messages stubs | [plans/UIC8-delete-shared-stubs.md](plans/UIC8-delete-shared-stubs.md) | XS | UIM13 decision | DONE | [#327](https://github.com/Ramc4685/academy-manager/pull/327) |
 
 ## UI — Missing features
 
@@ -84,8 +84,8 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 |---|---|---|---|---|---|---|
 | DS1 | Single-source color tokens + contrast fixes | [plans/DS1-tokens.md](plans/DS1-tokens.md) | S | — | DONE | #313 |
 | DS2 | De-hex design-system components | [plans/DS2-dehex-ds.md](plans/DS2-dehex-ds.md) | S | DS1 | DONE | #316 |
-| DS3 | Add missing DS primitives (FormField, Skeleton, EmptyState, Modal, Toast) | [plans/DS3-primitives.md](plans/DS3-primitives.md) | M | DS2 | IN REVIEW | PR #323 (open); full pre-push suite green |
-| DS4 | Migrate parent surface onto DS | [plans/DS4-parent-migration.md](plans/DS4-parent-migration.md) | L | DS1-3 | TODO | |
+| DS3 | Add missing DS primitives (FormField, Skeleton, EmptyState, Modal, Toast) | [plans/DS3-primitives.md](plans/DS3-primitives.md) | M | DS2 | DONE | #323 — verified 2026-07-24: form-field.tsx, skeleton.tsx, empty-state.tsx, modal.tsx, toast.tsx all on origin/main |
+| DS4 | Migrate parent surface onto DS | [plans/DS4-parent-migration.md](plans/DS4-parent-migration.md) | L | DS1-3 | IN PROGRESS | waivers/dashboard/children/requests #330; progress, payments remain |
 | DS5 | Desktop Chromium Playwright project | [plans/DS5-desktop-e2e.md](plans/DS5-desktop-e2e.md) | S | — | TODO | |
 | DS6 | Polish: server-side gating, nav restructure, dead offline code, manifest colors | [plans/DS6-polish.md](plans/DS6-polish.md) | M | UIC merges help | TODO | |
 

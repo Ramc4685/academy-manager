@@ -21,6 +21,7 @@ import {
 import { getAdminStudent } from "@/lib/api/v2/students";
 import { getActiveAcademyId } from "@/lib/api/client";
 import { resolveStudentProgressReturn } from "@/lib/navigation/admin-student-progress-return";
+import { StudentDetailTabs } from "@/components/admin/StudentDetailTabs";
 import { Card } from "@/components/ds/card";
 import { Button } from "@/components/ds/button";
 
@@ -143,6 +144,8 @@ export default function AdminStudentProgressPage() {
 
   return (
     <section data-testid="admin-student-progress" className="space-y-6">
+      <StudentDetailTabs studentId={studentId} active="progress" />
+
       <Link
         href={returnLink.href as Parameters<typeof Link>[0]["href"]}
         className="inline-flex items-center gap-1.5 rounded text-sm text-rally-muted hover:text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600"

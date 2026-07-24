@@ -274,6 +274,20 @@ class FirebaseAdminAdapter:
         _ensure_firebase_app()
         await asyncio.to_thread(firebase_admin_auth.delete_user, uid)
 
+    async def create_custom_token(self, uid: str) -> str:
+        """Mint a Firebase custom token for ``uid``.
+
+        The browser exchanges this short-lived credential for a real session via
+        ``signInWithCustomToken``. Used by the magic-link consume flow to sign a
+        provisioned parent in without a password. ``create_custom_token`` returns
+        ``bytes``; decode to the ``str`` the JSON response carries.
+        """
+        if firebase_admin_auth is None:
+            raise RuntimeError("firebase-admin is required for Firebase auth")
+        _ensure_firebase_app()
+        token = await asyncio.to_thread(firebase_admin_auth.create_custom_token, uid)
+        return token.decode("utf-8") if isinstance(token, bytes) else str(token)
+
 
 def get_firebase_admin_adapter() -> FirebaseAdminAdapter:
     global _firebase_admin_adapter

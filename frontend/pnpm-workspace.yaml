@@ -11,6 +11,10 @@ overrides:
   undici: ^7.28.0
   # CVE-2026-33327/33328/35590/35591 (libvips via sharp); patched in >=0.35.0.
   sharp: '>=0.35.0'
+  # GHSA-6g55-p6wh-862q / GHSA-r28c-9q8g-f849 (PostCSS path traversal via
+  # sourceMappingURL auto-loading); patched in >=8.5.18. Transitive via
+  # next's bundled postcss.
+  postcss@<8.5.18: '>=8.5.18'
   # GHSA-3jxr-9vmj-r5cp (brace-expansion ReDoS) / js-yaml quadratic-CPU merge
   # keys — both dev-only, transitive via eslint/lhci/openapi-typescript/serwist.
   brace-expansion@1: ^1.1.16

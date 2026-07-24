@@ -1,6 +1,6 @@
 # MT5 — Split frontend monolith pages
 
-Status: TODO
+Status: DONE (PR #331, 2026-07-23)
 Size: L · Depends on: DS3 (dialog primitives — optional; use `Modal` primitive instead of the extracted `RallyDialog` if DS3 lands first) · Tracker: ../TRACKER.md
 
 ## Problem
