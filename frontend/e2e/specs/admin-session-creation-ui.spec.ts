@@ -104,6 +104,10 @@ test.describe("admin session creation and fee settings UI", () => {
 
     await expect(page.getByRole("heading", { name: "Create session" })).toBeVisible();
 
+    // The coach field renders a placeholder <input> until the admin/users query
+    // resolves, then swaps to a <select>. Wait for the option itself so we never
+    // call selectOption() against the "Loading coaches..." input.
+    await expect(page.getByLabel("Coach").locator("option[value='coach-e2e']")).toBeAttached();
     await page.getByLabel("Coach").selectOption("coach-e2e");
     await page.getByLabel("Name").fill("Intermediate badminton");
     await page.getByLabel("Location").fill("BLNO Court 3");
@@ -332,6 +336,11 @@ test.describe("admin session creation and fee settings UI", () => {
 
     await page.getByRole("button", { name: "Add replacement" }).click();
     await page.getByLabel("Date").fill(replacementDate);
+    // Same placeholder-input-then-<select> swap as the create dialog above; this
+    // is the race that made this test flaky in CI (WebKit, PR #351).
+    await expect(
+      page.getByLabel("Replacement coach").locator("option[value='coach-replacement']"),
+    ).toBeAttached();
     await page.getByLabel("Replacement coach").selectOption("coach-replacement");
     await page.getByRole("button", { name: "Save" }).click();
 

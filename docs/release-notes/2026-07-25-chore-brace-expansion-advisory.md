@@ -16,6 +16,17 @@ failing `pnpm audit --audit-level=high` in Frontend Static on every open PR
   this one GHSA, covering the two copies that **cannot** be fixed (see below).
 - `frontend/pnpm-lock.yaml`: regenerated for the bumped range.
 
+Also de-flakes `e2e/specs/admin-session-creation-ui.spec.ts`, which failed this
+PR's WebKit run. `playwright.config.ts` sets `failOnFlakyTests` under CI, so a
+single flaky retry fails the job — and this race sits in a spec every frontend
+PR runs, so it was blocking the same set of PRs as the advisory above. The coach
+field renders a placeholder `<input>` ("Loading coaches...") until the
+`admin/users` query resolves and only then swaps to a `<select>`; both
+`selectOption()` call sites now wait for the target `<option>` to be attached
+first, which cannot be satisfied by the placeholder input. Fixed at the create
+dialog (`Coach`) as well as the replacement dialog (`Replacement coach`) — the
+create-dialog call had the identical latent race and merely happened to win.
+
 ### Why the 1.x/2.x copies are suppressed rather than bumped
 Three copies of `brace-expansion` resolve in this tree: `5.0.7` (fixed above),
 `1.1.16`, and `2.1.2`. Upstream published **no** patched 1.x or 2.x release —
