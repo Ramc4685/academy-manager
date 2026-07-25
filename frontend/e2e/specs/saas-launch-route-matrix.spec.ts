@@ -93,7 +93,16 @@ const ADMIN_ROUTE_MATRIX = [
     href: "/admin/registrations",
     testId: "admin-registrations",
   },
-  { label: "waitlist", href: "/admin/waitlist", testId: "admin-waitlist" },
+  {
+    label: "waitlist",
+    href: "/admin/registrations?tab=waitlist",
+    testId: "admin-waitlist-tab",
+  },
+  {
+    label: "level-ups",
+    href: "/admin/registrations?tab=level-ups",
+    testId: "admin-level-up-queue-tab",
+  },
   {
     label: "pause requests",
     href: "/admin/requests?tab=pauses",
@@ -135,6 +144,9 @@ async function stubAdminLaunchBff(page: Page): Promise<void> {
   );
   await page.route("**/api/v2/admin/waitlist", (route) =>
     fulfillJson(route, { total_waitlisted: 0, sessions: [] })
+  );
+  await page.route("**/api/v2/admin/level-up-queue*", (route) =>
+    fulfillJson(route, { queue: [] })
   );
   await page.route("**/api/v2/admin/pause-requests*", (route) =>
     fulfillJson(route, { requests: [] })

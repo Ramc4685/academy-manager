@@ -56,7 +56,7 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 | UIC3 | Session economics + Dues → Reports tabs | [plans/UIC3-reports-consolidation.md](plans/UIC3-reports-consolidation.md) | M | — | TODO | |
 | UIC4 | Coach payslip → Payouts tab | [plans/UIC4-payslip-into-payouts.md](plans/UIC4-payslip-into-payouts.md) | S | — | DONE | [#346](https://github.com/Ramc4685/academy-manager/pull/346) |
 | UIC5 | Progress → tab of student/session detail | [plans/UIC5-progress-tabs.md](plans/UIC5-progress-tabs.md) | S | — | DONE | [#328](https://github.com/Ramc4685/academy-manager/pull/328) |
-| UIC6 | Registrations + Waitlist + Level-up queue → Admissions | [plans/UIC6-admissions-queues.md](plans/UIC6-admissions-queues.md) | M | — | TODO | |
+| UIC6 | Registrations + Waitlist + Level-up queue → Admissions | [plans/UIC6-admissions-queues.md](plans/UIC6-admissions-queues.md) | M | — | DONE | [#348](https://github.com/Ramc4685/academy-manager/pull/348) |
 | UIC7 | Self-service policy → Settings section | [plans/UIC7-settings-selfservice.md](plans/UIC7-settings-selfservice.md) | XS | — | DONE | Moved into `/admin/settings?panel=self-service`; old URL redirects |
 | UIC8 | Delete shared Calendar/Messages stubs | [plans/UIC8-delete-shared-stubs.md](plans/UIC8-delete-shared-stubs.md) | XS | UIM13 decision | DONE | [#327](https://github.com/Ramc4685/academy-manager/pull/327) |
 
@@ -85,7 +85,7 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 | DS1 | Single-source color tokens + contrast fixes | [plans/DS1-tokens.md](plans/DS1-tokens.md) | S | — | DONE | #313 |
 | DS2 | De-hex design-system components | [plans/DS2-dehex-ds.md](plans/DS2-dehex-ds.md) | S | DS1 | DONE | #316 |
 | DS3 | Add missing DS primitives (FormField, Skeleton, EmptyState, Modal, Toast) | [plans/DS3-primitives.md](plans/DS3-primitives.md) | M | DS2 | DONE | #323 — verified 2026-07-24: form-field.tsx, skeleton.tsx, empty-state.tsx, modal.tsx, toast.tsx all on origin/main |
-| DS4 | Migrate parent surface onto DS | [plans/DS4-parent-migration.md](plans/DS4-parent-migration.md) | L | DS1-3 | IN PROGRESS | waivers/dashboard/children/requests #330; progress, payments remain |
+| DS4 | Migrate parent surface onto DS | [plans/DS4-parent-migration.md](plans/DS4-parent-migration.md) | L | DS1-3 | DONE | waivers/dashboard/children/requests #330; progress/payments [#350](https://github.com/Ramc4685/academy-manager/pull/350) |
 | DS5 | Desktop Chromium Playwright project | [plans/DS5-desktop-e2e.md](plans/DS5-desktop-e2e.md) | S | — | TODO | |
 | DS6 | Polish: server-side gating, nav restructure, dead offline code, manifest colors | [plans/DS6-polish.md](plans/DS6-polish.md) | M | UIC merges help | TODO | |
 
