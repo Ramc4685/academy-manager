@@ -380,20 +380,19 @@ export default function ParentPaymentsPage() {
     pauseRequestsQuery.isError ||
     creditsQuery.isError;
 
-  if (loading) return <p className="p-4 text-sm text-neutral-500">Loading...</p>;
-  if (error) return <p className="p-4 text-sm text-red-600">Could not load payments.</p>;
+  if (loading) return <p className="p-4 text-sm text-rally-subtle">Loading...</p>;
+  if (error) return <p className="p-4 text-sm text-status-red-600">Could not load payments.</p>;
 
   return (
     <section data-testid="parent-payments" className="space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold" style={{ color: "#0a0f1c" }}>Payments</h1>
+        <h1 className="text-xl font-semibold text-rally-ink">Payments</h1>
         <button
           type="button"
           onClick={() => portalMutation.mutate()}
           disabled={portalMutation.isPending}
-          className="flex items-center gap-1.5 text-sm font-medium disabled:opacity-60"
-          style={{ color: "#185fa5" }}
+          className="flex items-center gap-1.5 text-sm font-medium text-rally-cobalt-700 disabled:opacity-60"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
@@ -406,39 +405,39 @@ export default function ParentPaymentsPage() {
 
       {/* Status banners */}
       {returnedFromAutopayCheckout && checkoutStatusQuery.isFetching && (
-        <p role="status" data-testid="autopay-checkout-confirming" className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+        <p role="status" data-testid="autopay-checkout-confirming" className="rounded-xl border border-rally-cobalt-100 bg-rally-cobalt-50 px-4 py-3 text-sm text-rally-cobalt-700">
           Confirming autopay…
         </p>
       )}
       {enrollments.some((e) => e.payment_mode === "monthly" && e.autopay_enrollment_status === "setup_started") && (
-        <p role="status" data-testid="payment-update-pending" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        <p role="status" data-testid="payment-update-pending" className="rounded-xl border border-status-amber-500/30 bg-status-amber-50 px-4 py-3 text-sm text-status-amber-800">
           Your payment may take a moment to update this page. If it does not update, retry autopay or contact the academy.
         </p>
       )}
       {portalError && (
-        <p role="alert" data-testid="billing-portal-error" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+        <p role="alert" data-testid="billing-portal-error" className="rounded-xl border border-status-red-500/30 bg-status-red-50 px-4 py-3 text-sm text-status-red-800">
           {portalError}
         </p>
       )}
       {invoicePaymentError && (
-        <p role="alert" data-testid="invoice-payment-error" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+        <p role="alert" data-testid="invoice-payment-error" className="rounded-xl border border-status-red-500/30 bg-status-red-50 px-4 py-3 text-sm text-status-red-800">
           {invoicePaymentError}
         </p>
       )}
       {balancePaymentError && (
-        <p role="alert" data-testid="balance-payment-error" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+        <p role="alert" data-testid="balance-payment-error" className="rounded-xl border border-status-red-500/30 bg-status-red-50 px-4 py-3 text-sm text-status-red-800">
           {balancePaymentError}
         </p>
       )}
 
       {/* Credit card */}
       {creditBalance > 0 && (
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-          <p className="text-sm font-medium text-emerald-900">
+        <div className="rounded-xl border border-status-green-500/30 bg-status-green-50 p-4">
+          <p className="text-sm font-medium text-status-green-800">
             {money(creditBalance)} credit applies automatically to your next invoice.
           </p>
           {credits.length > 0 && (
-            <ul className="mt-2 space-y-0.5 text-xs text-emerald-800">
+            <ul className="mt-2 space-y-0.5 text-xs text-status-green-800">
               {credits.map((credit) => (
                 <li key={credit.credit_id}>
                   {credit.reason}: {money(credit.remaining_amount_cents, credit.currency.toUpperCase())}
@@ -452,10 +451,10 @@ export default function ParentPaymentsPage() {
 
       {/* Balance hero */}
       {currentBalance > 0 && (
-        <div className="rounded-2xl p-4" style={{ background: "#0a0f1c" }}>
-          <p className="text-xs" style={{ color: "var(--rally-subtle-ink)" }}>Balance due</p>
+        <div className="rounded-2xl p-4 bg-rally-night">
+          <p className="text-xs text-rally-subtle-ink">Balance due</p>
           <p className="mt-1 text-3xl font-semibold text-white">{money(currentBalance)}</p>
-          <p className="mt-1.5 inline-block rounded-full px-2.5 py-0.5 text-xs font-medium" style={{ background: "rgba(251,191,36,0.12)", color: "#fbbf24" }}>
+          <p className="mt-1.5 inline-block rounded-full px-2.5 py-0.5 text-xs font-medium bg-rally-volt-400/10 text-rally-volt-400">
             {invoices.filter((i) => i.balance_due_cents > 0 && i.status !== "void").length} open invoice
             {invoices.filter((i) => i.balance_due_cents > 0 && i.status !== "void").length === 1 ? "" : "s"}
             {" · "}
@@ -472,22 +471,21 @@ export default function ParentPaymentsPage() {
               })
             }
             disabled={balancePaymentMutation.isPending}
-            className="mt-4 w-full rounded-xl py-3 text-sm font-semibold disabled:opacity-60 active:scale-95 transition-transform"
-            style={{ background: "linear-gradient(135deg,#facc15,#f59e0b)", color: "#0a0f1c" }}
+            className="mt-4 w-full rounded-xl py-3 text-sm font-semibold text-rally-ink disabled:opacity-60 active:scale-95 transition-transform"
+            style={{ background: "linear-gradient(135deg,#facc15,#f59e0b)" }}
           >
             {balancePaymentMutation.isPending ? "Starting…" : `Pay balance · ${money(currentBalance)}`}
           </button>
           {showAutopayOptinForBalance(invoices, enrollments) && (
             <label
               data-testid="balance-autopay-optin"
-              className="mt-2.5 flex items-center gap-2 text-xs"
-              style={{ color: "var(--rally-subtle-ink)" }}
+              className="mt-2.5 flex items-center gap-2 text-xs text-rally-subtle-ink"
             >
               <input
                 type="checkbox"
                 checked={balanceAutopayOptin}
                 onChange={(e) => setBalanceAutopayOptin(e.target.checked)}
-                className="h-4 w-4 shrink-0 accent-amber-400"
+                className="h-4 w-4 shrink-0 accent-rally-volt-400"
               />
               {AUTOPAY_OPTIN_LABEL}
             </label>
@@ -497,9 +495,9 @@ export default function ParentPaymentsPage() {
 
       {/* Invoices */}
       <div>
-        <p className="mb-2 text-xs font-semibold uppercase tracking-wide" style={{ color: "#888780" }}>Invoices</p>
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-rally-subtle">Invoices</p>
         {invoices.length === 0 ? (
-          <p className="text-sm text-neutral-500">No invoices yet.</p>
+          <p className="text-sm text-rally-subtle">No invoices yet.</p>
         ) : (
           <div className="space-y-2">
             {invoices.map((invoice) => {
@@ -511,15 +509,15 @@ export default function ParentPaymentsPage() {
               return (
                 <div
                   key={invoice.invoice_id}
-                  className="rounded-2xl border p-3"
-                  style={{ background: "#fff", borderColor: "#e6e3da", opacity: isPaid ? 0.75 : 1 }}
+                  className="rounded-2xl border border-rally-line bg-white p-3"
+                  style={{ opacity: isPaid ? 0.75 : 1 }}
                 >
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="text-sm font-medium" style={{ color: "#0a0f1c" }}>{formatPeriodLabel(invoice.period)}</p>
+                      <p className="text-sm font-medium text-rally-ink">{formatPeriodLabel(invoice.period)}</p>
                       <StatusPill status={invoice.status} />
                     </div>
-                    <p className="text-base font-semibold tabular-nums" style={{ color: "#0a0f1c" }}>
+                    <p className="text-base font-semibold tabular-nums text-rally-ink">
                       {money(
                         invoice.balance_due_cents > 0 ? invoice.balance_due_cents : paid,
                         invoice.currency.toUpperCase(),
@@ -540,8 +538,7 @@ export default function ParentPaymentsPage() {
                                 resolveEnrollAutopayChecked(invoiceAutopayOptins[invoice.invoice_id]),
                             })
                           }
-                          className="flex-1 rounded-xl border py-2 text-sm font-medium disabled:opacity-60 active:scale-95 transition-transform"
-                          style={{ borderColor: "#facc15", background: "#fffbe9", color: "#854f0b" }}
+                          className="flex-1 rounded-xl border border-rally-volt-400 bg-rally-volt-100 py-2 text-sm font-medium text-status-amber-800 disabled:opacity-60 active:scale-95 transition-transform"
                         >
                           {payingInvoiceId === invoice.invoice_id
                             ? "Starting…"
@@ -552,8 +549,7 @@ export default function ParentPaymentsPage() {
                           onClick={() =>
                             setSelectedInvoiceId(selectedInvoiceId === invoice.invoice_id ? null : invoice.invoice_id)
                           }
-                          className="rounded-xl border px-4 py-2 text-sm"
-                          style={{ borderColor: "#d3d1c7", background: "#fff", color: "#5f5e5a" }}
+                          className="rounded-xl border border-rally-line bg-white px-4 py-2 text-sm text-rally-muted"
                         >
                           {selectedInvoiceId === invoice.invoice_id ? "Close" : "View"}
                         </button>
@@ -561,8 +557,7 @@ export default function ParentPaymentsPage() {
                       {showAutopayOptinForInvoice(invoice, enrollments) && (
                         <label
                           data-testid={`invoice-autopay-optin-${invoice.invoice_id}`}
-                          className="mt-2 flex items-center gap-2 text-xs"
-                          style={{ color: "#5f5e5a" }}
+                          className="mt-2 flex items-center gap-2 text-xs text-rally-muted"
                         >
                           <input
                             type="checkbox"
@@ -573,7 +568,7 @@ export default function ParentPaymentsPage() {
                                 [invoice.invoice_id]: e.target.checked,
                               }))
                             }
-                            className="h-4 w-4 shrink-0 accent-amber-400"
+                            className="h-4 w-4 shrink-0 accent-rally-volt-400"
                           />
                           {AUTOPAY_OPTIN_LABEL}
                         </label>
@@ -586,25 +581,23 @@ export default function ParentPaymentsPage() {
                       onClick={() =>
                         setSelectedInvoiceId(selectedInvoiceId === invoice.invoice_id ? null : invoice.invoice_id)
                       }
-                      className="mt-2 text-xs font-medium"
-                      style={{ color: "#888780" }}
+                      className="mt-2 text-xs font-medium text-rally-subtle"
                     >
                       {selectedInvoiceId === invoice.invoice_id ? "Hide detail" : "View detail"}
                     </button>
                   )}
                   {selectedInvoiceId === invoice.invoice_id && (
-                    <div className="mt-3 border-t pt-3" style={{ borderColor: "#e6e3da" }}>
+                    <div className="mt-3 border-t border-rally-line pt-3">
                       {invoiceDetailQuery.isLoading ? (
-                        <p className="text-xs text-neutral-500">Loading…</p>
+                        <p className="text-xs text-rally-subtle">Loading…</p>
                       ) : invoiceDetailQuery.isError ? (
-                        <p className="text-xs text-red-600">Could not load detail.</p>
+                        <p className="text-xs text-status-red-600">Could not load detail.</p>
                       ) : invoiceDetailQuery.data ? (
                         <ul className="space-y-1.5">
                           {invoiceDetailQuery.data.lines.map((line) => (
                             <li
                               key={`${line.label ?? line.description}-${line.amount_cents}`}
-                              className="flex items-center justify-between gap-3 text-xs"
-                              style={{ color: "#5f5e5a" }}
+                              className="flex items-center justify-between gap-3 text-xs text-rally-muted"
                             >
                               <span>{line.label ?? `${line.description} × ${line.quantity}`}</span>
                               <span className="tabular-nums">
@@ -625,14 +618,14 @@ export default function ParentPaymentsPage() {
 
       {/* Autopay */}
       <div>
-        <p className="mb-2 text-xs font-semibold uppercase tracking-wide" style={{ color: "#888780" }}>Autopay</p>
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-rally-subtle">Autopay</p>
         {autopayError && (
-          <p role="alert" data-testid="autopay-error" className="mb-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+          <p role="alert" data-testid="autopay-error" className="mb-2 rounded-xl border border-status-red-500/30 bg-status-red-50 px-4 py-3 text-sm text-status-red-800">
             {autopayError}
           </p>
         )}
         {enrollments.length === 0 ? (
-          <p className="text-sm text-neutral-500">No active enrollments.</p>
+          <p className="text-sm text-rally-subtle">No active enrollments.</p>
         ) : (
           <div className="space-y-2">
             {enrollments.map((enrollment) => {
@@ -645,42 +638,36 @@ export default function ParentPaymentsPage() {
               return (
                 <div
                   key={enrollment.enrollment_id}
-                  className="rounded-2xl border p-3"
-                  style={{ background: "#fff", borderColor: "#e6e3da" }}
+                  className="rounded-2xl border border-rally-line bg-white p-3"
                 >
                   <div className="flex items-center gap-3">
-                    <div
-                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold"
-                      style={{ background: "#e6f1fb", color: "#185fa5" }}
-                    >
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold bg-rally-cobalt-50 text-rally-cobalt-700">
                       {initials(enrollment.student_name)}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="truncate text-sm font-medium" style={{ color: "#0a0f1c" }}>
+                      <p className="truncate text-sm font-medium text-rally-ink">
                         {enrollment.student_name}
                       </p>
-                      <p className="truncate text-xs" style={{ color: "#888780" }}>{enrollment.session_title}</p>
-                      <p className="mt-0.5 text-xs" style={{ color: enabled ? "#0f6e56" : "#888780" }}>
+                      <p className="truncate text-xs text-rally-subtle">{enrollment.session_title}</p>
+                      <p className={`mt-0.5 text-xs ${enabled ? "text-status-green-800" : "text-rally-subtle"}`}>
                         {autopayStatusText(enrollment)}
                       </p>
                       {methodText && (
-                        <p className="mt-0.5 text-xs" style={{ color: "#5f5e5a" }}>{methodText}</p>
+                        <p className="mt-0.5 text-xs text-rally-muted">{methodText}</p>
                       )}
                     </div>
                   </div>
                   {helperText && (
-                    <p className="mt-2 text-xs" style={{ color: "#854f0b" }}>{helperText}</p>
+                    <p className="mt-2 text-xs text-status-amber-800">{helperText}</p>
                   )}
                   <div className="mt-3 flex gap-2">
                     <button
                       type="button"
                       disabled={enabled || autopayMutation.isPending}
                       onClick={() => autopayMutation.mutate(enrollment.enrollment_id)}
-                      className="flex-1 rounded-xl py-2.5 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50 active:scale-95 transition-transform"
-                      style={{
-                        background: enabled ? "#e6e3da" : "#0a0f1c",
-                        color: enabled ? "#888780" : "#fff",
-                      }}
+                      className={`flex-1 rounded-xl py-2.5 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50 active:scale-95 transition-transform ${
+                        enabled ? "bg-rally-line text-rally-subtle" : "bg-rally-ink text-white"
+                      }`}
                     >
                       {enabled
                         ? "Autopay on"
@@ -693,8 +680,7 @@ export default function ParentPaymentsPage() {
                     <button
                       type="button"
                       onClick={() => setPauseEnrollmentId(enrollment.enrollment_id)}
-                      className="rounded-xl border px-4 py-2.5 text-sm"
-                      style={{ borderColor: "#d3d1c7", background: "#fff", color: "#5f5e5a" }}
+                      className="rounded-xl border border-rally-line bg-white px-4 py-2.5 text-sm text-rally-muted"
                     >
                       Pause enrollment
                     </button>
@@ -708,25 +694,27 @@ export default function ParentPaymentsPage() {
 
       {/* Pause form */}
       {pauseEnrollmentId && (
-        <div className="rounded-2xl border p-4" style={{ background: "#fff", borderColor: "#e6e3da" }}>
-          <p className="mb-3 text-sm font-semibold" style={{ color: "#0a0f1c" }}>Pause enrollment</p>
-          <p className="mb-3 text-xs" style={{ color: "#5f5e5a" }}>
+        <div className="rounded-2xl border border-rally-line bg-white p-4">
+          <p className="mb-3 text-sm font-semibold text-rally-ink">Pause enrollment</p>
+          <p className="mb-3 text-xs text-rally-muted">
             This pauses your child&apos;s class enrollment (and its billing) — it does not change your autopay payment method.
           </p>
           <div className="space-y-3">
             <fieldset className="space-y-2">
-              <legend className="text-xs font-medium" style={{ color: "#5f5e5a" }}>Pause type</legend>
+              <legend className="text-xs font-medium text-rally-muted">Pause type</legend>
               <div className="grid grid-cols-2 gap-2">
                 <label
-                  className="flex min-h-touch items-center gap-2 rounded-xl border px-3 text-sm"
-                  style={{ borderColor: pauseKind === "fixed" ? "#facc15" : "#d3d1c7" }}
+                  className={`flex min-h-touch items-center gap-2 rounded-xl border px-3 text-sm ${
+                    pauseKind === "fixed" ? "border-rally-volt-400" : "border-rally-line"
+                  }`}
                 >
                   <input type="radio" name="pause-kind" value="fixed" checked={pauseKind === "fixed"} onChange={() => setPauseKind("fixed")} />
                   Fixed date
                 </label>
                 <label
-                  className="flex min-h-touch items-center gap-2 rounded-xl border px-3 text-sm"
-                  style={{ borderColor: pauseKind === "indefinite" ? "#facc15" : "#d3d1c7" }}
+                  className={`flex min-h-touch items-center gap-2 rounded-xl border px-3 text-sm ${
+                    pauseKind === "indefinite" ? "border-rally-volt-400" : "border-rally-line"
+                  }`}
                 >
                   <input type="radio" name="pause-kind" value="indefinite" checked={pauseKind === "indefinite"} onChange={() => setPauseKind("indefinite")} />
                   Indefinite
@@ -734,42 +722,39 @@ export default function ParentPaymentsPage() {
               </div>
             </fieldset>
             {pauseKind === "fixed" ? (
-              <label className="block text-xs font-medium" style={{ color: "#5f5e5a" }}>
+              <label className="block text-xs font-medium text-rally-muted">
                 Resume date
                 <input
                   type="date"
                   value={resumeOn}
                   min={dateFromOffset(1)}
                   onChange={(e) => setResumeOn(e.target.value)}
-                  className="mt-1 h-11 w-full rounded-xl border px-3 text-sm"
-                  style={{ borderColor: "#d3d1c7" }}
+                  className="mt-1 h-11 w-full rounded-xl border border-rally-line px-3 text-sm"
                 />
               </label>
             ) : (
-              <label className="block text-xs font-medium" style={{ color: "#5f5e5a" }}>
+              <label className="block text-xs font-medium text-rally-muted">
                 Review date
                 <input
                   type="date"
                   value={reviewOn}
                   onChange={(e) => setReviewOn(e.target.value)}
-                  className="mt-1 h-11 w-full rounded-xl border px-3 text-sm"
-                  style={{ borderColor: "#d3d1c7" }}
+                  className="mt-1 h-11 w-full rounded-xl border border-rally-line px-3 text-sm"
                 />
               </label>
             )}
-            <p className="text-xs" style={{ color: "#888780" }}>
+            <p className="text-xs text-rally-subtle">
               {pauseKind === "fixed"
                 ? "We will attempt to resume this enrollment on the requested date if a seat is available."
                 : "The academy will review this pause on the selected date so billing cannot remain deferred without follow-up."}
             </p>
-            <label className="block text-xs font-medium" style={{ color: "#5f5e5a" }}>
+            <label className="block text-xs font-medium text-rally-muted">
               Reason
               <textarea
                 value={pauseReason}
                 onChange={(e) => setPauseReason(e.target.value)}
                 rows={3}
-                className="mt-1 w-full rounded-xl border px-3 py-2 text-sm"
-                style={{ borderColor: "#d3d1c7" }}
+                className="mt-1 w-full rounded-xl border border-rally-line px-3 py-2 text-sm"
               />
             </label>
             <div className="flex gap-2">
@@ -780,8 +765,7 @@ export default function ParentPaymentsPage() {
                   pauseMutation.isPending ||
                   (pauseKind === "fixed" ? !resumeOn || resumeOn <= currentDate() : !reviewOn)
                 }
-                className="min-h-touch flex-1 rounded-xl text-sm font-semibold text-white disabled:opacity-60"
-                style={{ background: "#0a0f1c" }}
+                className="min-h-touch flex-1 rounded-xl text-sm font-semibold text-white bg-rally-ink disabled:opacity-60"
               >
                 {pauseMutation.isPending ? "Sending…" : "Submit"}
               </button>
@@ -794,8 +778,7 @@ export default function ParentPaymentsPage() {
                   setReviewOn(dateFromOffset(14));
                   setPauseReason("");
                 }}
-                className="min-h-touch rounded-xl border px-4 text-sm"
-                style={{ borderColor: "#d3d1c7" }}
+                className="min-h-touch rounded-xl border border-rally-line px-4 text-sm"
               >
                 Cancel
               </button>
@@ -812,17 +795,16 @@ export default function ParentPaymentsPage() {
         onToggle={() => setShowPauseRequests((v) => !v)}
       >
         {pauseRequests.length === 0 ? (
-          <p className="text-sm text-neutral-500">No pause requests.</p>
+          <p className="text-sm text-rally-subtle">No pause requests.</p>
         ) : (
           <ul className="space-y-2">
             {pauseRequests.map((request) => (
               <li
                 key={request.pause_request_id}
-                className="rounded-xl border p-3 text-sm"
-                style={{ borderColor: "#e6e3da" }}
+                className="rounded-xl border border-rally-line p-3 text-sm"
               >
                 <div className="flex items-center justify-between gap-3">
-                  <span className="font-medium" style={{ color: "#0a0f1c" }}>
+                  <span className="font-medium text-rally-ink">
                     {request.pause_kind === "indefinite"
                       ? `Review ${formatDate(request.review_on)}`
                       : `Resume ${formatDate(request.resume_on)}`}
@@ -830,7 +812,7 @@ export default function ParentPaymentsPage() {
                   <StatusPill status={request.status} />
                 </div>
                 {request.reason && (
-                  <p className="mt-1 text-xs" style={{ color: "#888780" }}>{request.reason}</p>
+                  <p className="mt-1 text-xs text-rally-subtle">{request.reason}</p>
                 )}
               </li>
             ))}
@@ -845,34 +827,33 @@ export default function ParentPaymentsPage() {
         onToggle={() => setShowHistory((v) => !v)}
       >
         {payments.length === 0 ? (
-          <p className="text-sm text-neutral-500">No payments yet.</p>
+          <p className="text-sm text-rally-subtle">No payments yet.</p>
         ) : (
           <ul className="space-y-2" data-testid="payments-list">
             {payments.map((payment) => (
               <li
                 key={payment.payment_id}
                 data-testid={`payment-${payment.payment_id}`}
-                className="rounded-xl border p-3"
-                style={{ background: "#fff", borderColor: "#e6e3da" }}
+                className="rounded-xl border border-rally-line bg-white p-3"
               >
                 <div className="flex items-center justify-between">
-                  <p className="text-sm font-medium" style={{ color: "#0a0f1c" }}>
+                  <p className="text-sm font-medium text-rally-ink">
                     {money(payment.amount_cents, payment.currency.toUpperCase())}
                   </p>
                   <StatusPill status={payment.status} />
                 </div>
-                <p className="mt-1 text-xs" style={{ color: "#888780" }}>
+                <p className="mt-1 text-xs text-rally-subtle">
                   {payment.invoice_period
                     ? `Tuition · ${formatPeriodLabel(payment.invoice_period)} · ${new Date(payment.created_at).toLocaleDateString()}`
                     : new Date(payment.created_at).toLocaleString()}
                 </p>
                 {payment.refunded_cents > 0 && (
-                  <p className="text-xs" style={{ color: "#854f0b" }}>
+                  <p className="text-xs text-status-amber-800">
                     Refunded {money(payment.refunded_cents, payment.currency.toUpperCase())}
                   </p>
                 )}
                 {(payment.stripe_invoice_id || payment.stripe_payment_intent_id) && (
-                  <p className="mt-1 truncate font-mono text-xs" style={{ color: "#b4b2a9" }}>
+                  <p className="mt-1 truncate font-mono text-xs text-rally-subtle">
                     {payment.stripe_invoice_id
                       ? `Invoice ${payment.stripe_invoice_id}`
                       : `PaymentIntent ${payment.stripe_payment_intent_id}`}
@@ -904,14 +885,11 @@ function CollapsibleSection({
     <div>
       <button type="button" onClick={onToggle} className="flex w-full items-center justify-between py-1">
         <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: "#888780" }}>
+          <span className="text-xs font-semibold uppercase tracking-wide text-rally-subtle">
             {title}
           </span>
           {badge && (
-            <span
-              className="rounded-full px-1.5 py-0.5 text-[10px] font-semibold"
-              style={{ background: "#e6e3da", color: "#5f5e5a" }}
-            >
+            <span className="rounded-full px-1.5 py-0.5 text-[10px] font-semibold bg-rally-line text-rally-muted">
               {badge}
             </span>
           )}
@@ -919,7 +897,7 @@ function CollapsibleSection({
         <svg
           width="14" height="14" viewBox="0 0 24 24" fill="none"
           stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-          style={{ color: "#888780", transform: open ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s" }}
+          className={`text-rally-subtle transition-transform duration-200 ${open ? "rotate-180" : "rotate-0"}`}
           aria-hidden="true"
         >
           <polyline points="6 9 12 15 18 9" />
@@ -950,28 +928,33 @@ function formatDate(value: string | null): string {
   });
 }
 
-function StatusPill({ status }: { status: string }) {
-  const palette: Record<string, { bg: string; color: string }> = {
-    succeeded:          { bg: "#e1f5ee", color: "#0f6e56" },
-    paid:               { bg: "#e1f5ee", color: "#0f6e56" },
-    pending:            { bg: "#faeeda", color: "#854f0b" },
-    approved:           { bg: "#faeeda", color: "#854f0b" },
-    open:               { bg: "#fcebeb", color: "#a32d2d" },
-    past_due:           { bg: "#fcebeb", color: "#a32d2d" },
-    failed:             { bg: "#fcebeb", color: "#a32d2d" },
-    partially_paid:     { bg: "#faeeda", color: "#854f0b" },
-    refunded:           { bg: "#f1efe8", color: "#5f5e5a" },
-    partially_refunded: { bg: "#f1efe8", color: "#5f5e5a" },
-    expired:            { bg: "#f1efe8", color: "#5f5e5a" },
-    void:               { bg: "#f1efe8", color: "#5f5e5a" },
-    rejected:           { bg: "#fcebeb", color: "#a32d2d" },
+// Palette collapsed onto token class bundles — mirrors the dashboard's
+// metric-tone conversion in PR #330. Kept as a bespoke pill (not the DS3
+// Chip primitive) because e2e asserts the exact lowercase status text
+// (e.g. `getByText("open", { exact: true })` in billing-trust-recovery.spec.ts);
+// Chip always uppercases its label.
+function statusPillClasses(status: string): string {
+  const classes: Record<string, string> = {
+    succeeded: "bg-status-green-50 text-status-green-800",
+    paid: "bg-status-green-50 text-status-green-800",
+    pending: "bg-status-amber-50 text-status-amber-800",
+    approved: "bg-status-amber-50 text-status-amber-800",
+    open: "bg-status-red-50 text-status-red-800",
+    past_due: "bg-status-red-50 text-status-red-800",
+    failed: "bg-status-red-50 text-status-red-800",
+    partially_paid: "bg-status-amber-50 text-status-amber-800",
+    refunded: "bg-status-slate-100 text-status-slate-700",
+    partially_refunded: "bg-status-slate-100 text-status-slate-700",
+    expired: "bg-status-slate-100 text-status-slate-700",
+    void: "bg-status-slate-100 text-status-slate-700",
+    rejected: "bg-status-red-50 text-status-red-800",
   };
-  const { bg, color } = palette[status] ?? palette.expired;
+  return classes[status] ?? classes.expired;
+}
+
+function StatusPill({ status }: { status: string }) {
   return (
-    <span
-      className="mt-0.5 inline-block rounded-full px-2 py-0.5 text-xs font-medium"
-      style={{ background: bg, color }}
-    >
+    <span className={`mt-0.5 inline-block rounded-full px-2 py-0.5 text-xs font-medium ${statusPillClasses(status)}`}>
       {status.replace(/_/g, " ")}
     </span>
   );
