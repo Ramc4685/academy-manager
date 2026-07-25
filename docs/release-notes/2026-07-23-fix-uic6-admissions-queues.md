@@ -1,6 +1,6 @@
 # fix-uic6-admissions-queues
 
-PR: #TBD
+PR: #348
 
 ## What changed
 Registrations, the global waitlist, and the coach level-up queue are now one

@@ -56,7 +56,7 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 | UIC3 | Session economics + Dues → Reports tabs | [plans/UIC3-reports-consolidation.md](plans/UIC3-reports-consolidation.md) | M | — | TODO | |
 | UIC4 | Coach payslip → Payouts tab | [plans/UIC4-payslip-into-payouts.md](plans/UIC4-payslip-into-payouts.md) | S | — | DONE | [#346](https://github.com/Ramc4685/academy-manager/pull/346) |
 | UIC5 | Progress → tab of student/session detail | [plans/UIC5-progress-tabs.md](plans/UIC5-progress-tabs.md) | S | — | DONE | [#328](https://github.com/Ramc4685/academy-manager/pull/328) |
-| UIC6 | Registrations + Waitlist + Level-up queue → Admissions | [plans/UIC6-admissions-queues.md](plans/UIC6-admissions-queues.md) | M | — | DONE | #TBD |
+| UIC6 | Registrations + Waitlist + Level-up queue → Admissions | [plans/UIC6-admissions-queues.md](plans/UIC6-admissions-queues.md) | M | — | DONE | [#348](https://github.com/Ramc4685/academy-manager/pull/348) |
 | UIC7 | Self-service policy → Settings section | [plans/UIC7-settings-selfservice.md](plans/UIC7-settings-selfservice.md) | XS | — | DONE | Moved into `/admin/settings?panel=self-service`; old URL redirects |
 | UIC8 | Delete shared Calendar/Messages stubs | [plans/UIC8-delete-shared-stubs.md](plans/UIC8-delete-shared-stubs.md) | XS | UIM13 decision | DONE | [#327](https://github.com/Ramc4685/academy-manager/pull/327) |
 
