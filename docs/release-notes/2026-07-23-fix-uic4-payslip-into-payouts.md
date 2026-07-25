@@ -18,6 +18,13 @@ panel root so existing selectors still resolve; its loading/empty states
 now use the DS3 `Skeleton`/`EmptyState` primitives instead of bespoke
 markup. Audit item UIC4.
 
+Also widened the tree-wide `postcss` pnpm override from `>=8.5.12` to
+`>=8.5.18` (`frontend/pnpm-workspace.yaml`) to clear a newly-published
+high-severity advisory (GHSA-r28c-9q8g-f849, path traversal via
+sourceMappingURL auto-loading) that started failing `pnpm audit
+--audit-level=high` in Frontend Static on this PR; unrelated to the
+payslip/payouts move, just needed to get CI green.
+
 ## Deploy notes
 none — frontend-only IA move. `listAdminUsers`/`listPayouts` (`lib/api/admin`)
 are unchanged (no backend, migration, or env-var changes).
