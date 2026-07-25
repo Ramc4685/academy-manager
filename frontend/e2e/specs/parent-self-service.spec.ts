@@ -416,3 +416,35 @@ test.describe("parent self-service — self-cancel enrollment", () => {
     await expect(dialog).not.toBeVisible();
   });
 });
+
+test.describe("parent self-service — progress", () => {
+  test("renders progress notes", async ({ page }) => {
+    await stubParentIdentity(page);
+    await stubAcademyAndChildren(page);
+
+    await page.route("**/api/v2/parent/progress", async (route: Route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          notes: [
+            {
+              note_id: "note-1",
+              coach_name: "Coach Kim",
+              student_name: STUDENT_NAME,
+              created_at: new Date().toISOString(),
+              session_title: SESSION_TITLE,
+              body: "Great footwork this week.",
+            },
+          ],
+        }),
+      });
+    });
+
+    await page.goto("/parent/progress");
+
+    await expect(page.getByTestId("parent-progress")).toBeVisible();
+    await expect(page.getByText("Great footwork this week.")).toBeVisible();
+  });
+});

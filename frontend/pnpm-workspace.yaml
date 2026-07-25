@@ -17,11 +17,34 @@ overrides:
   postcss@<8.5.18: '>=8.5.18'
   # GHSA-3jxr-9vmj-r5cp (brace-expansion ReDoS) / js-yaml quadratic-CPU merge
   # keys — both dev-only, transitive via eslint/lhci/openapi-typescript/serwist.
+  # GHSA-mh99-v99m-4gvg (brace-expansion unbounded-expansion OOM DoS) is
+  # patched only in >=5.0.8, so the v5 range is bumped here; see auditConfig
+  # below for why the 1.x/2.x ranges can't follow.
   brace-expansion@1: ^1.1.16
   brace-expansion@2: ^2.1.2
-  brace-expansion@5: ^5.0.7
+  brace-expansion@5: ^5.0.8
   js-yaml@3: ^3.15.0
   js-yaml@4: ^4.3.0
+
+auditConfig:
+  ignoreGhsas:
+    # GHSA-mh99-v99m-4gvg (brace-expansion unbounded expansion -> OOM crash).
+    # Fixed above for brace-expansion@5. The only remaining vulnerable copies
+    # are 1.1.16 and 2.1.2, and upstream published no patched 1.x/2.x release —
+    # 5.0.8 is the sole fixed version. They cannot be overridden to v5 because
+    # v5's CommonJS entry exports an object ({ expand, EXPANSION_MAX, ... })
+    # rather than the callable module.exports that their only consumers,
+    # minimatch@3.1.5 and minimatch@5.1.9, invoke via
+    # `require("brace-expansion")(...)` — forcing v5 there is a runtime break,
+    # not a fix.
+    #
+    # Both residual paths are build-time only, reached exclusively through
+    # @serwist/next's bundled glob@7/glob@9 (the Next PWA service-worker build
+    # plugin). Nothing in that chain ships to the browser or runs in the
+    # request path, and the glob patterns it expands are our own repo globs,
+    # never attacker-controlled input. Re-evaluate when @serwist/next moves off
+    # glob@7/@9 (which would pull minimatch@10 -> brace-expansion@5).
+    - GHSA-mh99-v99m-4gvg
 
 onlyBuiltDependencies:
   - esbuild
