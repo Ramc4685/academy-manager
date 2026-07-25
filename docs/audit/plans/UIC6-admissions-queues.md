@@ -1,5 +1,5 @@
 # UIC6 — Registrations + Waitlist + Level-up queue → Admissions screen
-Status: TODO
+Status: DONE (PR #348, 2026-07-24)
 Size: M · Depends on: none · Tracker: ../TRACKER.md
 
 ## Problem

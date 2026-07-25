@@ -76,7 +76,8 @@ const ADMIN_ROUTES = [
   { href: "/admin/students", testid: "admin-students" },
   { href: "/admin/users", testid: "admin-users" },
   { href: "/admin/registrations", testid: "admin-registrations" },
-  { href: "/admin/waitlist", testid: "admin-waitlist" },
+  { href: "/admin/registrations?tab=waitlist", testid: "admin-waitlist-tab" },
+  { href: "/admin/registrations?tab=level-ups", testid: "admin-level-up-queue-tab" },
   { href: "/admin/requests?tab=pauses", testid: "admin-pause-requests" },
   { href: "/admin/payments", testid: "admin-payments" },
   { href: "/admin/dues", testid: "admin-dues" },
@@ -201,6 +202,9 @@ async function stubAdminBff(page: Page) {
   );
   await page.route("**/api/v2/admin/waitlist", (route) =>
     fulfillJson(route, { total_waitlisted: 0, sessions: [] }),
+  );
+  await page.route("**/api/v2/admin/level-up-queue*", (route) =>
+    fulfillJson(route, { queue: [] }),
   );
   await page.route("**/api/v2/admin/dashboard/attention*", (route) =>
     fulfillJson(route, {
