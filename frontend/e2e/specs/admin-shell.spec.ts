@@ -1,5 +1,7 @@
 import { test, expect, type Page, type Route } from "@playwright/test";
 
+import { openAdminNav } from "../helpers/nav";
+
 const ADMIN_ME = {
   user_id: "user-admin-e2e",
   email: "admin@example.com",
@@ -313,13 +315,6 @@ async function expectShellLogout(
   ]);
 }
 
-async function openAdminDrawer(page: Page) {
-  const button = page.getByTestId("admin-open-drawer");
-  await expect(button).toBeVisible();
-  await button.scrollIntoViewIfNeeded();
-  await button.click({ force: true });
-}
-
 test.describe("Rally admin shell", () => {
   test("admin shell uses academy display name without demo branding or internal IDs", async ({
     page,
@@ -334,11 +329,10 @@ test.describe("Rally admin shell", () => {
         timeout: 10_000,
       },
     );
-    await openAdminDrawer(page);
-    const drawer = page.getByTestId("admin-mobile-drawer");
-    await expect(drawer.getByText("Academy E2E")).toBeVisible();
-    await expect(drawer.getByText("admin@example.com")).toBeVisible();
-    await expect(drawer.getByText("Admin", { exact: true })).toBeVisible();
+    const nav = await openAdminNav(page);
+    await expect(nav.getByText("Academy E2E")).toBeVisible();
+    await expect(nav.getByText("admin@example.com")).toBeVisible();
+    await expect(nav.getByText("Admin", { exact: true })).toBeVisible();
     await expect(page.getByText("Rally Academy")).toHaveCount(0);
     await expect(page.getByText("COURT 7")).toHaveCount(0);
     await expect(page.getByText("academy-e2e")).toHaveCount(0);
@@ -349,24 +343,27 @@ test.describe("Rally admin shell", () => {
     ).toEqual([]);
   });
 
-  test("mobile drawer opens, contains all nav groups, and closes", async ({
+  test("admin navigation renders all nav groups, and mobile drawer closes", async ({
     page,
   }) => {
     const errors = collectConsoleErrors(page);
     await stubAdminBff(page);
     await page.goto("/admin");
     await expect(page.getByTestId("admin-dashboard")).toBeVisible();
-    await openAdminDrawer(page);
-    const drawer = page.getByTestId("admin-mobile-drawer");
-    await expect(drawer).toBeVisible();
-    await expect(drawer.getByText("WORK", { exact: true })).toBeVisible();
-    await expect(drawer.getByText("MONEY", { exact: true })).toBeVisible();
+    const nav = await openAdminNav(page);
+    await expect(nav.getByText("WORK", { exact: true })).toBeVisible();
+    await expect(nav.getByText("MONEY", { exact: true })).toBeVisible();
     await expect(
-      drawer.getByText("COMMS · OPS", { exact: true }),
+      nav.getByText("COMMS · OPS", { exact: true }),
     ).toBeVisible();
-    await expect(drawer.getByRole("link", { name: /waivers/i })).toBeVisible();
-    await drawer.getByLabel("Close menu").click();
-    await expect(drawer).toBeHidden();
+    await expect(nav.getByRole("link", { name: /waivers/i })).toBeVisible();
+    // Only the mobile drawer has a close affordance — the desktop sidebar
+    // is always visible and has nothing to close.
+    const closeButton = page.getByLabel("Close menu");
+    if (await closeButton.isVisible()) {
+      await closeButton.click();
+      await expect(nav).toBeHidden();
+    }
     expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
   });
 
