@@ -1,6 +1,6 @@
 # fix-uim8-tuition-discounts
 
-PR: #352
+PR: #359
 
 ## What changed
 Adds a Tuition discounts section to the admin Dues page
