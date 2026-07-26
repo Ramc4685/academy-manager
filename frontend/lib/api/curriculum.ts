@@ -55,9 +55,23 @@ export interface SkillCriterion {
   display_order: number;
 }
 
+export type ExternalSource = "BWF_SHUTTLE_TIME" | "ACADEMY_CUSTOM" | "COACH_CREATED";
+
+export interface ExternalLessonReference {
+  ref_id: string;
+  skill_id: string;
+  source: ExternalSource;
+  source_title: string;
+  module_name: string;
+  lesson_range: string;
+  reference_title: string;
+  page_hint: string | null;
+  internal_note: string;
+}
+
 export interface PathwayLevel {
   level: Level;
-  skills: { skill: Skill; criteria: SkillCriterion[] }[];
+  skills: { skill: Skill; criteria: SkillCriterion[]; external_refs: ExternalLessonReference[] }[];
 }
 
 export interface FullPathway {
@@ -240,6 +254,35 @@ export function createSkill(
   return apiFetch<Skill>(
     `/admin/levels/${encodeURIComponent(levelId)}/skills`,
     { method: "POST", body: JSON.stringify(body) },
+  );
+}
+
+export function addExternalRef(
+  skillId: string,
+  body: {
+    source: ExternalSource;
+    source_title: string;
+    module_name: string;
+    lesson_range: string;
+    reference_title: string;
+    page_hint?: string;
+    internal_note?: string;
+  },
+): Promise<ExternalLessonReference> {
+  return apiFetch<ExternalLessonReference>(
+    `/admin/skills/${encodeURIComponent(skillId)}/external-refs`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+}
+
+// The backend route takes a `{program_id}` path segment for symmetry with the
+// other program-scoped routes, but the use case ignores it: it seeds (or
+// returns the existing) academy-wide badminton program regardless of which
+// id is passed. Safe to call before any program exists.
+export function seedBadmintonPathway(): Promise<{ program_id: string; name: string }> {
+  return apiFetch<{ program_id: string; name: string }>(
+    `/admin/programs/_/seed-badminton`,
+    { method: "POST" },
   );
 }
 

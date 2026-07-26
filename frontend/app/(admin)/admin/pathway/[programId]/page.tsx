@@ -5,11 +5,14 @@ import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  addExternalRef,
   createLevel,
   createSkill,
   getFullPathway,
   listLessonCards,
   seedLessonCards,
+  type ExternalLessonReference,
+  type ExternalSource,
   type PathwayLevel,
   type SeedLessonCardsResult,
   type Skill,
@@ -279,8 +282,13 @@ function LevelAccordion({
             <p className="px-4 py-3 text-sm text-neutral-400">No skills yet.</p>
           )}
 
-          {skills.map(({ skill }) => (
-            <SkillRow key={skill.skill_id} skill={skill} />
+          {skills.map(({ skill, external_refs }) => (
+            <SkillRow
+              key={skill.skill_id}
+              skill={skill}
+              externalRefs={external_refs}
+              onRefAdded={onSkillAdded}
+            />
           ))}
 
           {showAddSkill && (
@@ -354,29 +362,176 @@ function LevelAccordion({
   );
 }
 
-function SkillRow({ skill }: { skill: Skill }) {
+const EXTERNAL_SOURCES: ExternalSource[] = [
+  "BWF_SHUTTLE_TIME",
+  "ACADEMY_CUSTOM",
+  "COACH_CREATED",
+];
+
+function SkillRow({
+  skill,
+  externalRefs,
+  onRefAdded,
+}: {
+  skill: Skill;
+  externalRefs: ExternalLessonReference[];
+  onRefAdded: () => void;
+}) {
+  const [showAddRef, setShowAddRef] = useState(false);
+  const [source, setSource] = useState<ExternalSource>("BWF_SHUTTLE_TIME");
+  const [sourceTitle, setSourceTitle] = useState("");
+  const [moduleName, setModuleName] = useState("");
+  const [lessonRange, setLessonRange] = useState("");
+  const [referenceTitle, setReferenceTitle] = useState("");
+  const [pageHint, setPageHint] = useState("");
+  const [internalNote, setInternalNote] = useState("");
+
+  const addRefMutation = useMutation({
+    mutationFn: () =>
+      addExternalRef(skill.skill_id, {
+        source,
+        source_title: sourceTitle,
+        module_name: moduleName,
+        lesson_range: lessonRange,
+        reference_title: referenceTitle,
+        page_hint: pageHint.trim() || undefined,
+        internal_note: internalNote,
+      }),
+    onSuccess: () => {
+      onRefAdded();
+      setShowAddRef(false);
+      setSourceTitle("");
+      setModuleName("");
+      setLessonRange("");
+      setReferenceTitle("");
+      setPageHint("");
+      setInternalNote("");
+    },
+  });
+
+  const canSubmitRef =
+    sourceTitle.trim() && moduleName.trim() && lessonRange.trim() && referenceTitle.trim();
+
   return (
-    <div className="flex items-center gap-3 px-4 py-3">
-      <span className="w-5 text-right text-xs text-neutral-400">{skill.sequence}</span>
-      <div className="min-w-0 flex-1">
-        <span className="text-sm font-medium text-rally-base">{skill.name}</span>
-        {skill.description && (
-          <span className="ml-2 text-xs text-neutral-400">{skill.description}</span>
-        )}
-      </div>
-      <div className="flex shrink-0 items-center gap-2">
-        {skill.is_required && (
-          <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-red-600">
-            Required
+    <div className="px-4 py-3">
+      <div className="flex items-center gap-3">
+        <span className="w-5 text-right text-xs text-neutral-400">{skill.sequence}</span>
+        <div className="min-w-0 flex-1">
+          <span className="text-sm font-medium text-rally-base">{skill.name}</span>
+          {skill.description && (
+            <span className="ml-2 text-xs text-neutral-400">{skill.description}</span>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {skill.is_required && (
+            <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-red-600">
+              Required
+            </span>
+          )}
+          <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium text-neutral-500 dark:bg-neutral-800">
+            {skill.scoring_type}
           </span>
-        )}
-        <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium text-neutral-500 dark:bg-neutral-800">
-          {skill.scoring_type}
-        </span>
-        {skill.pass_threshold_pct > 0 && (
-          <span className="text-xs text-neutral-400">{skill.pass_threshold_pct}%</span>
-        )}
+          {skill.pass_threshold_pct > 0 && (
+            <span className="text-xs text-neutral-400">{skill.pass_threshold_pct}%</span>
+          )}
+          <button
+            onClick={() => setShowAddRef((v) => !v)}
+            className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+          >
+            {showAddRef ? "Cancel" : "+ Reference"}
+          </button>
+        </div>
       </div>
+
+      {externalRefs.length > 0 && (
+        <ul className="ml-8 mt-2 space-y-1">
+          {externalRefs.map((ref) => (
+            <li key={ref.ref_id} className="text-xs text-neutral-500">
+              <span className="font-medium text-neutral-600 dark:text-neutral-300">
+                {ref.reference_title}
+              </span>{" "}
+              — {ref.source_title} · {ref.module_name} · lessons {ref.lesson_range}
+              {ref.page_hint ? ` · ${ref.page_hint}` : ""}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {showAddRef && (
+        <div className="ml-8 mt-3 space-y-2 rounded-md bg-neutral-50 p-3 dark:bg-neutral-900">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <select
+              value={source}
+              onChange={(e) => setSource(e.target.value as ExternalSource)}
+              className="rounded-md border border-neutral-300 px-2 py-1.5 text-xs focus:outline-none"
+            >
+              {EXTERNAL_SOURCES.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+            <input
+              type="text"
+              value={sourceTitle}
+              onChange={(e) => setSourceTitle(e.target.value)}
+              placeholder="Source title (e.g. Shuttle Time Level 1)"
+              className="rounded-md border border-neutral-300 px-2 py-1.5 text-xs focus:border-blue-500 focus:outline-none"
+            />
+            <input
+              type="text"
+              value={moduleName}
+              onChange={(e) => setModuleName(e.target.value)}
+              placeholder="Module (e.g. Grip and Movement)"
+              className="rounded-md border border-neutral-300 px-2 py-1.5 text-xs focus:border-blue-500 focus:outline-none"
+            />
+            <input
+              type="text"
+              value={lessonRange}
+              onChange={(e) => setLessonRange(e.target.value)}
+              placeholder="Lesson range (e.g. 3-4)"
+              className="rounded-md border border-neutral-300 px-2 py-1.5 text-xs focus:border-blue-500 focus:outline-none"
+            />
+            <input
+              type="text"
+              value={referenceTitle}
+              onChange={(e) => setReferenceTitle(e.target.value)}
+              placeholder="Reference title"
+              className="rounded-md border border-neutral-300 px-2 py-1.5 text-xs focus:border-blue-500 focus:outline-none"
+            />
+            <input
+              type="text"
+              value={pageHint}
+              onChange={(e) => setPageHint(e.target.value)}
+              placeholder="Page hint (optional)"
+              className="rounded-md border border-neutral-300 px-2 py-1.5 text-xs focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+          <input
+            type="text"
+            value={internalNote}
+            onChange={(e) => setInternalNote(e.target.value)}
+            placeholder="Internal note (why this reference maps to this skill)"
+            className="w-full rounded-md border border-neutral-300 px-2 py-1.5 text-xs focus:border-blue-500 focus:outline-none"
+          />
+          {addRefMutation.isError && (
+            <p className="text-xs text-red-600">Failed to add reference.</p>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" size="sm" onClick={() => setShowAddRef(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={!canSubmitRef || addRefMutation.isPending}
+              onClick={() => addRefMutation.mutate()}
+            >
+              {addRefMutation.isPending ? "Adding..." : "Add reference"}
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
