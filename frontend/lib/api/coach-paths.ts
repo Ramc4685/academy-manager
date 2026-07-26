@@ -22,6 +22,12 @@ export function coachStudentPassportPath(studentId: string, programId?: string):
   });
 }
 
+export function coachSkillNotesPath(studentId: string, skillId?: string): string {
+  return withParams(`/coach/students/${encodeURIComponent(studentId)}/skill-notes`, {
+    skill_id: skillId,
+  });
+}
+
 function withParams(path: string, params: Record<string, string | undefined>): string {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
