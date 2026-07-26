@@ -1,5 +1,5 @@
 # UIM7 — Coach skill-notes UI
-Status: TODO
+Status: DONE (PR #353, 2026-07-26)
 Size: S · Depends on: none · Tracker: ../TRACKER.md
 
 ## User value
@@ -41,6 +41,6 @@ None. No new frontend route (panel on the existing passport page) → extend the
 - Rollback: remove the panel; routes untouched.
 
 ## PR checklist (release note · TRACKER.md · plan Status → DONE)
-- [ ] Release note
-- [ ] Update TRACKER.md row UIM7
-- [ ] Plan Status → DONE
+- [x] Release note
+- [x] Update TRACKER.md row UIM7
+- [x] Plan Status → DONE

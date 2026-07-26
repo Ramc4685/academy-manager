@@ -70,7 +70,7 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 | UIM4 | Session-type management UI | [plans/UIM4-session-types.md](plans/UIM4-session-types.md) | S | — | TODO | |
 | UIM5 | Billing-enrollment move/override UI | [plans/UIM5-billing-enrollment-move.md](plans/UIM5-billing-enrollment-move.md) | M | — | TODO | |
 | UIM6 | Bulk user invite UI | [plans/UIM6-bulk-invite.md](plans/UIM6-bulk-invite.md) | S | UIC1 (same surface) | TODO | |
-| UIM7 | Coach skill-notes UI | [plans/UIM7-skill-notes.md](plans/UIM7-skill-notes.md) | S | — | TODO | |
+| UIM7 | Coach skill-notes UI | [plans/UIM7-skill-notes.md](plans/UIM7-skill-notes.md) | S | — | DONE | [#353](https://github.com/Ramc4685/academy-manager/pull/353) |
 | UIM8 | Tuition-discounts report UI | [plans/UIM8-tuition-discounts.md](plans/UIM8-tuition-discounts.md) | S | — | TODO | |
 | UIM9 | Platform-fallback billing visibility | [plans/UIM9-platform-fallback-setting.md](plans/UIM9-platform-fallback-setting.md) | S | — | DONE | [#352](https://github.com/Ramc4685/academy-manager/pull/352) |
 | UIM10 | Curriculum authoring extras | [plans/UIM10-curriculum-extras.md](plans/UIM10-curriculum-extras.md) | S | — | TODO | |
