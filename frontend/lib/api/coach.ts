@@ -11,6 +11,7 @@ import {
   coachDayHubPath,
   coachSessionBulkSkillStatusPath,
   coachSessionSkillsPath,
+  coachSkillNotesPath,
 } from "./coach-paths";
 
 export type EnrollmentStatus = "active" | "paused" | "cancelled";
@@ -187,6 +188,16 @@ export interface ProgressNote {
   created_at: string;
 }
 
+export interface SkillNote {
+  note_id: string;
+  student_id: string;
+  skill_id: string;
+  coach_id: string;
+  session_id: string | null;
+  body: string;
+  created_at: string;
+}
+
 export interface CoachScheduleEntry {
   session_id: string;
   occurrence_id: string;
@@ -314,6 +325,23 @@ export function createProgressNote(
       body: JSON.stringify(payload),
     },
   );
+}
+
+export function listSkillNotes(
+  studentId: string,
+  skillId: string,
+): Promise<{ notes: SkillNote[] }> {
+  return apiFetch(coachSkillNotesPath(studentId, skillId), { method: "GET" });
+}
+
+export function createSkillNote(
+  studentId: string,
+  payload: { skill_id: string; body: string },
+): Promise<SkillNote> {
+  return apiFetch(coachSkillNotesPath(studentId), {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function getCoachSchedule(): Promise<CoachScheduleResponse> {

@@ -19,6 +19,8 @@ export const queryKeys = {
     session: (sessionId: string) => ["coach", "session", sessionId] as const,
     sessionSkills: (sessionId: string, date: string, programId?: string) =>
       ["coach", "session", sessionId, "skills", date, programId ?? "default"] as const,
+    skillNotes: (studentId: string, skillId: string) =>
+      ["coach", "skill-notes", studentId, skillId] as const,
   },
   admin: {
     all: ["admin"] as const,
