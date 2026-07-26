@@ -54,5 +54,17 @@ export default defineConfig({
       name: "webkit-mobile",
       use: { ...devices["iPhone 14"] },
     },
+    // Desktop viewport so the admin lg: sidebar branch (the primary admin
+    // navigation on real screens) is exercised end-to-end. Scoped via
+    // testMatch to a few admin specs so CI wall-time grows by minutes,
+    // not double (workers=1 in CI).
+    {
+      name: "chromium-desktop",
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 1280, height: 800 },
+      },
+      testMatch: /admin-(shell|students|registrations)\.spec\.ts/,
+    },
   ],
 });
