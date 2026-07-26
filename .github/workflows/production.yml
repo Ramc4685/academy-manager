@@ -381,14 +381,14 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      NEXT_PUBLIC_FIREBASE_API_KEY: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY }}
-      NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${{ env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN }}
-      NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${{ env.NEXT_PUBLIC_FIREBASE_PROJECT_ID }}
-      NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: ${{ env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET }}
-      NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${{ env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID }}
-      NEXT_PUBLIC_FIREBASE_APP_ID: ${{ env.NEXT_PUBLIC_FIREBASE_APP_ID }}
-      NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID: ${{ env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID }}
-      FIREBASE_PROJECT_ID: ${{ env.NEXT_PUBLIC_FIREBASE_PROJECT_ID }}
+      NEXT_PUBLIC_FIREBASE_API_KEY: ${{ vars.REACT_APP_FIREBASE_API_KEY }}
+      NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${{ vars.REACT_APP_FIREBASE_AUTH_DOMAIN }}
+      NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${{ vars.REACT_APP_FIREBASE_PROJECT_ID }}
+      NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: ${{ vars.REACT_APP_FIREBASE_STORAGE_BUCKET }}
+      NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${{ vars.REACT_APP_FIREBASE_MESSAGING_SENDER_ID }}
+      NEXT_PUBLIC_FIREBASE_APP_ID: ${{ vars.REACT_APP_FIREBASE_APP_ID }}
+      NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID: ${{ vars.REACT_APP_FIREBASE_MEASUREMENT_ID }}
+      FIREBASE_PROJECT_ID: ${{ vars.REACT_APP_FIREBASE_PROJECT_ID }}
       # Emulator-only credentials — not valid against any real account.
       SEED_ADMIN_PASSWORD: e2e-ci-admin-pass
       SEED_COACH_PASSWORD: e2e-ci-coach-pass
@@ -396,7 +396,7 @@ jobs:
       LOCAL_AUTH_ADMIN_PASSWORD: e2e-ci-admin-pass
       LOCAL_AUTH_PARENT_PASSWORD: e2e-ci-parent-pass
       LOCAL_AUTH_BASE_URL: http://localhost:3001
-      LOCAL_AUTH_EVIDENCE_DIR: ${{ runner.temp }}/real-auth-evidence
+      LOCAL_AUTH_EVIDENCE_DIR: /tmp/real-auth-evidence
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -464,7 +464,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: playwright-report-real-auth
-          path: ${{ runner.temp }}/real-auth-evidence
+          path: /tmp/real-auth-evidence
           retention-days: 7
 
       - name: Stop local stack
