@@ -2656,6 +2656,26 @@ export function sendDuesReminders(payload: { parent_ids?: string[] } = {}): Prom
   });
 }
 
+export interface AdminTuitionDiscountCategorySummary {
+  category: string;
+  discount_cents: number;
+}
+
+export interface AdminTuitionDiscountSummaryResponse {
+  period: string;
+  gross_tuition_cents: number;
+  discount_cents: number;
+  net_tuition_cents: number;
+  by_category: AdminTuitionDiscountCategorySummary[];
+}
+
+export function getTuitionDiscountSummary(period: string): Promise<AdminTuitionDiscountSummaryResponse> {
+  return apiFetch<AdminTuitionDiscountSummaryResponse>(
+    `/admin/finance/tuition-discounts?period=${encodeURIComponent(period)}`,
+    { method: "GET" },
+  );
+}
+
 export function exportAdminReportCsv(reportName: string, period?: string): Promise<string> {
   const query = period ? `?period=${encodeURIComponent(period)}` : "";
   return apiFetch<string>(`/admin/reports/${encodeURIComponent(reportName)}.csv${query}`, {

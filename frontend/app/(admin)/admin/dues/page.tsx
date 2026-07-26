@@ -1,9 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRouter, useSearchParams } from "next/navigation";
 
-import { listDuesFollowup, sendDuesReminders } from "@/lib/api/admin";
+import { getTuitionDiscountSummary, listDuesFollowup, sendDuesReminders } from "@/lib/api/admin";
+import { queryKeys } from "@/lib/query/keys";
 import { useAdminAction } from "@/components/admin/admin-action-slot";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
@@ -13,12 +15,39 @@ function money(cents: number): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
 }
 
+function currentPeriod(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
 export default function AdminDuesPage() {
+  return (
+    <Suspense fallback={<div className="p-6 text-sm text-neutral-500">Loading...</div>}>
+      <AdminDuesContent />
+    </Suspense>
+  );
+}
+
+function AdminDuesContent() {
   const queryClient = useQueryClient();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const discountsPeriod = searchParams.get("discounts_period") || currentPeriod();
+  const setDiscountsPeriod = (period: string) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("discounts_period", period || currentPeriod());
+    router.replace(`/admin/dues?${params.toString()}`);
+  };
   const { data, isLoading, isError } = useQuery({
     queryKey: ["admin", "dues-followup"],
     queryFn: listDuesFollowup,
   });
+  const discountSummaryQuery = useQuery({
+    queryKey: queryKeys.admin.tuitionDiscounts(discountsPeriod),
+    queryFn: () => getTuitionDiscountSummary(discountsPeriod),
+  });
+  const discountSummary = discountSummaryQuery.data;
+  const discountByCategory = discountSummary?.by_category ?? [];
   const reminderMutation = useMutation({
     mutationFn: (parentIds: string[] | undefined) =>
       sendDuesReminders(parentIds ? { parent_ids: parentIds } : {}),
@@ -132,6 +161,85 @@ export default function AdminDuesPage() {
           </table>
         </div>
       )}
+
+      <Card p={24} data-testid="tuition-discounts-section" className="space-y-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <Overline>Tuition discounts</Overline>
+            <p className="mt-1 text-sm text-neutral-500">
+              Gross tuition vs. discounts granted for the selected month.
+            </p>
+          </div>
+          <label className="flex flex-col gap-1 text-sm font-medium text-rally-ink">
+            Month
+            <input
+              type="month"
+              value={discountsPeriod}
+              onChange={(event) => setDiscountsPeriod(event.target.value)}
+              className="h-10 rounded-md border border-rally-line bg-white px-3 text-sm text-rally-ink shadow-sm focus:border-rally-accent focus:outline-none focus:ring-2 focus:ring-rally-accent/20 dark:bg-neutral-950"
+            />
+          </label>
+        </div>
+
+        {discountSummaryQuery.isError ? (
+          <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+            Could not load the tuition discounts summary.
+          </p>
+        ) : discountSummaryQuery.isLoading ? (
+          <Skeleton />
+        ) : (
+          <>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <Metric label="Gross tuition" value={money(discountSummary?.gross_tuition_cents ?? 0)} />
+              <Metric label="Total discounts" value={money(discountSummary?.discount_cents ?? 0)} />
+              <Metric label="Net tuition" value={money(discountSummary?.net_tuition_cents ?? 0)} />
+            </div>
+
+            {discountByCategory.length === 0 ? (
+              <p data-testid="tuition-discounts-empty" className="text-sm text-neutral-500">
+                No discounts recorded for this month.
+              </p>
+            ) : (
+              <div className="overflow-x-auto rounded-lg border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
+                <table className="w-full min-w-[480px] text-sm">
+                  <thead>
+                    <tr className="border-b border-neutral-200 text-left text-neutral-500 dark:border-neutral-800">
+                      <th className="px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
+                        Category
+                      </th>
+                      <th className="px-4 py-3 text-right font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
+                        Discount
+                      </th>
+                      <th className="px-4 py-3 text-right font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
+                        % of gross
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {discountByCategory.map((row) => (
+                      <tr
+                        key={row.category}
+                        data-testid={`tuition-discounts-row-${row.category}`}
+                        className="border-b border-neutral-100 last:border-0 dark:border-neutral-800"
+                      >
+                        <td className="px-4 py-3 font-medium">{row.category}</td>
+                        <td className="px-4 py-3 text-right font-mono tabular-nums">
+                          {money(row.discount_cents)}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono tabular-nums">
+                          {discountSummary && discountSummary.gross_tuition_cents > 0
+                            ? `${((row.discount_cents / discountSummary.gross_tuition_cents) * 100).toFixed(1)}%`
+                            : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )}
+      </Card>
     </section>
   );
 }

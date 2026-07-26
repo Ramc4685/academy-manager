@@ -95,6 +95,8 @@ export const queryKeys = {
       [...queryKeys.admin.selfServiceTrialsAll(), status ?? "all"] as const,
     selfServiceCancellations: () =>
       ["admin", "self-service", "cancellations"] as const,
+    tuitionDiscounts: (period: string) =>
+      ["admin", "tuition-discounts", period] as const,
   },
   parent: {
     all: ["parent"] as const,
