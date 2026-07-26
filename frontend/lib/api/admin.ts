@@ -1709,6 +1709,30 @@ export function reconcileStripeBilling(
   });
 }
 
+export interface PlatformChargeFallbackView {
+  allow_platform_charge_fallback: boolean;
+}
+
+export interface SetPlatformChargeFallbackRequest {
+  enabled: boolean;
+  reason?: string | null;
+}
+
+export function getPlatformChargeFallback(): Promise<PlatformChargeFallbackView> {
+  return apiFetch<PlatformChargeFallbackView>("/admin/billing/settings/platform-fallback", {
+    method: "GET",
+  });
+}
+
+export function setPlatformChargeFallback(
+  payload: SetPlatformChargeFallbackRequest,
+): Promise<PlatformChargeFallbackView> {
+  return apiFetch<PlatformChargeFallbackView>("/admin/billing/settings/platform-fallback", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function getBillingReconciliationReport(params: {
   stripe_invoice_id?: string | null;
   payment_intent_id?: string | null;
