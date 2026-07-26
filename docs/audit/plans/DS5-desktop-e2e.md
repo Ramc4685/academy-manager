@@ -1,5 +1,5 @@
 # DS5 — Desktop Chromium Playwright project
-Status: TODO
+Status: DONE (PR #364, 2026-07-26)
 Size: S · Depends on: none (independent of DS1-4; can land any time) · Tracker: ../TRACKER.md
 
 ## Problem
@@ -56,6 +56,13 @@ export async function gotoAdminNav(page: Page, slug: string) {
 - Rollback: delete the project block + helper usage; zero product code touched.
 
 ## PR checklist
-- [ ] Release note: "CI now exercises the desktop admin layout (chromium-desktop Playwright project)."
-- [ ] Update `docs/audit/TRACKER.md` DS5 row
-- [ ] Flip this plan's Status → DONE (PR #NNN, date)
+- [x] Release note: "CI now exercises the desktop admin layout (chromium-desktop Playwright project)."
+- [x] Update `docs/audit/TRACKER.md` DS5 row
+- [x] Flip this plan's Status → DONE (PR #364, 2026-07-26)
+
+## Note (2026-07-26)
+The plan's step 3 only names `playwright.config.ts` under "Files to change" — the
+new `chromium-desktop` project also needed a CI job wired into
+`.github/workflows/production.yml` (CI runs Playwright projects by explicit
+`--project=` name per #128; a project that isn't named in a job never runs).
+Added `frontend-e2e-chromium-desktop` mirroring the existing chromium-mobile job.
