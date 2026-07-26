@@ -1,6 +1,6 @@
 # MT2 — Split runtime vs dev requirements
 
-Status: DONE (PR #TBD, 2026-07-26)
+Status: DONE (PR #356, 2026-07-26)
 Size: S · Depends on: none · Tracker: ../TRACKER.md
 
 ## Problem
