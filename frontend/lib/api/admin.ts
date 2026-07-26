@@ -2295,6 +2295,65 @@ export function getAdminSessionEconomics(period: string): Promise<AdminSessionEc
   );
 }
 
+export interface AdminEnrollmentFunnelResponse {
+  leads: number;
+  applied: number;
+  assessed: number;
+  confirmed: number;
+  dropped: number;
+  total_applications: number;
+  conversion_rate: number;
+  period: string | null;
+}
+
+export function getEnrollmentFunnel(period?: string): Promise<AdminEnrollmentFunnelResponse> {
+  const q = period ? `?period=${encodeURIComponent(period)}` : "";
+  return apiFetch<AdminEnrollmentFunnelResponse>(`/admin/reports/enrollment-funnel${q}`, {
+    method: "GET",
+  });
+}
+
+export interface AdminAttendanceTrendsPeriod {
+  period: string;
+  scheduled_count: number;
+  completed_count: number;
+  no_show_count: number;
+  completion_rate: number;
+}
+
+export interface AdminAttendanceTrendsResponse {
+  periods: AdminAttendanceTrendsPeriod[];
+  overall_completion_rate: number;
+}
+
+export function getAttendanceTrends(periods: string[]): Promise<AdminAttendanceTrendsResponse> {
+  const q = periods.map((p) => `periods=${encodeURIComponent(p)}`).join("&");
+  return apiFetch<AdminAttendanceTrendsResponse>(`/admin/reports/attendance-trends?${q}`, {
+    method: "GET",
+  });
+}
+
+export interface AdminCoachUtilizationEntry {
+  coach_id: string;
+  period: string;
+  hours: number;
+  payout_minor: number;
+  utilization_rate: number;
+}
+
+export interface AdminCoachUtilizationResponse {
+  coaches: AdminCoachUtilizationEntry[];
+  periods: string[];
+  total_payout_minor: number;
+}
+
+export function getCoachUtilization(periods: string[]): Promise<AdminCoachUtilizationResponse> {
+  const q = periods.map((p) => `periods=${encodeURIComponent(p)}`).join("&");
+  return apiFetch<AdminCoachUtilizationResponse>(`/admin/reports/coach-utilization?${q}`, {
+    method: "GET",
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Messages / Comms
 // ---------------------------------------------------------------------------

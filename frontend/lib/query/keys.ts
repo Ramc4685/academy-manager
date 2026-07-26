@@ -60,6 +60,12 @@ export const queryKeys = {
     payouts: () => ["admin", "finance", "payouts"] as const,
     expenses: () => ["admin", "finance", "expenses"] as const,
     revenue: () => ["admin", "finance", "revenue"] as const,
+    enrollmentFunnel: (period?: string) =>
+      ["admin", "reports", "funnel", period ?? "all"] as const,
+    attendanceTrends: (periods: string[]) =>
+      ["admin", "reports", "attendance-trends", ...periods] as const,
+    coachUtilization: (periods: string[]) =>
+      ["admin", "reports", "coach-utilization", ...periods] as const,
     messages: () => ["admin", "messages"] as const,
     waivers: () => ["admin", "waivers"] as const,
     waiverTemplates: () => ["admin", "waivers", "templates"] as const,

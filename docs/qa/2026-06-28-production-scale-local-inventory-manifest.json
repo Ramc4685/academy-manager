@@ -1262,7 +1262,8 @@
       "source": "frontend/app/(admin)/admin/reports/page.tsx",
       "workflows": [
         "Review finance/attendance reports",
-        "Export"
+        "Export",
+        "Review enrollment funnel, attendance trends, and coach utilization"
       ],
       "controls": {
         "buttons": [
@@ -1287,6 +1288,7 @@
         "Exports are tenant-scoped and failures are visible",
         "Workflow evidence: \"Review finance/attendance reports\" completes for the admin route /admin/reports with real-user evidence and no framework or runtime errors.",
         "Workflow evidence: \"Export\" completes for the admin route /admin/reports with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Review enrollment funnel, attendance trends, and coach utilization\" completes for the admin route /admin/reports with real-user evidence and no framework or runtime errors.",
         "Risk evidence: \"Tenant data leakage in export\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     },
