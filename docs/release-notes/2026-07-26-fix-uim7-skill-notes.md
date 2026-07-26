@@ -1,6 +1,6 @@
 # fix-uim7-skill-notes
 
-PR: #TBD
+PR: #353
 
 ## What changed
 Adds a per-skill notes panel to the coach student passport page
