@@ -11,8 +11,19 @@ import { REAL_AUTH_USERS } from "../fixtures/real-auth-users";
  *
  * Does NOT exercise prod Firebase quirks (e.g. the enumeration-protection
  * behavior noted in PR #304) — the Auth Emulator does not reproduce those.
+ *
+ * Opt-in behind REAL_AUTH_E2E=1 (same convention as LOCAL_AUTH_E2E for
+ * local-auth-qa.spec.ts) so the default `pnpm e2e` config — which has no
+ * seeded backend/emulator behind it — skips this spec instead of failing.
  */
+const REAL_AUTH_ENABLED = process.env.REAL_AUTH_E2E === "1";
+
 test.describe("real-auth smoke", () => {
+  test.skip(
+    !REAL_AUTH_ENABLED,
+    "Set REAL_AUTH_E2E=1 and run with playwright.ci-real-auth.config.ts against a seeded local stack.",
+  );
+
   test("admin signs in, /me resolves the admin persona, and lands on /admin", async ({
     page,
   }) => {
