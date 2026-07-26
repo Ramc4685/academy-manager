@@ -302,6 +302,53 @@ jobs:
           path: frontend/playwright-report
           retention-days: 7
 
+  frontend-e2e-chromium-desktop:
+    name: Frontend E2E Chromium Desktop
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    needs: [changes]
+    if: >
+      needs.changes.outputs.frontend == 'true' ||
+      needs.changes.outputs.ci == 'true' ||
+      github.event_name == 'workflow_dispatch'
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium browser
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Playwright E2E Chromium Desktop
+        env:
+          CI: "1"
+        run: pnpm exec playwright test --project=chromium-desktop
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-chromium-desktop
+          path: frontend/playwright-report
+          retention-days: 7
+
   frontend-e2e-webkit:
     name: Frontend E2E WebKit
     runs-on: ubuntu-latest
@@ -369,6 +416,7 @@ jobs:
         backend,
         frontend-static,
         frontend-e2e-chromium,
+        frontend-e2e-chromium-desktop,
         frontend-e2e-webkit,
         backend-advisory,
         changes,
@@ -378,6 +426,7 @@ jobs:
       needs.backend.result != 'failure' &&
       needs.frontend-static.result != 'failure' &&
       needs.frontend-e2e-chromium.result != 'failure' &&
+      needs.frontend-e2e-chromium-desktop.result != 'failure' &&
       needs.frontend-e2e-webkit.result != 'failure' &&
       needs.backend-advisory.result != 'failure' &&
       (
