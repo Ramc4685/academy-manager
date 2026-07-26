@@ -370,16 +370,15 @@ jobs:
       needs.changes.outputs.frontend == 'true' ||
       needs.changes.outputs.ci == 'true' ||
       github.event_name == 'workflow_dispatch'
-    services:
-      mongo:
-        image: mongo:7
-        ports:
-          - 27017:27017
-        options: >-
-          --health-cmd "mongosh --quiet --eval 'db.runCommand({ping:1}).ok'"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
+    # No `services: mongo:` container here (unlike the `backend` job): GH
+    # Actions service containers are exposed via iptables NAT with the
+    # userland-proxy disabled, so there's no real host-level listening socket
+    # for lsof to find. scripts/local_test_stack.sh detects an already-running
+    # Mongo via `lsof -iTCP:27017 -sTCP:LISTEN` (so it can skip spawning its
+    # own mongod on a real dev machine) — that check silently reports the port
+    # free against a service container, so the script then tries (and fails)
+    # to launch mongod itself. Installing mongod as a real process below keeps
+    # the script's local-dev assumptions intact.
     env:
       NEXT_PUBLIC_FIREBASE_API_KEY: ${{ vars.REACT_APP_FIREBASE_API_KEY }}
       NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${{ vars.REACT_APP_FIREBASE_AUTH_DOMAIN }}
@@ -400,6 +399,12 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+
+      - name: Start MongoDB (real mongod process, not a service container)
+        uses: supercharge/mongodb-github-action@1.12.0
+        with:
+          mongodb-version: "7.0"
+          mongodb-port: 27017
 
       - name: Set up Python
         uses: actions/setup-python@v6
