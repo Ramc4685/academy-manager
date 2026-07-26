@@ -1,6 +1,6 @@
 # fix-uim10-curriculum-extras
 
-PR: #TBD
+PR: #354
 
 ## What changed
 Surfaces two curriculum-authoring routes that only existed as "dark" admin
