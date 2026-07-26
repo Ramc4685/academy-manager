@@ -66,7 +66,7 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 |---|---|---|---|---|---|---|
 | UIM1 | Platform/tenant-admin persona UI | [plans/UIM1-platform-persona.md](plans/UIM1-platform-persona.md) | L | DS1-3 recommended | TODO | |
 | UIM2 | GET /me/memberships + real TenantSwitcher | [plans/UIM2-memberships-route.md](plans/UIM2-memberships-route.md) | S | — | TODO | |
-| UIM3 | Funnel/attendance/utilization reports UI | [plans/UIM3-analytics-reports.md](plans/UIM3-analytics-reports.md) | M | UIC3 (same surface) | TODO | |
+| UIM3 | Funnel/attendance/utilization reports UI | [plans/UIM3-analytics-reports.md](plans/UIM3-analytics-reports.md) | M | UIC3 (same surface) | DONE | [#362](https://github.com/Ramc4685/academy-manager/pull/362) |
 | UIM4 | Session-type management UI | [plans/UIM4-session-types.md](plans/UIM4-session-types.md) | S | — | TODO | |
 | UIM5 | Billing-enrollment move/override UI | [plans/UIM5-billing-enrollment-move.md](plans/UIM5-billing-enrollment-move.md) | M | — | TODO | |
 | UIM6 | Bulk user invite UI | [plans/UIM6-bulk-invite.md](plans/UIM6-bulk-invite.md) | S | UIC1 (same surface) | TODO | |
