@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createProgram,
   listPrograms,
+  seedBadmintonPathway,
   type Program,
 } from "@/lib/api/curriculum";
 import { getActiveAcademyId } from "@/lib/api/client";
@@ -40,6 +41,13 @@ export default function AdminPathwayPage() {
       setFormName("");
       setFormSport("");
       setFormDescription("");
+    },
+  });
+
+  const seedMutation = useMutation({
+    mutationFn: () => seedBadmintonPathway(),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["admin", "programs"] });
     },
   });
 
@@ -143,7 +151,34 @@ export default function AdminPathwayPage() {
       {isLoading ? (
         <Skeleton />
       ) : list.length === 0 ? (
-        <p className="text-sm text-neutral-500">No programs yet. Create one to get started.</p>
+        <Card p={20}>
+          <h2 className="text-sm font-semibold">Seed content</h2>
+          <p className="mt-1 text-sm text-neutral-500">
+            No programs yet. Seed the academy&apos;s badminton skill pathway to get started, or
+            create a custom program above. Seeding is idempotent — safe to click more than once.
+          </p>
+          {seedMutation.isError && (
+            <p className="mt-2 text-xs text-red-600">Failed to seed the badminton pathway.</p>
+          )}
+          <div className="mt-3">
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={seedMutation.isPending}
+              onClick={() => {
+                if (
+                  window.confirm(
+                    "Seed the badminton skill pathway? This creates curriculum content (levels, skills, and reference metadata) for this academy.",
+                  )
+                ) {
+                  seedMutation.mutate();
+                }
+              }}
+            >
+              {seedMutation.isPending ? "Seeding..." : "Seed badminton pathway"}
+            </Button>
+          </div>
+        </Card>
       ) : (
         <div className="space-y-3">
           {list.map((program) => (
