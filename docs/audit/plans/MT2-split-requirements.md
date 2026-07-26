@@ -1,6 +1,6 @@
 # MT2 — Split runtime vs dev requirements
 
-Status: TODO
+Status: DONE (PR #TBD, 2026-07-26)
 Size: S · Depends on: none · Tracker: ../TRACKER.md
 
 ## Problem
@@ -75,6 +75,6 @@ Split into:
 
 ## PR checklist
 
-- [ ] Release note (per AGENTS.md `docs/release-notes/`)
-- [ ] TRACKER.md updated
-- [ ] Plan Status flipped to DONE
+- [x] Release note (per AGENTS.md `docs/release-notes/`)
+- [x] TRACKER.md updated
+- [x] Plan Status flipped to DONE

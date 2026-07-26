@@ -58,7 +58,7 @@ header "Backend"
 cd "$BACKEND"
 
 if ! source .venv/bin/activate 2>/dev/null; then
-  fail "backend .venv not found — run: cd backend && python -m venv .venv && pip install -r requirements.txt"
+  fail "backend .venv not found — run: cd backend && python -m venv .venv && pip install -r requirements-dev.txt"
   ERRORS=$((ERRORS + 1))
 else
   run_check "ruff format --check v2" ruff format --check v2
