@@ -41,6 +41,22 @@ async function stubMe(page: Page) {
     if (route.request().method() !== "GET") return route.fallback();
     return fulfillJson(route, ADMIN_ME);
   });
+  await page.route("**/api/v2/me/memberships", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, {
+      memberships: [
+        {
+          academy_id: "academy-e2e",
+          academy_name: "Academy E2E",
+          academy_slug: "academy-e2e",
+          roles: ["admin"],
+          status: "active",
+          is_default: true,
+        },
+      ],
+      active_academy_id: "academy-e2e",
+    });
+  });
 }
 
 async function stubAdminShell(page: Page) {

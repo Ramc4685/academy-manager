@@ -20,6 +20,22 @@ async function stubAdminShell(page: Page) {
     if (route.request().method() !== "GET") return route.fallback();
     return fulfillJson(route, ADMIN_ME);
   });
+  await page.route("**/api/v2/me/memberships", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, {
+      memberships: [
+        {
+          academy_id: "academy-e2e",
+          academy_name: "BLNO Badminton Academy",
+          academy_slug: "academy-e2e",
+          roles: ["admin"],
+          status: "active",
+          is_default: true,
+        },
+      ],
+      active_academy_id: "academy-e2e",
+    });
+  });
   await page.route("**/api/v2/admin/academy", (route) => {
     if (route.request().method() !== "GET") return route.fallback();
     return fulfillJson(route, {

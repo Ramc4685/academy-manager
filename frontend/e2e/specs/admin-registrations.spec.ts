@@ -42,6 +42,21 @@ function fulfillJson(route: Route, body: unknown, status = 200) {
 
 async function stubAdminShell(page: Page) {
   await page.route("**/api/v2/me", (route) => fulfillJson(route, ADMIN_ME));
+  await page.route("**/api/v2/me/memberships", (route) =>
+    fulfillJson(route, {
+      memberships: [
+        {
+          academy_id: "academy-e2e",
+          academy_name: "Rally Academy",
+          academy_slug: "academy-e2e",
+          roles: ["admin"],
+          status: "active",
+          is_default: true,
+        },
+      ],
+      active_academy_id: "academy-e2e",
+    }),
+  );
   await page.route("**/api/v2/admin/academy", (route) =>
     fulfillJson(route, {
       academy_id: "academy-e2e",

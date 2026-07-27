@@ -61,17 +61,29 @@ export async function stubMe(page: Page, user: MockUser): Promise<void> {
 }
 
 /**
- * Stub multi-membership endpoint. The frontend may issue this as the
- * user lands. We treat the response as the source of truth for which
- * academies the user can switch into.
+ * Stub the `/me/memberships` endpoint. The frontend fetches this as the
+ * user lands, so the response shape here must mirror the real BFF
+ * contract (`MyMembershipsResponse` in `lib/api/v2/memberships.ts`), not
+ * just the fields a given test happens to read.
  */
 export async function stubMemberships(
   page: Page,
   memberships: Array<{ academy_id: string; academy_name: string; role: RoleName }>
 ): Promise<void> {
+  const activeAcademyId = memberships[0]?.academy_id ?? "";
   await page.route("**/api/v2/me/memberships", (route) => {
     if (route.request().method() !== "GET") return route.fallback();
-    return fulfillJson(route, { memberships });
+    return fulfillJson(route, {
+      memberships: memberships.map((m) => ({
+        academy_id: m.academy_id,
+        academy_name: m.academy_name,
+        academy_slug: m.academy_id,
+        roles: [m.role],
+        status: "active",
+        is_default: m.academy_id === activeAcademyId,
+      })),
+      active_academy_id: activeAcademyId,
+    });
   });
 }
 

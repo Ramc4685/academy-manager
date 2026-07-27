@@ -138,8 +138,52 @@ async function stubMe(page: Page, body = ADMIN_ME) {
   });
 }
 
-async function stubAdminBff(page: Page) {
+const SINGLE_MEMBERSHIP = {
+  memberships: [
+    {
+      academy_id: "academy-e2e",
+      academy_name: "Academy E2E",
+      academy_slug: "academy-e2e",
+      roles: ["admin"],
+      status: "active",
+      is_default: true,
+    },
+  ],
+  active_academy_id: "academy-e2e",
+};
+
+const MULTI_MEMBERSHIP = {
+  memberships: [
+    {
+      academy_id: "academy-e2e",
+      academy_name: "Academy E2E",
+      academy_slug: "academy-e2e",
+      roles: ["admin"],
+      status: "active",
+      is_default: true,
+    },
+    {
+      academy_id: "academy-e2e-2",
+      academy_name: "Academy E2E Two",
+      academy_slug: "academy-e2e-2",
+      roles: ["admin"],
+      status: "active",
+      is_default: false,
+    },
+  ],
+  active_academy_id: "academy-e2e",
+};
+
+async function stubMemberships(page: Page, body = SINGLE_MEMBERSHIP) {
+  await page.route("**/api/v2/me/memberships", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, body);
+  });
+}
+
+async function stubAdminBff(page: Page, memberships = SINGLE_MEMBERSHIP) {
   await stubMe(page, ADMIN_ME);
+  await stubMemberships(page, memberships);
   // Catch-all FIRST. Playwright route handlers match in LIFO order
   // (later-registered = higher priority), so registering this first means
   // the specific stubs below override it. Keeps any new admin endpoint
@@ -358,6 +402,50 @@ test.describe("Rally admin shell", () => {
     expect(
       errors,
       `App console errors on shell branding: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  test("tenant switcher goes live and switches academy when the user has multiple memberships", async ({
+    page,
+  }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page, MULTI_MEMBERSHIP);
+    await page.goto("/admin");
+    await expect(page.getByTestId("admin-dashboard")).toBeVisible();
+
+    const switcherButton = page.getByTestId("tenant-switcher-button");
+    await expect(switcherButton).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId("tenant-switcher-single")).toHaveCount(0);
+    await expect(switcherButton).toContainText("Academy E2E");
+
+    await switcherButton.click();
+    const menu = page.getByTestId("tenant-switcher-menu");
+    await expect(menu).toBeVisible();
+    await expect(
+      page.getByTestId("tenant-switcher-option-academy-e2e"),
+    ).toContainText("ACTIVE");
+    await expect(
+      page.getByTestId("tenant-switcher-option-academy-e2e-2"),
+    ).toContainText("Academy E2E Two");
+
+    await page.getByTestId("tenant-switcher-option-academy-e2e-2").click();
+    await expect(menu).toBeHidden();
+
+    // Re-open and confirm the ACTIVE marker moved to the newly selected
+    // academy — the switcher pill label itself is driven by a separate
+    // `/admin/academy` query stubbed statically in this spec.
+    await switcherButton.click();
+    await expect(menu).toBeVisible();
+    await expect(
+      page.getByTestId("tenant-switcher-option-academy-e2e-2"),
+    ).toContainText("ACTIVE");
+    await expect(
+      page.getByTestId("tenant-switcher-option-academy-e2e"),
+    ).not.toContainText("ACTIVE");
+
+    expect(
+      errors,
+      `App console errors on multi-academy switcher: ${errors.join("\n")}`,
     ).toEqual([]);
   });
 

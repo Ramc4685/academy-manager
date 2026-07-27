@@ -108,7 +108,12 @@ export async function apiFetch<T>(
   if (dedupKey) inflight.set(dedupKey, promise);
   try {
     const res = await promise;
-    return await parseResponse<T>(res);
+    // Never read `res` directly here — a concurrent deduped caller (see
+    // above) may be racing to `.clone()` the same in-flight Response, and
+    // clone() throws once the body has started being read. Reading only
+    // from a clone keeps the original stream untouched so any number of
+    // concurrent dedup callers can clone it safely.
+    return await parseResponse<T>(res.clone());
   } finally {
     clearTimeout(abortTimer);
     if (dedupKey) inflight.delete(dedupKey);
