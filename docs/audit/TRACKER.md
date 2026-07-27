@@ -44,6 +44,8 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 | MT1 | Drain the composition root (billing math → application layer) | [plans/MT1-drain-composition-root.md](plans/MT1-drain-composition-root.md) | L | — | TODO | |
 | MT2 | Split runtime vs dev requirements | [plans/MT2-split-requirements.md](plans/MT2-split-requirements.md) | S | — | TODO | |
 | MT3 | Real-auth e2e job in CI | [plans/MT3-real-auth-e2e.md](plans/MT3-real-auth-e2e.md) | M | — | IN PROGRESS | [#361](https://github.com/Ramc4685/academy-manager/pull/361) |
+| MT2 | Split runtime vs dev requirements | [plans/MT2-split-requirements.md](plans/MT2-split-requirements.md) | S | — | DONE | [#356](https://github.com/Ramc4685/academy-manager/pull/356) |
+| MT3 | Real-auth e2e job in CI | [plans/MT3-real-auth-e2e.md](plans/MT3-real-auth-e2e.md) | M | — | TODO | |
 | MT4 | Structural tenancy test | [plans/MT4-structural-tenancy-test.md](plans/MT4-structural-tenancy-test.md) | S | C4 (ideally after) | DONE | [#321](https://github.com/Ramc4685/academy-manager/pull/321) |
 | MT5 | Split frontend monolith pages | [plans/MT5-split-monolith-pages.md](plans/MT5-split-monolith-pages.md) | L | DS3 (dialog primitives help) | DONE | #331 |
 
@@ -66,14 +68,14 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 |---|---|---|---|---|---|---|
 | UIM1 | Platform/tenant-admin persona UI | [plans/UIM1-platform-persona.md](plans/UIM1-platform-persona.md) | L | DS1-3 recommended | TODO | |
 | UIM2 | GET /me/memberships + real TenantSwitcher | [plans/UIM2-memberships-route.md](plans/UIM2-memberships-route.md) | S | — | TODO | |
-| UIM3 | Funnel/attendance/utilization reports UI | [plans/UIM3-analytics-reports.md](plans/UIM3-analytics-reports.md) | M | UIC3 (same surface) | TODO | |
+| UIM3 | Funnel/attendance/utilization reports UI | [plans/UIM3-analytics-reports.md](plans/UIM3-analytics-reports.md) | M | UIC3 (same surface) | DONE | [#362](https://github.com/Ramc4685/academy-manager/pull/362) |
 | UIM4 | Session-type management UI | [plans/UIM4-session-types.md](plans/UIM4-session-types.md) | S | — | TODO | |
 | UIM5 | Billing-enrollment move/override UI | [plans/UIM5-billing-enrollment-move.md](plans/UIM5-billing-enrollment-move.md) | M | — | TODO | |
 | UIM6 | Bulk user invite UI | [plans/UIM6-bulk-invite.md](plans/UIM6-bulk-invite.md) | S | UIC1 (same surface) | TODO | |
-| UIM7 | Coach skill-notes UI | [plans/UIM7-skill-notes.md](plans/UIM7-skill-notes.md) | S | — | TODO | |
-| UIM8 | Tuition-discounts report UI | [plans/UIM8-tuition-discounts.md](plans/UIM8-tuition-discounts.md) | S | — | TODO | |
-| UIM9 | Platform-fallback billing visibility | [plans/UIM9-platform-fallback-setting.md](plans/UIM9-platform-fallback-setting.md) | S | — | TODO | |
-| UIM10 | Curriculum authoring extras | [plans/UIM10-curriculum-extras.md](plans/UIM10-curriculum-extras.md) | S | — | TODO | |
+| UIM7 | Coach skill-notes UI | [plans/UIM7-skill-notes.md](plans/UIM7-skill-notes.md) | S | — | DONE | [#353](https://github.com/Ramc4685/academy-manager/pull/353) |
+| UIM8 | Tuition-discounts report UI | [plans/UIM8-tuition-discounts.md](plans/UIM8-tuition-discounts.md) | S | — | DONE | [#359](https://github.com/Ramc4685/academy-manager/pull/359) — built on `/admin/dues` since UIC3 hasn't merged yet |
+| UIM9 | Platform-fallback billing visibility | [plans/UIM9-platform-fallback-setting.md](plans/UIM9-platform-fallback-setting.md) | S | — | DONE | [#352](https://github.com/Ramc4685/academy-manager/pull/352) |
+| UIM10 | Curriculum authoring extras | [plans/UIM10-curriculum-extras.md](plans/UIM10-curriculum-extras.md) | S | — | DONE | [#354](https://github.com/Ramc4685/academy-manager/pull/354) |
 | UIM11 | Franchise cross-academy rollup | [plans/UIM11-franchise-rollup.md](plans/UIM11-franchise-rollup.md) | L | UIM2, owner role | TODO | |
 | UIM12 | Student login persona | [plans/UIM12-student-persona.md](plans/UIM12-student-persona.md) | L | — | TODO | |
 | UIM13 | Real Messages inbox + Calendar | [plans/UIM13-messages-calendar.md](plans/UIM13-messages-calendar.md) | L | — | TODO | |
@@ -86,7 +88,7 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 | DS2 | De-hex design-system components | [plans/DS2-dehex-ds.md](plans/DS2-dehex-ds.md) | S | DS1 | DONE | #316 |
 | DS3 | Add missing DS primitives (FormField, Skeleton, EmptyState, Modal, Toast) | [plans/DS3-primitives.md](plans/DS3-primitives.md) | M | DS2 | DONE | #323 — verified 2026-07-24: form-field.tsx, skeleton.tsx, empty-state.tsx, modal.tsx, toast.tsx all on origin/main |
 | DS4 | Migrate parent surface onto DS | [plans/DS4-parent-migration.md](plans/DS4-parent-migration.md) | L | DS1-3 | DONE | waivers/dashboard/children/requests #330; progress/payments [#350](https://github.com/Ramc4685/academy-manager/pull/350) |
-| DS5 | Desktop Chromium Playwright project | [plans/DS5-desktop-e2e.md](plans/DS5-desktop-e2e.md) | S | — | TODO | |
+| DS5 | Desktop Chromium Playwright project | [plans/DS5-desktop-e2e.md](plans/DS5-desktop-e2e.md) | S | — | DONE | [#364](https://github.com/Ramc4685/academy-manager/pull/364) |
 | DS6 | Polish: server-side gating, nav restructure, dead offline code, manifest colors | [plans/DS6-polish.md](plans/DS6-polish.md) | M | UIC merges help | TODO | |
 
 ## Suggested first wave

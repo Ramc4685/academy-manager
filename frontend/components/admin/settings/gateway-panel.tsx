@@ -13,6 +13,7 @@ import { queryKeys } from "@/lib/query/keys";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Overline } from "@/components/ds/typography";
+import { PlatformFallbackCard } from "@/components/admin/settings/platform-fallback-card";
 
 export function GatewayPanel() {
   const router = useRouter();
@@ -133,6 +134,8 @@ export function GatewayPanel() {
           </div>
         )}
       </Card>
+
+      <PlatformFallbackCard />
     </section>
   );
 }

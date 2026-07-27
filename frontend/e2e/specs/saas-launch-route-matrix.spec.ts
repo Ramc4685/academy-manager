@@ -178,6 +178,24 @@ async function stubAdminLaunchBff(page: Page): Promise<void> {
   await page.route("**/api/v2/admin/reports/dashboard*", (route) =>
     fulfillJson(route, REPORTS_DASHBOARD_EMPTY)
   );
+  await page.route("**/api/v2/admin/reports/enrollment-funnel*", (route) =>
+    fulfillJson(route, {
+      leads: 0,
+      applied: 0,
+      assessed: 0,
+      confirmed: 0,
+      dropped: 0,
+      total_applications: 0,
+      conversion_rate: 0,
+      period: null,
+    })
+  );
+  await page.route("**/api/v2/admin/reports/attendance-trends*", (route) =>
+    fulfillJson(route, { periods: [], overall_completion_rate: 0 })
+  );
+  await page.route("**/api/v2/admin/reports/coach-utilization*", (route) =>
+    fulfillJson(route, { coaches: [], periods: [], total_payout_minor: 0 })
+  );
   await page.route("**/api/v2/admin/reports/projected-income*", (route) =>
     fulfillJson(route, {
       period: "2026-06",

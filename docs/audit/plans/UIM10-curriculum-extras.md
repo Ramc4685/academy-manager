@@ -1,5 +1,5 @@
 # UIM10 — Curriculum authoring extras
-Status: TODO
+Status: DONE (PR #354, 2026-07-26)
 Size: S · Depends on: none · Tracker: ../TRACKER.md
 
 ## User value
@@ -44,6 +44,19 @@ None.
 - Purely additive UI; rollback = revert PR.
 
 ## PR checklist
-- [ ] Release note line
-- [ ] TRACKER.md row updated (Status, PR/Issue)
-- [ ] This plan's Status → DONE (PR #NNN, date)
+- [x] Release note line
+- [x] TRACKER.md row updated (Status, PR/Issue)
+- [x] This plan's Status → DONE (PR #354, 2026-07-26)
+
+## Shipped vs deferred
+- **Place in level**: already fully implemented before this PR (dialog on
+  `/admin/students/[studentId]/progress`, `placeStudentInLevel` →
+  `POST /admin/students/{id}/pathway-placement`, which the backend routes to
+  the same handler as `place-in-level`). No changes needed.
+- **External refs**: shipped in PR #354 — "+ Reference" form on each skill in
+  `/admin/pathway/[programId]`, existing refs now rendered from the pathway
+  payload's `external_refs`.
+- **Seed content**: lesson-card seeding was already implemented
+  (`LessonCardsPanel`); seed-badminton was missing and is shipped in PR #354
+  as a "Seed content" card on `/admin/pathway`, shown when the academy has no
+  programs yet.

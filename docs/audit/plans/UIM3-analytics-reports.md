@@ -1,5 +1,5 @@
 # UIM3 — Funnel / attendance-trends / coach-utilization reports UI
-Status: TODO
+Status: DONE (#362)
 Size: M · Depends on: UIC3 (same surface — land UIC3's tab consolidation of /admin/reports first, then add these as extra tabs; if UIC3 slips, add sections to the current page and let UIC3 absorb them) · Tracker: ../TRACKER.md
 
 ## User value
@@ -42,6 +42,6 @@ None. No new frontend route (tabs on the existing `/admin/reports` page), so the
 - Rollback: tabs are additive to one page; revert the page diff.
 
 ## PR checklist (release note · TRACKER.md · plan Status → DONE)
-- [ ] Release note
-- [ ] Update TRACKER.md row UIM3
-- [ ] Plan Status → DONE
+- [x] Release note
+- [x] Update TRACKER.md row UIM3
+- [x] Plan Status → DONE

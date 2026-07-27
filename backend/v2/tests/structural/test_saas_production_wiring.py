@@ -137,7 +137,8 @@ def test_saas_staging_runs_v2_migrations_on_boot() -> None:
 def test_ci_installs_single_backend_requirements_file() -> None:
     workflow = (REPO_ROOT / ".github/workflows/production.yml").read_text(encoding="utf-8")
 
-    assert "backend/requirements.txt" in workflow
+    assert "backend/requirements-dev.txt" in workflow
+    assert "pip-audit -r requirements.txt" in workflow
     assert "requirements-v2.txt" not in workflow
     assert "Legacy backend tests" not in workflow
 

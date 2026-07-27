@@ -1262,7 +1262,8 @@
       "source": "frontend/app/(admin)/admin/reports/page.tsx",
       "workflows": [
         "Review finance/attendance reports",
-        "Export"
+        "Export",
+        "Review enrollment funnel, attendance trends, and coach utilization"
       ],
       "controls": {
         "buttons": [
@@ -1287,6 +1288,7 @@
         "Exports are tenant-scoped and failures are visible",
         "Workflow evidence: \"Review finance/attendance reports\" completes for the admin route /admin/reports with real-user evidence and no framework or runtime errors.",
         "Workflow evidence: \"Export\" completes for the admin route /admin/reports with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Review enrollment funnel, attendance trends, and coach utilization\" completes for the admin route /admin/reports with real-user evidence and no framework or runtime errors.",
         "Risk evidence: \"Tenant data leakage in export\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     },
@@ -2162,36 +2164,47 @@
       "source": "frontend/app/(coach)/coach/students/[studentId]/passport/page.tsx",
       "workflows": [
         "Review student passport",
-        "Open resources"
+        "Open resources",
+        "Add skill note"
       ],
       "controls": {
         "buttons": [
           "Open resource",
-          "Back"
+          "Back",
+          "Notes",
+          "Add Note"
         ],
         "inputs": [
           "Program selector",
-          "Assessment input"
+          "Assessment input",
+          "Skill note body"
         ],
-        "modals": []
+        "modals": [
+          "Skill notes panel"
+        ]
       },
       "states": [
         "loading",
         "not found",
         "no placement",
         "error state",
-        "empty state"
+        "empty state",
+        "notes unavailable"
       ],
       "risk_edges": [
         "External video unavailable",
-        "Wrong-student data leakage"
+        "Wrong-student data leakage",
+        "Skill note visible to coach not assigned to student"
       ],
       "acceptance": [
         "Passport data belongs to selected student",
+        "Skill notes are append-only (no edit/delete affordance) and scoped to student+skill",
         "Workflow evidence: \"Review student passport\" completes for the coach route /coach/students/[studentId]/passport with real-user evidence and no framework or runtime errors.",
         "Workflow evidence: \"Open resources\" completes for the coach route /coach/students/[studentId]/passport with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Add skill note\" completes for the coach route /coach/students/[studentId]/passport with real-user evidence and no framework or runtime errors.",
         "Risk evidence: \"External video unavailable\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Wrong-student data leakage\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+        "Risk evidence: \"Wrong-student data leakage\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Skill note visible to coach not assigned to student\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     },
     {

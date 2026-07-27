@@ -14,6 +14,7 @@ import {
   type SkillPassportEntry,
   type SkillStatus,
 } from "@/lib/api/curriculum";
+import { SkillNotesPanel } from "@/components/coach/skill-notes-panel";
 
 const STATUS_LABELS: Record<SkillStatus, string> = {
   NOT_STARTED: "Not started",
@@ -162,6 +163,7 @@ function SkillCard({
   const [attemptsCount, setAttemptsCount] = useState("1");
   const [successCount, setSuccessCount] = useState("1");
   const [notes, setNotes] = useState("");
+  const [showNotesPanel, setShowNotesPanel] = useState(false);
 
   const statusMutation = useMutation({
     mutationFn: (status: SkillStatus) =>
@@ -234,7 +236,7 @@ function SkillCard({
       )}
 
       {/* Controls */}
-      <div className="grid gap-2 min-[360px]:grid-cols-[minmax(0,1fr)_auto]">
+      <div className="grid gap-2 min-[360px]:grid-cols-[minmax(0,1fr)_auto_auto]">
         <select
           value={entry.status}
           onChange={(e) => statusMutation.mutate(e.target.value as SkillStatus)}
@@ -254,7 +256,24 @@ function SkillCard({
         >
           {showTestForm ? "Cancel" : "Record Test"}
         </button>
+
+        <button
+          onClick={() => setShowNotesPanel(true)}
+          className="min-h-[36px] rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 transition-colors hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300"
+        >
+          Notes
+        </button>
       </div>
+
+      {showNotesPanel && (
+        <SkillNotesPanel
+          open={showNotesPanel}
+          onClose={() => setShowNotesPanel(false)}
+          studentId={studentId}
+          skillId={entry.skill_id}
+          skillName={entry.skill_name}
+        />
+      )}
 
       {/* Test form */}
       {showTestForm && (

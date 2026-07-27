@@ -1,6 +1,11 @@
 # UIM8 — Tuition-discounts report UI
-Status: TODO
+Status: DONE (PR #359, 2026-07-26)
 Size: S · Depends on: UIC3 (target surface — merged Reports) · Tracker: ../TRACKER.md
+
+Note: UIC3 had not actually merged at implementation time (TRACKER still
+listed it TODO), so per this plan's own fallback the Discounts section was
+built on the existing `/admin/dues` page instead of the Reports surface.
+Move it into Reports once UIC3 lands.
 
 ## User value
 Admins granting tuition discounts today have no way to see their aggregate cost. A per-period discounts table (gross tuition vs discounts vs net, broken down by category) makes discounting a visible, reviewable finance lever instead of an invisible leak.

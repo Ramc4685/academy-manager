@@ -1,5 +1,5 @@
 # UIM9 — Platform-fallback billing visibility
-Status: TODO
+Status: DONE (PR #352, 2026-07-26)
 Size: S · Depends on: none · Tracker: ../TRACKER.md
 
 ## User value

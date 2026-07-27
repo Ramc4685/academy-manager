@@ -19,6 +19,8 @@ export const queryKeys = {
     session: (sessionId: string) => ["coach", "session", sessionId] as const,
     sessionSkills: (sessionId: string, date: string, programId?: string) =>
       ["coach", "session", sessionId, "skills", date, programId ?? "default"] as const,
+    skillNotes: (studentId: string, skillId: string) =>
+      ["coach", "skill-notes", studentId, skillId] as const,
   },
   admin: {
     all: ["admin"] as const,
@@ -58,6 +60,12 @@ export const queryKeys = {
     payouts: () => ["admin", "finance", "payouts"] as const,
     expenses: () => ["admin", "finance", "expenses"] as const,
     revenue: () => ["admin", "finance", "revenue"] as const,
+    enrollmentFunnel: (period?: string) =>
+      ["admin", "reports", "funnel", period ?? "all"] as const,
+    attendanceTrends: (periods: string[]) =>
+      ["admin", "reports", "attendance-trends", ...periods] as const,
+    coachUtilization: (periods: string[]) =>
+      ["admin", "reports", "coach-utilization", ...periods] as const,
     messages: () => ["admin", "messages"] as const,
     waivers: () => ["admin", "waivers"] as const,
     waiverTemplates: () => ["admin", "waivers", "templates"] as const,
@@ -66,6 +74,7 @@ export const queryKeys = {
     fees: () => ["admin", "academy", "fees"] as const,
     notifications: () => ["admin", "academy", "notifications"] as const,
     gateway: () => ["admin", "academy", "gateway"] as const,
+    platformFallback: () => ["admin", "billing", "platform-fallback"] as const,
     lessonCards: (programId: string) =>
       ["admin", "pathway", programId, "lesson-cards"] as const,
     coachDigestLog: () => ["admin", "comms", "digests", "log"] as const,
@@ -92,6 +101,8 @@ export const queryKeys = {
       [...queryKeys.admin.selfServiceTrialsAll(), status ?? "all"] as const,
     selfServiceCancellations: () =>
       ["admin", "self-service", "cancellations"] as const,
+    tuitionDiscounts: (period: string) =>
+      ["admin", "tuition-discounts", period] as const,
   },
   parent: {
     all: ["parent"] as const,

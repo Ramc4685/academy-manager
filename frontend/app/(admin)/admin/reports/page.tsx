@@ -28,6 +28,9 @@ import {
 import { Card } from "@/components/ds/card";
 import { Button } from "@/components/ds/button";
 import { BigNum, Overline } from "@/components/ds/typography";
+import { FunnelPanel } from "@/components/admin/reports/funnel-panel";
+import { AttendanceTrendsPanel } from "@/components/admin/reports/attendance-trends-panel";
+import { CoachUtilizationPanel } from "@/components/admin/reports/coach-utilization-panel";
 
 const REPORTS = [
   {
@@ -93,6 +96,8 @@ export default function AdminReportsPage() {
     queryKey: ["admin", "billing", "failed-payment-attempts"],
     queryFn: fetchFailedPaymentAttempts,
   });
+
+  const trailingPeriods = useMemo(() => lastThreeMonths(period), [period]);
 
   const projectionPeriod = nextPeriod(period);
   const projectedIncomeQuery = useQuery({
@@ -665,6 +670,20 @@ export default function AdminReportsPage() {
 
       <div className="space-y-3">
         <div>
+          <Overline>Analytics</Overline>
+          <p className="mt-1 text-sm text-neutral-500">
+            Enrollment, attendance, and coach utilization over the trailing three months.
+          </p>
+        </div>
+        <div className="grid gap-4">
+          <FunnelPanel period={period} />
+          <AttendanceTrendsPanel periods={trailingPeriods} />
+          <CoachUtilizationPanel periods={trailingPeriods} />
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <div>
           <Overline>Financial reports</Overline>
           <p className="mt-1 text-sm text-neutral-500">
             Monthly reports over the billing ledger, with CSV export on each page.
@@ -831,6 +850,19 @@ function nextPeriod(period: string) {
   const nextMonth = month === 12 ? 1 : month + 1;
   const nextYear = month === 12 ? year + 1 : year;
   return `${nextYear}-${String(nextMonth).padStart(2, "0")}`;
+}
+
+function lastThreeMonths(period: string): string[] {
+  const [year, month] = period.split("-").map(Number);
+  if (!year || !month) return [period];
+  const result: string[] = [];
+  for (let offset = 2; offset >= 0; offset -= 1) {
+    const index = month - 1 - offset;
+    const wrappedYear = year + Math.floor(index / 12);
+    const wrappedMonth = ((index % 12) + 12) % 12;
+    result.push(`${wrappedYear}-${String(wrappedMonth + 1).padStart(2, "0")}`);
+  }
+  return result;
 }
 
 const MONTH_LABELS = [
