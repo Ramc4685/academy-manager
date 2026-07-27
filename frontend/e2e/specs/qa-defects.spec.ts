@@ -1,6 +1,11 @@
 import { expect, test } from "@playwright/test";
 
-import { ACADEMY_A, fulfillJson, stubMe } from "../fixtures/saas-stubs";
+import {
+  ACADEMY_A,
+  fulfillJson,
+  stubMe,
+  stubMemberships,
+} from "../fixtures/saas-stubs";
 
 const draftApplication = {
   application_id: "app-qa-1",
@@ -38,6 +43,9 @@ async function stubParentShell(page: Parameters<typeof stubMe>[0]) {
     academy_id: ACADEMY_A,
     roles: ["parent"],
   });
+  await stubMemberships(page, [
+    { academy_id: ACADEMY_A, academy_name: "Academy A", role: "parent" },
+  ]);
   await page.route("**/api/v2/parent/invoices", (route) => {
     if (route.request().method() !== "GET") return route.fallback();
     return fulfillJson(route, { invoices: [] });

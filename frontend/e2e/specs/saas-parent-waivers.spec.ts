@@ -15,7 +15,13 @@ import {
   collectConsoleErrors,
   installTenantGuard,
 } from "../fixtures/tenant-isolation";
-import { ACADEMY_A, fulfillJson, stubAcademy, stubMe } from "../fixtures/saas-stubs";
+import {
+  ACADEMY_A,
+  fulfillJson,
+  stubAcademy,
+  stubMe,
+  stubMemberships,
+} from "../fixtures/saas-stubs";
 
 test.describe("SaaS v2 — parent registration", () => {
   test("parent onboarding lands cleanly after register hits /register/parent", async ({
@@ -82,6 +88,9 @@ test.describe("SaaS v2 — waiver template versioning", () => {
       roles: ["admin"],
     });
     await stubAcademy(page, ACADEMY_A);
+    await stubMemberships(page, [
+      { academy_id: ACADEMY_A, academy_name: "Aces Academy", role: "admin" },
+    ]);
 
     const TEMPLATE_VERSION = "v4.2";
 
@@ -173,6 +182,9 @@ test.describe("SaaS v2 — no legacy /api/* traffic anywhere in admin smoke", ()
       roles: ["admin"],
     });
     await stubAcademy(page, ACADEMY_A);
+    await stubMemberships(page, [
+      { academy_id: ACADEMY_A, academy_name: "Aces Academy", role: "admin" },
+    ]);
     await page.route("**/api/v2/admin/**", (route) => {
       if (route.request().method() !== "GET") return route.fallback();
       return fulfillJson(route, {});

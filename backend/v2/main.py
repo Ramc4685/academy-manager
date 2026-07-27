@@ -53,6 +53,9 @@ from backend.v2.contexts.communications.application.use_cases.send_coach_daily_d
 from backend.v2.contexts.communications.application.use_cases.send_parent_daily_digest import (
     SendParentDailyDigestCommand,
 )
+from backend.v2.contexts.identity.application.list_my_memberships_use_case import (
+    ListMyMembershipsUseCase,
+)
 from backend.v2.contexts.identity.application.use_cases.bootstrap_academy import (
     BootstrapAcademy,
 )
@@ -197,6 +200,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         platform_roles=platform_role_repo,
     )
     app.state.load_auth_claims = load_claims
+    app.state.list_my_memberships = ListMyMembershipsUseCase(
+        memberships=membership_repo,
+        academies=MongoAcademyRepository(db),
+    )
     app.state.register_public_parent = RegisterPublicParent(
         verifier=verifier,
         users=users_repo,
@@ -915,6 +922,13 @@ class _LegacyUserMembershipAdapter:
             roles=user.roles,
             status="active",
         )
+
+    async def list_memberships_for_user(self, user_id: str) -> list[AcademyMembership]:
+        """Synthesize a single-item membership list from the legacy User record."""
+        membership = await self.get_for_user_in_academy(
+            user_id=user_id, academy_id=self._default_academy_id
+        )
+        return [membership] if membership is not None else []
 
 
 class _NullPlatformRoleRepository:
