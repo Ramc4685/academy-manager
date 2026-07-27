@@ -1,5 +1,5 @@
 # UIM2 — GET /me/memberships + real TenantSwitcher
-Status: TODO
+Status: DONE (PR #366, 2026-07-27)
 Size: S · Depends on: none · Tracker: ../TRACKER.md
 
 ## User value
