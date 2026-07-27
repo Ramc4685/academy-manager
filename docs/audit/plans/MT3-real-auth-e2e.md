@@ -1,6 +1,6 @@
 # MT3 — Real-auth e2e job in CI
 
-Status: IN PROGRESS (PR #361, 2026-07-26)
+Status: DONE (PR #361, 2026-07-27)
 Size: M · Depends on: none · Tracker: ../TRACKER.md
 
 ## Problem
