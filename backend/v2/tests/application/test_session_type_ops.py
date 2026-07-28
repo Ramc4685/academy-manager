@@ -39,6 +39,9 @@ class FakeSessionTypeRepo:
     async def list_active(self) -> list[SessionType]:
         return [row for row in self.rows.values() if row.is_active]
 
+    async def list_all(self) -> list[SessionType]:
+        return list(self.rows.values())
+
     async def soft_delete(self, session_type_id: str) -> None:
         row = self.rows[session_type_id]
         self.rows[session_type_id] = row.model_copy(

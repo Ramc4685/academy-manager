@@ -136,7 +136,9 @@ class ListSessionTypes:
     def __init__(self, *, session_types: SessionTypeRepository) -> None:
         self._session_types = session_types
 
-    async def execute(self) -> list[SessionType]:
+    async def execute(self, *, include_archived: bool = False) -> list[SessionType]:
+        if include_archived:
+            return await self._session_types.list_all()
         return await self._session_types.list_active()
 
 
