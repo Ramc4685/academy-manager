@@ -236,7 +236,7 @@ export function SessionEditDialog({
   open: boolean;
   session: AdminSessionView | null;
   onOpenChange: (open: boolean) => void;
-  onSaved: () => void;
+  onSaved: (session: AdminSessionView) => void;
 }) {
   const [form, setForm] = useState<EditSessionRequest>({});
   const [error, setError] = useState<string | null>(null);
@@ -256,9 +256,9 @@ export function SessionEditDialog({
 
   const mutation = useMutation({
     mutationFn: (payload: EditSessionRequest) => updateAdminSession(session!.session_id, payload),
-    onSuccess: () => {
+    onSuccess: (savedSession) => {
       setError(null);
-      onSaved();
+      onSaved(savedSession);
     },
     onError: (err: Error) => setError(err.message ?? "Failed to update session."),
   });

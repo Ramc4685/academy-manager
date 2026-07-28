@@ -9,8 +9,11 @@ instead of the composition root.
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, time
-from decimal import ROUND_HALF_EVEN, Decimal
 from typing import Any
+
+# Re-exported: the rounding rule is shared with the coaching payout read
+# models, and contexts may not import one another, so it lives in `shared`.
+from backend.v2.shared.money import round_money_minor as round_money_minor
 
 
 def month_bounds(period: str) -> tuple[datetime, datetime]:
@@ -374,7 +377,3 @@ def aging_label(days_late: int) -> str:
 
 def cents_to_dollars(cents: int) -> str:
     return f"{cents / 100:.2f}"
-
-
-def round_money_minor(value: Decimal) -> int:
-    return int(value.quantize(Decimal("1"), rounding=ROUND_HALF_EVEN))
