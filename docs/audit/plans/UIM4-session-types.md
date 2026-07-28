@@ -1,5 +1,5 @@
 # UIM4 — Session-type management UI
-Status: TODO
+Status: DONE (PR #TBD, 2026-07-27)
 Size: S · Depends on: none (DS3 FormField/Modal primitives help if available) · Tracker: ../TRACKER.md
 
 ## User value
@@ -37,6 +37,30 @@ No backend changes. New frontend route `/admin/settings/session-types` **must** 
 ## Risks / rollback
 - Archiving a session type that active billing enrollments reference: backend soft-delete permits it — show a warning copy in the confirm dialog ("existing enrollments keep billing").
 - Rollback: additive page; remove route + manifest entry.
+
+## Corrections found during implementation (2026-07-27)
+Two assumptions in this plan were stale by the time it was built:
+
+1. **Location.** The plan put the UI at a standalone `/admin/settings/session-types`
+   route "matching the existing `settings/self-service` child pattern". UIC7 (#319)
+   deleted exactly that pattern — `settings/self-service/page.tsx` is now a
+   `redirect()` stub and the panel lives at `?panel=self-service`; UIM9 (#352)
+   followed the same tab convention. Shipped as a ninth `SETTINGS_TABS` panel
+   (`components/admin/settings/session-types-panel.tsx`) instead. Consequences:
+   no new app route, so no `screen-meta.ts` entry, no QA-manifest route row, and
+   no route-count bump in the two inventory tests — the `/admin/settings`
+   manifest entry was extended instead.
+2. **Archived rows are not listable.** The plan assumed the list endpoint returns
+   archived types and that `PATCH is_active: true` could reactivate from a
+   "show archived" toggle. `GET /admin/session-types` →
+   `ListSessionTypes.execute()` → `SessionTypeRepository.list_active()`, whose
+   Mongo query hard-filters `{"is_active": True}`
+   (`contexts/billing/infrastructure/mongo_session_type_repo.py:39-41`). The
+   toggle would have been a no-op and the Reactivate button unreachable, so both
+   were dropped and the archive confirmation now says archiving cannot be undone
+   from this screen. **Follow-up:** restoring archived types needs an
+   `include_archived` query param plus a `list_all()` repo method (5 test fakes
+   implement the port) — deliberately not bundled into this S-sized item.
 
 ## PR checklist (release note · TRACKER.md · plan Status → DONE)
 - [ ] Release note

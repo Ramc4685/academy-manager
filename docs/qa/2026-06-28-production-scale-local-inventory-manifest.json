@@ -1319,34 +1319,45 @@
         "Gateway",
         "Notifications",
         "Branding",
-        "Data"
+        "Data",
+        "Manage session types"
       ],
       "controls": {
         "buttons": [
           "Save",
           "Cancel",
-          "Connect Stripe"
+          "Connect Stripe",
+          "New session type",
+          "Archive"
         ],
         "inputs": [
           "Academy name",
           "Fees",
           "Notification toggles",
-          "Branding"
+          "Branding",
+          "Session type name",
+          "Session type price",
+          "Billing period",
+          "Overage rate"
         ],
         "modals": [
           "Stripe gateway",
-          "Data action confirmation"
+          "Data action confirmation",
+          "Session type form",
+          "Archive session type confirmation"
         ]
       },
       "states": [
         "loading",
         "saved",
         "validation error",
-        "provider unavailable"
+        "provider unavailable",
+        "empty"
       ],
       "risk_edges": [
         "CORS/origin mismatch",
-        "Stripe connect unavailable"
+        "Stripe connect unavailable",
+        "Archiving a session type referenced by active billing enrollments"
       ],
       "acceptance": [
         "Each panel saves or shows specific failure",
@@ -1357,7 +1368,9 @@
         "Workflow evidence: \"Branding\" completes for the admin route /admin/settings with real-user evidence and no framework or runtime errors.",
         "Workflow evidence: \"Data\" completes for the admin route /admin/settings with real-user evidence and no framework or runtime errors.",
         "Risk evidence: \"CORS/origin mismatch\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Stripe connect unavailable\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+        "Risk evidence: \"Stripe connect unavailable\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Workflow evidence: \"Manage session types\" completes for the admin route /admin/settings with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Archiving a session type referenced by active billing enrollments\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     },
     {
