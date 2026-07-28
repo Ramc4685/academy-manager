@@ -11,7 +11,12 @@ import {
   collectConsoleErrors,
   installTenantGuard,
 } from "../fixtures/tenant-isolation";
-import { ACADEMY_A, fulfillJson, stubMe } from "../fixtures/saas-stubs";
+import {
+  ACADEMY_A,
+  fulfillJson,
+  stubMe,
+  stubMemberships,
+} from "../fixtures/saas-stubs";
 
 const ADMIN_ME = {
   user_id: "user-admin-wave12",
@@ -121,6 +126,9 @@ const ADMIN_ROUTE_MATRIX = [
 
 async function stubAdminLaunchBff(page: Page): Promise<void> {
   await stubMe(page, ADMIN_ME);
+  await stubMemberships(page, [
+    { academy_id: ACADEMY_A, academy_name: "Aces Academy", role: "admin" },
+  ]);
 
   await page.route("**/api/v2/admin/**", (route) => {
     if (route.request().method() !== "GET") return route.fallback();

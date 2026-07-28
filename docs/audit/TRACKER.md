@@ -42,10 +42,8 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 | ID | Item | Plan | Size | Depends on | Status | PR/Issue |
 |---|---|---|---|---|---|---|
 | MT1 | Drain the composition root (billing math → application layer) | [plans/MT1-drain-composition-root.md](plans/MT1-drain-composition-root.md) | L | — | TODO | |
-| MT2 | Split runtime vs dev requirements | [plans/MT2-split-requirements.md](plans/MT2-split-requirements.md) | S | — | TODO | |
-| MT3 | Real-auth e2e job in CI | [plans/MT3-real-auth-e2e.md](plans/MT3-real-auth-e2e.md) | M | — | IN PROGRESS | [#361](https://github.com/Ramc4685/academy-manager/pull/361) |
 | MT2 | Split runtime vs dev requirements | [plans/MT2-split-requirements.md](plans/MT2-split-requirements.md) | S | — | DONE | [#356](https://github.com/Ramc4685/academy-manager/pull/356) |
-| MT3 | Real-auth e2e job in CI | [plans/MT3-real-auth-e2e.md](plans/MT3-real-auth-e2e.md) | M | — | TODO | |
+| MT3 | Real-auth e2e job in CI | [plans/MT3-real-auth-e2e.md](plans/MT3-real-auth-e2e.md) | M | — | DONE | [#361](https://github.com/Ramc4685/academy-manager/pull/361) |
 | MT4 | Structural tenancy test | [plans/MT4-structural-tenancy-test.md](plans/MT4-structural-tenancy-test.md) | S | C4 (ideally after) | DONE | [#321](https://github.com/Ramc4685/academy-manager/pull/321) |
 | MT5 | Split frontend monolith pages | [plans/MT5-split-monolith-pages.md](plans/MT5-split-monolith-pages.md) | L | DS3 (dialog primitives help) | DONE | #331 |
 
@@ -67,7 +65,7 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 | ID | Item | Plan | Size | Depends on | Status | PR/Issue |
 |---|---|---|---|---|---|---|
 | UIM1 | Platform/tenant-admin persona UI | [plans/UIM1-platform-persona.md](plans/UIM1-platform-persona.md) | L | DS1-3 recommended | TODO | |
-| UIM2 | GET /me/memberships + real TenantSwitcher | [plans/UIM2-memberships-route.md](plans/UIM2-memberships-route.md) | S | — | TODO | |
+| UIM2 | GET /me/memberships + real TenantSwitcher | [plans/UIM2-memberships-route.md](plans/UIM2-memberships-route.md) | S | — | DONE | [#366](https://github.com/Ramc4685/academy-manager/pull/366) |
 | UIM3 | Funnel/attendance/utilization reports UI | [plans/UIM3-analytics-reports.md](plans/UIM3-analytics-reports.md) | M | UIC3 (same surface) | DONE | [#362](https://github.com/Ramc4685/academy-manager/pull/362) |
 | UIM4 | Session-type management UI | [plans/UIM4-session-types.md](plans/UIM4-session-types.md) | S | — | TODO | |
 | UIM5 | Billing-enrollment move/override UI | [plans/UIM5-billing-enrollment-move.md](plans/UIM5-billing-enrollment-move.md) | M | — | TODO | |
