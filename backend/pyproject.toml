@@ -166,6 +166,23 @@ forbidden_modules = [
 # (Enforced by the structural test for now; import-linter "independence"
 # contracts will be added per wave as contexts land.)
 
+# Rule 7: Composition is pure wiring, and wiring is the outermost layer.
+# Nothing inside a context — and nothing in `shared` — may depend on it, so
+# business logic cannot drift back into the composition root the way it did
+# before MT1 (see docs/audit/plans/MT1-drain-composition-root.md). Only
+# `interfaces` and `main` may import composition. Import-linter can only
+# constrain direction, not "no business logic here", so this contract is
+# paired with the line-count tripwire in
+# tests/structural/test_composition_is_wiring.py.
+[[tool.importlinter.contracts]]
+name = "composition-is-outermost"
+type = "forbidden"
+source_modules = [
+    "backend.v2.contexts",
+    "backend.v2.shared",
+]
+forbidden_modules = ["backend.v2.composition"]
+
 # Rule 6: academy_id literals forbidden outside shared/tenancy and */infrastructure.
 # import-linter cannot match on literals; this is enforced by a separate
 # pytest check (tests/structural/test_tenancy_literals.py — landed alongside
