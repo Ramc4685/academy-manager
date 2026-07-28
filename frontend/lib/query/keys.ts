@@ -104,6 +104,11 @@ export const queryKeys = {
     tuitionDiscounts: (period: string) =>
       ["admin", "tuition-discounts", period] as const,
   },
+  owner: {
+    all: ["owner"] as const,
+    rollup: (months?: string[]) =>
+      ["owner", "rollup", months?.join(",") ?? "all"] as const,
+  },
   parent: {
     all: ["parent"] as const,
     absences: () => ["parent", "absences"] as const,
@@ -128,5 +133,6 @@ type QueryKeyFrom<T> = T extends QueryKeyFactory ? ReturnType<T> : never;
 export type QueryKey =
   | QueryKeyFrom<(typeof queryKeys.coach)[keyof typeof queryKeys.coach]>
   | QueryKeyFrom<(typeof queryKeys.admin)[keyof typeof queryKeys.admin]>
+  | QueryKeyFrom<(typeof queryKeys.owner)[keyof typeof queryKeys.owner]>
   | QueryKeyFrom<(typeof queryKeys.parent)[keyof typeof queryKeys.parent]>
   | QueryKeyFrom<(typeof queryKeys.student)[keyof typeof queryKeys.student]>;

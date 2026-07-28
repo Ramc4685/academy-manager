@@ -1,6 +1,12 @@
 import { apiFetch } from "./client";
 
-export type UserRole = "admin" | "coach" | "parent" | "student";
+export type UserRole = "admin" | "coach" | "parent" | "student" | "owner";
+
+/**
+ * Roles that have their own persona shell and home route. `owner` is a
+ * franchise scope reached from the tenant switcher, not a persona view.
+ */
+export type PersonaRole = Exclude<UserRole, "owner">;
 
 export interface CurrentUser {
   user_id: string;
@@ -14,6 +20,7 @@ export type RoleHome =
   | "/coach/today"
   | "/parent/payments"
   | "/student/dashboard"
+  | "/owner"
   | "/login";
 
 export function getCurrentUser(): Promise<CurrentUser> {
@@ -33,5 +40,8 @@ export function homeForRoles(roles: UserRole[]): RoleHome {
   // account type). Parent wins when both are present since it's the richer,
   // pre-existing surface; "student" is the fallback for student-only logins.
   if (roles.includes("student")) return "/student/dashboard";
+  // Owner is a scope, not a persona shell, so it ranks last — but an
+  // owner-only user still needs somewhere to land.
+  if (roles.includes("owner")) return "/owner";
   return "/login";
 }

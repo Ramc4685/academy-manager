@@ -30,6 +30,7 @@ from backend.v2.composition.digests import (
     compose_send_parent_daily_digest,
     resolve_digest_schedule,
 )
+from backend.v2.composition.owner import compose_owner
 from backend.v2.composition.parent import compose_parent, compose_parent_webhook_handler
 from backend.v2.composition.student import compose_student
 from backend.v2.contexts.billing.application.ports import StripeGateway
@@ -121,6 +122,7 @@ from backend.v2.interfaces.admin.router import router as admin_router
 from backend.v2.interfaces.coach.router import router as coach_router
 from backend.v2.interfaces.magic_link_routes import router as magic_link_router
 from backend.v2.interfaces.me_routes import router as me_router
+from backend.v2.interfaces.owner.router import router as owner_router
 from backend.v2.interfaces.parent.router import router as parent_router
 from backend.v2.interfaces.platform.router import router as platform_router
 from backend.v2.interfaces.registration_routes import router as registration_router
@@ -302,6 +304,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Admin BFF wiring (Wave 3).
     app.state.admin = compose_admin(db, outbox, idempotency_store, stripe_gw)
+
+    # Owner (franchise) BFF wiring — UIM11. Left unset when the flag is off so
+    # the routes 404 even if something mounts them.
+    if settings.enable_owner_role:
+        app.state.owner = compose_owner(db)
 
     scheduler: AsyncIOScheduler | None = None
 
@@ -768,6 +775,8 @@ def create_app() -> FastAPI:
         # match), matching the enable_platform_routes pattern above, rather
         # than a route that exists but always errors.
         app.include_router(student_router, prefix="/api/v2")
+    if settings.enable_owner_role:
+        app.include_router(owner_router, prefix="/api/v2")
 
     return app
 

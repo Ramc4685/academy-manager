@@ -38,7 +38,12 @@ from pydantic import BaseModel, EmailStr, Field, field_validator, model_validato
 # end-to-end by `settings.enable_student_login` — a `student` membership can
 # exist while the flag is off (the invite already went out); the BFF just
 # 404s until the flag flips.
-Role = Literal["admin", "coach", "parent", "student"]
+#
+# `owner` is the franchise role: a user holding it in several academies can
+# read a cross-academy financial rollup (UIM11). It is still an academy-scoped
+# role — the rollup unions the user's own `owner` memberships and never widens
+# from the request tenant.
+Role = Literal["admin", "coach", "parent", "student", "owner"]
 
 # Platform-wide roles. Granted via `PlatformRole` records and carried on
 # `AuthClaims.platform_roles` separately from academy roles.

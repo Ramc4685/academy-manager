@@ -46,7 +46,7 @@ class MongoMembershipRepository:
         if isinstance(roles_raw, str):
             roles: tuple[Role, ...] = (roles_raw,)  # type: ignore[assignment]
         else:
-            roles = tuple(roles_raw)
+            roles = tuple(roles_raw)  # type: ignore[arg-type]
 
         return AcademyMembership(
             membership_id=str(doc.get("membership_id") or doc["_id"]),

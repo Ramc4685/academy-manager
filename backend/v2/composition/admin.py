@@ -8,7 +8,7 @@ import html
 import io
 import re
 from datetime import UTC, date, datetime, time, timedelta
-from decimal import ROUND_HALF_EVEN, Decimal
+from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -26,6 +26,28 @@ from backend.v2.composition.digests import (
 from backend.v2.composition.pathway import (
     compose_curriculum,
     compose_student_progress,
+)
+from backend.v2.contexts.billing.application.admin_money import (
+    aging_label,
+    cents_to_dollars,
+    coerce_report_datetime,
+    invoice_due_date,
+    invoice_outstanding_cents,
+    invoice_paid_cents,
+    invoice_provider_keys,
+    invoice_to_admin_payment_row,
+    ledger_payment_effective_at,
+    ledger_payment_effective_month,
+    ledger_payment_effective_window_query,
+    legacy_payment_cash_candidate_query,
+    month_bounds,
+    payment_collected_cents,
+    payment_due_date,
+    payment_effective_month,
+    payment_outstanding_cents,
+    payment_provider_keys,
+    payment_revenue_net_cents,
+    round_money_minor,
 )
 from backend.v2.contexts.billing.application.ports import (
     BillingSetupStudent,
@@ -732,7 +754,7 @@ def _make_reports_kpis(db: AsyncIOMotorDatabase[Any]) -> object:
         academy_id = current_academy_id()
         now = datetime.now(UTC)
         period_str = now.strftime("%Y-%m")
-        start_month, end_month = _month_bounds(period_str)
+        start_month, end_month = month_bounds(period_str)
         cutoff_30d = now - timedelta(days=30)
 
         # active_students: distinct students with active enrollment
@@ -821,369 +843,6 @@ def _make_reports_kpis(db: AsyncIOMotorDatabase[Any]) -> object:
     return get_reports_kpis
 
 
-def _month_bounds(period: str) -> tuple[datetime, datetime]:
-    year_str, month_str = period.split("-", 1)
-    year = int(year_str)
-    month = int(month_str)
-    start = datetime(year, month, 1, tzinfo=UTC)
-    if month == 12:
-        end = datetime(year + 1, 1, 1, tzinfo=UTC)
-    else:
-        end = datetime(year, month + 1, 1, tzinfo=UTC)
-    return start, end
-
-
-def _money_to_cents(value: Any) -> int:
-    if value is None:
-        return 0
-    return round(float(value) * 100)
-
-
-def _payment_discount_cents(payment: dict[str, Any]) -> int:
-    value = payment.get("discount_cents")
-    if value is not None:
-        return int(value)
-    return _money_to_cents(payment.get("discount"))
-
-
-def _payment_received_cents(payment: dict[str, Any]) -> int | None:
-    for key in ("paid_amount_cents", "amount_received_cents"):
-        value = payment.get(key)
-        if value is not None:
-            return int(value)
-    for key in ("paid_amount", "amount_received"):
-        value = payment.get(key)
-        if value is not None:
-            return _money_to_cents(value)
-    return None
-
-
-def _payment_final_amount_cents(payment: dict[str, Any]) -> int:
-    for key in ("final_amount_cents", "final_amount"):
-        value = payment.get(key)
-        if value is not None:
-            if key.endswith("_cents"):
-                return int(value)
-            return _money_to_cents(value)
-    for key in ("amount_cents", "gross_amount_cents"):
-        value = payment.get(key)
-        if value is not None:
-            return max(int(value) - _payment_discount_cents(payment), 0)
-    for key in ("amount", "gross_amount"):
-        value = payment.get(key)
-        if value is not None:
-            return max(_money_to_cents(value) - _payment_discount_cents(payment), 0)
-    return 0
-
-
-def _payment_collected_cents(payment: dict[str, Any]) -> int:
-    status = str(payment.get("status") or "")
-    if status in {"partially_paid", "pending", "failed"}:
-        return max(_payment_received_cents(payment) or 0, 0)
-    if status in {"succeeded", "paid", "partially_refunded", "refunded"}:
-        paid = _payment_received_cents(payment)
-        if paid is None:
-            paid = _payment_final_amount_cents(payment)
-        return max(paid - int(payment.get("refunded_cents") or 0), 0)
-    return 0
-
-
-def _payment_outstanding_cents(payment: dict[str, Any]) -> int:
-    status = str(payment.get("status") or "")
-    if status not in {"pending", "failed", "partially_paid"}:
-        return 0
-    balance = payment.get("balance_due_cents")
-    if balance is not None:
-        return max(int(balance), 0)
-    return max(_payment_final_amount_cents(payment) - _payment_collected_cents(payment), 0)
-
-
-def _invoice_status_for_admin(invoice: dict[str, Any]) -> str:
-    status = str(invoice.get("status") or "open")
-    if status in {"open", "draft"}:
-        return "pending"
-    if status == "void":
-        return "waived"
-    return status
-
-
-def _invoice_amount_cents(invoice: dict[str, Any]) -> int:
-    subtotal = invoice.get("subtotal_cents")
-    if subtotal is not None:
-        return int(subtotal)
-    total = int(invoice.get("total_cents") or 0)
-    return total + int(invoice.get("discount_cents") or 0)
-
-
-def _invoice_final_amount_cents(invoice: dict[str, Any]) -> int:
-    return int(invoice.get("total_cents") or _invoice_amount_cents(invoice))
-
-
-def _invoice_paid_cents(invoice: dict[str, Any]) -> int:
-    total = _invoice_final_amount_cents(invoice)
-    balance = max(int(invoice.get("balance_due_cents") or 0), 0)
-    return max(total - balance, 0)
-
-
-def _invoice_outstanding_cents(invoice: dict[str, Any]) -> int:
-    if str(invoice.get("status") or "") in {"paid", "void", "waived", "cancelled"}:
-        return 0
-    return max(int(invoice.get("balance_due_cents") or 0), 0)
-
-
-def _invoice_provider_keys(invoice: dict[str, Any]) -> set[str]:
-    return {
-        str(value)
-        for value in (
-            invoice.get("invoice_id"),
-            invoice.get("invoice_number"),
-            invoice.get("stripe_invoice_id"),
-            invoice.get("stripe_payment_intent_id"),
-        )
-        if value
-    }
-
-
-def _payment_provider_keys(payment: dict[str, Any]) -> set[str]:
-    return {
-        str(value)
-        for value in (
-            payment.get("payment_id"),
-            payment.get("invoice_id"),
-            payment.get("invoice_number"),
-            payment.get("stripe_invoice_id"),
-            payment.get("stripe_payment_intent_id"),
-            payment.get("stripe_checkout_session_id"),
-        )
-        if value
-    }
-
-
-def _payment_revenue_net_cents(payment: dict[str, Any]) -> int:
-    paid = _payment_received_cents(payment)
-    if paid is None:
-        paid = _payment_final_amount_cents(payment)
-    return max(paid - int(payment.get("refunded_cents") or 0), 0)
-
-
-def _invoice_to_admin_payment_row(invoice: dict[str, Any]) -> dict[str, Any]:
-    total = _invoice_final_amount_cents(invoice)
-    paid = _invoice_paid_cents(invoice)
-    stripe_invoice_id = invoice.get("stripe_invoice_id")
-    stripe_payment_intent_id = invoice.get("stripe_payment_intent_id")
-    stripe_checkout_session_id = invoice.get("stripe_checkout_session_id")
-    stripe_subscription_id = invoice.get("stripe_subscription_id")
-    stripe_linked = any(
-        value
-        for value in (
-            stripe_invoice_id,
-            stripe_payment_intent_id,
-            stripe_checkout_session_id,
-            stripe_subscription_id,
-        )
-    )
-    return {
-        "payment_id": str(invoice.get("invoice_id") or invoice.get("_id") or ""),
-        "invoice_id": str(invoice.get("invoice_id") or "") or None,
-        "parent_id": str(invoice.get("parent_id") or invoice.get("parent_user_id") or ""),
-        "parent_name": None,
-        "student_id": str(invoice.get("student_id") or "") or None,
-        "student_name": None,
-        "enrollment_id": str(invoice.get("enrollment_id") or "") or None,
-        "session_id": str(invoice.get("session_id") or "") or None,
-        "period": str(invoice.get("period") or "") or None,
-        "amount_cents": _invoice_amount_cents(invoice),
-        "discount_cents": int(invoice.get("discount_cents") or 0),
-        "final_amount_cents": total,
-        "amount_received_cents": paid,
-        "paid_amount_cents": paid,
-        "balance_due_cents": max(int(invoice.get("balance_due_cents") or 0), 0),
-        # surfaced from APPROVED OVERPAYMENT credits, batch-enriched onto the doc by the
-        # list builder (no longer hardcoded 0)
-        "overpayment_credit_cents": int(invoice.get("overpayment_credit_cents") or 0),
-        "currency": str(invoice.get("currency") or "usd"),
-        "status": _invoice_status_for_admin(invoice),
-        "refunded_cents": int(invoice.get("refunded_cents") or 0),
-        "invoice_number": invoice.get("invoice_number") or invoice.get("invoice_id"),
-        "payment_method": "stripe" if stripe_linked else "invoice",
-        "stripe_linked": stripe_linked,
-        "stripe_customer_id": invoice.get("stripe_customer_id"),
-        "stripe_checkout_session_id": stripe_checkout_session_id,
-        "stripe_subscription_id": stripe_subscription_id,
-        "stripe_invoice_id": stripe_invoice_id,
-        "stripe_payment_intent_id": stripe_payment_intent_id,
-        "reconciliation_status": invoice.get("reconciliation_status"),
-        "created_at": invoice.get("created_at") or datetime.now(UTC),
-    }
-
-
-def _coerce_report_date(value: object) -> date | None:
-    if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date):
-        return value
-    if isinstance(value, str):
-        try:
-            return date.fromisoformat(value[:10])
-        except ValueError:
-            return None
-    return None
-
-
-def _coerce_report_datetime(value: object) -> datetime | None:
-    if value is None or value == "":
-        return None
-    if isinstance(value, datetime):
-        return value.astimezone(UTC) if value.tzinfo is not None else value.replace(tzinfo=UTC)
-    if isinstance(value, date):
-        return datetime.combine(value, time.min, tzinfo=UTC)
-    if isinstance(value, str):
-        raw = value.strip()
-        if not raw:
-            return None
-        try:
-            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        except ValueError:
-            try:
-                parsed_date = date.fromisoformat(raw[:10])
-            except ValueError:
-                return None
-            return datetime.combine(parsed_date, time.min, tzinfo=UTC)
-        return parsed.astimezone(UTC) if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
-    return None
-
-
-def _period_start_datetime(period: object) -> datetime | None:
-    if not isinstance(period, str) or not period:
-        return None
-    try:
-        start, _ = _month_bounds(period)
-    except (TypeError, ValueError):
-        return None
-    return start
-
-
-def _payment_effective_at(payment: dict[str, Any]) -> datetime | None:
-    for key in ("paid_at", "payment_date", "created_at"):
-        parsed = _coerce_report_datetime(payment.get(key))
-        if parsed is not None:
-            return parsed
-    return _period_start_datetime(payment.get("period"))
-
-
-def _payment_effective_month(payment: dict[str, Any]) -> str:
-    effective_at = _payment_effective_at(payment)
-    return effective_at.strftime("%Y-%m") if effective_at is not None else ""
-
-
-def _ledger_payment_effective_at(payment: dict[str, Any]) -> datetime | None:
-    for key in ("paid_at", "created_at"):
-        parsed = _coerce_report_datetime(payment.get(key))
-        if parsed is not None:
-            return parsed
-    return None
-
-
-def _ledger_payment_effective_month(payment: dict[str, Any]) -> str:
-    effective_at = _ledger_payment_effective_at(payment)
-    return effective_at.strftime("%Y-%m") if effective_at is not None else ""
-
-
-def _missing_or_empty_field(field: str) -> dict[str, Any]:
-    return {"$or": [{field: None}, {field: ""}]}
-
-
-def _field_window_or(field: str, start: datetime, end: datetime) -> list[dict[str, Any]]:
-    return [
-        {field: {"$gte": start, "$lt": end}},
-        {
-            field: {
-                "$gte": start.date().isoformat(),
-                "$lt": end.date().isoformat(),
-            }
-        },
-    ]
-
-
-def _ledger_payment_effective_window_query(start: datetime, end: datetime) -> dict[str, Any]:
-    paid_at_missing = _missing_or_empty_field("paid_at")
-    return {
-        "$or": [
-            *_field_window_or("paid_at", start, end),
-            {
-                "$and": [
-                    paid_at_missing,
-                    {"$or": _field_window_or("created_at", start, end)},
-                ]
-            },
-        ]
-    }
-
-
-def _payment_effective_window_or(start: datetime, end: datetime) -> list[dict[str, Any]]:
-    paid_at_missing = _missing_or_empty_field("paid_at")
-    payment_date_missing = _missing_or_empty_field("payment_date")
-    return [
-        *_field_window_or("paid_at", start, end),
-        {
-            "$and": [
-                paid_at_missing,
-                {"$or": _field_window_or("payment_date", start, end)},
-            ]
-        },
-        {
-            "$and": [
-                paid_at_missing,
-                payment_date_missing,
-                {"$or": _field_window_or("created_at", start, end)},
-            ]
-        },
-    ]
-
-
-def _payment_effective_window_query(start: datetime, end: datetime) -> dict[str, Any]:
-    return {"$or": _payment_effective_window_or(start, end)}
-
-
-def _legacy_payment_cash_candidate_query(
-    academy_id: str, period: str, start: datetime, end: datetime
-) -> dict[str, Any]:
-    return {
-        "academy_id": academy_id,
-        "is_deleted": {"$ne": True},
-        "$or": [
-            *_payment_effective_window_or(start, end),
-            {"period": period},
-        ],
-    }
-
-
-def _payment_due_date(payment: dict[str, Any], fallback: date) -> date:
-    for key in ("due_date", "due_at", "created_at"):
-        parsed = _coerce_report_date(payment.get(key))
-        if parsed is not None:
-            return parsed
-    return fallback
-
-
-def _invoice_due_date(invoice: dict[str, Any], fallback: date) -> date:
-    for key in ("due_date", "due_at", "created_at"):
-        parsed = _coerce_report_date(invoice.get(key))
-        if parsed is not None:
-            return parsed
-    return fallback
-
-
-def _aging_label(days_late: int) -> str:
-    if days_late <= 0:
-        return "Current"
-    if days_late <= 30:
-        return "1-30"
-    if days_late <= 60:
-        return "31-60"
-    return "60+"
-
-
 class _AdminEffectiveRevenueQuery:
     def __init__(self, db: AsyncIOMotorDatabase[Any]) -> None:
         self._db = db
@@ -1225,7 +884,7 @@ class _AdminEffectiveRevenueQuery:
             ledger_query,
             ledger_key_projection,
         ):
-            ledger_keys.update(_payment_provider_keys(payment))
+            ledger_keys.update(payment_provider_keys(payment))
             payment_id = str(payment.get("payment_id") or "")
             if payment_id:
                 ledger_payment_ids.append(payment_id)
@@ -1522,9 +1181,9 @@ class _AdminEffectiveRevenueQuery:
         }
         months: dict[str, int] = {}
         async for payment in self._db["ledger_payments"].find(match, projection):
-            month = _ledger_payment_effective_month(payment)
+            month = ledger_payment_effective_month(payment)
             if month:
-                months[month] = months.get(month, 0) + _payment_revenue_net_cents(payment)
+                months[month] = months.get(month, 0) + payment_revenue_net_cents(payment)
         return months
 
     async def _legacy_revenue_fallback(self, match: dict[str, Any]) -> dict[str, int]:
@@ -1549,9 +1208,9 @@ class _AdminEffectiveRevenueQuery:
         }
         months: dict[str, int] = {}
         async for payment in self._db["payments"].find(match, projection):
-            month = _payment_effective_month(payment)
+            month = payment_effective_month(payment)
             if month:
-                months[month] = months.get(month, 0) + _payment_revenue_net_cents(payment)
+                months[month] = months.get(month, 0) + payment_revenue_net_cents(payment)
         return months
 
     async def _add_allocation_keys(
@@ -1614,9 +1273,9 @@ class _AdminEffectiveRevenueQuery:
                 if not row_id or row_id in seen:
                     continue
                 seen.add(row_id)
-                month = _payment_effective_month(payment)
+                month = payment_effective_month(payment)
                 if month:
-                    months[month] = months.get(month, 0) + _payment_revenue_net_cents(payment)
+                    months[month] = months.get(month, 0) + payment_revenue_net_cents(payment)
         return months
 
 
@@ -1626,7 +1285,7 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
 
     async def get_reports_dashboard(period: str) -> dict[str, Any]:
         academy_id = current_academy_id()
-        start, end = _month_bounds(period)
+        start, end = month_bounds(period)
 
         cash_collected_cents = 0
         billed_cents = 0
@@ -1651,12 +1310,12 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
             }
         )
         async for invoice in invoices_cursor:
-            invoice_keys.update(_invoice_provider_keys(invoice))
+            invoice_keys.update(invoice_provider_keys(invoice))
             if str(invoice.get("status") or "") == "partially_paid":
                 partial_payment_count += 1
-            outstanding = _invoice_outstanding_cents(invoice)
+            outstanding = invoice_outstanding_cents(invoice)
             outstanding_dues_cents += outstanding
-            billed_cents += _invoice_paid_cents(invoice) + outstanding
+            billed_cents += invoice_paid_cents(invoice) + outstanding
             if outstanding:
                 family_id = str(
                     invoice.get("parent_id")
@@ -1667,9 +1326,9 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
                 )
                 if family_id:
                     collection_family_ids.add(family_id)
-                due_date = _invoice_due_date(invoice, end.date())
+                due_date = invoice_due_date(invoice, end.date())
                 days_late = max((end.date() - due_date).days, 0)
-                label = _aging_label(days_late)
+                label = aging_label(days_late)
                 bucket = aging_totals[label]
                 bucket["amount_cents"] = int(bucket["amount_cents"]) + outstanding
                 family_ids = bucket["family_ids"]
@@ -1681,7 +1340,7 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
         ledger_payments_cursor = db["ledger_payments"].find(
             {
                 "academy_id": academy_id,
-                **_ledger_payment_effective_window_query(start, end),
+                **ledger_payment_effective_window_query(start, end),
                 "status": {"$in": successful_ledger_statuses},
             },
             {
@@ -1709,13 +1368,13 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
             },
         )
         async for ledger_payment in ledger_payments_cursor:
-            if _ledger_payment_effective_month(ledger_payment) != period:
+            if ledger_payment_effective_month(ledger_payment) != period:
                 continue
-            ledger_payment_keys.update(_payment_provider_keys(ledger_payment))
+            ledger_payment_keys.update(payment_provider_keys(ledger_payment))
             payment_id = str(ledger_payment.get("payment_id") or "")
             if payment_id:
                 ledger_payment_ids.add(payment_id)
-            cash_collected_cents += _payment_revenue_net_cents(ledger_payment)
+            cash_collected_cents += payment_revenue_net_cents(ledger_payment)
 
         ledger_key_cursor = db["ledger_payments"].find(
             {
@@ -1732,7 +1391,7 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
             },
         )
         async for ledger_payment in ledger_key_cursor:
-            ledger_payment_keys.update(_payment_provider_keys(ledger_payment))
+            ledger_payment_keys.update(payment_provider_keys(ledger_payment))
             payment_id = str(ledger_payment.get("payment_id") or "")
             if payment_id:
                 ledger_payment_ids.add(payment_id)
@@ -1763,7 +1422,7 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
             failed_payment_count += 1
 
         cash_payments_cursor = db["payments"].find(
-            _legacy_payment_cash_candidate_query(academy_id, period, start, end),
+            legacy_payment_cash_candidate_query(academy_id, period, start, end),
             {
                 "payment_id": 1,
                 "invoice_id": 1,
@@ -1792,12 +1451,12 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
             },
         )
         async for payment in cash_payments_cursor:
-            if _payment_effective_month(payment) != period:
+            if payment_effective_month(payment) != period:
                 continue
-            payment_keys = _payment_provider_keys(payment)
+            payment_keys = payment_provider_keys(payment)
             if payment_keys & (invoice_keys | ledger_payment_keys):
                 continue
-            cash_collected_cents += _payment_collected_cents(payment)
+            cash_collected_cents += payment_collected_cents(payment)
 
         risk_payments_cursor = db["payments"].find(
             {
@@ -1829,7 +1488,7 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
             },
         )
         async for payment in risk_payments_cursor:
-            payment_keys = _payment_provider_keys(payment)
+            payment_keys = payment_provider_keys(payment)
             if payment_keys & invoice_keys:
                 continue
             status = str(payment.get("status") or "")
@@ -1837,9 +1496,9 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
                 failed_payment_count += 1
             elif status == "partially_paid":
                 partial_payment_count += 1
-            outstanding = _payment_outstanding_cents(payment)
+            outstanding = payment_outstanding_cents(payment)
             outstanding_dues_cents += outstanding
-            billed_cents += _payment_collected_cents(payment) + outstanding
+            billed_cents += payment_collected_cents(payment) + outstanding
             if outstanding:
                 family_id = str(
                     payment.get("parent_id")
@@ -1850,9 +1509,9 @@ def _make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
                 )
                 if family_id:
                     collection_family_ids.add(family_id)
-                due_date = _payment_due_date(payment, end.date())
+                due_date = payment_due_date(payment, end.date())
                 days_late = max((end.date() - due_date).days, 0)
-                label = _aging_label(days_late)
+                label = aging_label(days_late)
                 bucket = aging_totals[label]
                 bucket["amount_cents"] = int(bucket["amount_cents"]) + outstanding
                 family_ids = bucket["family_ids"]
@@ -2258,7 +1917,7 @@ def _make_projected_income_report(db: AsyncIOMotorDatabase[Any]) -> object:
 
 
 def _report_iso(value: Any) -> str | None:
-    parsed = _coerce_report_datetime(value)
+    parsed = coerce_report_datetime(value)
     return parsed.isoformat() if parsed is not None else None
 
 
@@ -2276,7 +1935,7 @@ def _make_refunds_report(db: AsyncIOMotorDatabase[Any]) -> object:
 
     async def get_refunds_report(period: str) -> dict[str, Any]:
         academy_id = current_academy_id()
-        start, end = _month_bounds(period)
+        start, end = month_bounds(period)
 
         refunds: list[dict[str, Any]] = []
         total_refunded_cents = 0
@@ -2389,7 +2048,7 @@ def _make_revenue_by_category_report(db: AsyncIOMotorDatabase[Any]) -> object:
 
     async def get_revenue_by_category_report(period: str) -> dict[str, Any]:
         academy_id = current_academy_id()
-        start, end = _month_bounds(period)
+        start, end = month_bounds(period)
 
         allocated_by_invoice: dict[str, int] = {}
         allocation_cursor = db["payment_allocations"].find(
@@ -2465,13 +2124,13 @@ def _make_revenue_by_category_report(db: AsyncIOMotorDatabase[Any]) -> object:
         unapplied_cursor = db["ledger_payments"].find(
             {
                 "academy_id": academy_id,
-                **_ledger_payment_effective_window_query(start, end),
+                **ledger_payment_effective_window_query(start, end),
                 "status": {"$in": _LEDGER_SUCCESS_STATUSES},
             },
             {"unapplied_amount_cents": 1, "paid_at": 1, "created_at": 1},
         )
         async for payment in unapplied_cursor:
-            if _ledger_payment_effective_month(payment) != period:
+            if ledger_payment_effective_month(payment) != period:
                 continue
             unapplied_cents += max(int(payment.get("unapplied_amount_cents") or 0), 0)
 
@@ -2504,21 +2163,21 @@ def _make_deposit_slip_report(db: AsyncIOMotorDatabase[Any]) -> object:
 
     async def get_deposit_slip_report(period: str) -> dict[str, Any]:
         academy_id = current_academy_id()
-        start, end = _month_bounds(period)
+        start, end = month_bounds(period)
 
         day_totals: dict[str, dict[str, dict[str, int]]] = {}
         payment_cursor = db["ledger_payments"].find(
             {
                 "academy_id": academy_id,
-                **_ledger_payment_effective_window_query(start, end),
+                **ledger_payment_effective_window_query(start, end),
                 "status": {"$in": _LEDGER_SUCCESS_STATUSES},
             },
             {"amount_cents": 1, "payment_method": 1, "paid_at": 1, "created_at": 1},
         )
         async for payment in payment_cursor:
-            if _ledger_payment_effective_month(payment) != period:
+            if ledger_payment_effective_month(payment) != period:
                 continue
-            effective_at = _ledger_payment_effective_at(payment)
+            effective_at = ledger_payment_effective_at(payment)
             if effective_at is None:
                 continue
             day = effective_at.date().isoformat()
@@ -2557,10 +2216,6 @@ def _make_deposit_slip_report(db: AsyncIOMotorDatabase[Any]) -> object:
         }
 
     return get_deposit_slip_report
-
-
-def _cents_to_dollars(cents: int) -> str:
-    return f"{cents / 100:.2f}"
 
 
 def _csv_safe(value: Any) -> Any:
@@ -2675,7 +2330,7 @@ def _make_financial_report_csv(db: AsyncIOMotorDatabase[Any]) -> object:
             revenue = await get_revenue_by_category_report(effective_period)
             deposits = await get_deposit_slip_report(effective_period)
             refunds = await get_refunds_report(effective_period)
-            _, month_end = _month_bounds(effective_period)
+            _, month_end = month_bounds(effective_period)
             journal_date = (month_end - timedelta(days=1)).strftime("%m/%d/%Y")
             writer.writerow(["JournalNo", "JournalDate", "Memo", "Account", "Debits", "Credits"])
             collected_cents = deposits["total_cents"]
@@ -2689,7 +2344,7 @@ def _make_financial_report_csv(db: AsyncIOMotorDatabase[Any]) -> object:
                         journal_date,
                         memo,
                         "Undeposited Funds",
-                        _cents_to_dollars(collected_cents),
+                        cents_to_dollars(collected_cents),
                         "",
                     ]
                 )
@@ -2702,7 +2357,7 @@ def _make_financial_report_csv(db: AsyncIOMotorDatabase[Any]) -> object:
                             memo,
                             account,
                             "",
-                            _cents_to_dollars(row["amount_cents"]),
+                            cents_to_dollars(row["amount_cents"]),
                         ]
                     )
                 balance_cents = collected_cents - allocated_cents
@@ -2714,7 +2369,7 @@ def _make_financial_report_csv(db: AsyncIOMotorDatabase[Any]) -> object:
                             memo,
                             "Unapplied Customer Payments",
                             "",
-                            _cents_to_dollars(balance_cents),
+                            cents_to_dollars(balance_cents),
                         ]
                     )
                 elif balance_cents < 0:
@@ -2724,7 +2379,7 @@ def _make_financial_report_csv(db: AsyncIOMotorDatabase[Any]) -> object:
                             journal_date,
                             memo,
                             "Unapplied Customer Payments",
-                            _cents_to_dollars(-balance_cents),
+                            cents_to_dollars(-balance_cents),
                             "",
                         ]
                     )
@@ -2738,7 +2393,7 @@ def _make_financial_report_csv(db: AsyncIOMotorDatabase[Any]) -> object:
                         journal_date,
                         memo,
                         "Refunds Given",
-                        _cents_to_dollars(refunded_cents),
+                        cents_to_dollars(refunded_cents),
                         "",
                     ]
                 )
@@ -2749,7 +2404,7 @@ def _make_financial_report_csv(db: AsyncIOMotorDatabase[Any]) -> object:
                         memo,
                         "Undeposited Funds",
                         "",
-                        _cents_to_dollars(refunded_cents),
+                        cents_to_dollars(refunded_cents),
                     ]
                 )
         return out.getvalue()
@@ -2763,7 +2418,7 @@ def _make_session_economics_report(db: AsyncIOMotorDatabase[Any]) -> object:
 
     async def get_session_economics(period: str) -> dict[str, Any]:
         academy_id = current_academy_id()
-        start, end = _month_bounds(period)
+        start, end = month_bounds(period)
 
         occurrence_by_id: dict[str, str] = {}
         occurrences_by_session: dict[str, int] = {}
@@ -2834,7 +2489,7 @@ def _make_session_economics_report(db: AsyncIOMotorDatabase[Any]) -> object:
             expected_total = monthly_fee * enrollment_count
             expected_by_session[session_id] = expected_total
             per_occurrence_by_session[session_id] = (
-                _round_money_minor(Decimal(expected_total) / Decimal(occurrence_count))
+                round_money_minor(Decimal(expected_total) / Decimal(occurrence_count))
                 if occurrence_count
                 else 0
             )
@@ -2867,15 +2522,15 @@ def _make_session_economics_report(db: AsyncIOMotorDatabase[Any]) -> object:
             }
         )
         async for invoice in invoices_cursor:
-            invoice_keys.update(_invoice_provider_keys(invoice))
+            invoice_keys.update(invoice_provider_keys(invoice))
             backfill_payment_id = invoice.get("backfill_payment_id")
             if backfill_payment_id:
                 invoice_keys.add(str(backfill_payment_id))
             session_id = session_for_doc(invoice)
             if session_id not in paid_by_session:
                 continue
-            paid = _invoice_paid_cents(invoice)
-            outstanding = _invoice_outstanding_cents(invoice)
+            paid = invoice_paid_cents(invoice)
+            outstanding = invoice_outstanding_cents(invoice)
             paid_by_session[session_id] += paid
             billed_unpaid_by_session[session_id] += outstanding
             enrollment_id = str(invoice.get("enrollment_id") or "")
@@ -2909,8 +2564,8 @@ def _make_session_economics_report(db: AsyncIOMotorDatabase[Any]) -> object:
             session_id = session_for_doc(payment)
             if session_id not in paid_by_session:
                 continue
-            paid = _payment_collected_cents(payment)
-            outstanding = _payment_outstanding_cents(payment)
+            paid = payment_collected_cents(payment)
+            outstanding = payment_outstanding_cents(payment)
             paid_by_session[session_id] += paid
             billed_unpaid_by_session[session_id] += outstanding
             enrollment_id = str(payment.get("enrollment_id") or "")
@@ -3063,7 +2718,7 @@ def _allocate_report_amount(
         if index == len(session_ids) - 1:
             allocations[session_id] = remaining
             break
-        amount = _round_money_minor(
+        amount = round_money_minor(
             Decimal(total_cents)
             * Decimal(expected_by_session.get(session_id, 0))
             / Decimal(expected_total)
@@ -3221,7 +2876,7 @@ class _MongoPayableOccurrenceQuery:
             enrolled_by_session[session_id] = enrolled_by_session.get(session_id, 0) + 1
 
         return {
-            session_id: _round_money_minor(
+            session_id: round_money_minor(
                 Decimal(price_by_session[session_id])
                 * Decimal(enrolled_by_session.get(session_id, 0))
                 / Decimal(occurrences_by_session[session_id])
@@ -3398,10 +3053,6 @@ def _occurrence_session_id(doc: dict[str, Any]) -> str:
     """Session the occurrence belongs to — enrollments reference the
     template session, so prefer ``template_session_id`` when present."""
     return str(doc.get("template_session_id") or doc.get("session_id") or "")
-
-
-def _round_money_minor(value: Decimal) -> int:
-    return int(value.quantize(Decimal("1"), rounding=ROUND_HALF_EVEN))
 
 
 def _effective_occurrence_status(doc: dict[str, Any]) -> str:
@@ -5788,11 +5439,11 @@ def compose_admin(
                 inv_id = str(credit.get("invoice_id") or "")
                 overpay_by_invoice[inv_id] += int(credit.get("amount_cents") or 0)
         for doc in invoice_docs:
-            invoice_keys.update(_invoice_provider_keys(doc))
+            invoice_keys.update(invoice_provider_keys(doc))
             doc["overpayment_credit_cents"] = overpay_by_invoice.get(
                 str(doc.get("invoice_id") or ""), 0
             )
-            invoice_rows.append(_invoice_to_admin_payment_row(doc))
+            invoice_rows.append(invoice_to_admin_payment_row(doc))
         invoice_student_ids = [
             str(row["student_id"])
             for row in invoice_rows
@@ -5956,7 +5607,7 @@ def compose_admin(
 
     def _effective_paid_at(row: dict[str, Any]) -> datetime | None:
         for key in ("paid_at", "payment_date"):
-            value = _coerce_report_datetime(row.get(key))
+            value = coerce_report_datetime(row.get(key))
             if value is not None:
                 return value
         return None
@@ -5964,7 +5615,7 @@ def compose_admin(
     def _payment_activity_sort_key(row: dict[str, Any]) -> datetime:
         return (
             _effective_paid_at(row)
-            or _coerce_report_datetime(row.get("created_at"))
+            or coerce_report_datetime(row.get("created_at"))
             or datetime.min.replace(tzinfo=UTC)
         )
 
@@ -5996,7 +5647,7 @@ def compose_admin(
         if date_from or date_to:
             windowed: list[dict[str, Any]] = []
             for row in rows:
-                effective = row.get("paid_at") or _coerce_report_datetime(row.get("created_at"))
+                effective = row.get("paid_at") or coerce_report_datetime(row.get("created_at"))
                 if effective is None:
                     continue
                 if date_from and effective < date_from:
@@ -6041,7 +5692,7 @@ def compose_admin(
                 "currency": str(doc.get("currency") or "usd"),
                 "status": str(doc.get("status") or ""),
                 "payment_method": doc.get("payment_method"),
-                "paid_at": _coerce_report_datetime(
+                "paid_at": coerce_report_datetime(
                     doc.get("paid_at") or doc.get("payment_date") or doc.get("created_at")
                 ),
             }
@@ -6053,7 +5704,7 @@ def compose_admin(
             sort=[("paid_at", -1), ("created_at", -1)],
             limit=limit * 2,
         ):
-            seen_keys.update(_payment_provider_keys(doc))
+            seen_keys.update(payment_provider_keys(doc))
             rows.append(_feed_row(doc))
         async for doc in db["payments"].find(
             {
@@ -6064,7 +5715,7 @@ def compose_admin(
             sort=[("paid_at", -1), ("created_at", -1)],
             limit=limit * 2,
         ):
-            if _payment_provider_keys(doc) & seen_keys:
+            if payment_provider_keys(doc) & seen_keys:
                 continue
             rows.append(_feed_row(doc))
         rows = [r for r in rows if r.get("paid_at") is not None]
@@ -6081,7 +5732,7 @@ def compose_admin(
             parent_id = str(doc.get("parent_id") or "")
             if not parent_id:
                 return
-            paid_at = _coerce_report_datetime(
+            paid_at = coerce_report_datetime(
                 doc.get("paid_at") or doc.get("payment_date") or doc.get("created_at")
             )
             if paid_at is None:
@@ -6643,7 +6294,7 @@ def compose_admin(
         )
         invoice_keys: set[str] = set()
         async for invoice in invoice_cursor:
-            invoice_keys.update(_invoice_provider_keys(invoice))
+            invoice_keys.update(invoice_provider_keys(invoice))
             parent_id = str(invoice.get("parent_id") or invoice.get("parent_user_id") or "")
             if not parent_id:
                 continue
@@ -6658,7 +6309,7 @@ def compose_admin(
                 },
             )
             entry["pending_count"] += 1
-            entry["total_due_cents"] += _invoice_outstanding_cents(invoice)
+            entry["total_due_cents"] += invoice_outstanding_cents(invoice)
 
         cursor = (
             db["payments"]

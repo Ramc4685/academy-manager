@@ -174,6 +174,14 @@ const MULTI_MEMBERSHIP = {
   active_academy_id: "academy-e2e",
 };
 
+const OWNER_MEMBERSHIP = {
+  memberships: MULTI_MEMBERSHIP.memberships.map((m) => ({
+    ...m,
+    roles: ["admin", "owner"],
+  })),
+  active_academy_id: "academy-e2e",
+};
+
 async function stubMemberships(page: Page, body = SINGLE_MEMBERSHIP) {
   await page.route("**/api/v2/me/memberships", (route) => {
     if (route.request().method() !== "GET") return route.fallback();
@@ -447,6 +455,71 @@ test.describe("Rally admin shell", () => {
       errors,
       `App console errors on multi-academy switcher: ${errors.join("\n")}`,
     ).toEqual([]);
+  });
+
+  test("franchise rollup entry appears only for multi-academy owners", async ({
+    page,
+  }) => {
+    await stubAdminBff(page, MULTI_MEMBERSHIP);
+    await page.goto("/admin");
+    await expect(page.getByTestId("admin-dashboard")).toBeVisible();
+
+    // Admin in both academies, owner in neither — no rollup entry.
+    await page.getByTestId("tenant-switcher-button").click();
+    await expect(page.getByTestId("tenant-switcher-menu")).toBeVisible();
+    await expect(
+      page.getByTestId("tenant-switcher-all-academies"),
+    ).toHaveCount(0);
+  });
+
+  test("multi-academy owner can reach the franchise rollup from the switcher", async ({
+    page,
+  }) => {
+    await stubAdminBff(page, OWNER_MEMBERSHIP);
+    await page.route("**/api/v2/owner/rollup*", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, {
+        academies: [
+          {
+            academy_id: "academy-e2e",
+            academy_name: "Academy E2E",
+            revenue_by_month: { "2026-07": 120_000 },
+            collected_cents: 120_000,
+            outstanding_cents: 5_000,
+            outstanding_invoice_count: 2,
+          },
+          {
+            academy_id: "academy-e2e-2",
+            academy_name: "Academy E2E Two",
+            revenue_by_month: { "2026-07": 80_000 },
+            collected_cents: 80_000,
+            outstanding_cents: 1_000,
+            outstanding_invoice_count: 1,
+          },
+        ],
+        totals: {
+          academy_count: 2,
+          revenue_by_month: { "2026-07": 200_000 },
+          collected_cents: 200_000,
+          outstanding_cents: 6_000,
+          outstanding_invoice_count: 3,
+        },
+      });
+    });
+
+    await page.goto("/admin");
+    await expect(page.getByTestId("admin-dashboard")).toBeVisible();
+
+    await page.getByTestId("tenant-switcher-button").click();
+    const entry = page.getByTestId("tenant-switcher-all-academies");
+    await expect(entry).toBeVisible();
+    await entry.click();
+
+    await expect(page).toHaveURL(/\/owner$/);
+    await expect(page.getByTestId("owner-rollup-totals")).toContainText("$2,000.00");
+    await expect(
+      page.getByTestId("owner-rollup-row-academy-e2e-2"),
+    ).toContainText("Academy E2E Two");
   });
 
   test("admin navigation renders all nav groups, and mobile drawer closes", async ({
