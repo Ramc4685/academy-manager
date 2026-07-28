@@ -23,6 +23,9 @@ multi-academy switching it is the simplest path.
 - `payouts.ts` calls admin payout-period endpoints under `/admin/payout-periods/*`.
 - `sessions.ts` calls admin session and occurrence endpoints.
 - `students.ts` calls admin student progress and placement endpoints.
+- `session-types.ts` calls the admin session-type billing catalog endpoints
+  under `/admin/session-types/*`. Note `GET` returns active types only, so
+  archiving (`DELETE`, a soft delete) is not reversible through this client.
 - `memberships.ts` is the one deliberate fallback: `/me/memberships` is not
   exposed yet, so it derives a single active academy from `/me` until the real
   BFF route lands.
