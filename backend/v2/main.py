@@ -30,7 +30,9 @@ from backend.v2.composition.digests import (
     compose_send_parent_daily_digest,
     resolve_digest_schedule,
 )
+from backend.v2.composition.owner import compose_owner
 from backend.v2.composition.parent import compose_parent, compose_parent_webhook_handler
+from backend.v2.composition.student import compose_student
 from backend.v2.contexts.billing.application.ports import StripeGateway
 from backend.v2.contexts.billing.application.use_cases.connect_onboarding import (
     StartConnectOnboarding,
@@ -120,9 +122,11 @@ from backend.v2.interfaces.admin.router import router as admin_router
 from backend.v2.interfaces.coach.router import router as coach_router
 from backend.v2.interfaces.magic_link_routes import router as magic_link_router
 from backend.v2.interfaces.me_routes import router as me_router
+from backend.v2.interfaces.owner.router import router as owner_router
 from backend.v2.interfaces.parent.router import router as parent_router
 from backend.v2.interfaces.platform.router import router as platform_router
 from backend.v2.interfaces.registration_routes import router as registration_router
+from backend.v2.interfaces.student.router import router as student_router
 from backend.v2.migrations import run_pending_migrations
 from backend.v2.shared.auth.middleware import TenancyMiddleware
 from backend.v2.shared.config import Settings, get_settings
@@ -280,6 +284,15 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     stripe_webhook_processors = {runtime_academy_id: app.state.parent.handle_webhook_event}
 
+    # Student BFF wiring (UIM12) — entirely behind enable_student_login.
+    # With the flag off the router is not mounted at all (see the
+    # include_router call below), so /student/* 404s at routing. This
+    # composition is skipped for the same reason; the belt-and-braces 404 in
+    # interfaces/student/deps.get_student_use_cases covers the case where a
+    # test (or a future caller) mounts the router without composing state.
+    if settings.enable_student_login:
+        app.state.student = compose_student(db, parent=app.state.parent)
+
     # Platform Stripe Connect onboarding (Slice I). Composition root wires the
     # real repo + gateway into the use case; the platform BFF route only sees
     # app.state.platform_connect_onboarding.
@@ -291,6 +304,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Admin BFF wiring (Wave 3).
     app.state.admin = compose_admin(db, outbox, idempotency_store, stripe_gw)
+
+    # Owner (franchise) BFF wiring — UIM11. Left unset when the flag is off so
+    # the routes 404 even if something mounts them.
+    if settings.enable_owner_role:
+        app.state.owner = compose_owner(db)
 
     scheduler: AsyncIOScheduler | None = None
 
@@ -752,6 +770,13 @@ def create_app() -> FastAPI:
     app.include_router(coach_router, prefix="/api/v2")
     app.include_router(parent_router, prefix="/api/v2")
     app.include_router(admin_router, prefix="/api/v2")
+    if settings.enable_student_login:
+        # Not registered at all when the flag is off — true 404 (no route
+        # match), matching the enable_platform_routes pattern above, rather
+        # than a route that exists but always errors.
+        app.include_router(student_router, prefix="/api/v2")
+    if settings.enable_owner_role:
+        app.include_router(owner_router, prefix="/api/v2")
 
     return app
 

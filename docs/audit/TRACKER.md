@@ -41,7 +41,7 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 
 | ID | Item | Plan | Size | Depends on | Status | PR/Issue |
 |---|---|---|---|---|---|---|
-| MT1 | Drain the composition root (billing math → application layer) | [plans/MT1-drain-composition-root.md](plans/MT1-drain-composition-root.md) | L | — | TODO | |
+| MT1 | Drain the composition root (billing math → application layer) | [plans/MT1-drain-composition-root.md](plans/MT1-drain-composition-root.md) | L | — | IN PROGRESS | Phase A DONE [#368](https://github.com/Ramc4685/academy-manager/pull/368) — Phases B–E (reports read models, payouts, email adapters, import-linter contract) still TODO |
 | MT2 | Split runtime vs dev requirements | [plans/MT2-split-requirements.md](plans/MT2-split-requirements.md) | S | — | DONE | [#356](https://github.com/Ramc4685/academy-manager/pull/356) |
 | MT3 | Real-auth e2e job in CI | [plans/MT3-real-auth-e2e.md](plans/MT3-real-auth-e2e.md) | M | — | DONE | [#361](https://github.com/Ramc4685/academy-manager/pull/361) |
 | MT4 | Structural tenancy test | [plans/MT4-structural-tenancy-test.md](plans/MT4-structural-tenancy-test.md) | S | C4 (ideally after) | DONE | [#321](https://github.com/Ramc4685/academy-manager/pull/321) |
@@ -67,15 +67,15 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 | UIM1 | Platform/tenant-admin persona UI | [plans/UIM1-platform-persona.md](plans/UIM1-platform-persona.md) | L | DS1-3 recommended | TODO | |
 | UIM2 | GET /me/memberships + real TenantSwitcher | [plans/UIM2-memberships-route.md](plans/UIM2-memberships-route.md) | S | — | DONE | [#366](https://github.com/Ramc4685/academy-manager/pull/366) |
 | UIM3 | Funnel/attendance/utilization reports UI | [plans/UIM3-analytics-reports.md](plans/UIM3-analytics-reports.md) | M | UIC3 (same surface) | DONE | [#362](https://github.com/Ramc4685/academy-manager/pull/362) |
-| UIM4 | Session-type management UI | [plans/UIM4-session-types.md](plans/UIM4-session-types.md) | S | — | TODO | |
+| UIM4 | Session-type management UI | [plans/UIM4-session-types.md](plans/UIM4-session-types.md) | S | — | DONE | [#374](https://github.com/Ramc4685/academy-manager/pull/374) — shipped as `/admin/settings?panel=session-types` (UIC7 removed the child-route pattern the plan cited); archived-type listing/reactivation dropped, needs a backend `include_archived` param (see plan Corrections) |
 | UIM5 | Billing-enrollment move/override UI | [plans/UIM5-billing-enrollment-move.md](plans/UIM5-billing-enrollment-move.md) | M | — | TODO | |
 | UIM6 | Bulk user invite UI | [plans/UIM6-bulk-invite.md](plans/UIM6-bulk-invite.md) | S | UIC1 (same surface) | TODO | |
 | UIM7 | Coach skill-notes UI | [plans/UIM7-skill-notes.md](plans/UIM7-skill-notes.md) | S | — | DONE | [#353](https://github.com/Ramc4685/academy-manager/pull/353) |
 | UIM8 | Tuition-discounts report UI | [plans/UIM8-tuition-discounts.md](plans/UIM8-tuition-discounts.md) | S | — | DONE | [#359](https://github.com/Ramc4685/academy-manager/pull/359) — built on `/admin/dues` since UIC3 hasn't merged yet |
 | UIM9 | Platform-fallback billing visibility | [plans/UIM9-platform-fallback-setting.md](plans/UIM9-platform-fallback-setting.md) | S | — | DONE | [#352](https://github.com/Ramc4685/academy-manager/pull/352) |
 | UIM10 | Curriculum authoring extras | [plans/UIM10-curriculum-extras.md](plans/UIM10-curriculum-extras.md) | S | — | DONE | [#354](https://github.com/Ramc4685/academy-manager/pull/354) |
-| UIM11 | Franchise cross-academy rollup | [plans/UIM11-franchise-rollup.md](plans/UIM11-franchise-rollup.md) | L | UIM2, owner role | TODO | |
-| UIM12 | Student login persona | [plans/UIM12-student-persona.md](plans/UIM12-student-persona.md) | L | — | TODO | |
+| UIM11 | Franchise cross-academy rollup | [plans/UIM11-franchise-rollup.md](plans/UIM11-franchise-rollup.md) | L | UIM2, owner role | DONE | [#369](https://github.com/Ramc4685/academy-manager/pull/369) — ships dark behind `enable_owner_role` |
+| UIM12 | Student login persona | [plans/UIM12-student-persona.md](plans/UIM12-student-persona.md) | L | — | DONE | [#371](https://github.com/Ramc4685/academy-manager/pull/371) — ships dark behind `enable_student_login`; no unlink/re-invite path yet (follow-up before enabling) |
 | UIM13 | Real Messages inbox + Calendar | [plans/UIM13-messages-calendar.md](plans/UIM13-messages-calendar.md) | L | — | TODO | |
 
 ## UI — Design standardization (do in order)

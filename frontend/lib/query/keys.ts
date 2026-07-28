@@ -75,6 +75,7 @@ export const queryKeys = {
     notifications: () => ["admin", "academy", "notifications"] as const,
     gateway: () => ["admin", "academy", "gateway"] as const,
     platformFallback: () => ["admin", "billing", "platform-fallback"] as const,
+    sessionTypes: () => ["admin", "session-types"] as const,
     lessonCards: (programId: string) =>
       ["admin", "pathway", programId, "lesson-cards"] as const,
     coachDigestLog: () => ["admin", "comms", "digests", "log"] as const,
@@ -104,6 +105,11 @@ export const queryKeys = {
     tuitionDiscounts: (period: string) =>
       ["admin", "tuition-discounts", period] as const,
   },
+  owner: {
+    all: ["owner"] as const,
+    rollup: (months?: string[]) =>
+      ["owner", "rollup", months?.join(",") ?? "all"] as const,
+  },
   parent: {
     all: ["parent"] as const,
     absences: () => ["parent", "absences"] as const,
@@ -114,6 +120,12 @@ export const queryKeys = {
     cancellationPreview: (enrollmentId: string) =>
       ["parent", "enrollments", enrollmentId, "cancellation-preview"] as const,
   },
+  student: {
+    all: ["student"] as const,
+    me: () => ["student", "me"] as const,
+    schedule: () => ["student", "schedule"] as const,
+    progress: () => ["student", "progress"] as const,
+  },
 } as const;
 
 type QueryKeyFactory = (...args: never[]) => readonly unknown[];
@@ -122,4 +134,6 @@ type QueryKeyFrom<T> = T extends QueryKeyFactory ? ReturnType<T> : never;
 export type QueryKey =
   | QueryKeyFrom<(typeof queryKeys.coach)[keyof typeof queryKeys.coach]>
   | QueryKeyFrom<(typeof queryKeys.admin)[keyof typeof queryKeys.admin]>
-  | QueryKeyFrom<(typeof queryKeys.parent)[keyof typeof queryKeys.parent]>;
+  | QueryKeyFrom<(typeof queryKeys.owner)[keyof typeof queryKeys.owner]>
+  | QueryKeyFrom<(typeof queryKeys.parent)[keyof typeof queryKeys.parent]>
+  | QueryKeyFrom<(typeof queryKeys.student)[keyof typeof queryKeys.student]>;

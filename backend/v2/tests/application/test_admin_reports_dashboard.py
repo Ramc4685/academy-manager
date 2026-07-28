@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-import backend.v2.composition.admin as admin_composition
+import backend.v2.contexts.billing.infrastructure.admin_reports_read_model as reports_read_model
 from backend.v2.shared.tenancy.context import tenant_scope
 
 
@@ -207,7 +207,7 @@ async def test_reports_dashboard_composes_monthly_finance_attendance_and_capacit
     )
 
     with tenant_scope("acad"):
-        dashboard = await admin_composition._make_reports_dashboard(db)("2026-05")
+        dashboard = await reports_read_model.make_reports_dashboard(db)("2026-05")
 
     assert dashboard["period"] == "2026-05"
     assert dashboard["cash_collected_cents"] == 13_000
@@ -358,7 +358,7 @@ async def test_reports_dashboard_uses_ledger_invoices_and_payments_without_legac
     )
 
     with tenant_scope("acad"):
-        dashboard = await admin_composition._make_reports_dashboard(db)("2026-05")
+        dashboard = await reports_read_model.make_reports_dashboard(db)("2026-05")
 
     assert dashboard["cash_collected_cents"] == 13_000
     assert dashboard["outstanding_dues_cents"] == 9_000
@@ -448,8 +448,8 @@ async def test_reports_dashboard_buckets_ledger_cash_by_paid_at_with_created_at_
     )
 
     with tenant_scope("acad"):
-        may_dashboard = await admin_composition._make_reports_dashboard(db)("2026-05")
-        june_dashboard = await admin_composition._make_reports_dashboard(db)("2026-06")
+        may_dashboard = await reports_read_model.make_reports_dashboard(db)("2026-05")
+        june_dashboard = await reports_read_model.make_reports_dashboard(db)("2026-06")
 
     assert may_dashboard["cash_collected_cents"] == 17_000
     assert may_dashboard["profit_and_loss"]["revenue_cents"] == 17_000
@@ -614,8 +614,8 @@ async def test_reports_dashboard_uses_legacy_effective_payment_date_before_perio
     )
 
     with tenant_scope("acad"):
-        may_dashboard = await admin_composition._make_reports_dashboard(db)("2026-05")
-        june_dashboard = await admin_composition._make_reports_dashboard(db)("2026-06")
+        may_dashboard = await reports_read_model.make_reports_dashboard(db)("2026-05")
+        june_dashboard = await reports_read_model.make_reports_dashboard(db)("2026-06")
 
     assert may_dashboard["cash_collected_cents"] == 29_000
     assert may_dashboard["collections_risk"]["failed_payment_count"] == 1
@@ -664,7 +664,7 @@ async def test_reports_dashboard_returns_meaningful_empty_states() -> None:
     db = client["test_db"]
 
     with tenant_scope("acad"):
-        dashboard = await admin_composition._make_reports_dashboard(db)("2026-05")
+        dashboard = await reports_read_model.make_reports_dashboard(db)("2026-05")
 
     assert dashboard == {
         "period": "2026-05",
@@ -832,7 +832,7 @@ async def test_session_economics_prorates_monthly_fee_and_allocates_costs() -> N
     )
 
     with tenant_scope("acad"):
-        report = await admin_composition._make_session_economics_report(db)("2026-04")
+        report = await reports_read_model.make_session_economics_report(db)("2026-04")
 
     assert report["summary"] == {
         "expected_revenue_cents": 60_000,
@@ -929,7 +929,7 @@ async def test_reports_dashboard_reports_billed_collection_rate_and_family_names
     )
 
     with tenant_scope("acad"):
-        dashboard = await admin_composition._make_reports_dashboard(db)("2026-05")
+        dashboard = await reports_read_model.make_reports_dashboard(db)("2026-05")
 
     assert dashboard["billed_cents"] == 15_000
     assert dashboard["cash_collected_cents"] == 10_000
@@ -1030,7 +1030,7 @@ async def test_projected_income_splits_autopay_vs_manual_with_overrides() -> Non
     )
 
     with tenant_scope("acad"):
-        projection = await admin_composition._make_projected_income_report(db)("2026-08")
+        projection = await reports_read_model.make_projected_income_report(db)("2026-08")
 
     assert projection["period"] == "2026-08"
     assert projection["total_cents"] == 52_000
@@ -1065,7 +1065,7 @@ async def test_projected_income_empty_when_no_active_enrollments() -> None:
     db = client["test_db"]
 
     with tenant_scope("acad"):
-        projection = await admin_composition._make_projected_income_report(db)("2026-08")
+        projection = await reports_read_model.make_projected_income_report(db)("2026-08")
 
     assert projection["total_cents"] == 0
     assert projection["by_session"] == []

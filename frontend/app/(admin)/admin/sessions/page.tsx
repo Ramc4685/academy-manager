@@ -22,6 +22,7 @@ import {
   updateAdminSession,
   deleteAdminSession,
   getAdminAcademy,
+  type AdminSessionList,
   type AdminUserView,
   type AdminSessionView,
   type CreateSessionRequest,
@@ -234,8 +235,20 @@ export default function AdminSessionsPage() {
         onOpenChange={(open) => {
           if (!open) setEditSession(null);
         }}
-        onSaved={() => {
+        onSaved={(savedSession) => {
           setEditSession(null);
+          queryClient.setQueryData<AdminSessionList | undefined>(
+            queryKeys.admin.sessions("upcoming"),
+            (current) =>
+              current
+                ? {
+                    sessions: current.sessions.map((session) =>
+                      session.session_id === savedSession.session_id ? savedSession : session,
+                    ),
+                  }
+                : current,
+          );
+          queryClient.setQueryData(queryKeys.admin.sessionDetail(savedSession.session_id), savedSession);
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
         }}
       />
@@ -401,7 +414,7 @@ function EditSessionDialog({
 }: {
   session: AdminSessionView | null;
   onOpenChange: (open: boolean) => void;
-  onSaved: () => void;
+  onSaved: (session: AdminSessionView) => void;
 }) {
   const [form, setForm] = useState<EditSessionRequest>({});
   const [error, setError] = useState<string | null>(null);
@@ -415,9 +428,9 @@ function EditSessionDialog({
 
   const mutation = useMutation({
     mutationFn: (payload: EditSessionRequest) => updateAdminSession(session!.session_id, payload),
-    onSuccess: () => {
+    onSuccess: (savedSession) => {
       setError(null);
-      onSaved();
+      onSaved(savedSession);
     },
     onError: (err: Error) => setError(err.message ?? "Failed to update session."),
   });

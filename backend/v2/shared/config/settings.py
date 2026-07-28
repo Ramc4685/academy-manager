@@ -264,6 +264,10 @@ class Settings(BaseSettings):
             raise ValueError(
                 "enable_platform_routes must be false for production single_academy launch"
             )
+        if self.tenancy_mode == "single_academy" and self.enable_owner_role:
+            # The owner rollup spans academies; single_academy mode exists to
+            # refuse every tenant but primary_academy_id.
+            raise ValueError("enable_owner_role requires tenancy_mode=multi_academy")
 
 
 def _explicit_env_value(*names: str) -> str | None:
