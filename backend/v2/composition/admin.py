@@ -425,6 +425,9 @@ from backend.v2.contexts.identity.application.use_cases.manage_user_roles import
 from backend.v2.contexts.identity.application.use_cases.provision_parent_login import (
     ProvisionParentLogin,
 )
+from backend.v2.contexts.identity.application.use_cases.provision_student_login import (
+    ProvisionStudentLogin,
+)
 from backend.v2.contexts.identity.application.use_cases.send_login_invite import (
     SendLoginInvite,
 )
@@ -432,6 +435,11 @@ from backend.v2.contexts.identity.application.use_cases.stripe_connect import (
     CompleteStripeConnectUseCase,
     DisconnectStripeUseCase,
     StartStripeConnectUseCase,
+)
+from backend.v2.contexts.identity.domain.errors import (
+    StudentAlreadyLinked,
+    StudentNotFound,
+    UserAlreadyLinkedToStudent,
 )
 from backend.v2.contexts.identity.infrastructure.firebase_admin_adapter import (
     get_firebase_admin_adapter,
@@ -476,6 +484,104 @@ from backend.v2.shared.idempotency import IdempotencyStore
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.occurrences import occurrence_session_id
 from backend.v2.shared.tenancy import TenantContextUnset, current_academy_id, tenant_scope
+
+
+class _StudentLoginProvisionerAdapter:
+    """Bridges identity's `ProvisionStudentLogin` use case across the
+    identity/enrollment boundary (UIM12). The use case itself only knows
+    about the `StudentLoginProvisioner` port; this adapter — composition
+    root, not an interface — is what's allowed to touch both
+    `MongoUserRepository` (identity) and `MongoStudentWriter`/
+    `MongoStudentRepository` (enrollment) in one call.
+
+    "One user per student per academy" is enforced in BOTH directions,
+    in layers (the review found the first cut only guarded the student
+    side, letting two siblings invited with one family email share a
+    login and see each other's data):
+
+    1. Pre-checks below — clean 404/409 before any Firebase account or
+       membership row is created. The student must be unlinked, and the
+       user this email would resolve to must not already be another
+       student's login.
+    2. `link_student_user` — conditional `$set` (student side) plus the
+       unique partial index from migration 0150 (user side). This is
+       the race-safe layer: concurrent invites that both pass the
+       pre-checks cannot both commit.
+    3. `get_by_student_user_id` fails closed if a duplicate ever exists
+       anyway, so corruption degrades to "no access", not "wrong data".
+    """
+
+    def __init__(
+        self,
+        users: MongoUserRepository,
+        students_read: MongoStudentRepository,
+        students_write: MongoStudentWriter,
+    ) -> None:
+        self._users = users
+        self._students_r = students_read
+        self._students_w = students_write
+
+    async def _reject_if_user_linked_elsewhere(self, user_id: str, *, student_id: str) -> None:
+        already = await self._students_r.count_students_linked_to_user(
+            user_id, excluding_student_id=student_id
+        )
+        if already:
+            raise UserAlreadyLinkedToStudent(
+                "that email is already another student's login; use a different email",
+                student_id=student_id,
+            )
+
+    async def ensure_student_login(
+        self,
+        *,
+        student_id: str,
+        email: str,
+        display_name: str,
+        academy_id: str,
+        actor_id: str,
+        reason: str = "student login invite",
+    ) -> str:
+        students = await self._students_r.by_ids([student_id])
+        student = students[0] if students else None
+        if student is None:
+            raise StudentNotFound(f"student {student_id!r} not found")
+        if student.student_user_id:
+            raise StudentAlreadyLinked(
+                f"student {student_id!r} already has a login", student_id=student_id
+            )
+
+        # Pre-check against the user this email already resolves to, so
+        # the sibling-shared-email case is rejected before we create a
+        # Firebase account or grant a membership.
+        existing_user = await self._users.get_by_email(email)
+        if existing_user is not None:
+            await self._reject_if_user_linked_elsewhere(
+                existing_user.user_id, student_id=student_id
+            )
+
+        user_id = await self._users.ensure_student_login(
+            student_id=student_id,
+            email=email,
+            display_name=display_name,
+            academy_id=academy_id,
+            actor_id=actor_id,
+            reason=reason,
+        )
+        # Re-check with the *resolved* uid: get_by_email may miss (legacy
+        # docs, casing) where ensure_student_login's own lookup hits.
+        await self._reject_if_user_linked_elsewhere(user_id, student_id=student_id)
+
+        outcome = await self._students_w.link_student_user(student_id, user_id)
+        if outcome == "student_already_linked":
+            raise StudentAlreadyLinked(
+                f"student {student_id!r} already has a login", student_id=student_id
+            )
+        if outcome == "user_already_linked":
+            raise UserAlreadyLinkedToStudent(
+                "that email is already another student's login; use a different email",
+                student_id=student_id,
+            )
+        return user_id
 
 
 class _ConnectedAccountGatewayReader:
@@ -1641,6 +1747,10 @@ def compose_admin(
         academies=academy_repo,
     )
     provision_parent_login = ProvisionParentLogin(users_r)
+
+    provision_student_login = ProvisionStudentLogin(
+        _StudentLoginProvisionerAdapter(users_r, students_r, students_w)
+    )
     add_user_role = AddUserRole(users_r)
     remove_user_role = RemoveUserRole(users_r)
     list_admin_students = ListAdminStudents(students_r)
@@ -4266,6 +4376,7 @@ def compose_admin(
         update_admin_user=update_admin_user,
         create_admin_user=create_admin_user,
         provision_parent_login=provision_parent_login,
+        provision_student_login=provision_student_login,
         send_login_invite=send_login_invite,
         add_user_role=add_user_role,
         remove_user_role=remove_user_role,

@@ -1,5 +1,5 @@
 # UIM12 — Student login persona
-Status: TODO
+Status: DONE (PR #371, 2026-07-28)
 Size: L · Depends on: none (parent invite flow PR #297/298 is the template) · Tracker: ../TRACKER.md
 
 ## User value
