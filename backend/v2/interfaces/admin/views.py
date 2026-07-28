@@ -17,13 +17,13 @@ class AdminUserView(BaseModel):
     user_id: str
     email: EmailStr
     display_name: str
-    role: Literal["admin", "coach", "parent"]
+    role: Literal["admin", "coach", "parent", "owner"]
     status: str
 
 
 class AdminUserDetailView(AdminUserView):
     phone: str | None = None
-    roles: list[Literal["admin", "coach", "parent"]] = []
+    roles: list[Literal["admin", "coach", "parent", "owner"]] = []
     linked_student_count: int = 0
     session_count: int = 0
     login_invite_sent_at: datetime | None = None
@@ -34,7 +34,7 @@ class AdminUserList(BaseModel):
 
 
 class ModifyUserRoleRequest(BaseModel):
-    role: Literal["admin", "coach", "parent"]
+    role: Literal["admin", "coach", "parent", "owner"]
     reason: str = Field(default="Admin role change", min_length=1, max_length=500)
 
 
@@ -182,12 +182,12 @@ class UpdateAdminUserRequest(BaseModel):
 
 
 class UpdateAdminUserRoleRequest(BaseModel):
-    role: Literal["admin", "coach", "parent"]
+    role: Literal["admin", "coach", "parent", "owner"]
     reason: str = Field(default="admin role change", min_length=1, max_length=500)
 
 
 class CreateAdminUserRequest(BaseModel):
-    role: Literal["admin", "coach", "parent"]
+    role: Literal["admin", "coach", "parent", "owner"]
     display_name: str = Field(min_length=1, max_length=120)
     email: str = Field(min_length=1, max_length=254)
     phone: str | None = Field(default=None, max_length=40)
@@ -220,6 +220,14 @@ class BulkInviteResponse(BaseModel):
 
 class LoginInviteResponse(BaseModel):
     sent_at: datetime
+
+
+class StudentLoginInviteRequest(BaseModel):
+    """UIM12: admin-supplied email to provision a student's own login."""
+
+    email: str = Field(min_length=1, max_length=254)
+    display_name: str | None = Field(default=None, max_length=120)
+    reason: str = Field(default="student login invite", min_length=1, max_length=500)
 
 
 # --- Session Type Billing ---

@@ -35,6 +35,21 @@ class ParentLoginProvisioner(Protocol):
     ) -> str: ...
 
 
+class StudentLoginProvisioner(Protocol):
+    """Create/link the Firebase identity + membership for a student login (UIM12)."""
+
+    async def ensure_student_login(
+        self,
+        *,
+        student_id: str,
+        email: str,
+        display_name: str,
+        academy_id: str,
+        actor_id: str,
+        reason: str,
+    ) -> str: ...
+
+
 class PublicParentRegistrationRepository(UserRepository, Protocol):
     """Write port for first-time parent self-registration.
 

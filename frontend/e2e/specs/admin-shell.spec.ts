@@ -100,7 +100,24 @@ const SETTINGS_PANELS = [
   { key: "roles", label: "Roles", testid: "admin-settings-roles" },
   { key: "branding", label: "Branding", testid: "admin-settings-branding" },
   { key: "data", label: "Data", testid: "admin-settings-data" },
+  {
+    key: "session-types",
+    label: "Session types",
+    testid: "admin-settings-session-types",
+  },
 ] as const;
+
+const SESSION_TYPE_E2E = {
+  session_type_id: "st-e2e",
+  name: "Monthly Unlimited",
+  description: "All weekday squads",
+  price_cents: 12000,
+  billing_period: "monthly",
+  overage_rate_cents: 1500,
+  is_active: true,
+  created_at: "2026-07-01T00:00:00Z",
+  updated_at: "2026-07-01T00:00:00Z",
+} as const;
 
 const BENIGN_PATTERNS: RegExp[] = [
   /Download the React DevTools/i,
@@ -174,6 +191,14 @@ const MULTI_MEMBERSHIP = {
   active_academy_id: "academy-e2e",
 };
 
+const OWNER_MEMBERSHIP = {
+  memberships: MULTI_MEMBERSHIP.memberships.map((m) => ({
+    ...m,
+    roles: ["admin", "owner"],
+  })),
+  active_academy_id: "academy-e2e",
+};
+
 async function stubMemberships(page: Page, body = SINGLE_MEMBERSHIP) {
   await page.route("**/api/v2/me/memberships", (route) => {
     if (route.request().method() !== "GET") return route.fallback();
@@ -219,6 +244,10 @@ async function stubAdminBff(page: Page, memberships = SINGLE_MEMBERSHIP) {
         },
       ],
     });
+  });
+  await page.route("**/api/v2/admin/session-types*", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, { session_types: [SESSION_TYPE_E2E] });
   });
   await page.route("**/api/v2/admin/students*", (route) =>
     fulfillJson(route, { students: [] }),
@@ -447,6 +476,71 @@ test.describe("Rally admin shell", () => {
       errors,
       `App console errors on multi-academy switcher: ${errors.join("\n")}`,
     ).toEqual([]);
+  });
+
+  test("franchise rollup entry appears only for multi-academy owners", async ({
+    page,
+  }) => {
+    await stubAdminBff(page, MULTI_MEMBERSHIP);
+    await page.goto("/admin");
+    await expect(page.getByTestId("admin-dashboard")).toBeVisible();
+
+    // Admin in both academies, owner in neither — no rollup entry.
+    await page.getByTestId("tenant-switcher-button").click();
+    await expect(page.getByTestId("tenant-switcher-menu")).toBeVisible();
+    await expect(
+      page.getByTestId("tenant-switcher-all-academies"),
+    ).toHaveCount(0);
+  });
+
+  test("multi-academy owner can reach the franchise rollup from the switcher", async ({
+    page,
+  }) => {
+    await stubAdminBff(page, OWNER_MEMBERSHIP);
+    await page.route("**/api/v2/owner/rollup*", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, {
+        academies: [
+          {
+            academy_id: "academy-e2e",
+            academy_name: "Academy E2E",
+            revenue_by_month: { "2026-07": 120_000 },
+            collected_cents: 120_000,
+            outstanding_cents: 5_000,
+            outstanding_invoice_count: 2,
+          },
+          {
+            academy_id: "academy-e2e-2",
+            academy_name: "Academy E2E Two",
+            revenue_by_month: { "2026-07": 80_000 },
+            collected_cents: 80_000,
+            outstanding_cents: 1_000,
+            outstanding_invoice_count: 1,
+          },
+        ],
+        totals: {
+          academy_count: 2,
+          revenue_by_month: { "2026-07": 200_000 },
+          collected_cents: 200_000,
+          outstanding_cents: 6_000,
+          outstanding_invoice_count: 3,
+        },
+      });
+    });
+
+    await page.goto("/admin");
+    await expect(page.getByTestId("admin-dashboard")).toBeVisible();
+
+    await page.getByTestId("tenant-switcher-button").click();
+    const entry = page.getByTestId("tenant-switcher-all-academies");
+    await expect(entry).toBeVisible();
+    await entry.click();
+
+    await expect(page).toHaveURL(/\/owner$/);
+    await expect(page.getByTestId("owner-rollup-totals")).toContainText("$2,000.00");
+    await expect(
+      page.getByTestId("owner-rollup-row-academy-e2e-2"),
+    ).toContainText("Academy E2E Two");
   });
 
   test("admin navigation renders all nav groups, and mobile drawer closes", async ({
@@ -699,6 +793,61 @@ test.describe("Rally admin shell", () => {
       errors,
       `App console errors on settings: ${errors.join("\n")}`,
     ).toEqual([]);
+  });
+
+  test("session types panel lists the catalog and posts a new type", async ({
+    page,
+  }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    const created: Array<Record<string, unknown>> = [];
+    await page.route("**/api/v2/admin/session-types", (route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      created.push(route.request().postDataJSON());
+      return fulfillJson(route, {
+        ...SESSION_TYPE_E2E,
+        session_type_id: "st-new",
+        name: "Drop-in",
+      });
+    });
+
+    await page.goto("/admin/settings?panel=session-types");
+    await expect(page.getByTestId("admin-settings-session-types")).toBeVisible();
+    await expect(page.getByTestId("session-type-row")).toHaveCount(1);
+    // price_cents 12000 / overage 1500 must render as dollars, not raw cents.
+    await expect(page.getByText("$120.00")).toBeVisible();
+    await expect(page.getByText("$15.00")).toBeVisible();
+
+    await page.getByTestId("session-type-new").click();
+    await page.locator("#st-name").fill("Drop-in");
+    await page.locator("#st-price").fill("25.50");
+    await page.locator("#st-period").selectOption("per_session");
+    await page.getByTestId("session-type-save").click();
+
+    await expect.poll(() => created.length).toBe(1);
+    expect(created[0]).toMatchObject({
+      name: "Drop-in",
+      price_cents: 2550,
+      billing_period: "per_session",
+    });
+    expect(
+      errors,
+      `App console errors on session types: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  test("session types archive confirm warns that enrollments keep billing", async ({
+    page,
+  }) => {
+    await stubAdminBff(page);
+    await page.goto("/admin/settings?panel=session-types");
+    await expect(page.getByTestId("session-type-row")).toHaveCount(1);
+
+    await page.getByRole("button", { name: "Archive", exact: true }).click();
+    await expect(
+      page.getByText(/keep billing at their current price/i),
+    ).toBeVisible();
+    await expect(page.getByTestId("session-type-archive-confirm")).toBeVisible();
   });
 
   test("students search sends BFF query and renders returned rich fields", async ({

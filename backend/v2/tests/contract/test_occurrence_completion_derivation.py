@@ -6,7 +6,7 @@ so both payout paths derive completion from the clock:
 - ``MongoPayoutRepository._derive_from_completed_occurrences`` (billing,
   feeds the admin payouts dashboard list) matches past non-cancelled
   occurrences in its Mongo filter.
-- ``_MongoPayableOccurrenceQuery`` (composition, feeds
+- ``MongoPayableOccurrenceQuery`` (composition, feeds
   ``ComputeCoachPayout`` / payout periods) maps past scheduled
   occurrences to status "completed".
 """
@@ -17,8 +17,10 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from backend.v2.composition.admin import _MongoPayableOccurrenceQuery
 from backend.v2.contexts.billing.application.use_cases.finance import MongoPayoutRepository
+from backend.v2.contexts.coaching.infrastructure.mongo_payout_read_models import (
+    MongoPayableOccurrenceQuery,
+)
 
 
 def _hours_ago(hours: int) -> datetime:
@@ -104,7 +106,7 @@ async def test_payable_occurrence_query_derives_completion_and_revenue(db, acad)
         }
     )
 
-    occurrences = await _MongoPayableOccurrenceQuery(db).list_in_period(
+    occurrences = await MongoPayableOccurrenceQuery(db).list_in_period(
         acad, _hours_ago(48), _hours_ahead(48)
     )
 
