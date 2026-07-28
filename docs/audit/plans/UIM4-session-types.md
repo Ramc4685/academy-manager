@@ -62,6 +62,14 @@ Two assumptions in this plan were stale by the time it was built:
    `include_archived` query param plus a `list_all()` repo method (5 test fakes
    implement the port) — deliberately not bundled into this S-sized item.
 
+   **RESOLVED 2026-07-28** (release note
+   `2026-07-28-fix-uim4-archived-session-types.md`). `GET /admin/session-types`
+   now takes `include_archived` (default false), `ListSessionTypes.execute()`
+   routes to the new `SessionTypeRepository.list_all()`, and the panel has the
+   "Show archived" toggle and per-row Reactivate button the plan originally
+   asked for. The archive confirmation was reworded accordingly — archiving is
+   reversible again, so it no longer claims otherwise.
+
 ## PR checklist (release note · TRACKER.md · plan Status → DONE)
 - [ ] Release note
 - [ ] Update TRACKER.md row UIM4

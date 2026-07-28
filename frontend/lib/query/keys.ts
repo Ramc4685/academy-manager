@@ -81,7 +81,11 @@ export const queryKeys = {
     notifications: () => ["admin", "academy", "notifications"] as const,
     gateway: () => ["admin", "academy", "gateway"] as const,
     platformFallback: () => ["admin", "billing", "platform-fallback"] as const,
+    // sessionTypes() is the invalidation prefix; sessionTypesList() is the
+    // per-view cache key, since the archived and active lists differ.
     sessionTypes: () => ["admin", "session-types"] as const,
+    sessionTypesList: (includeArchived: boolean) =>
+      ["admin", "session-types", { includeArchived }] as const,
     lessonCards: (programId: string) =>
       ["admin", "pathway", programId, "lesson-cards"] as const,
     coachDigestLog: () => ["admin", "comms", "digests", "log"] as const,
