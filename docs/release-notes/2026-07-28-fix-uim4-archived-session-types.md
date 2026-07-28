@@ -1,6 +1,6 @@
 # fix-uim4-archived-session-types
 
-PR: #TBD
+PR: #376
 
 ## What changed
 Archiving a session type is no longer a one-way door. Admins can tick "Show
