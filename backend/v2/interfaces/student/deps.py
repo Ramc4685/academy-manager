@@ -9,6 +9,7 @@ AttributeError that would leak as a 500.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import cast
 
 from fastapi import Depends, HTTPException, Request
 
@@ -72,4 +73,6 @@ async def get_resolved_student(
     resolved = await use_cases.resolve_student(claims.user_id)  # type: ignore[operator]
     if resolved is None:
         raise HTTPException(status_code=404, detail="Not found")
-    return resolved
+    # `resolve_student` is held as `object` on StudentUseCases (composition
+    # supplies the callable), so mypy sees Any here.
+    return cast(ResolvedStudent, resolved)
