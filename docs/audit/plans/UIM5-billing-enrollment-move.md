@@ -1,5 +1,5 @@
 # UIM5 — Billing-enrollment move/override UI
-Status: DONE (PR #TBD, 2026-07-27)
+Status: DONE (PR #370, 2026-07-28)
 Size: M · Depends on: UIM4 (session-type picker/list + query key) · Tracker: ../TRACKER.md
 
 ## User value

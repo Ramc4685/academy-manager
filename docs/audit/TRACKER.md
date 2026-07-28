@@ -68,7 +68,7 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 | UIM2 | GET /me/memberships + real TenantSwitcher | [plans/UIM2-memberships-route.md](plans/UIM2-memberships-route.md) | S | — | DONE | [#366](https://github.com/Ramc4685/academy-manager/pull/366) |
 | UIM3 | Funnel/attendance/utilization reports UI | [plans/UIM3-analytics-reports.md](plans/UIM3-analytics-reports.md) | M | UIC3 (same surface) | DONE | [#362](https://github.com/Ramc4685/academy-manager/pull/362) |
 | UIM4 | Session-type management UI | [plans/UIM4-session-types.md](plans/UIM4-session-types.md) | S | — | TODO | |
-| UIM5 | Billing-enrollment move/override UI | [plans/UIM5-billing-enrollment-move.md](plans/UIM5-billing-enrollment-move.md) | M | — | DONE | #TBD |
+| UIM5 | Billing-enrollment move/override UI | [plans/UIM5-billing-enrollment-move.md](plans/UIM5-billing-enrollment-move.md) | M | — | DONE | [#370](https://github.com/Ramc4685/academy-manager/pull/370) |
 | UIM6 | Bulk user invite UI | [plans/UIM6-bulk-invite.md](plans/UIM6-bulk-invite.md) | S | UIC1 (same surface) | TODO | |
 | UIM7 | Coach skill-notes UI | [plans/UIM7-skill-notes.md](plans/UIM7-skill-notes.md) | S | — | DONE | [#353](https://github.com/Ramc4685/academy-manager/pull/353) |
 | UIM8 | Tuition-discounts report UI | [plans/UIM8-tuition-discounts.md](plans/UIM8-tuition-discounts.md) | S | — | DONE | [#359](https://github.com/Ramc4685/academy-manager/pull/359) — built on `/admin/dues` since UIC3 hasn't merged yet |
