@@ -68,7 +68,7 @@ async def _attach_tuition_discounts(data: dict, use_cases: AdminUseCases) -> Non
 
 @router.get("/users", response_model=AdminUserList)
 async def list_users(
-    role: Literal["admin", "coach", "parent"] | None = Query(default=None),
+    role: Literal["admin", "coach", "parent", "owner"] | None = Query(default=None),
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminUserList:
@@ -195,7 +195,7 @@ async def add_user_role(
 @router.delete("/users/{user_id}/roles/{role}", response_model=AdminUserDetailView)
 async def remove_user_role(
     user_id: str,
-    role: Literal["admin", "coach", "parent"],
+    role: Literal["admin", "coach", "parent", "owner"],
     reason: str = Query(default="Admin role change", min_length=1, max_length=500),
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),

@@ -78,221 +78,6 @@
       ]
     },
     {
-      "route": "/login",
-      "role": "public",
-      "source": "frontend/app/(marketing)/login/page.tsx",
-      "workflows": [
-        "Email/password sign-in",
-        "Google sign-in",
-        "Password reset",
-        "Verification resend"
-      ],
-      "controls": {
-        "buttons": [
-          "Sign in",
-          "Google",
-          "Forgot password",
-          "Register",
-          "Resend verification"
-        ],
-        "inputs": [
-          "Email",
-          "Password"
-        ],
-        "modals": []
-      },
-      "states": [
-        "loading",
-        "invalid credentials",
-        "unverified email",
-        "redirecting",
-        "notice",
-        "error state",
-        "validation error"
-      ],
-      "risk_edges": [
-        "Stale Firebase session",
-        "Verified email after open tab",
-        "No app membership"
-      ],
-      "acceptance": [
-        "Seeded admin, coach, and parent can sign in",
-        "Wrong-role users are redirected with notice",
-        "Workflow evidence: \"Email/password sign-in\" completes for the public route /login with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Google sign-in\" completes for the public route /login with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Password reset\" completes for the public route /login with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Verification resend\" completes for the public route /login with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Stale Firebase session\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Verified email after open tab\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"No app membership\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/register",
-      "role": "public",
-      "source": "frontend/app/(marketing)/register/page.tsx",
-      "workflows": [
-        "Parent registration",
-        "Firebase account creation",
-        "Email verification continuation"
-      ],
-      "controls": {
-        "buttons": [
-          "Create account",
-          "Continue",
-          "Back to login"
-        ],
-        "inputs": [
-          "Email",
-          "Password",
-          "Parent details"
-        ],
-        "modals": []
-      },
-      "states": [
-        "loading",
-        "validation error",
-        "verification required",
-        "backend failure"
-      ],
-      "risk_edges": [
-        "Firebase user created but backend registration fails",
-        "Expired pending registration"
-      ],
-      "acceptance": [
-        "Registration failures remain recoverable",
-        "No sensitive error leakage",
-        "Workflow evidence: \"Parent registration\" completes for the public route /register with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Firebase account creation\" completes for the public route /register with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Email verification continuation\" completes for the public route /register with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Firebase user created but backend registration fails\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Expired pending registration\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/post-login",
-      "role": "authenticated",
-      "source": "frontend/app/post-login/page.tsx",
-      "workflows": [
-        "Resolve persona home",
-        "Redirect by role"
-      ],
-      "controls": {
-        "buttons": [
-          "Retry"
-        ],
-        "inputs": [],
-        "modals": []
-      },
-      "states": [
-        "loading",
-        "no role",
-        "access denied",
-        "fallback redirect"
-      ],
-      "risk_edges": [
-        "/me 500 after Firebase success",
-        "Slow route compile leaves stale loading",
-        "Wrong-role persona redirect"
-      ],
-      "acceptance": [
-        "User lands on correct persona home",
-        "No indefinite loading",
-        "Workflow evidence: \"Resolve persona home\" completes for the authenticated route /post-login with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Redirect by role\" completes for the authenticated route /post-login with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"/me 500 after Firebase success\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Slow route compile leaves stale loading\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Wrong-role persona redirect\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/privacy",
-      "role": "public",
-      "source": "frontend/app/(marketing)/privacy/page.tsx",
-      "workflows": [
-        "Read privacy policy"
-      ],
-      "controls": {
-        "buttons": [
-          "Auth navigation"
-        ],
-        "inputs": [],
-        "modals": []
-      },
-      "states": [
-        "default",
-        "mobile"
-      ],
-      "risk_edges": [
-        "Missing legal content",
-        "Broken navigation"
-      ],
-      "acceptance": [
-        "Page renders readable legal content",
-        "Workflow evidence: \"Read privacy policy\" completes for the public route /privacy with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Missing legal content\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Broken navigation\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/terms",
-      "role": "public",
-      "source": "frontend/app/(marketing)/terms/page.tsx",
-      "workflows": [
-        "Read terms"
-      ],
-      "controls": {
-        "buttons": [
-          "Auth navigation"
-        ],
-        "inputs": [],
-        "modals": []
-      },
-      "states": [
-        "default",
-        "mobile"
-      ],
-      "risk_edges": [
-        "Missing legal content",
-        "Broken navigation"
-      ],
-      "acceptance": [
-        "Page renders readable terms",
-        "Workflow evidence: \"Read terms\" completes for the public route /terms with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Missing legal content\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Broken navigation\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/security",
-      "role": "public",
-      "source": "frontend/app/(marketing)/security/page.tsx",
-      "workflows": [
-        "Read security disclosure"
-      ],
-      "controls": {
-        "buttons": [
-          "Auth navigation"
-        ],
-        "inputs": [],
-        "modals": []
-      },
-      "states": [
-        "default",
-        "mobile"
-      ],
-      "risk_edges": [
-        "Broken disclosure contact",
-        "Broken navigation"
-      ],
-      "acceptance": [
-        "Page renders readable security content",
-        "Workflow evidence: \"Read security disclosure\" completes for the public route /security with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Broken disclosure contact\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Broken navigation\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
       "route": "/admin",
       "role": "admin",
       "source": "frontend/app/(admin)/admin/page.tsx",
@@ -332,6 +117,210 @@
       ]
     },
     {
+      "route": "/admin/audit-logs",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/audit-logs/page.tsx",
+      "workflows": [
+        "Review audit logs",
+        "Filter/paginate"
+      ],
+      "controls": {
+        "buttons": [
+          "Filter",
+          "Next page",
+          "Previous page"
+        ],
+        "inputs": [
+          "Actor",
+          "Action",
+          "Date"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty",
+        "pagination error"
+      ],
+      "risk_edges": [
+        "Cross-tenant audit leakage"
+      ],
+      "acceptance": [
+        "Audit logs are tenant-scoped and pageable",
+        "Workflow evidence: \"Review audit logs\" completes for the admin route /admin/audit-logs with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Filter/paginate\" completes for the admin route /admin/audit-logs with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Cross-tenant audit leakage\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/billing-health",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/billing-health/page.tsx",
+      "workflows": [
+        "Inspect webhook queue",
+        "Retry autopay",
+        "Replay webhook",
+        "Legacy match"
+      ],
+      "controls": {
+        "buttons": [
+          "Retry",
+          "Replay",
+          "Match",
+          "Refresh"
+        ],
+        "inputs": [
+          "Event id",
+          "Filters"
+        ],
+        "modals": [
+          "Replay confirmation",
+          "Legacy match confirmation"
+        ]
+      },
+      "states": [
+        "loading",
+        "healthy",
+        "degraded",
+        "failed replay",
+        "quarantine",
+        "error state",
+        "empty state"
+      ],
+      "risk_edges": [
+        "Webhook queue stalls",
+        "Replay does not converge",
+        "Wrong legacy candidate"
+      ],
+      "acceptance": [
+        "Admin can see unrecovered billing failures",
+        "Workflow evidence: \"Inspect webhook queue\" completes for the admin route /admin/billing-health with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Retry autopay\" completes for the admin route /admin/billing-health with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Replay webhook\" completes for the admin route /admin/billing-health with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Legacy match\" completes for the admin route /admin/billing-health with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Webhook queue stalls\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Replay does not converge\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Wrong legacy candidate\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/billing-setup",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/billing-setup/page.tsx",
+      "workflows": [
+        "Filter and search families by registration status",
+        "Send a context-aware invite (login invite or add-card reminder)",
+        "Charge a card-on-file parent's outstanding balance",
+        "Enable autopay for a parent's eligible (paused) enrollments"
+      ],
+      "controls": {
+        "buttons": [
+          "All",
+          "Not invited",
+          "No card",
+          "Chargeable",
+          "Send invite",
+          "Remind: add card",
+          "Charge now",
+          "Enable autopay",
+          "Refresh"
+        ],
+        "inputs": [
+          "Search parent name or email"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty state",
+        "error state",
+        "charge declined",
+        "invite failed"
+      ],
+      "risk_edges": [
+        "Charging without an active autopay enrollment must fail closed, not silently succeed",
+        "Enabling autopay must never skip the Stripe consent flow by jumping offered straight to active",
+        "Invite action must not create a duplicate login account on resend"
+      ],
+      "acceptance": [
+        "Workflow evidence: \"Filter and search families\" completes for the admin route /admin/billing-setup with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Send a context-aware invite\" completes for the admin route /admin/billing-setup with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Charge a card-on-file parent's outstanding balance\" completes for the admin route /admin/billing-setup with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Enable autopay for eligible enrollments\" completes for the admin route /admin/billing-setup with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Charge without active autopay\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Autopay enable must not skip Stripe consent\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Duplicate invite on resend\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/coach-payslip",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/coach-payslip/page.tsx",
+      "workflows": [
+        "Preview coach payslip"
+      ],
+      "controls": {
+        "buttons": [
+          "Generate",
+          "Export"
+        ],
+        "inputs": [
+          "Coach",
+          "Period"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty",
+        "missing rate",
+        "error state"
+      ],
+      "risk_edges": [
+        "Wrong coach selected",
+        "Missing rate silently zeroes pay"
+      ],
+      "acceptance": [
+        "Missing rate is explicit, not silently paid",
+        "Workflow evidence: \"Preview coach payslip\" completes for the admin route /admin/coach-payslip with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Wrong coach selected\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Missing rate silently zeroes pay\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/coaches",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/coaches/page.tsx",
+      "workflows": [
+        "List coaches",
+        "Open coach-related data"
+      ],
+      "controls": {
+        "buttons": [
+          "Search",
+          "Open"
+        ],
+        "inputs": [
+          "Search"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty",
+        "error"
+      ],
+      "risk_edges": [
+        "Coach parent multi-role confusion"
+      ],
+      "acceptance": [
+        "Coach directory renders seeded coaches",
+        "Workflow evidence: \"List coaches\" completes for the admin route /admin/coaches with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Open coach-related data\" completes for the admin route /admin/coaches with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Coach parent multi-role confusion\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
       "route": "/admin/dashboard",
       "role": "admin",
       "source": "frontend/app/(admin)/admin/dashboard/page.tsx",
@@ -355,6 +344,812 @@
         "Workflow evidence: \"Redirect to canonical admin dashboard\" completes for the admin route /admin/dashboard with real-user evidence and no framework or runtime errors.",
         "Risk evidence: \"Alias route loops\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"Alias route bypasses admin authorization\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/dues",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/dues/page.tsx",
+      "workflows": [
+        "Review dues",
+        "Send reminders"
+      ],
+      "controls": {
+        "buttons": [
+          "Select all",
+          "Send reminders",
+          "Refresh"
+        ],
+        "inputs": [
+          "Family checkboxes",
+          "Period"
+        ],
+        "modals": [
+          "Reminder confirmation"
+        ]
+      },
+      "states": [
+        "loading",
+        "empty",
+        "email disabled",
+        "send failed",
+        "error state"
+      ],
+      "risk_edges": [
+        "Local email disabled but UI claims sent"
+      ],
+      "acceptance": [
+        "Disabled email state is truthful",
+        "Workflow evidence: \"Review dues\" completes for the admin route /admin/dues with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Send reminders\" completes for the admin route /admin/dues with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Local email disabled but UI claims sent\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/expenses",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/expenses/page.tsx",
+      "workflows": [
+        "Add expense",
+        "Edit expense",
+        "Delete expense"
+      ],
+      "controls": {
+        "buttons": [
+          "Add",
+          "Edit",
+          "Delete",
+          "Cancel",
+          "Save",
+          "Confirm delete"
+        ],
+        "inputs": [
+          "Amount",
+          "Category",
+          "Date",
+          "Description"
+        ],
+        "modals": [
+          "Expense form",
+          "Delete confirmation"
+        ]
+      },
+      "states": [
+        "loading",
+        "empty",
+        "validation error",
+        "mutation error"
+      ],
+      "risk_edges": [
+        "Negative amount",
+        "Export/report mismatch"
+      ],
+      "acceptance": [
+        "Invalid expense input is rejected visibly",
+        "Workflow evidence: \"Add expense\" completes for the admin route /admin/expenses with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Edit expense\" completes for the admin route /admin/expenses with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Delete expense\" completes for the admin route /admin/expenses with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Negative amount\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Export/report mismatch\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/level-up-queue",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/level-up-queue/page.tsx",
+      "workflows": [
+        "Approve/reject level-up"
+      ],
+      "controls": {
+        "buttons": [
+          "Approve",
+          "Reject"
+        ],
+        "inputs": [
+          "Rejection reason"
+        ],
+        "modals": [
+          "Decision confirmation"
+        ]
+      },
+      "states": [
+        "loading",
+        "empty",
+        "mutation error"
+      ],
+      "risk_edges": [
+        "Reject without reason",
+        "Already-approved conflict"
+      ],
+      "acceptance": [
+        "Level-up decisions require valid reason when rejected",
+        "Workflow evidence: \"Approve/reject level-up\" completes for the admin route /admin/level-up-queue with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Reject without reason\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Already-approved conflict\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/messages",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/messages/page.tsx",
+      "workflows": [
+        "Compose broadcast",
+        "Review messages"
+      ],
+      "controls": {
+        "buttons": [
+          "Send",
+          "Save draft",
+          "Refresh",
+          "Select audience",
+          "Clear result"
+        ],
+        "inputs": [
+          "Audience",
+          "Subject",
+          "Message"
+        ],
+        "modals": [
+          "Compose message"
+        ]
+      },
+      "states": [
+        "loading",
+        "empty",
+        "partial send failure",
+        "email disabled",
+        "error state",
+        "validation error"
+      ],
+      "risk_edges": [
+        "Local email disabled but UI claims sent",
+        "Partial audience failure"
+      ],
+      "acceptance": [
+        "Delivery disabled/failure state is truthful",
+        "Workflow evidence: \"Compose broadcast\" completes for the admin route /admin/messages with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Review messages\" completes for the admin route /admin/messages with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Local email disabled but UI claims sent\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Partial audience failure\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/parents",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/parents/page.tsx",
+      "workflows": [
+        "List parents",
+        "Inspect family records"
+      ],
+      "controls": {
+        "buttons": [
+          "Search",
+          "Open"
+        ],
+        "inputs": [
+          "Search"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty",
+        "error",
+        "large pagination"
+      ],
+      "risk_edges": [
+        "Scale parent pagination",
+        "Missing invited_by provenance"
+      ],
+      "acceptance": [
+        "Scaled parent list renders without timeouts",
+        "Workflow evidence: \"List parents\" completes for the admin route /admin/parents with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Inspect family records\" completes for the admin route /admin/parents with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Scale parent pagination\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Missing invited_by provenance\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/pathway",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/pathway/page.tsx",
+      "workflows": [
+        "List/create programs",
+        "Open program"
+      ],
+      "controls": {
+        "buttons": [
+          "Create program",
+          "Open",
+          "Cancel program form"
+        ],
+        "inputs": [
+          "Program name",
+          "Program description"
+        ],
+        "modals": [
+          "Program form"
+        ]
+      },
+      "states": [
+        "loading",
+        "empty",
+        "mutation error"
+      ],
+      "risk_edges": [
+        "Duplicate program",
+        "Missing seed"
+      ],
+      "acceptance": [
+        "Seeded badminton pathway is visible",
+        "Workflow evidence: \"List/create programs\" completes for the admin route /admin/pathway with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Open program\" completes for the admin route /admin/pathway with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Duplicate program\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Missing seed\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/pathway/[programId]",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/pathway/[programId]/page.tsx",
+      "workflows": [
+        "Edit levels/skills/criteria"
+      ],
+      "controls": {
+        "buttons": [
+          "Add level",
+          "Add skill",
+          "Save",
+          "Delete",
+          "Cancel level form"
+        ],
+        "inputs": [
+          "Level name",
+          "Skill name",
+          "Criteria"
+        ],
+        "modals": [
+          "Level form",
+          "Skill form",
+          "Delete confirmation"
+        ]
+      },
+      "states": [
+        "loading",
+        "not found",
+        "validation error",
+        "mutation error",
+        "empty state"
+      ],
+      "risk_edges": [
+        "Deleting referenced skill",
+        "Concurrent pathway edit"
+      ],
+      "acceptance": [
+        "Pathway mutations fail visibly and preserve existing progress",
+        "Workflow evidence: \"Edit levels/skills/criteria\" completes for the admin route /admin/pathway/[programId] with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Deleting referenced skill\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Concurrent pathway edit\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/pathway/progress",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/pathway/progress/page.tsx",
+      "workflows": [
+        "Review progress overview"
+      ],
+      "controls": {
+        "buttons": [
+          "Filter",
+          "Open student"
+        ],
+        "inputs": [
+          "Program",
+          "Level",
+          "Search"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty",
+        "large pagination",
+        "error state"
+      ],
+      "risk_edges": [
+        "Scale progress query slow"
+      ],
+      "acceptance": [
+        "Progress overview handles scaled students",
+        "Workflow evidence: \"Review progress overview\" completes for the admin route /admin/pathway/progress with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Scale progress query slow\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/pause-requests",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/pause-requests/page.tsx",
+      "workflows": [
+        "Approve pause",
+        "Decline pause"
+      ],
+      "controls": {
+        "buttons": [
+          "Approve",
+          "Decline"
+        ],
+        "inputs": [
+          "Reason"
+        ],
+        "modals": [
+          "Decision confirmation"
+        ]
+      },
+      "states": [
+        "loading",
+        "empty",
+        "already decided",
+        "mutation error"
+      ],
+      "risk_edges": [
+        "Pause decision race",
+        "Billing deferral mismatch"
+      ],
+      "acceptance": [
+        "Conflicting decisions surface as recoverable errors",
+        "Workflow evidence: \"Approve pause\" completes for the admin route /admin/pause-requests with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Decline pause\" completes for the admin route /admin/pause-requests with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Pause decision race\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Billing deferral mismatch\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/payments",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/payments/page.tsx",
+      "workflows": [
+        "Generate monthly",
+        "Sync Stripe",
+        "Refund",
+        "Mark/undo paid",
+        "Review attempts"
+      ],
+      "controls": {
+        "buttons": [
+          "Generate monthly",
+          "Sync Stripe",
+          "Refund",
+          "Mark paid",
+          "Undo paid",
+          "Reconcile",
+          "Retry",
+          "Invoice",
+          "Discount"
+        ],
+        "inputs": [
+          "Period",
+          "Amount",
+          "Reason",
+          "Payment method",
+          "Notes"
+        ],
+        "modals": [
+          "Refund",
+          "Manual status",
+          "Reconciliation"
+        ]
+      },
+      "states": [
+        "loading",
+        "empty",
+        "failed attempt",
+        "duplicate action",
+        "mutation error",
+        "validation error"
+      ],
+      "risk_edges": [
+        "Double payment",
+        "Redirect treated as success",
+        "Legacy/ledger mismatch"
+      ],
+      "acceptance": [
+        "Money actions keep ledger authoritative and failures visible",
+        "Workflow evidence: \"Generate monthly\" completes for the admin route /admin/payments with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Sync Stripe\" completes for the admin route /admin/payments with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Refund\" completes for the admin route /admin/payments with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Mark/undo paid\" completes for the admin route /admin/payments with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Review attempts\" completes for the admin route /admin/payments with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Double payment\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Redirect treated as success\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Legacy/ledger mismatch\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/payouts",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/payouts/page.tsx",
+      "workflows": [
+        "Generate payout period",
+        "Review warnings",
+        "Open payout"
+      ],
+      "controls": {
+        "buttons": [
+          "Generate",
+          "Recompute",
+          "Open",
+          "Export"
+        ],
+        "inputs": [
+          "Month"
+        ],
+        "modals": [
+          "Generation confirmation"
+        ]
+      },
+      "states": [
+        "loading",
+        "empty",
+        "warnings",
+        "generation error"
+      ],
+      "risk_edges": [
+        "Percent-rate basis mismatch",
+        "Missing attendance blocks payout"
+      ],
+      "acceptance": [
+        "Warnings are visible before payout approval",
+        "Workflow evidence: \"Generate payout period\" completes for the admin route /admin/payouts with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Review warnings\" completes for the admin route /admin/payouts with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Open payout\" completes for the admin route /admin/payouts with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Percent-rate basis mismatch\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Missing attendance blocks payout\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/payouts/[payoutId]",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/payouts/[payoutId]/page.tsx",
+      "workflows": [
+        "Approve payout",
+        "Reopen",
+        "Mark paid",
+        "Add correction"
+      ],
+      "controls": {
+        "buttons": [
+          "Approve",
+          "Reopen",
+          "Mark paid",
+          "Export",
+          "Add correction"
+        ],
+        "inputs": [
+          "Reason",
+          "Correction amount"
+        ],
+        "modals": [
+          "Correction drawer",
+          "Reopen confirmation",
+          "Mark paid confirmation"
+        ]
+      },
+      "states": [
+        "loading",
+        "not found",
+        "approval blocked",
+        "paid",
+        "mutation error",
+        "empty state",
+        "validation error"
+      ],
+      "risk_edges": [
+        "Paid payout reopened without reason",
+        "Correction validation"
+      ],
+      "acceptance": [
+        "Payout state transitions require valid reasons and stay auditable",
+        "Workflow evidence: \"Approve payout\" completes for the admin route /admin/payouts/[payoutId] with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Reopen\" completes for the admin route /admin/payouts/[payoutId] with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Mark paid\" completes for the admin route /admin/payouts/[payoutId] with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Add correction\" completes for the admin route /admin/payouts/[payoutId] with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Paid payout reopened without reason\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Correction validation\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/registrations",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/registrations/page.tsx",
+      "workflows": [
+        "Review applications",
+        "Open application"
+      ],
+      "controls": {
+        "buttons": [
+          "Open",
+          "Filter"
+        ],
+        "inputs": [
+          "Status filter"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty",
+        "error"
+      ],
+      "risk_edges": [
+        "Pending applications hidden by filter"
+      ],
+      "acceptance": [
+        "Registration queue renders pending applications or clear empty state",
+        "Workflow evidence: \"Review applications\" completes for the admin route /admin/registrations with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Open application\" completes for the admin route /admin/registrations with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Pending applications hidden by filter\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/registrations/[applicationId]",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/registrations/[applicationId]/page.tsx",
+      "workflows": [
+        "Approve",
+        "Reject",
+        "Waitlist"
+      ],
+      "controls": {
+        "buttons": [
+          "Approve",
+          "Reject",
+          "Waitlist"
+        ],
+        "inputs": [
+          "Reason"
+        ],
+        "modals": [
+          "Decision confirmation"
+        ]
+      },
+      "states": [
+        "loading",
+        "not found",
+        "already decided",
+        "mutation error",
+        "validation error"
+      ],
+      "risk_edges": [
+        "Approval creates partial membership/enrollment",
+        "Stale cache after mutation"
+      ],
+      "acceptance": [
+        "Decision updates local cache and no stale error remains",
+        "Workflow evidence: \"Approve\" completes for the admin route /admin/registrations/[applicationId] with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Reject\" completes for the admin route /admin/registrations/[applicationId] with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Waitlist\" completes for the admin route /admin/registrations/[applicationId] with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Approval creates partial membership/enrollment\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Stale cache after mutation\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/reports",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/reports/page.tsx",
+      "workflows": [
+        "Review finance/attendance reports",
+        "Export",
+        "Review enrollment funnel, attendance trends, and coach utilization"
+      ],
+      "controls": {
+        "buttons": [
+          "Refresh",
+          "Export"
+        ],
+        "inputs": [
+          "Period"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty",
+        "partial unavailable",
+        "export error"
+      ],
+      "risk_edges": [
+        "Tenant data leakage in export"
+      ],
+      "acceptance": [
+        "Exports are tenant-scoped and failures are visible",
+        "Workflow evidence: \"Review finance/attendance reports\" completes for the admin route /admin/reports with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Export\" completes for the admin route /admin/reports with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Review enrollment funnel, attendance trends, and coach utilization\" completes for the admin route /admin/reports with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Tenant data leakage in export\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/reports/deposit-slip",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/reports/deposit-slip/page.tsx",
+      "workflows": [
+        "Reconcile daily deposits by payment method",
+        "Export deposit-slip CSV"
+      ],
+      "controls": {
+        "buttons": [
+          "Export CSV"
+        ],
+        "inputs": [
+          "Month"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty",
+        "load error",
+        "export error"
+      ],
+      "risk_edges": [
+        "Tenant data leakage in deposit slip"
+      ],
+      "acceptance": [
+        "Daily totals are tenant-scoped gross receipts grouped by payment method",
+        "Workflow evidence: \"Reconcile daily deposits by payment method\" completes for the admin route /admin/reports/deposit-slip with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Export deposit-slip CSV\" completes for the admin route /admin/reports/deposit-slip with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Tenant data leakage in deposit slip\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/reports/refunds",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/reports/refunds/page.tsx",
+      "workflows": [
+        "Review monthly refunds and account credits",
+        "Export refunds CSV"
+      ],
+      "controls": {
+        "buttons": [
+          "Export CSV"
+        ],
+        "inputs": [
+          "Month"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty",
+        "load error",
+        "export error"
+      ],
+      "risk_edges": [
+        "Tenant data leakage in refunds report"
+      ],
+      "acceptance": [
+        "Refund and credit rows are tenant-scoped and match the billing audit trail",
+        "Workflow evidence: \"Review monthly refunds and account credits\" completes for the admin route /admin/reports/refunds with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Export refunds CSV\" completes for the admin route /admin/reports/refunds with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Tenant data leakage in refunds report\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/reports/revenue-by-category",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/reports/revenue-by-category/page.tsx",
+      "workflows": [
+        "Review collected revenue by category",
+        "Export revenue-by-category CSV"
+      ],
+      "controls": {
+        "buttons": [
+          "Export CSV"
+        ],
+        "inputs": [
+          "Month"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty",
+        "load error",
+        "export error"
+      ],
+      "risk_edges": [
+        "Tenant data leakage in revenue report"
+      ],
+      "acceptance": [
+        "Category totals are tenant-scoped and sum to the money applied to invoices in the month",
+        "Workflow evidence: \"Review collected revenue by category\" completes for the admin route /admin/reports/revenue-by-category with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Export revenue-by-category CSV\" completes for the admin route /admin/reports/revenue-by-category with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Tenant data leakage in revenue report\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/requests",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/requests/page.tsx",
+      "workflows": [
+        "Approve makeup",
+        "Deny makeup",
+        "Approve trial",
+        "Deny trial",
+        "Review cancellations"
+      ],
+      "controls": {
+        "buttons": [
+          "Approve",
+          "Deny"
+        ],
+        "inputs": [
+          "Target occurrence id",
+          "Reason"
+        ],
+        "modals": [
+          "Approve makeup",
+          "Deny makeup",
+          "Approve trial",
+          "Deny trial"
+        ]
+      },
+      "states": [
+        "loading",
+        "empty",
+        "mutation error",
+        "status filters",
+        "validation"
+      ],
+      "risk_edges": [
+        "Approve into full occurrence",
+        "Fee billing failure visibility"
+      ],
+      "acceptance": [
+        "Admin decisions surface backend capacity and billing errors as recoverable states",
+        "Workflow evidence: \"Approve makeup\" completes for the admin route /admin/requests with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Deny makeup\" completes for the admin route /admin/requests with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Approve trial\" completes for the admin route /admin/requests with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Deny trial\" completes for the admin route /admin/requests with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Review cancellations\" completes for the admin route /admin/requests with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Approve into full occurrence\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Fee billing failure visibility\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/session-economics",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/session-economics/page.tsx",
+      "workflows": [
+        "Review session profitability"
+      ],
+      "controls": {
+        "buttons": [
+          "Refresh",
+          "Export"
+        ],
+        "inputs": [
+          "Period",
+          "Session filter"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty",
+        "partial unavailable",
+        "error state"
+      ],
+      "risk_edges": [
+        "Revenue/payroll disagree",
+        "Scale query slow"
+      ],
+      "acceptance": [
+        "Report distinguishes unavailable payroll from zero payroll",
+        "Workflow evidence: \"Review session profitability\" completes for the admin route /admin/session-economics with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Revenue/payroll disagree\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Scale query slow\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     },
     {
@@ -512,6 +1307,92 @@
         "Workflow evidence: \"Update skill statuses\" completes for the admin route /admin/sessions/[id]/skill-board with real-user evidence and no framework or runtime errors.",
         "Risk evidence: \"Bulk update partial failure\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"Unplaced student visible but not actionable\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/settings",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/settings/page.tsx",
+      "workflows": [
+        "Edit academy settings",
+        "Fees",
+        "Gateway",
+        "Notifications",
+        "Branding",
+        "Data"
+      ],
+      "controls": {
+        "buttons": [
+          "Save",
+          "Cancel",
+          "Connect Stripe"
+        ],
+        "inputs": [
+          "Academy name",
+          "Fees",
+          "Notification toggles",
+          "Branding"
+        ],
+        "modals": [
+          "Stripe gateway",
+          "Data action confirmation"
+        ]
+      },
+      "states": [
+        "loading",
+        "saved",
+        "validation error",
+        "provider unavailable"
+      ],
+      "risk_edges": [
+        "CORS/origin mismatch",
+        "Stripe connect unavailable"
+      ],
+      "acceptance": [
+        "Each panel saves or shows specific failure",
+        "Workflow evidence: \"Edit academy settings\" completes for the admin route /admin/settings with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Fees\" completes for the admin route /admin/settings with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Gateway\" completes for the admin route /admin/settings with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Notifications\" completes for the admin route /admin/settings with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Branding\" completes for the admin route /admin/settings with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Data\" completes for the admin route /admin/settings with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"CORS/origin mismatch\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Stripe connect unavailable\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/settings/self-service",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/settings/self-service/page.tsx",
+      "workflows": [
+        "Update self-service policy"
+      ],
+      "controls": {
+        "buttons": [
+          "Save"
+        ],
+        "inputs": [
+          "Notice hours",
+          "Makeup expiry days",
+          "Cancellation notice days",
+          "Cancellation fee",
+          "Effective timing"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "saving",
+        "save error",
+        "saved confirmation"
+      ],
+      "risk_edges": [
+        "Policy change mid-request lifecycle"
+      ],
+      "acceptance": [
+        "Policy edits persist and reload with server-validated values",
+        "Workflow evidence: \"Update self-service policy\" completes for the admin route /admin/settings/self-service with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Policy change mid-request lifecycle\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     },
     {
@@ -696,43 +1577,6 @@
       ]
     },
     {
-      "route": "/admin/users/new",
-      "role": "admin",
-      "source": "frontend/app/(admin)/admin/users/new/page.tsx",
-      "workflows": [
-        "Create user",
-        "Auto-send parent login invite"
-      ],
-      "controls": {
-        "buttons": [
-          "Create user"
-        ],
-        "inputs": [
-          "Full name",
-          "Email",
-          "Phone (optional)",
-          "Role"
-        ],
-        "modals": []
-      },
-      "states": [
-        "idle form",
-        "submitting",
-        "validation error",
-        "create failed (email exists)",
-        "created \u2192 redirect to user detail"
-      ],
-      "risk_edges": [
-        "duplicate email \u2192 creation fails, surfaced inline",
-        "parent auto-invite send failure is best-effort (user created, invite re-sendable)"
-      ],
-      "acceptance": [
-        "admin can create parent/coach/admin with name+email",
-        "parent creation auto-sends set-password invite",
-        "successful create navigates to /admin/users/[userId]"
-      ]
-    },
-    {
       "route": "/admin/users/[userId]",
       "role": "admin",
       "source": "frontend/app/(admin)/admin/users/[userId]/page.tsx",
@@ -774,731 +1618,40 @@
       ]
     },
     {
-      "route": "/admin/coaches",
+      "route": "/admin/users/new",
       "role": "admin",
-      "source": "frontend/app/(admin)/admin/coaches/page.tsx",
+      "source": "frontend/app/(admin)/admin/users/new/page.tsx",
       "workflows": [
-        "List coaches",
-        "Open coach-related data"
+        "Create user",
+        "Auto-send parent login invite"
       ],
       "controls": {
         "buttons": [
-          "Search",
-          "Open"
+          "Create user"
         ],
         "inputs": [
-          "Search"
+          "Full name",
+          "Email",
+          "Phone (optional)",
+          "Role"
         ],
         "modals": []
       },
       "states": [
-        "loading",
-        "empty",
-        "error"
-      ],
-      "risk_edges": [
-        "Coach parent multi-role confusion"
-      ],
-      "acceptance": [
-        "Coach directory renders seeded coaches",
-        "Workflow evidence: \"List coaches\" completes for the admin route /admin/coaches with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Open coach-related data\" completes for the admin route /admin/coaches with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Coach parent multi-role confusion\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/admin/parents",
-      "role": "admin",
-      "source": "frontend/app/(admin)/admin/parents/page.tsx",
-      "workflows": [
-        "List parents",
-        "Inspect family records"
-      ],
-      "controls": {
-        "buttons": [
-          "Search",
-          "Open"
-        ],
-        "inputs": [
-          "Search"
-        ],
-        "modals": []
-      },
-      "states": [
-        "loading",
-        "empty",
-        "error",
-        "large pagination"
-      ],
-      "risk_edges": [
-        "Scale parent pagination",
-        "Missing invited_by provenance"
-      ],
-      "acceptance": [
-        "Scaled parent list renders without timeouts",
-        "Workflow evidence: \"List parents\" completes for the admin route /admin/parents with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Inspect family records\" completes for the admin route /admin/parents with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Scale parent pagination\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Missing invited_by provenance\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/admin/payments",
-      "role": "admin",
-      "source": "frontend/app/(admin)/admin/payments/page.tsx",
-      "workflows": [
-        "Generate monthly",
-        "Sync Stripe",
-        "Refund",
-        "Mark/undo paid",
-        "Review attempts"
-      ],
-      "controls": {
-        "buttons": [
-          "Generate monthly",
-          "Sync Stripe",
-          "Refund",
-          "Mark paid",
-          "Undo paid",
-          "Reconcile",
-          "Retry",
-          "Invoice",
-          "Discount"
-        ],
-        "inputs": [
-          "Period",
-          "Amount",
-          "Reason",
-          "Payment method",
-          "Notes"
-        ],
-        "modals": [
-          "Refund",
-          "Manual status",
-          "Reconciliation"
-        ]
-      },
-      "states": [
-        "loading",
-        "empty",
-        "failed attempt",
-        "duplicate action",
-        "mutation error",
-        "validation error"
-      ],
-      "risk_edges": [
-        "Double payment",
-        "Redirect treated as success",
-        "Legacy/ledger mismatch"
-      ],
-      "acceptance": [
-        "Money actions keep ledger authoritative and failures visible",
-        "Workflow evidence: \"Generate monthly\" completes for the admin route /admin/payments with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Sync Stripe\" completes for the admin route /admin/payments with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Refund\" completes for the admin route /admin/payments with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Mark/undo paid\" completes for the admin route /admin/payments with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Review attempts\" completes for the admin route /admin/payments with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Double payment\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Redirect treated as success\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Legacy/ledger mismatch\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/admin/billing-health",
-      "role": "admin",
-      "source": "frontend/app/(admin)/admin/billing-health/page.tsx",
-      "workflows": [
-        "Inspect webhook queue",
-        "Retry autopay",
-        "Replay webhook",
-        "Legacy match"
-      ],
-      "controls": {
-        "buttons": [
-          "Retry",
-          "Replay",
-          "Match",
-          "Refresh"
-        ],
-        "inputs": [
-          "Event id",
-          "Filters"
-        ],
-        "modals": [
-          "Replay confirmation",
-          "Legacy match confirmation"
-        ]
-      },
-      "states": [
-        "loading",
-        "healthy",
-        "degraded",
-        "failed replay",
-        "quarantine",
-        "error state",
-        "empty state"
-      ],
-      "risk_edges": [
-        "Webhook queue stalls",
-        "Replay does not converge",
-        "Wrong legacy candidate"
-      ],
-      "acceptance": [
-        "Admin can see unrecovered billing failures",
-        "Workflow evidence: \"Inspect webhook queue\" completes for the admin route /admin/billing-health with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Retry autopay\" completes for the admin route /admin/billing-health with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Replay webhook\" completes for the admin route /admin/billing-health with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Legacy match\" completes for the admin route /admin/billing-health with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Webhook queue stalls\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Replay does not converge\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Wrong legacy candidate\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/admin/billing-setup",
-      "role": "admin",
-      "source": "frontend/app/(admin)/admin/billing-setup/page.tsx",
-      "workflows": [
-        "Filter and search families by registration status",
-        "Send a context-aware invite (login invite or add-card reminder)",
-        "Charge a card-on-file parent's outstanding balance",
-        "Enable autopay for a parent's eligible (paused) enrollments"
-      ],
-      "controls": {
-        "buttons": [
-          "All",
-          "Not invited",
-          "No card",
-          "Chargeable",
-          "Send invite",
-          "Remind: add card",
-          "Charge now",
-          "Enable autopay",
-          "Refresh"
-        ],
-        "inputs": [
-          "Search parent name or email"
-        ],
-        "modals": []
-      },
-      "states": [
-        "loading",
-        "empty state",
-        "error state",
-        "charge declined",
-        "invite failed"
-      ],
-      "risk_edges": [
-        "Charging without an active autopay enrollment must fail closed, not silently succeed",
-        "Enabling autopay must never skip the Stripe consent flow by jumping offered straight to active",
-        "Invite action must not create a duplicate login account on resend"
-      ],
-      "acceptance": [
-        "Workflow evidence: \"Filter and search families\" completes for the admin route /admin/billing-setup with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Send a context-aware invite\" completes for the admin route /admin/billing-setup with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Charge a card-on-file parent's outstanding balance\" completes for the admin route /admin/billing-setup with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Enable autopay for eligible enrollments\" completes for the admin route /admin/billing-setup with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Charge without active autopay\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Autopay enable must not skip Stripe consent\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Duplicate invite on resend\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/admin/dues",
-      "role": "admin",
-      "source": "frontend/app/(admin)/admin/dues/page.tsx",
-      "workflows": [
-        "Review dues",
-        "Send reminders"
-      ],
-      "controls": {
-        "buttons": [
-          "Select all",
-          "Send reminders",
-          "Refresh"
-        ],
-        "inputs": [
-          "Family checkboxes",
-          "Period"
-        ],
-        "modals": [
-          "Reminder confirmation"
-        ]
-      },
-      "states": [
-        "loading",
-        "empty",
-        "email disabled",
-        "send failed",
-        "error state"
-      ],
-      "risk_edges": [
-        "Local email disabled but UI claims sent"
-      ],
-      "acceptance": [
-        "Disabled email state is truthful",
-        "Workflow evidence: \"Review dues\" completes for the admin route /admin/dues with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Send reminders\" completes for the admin route /admin/dues with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Local email disabled but UI claims sent\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/admin/pause-requests",
-      "role": "admin",
-      "source": "frontend/app/(admin)/admin/pause-requests/page.tsx",
-      "workflows": [
-        "Approve pause",
-        "Decline pause"
-      ],
-      "controls": {
-        "buttons": [
-          "Approve",
-          "Decline"
-        ],
-        "inputs": [
-          "Reason"
-        ],
-        "modals": [
-          "Decision confirmation"
-        ]
-      },
-      "states": [
-        "loading",
-        "empty",
-        "already decided",
-        "mutation error"
-      ],
-      "risk_edges": [
-        "Pause decision race",
-        "Billing deferral mismatch"
-      ],
-      "acceptance": [
-        "Conflicting decisions surface as recoverable errors",
-        "Workflow evidence: \"Approve pause\" completes for the admin route /admin/pause-requests with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Decline pause\" completes for the admin route /admin/pause-requests with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Pause decision race\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Billing deferral mismatch\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/admin/expenses",
-      "role": "admin",
-      "source": "frontend/app/(admin)/admin/expenses/page.tsx",
-      "workflows": [
-        "Add expense",
-        "Edit expense",
-        "Delete expense"
-      ],
-      "controls": {
-        "buttons": [
-          "Add",
-          "Edit",
-          "Delete",
-          "Cancel",
-          "Save",
-          "Confirm delete"
-        ],
-        "inputs": [
-          "Amount",
-          "Category",
-          "Date",
-          "Description"
-        ],
-        "modals": [
-          "Expense form",
-          "Delete confirmation"
-        ]
-      },
-      "states": [
-        "loading",
-        "empty",
+        "idle form",
+        "submitting",
         "validation error",
-        "mutation error"
+        "create failed (email exists)",
+        "created \u2192 redirect to user detail"
       ],
       "risk_edges": [
-        "Negative amount",
-        "Export/report mismatch"
+        "duplicate email \u2192 creation fails, surfaced inline",
+        "parent auto-invite send failure is best-effort (user created, invite re-sendable)"
       ],
       "acceptance": [
-        "Invalid expense input is rejected visibly",
-        "Workflow evidence: \"Add expense\" completes for the admin route /admin/expenses with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Edit expense\" completes for the admin route /admin/expenses with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Delete expense\" completes for the admin route /admin/expenses with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Negative amount\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Export/report mismatch\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/admin/payouts",
-      "role": "admin",
-      "source": "frontend/app/(admin)/admin/payouts/page.tsx",
-      "workflows": [
-        "Generate payout period",
-        "Review warnings",
-        "Open payout"
-      ],
-      "controls": {
-        "buttons": [
-          "Generate",
-          "Recompute",
-          "Open",
-          "Export"
-        ],
-        "inputs": [
-          "Month"
-        ],
-        "modals": [
-          "Generation confirmation"
-        ]
-      },
-      "states": [
-        "loading",
-        "empty",
-        "warnings",
-        "generation error"
-      ],
-      "risk_edges": [
-        "Percent-rate basis mismatch",
-        "Missing attendance blocks payout"
-      ],
-      "acceptance": [
-        "Warnings are visible before payout approval",
-        "Workflow evidence: \"Generate payout period\" completes for the admin route /admin/payouts with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Review warnings\" completes for the admin route /admin/payouts with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Open payout\" completes for the admin route /admin/payouts with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Percent-rate basis mismatch\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Missing attendance blocks payout\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/admin/payouts/[payoutId]",
-      "role": "admin",
-      "source": "frontend/app/(admin)/admin/payouts/[payoutId]/page.tsx",
-      "workflows": [
-        "Approve payout",
-        "Reopen",
-        "Mark paid",
-        "Add correction"
-      ],
-      "controls": {
-        "buttons": [
-          "Approve",
-          "Reopen",
-          "Mark paid",
-          "Export",
-          "Add correction"
-        ],
-        "inputs": [
-          "Reason",
-          "Correction amount"
-        ],
-        "modals": [
-          "Correction drawer",
-          "Reopen confirmation",
-          "Mark paid confirmation"
-        ]
-      },
-      "states": [
-        "loading",
-        "not found",
-        "approval blocked",
-        "paid",
-        "mutation error",
-        "empty state",
-        "validation error"
-      ],
-      "risk_edges": [
-        "Paid payout reopened without reason",
-        "Correction validation"
-      ],
-      "acceptance": [
-        "Payout state transitions require valid reasons and stay auditable",
-        "Workflow evidence: \"Approve payout\" completes for the admin route /admin/payouts/[payoutId] with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Reopen\" completes for the admin route /admin/payouts/[payoutId] with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Mark paid\" completes for the admin route /admin/payouts/[payoutId] with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Add correction\" completes for the admin route /admin/payouts/[payoutId] with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Paid payout reopened without reason\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Correction validation\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/admin/session-economics",
-      "role": "admin",
-      "source": "frontend/app/(admin)/admin/session-economics/page.tsx",
-      "workflows": [
-        "Review session profitability"
-      ],
-      "controls": {
-        "buttons": [
-          "Refresh",
-          "Export"
-        ],
-        "inputs": [
-          "Period",
-          "Session filter"
-        ],
-        "modals": []
-      },
-      "states": [
-        "loading",
-        "empty",
-        "partial unavailable",
-        "error state"
-      ],
-      "risk_edges": [
-        "Revenue/payroll disagree",
-        "Scale query slow"
-      ],
-      "acceptance": [
-        "Report distinguishes unavailable payroll from zero payroll",
-        "Workflow evidence: \"Review session profitability\" completes for the admin route /admin/session-economics with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Revenue/payroll disagree\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Scale query slow\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/admin/reports",
-      "role": "admin",
-      "source": "frontend/app/(admin)/admin/reports/page.tsx",
-      "workflows": [
-        "Review finance/attendance reports",
-        "Export",
-        "Review enrollment funnel, attendance trends, and coach utilization"
-      ],
-      "controls": {
-        "buttons": [
-          "Refresh",
-          "Export"
-        ],
-        "inputs": [
-          "Period"
-        ],
-        "modals": []
-      },
-      "states": [
-        "loading",
-        "empty",
-        "partial unavailable",
-        "export error"
-      ],
-      "risk_edges": [
-        "Tenant data leakage in export"
-      ],
-      "acceptance": [
-        "Exports are tenant-scoped and failures are visible",
-        "Workflow evidence: \"Review finance/attendance reports\" completes for the admin route /admin/reports with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Export\" completes for the admin route /admin/reports with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Review enrollment funnel, attendance trends, and coach utilization\" completes for the admin route /admin/reports with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Tenant data leakage in export\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/admin/reports/refunds",
-      "role": "admin",
-      "source": "frontend/app/(admin)/admin/reports/refunds/page.tsx",
-      "workflows": [
-        "Review monthly refunds and account credits",
-        "Export refunds CSV"
-      ],
-      "controls": {
-        "buttons": [
-          "Export CSV"
-        ],
-        "inputs": [
-          "Month"
-        ],
-        "modals": []
-      },
-      "states": [
-        "loading",
-        "empty",
-        "load error",
-        "export error"
-      ],
-      "risk_edges": [
-        "Tenant data leakage in refunds report"
-      ],
-      "acceptance": [
-        "Refund and credit rows are tenant-scoped and match the billing audit trail",
-        "Workflow evidence: \"Review monthly refunds and account credits\" completes for the admin route /admin/reports/refunds with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Export refunds CSV\" completes for the admin route /admin/reports/refunds with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Tenant data leakage in refunds report\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/admin/reports/revenue-by-category",
-      "role": "admin",
-      "source": "frontend/app/(admin)/admin/reports/revenue-by-category/page.tsx",
-      "workflows": [
-        "Review collected revenue by category",
-        "Export revenue-by-category CSV"
-      ],
-      "controls": {
-        "buttons": [
-          "Export CSV"
-        ],
-        "inputs": [
-          "Month"
-        ],
-        "modals": []
-      },
-      "states": [
-        "loading",
-        "empty",
-        "load error",
-        "export error"
-      ],
-      "risk_edges": [
-        "Tenant data leakage in revenue report"
-      ],
-      "acceptance": [
-        "Category totals are tenant-scoped and sum to the money applied to invoices in the month",
-        "Workflow evidence: \"Review collected revenue by category\" completes for the admin route /admin/reports/revenue-by-category with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Export revenue-by-category CSV\" completes for the admin route /admin/reports/revenue-by-category with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Tenant data leakage in revenue report\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/admin/reports/deposit-slip",
-      "role": "admin",
-      "source": "frontend/app/(admin)/admin/reports/deposit-slip/page.tsx",
-      "workflows": [
-        "Reconcile daily deposits by payment method",
-        "Export deposit-slip CSV"
-      ],
-      "controls": {
-        "buttons": [
-          "Export CSV"
-        ],
-        "inputs": [
-          "Month"
-        ],
-        "modals": []
-      },
-      "states": [
-        "loading",
-        "empty",
-        "load error",
-        "export error"
-      ],
-      "risk_edges": [
-        "Tenant data leakage in deposit slip"
-      ],
-      "acceptance": [
-        "Daily totals are tenant-scoped gross receipts grouped by payment method",
-        "Workflow evidence: \"Reconcile daily deposits by payment method\" completes for the admin route /admin/reports/deposit-slip with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Export deposit-slip CSV\" completes for the admin route /admin/reports/deposit-slip with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Tenant data leakage in deposit slip\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/admin/coach-payslip",
-      "role": "admin",
-      "source": "frontend/app/(admin)/admin/coach-payslip/page.tsx",
-      "workflows": [
-        "Preview coach payslip"
-      ],
-      "controls": {
-        "buttons": [
-          "Generate",
-          "Export"
-        ],
-        "inputs": [
-          "Coach",
-          "Period"
-        ],
-        "modals": []
-      },
-      "states": [
-        "loading",
-        "empty",
-        "missing rate",
-        "error state"
-      ],
-      "risk_edges": [
-        "Wrong coach selected",
-        "Missing rate silently zeroes pay"
-      ],
-      "acceptance": [
-        "Missing rate is explicit, not silently paid",
-        "Workflow evidence: \"Preview coach payslip\" completes for the admin route /admin/coach-payslip with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Wrong coach selected\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Missing rate silently zeroes pay\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/admin/registrations",
-      "role": "admin",
-      "source": "frontend/app/(admin)/admin/registrations/page.tsx",
-      "workflows": [
-        "Review applications",
-        "Open application"
-      ],
-      "controls": {
-        "buttons": [
-          "Open",
-          "Filter"
-        ],
-        "inputs": [
-          "Status filter"
-        ],
-        "modals": []
-      },
-      "states": [
-        "loading",
-        "empty",
-        "error"
-      ],
-      "risk_edges": [
-        "Pending applications hidden by filter"
-      ],
-      "acceptance": [
-        "Registration queue renders pending applications or clear empty state",
-        "Workflow evidence: \"Review applications\" completes for the admin route /admin/registrations with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Open application\" completes for the admin route /admin/registrations with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Pending applications hidden by filter\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/admin/registrations/[applicationId]",
-      "role": "admin",
-      "source": "frontend/app/(admin)/admin/registrations/[applicationId]/page.tsx",
-      "workflows": [
-        "Approve",
-        "Reject",
-        "Waitlist"
-      ],
-      "controls": {
-        "buttons": [
-          "Approve",
-          "Reject",
-          "Waitlist"
-        ],
-        "inputs": [
-          "Reason"
-        ],
-        "modals": [
-          "Decision confirmation"
-        ]
-      },
-      "states": [
-        "loading",
-        "not found",
-        "already decided",
-        "mutation error",
-        "validation error"
-      ],
-      "risk_edges": [
-        "Approval creates partial membership/enrollment",
-        "Stale cache after mutation"
-      ],
-      "acceptance": [
-        "Decision updates local cache and no stale error remains",
-        "Workflow evidence: \"Approve\" completes for the admin route /admin/registrations/[applicationId] with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Reject\" completes for the admin route /admin/registrations/[applicationId] with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Waitlist\" completes for the admin route /admin/registrations/[applicationId] with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Approval creates partial membership/enrollment\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Stale cache after mutation\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+        "admin can create parent/coach/admin with name+email",
+        "parent creation auto-sends set-password invite",
+        "successful create navigates to /admin/users/[userId]"
       ]
     },
     {
@@ -1648,287 +1801,139 @@
       ]
     },
     {
-      "route": "/admin/pathway",
-      "role": "admin",
-      "source": "frontend/app/(admin)/admin/pathway/page.tsx",
+      "route": "/api/csp-report",
+      "role": "public",
+      "source": "frontend/app/api/csp-report/route.ts",
       "workflows": [
-        "List/create programs",
-        "Open program"
+        "Collect CSP violation reports"
       ],
       "controls": {
-        "buttons": [
-          "Create program",
-          "Open",
-          "Cancel program form"
-        ],
+        "buttons": [],
         "inputs": [
-          "Program name",
-          "Program description"
-        ],
-        "modals": [
-          "Program form"
-        ]
-      },
-      "states": [
-        "loading",
-        "empty",
-        "mutation error"
-      ],
-      "risk_edges": [
-        "Duplicate program",
-        "Missing seed"
-      ],
-      "acceptance": [
-        "Seeded badminton pathway is visible",
-        "Workflow evidence: \"List/create programs\" completes for the admin route /admin/pathway with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Open program\" completes for the admin route /admin/pathway with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Duplicate program\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Missing seed\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/admin/pathway/[programId]",
-      "role": "admin",
-      "source": "frontend/app/(admin)/admin/pathway/[programId]/page.tsx",
-      "workflows": [
-        "Edit levels/skills/criteria"
-      ],
-      "controls": {
-        "buttons": [
-          "Add level",
-          "Add skill",
-          "Save",
-          "Delete",
-          "Cancel level form"
-        ],
-        "inputs": [
-          "Level name",
-          "Skill name",
-          "Criteria"
-        ],
-        "modals": [
-          "Level form",
-          "Skill form",
-          "Delete confirmation"
-        ]
-      },
-      "states": [
-        "loading",
-        "not found",
-        "validation error",
-        "mutation error",
-        "empty state"
-      ],
-      "risk_edges": [
-        "Deleting referenced skill",
-        "Concurrent pathway edit"
-      ],
-      "acceptance": [
-        "Pathway mutations fail visibly and preserve existing progress",
-        "Workflow evidence: \"Edit levels/skills/criteria\" completes for the admin route /admin/pathway/[programId] with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Deleting referenced skill\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Concurrent pathway edit\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/admin/pathway/progress",
-      "role": "admin",
-      "source": "frontend/app/(admin)/admin/pathway/progress/page.tsx",
-      "workflows": [
-        "Review progress overview"
-      ],
-      "controls": {
-        "buttons": [
-          "Filter",
-          "Open student"
-        ],
-        "inputs": [
-          "Program",
-          "Level",
-          "Search"
+          "CSP violation report body"
         ],
         "modals": []
       },
       "states": [
-        "loading",
-        "empty",
-        "large pagination",
-        "error state"
+        "report logged",
+        "empty body ignored",
+        "malformed body ignored"
       ],
       "risk_edges": [
-        "Scale progress query slow"
+        "Oversized report body",
+        "Log noise from malicious reports"
       ],
       "acceptance": [
-        "Progress overview handles scaled students",
-        "Workflow evidence: \"Review progress overview\" completes for the admin route /admin/pathway/progress with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Scale progress query slow\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+        "Browser-sent CSP violation reports return 204 and are logged truncated server-side",
+        "Workflow evidence: \"Collect CSP violation reports\" completes for the public route /api/csp-report with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Oversized report body\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Log noise from malicious reports\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     },
     {
-      "route": "/admin/level-up-queue",
-      "role": "admin",
-      "source": "frontend/app/(admin)/admin/level-up-queue/page.tsx",
+      "route": "/api/v2/[...path]",
+      "role": "proxy",
+      "source": "frontend/app/api/v2/[...path]/route.ts",
       "workflows": [
-        "Approve/reject level-up"
+        "Proxy BFF requests",
+        "Bridge auth headers",
+        "Forward methods"
       ],
       "controls": {
-        "buttons": [
-          "Approve",
-          "Reject"
-        ],
+        "buttons": [],
         "inputs": [
-          "Rejection reason"
-        ],
-        "modals": [
-          "Decision confirmation"
-        ]
-      },
-      "states": [
-        "loading",
-        "empty",
-        "mutation error"
-      ],
-      "risk_edges": [
-        "Reject without reason",
-        "Already-approved conflict"
-      ],
-      "acceptance": [
-        "Level-up decisions require valid reason when rejected",
-        "Workflow evidence: \"Approve/reject level-up\" completes for the admin route /admin/level-up-queue with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Reject without reason\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Already-approved conflict\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/admin/messages",
-      "role": "admin",
-      "source": "frontend/app/(admin)/admin/messages/page.tsx",
-      "workflows": [
-        "Compose broadcast",
-        "Review messages"
-      ],
-      "controls": {
-        "buttons": [
-          "Send",
-          "Save draft",
-          "Refresh",
-          "Select audience",
-          "Clear result"
-        ],
-        "inputs": [
-          "Audience",
-          "Subject",
-          "Message"
-        ],
-        "modals": [
-          "Compose message"
-        ]
-      },
-      "states": [
-        "loading",
-        "empty",
-        "partial send failure",
-        "email disabled",
-        "error state",
-        "validation error"
-      ],
-      "risk_edges": [
-        "Local email disabled but UI claims sent",
-        "Partial audience failure"
-      ],
-      "acceptance": [
-        "Delivery disabled/failure state is truthful",
-        "Workflow evidence: \"Compose broadcast\" completes for the admin route /admin/messages with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Review messages\" completes for the admin route /admin/messages with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Local email disabled but UI claims sent\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Partial audience failure\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/admin/settings",
-      "role": "admin",
-      "source": "frontend/app/(admin)/admin/settings/page.tsx",
-      "workflows": [
-        "Edit academy settings",
-        "Fees",
-        "Gateway",
-        "Notifications",
-        "Branding",
-        "Data"
-      ],
-      "controls": {
-        "buttons": [
-          "Save",
-          "Cancel",
-          "Connect Stripe"
-        ],
-        "inputs": [
-          "Academy name",
-          "Fees",
-          "Notification toggles",
-          "Branding"
-        ],
-        "modals": [
-          "Stripe gateway",
-          "Data action confirmation"
-        ]
-      },
-      "states": [
-        "loading",
-        "saved",
-        "validation error",
-        "provider unavailable"
-      ],
-      "risk_edges": [
-        "CORS/origin mismatch",
-        "Stripe connect unavailable"
-      ],
-      "acceptance": [
-        "Each panel saves or shows specific failure",
-        "Workflow evidence: \"Edit academy settings\" completes for the admin route /admin/settings with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Fees\" completes for the admin route /admin/settings with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Gateway\" completes for the admin route /admin/settings with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Notifications\" completes for the admin route /admin/settings with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Branding\" completes for the admin route /admin/settings with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Data\" completes for the admin route /admin/settings with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"CORS/origin mismatch\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Stripe connect unavailable\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/admin/audit-logs",
-      "role": "admin",
-      "source": "frontend/app/(admin)/admin/audit-logs/page.tsx",
-      "workflows": [
-        "Review audit logs",
-        "Filter/paginate"
-      ],
-      "controls": {
-        "buttons": [
-          "Filter",
-          "Next page",
-          "Previous page"
-        ],
-        "inputs": [
-          "Actor",
-          "Action",
-          "Date"
+          "HTTP method",
+          "Headers",
+          "Body"
         ],
         "modals": []
       },
       "states": [
-        "loading",
-        "empty",
-        "pagination error"
+        "success",
+        "upstream error",
+        "redirect",
+        "tenant mismatch"
       ],
       "risk_edges": [
-        "Cross-tenant audit leakage"
+        "Auth header dropped",
+        "Upstream redirect mishandled",
+        "Binary headers lost"
       ],
       "acceptance": [
-        "Audit logs are tenant-scoped and pageable",
-        "Workflow evidence: \"Review audit logs\" completes for the admin route /admin/audit-logs with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Filter/paginate\" completes for the admin route /admin/audit-logs with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Cross-tenant audit leakage\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+        "Proxy preserves auth/tenant semantics and meaningful status codes",
+        "Workflow evidence: \"Proxy BFF requests\" completes for the proxy route /api/v2/[...path] with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Bridge auth headers\" completes for the proxy route /api/v2/[...path] with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Forward methods\" completes for the proxy route /api/v2/[...path] with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Auth header dropped\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Upstream redirect mishandled\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Binary headers lost\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/auth/magic",
+      "role": "public",
+      "source": "frontend/app/(marketing)/auth/magic/page.tsx",
+      "workflows": [
+        "One-time magic-link auto-login",
+        "Expired-link recovery to sign-in"
+      ],
+      "controls": {
+        "buttons": [
+          "Go to sign in"
+        ],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "expired",
+        "invalid",
+        "error",
+        "redirecting",
+        "validation"
+      ],
+      "risk_edges": [
+        "Reused/consumed token race",
+        "Cross-tenant token",
+        "Mail-scanner prefetch",
+        "Open-redirect next_path"
+      ],
+      "acceptance": [
+        "Workflow evidence: \"One-time magic-link auto-login\" completes for the public route /auth/magic with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Expired-link recovery to sign-in\" completes for the public route /auth/magic with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Reused/consumed token race\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Cross-tenant token\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Mail-scanner prefetch\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Open-redirect next_path\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/calendar",
+      "role": "authenticated",
+      "source": "frontend/app/(shared)/calendar/page.tsx",
+      "workflows": [
+        "Open role-scoped schedule handoff"
+      ],
+      "controls": {
+        "buttons": [
+          "Open schedule"
+        ],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "signed-in",
+        "role destination fallback"
+      ],
+      "risk_edges": [
+        "Wrong role destination",
+        "Unauthenticated user sees handoff content"
+      ],
+      "acceptance": [
+        "Calendar handoff renders one role-scoped schedule link instead of stale calendar controls",
+        "Workflow evidence: \"Open role-scoped schedule handoff\" completes for the authenticated route /calendar with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Wrong role destination\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Unauthenticated user sees handoff content\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     },
     {
@@ -1974,41 +1979,74 @@
       ]
     },
     {
-      "route": "/coach/today",
+      "route": "/coach/needs-review",
       "role": "coach",
-      "source": "frontend/app/(coach)/coach/today/page.tsx",
+      "source": "frontend/app/(coach)/coach/needs-review/page.tsx",
       "workflows": [
-        "Review today's classes",
-        "Navigate date",
-        "Open plan"
+        "Review failed offline writes",
+        "Dismiss/export"
       ],
       "controls": {
         "buttons": [
-          "Previous",
-          "Today",
-          "Next",
-          "Open plan"
+          "Dismiss",
+          "Export CSV"
         ],
         "inputs": [],
         "modals": []
       },
       "states": [
-        "loading",
         "empty",
-        "refreshing",
-        "error"
+        "failed queue",
+        "export error",
+        "loading"
       ],
       "risk_edges": [
-        "Timezone shifts class date",
-        "No full date picker"
+        "Conflict resolution described but not implemented"
       ],
       "acceptance": [
-        "Seeded coach sees correct local-time sessions",
-        "Workflow evidence: \"Review today's classes\" completes for the coach route /coach/today with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Navigate date\" completes for the coach route /coach/today with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Open plan\" completes for the coach route /coach/today with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Timezone shifts class date\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"No full date picker\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+        "Failed writes remain visible until dismissed",
+        "Workflow evidence: \"Review failed offline writes\" completes for the coach route /coach/needs-review with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Dismiss/export\" completes for the coach route /coach/needs-review with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Conflict resolution described but not implemented\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/coach/profile",
+      "role": "coach",
+      "source": "frontend/app/(coach)/coach/profile/page.tsx",
+      "workflows": [
+        "Edit profile",
+        "Logout"
+      ],
+      "controls": {
+        "buttons": [
+          "Edit",
+          "Save",
+          "Cancel",
+          "Logout"
+        ],
+        "inputs": [
+          "Display name",
+          "Phone"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "save error",
+        "offline",
+        "empty state"
+      ],
+      "risk_edges": [
+        "Missing query error state",
+        "Logout failure"
+      ],
+      "acceptance": [
+        "Profile save failure is explicit",
+        "Workflow evidence: \"Edit profile\" completes for the coach route /coach/profile with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Logout\" completes for the coach route /coach/profile with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Missing query error state\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Logout failure\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     },
     {
@@ -2089,6 +2127,38 @@
       ]
     },
     {
+      "route": "/coach/sessions/[id]/progress",
+      "role": "coach",
+      "source": "frontend/app/(coach)/coach/sessions/[id]/progress/page.tsx",
+      "workflows": [
+        "Record session progress"
+      ],
+      "controls": {
+        "buttons": [
+          "Save",
+          "Pass",
+          "Needs practice"
+        ],
+        "inputs": [
+          "Progress note"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty",
+        "mutation error"
+      ],
+      "risk_edges": [
+        "Progress saved to wrong student/session"
+      ],
+      "acceptance": [
+        "Progress writes are scoped to session and student",
+        "Workflow evidence: \"Record session progress\" completes for the coach route /coach/sessions/[id]/progress with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Progress saved to wrong student/session\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
       "route": "/coach/sessions/[id]/skills",
       "role": "coach",
       "source": "frontend/app/(coach)/coach/sessions/[id]/skills/page.tsx",
@@ -2124,38 +2194,6 @@
         "Workflow evidence: \"Update skill status\" completes for the coach route /coach/sessions/[id]/skills with real-user evidence and no framework or runtime errors.",
         "Risk evidence: \"Partial skill update\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"Unplaced student hidden\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/coach/sessions/[id]/progress",
-      "role": "coach",
-      "source": "frontend/app/(coach)/coach/sessions/[id]/progress/page.tsx",
-      "workflows": [
-        "Record session progress"
-      ],
-      "controls": {
-        "buttons": [
-          "Save",
-          "Pass",
-          "Needs practice"
-        ],
-        "inputs": [
-          "Progress note"
-        ],
-        "modals": []
-      },
-      "states": [
-        "loading",
-        "empty",
-        "mutation error"
-      ],
-      "risk_edges": [
-        "Progress saved to wrong student/session"
-      ],
-      "acceptance": [
-        "Progress writes are scoped to session and student",
-        "Workflow evidence: \"Record session progress\" completes for the coach route /coach/sessions/[id]/progress with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Progress saved to wrong student/session\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     },
     {
@@ -2208,6 +2246,44 @@
       ]
     },
     {
+      "route": "/coach/today",
+      "role": "coach",
+      "source": "frontend/app/(coach)/coach/today/page.tsx",
+      "workflows": [
+        "Review today's classes",
+        "Navigate date",
+        "Open plan"
+      ],
+      "controls": {
+        "buttons": [
+          "Previous",
+          "Today",
+          "Next",
+          "Open plan"
+        ],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty",
+        "refreshing",
+        "error"
+      ],
+      "risk_edges": [
+        "Timezone shifts class date",
+        "No full date picker"
+      ],
+      "acceptance": [
+        "Seeded coach sees correct local-time sessions",
+        "Workflow evidence: \"Review today's classes\" completes for the coach route /coach/today with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Navigate date\" completes for the coach route /coach/today with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Open plan\" completes for the coach route /coach/today with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Timezone shifts class date\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"No full date picker\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
       "route": "/coach/today/plan",
       "role": "coach",
       "source": "frontend/app/(coach)/coach/today/plan/page.tsx",
@@ -2245,74 +2321,229 @@
       ]
     },
     {
-      "route": "/coach/profile",
-      "role": "coach",
-      "source": "frontend/app/(coach)/coach/profile/page.tsx",
+      "route": "/login",
+      "role": "public",
+      "source": "frontend/app/(marketing)/login/page.tsx",
       "workflows": [
-        "Edit profile",
-        "Logout"
+        "Email/password sign-in",
+        "Google sign-in",
+        "Password reset",
+        "Verification resend"
       ],
       "controls": {
         "buttons": [
-          "Edit",
-          "Save",
-          "Cancel",
-          "Logout"
+          "Sign in",
+          "Google",
+          "Forgot password",
+          "Register",
+          "Resend verification"
         ],
         "inputs": [
-          "Display name",
-          "Phone"
+          "Email",
+          "Password"
         ],
         "modals": []
       },
       "states": [
         "loading",
-        "save error",
-        "offline",
-        "empty state"
+        "invalid credentials",
+        "unverified email",
+        "redirecting",
+        "notice",
+        "error state",
+        "validation error"
       ],
       "risk_edges": [
-        "Missing query error state",
-        "Logout failure"
+        "Stale Firebase session",
+        "Verified email after open tab",
+        "No app membership"
       ],
       "acceptance": [
-        "Profile save failure is explicit",
-        "Workflow evidence: \"Edit profile\" completes for the coach route /coach/profile with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Logout\" completes for the coach route /coach/profile with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Missing query error state\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Logout failure\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+        "Seeded admin, coach, and parent can sign in",
+        "Wrong-role users are redirected with notice",
+        "Workflow evidence: \"Email/password sign-in\" completes for the public route /login with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Google sign-in\" completes for the public route /login with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Password reset\" completes for the public route /login with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Verification resend\" completes for the public route /login with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Stale Firebase session\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Verified email after open tab\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"No app membership\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     },
     {
-      "route": "/coach/needs-review",
-      "role": "coach",
-      "source": "frontend/app/(coach)/coach/needs-review/page.tsx",
+      "route": "/messages",
+      "role": "authenticated",
+      "source": "frontend/app/(shared)/messages/page.tsx",
       "workflows": [
-        "Review failed offline writes",
-        "Dismiss/export"
+        "Open role-scoped messages handoff"
       ],
       "controls": {
         "buttons": [
-          "Dismiss",
-          "Export CSV"
+          "Open admin messages",
+          "Go to workspace"
         ],
         "inputs": [],
         "modals": []
       },
       "states": [
-        "empty",
-        "failed queue",
-        "export error",
-        "loading"
+        "loading",
+        "admin destination",
+        "non-admin destination"
       ],
       "risk_edges": [
-        "Conflict resolution described but not implemented"
+        "Non-admin gets admin message destination",
+        "Loading state persists after auth resolves"
       ],
       "acceptance": [
-        "Failed writes remain visible until dismissed",
-        "Workflow evidence: \"Review failed offline writes\" completes for the coach route /coach/needs-review with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Dismiss/export\" completes for the coach route /coach/needs-review with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Conflict resolution described but not implemented\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+        "Messages handoff renders the destination appropriate for the signed-in role",
+        "Workflow evidence: \"Open role-scoped messages handoff\" completes for the authenticated route /messages with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Non-admin gets admin message destination\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Loading state persists after auth resolves\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/owner",
+      "role": "authenticated",
+      "source": "frontend/app/(owner)/owner/page.tsx",
+      "workflows": [
+        "Review consolidated franchise totals",
+        "Drill into a single academy dashboard"
+      ],
+      "controls": {
+        "buttons": [
+          "Back to academy",
+          "Sign out"
+        ],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "error state",
+        "empty",
+        "access denied"
+      ],
+      "risk_edges": [
+        "Owner membership revoked mid-session",
+        "Owner role feature flag disabled"
+      ],
+      "acceptance": [
+        "Rollup totals equal the sum of each owned academy's admin figures",
+        "A user with no owner membership receives a 404 from GET /owner/rollup",
+        "Workflow evidence: \"Review consolidated franchise totals\" completes for the authenticated route /owner with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Drill into a single academy dashboard\" completes for the authenticated route /owner with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Owner membership revoked mid-session\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Owner role feature flag disabled\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/parent/attendance",
+      "role": "parent",
+      "source": "frontend/app/(parent)/parent/attendance/page.tsx",
+      "workflows": [
+        "Review attendance history"
+      ],
+      "controls": {
+        "buttons": [
+          "Filter",
+          "Refresh"
+        ],
+        "inputs": [
+          "Child",
+          "Period"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty",
+        "error"
+      ],
+      "risk_edges": [
+        "N+1 slow load at scale",
+        "Wrong-family attendance leak"
+      ],
+      "acceptance": [
+        "Attendance loads for scaled data without blank page",
+        "Workflow evidence: \"Review attendance history\" completes for the parent route /parent/attendance with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"N+1 slow load at scale\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Wrong-family attendance leak\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/parent/checkout/return",
+      "role": "parent",
+      "source": "frontend/app/(parent)/parent/checkout/return/page.tsx",
+      "workflows": [
+        "Poll checkout status",
+        "Show terminal status"
+      ],
+      "controls": {
+        "buttons": [
+          "Back to dashboard",
+          "Retry payment"
+        ],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "polling",
+        "paid",
+        "expired",
+        "refunded",
+        "missing application",
+        "error state"
+      ],
+      "risk_edges": [
+        "Long-running nonterminal status",
+        "Redirect treated as payment success"
+      ],
+      "acceptance": [
+        "Only backend terminal status drives success copy",
+        "Workflow evidence: \"Poll checkout status\" completes for the parent route /parent/checkout/return with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Show terminal status\" completes for the parent route /parent/checkout/return with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Long-running nonterminal status\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Redirect treated as payment success\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/parent/children",
+      "role": "parent",
+      "source": "frontend/app/(parent)/parent/children/page.tsx",
+      "workflows": [
+        "Review children",
+        "Review schedules"
+      ],
+      "controls": {
+        "buttons": [
+          "Open child",
+          "Add child",
+          "Report absence",
+          "Cancel enrollment"
+        ],
+        "inputs": [
+          "Reason"
+        ],
+        "modals": [
+          "Cancel enrollment confirmation"
+        ]
+      },
+      "states": [
+        "loading",
+        "empty",
+        "error",
+        "validation"
+      ],
+      "risk_edges": [
+        "Empty after prior enrollment",
+        "Wrong-family child leak"
+      ],
+      "acceptance": [
+        "Only parent's children render",
+        "Workflow evidence: \"Review children\" completes for the parent route /parent/children with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Review schedules\" completes for the parent route /parent/children with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Empty after prior enrollment\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Wrong-family child leak\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     },
     {
@@ -2411,42 +2642,6 @@
       ]
     },
     {
-      "route": "/parent/checkout/return",
-      "role": "parent",
-      "source": "frontend/app/(parent)/parent/checkout/return/page.tsx",
-      "workflows": [
-        "Poll checkout status",
-        "Show terminal status"
-      ],
-      "controls": {
-        "buttons": [
-          "Back to dashboard",
-          "Retry payment"
-        ],
-        "inputs": [],
-        "modals": []
-      },
-      "states": [
-        "polling",
-        "paid",
-        "expired",
-        "refunded",
-        "missing application",
-        "error state"
-      ],
-      "risk_edges": [
-        "Long-running nonterminal status",
-        "Redirect treated as payment success"
-      ],
-      "acceptance": [
-        "Only backend terminal status drives success copy",
-        "Workflow evidence: \"Poll checkout status\" completes for the parent route /parent/checkout/return with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Show terminal status\" completes for the parent route /parent/checkout/return with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Long-running nonterminal status\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Redirect treated as payment success\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
       "route": "/parent/payments",
       "role": "parent",
       "source": "frontend/app/(parent)/parent/payments/page.tsx",
@@ -2503,120 +2698,6 @@
       ]
     },
     {
-      "route": "/parent/waivers",
-      "role": "parent",
-      "source": "frontend/app/(parent)/parent/waivers/page.tsx",
-      "workflows": [
-        "Review waiver status",
-        "Sign waiver"
-      ],
-      "controls": {
-        "buttons": [
-          "Accept waiver",
-          "Retry"
-        ],
-        "inputs": [
-          "Signer name"
-        ],
-        "modals": []
-      },
-      "states": [
-        "loading",
-        "not required",
-        "pending",
-        "signed",
-        "outdated",
-        "error",
-        "validation error",
-        "empty"
-      ],
-      "risk_edges": [
-        "Signer name blank",
-        "Mixed outdated/current child states"
-      ],
-      "acceptance": [
-        "Current waiver signature is required before dependent workflows",
-        "Workflow evidence: \"Review waiver status\" completes for the parent route /parent/waivers with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Sign waiver\" completes for the parent route /parent/waivers with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Signer name blank\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Mixed outdated/current child states\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/parent/children",
-      "role": "parent",
-      "source": "frontend/app/(parent)/parent/children/page.tsx",
-      "workflows": [
-        "Review children",
-        "Review schedules"
-      ],
-      "controls": {
-        "buttons": [
-          "Open child",
-          "Add child",
-          "Report absence",
-          "Cancel enrollment"
-        ],
-        "inputs": [
-          "Reason"
-        ],
-        "modals": [
-          "Cancel enrollment confirmation"
-        ]
-      },
-      "states": [
-        "loading",
-        "empty",
-        "error",
-        "validation"
-      ],
-      "risk_edges": [
-        "Empty after prior enrollment",
-        "Wrong-family child leak"
-      ],
-      "acceptance": [
-        "Only parent's children render",
-        "Workflow evidence: \"Review children\" completes for the parent route /parent/children with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Review schedules\" completes for the parent route /parent/children with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Empty after prior enrollment\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Wrong-family child leak\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/parent/attendance",
-      "role": "parent",
-      "source": "frontend/app/(parent)/parent/attendance/page.tsx",
-      "workflows": [
-        "Review attendance history"
-      ],
-      "controls": {
-        "buttons": [
-          "Filter",
-          "Refresh"
-        ],
-        "inputs": [
-          "Child",
-          "Period"
-        ],
-        "modals": []
-      },
-      "states": [
-        "loading",
-        "empty",
-        "error"
-      ],
-      "risk_edges": [
-        "N+1 slow load at scale",
-        "Wrong-family attendance leak"
-      ],
-      "acceptance": [
-        "Attendance loads for scaled data without blank page",
-        "Workflow evidence: \"Review attendance history\" completes for the parent route /parent/attendance with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"N+1 slow load at scale\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Wrong-family attendance leak\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
       "route": "/parent/progress",
       "role": "parent",
       "source": "frontend/app/(parent)/parent/progress/page.tsx",
@@ -2650,135 +2731,6 @@
         "Workflow evidence: \"Open resources\" completes for the parent route /parent/progress with real-user evidence and no framework or runtime errors.",
         "Risk evidence: \"Progress flag mismatch\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"External resource unavailable\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/calendar",
-      "role": "authenticated",
-      "source": "frontend/app/(shared)/calendar/page.tsx",
-      "workflows": [
-        "Open role-scoped schedule handoff"
-      ],
-      "controls": {
-        "buttons": [
-          "Open schedule"
-        ],
-        "inputs": [],
-        "modals": []
-      },
-      "states": [
-        "signed-in",
-        "role destination fallback"
-      ],
-      "risk_edges": [
-        "Wrong role destination",
-        "Unauthenticated user sees handoff content"
-      ],
-      "acceptance": [
-        "Calendar handoff renders one role-scoped schedule link instead of stale calendar controls",
-        "Workflow evidence: \"Open role-scoped schedule handoff\" completes for the authenticated route /calendar with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Wrong role destination\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Unauthenticated user sees handoff content\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/messages",
-      "role": "authenticated",
-      "source": "frontend/app/(shared)/messages/page.tsx",
-      "workflows": [
-        "Open role-scoped messages handoff"
-      ],
-      "controls": {
-        "buttons": [
-          "Open admin messages",
-          "Go to workspace"
-        ],
-        "inputs": [],
-        "modals": []
-      },
-      "states": [
-        "loading",
-        "admin destination",
-        "non-admin destination"
-      ],
-      "risk_edges": [
-        "Non-admin gets admin message destination",
-        "Loading state persists after auth resolves"
-      ],
-      "acceptance": [
-        "Messages handoff renders the destination appropriate for the signed-in role",
-        "Workflow evidence: \"Open role-scoped messages handoff\" completes for the authenticated route /messages with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Non-admin gets admin message destination\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Loading state persists after auth resolves\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/api/csp-report",
-      "role": "public",
-      "source": "frontend/app/api/csp-report/route.ts",
-      "workflows": [
-        "Collect CSP violation reports"
-      ],
-      "controls": {
-        "buttons": [],
-        "inputs": [
-          "CSP violation report body"
-        ],
-        "modals": []
-      },
-      "states": [
-        "report logged",
-        "empty body ignored",
-        "malformed body ignored"
-      ],
-      "risk_edges": [
-        "Oversized report body",
-        "Log noise from malicious reports"
-      ],
-      "acceptance": [
-        "Browser-sent CSP violation reports return 204 and are logged truncated server-side",
-        "Workflow evidence: \"Collect CSP violation reports\" completes for the public route /api/csp-report with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Oversized report body\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Log noise from malicious reports\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/api/v2/[...path]",
-      "role": "proxy",
-      "source": "frontend/app/api/v2/[...path]/route.ts",
-      "workflows": [
-        "Proxy BFF requests",
-        "Bridge auth headers",
-        "Forward methods"
-      ],
-      "controls": {
-        "buttons": [],
-        "inputs": [
-          "HTTP method",
-          "Headers",
-          "Body"
-        ],
-        "modals": []
-      },
-      "states": [
-        "success",
-        "upstream error",
-        "redirect",
-        "tenant mismatch"
-      ],
-      "risk_edges": [
-        "Auth header dropped",
-        "Upstream redirect mishandled",
-        "Binary headers lost"
-      ],
-      "acceptance": [
-        "Proxy preserves auth/tenant semantics and meaningful status codes",
-        "Workflow evidence: \"Proxy BFF requests\" completes for the proxy route /api/v2/[...path] with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Bridge auth headers\" completes for the proxy route /api/v2/[...path] with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Forward methods\" completes for the proxy route /api/v2/[...path] with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Auth header dropped\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Upstream redirect mishandled\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Binary headers lost\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     },
     {
@@ -2825,125 +2777,208 @@
       ]
     },
     {
-      "route": "/admin/requests",
-      "role": "admin",
-      "source": "frontend/app/(admin)/admin/requests/page.tsx",
+      "route": "/parent/waivers",
+      "role": "parent",
+      "source": "frontend/app/(parent)/parent/waivers/page.tsx",
       "workflows": [
-        "Approve makeup",
-        "Deny makeup",
-        "Approve trial",
-        "Deny trial",
-        "Review cancellations"
+        "Review waiver status",
+        "Sign waiver"
       ],
       "controls": {
         "buttons": [
-          "Approve",
-          "Deny"
+          "Accept waiver",
+          "Retry"
         ],
         "inputs": [
-          "Target occurrence id",
-          "Reason"
-        ],
-        "modals": [
-          "Approve makeup",
-          "Deny makeup",
-          "Approve trial",
-          "Deny trial"
-        ]
-      },
-      "states": [
-        "loading",
-        "empty",
-        "mutation error",
-        "status filters",
-        "validation"
-      ],
-      "risk_edges": [
-        "Approve into full occurrence",
-        "Fee billing failure visibility"
-      ],
-      "acceptance": [
-        "Admin decisions surface backend capacity and billing errors as recoverable states",
-        "Workflow evidence: \"Approve makeup\" completes for the admin route /admin/requests with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Deny makeup\" completes for the admin route /admin/requests with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Approve trial\" completes for the admin route /admin/requests with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Deny trial\" completes for the admin route /admin/requests with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Review cancellations\" completes for the admin route /admin/requests with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Approve into full occurrence\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Fee billing failure visibility\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/admin/settings/self-service",
-      "role": "admin",
-      "source": "frontend/app/(admin)/admin/settings/self-service/page.tsx",
-      "workflows": [
-        "Update self-service policy"
-      ],
-      "controls": {
-        "buttons": [
-          "Save"
-        ],
-        "inputs": [
-          "Notice hours",
-          "Makeup expiry days",
-          "Cancellation notice days",
-          "Cancellation fee",
-          "Effective timing"
+          "Signer name"
         ],
         "modals": []
       },
       "states": [
         "loading",
-        "saving",
-        "save error",
-        "saved confirmation"
+        "not required",
+        "pending",
+        "signed",
+        "outdated",
+        "error",
+        "validation error",
+        "empty"
       ],
       "risk_edges": [
-        "Policy change mid-request lifecycle"
+        "Signer name blank",
+        "Mixed outdated/current child states"
       ],
       "acceptance": [
-        "Policy edits persist and reload with server-validated values",
-        "Workflow evidence: \"Update self-service policy\" completes for the admin route /admin/settings/self-service with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Policy change mid-request lifecycle\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+        "Current waiver signature is required before dependent workflows",
+        "Workflow evidence: \"Review waiver status\" completes for the parent route /parent/waivers with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Sign waiver\" completes for the parent route /parent/waivers with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Signer name blank\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Mixed outdated/current child states\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     },
     {
-      "route": "/auth/magic",
-      "role": "public",
-      "source": "frontend/app/(marketing)/auth/magic/page.tsx",
+      "route": "/post-login",
+      "role": "authenticated",
+      "source": "frontend/app/post-login/page.tsx",
       "workflows": [
-        "One-time magic-link auto-login",
-        "Expired-link recovery to sign-in"
+        "Resolve persona home",
+        "Redirect by role"
       ],
       "controls": {
         "buttons": [
-          "Go to sign in"
+          "Retry"
         ],
         "inputs": [],
         "modals": []
       },
       "states": [
         "loading",
-        "expired",
-        "invalid",
-        "error",
-        "redirecting",
-        "validation"
+        "no role",
+        "access denied",
+        "fallback redirect"
       ],
       "risk_edges": [
-        "Reused/consumed token race",
-        "Cross-tenant token",
-        "Mail-scanner prefetch",
-        "Open-redirect next_path"
+        "/me 500 after Firebase success",
+        "Slow route compile leaves stale loading",
+        "Wrong-role persona redirect"
       ],
       "acceptance": [
-        "Workflow evidence: \"One-time magic-link auto-login\" completes for the public route /auth/magic with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Expired-link recovery to sign-in\" completes for the public route /auth/magic with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Reused/consumed token race\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Cross-tenant token\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Mail-scanner prefetch\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Open-redirect next_path\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+        "User lands on correct persona home",
+        "No indefinite loading",
+        "Workflow evidence: \"Resolve persona home\" completes for the authenticated route /post-login with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Redirect by role\" completes for the authenticated route /post-login with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"/me 500 after Firebase success\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Slow route compile leaves stale loading\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Wrong-role persona redirect\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/privacy",
+      "role": "public",
+      "source": "frontend/app/(marketing)/privacy/page.tsx",
+      "workflows": [
+        "Read privacy policy"
+      ],
+      "controls": {
+        "buttons": [
+          "Auth navigation"
+        ],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "default",
+        "mobile"
+      ],
+      "risk_edges": [
+        "Missing legal content",
+        "Broken navigation"
+      ],
+      "acceptance": [
+        "Page renders readable legal content",
+        "Workflow evidence: \"Read privacy policy\" completes for the public route /privacy with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Missing legal content\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Broken navigation\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/register",
+      "role": "public",
+      "source": "frontend/app/(marketing)/register/page.tsx",
+      "workflows": [
+        "Parent registration",
+        "Firebase account creation",
+        "Email verification continuation"
+      ],
+      "controls": {
+        "buttons": [
+          "Create account",
+          "Continue",
+          "Back to login"
+        ],
+        "inputs": [
+          "Email",
+          "Password",
+          "Parent details"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "validation error",
+        "verification required",
+        "backend failure"
+      ],
+      "risk_edges": [
+        "Firebase user created but backend registration fails",
+        "Expired pending registration"
+      ],
+      "acceptance": [
+        "Registration failures remain recoverable",
+        "No sensitive error leakage",
+        "Workflow evidence: \"Parent registration\" completes for the public route /register with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Firebase account creation\" completes for the public route /register with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Email verification continuation\" completes for the public route /register with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Firebase user created but backend registration fails\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Expired pending registration\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/security",
+      "role": "public",
+      "source": "frontend/app/(marketing)/security/page.tsx",
+      "workflows": [
+        "Read security disclosure"
+      ],
+      "controls": {
+        "buttons": [
+          "Auth navigation"
+        ],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "default",
+        "mobile"
+      ],
+      "risk_edges": [
+        "Broken disclosure contact",
+        "Broken navigation"
+      ],
+      "acceptance": [
+        "Page renders readable security content",
+        "Workflow evidence: \"Read security disclosure\" completes for the public route /security with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Broken disclosure contact\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Broken navigation\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/terms",
+      "role": "public",
+      "source": "frontend/app/(marketing)/terms/page.tsx",
+      "workflows": [
+        "Read terms"
+      ],
+      "controls": {
+        "buttons": [
+          "Auth navigation"
+        ],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "default",
+        "mobile"
+      ],
+      "risk_edges": [
+        "Missing legal content",
+        "Broken navigation"
+      ],
+      "acceptance": [
+        "Page renders readable terms",
+        "Workflow evidence: \"Read terms\" completes for the public route /terms with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Missing legal content\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Broken navigation\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     }
   ],

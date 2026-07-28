@@ -1,6 +1,12 @@
 import { apiFetch } from "./client";
 
-export type UserRole = "admin" | "coach" | "parent";
+export type UserRole = "admin" | "coach" | "parent" | "owner";
+
+/**
+ * Roles that have their own persona shell and home route. `owner` is a
+ * franchise scope reached from the tenant switcher, not a persona view.
+ */
+export type PersonaRole = Exclude<UserRole, "owner">;
 
 export interface CurrentUser {
   user_id: string;
