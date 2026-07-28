@@ -562,7 +562,8 @@
         "Profile edit",
         "Billing tab",
         "Family tab",
-        "Enrollment actions"
+        "Enrollment actions",
+        "Session-type move and price override"
       ],
       "controls": {
         "buttons": [
@@ -573,19 +574,30 @@
           "Manual payment",
           "Send invoice",
           "Void",
-          "Autopay"
+          "Autopay",
+          "Move",
+          "Override price",
+          "Review move",
+          "Confirm move & invoice",
+          "Clear override",
+          "Save override"
         ],
         "inputs": [
           "Student fields",
           "Amount",
           "Reason",
-          "Parent selector"
+          "Parent selector",
+          "Target session type",
+          "Move date",
+          "Override price"
         ],
         "modals": [
           "Edit student",
           "Invoice line",
           "Manual payment",
-          "Parent change"
+          "Parent change",
+          "Move session type",
+          "Override price"
         ]
       },
       "states": [
@@ -599,7 +611,8 @@
       "risk_edges": [
         "Selected invoice stale after tab switch",
         "Concurrent invoice edit",
-        "Parent reassignment validation"
+        "Parent reassignment validation",
+        "Session-type move issues an unintended Stripe invoice"
       ],
       "acceptance": [
         "Profile and billing actions preserve ledger invariants",
@@ -609,7 +622,11 @@
         "Workflow evidence: \"Enrollment actions\" completes for the admin route /admin/students/[studentId] with real-user evidence and no framework or runtime errors.",
         "Risk evidence: \"Selected invoice stale after tab switch\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"Concurrent invoice edit\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Parent reassignment validation\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+        "Risk evidence: \"Parent reassignment validation\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Workflow evidence: \"Session-type move and price override\" completes for the admin route /admin/students/[studentId] with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Session-type move issues an unintended Stripe invoice\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Move requires a two-step confirm and reports proration plus the Stripe invoice id",
+        "Clearing a price override restores the session-type catalog price"
       ]
     },
     {
@@ -2050,7 +2067,8 @@
       "workflows": [
         "Mark attendance",
         "Add note",
-        "Open skills/passport"
+        "Open skills/passport",
+        "Preview billing move"
       ],
       "controls": {
         "buttons": [
@@ -2059,10 +2077,12 @@
           "Late",
           "Save note",
           "Skills",
-          "Progress"
+          "Progress",
+          "Billing"
         ],
         "inputs": [
-          "Progress note"
+          "Progress note",
+          "Preview target session type"
         ],
         "modals": []
       },
@@ -2071,12 +2091,14 @@
         "not found",
         "offline disabled",
         "mutation error",
-        "empty state"
+        "empty state",
+        "access denied"
       ],
       "risk_edges": [
         "Optimistic mutation rollback",
         "Late status unsupported in UI",
-        "Offline write conflict"
+        "Offline write conflict",
+        "Coach applies a billing change"
       ],
       "acceptance": [
         "Attendance mutation success/failure is visible and idempotent",
@@ -2085,7 +2107,10 @@
         "Workflow evidence: \"Open skills/passport\" completes for the coach route /coach/sessions/[id] with real-user evidence and no framework or runtime errors.",
         "Risk evidence: \"Optimistic mutation rollback\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"Late status unsupported in UI\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Offline write conflict\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+        "Risk evidence: \"Offline write conflict\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Workflow evidence: \"Preview billing move\" completes for the coach route /coach/sessions/[id] with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Coach applies a billing change\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Coach billing preview is read-only: no apply affordance is rendered and a 403 renders an access-denied state"
       ]
     },
     {

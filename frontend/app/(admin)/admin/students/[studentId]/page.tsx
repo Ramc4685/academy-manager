@@ -31,6 +31,7 @@ import { Avatar } from "@/components/ds/avatar";
 import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
 
+import { BillingEnrollmentsPanel } from "./BillingEnrollmentsPanel";
 import { BillingWorkflowPanel } from "./BillingWorkflowPanel";
 import { DetailList } from "./DetailList";
 import { formatCurrencyCents, formatDate, formatDateTime } from "./format";
@@ -198,15 +199,18 @@ export default function AdminStudentDetailPage() {
 
       {activeTab === "billing" && (
         <TabPanel id="billing">
-          <BillingWorkflowPanel
-            student={student}
-            active={activeTab === "billing"}
-            onChanged={() => {
-              void queryClient.invalidateQueries({
-                queryKey: queryKeys.admin.studentDetail(studentId),
-              });
-            }}
-          />
+          <div className="space-y-6">
+            <BillingWorkflowPanel
+              student={student}
+              active={activeTab === "billing"}
+              onChanged={() => {
+                void queryClient.invalidateQueries({
+                  queryKey: queryKeys.admin.studentDetail(studentId),
+                });
+              }}
+            />
+            <BillingEnrollmentsPanel studentId={studentId} active={activeTab === "billing"} />
+          </div>
         </TabPanel>
       )}
 
