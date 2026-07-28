@@ -1,5 +1,5 @@
 # UIM13 — Real Messages inbox + Calendar (coach/parent)
-Status: DONE (PR #PRNUM, 2026-07-28)
+Status: DONE (PR #375, 2026-07-28)
 Size: L · Depends on: coordinates with UIC8 (shared-stub deletion) · Tracker: ../TRACKER.md
 
 ## User value

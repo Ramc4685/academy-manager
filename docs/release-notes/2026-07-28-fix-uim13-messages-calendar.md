@@ -1,6 +1,6 @@
 # fix-uim13-messages-calendar
 
-PR: #PLACEHOLDER
+PR: #375
 
 ## What changed
 Coaches and parents can now read the messages admins already send them, and
