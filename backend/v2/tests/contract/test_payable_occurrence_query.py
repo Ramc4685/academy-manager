@@ -6,9 +6,12 @@ from datetime import UTC, datetime
 
 import pytest
 
-from backend.v2.composition.admin import _MongoCoachRateRepository, _MongoPayableOccurrenceQuery
 from backend.v2.contexts.coaching.application.use_cases.compute_payout import (
     ComputeCoachPayout,
+)
+from backend.v2.contexts.coaching.infrastructure.mongo_payout_read_models import (
+    MongoCoachRateLookup,
+    MongoPayableOccurrenceQuery,
 )
 
 
@@ -46,7 +49,7 @@ async def test_payable_occurrence_query_attaches_coach_attendance(db) -> None:
         }
     )
 
-    rows = await _MongoPayableOccurrenceQuery(db).list_in_period(
+    rows = await MongoPayableOccurrenceQuery(db).list_in_period(
         academy_id="acad",
         period_start=_dt("2026-05-01T00:00:00"),
         period_end=_dt("2026-06-01T00:00:00"),
@@ -102,8 +105,8 @@ async def test_percent_payout_uses_legacy_seeded_coach_rate_fields(db, acad) -> 
     )
 
     statement = await ComputeCoachPayout(
-        occurrences=_MongoPayableOccurrenceQuery(db),
-        rates=_MongoCoachRateRepository(db),
+        occurrences=MongoPayableOccurrenceQuery(db),
+        rates=MongoCoachRateLookup(db),
     ).execute(
         coach_id="coach-1",
         academy_id=acad,
@@ -157,7 +160,7 @@ async def test_expected_revenue_prorates_monthly_session_fee_across_occurrences(
             }
         )
 
-    rows = await _MongoPayableOccurrenceQuery(db).list_in_period(
+    rows = await MongoPayableOccurrenceQuery(db).list_in_period(
         academy_id=acad,
         period_start=_dt("2026-04-01T00:00:00"),
         period_end=_dt("2026-05-01T00:00:00"),

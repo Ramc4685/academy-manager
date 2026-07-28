@@ -1,6 +1,6 @@
 # fix-uim4-session-types
 
-PR: #TBD
+PR: #374
 
 ## What changed
 Admins can now see and manage session types — the pricing catalog (name,

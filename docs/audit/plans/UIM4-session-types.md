@@ -1,5 +1,5 @@
 # UIM4 — Session-type management UI
-Status: DONE (PR #TBD, 2026-07-27)
+Status: DONE (PR #374, 2026-07-28)
 Size: S · Depends on: none (DS3 FormField/Modal primitives help if available) · Tracker: ../TRACKER.md
 
 ## User value

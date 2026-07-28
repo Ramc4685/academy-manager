@@ -25,6 +25,7 @@ import {
   skipWaitlistEntry,
   deleteWaitlistEntry,
   type AdminEnrollmentView,
+  type AdminSessionList,
   type AdminSessionOccurrenceView,
 } from "@/lib/api/admin";
 import { getFullPathway, placeStudentInLevel } from "@/lib/api/curriculum";
@@ -380,8 +381,20 @@ export default function AdminSessionDetailPage() {
         open={editOpen}
         session={session}
         onOpenChange={setEditOpen}
-        onSaved={() => {
+        onSaved={(savedSession) => {
           setEditOpen(false);
+          queryClient.setQueryData(queryKeys.admin.sessionDetail(sessionId), savedSession);
+          queryClient.setQueryData<AdminSessionList | undefined>(
+            queryKeys.admin.sessions("upcoming"),
+            (current) =>
+              current
+                ? {
+                    sessions: current.sessions.map((session) =>
+                      session.session_id === savedSession.session_id ? savedSession : session,
+                    ),
+                  }
+                : current,
+          );
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessionDetail(sessionId) });
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
         }}
