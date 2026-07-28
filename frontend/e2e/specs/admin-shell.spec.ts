@@ -82,7 +82,8 @@ const ADMIN_ROUTES = [
   { href: "/admin/registrations?tab=level-ups", testid: "admin-level-up-queue-tab" },
   { href: "/admin/requests?tab=pauses", testid: "admin-pause-requests" },
   { href: "/admin/payments", testid: "admin-payments" },
-  { href: "/admin/dues", testid: "admin-dues" },
+  { href: "/admin/reports/dues", testid: "admin-dues" },
+  { href: "/admin/reports/session-economics", testid: "admin-session-economics" },
   { href: "/admin/reports", testid: "admin-reports" },
   { href: "/admin/coach-payslip", testid: "admin-coach-payslip" },
   { href: "/admin/expenses", testid: "admin-expenses" },
@@ -426,6 +427,34 @@ test.describe("Rally admin shell", () => {
     expect(
       errors,
       `App console errors on coach payslip redirect: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  test("/admin/dues redirects into Reports → Dues follow-up (UIC3)", async ({
+    page,
+  }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    // The destination's own rendering is covered by the ADMIN_ROUTES mount
+    // loop; this asserts only that the old bookmark still lands there.
+    await page.goto("/admin/dues");
+    await expect(page).toHaveURL(/\/admin\/reports\/dues$/);
+    expect(
+      errors,
+      `App console errors on dues redirect: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  test("/admin/session-economics redirects into Reports → Session economics (UIC3)", async ({
+    page,
+  }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    await page.goto("/admin/session-economics");
+    await expect(page).toHaveURL(/\/admin\/reports\/session-economics$/);
+    expect(
+      errors,
+      `App console errors on session economics redirect: ${errors.join("\n")}`,
     ).toEqual([]);
   });
 
