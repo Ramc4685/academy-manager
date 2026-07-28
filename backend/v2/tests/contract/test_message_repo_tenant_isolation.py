@@ -57,9 +57,7 @@ async def test_for_recipient_scopes_to_recipient_and_announcements(db) -> None:
         [
             _message_doc("own-dm", "academy-a", recipient_id="user-1"),
             _message_doc("other-dm", "academy-a", recipient_id="user-2"),
-            _message_doc(
-                "announcement", "academy-a", kind="announcement", recipient_id=None
-            ),
+            _message_doc("announcement", "academy-a", kind="announcement", recipient_id=None),
         ]
     )
     repo = MongoMessageRepository(db)
@@ -84,12 +82,8 @@ async def test_mark_read_isolates_tenants(db) -> None:
     with tenant_scope("academy-a"):
         await repo.mark_read("shared-id", "user-1")
 
-    a_doc = await db["messages"].find_one(
-        {"message_id": "shared-id", "academy_id": "academy-a"}
-    )
-    b_doc = await db["messages"].find_one(
-        {"message_id": "shared-id", "academy_id": "academy-b"}
-    )
+    a_doc = await db["messages"].find_one({"message_id": "shared-id", "academy_id": "academy-a"})
+    b_doc = await db["messages"].find_one({"message_id": "shared-id", "academy_id": "academy-b"})
     assert a_doc["read_by"] == ["user-1"]
     assert b_doc["read_by"] == []
 
@@ -100,9 +94,7 @@ async def test_mark_read_is_scoped_to_the_callers_own_messages(db) -> None:
     await db["messages"].insert_many(
         [
             _message_doc("other-dm", "academy-a", recipient_id="user-2"),
-            _message_doc(
-                "announcement", "academy-a", kind="announcement", recipient_id=None
-            ),
+            _message_doc("announcement", "academy-a", kind="announcement", recipient_id=None),
         ]
     )
     repo = MongoMessageRepository(db)
