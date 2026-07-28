@@ -15,6 +15,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 
 import { getAdminAcademy } from "@/lib/api/admin";
@@ -84,6 +85,10 @@ export function TenantSwitcher() {
 
   const label = displayAcademyName(academyQuery.data?.display_name);
   const single = memberships.length === 1;
+  // The rollup only says anything a single academy dashboard does not when
+  // the user owns more than one.
+  const ownsMultipleAcademies =
+    memberships.filter((m) => m.roles?.includes("owner")).length > 1;
 
   if (single) {
     return (
@@ -118,6 +123,21 @@ export function TenantSwitcher() {
           data-testid="tenant-switcher-menu"
           className="absolute right-0 mt-1 w-64 rounded-md border border-rally-line bg-white shadow-lg z-40 py-1 max-h-80 overflow-y-auto"
         >
+          {ownsMultipleAcademies && (
+            <li role="option" aria-selected={false} className="border-b border-rally-line">
+              <Link
+                href="/owner"
+                data-testid="tenant-switcher-all-academies"
+                onClick={() => setOpen(false)}
+                className="block px-3 py-2 text-sm hover:bg-neutral-50 focus:bg-neutral-100 focus:outline-none"
+              >
+                <span className="font-medium text-rally-cobalt-600">All academies</span>
+                <div className="font-mono text-[10px] text-rally-muted mt-0.5">
+                  FRANCHISE ROLLUP
+                </div>
+              </Link>
+            </li>
+          )}
           {memberships.map((m) => {
             const selected = m.academy_id === activeAcademyId;
             return (
