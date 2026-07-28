@@ -1,6 +1,6 @@
 # MT1 — Drain the composition root (billing math, reports, payouts, email adapters → contexts)
 
-Status: TODO
+Status: IN PROGRESS — Phase A DONE (PR #TBD, 2026-07-27); Phases B–E TODO
 Size: L · Depends on: none (Phase E benefits from C4 landing first) · Tracker: ../TRACKER.md
 
 ## Problem
