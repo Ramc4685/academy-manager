@@ -114,6 +114,14 @@ export const queryKeys = {
     cancellationPreview: (enrollmentId: string) =>
       ["parent", "enrollments", enrollmentId, "cancellation-preview"] as const,
   },
+  platform: {
+    all: ["platform"] as const,
+    tenants: () => ["platform", "tenants"] as const,
+    tenantStatus: (academyId: string) =>
+      ["platform", "tenant", academyId, "status"] as const,
+    tenantHealth: (academyId: string) =>
+      ["platform", "tenant", academyId, "health"] as const,
+  },
 } as const;
 
 type QueryKeyFactory = (...args: never[]) => readonly unknown[];
@@ -122,4 +130,5 @@ type QueryKeyFrom<T> = T extends QueryKeyFactory ? ReturnType<T> : never;
 export type QueryKey =
   | QueryKeyFrom<(typeof queryKeys.coach)[keyof typeof queryKeys.coach]>
   | QueryKeyFrom<(typeof queryKeys.admin)[keyof typeof queryKeys.admin]>
-  | QueryKeyFrom<(typeof queryKeys.parent)[keyof typeof queryKeys.parent]>;
+  | QueryKeyFrom<(typeof queryKeys.parent)[keyof typeof queryKeys.parent]>
+  | QueryKeyFrom<(typeof queryKeys.platform)[keyof typeof queryKeys.platform]>;

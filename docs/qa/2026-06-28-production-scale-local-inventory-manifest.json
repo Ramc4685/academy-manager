@@ -2945,6 +2945,143 @@
         "Risk evidence: \"Mail-scanner prefetch\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"Open-redirect next_path\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
+    },
+    {
+      "route": "/platform",
+      "role": "platform",
+      "source": "frontend/app/(platform)/platform/page.tsx",
+      "workflows": [
+        "Enter platform surface"
+      ],
+      "controls": {
+        "buttons": [],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "redirect",
+        "access denied"
+      ],
+      "risk_edges": [
+        "Wrong-role user reaching the platform surface"
+      ],
+      "acceptance": [
+        "Redirects to /platform/tenants for a platform operator",
+        "Workflow evidence: \"Enter platform surface\" completes for the platform route /platform with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Wrong-role user reaching the platform surface\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/platform/tenants",
+      "role": "platform",
+      "source": "frontend/app/(platform)/platform/tenants/page.tsx",
+      "workflows": [
+        "Review provisioned tenants",
+        "Create tenant",
+        "Bootstrap academy"
+      ],
+      "controls": {
+        "buttons": [
+          "Create tenant",
+          "Bootstrap academy",
+          "Open tenant"
+        ],
+        "inputs": [
+          "Display name",
+          "Slug",
+          "Primary domain",
+          "Plan code",
+          "Max students",
+          "Max coaches",
+          "Max locations",
+          "Owner email",
+          "Owner name",
+          "Timezone"
+        ],
+        "modals": [
+          "Create tenant",
+          "Bootstrap academy"
+        ]
+      },
+      "states": [
+        "loading",
+        "empty",
+        "error",
+        "validation",
+        "access denied"
+      ],
+      "risk_edges": [
+        "Wrong-role user reaching the tenant list",
+        "Tenant list leaking across tenant boundaries",
+        "Duplicate tenant slug creating a conflict"
+      ],
+      "acceptance": [
+        "Tenant list renders provisioned tenants or a clear empty state",
+        "Support-tier operators see the list without create or bootstrap buttons",
+        "Workflow evidence: \"Review provisioned tenants\" completes for the platform route /platform/tenants with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Create tenant\" completes for the platform route /platform/tenants with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Bootstrap academy\" completes for the platform route /platform/tenants with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Wrong-role user reaching the tenant list\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Tenant list leaking across tenant boundaries\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Duplicate tenant slug creating a conflict\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/platform/tenants/[academyId]",
+      "role": "platform",
+      "source": "frontend/app/(platform)/platform/tenants/[academyId]/page.tsx",
+      "workflows": [
+        "Review tenant status and health",
+        "Drive tenant lifecycle",
+        "Update plan and limits"
+      ],
+      "controls": {
+        "buttons": [
+          "Activate",
+          "Reactivate",
+          "Suspend",
+          "Cancel",
+          "Edit plan and limits",
+          "Save plan",
+          "Back to tenants"
+        ],
+        "inputs": [
+          "Reason",
+          "Plan code",
+          "Max students",
+          "Max coaches",
+          "Max locations"
+        ],
+        "modals": [
+          "Suspend tenant",
+          "Cancel tenant",
+          "Edit plan and limits"
+        ]
+      },
+      "states": [
+        "loading",
+        "error",
+        "not found",
+        "validation",
+        "conflict",
+        "access denied"
+      ],
+      "risk_edges": [
+        "Wrong-role user driving tenant lifecycle",
+        "Invalid lifecycle transition returning a conflict",
+        "Stale tenant status after a lifecycle mutation"
+      ],
+      "acceptance": [
+        "Status, health, and plan limits render for an existing tenant",
+        "Support-tier operators see no lifecycle mutation buttons",
+        "Lifecycle buttons disable for transitions the API rejects",
+        "Workflow evidence: \"Review tenant status and health\" completes for the platform route /platform/tenants/[academyId] with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Drive tenant lifecycle\" completes for the platform route /platform/tenants/[academyId] with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Update plan and limits\" completes for the platform route /platform/tenants/[academyId] with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Wrong-role user driving tenant lifecycle\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Invalid lifecycle transition returning a conflict\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Stale tenant status after a lifecycle mutation\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
     }
   ],
   "global_surfaces": [
