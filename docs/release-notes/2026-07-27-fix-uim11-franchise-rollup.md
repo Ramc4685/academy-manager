@@ -28,10 +28,14 @@ scope rather than a persona shell.
 
 ## Deploy notes
 No migrations and no new env vars. The feature ships dark: `enable_owner_role`
-defaults to `False`, which leaves both the composition root and the router
-unmounted, so `/api/v2/owner/*` 404s. To enable, set `ENABLE_OWNER_ROLE=true`
-and grant an `owner` role on the relevant academy memberships. Verify in
-staging against two seeded academies before enabling in production.
+defaults to `False`, which leaves the composition root unmounted, the router
+unmounted, and the `owner` grant path on `POST /admin/users/{id}/roles`
+404ing — so the flag is a complete kill switch over both reads and writes.
+To enable, set `ENABLE_OWNER_ROLE=true` and grant `owner` on the relevant
+academy memberships. Note that `enable_owner_role` is now rejected at startup
+alongside `tenancy_mode=single_academy`, since a rollup spanning academies
+contradicts a deployment configured to serve exactly one. Verify in staging
+against two seeded academies before enabling in production.
 
 ## Risk / rollback
 The cross-academy read is the risk, and it is contained two ways: the academy
@@ -52,4 +56,12 @@ in data.
 Verified: full backend `v2/tests` suite green, `ruff check v2` clean,
 `lint-imports` 5/5 contracts kept, mypy baseline gate clean (0 new errors);
 frontend `pnpm typecheck` and `pnpm lint` clean (0 errors), full `pnpm e2e`
-suite green.
+suite green (272 passed, 192 skipped) including new switcher/rollup coverage
+in `admin-shell.spec.ts`. A dedicated security review of the cross-tenant
+path found no exploitable isolation defect.
+
+Known follow-ups, deliberately out of scope here and safe while the flag is
+off: the rollup writes no `audit_logs` entry for the cross-academy read, and
+it does not apply the per-tenant `check_tenant_servable` lifecycle gate to
+academies beyond the resolved request tenant, so a suspended academy's
+figures still appear in its own owner's rollup.

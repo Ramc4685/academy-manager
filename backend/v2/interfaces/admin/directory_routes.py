@@ -50,6 +50,7 @@ from backend.v2.interfaces.admin.views import (
     UpdateAdminUserRoleRequest,
 )
 from backend.v2.shared.auth.claims import AuthClaims
+from backend.v2.shared.config.settings import get_settings
 from backend.v2.shared.http import require_persona
 
 logger = logging.getLogger(__name__)
@@ -181,6 +182,8 @@ async def add_user_role(
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminUserDetailView:
+    if payload.role == "owner" and not get_settings().enable_owner_role:
+        raise HTTPException(status_code=404, detail="Not found")
     use_case = use_cases.add_user_role
     if use_case is None:
         raise HTTPException(status_code=503, detail="Role management is not configured")

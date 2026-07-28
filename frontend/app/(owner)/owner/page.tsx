@@ -36,9 +36,13 @@ export default function OwnerRollupPage() {
 
       {rollup.isError && (
         <EmptyState
-          title="Franchise rollup unavailable"
-          description="This view is only available to franchise owners. If you believe you should have access, contact support."
-          data-testid="owner-rollup-denied"
+          title={isNotFound(rollup.error) ? "Not available" : "Could not load rollup"}
+          description={
+            isNotFound(rollup.error)
+              ? "This view is only available to franchise owners. If you believe you should have access, contact support."
+              : "Something went wrong loading your academies. Try again in a moment."
+          }
+          data-testid="owner-rollup-error"
         />
       )}
 
@@ -111,6 +115,10 @@ export default function OwnerRollupPage() {
       )}
     </div>
   );
+}
+
+function isNotFound(error: unknown): boolean {
+  return (error as { status?: number } | null)?.status === 404;
 }
 
 function TotalTile({

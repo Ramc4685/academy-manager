@@ -8,13 +8,13 @@ handing over academies the user actually owns.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from backend.v2.contexts.billing.application.ports import AcademyFinancialSnapshot
 
 _REVENUE_PAYMENT_STATUSES = ("succeeded", "partially_refunded", "refunded")
 _OPEN_INVOICE_STATUSES = ("open", "partially_paid", "draft")
-_SETTLED_INVOICE_STATUSES = frozenset({"paid", "void", "waived", "cancelled"})
 
 
 class MongoAcademyFinancialSnapshotReader:
@@ -46,10 +46,9 @@ class MongoAcademyFinancialSnapshotReader:
         )
         buckets: dict[str, int] = {}
         async for doc in cursor:
-            created_at = doc.get("created_at")
-            if created_at is None:
+            key = _month_key(doc.get("created_at"))
+            if key is None:
                 continue
-            key = created_at.strftime("%Y-%m")
             if months is not None and key not in months:
                 continue
             net = int(doc.get("amount_cents") or 0) - int(doc.get("refunded_cents") or 0)
@@ -64,16 +63,21 @@ class MongoAcademyFinancialSnapshotReader:
                 "balance_due_cents": {"$gt": 0},
                 "is_deleted": {"$ne": True},
             },
-            {"status": 1, "balance_due_cents": 1},
+            {"balance_due_cents": 1},
         )
         total = 0
         count = 0
         async for doc in cursor:
-            if str(doc.get("status") or "") in _SETTLED_INVOICE_STATUSES:
-                continue
-            due = max(int(doc.get("balance_due_cents") or 0), 0)
-            if due <= 0:
-                continue
-            total += due
+            total += int(doc.get("balance_due_cents") or 0)
             count += 1
         return total, count
+
+
+def _month_key(value: object) -> str | None:
+    """Legacy documents store created_at as an ISO string, not a BSON date."""
+
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m")
+    if isinstance(value, str) and len(value) >= 7:
+        return value[:7]
+    return None

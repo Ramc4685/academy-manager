@@ -96,6 +96,7 @@ def _make_app(
     tenant_academy_id: str = "academy-a",
     mount: bool = True,
     wire_state: bool = True,
+    authenticated: bool = True,
 ) -> tuple[FastAPI, _FakeSnapshotReader]:
     app = FastAPI()
     if mount:
@@ -126,7 +127,8 @@ def _make_app(
             roles=("admin",),
         )
 
-    app.dependency_overrides[get_auth_claims] = _claims
+    if authenticated:
+        app.dependency_overrides[get_auth_claims] = _claims
     return app, reader
 
 
@@ -179,12 +181,27 @@ def test_non_owner_memberships_are_excluded_from_scope() -> None:
     assert reader.seen == ["academy-b"]
 
 
-def test_suspended_owner_membership_grants_nothing() -> None:
-    app, _ = _make_app([_membership("academy-a", ("owner",), status="suspended")])
+@pytest.mark.parametrize("status", ["invited", "suspended", "removed"])
+def test_only_active_owner_memberships_grant_access(status: str) -> None:
+    """`invited` matters most: that is where an unaccepted grant sits."""
+
+    app, _ = _make_app([_membership("academy-a", ("owner",), status=status)])
     with TestClient(app) as client:
         response = client.get("/api/v2/owner/rollup")
 
     assert response.status_code == 404
+
+
+def test_unauthenticated_request_is_rejected_before_the_use_case() -> None:
+    app, reader = _make_app(
+        [_membership("academy-a", ("owner",))],
+        authenticated=False,
+    )
+    with TestClient(app) as client:
+        response = client.get("/api/v2/owner/rollup")
+
+    assert response.status_code == 401
+    assert reader.seen == []
 
 
 def test_user_without_owner_membership_gets_404() -> None:

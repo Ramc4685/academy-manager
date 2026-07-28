@@ -59,11 +59,12 @@ def _payment(month: str, amount: int, refunded: int = 0) -> dict[str, Any]:
 @pytest.mark.asyncio
 async def test_snapshot_nets_refunds_and_buckets_revenue_by_month() -> None:
     payments = _FakeCollection([_payment("2026-06", 5_000), _payment("2026-07", 3_000, 1_000)])
+    # The query filter already restricts to open invoices with a positive
+    # balance, so these are the only shapes the cursor can yield.
     invoices = _FakeCollection(
         [
             {"status": "open", "balance_due_cents": 2_500},
             {"status": "partially_paid", "balance_due_cents": 500},
-            {"status": "open", "balance_due_cents": 0},
         ]
     )
     reader = MongoAcademyFinancialSnapshotReader(
@@ -76,6 +77,25 @@ async def test_snapshot_nets_refunds_and_buckets_revenue_by_month() -> None:
     assert snapshot.collected_cents == 7_000
     assert snapshot.outstanding_cents == 3_000
     assert snapshot.outstanding_invoice_count == 2
+
+
+@pytest.mark.asyncio
+async def test_legacy_string_created_at_is_bucketed_not_crashed() -> None:
+    """Some payment rows predate the BSON-date write path."""
+
+    payments = _FakeCollection(
+        [
+            {"amount_cents": 1_000, "refunded_cents": 0, "created_at": "2026-05-02T10:00:00Z"},
+            {"amount_cents": 250, "refunded_cents": 0, "created_at": None},
+        ]
+    )
+    reader = MongoAcademyFinancialSnapshotReader(
+        _FakeDb({"payments": payments, "invoices": _FakeCollection([])})
+    )
+
+    snapshot = await reader.read(academy_id="academy-a")
+
+    assert snapshot.revenue_by_month == {"2026-05": 1_000}
 
 
 @pytest.mark.asyncio

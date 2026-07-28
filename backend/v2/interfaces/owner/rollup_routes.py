@@ -9,8 +9,8 @@ from backend.v2.contexts.billing.application.use_cases.owner_rollup import (
     NotAFranchiseOwner,
     OwnerRollup,
 )
-from backend.v2.interfaces.owner.deps import get_owner_use_cases, require_owner
-from backend.v2.shared.auth.claims import AuthClaims
+from backend.v2.interfaces.owner.deps import get_owner_use_cases
+from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 
 router = APIRouter(tags=["owner.rollup"])
 
@@ -18,7 +18,7 @@ router = APIRouter(tags=["owner.rollup"])
 @router.get("/rollup", response_model=OwnerRollup)
 async def owner_rollup(
     months: list[str] | None = Query(default=None, description="Filter to YYYY-MM months"),
-    claims: AuthClaims = Depends(require_owner),
+    claims: AuthClaims = Depends(get_auth_claims),
     use_cases: OwnerComposition = Depends(get_owner_use_cases),
 ) -> OwnerRollup:
     try:

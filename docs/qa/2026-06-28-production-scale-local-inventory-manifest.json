@@ -2421,7 +2421,8 @@
         "loading",
         "error state",
         "empty",
-        "access denied"
+        "access denied",
+        "not found"
       ],
       "risk_edges": [
         "Owner membership revoked mid-session",

@@ -50,6 +50,7 @@ TENANT_OWNED_COLLECTIONS = {
     "billing_policies",
     "enrollment_events",
     "enrollments",
+    "invoices",
     "expenses",
     "lesson_plans",
     "messages",

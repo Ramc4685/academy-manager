@@ -15,7 +15,7 @@ export interface CurrentUser {
   roles: UserRole[];
 }
 
-export type RoleHome = "/admin" | "/coach/today" | "/parent/payments" | "/login";
+export type RoleHome = "/admin" | "/coach/today" | "/parent/payments" | "/owner" | "/login";
 
 export function getCurrentUser(): Promise<CurrentUser> {
   return apiFetch<CurrentUser>("/me", { method: "GET", dedup: false });
@@ -29,5 +29,8 @@ export function homeForRoles(roles: UserRole[]): RoleHome {
   if (roles.includes("admin")) return "/admin";
   if (roles.includes("coach")) return "/coach/today";
   if (roles.includes("parent")) return "/parent/payments";
+  // Owner is a scope, not a persona shell, so it ranks last — but an
+  // owner-only user still needs somewhere to land.
+  if (roles.includes("owner")) return "/owner";
   return "/login";
 }
