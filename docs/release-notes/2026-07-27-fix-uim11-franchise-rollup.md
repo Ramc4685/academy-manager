@@ -1,6 +1,6 @@
 # fix-uim11-franchise-rollup
 
-PR: #PENDING
+PR: #369
 
 ## What changed
 Added the first genuinely multi-academy surface: a franchise owner can now see

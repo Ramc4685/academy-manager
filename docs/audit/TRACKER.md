@@ -74,7 +74,7 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 | UIM8 | Tuition-discounts report UI | [plans/UIM8-tuition-discounts.md](plans/UIM8-tuition-discounts.md) | S | — | DONE | [#359](https://github.com/Ramc4685/academy-manager/pull/359) — built on `/admin/dues` since UIC3 hasn't merged yet |
 | UIM9 | Platform-fallback billing visibility | [plans/UIM9-platform-fallback-setting.md](plans/UIM9-platform-fallback-setting.md) | S | — | DONE | [#352](https://github.com/Ramc4685/academy-manager/pull/352) |
 | UIM10 | Curriculum authoring extras | [plans/UIM10-curriculum-extras.md](plans/UIM10-curriculum-extras.md) | S | — | DONE | [#354](https://github.com/Ramc4685/academy-manager/pull/354) |
-| UIM11 | Franchise cross-academy rollup | [plans/UIM11-franchise-rollup.md](plans/UIM11-franchise-rollup.md) | L | UIM2, owner role | DONE | #PENDING — ships dark behind `enable_owner_role` |
+| UIM11 | Franchise cross-academy rollup | [plans/UIM11-franchise-rollup.md](plans/UIM11-franchise-rollup.md) | L | UIM2, owner role | DONE | [#369](https://github.com/Ramc4685/academy-manager/pull/369) — ships dark behind `enable_owner_role` |
 | UIM12 | Student login persona | [plans/UIM12-student-persona.md](plans/UIM12-student-persona.md) | L | — | TODO | |
 | UIM13 | Real Messages inbox + Calendar | [plans/UIM13-messages-calendar.md](plans/UIM13-messages-calendar.md) | L | — | TODO | |
 
