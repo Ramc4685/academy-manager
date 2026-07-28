@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-import backend.v2.composition.admin as admin_composition
+import backend.v2.contexts.billing.infrastructure.admin_reports_read_model as reports_read_model
 from backend.v2.shared.tenancy.context import tenant_scope
 
 
@@ -136,7 +136,7 @@ async def test_refunds_report_lists_audit_refunds_and_credits_with_tenant_isolat
     )
 
     with tenant_scope("acad"):
-        report = await admin_composition._make_refunds_report(db)("2026-05")
+        report = await reports_read_model.make_refunds_report(db)("2026-05")
 
     assert report["period"] == "2026-05"
     assert report["total_refunded_cents"] == 3_500
@@ -260,7 +260,7 @@ async def test_revenue_by_category_prorates_allocations_across_invoice_lines() -
     )
 
     with tenant_scope("acad"):
-        report = await admin_composition._make_revenue_by_category_report(db)("2026-05")
+        report = await reports_read_model.make_revenue_by_category_report(db)("2026-05")
 
     assert report["period"] == "2026-05"
     assert report["total_allocated_cents"] == 17_000
@@ -349,7 +349,7 @@ async def test_deposit_slip_groups_payments_by_day_and_method() -> None:
     )
 
     with tenant_scope("acad"):
-        report = await admin_composition._make_deposit_slip_report(db)("2026-05")
+        report = await reports_read_model.make_deposit_slip_report(db)("2026-05")
 
     assert report["period"] == "2026-05"
     assert report["total_cents"] == 22_500
@@ -416,7 +416,7 @@ async def test_quickbooks_export_emits_balanced_journal_entries() -> None:
     )
 
     with tenant_scope("acad"):
-        csv_text = await admin_composition._make_financial_report_csv(db)("quickbooks", "2026-05")
+        csv_text = await reports_read_model.make_financial_report_csv(db)("quickbooks", "2026-05")
 
     rows = list(csv.reader(io.StringIO(csv_text)))
     assert rows[0] == ["JournalNo", "JournalDate", "Memo", "Account", "Debits", "Credits"]
@@ -448,7 +448,7 @@ async def test_quickbooks_export_emits_balanced_journal_entries() -> None:
 async def test_financial_report_csv_returns_none_for_legacy_reports() -> None:
     db = _db()
     with tenant_scope("acad"):
-        renderer = admin_composition._make_financial_report_csv(db)
+        renderer = reports_read_model.make_financial_report_csv(db)
         assert await renderer("revenue", "2026-05") is None
         assert await renderer("pending-payments", None) is None
 
@@ -483,7 +483,7 @@ async def test_refunds_and_deposit_slip_csv_render_rows() -> None:
     )
 
     with tenant_scope("acad"):
-        renderer = admin_composition._make_financial_report_csv(db)
+        renderer = reports_read_model.make_financial_report_csv(db)
         refunds_csv = await renderer("refunds", "2026-05")
         deposit_csv = await renderer("deposit-slip", "2026-05")
 
@@ -516,7 +516,7 @@ async def test_csv_export_neutralises_formula_injection_in_free_text() -> None:
     )
 
     with tenant_scope("acad"):
-        refunds_csv = await admin_composition._make_financial_report_csv(db)("refunds", "2026-05")
+        refunds_csv = await reports_read_model.make_financial_report_csv(db)("refunds", "2026-05")
 
     refund_rows = list(csv.reader(io.StringIO(refunds_csv)))
     assert refund_rows[1][8].startswith("'=")

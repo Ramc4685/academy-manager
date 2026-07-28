@@ -41,7 +41,7 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 
 | ID | Item | Plan | Size | Depends on | Status | PR/Issue |
 |---|---|---|---|---|---|---|
-| MT1 | Drain the composition root (billing math → application layer) | [plans/MT1-drain-composition-root.md](plans/MT1-drain-composition-root.md) | L | — | TODO | |
+| MT1 | Drain the composition root (billing math → application layer) | [plans/MT1-drain-composition-root.md](plans/MT1-drain-composition-root.md) | L | — | IN PROGRESS | Phase A DONE [#368](https://github.com/Ramc4685/academy-manager/pull/368) — Phases B–E (reports read models, payouts, email adapters, import-linter contract) still TODO |
 | MT2 | Split runtime vs dev requirements | [plans/MT2-split-requirements.md](plans/MT2-split-requirements.md) | S | — | DONE | [#356](https://github.com/Ramc4685/academy-manager/pull/356) |
 | MT3 | Real-auth e2e job in CI | [plans/MT3-real-auth-e2e.md](plans/MT3-real-auth-e2e.md) | M | — | DONE | [#361](https://github.com/Ramc4685/academy-manager/pull/361) |
 | MT4 | Structural tenancy test | [plans/MT4-structural-tenancy-test.md](plans/MT4-structural-tenancy-test.md) | S | C4 (ideally after) | DONE | [#321](https://github.com/Ramc4685/academy-manager/pull/321) |
@@ -74,7 +74,7 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 | UIM8 | Tuition-discounts report UI | [plans/UIM8-tuition-discounts.md](plans/UIM8-tuition-discounts.md) | S | — | DONE | [#359](https://github.com/Ramc4685/academy-manager/pull/359) — built on `/admin/dues` since UIC3 hasn't merged yet |
 | UIM9 | Platform-fallback billing visibility | [plans/UIM9-platform-fallback-setting.md](plans/UIM9-platform-fallback-setting.md) | S | — | DONE | [#352](https://github.com/Ramc4685/academy-manager/pull/352) |
 | UIM10 | Curriculum authoring extras | [plans/UIM10-curriculum-extras.md](plans/UIM10-curriculum-extras.md) | S | — | DONE | [#354](https://github.com/Ramc4685/academy-manager/pull/354) |
-| UIM11 | Franchise cross-academy rollup | [plans/UIM11-franchise-rollup.md](plans/UIM11-franchise-rollup.md) | L | UIM2, owner role | TODO | |
+| UIM11 | Franchise cross-academy rollup | [plans/UIM11-franchise-rollup.md](plans/UIM11-franchise-rollup.md) | L | UIM2, owner role | DONE | [#369](https://github.com/Ramc4685/academy-manager/pull/369) — ships dark behind `enable_owner_role` |
 | UIM12 | Student login persona | [plans/UIM12-student-persona.md](plans/UIM12-student-persona.md) | L | — | TODO | |
 | UIM13 | Real Messages inbox + Calendar | [plans/UIM13-messages-calendar.md](plans/UIM13-messages-calendar.md) | L | — | DONE | [#375](https://github.com/Ramc4685/academy-manager/pull/375) |
 

@@ -1,5 +1,5 @@
 # UIM11 — Franchise cross-academy rollup
-Status: TODO
+Status: DONE (PR #369, 2026-07-27)
 Size: L · Depends on: UIM2 (GET /me/memberships), `enable_owner_role` flag · Tracker: ../TRACKER.md
 
 ## User value

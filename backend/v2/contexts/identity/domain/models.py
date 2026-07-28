@@ -32,7 +32,12 @@ from pydantic import BaseModel, EmailStr, Field, field_validator, model_validato
 
 # Academy-scoped roles. These are the roles a user can hold *within* a
 # single academy via an `AcademyMembership`. They are NOT platform roles.
-Role = Literal["admin", "coach", "parent"]
+#
+# `owner` is the franchise role: a user holding it in several academies can
+# read a cross-academy financial rollup (UIM11). It is still an academy-scoped
+# role — the rollup unions the user's own `owner` memberships and never widens
+# from the request tenant.
+Role = Literal["admin", "coach", "parent", "owner"]
 
 # Platform-wide roles. Granted via `PlatformRole` records and carried on
 # `AuthClaims.platform_roles` separately from academy roles.

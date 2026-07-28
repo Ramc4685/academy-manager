@@ -8,6 +8,8 @@ CURL_RETRY_ATTEMPTS="${CURL_RETRY_ATTEMPTS:-6}"
 CURL_RETRY_DELAY_SECONDS="${CURL_RETRY_DELAY_SECONDS:-5}"
 CURL_CONNECT_TIMEOUT_SECONDS="${CURL_CONNECT_TIMEOUT_SECONDS:-10}"
 CURL_MAX_TIME_SECONDS="${CURL_MAX_TIME_SECONDS:-60}"
+CHUNK_SCAN_ATTEMPTS="${CHUNK_SCAN_ATTEMPTS:-6}"
+CHUNK_SCAN_DELAY_SECONDS="${CHUNK_SCAN_DELAY_SECONDS:-10}"
 
 curl_smoke() {
   curl -fsS \
@@ -77,31 +79,59 @@ if ! grep -q '"status"[[:space:]]*:[[:space:]]*"ok"' <<<"${frontend_v2_health_bo
   exit 1
 fi
 
-login_html="$(curl_smoke "${FRONTEND_URL}/login")"
-next_scripts="$(grep -Eo 'src="[^"]*_next/static/[^"]+\.js"' <<<"${login_html}" |
-  sed -E 's/^src="([^"]+)"/\1/' |
-  sort -u || true)"
-if [[ -z "${next_scripts}" ]]; then
-  echo "Frontend check failed: could not find Next.js login script chunks" >&2
-  exit 1
-fi
+echo "Checking built Firebase config in login chunks..."
+
+# A chunk URL can 404 while a frontend rollout is still in flight: the login
+# HTML we just fetched may reference chunks from the outgoing build. Retry each
+# chunk barely at all so one dead URL cannot eat the whole job budget -- the
+# outer loop re-fetches the login HTML instead.
+curl_chunk() {
+  curl -fsS \
+    --retry 1 \
+    --retry-delay 1 \
+    --retry-all-errors \
+    --connect-timeout "${CURL_CONNECT_TIMEOUT_SECONDS}" \
+    --max-time "${CURL_MAX_TIME_SECONDS}" \
+    "$@"
+}
 
 firebase_config_found=0
-while IFS= read -r script_path; do
-  [[ -n "${script_path}" ]] || continue
-  if [[ "${script_path}" == http* ]]; then
-    script_url="${script_path}"
-  else
-    script_url="${FRONTEND_URL%/}${script_path}"
+next_scripts=""
+for ((scan_attempt = 1; scan_attempt <= CHUNK_SCAN_ATTEMPTS; scan_attempt++)); do
+  login_html="$(curl_smoke "${FRONTEND_URL}/login" || true)"
+  next_scripts="$(grep -Eo 'src="[^"]*_next/static/[^"]+\.js"' <<<"${login_html}" |
+    sed -E 's/^src="([^"]+)"/\1/' |
+    sort -u || true)"
+
+  while IFS= read -r script_path; do
+    [[ -n "${script_path}" ]] || continue
+    if [[ "${script_path}" == http* ]]; then
+      script_url="${script_path}"
+    else
+      script_url="${FRONTEND_URL%/}${script_path}"
+    fi
+    if curl_chunk "${script_url}" | grep -qF "${EXPECTED_FIREBASE_PROJECT_ID}"; then
+      firebase_config_found=1
+      break
+    fi
+  done <<<"${next_scripts}"
+
+  [[ "${firebase_config_found}" == "1" ]] && break
+
+  if ((scan_attempt < CHUNK_SCAN_ATTEMPTS)); then
+    echo "Firebase config not found in login chunks (attempt ${scan_attempt}/${CHUNK_SCAN_ATTEMPTS}); rollout may still be in flight, retrying in ${CHUNK_SCAN_DELAY_SECONDS}s..."
+    sleep "${CHUNK_SCAN_DELAY_SECONDS}"
   fi
-  if curl_smoke "${script_url}" | grep -qF "${EXPECTED_FIREBASE_PROJECT_ID}"; then
-    firebase_config_found=1
-    break
-  fi
-done <<<"${next_scripts}"
+done
 
 if [[ "${firebase_config_found}" != "1" ]]; then
-  echo "Frontend check failed: built Next.js chunks do not contain Firebase project ${EXPECTED_FIREBASE_PROJECT_ID}" >&2
+  if [[ -z "${next_scripts}" ]]; then
+    echo "Frontend check failed: could not find Next.js login script chunks at ${FRONTEND_URL}/login" >&2
+  else
+    echo "Frontend check failed: built Next.js chunks do not contain Firebase project ${EXPECTED_FIREBASE_PROJECT_ID}" >&2
+    echo "Chunks scanned:" >&2
+    printf '  %s\n' ${next_scripts} >&2
+  fi
   exit 1
 fi
 

@@ -31,7 +31,7 @@ from pydantic import BaseModel, Field
 
 # Re-exported from the identity domain so route files can import role types
 # directly from the auth surface without crossing context boundaries.
-Role = Literal["admin", "coach", "parent"]
+Role = Literal["admin", "coach", "parent", "owner"]
 PlatformRoleName = Literal["platform_admin", "platform_support"]
 
 

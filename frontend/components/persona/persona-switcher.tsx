@@ -12,27 +12,27 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 
-import { getCurrentUser, type UserRole } from "@/lib/api/me";
+import { getCurrentUser, type PersonaRole } from "@/lib/api/me";
 
-const PERSONA_HOME: Record<UserRole, string> = {
+const PERSONA_HOME: Record<PersonaRole, string> = {
   admin: "/admin",
   coach: "/coach/today",
   parent: "/parent/payments",
 };
 
-const PERSONA_LABEL: Record<UserRole, string> = {
+const PERSONA_LABEL: Record<PersonaRole, string> = {
   admin: "Admin view",
   coach: "Coach view",
   parent: "Parent view",
 };
 
-const PERSONA_ORDER: UserRole[] = ["admin", "coach", "parent"];
+const PERSONA_ORDER: PersonaRole[] = ["admin", "coach", "parent"];
 
 export function PersonaSwitcher({
   current,
   variant = "light",
 }: {
-  current: UserRole;
+  current: PersonaRole;
   variant?: "light" | "dark";
 }) {
   const router = useRouter();
