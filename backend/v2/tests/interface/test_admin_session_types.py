@@ -32,8 +32,14 @@ class _CreateSessionType:
 
 
 class _ListSessionTypes:
-    async def execute(self):
-        return [
+    """Mirrors ListSessionTypes: archived rows only when include_archived is set."""
+
+    def __init__(self) -> None:
+        self.calls: list[bool] = []
+
+    async def execute(self, *, include_archived: bool = False):
+        self.calls.append(include_archived)
+        rows = [
             SessionType(
                 session_type_id="type-new",
                 academy_id="acad",
@@ -44,6 +50,20 @@ class _ListSessionTypes:
                 updated_at=_now(),
             )
         ]
+        if include_archived:
+            rows.append(
+                SessionType(
+                    session_type_id="type-archived",
+                    academy_id="acad",
+                    name="Retired",
+                    price_cents=9_000,
+                    billing_period="monthly",
+                    is_active=False,
+                    created_at=_now(),
+                    updated_at=_now(),
+                )
+            )
+        return rows
 
 
 class _UpdateSessionType:
@@ -170,6 +190,25 @@ def test_admin_session_type_crud_routes(admin_client):
 
     deleted = admin_client.delete("/api/v2/admin/session-types/type-new")
     assert deleted.status_code == 204
+
+
+def test_admin_session_types_include_archived_is_opt_in(admin_client):
+    """Archived types stay out of the default list, and come back on request."""
+    _install_session_type_fakes(admin_client)
+    fake = admin_client.use_cases.list_session_types
+
+    default = admin_client.get("/api/v2/admin/session-types")
+    assert default.status_code == 200, default.text
+    assert [row["session_type_id"] for row in default.json()["session_types"]] == ["type-new"]
+
+    with_archived = admin_client.get("/api/v2/admin/session-types?include_archived=true")
+    assert with_archived.status_code == 200, with_archived.text
+    rows = with_archived.json()["session_types"]
+    assert [row["session_type_id"] for row in rows] == ["type-new", "type-archived"]
+    assert [row["is_active"] for row in rows] == [True, False]
+
+    # The param must actually reach the use case, not just filter the response.
+    assert fake.calls == [False, True]
 
 
 def test_admin_billing_enrollment_move_and_override_routes(admin_client):

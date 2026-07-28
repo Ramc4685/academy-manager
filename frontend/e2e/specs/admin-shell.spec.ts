@@ -119,6 +119,19 @@ const SESSION_TYPE_E2E = {
   updated_at: "2026-07-01T00:00:00Z",
 } as const;
 
+/** Soft-deleted: only returned when the panel asks for include_archived=true. */
+const ARCHIVED_SESSION_TYPE_E2E = {
+  session_type_id: "st-e2e-archived",
+  name: "Retired Saturday Squad",
+  description: null,
+  price_cents: 8000,
+  billing_period: "monthly",
+  overage_rate_cents: null,
+  is_active: false,
+  created_at: "2026-05-01T00:00:00Z",
+  updated_at: "2026-06-01T00:00:00Z",
+} as const;
+
 const BENIGN_PATTERNS: RegExp[] = [
   /Download the React DevTools/i,
   /Fast Refresh/i,
@@ -247,7 +260,14 @@ async function stubAdminBff(page: Page, memberships = SINGLE_MEMBERSHIP) {
   });
   await page.route("**/api/v2/admin/session-types*", (route) => {
     if (route.request().method() !== "GET") return route.fallback();
-    return fulfillJson(route, { session_types: [SESSION_TYPE_E2E] });
+    // Mirrors the backend: archived rows only when include_archived is set.
+    const includeArchived =
+      new URL(route.request().url()).searchParams.get("include_archived") === "true";
+    return fulfillJson(route, {
+      session_types: includeArchived
+        ? [SESSION_TYPE_E2E, ARCHIVED_SESSION_TYPE_E2E]
+        : [SESSION_TYPE_E2E],
+    });
   });
   await page.route("**/api/v2/admin/students*", (route) =>
     fulfillJson(route, { students: [] }),
@@ -833,6 +853,47 @@ test.describe("Rally admin shell", () => {
     expect(
       errors,
       `App console errors on session types: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  test("session types show-archived toggle lists archived rows and reactivates one", async ({
+    page,
+  }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    const patched: Array<Record<string, unknown>> = [];
+    await page.route("**/api/v2/admin/session-types/*", (route) => {
+      if (route.request().method() !== "PATCH") return route.fallback();
+      patched.push({
+        url: route.request().url(),
+        body: route.request().postDataJSON(),
+      });
+      return fulfillJson(route, { ...ARCHIVED_SESSION_TYPE_E2E, is_active: true });
+    });
+
+    await page.goto("/admin/settings?panel=session-types");
+    // Archived rows are hidden by default.
+    await expect(page.getByTestId("session-type-row")).toHaveCount(1);
+    await expect(page.getByText("Retired Saturday Squad")).toHaveCount(0);
+
+    await page.getByTestId("session-types-show-archived").check();
+    await expect(page.getByTestId("session-type-row")).toHaveCount(2);
+    const archivedRow = page
+      .getByTestId("session-type-row")
+      .filter({ hasText: "Retired Saturday Squad" });
+    await expect(archivedRow).toHaveAttribute("data-archived", "true");
+    await expect(archivedRow.getByText("ARCHIVED")).toBeVisible();
+
+    // The active row keeps Archive; only the archived row offers Reactivate.
+    await expect(page.getByTestId("session-type-reactivate")).toHaveCount(1);
+    await archivedRow.getByTestId("session-type-reactivate").click();
+
+    await expect.poll(() => patched.length).toBe(1);
+    expect(patched[0].body).toEqual({ is_active: true });
+    expect(String(patched[0].url)).toContain("st-e2e-archived");
+    expect(
+      errors,
+      `App console errors on archived session types: ${errors.join("\n")}`,
     ).toEqual([]);
   });
 

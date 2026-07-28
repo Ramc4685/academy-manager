@@ -17,6 +17,7 @@ import { queryKeys } from "@/lib/query/keys";
 import {
   Button,
   Card,
+  Chip,
   DialogActions,
   DialogError,
   EmptyState,
@@ -124,18 +125,19 @@ function toUpdatePayload(original: FormState, form: FormState): UpdateSessionTyp
 /**
  * Session types are the pricing catalog behind billing enrollments.
  *
- * Archive is a soft delete, and `GET /admin/session-types` only returns
- * active rows (`SessionTypeRepository.list_active`), so archived types are
- * neither listable nor restorable from here — the confirm copy says so.
+ * Archive is a soft delete. `GET /admin/session-types` hides archived rows
+ * unless `include_archived=true`, so the toggle below is what makes a
+ * soft-deleted type reachable again; Reactivate is `PATCH is_active: true`.
  */
 export function SessionTypesPanel() {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState<SessionTypeView | "new" | null>(null);
   const [archiving, setArchiving] = useState<SessionTypeView | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
 
   const query = useQuery({
-    queryKey: queryKeys.admin.sessionTypes(),
-    queryFn: listSessionTypes,
+    queryKey: queryKeys.admin.sessionTypesList(showArchived),
+    queryFn: () => listSessionTypes({ includeArchived: showArchived }),
     retry: false,
   });
 
@@ -157,6 +159,15 @@ export function SessionTypesPanel() {
     setArchiving(row);
   }
 
+  // Restoring an archived type is just clearing the soft-delete flag. One
+  // mutation serves every row; `variables` (the id in flight) is what scopes
+  // the pending and error states to the row that was actually clicked.
+  const reactivateMutation = useMutation({
+    mutationFn: (sessionTypeId: string) =>
+      updateSessionType(sessionTypeId, { is_active: true }),
+    onSuccess: () => void invalidate(),
+  });
+
   const rows = query.data?.session_types ?? [];
 
   return (
@@ -168,14 +179,26 @@ export function SessionTypesPanel() {
             Pricing plans students are billed against.
           </p>
         </div>
-        <Button
-          variant="volt"
-          size="sm"
-          onClick={() => setEditing("new")}
-          data-testid="session-type-new"
-        >
-          New session type
-        </Button>
+        <div className="flex items-center gap-4">
+          <label className="flex items-center gap-2 text-sm text-rally-muted">
+            <input
+              type="checkbox"
+              checked={showArchived}
+              onChange={(event) => setShowArchived(event.target.checked)}
+              data-testid="session-types-show-archived"
+              className="h-4 w-4 rounded border-rally-line"
+            />
+            Show archived
+          </label>
+          <Button
+            variant="volt"
+            size="sm"
+            onClick={() => setEditing("new")}
+            data-testid="session-type-new"
+          >
+            New session type
+          </Button>
+        </div>
       </div>
 
       <Card p={0}>
@@ -194,8 +217,12 @@ export function SessionTypesPanel() {
         ) : rows.length === 0 ? (
           <EmptyState
             data-testid="session-types-empty"
-            title="No session types yet"
-            description="Create a session type to start billing enrollments against a price."
+            title={showArchived ? "No session types" : "No active session types"}
+            description={
+              showArchived
+                ? "Create a session type to start billing enrollments against a price."
+                : "Nothing active. Tick \u201cShow archived\u201d to look for one you archived."
+            }
             action={
               <Button variant="volt" size="sm" onClick={() => setEditing("new")}>
                 New session type
@@ -203,7 +230,18 @@ export function SessionTypesPanel() {
             }
           />
         ) : (
-          <SessionTypesTable rows={rows} onEdit={setEditing} onArchive={openArchive} />
+          <SessionTypesTable
+            rows={rows}
+            onEdit={setEditing}
+            onArchive={openArchive}
+            onReactivate={(row) => reactivateMutation.mutate(row.session_type_id)}
+            reactivatingId={
+              reactivateMutation.isPending ? (reactivateMutation.variables ?? null) : null
+            }
+            failedReactivateId={
+              reactivateMutation.isError ? (reactivateMutation.variables ?? null) : null
+            }
+          />
         )}
       </Card>
 
@@ -228,7 +266,7 @@ export function SessionTypesPanel() {
           <p className="text-sm text-rally-muted">
             Students already enrolled keep billing at their current price — archiving
             does not stop or change them. New enrollments can no longer choose this
-            plan, and it cannot be restored from this screen.
+            plan. To bring it back, tick “Show archived” and reactivate it.
           </p>
           {archiveMutation.isError && (
             <div className="mt-3">
@@ -259,10 +297,17 @@ function SessionTypesTable({
   rows,
   onEdit,
   onArchive,
+  onReactivate,
+  reactivatingId,
+  failedReactivateId,
 }: {
   rows: SessionTypeView[];
   onEdit: (row: SessionTypeView) => void;
   onArchive: (row: SessionTypeView) => void;
+  onReactivate: (row: SessionTypeView) => void;
+  /** Id of the row whose reactivation is in flight, so only it shows pending. */
+  reactivatingId: string | null;
+  failedReactivateId: string | null;
 }) {
   return (
     <div className="overflow-x-auto">
@@ -281,12 +326,31 @@ function SessionTypesTable({
             <tr
               key={row.session_type_id}
               data-testid="session-type-row"
-              className="border-b border-rally-line last:border-0"
+              data-archived={row.is_active ? undefined : "true"}
+              className={`border-b border-rally-line last:border-0 ${
+                row.is_active ? "" : "bg-rally-paper text-rally-muted"
+              }`}
             >
               <td className="px-4 py-3">
-                <span className="font-semibold text-rally-ink">{row.name}</span>
+                <span
+                  className={
+                    row.is_active ? "font-semibold text-rally-ink" : "font-semibold"
+                  }
+                >
+                  {row.name}
+                </span>
+                {!row.is_active && (
+                  <span className="ml-2 align-middle">
+                    <Chip variant="expired" label="ARCHIVED" />
+                  </span>
+                )}
                 {row.description && (
                   <p className="text-xs text-rally-subtle">{row.description}</p>
+                )}
+                {failedReactivateId === row.session_type_id && (
+                  <p role="alert" className="mt-1 text-xs text-status-red-800">
+                    Could not reactivate this session type. Try again.
+                  </p>
                 )}
               </td>
               <td className="px-4 py-3 font-mono tabular-nums">{formatMoney(row.price_cents)}</td>
@@ -299,9 +363,23 @@ function SessionTypesTable({
                   <Button variant="secondary" size="sm" onClick={() => onEdit(row)}>
                     Edit
                   </Button>
-                  <Button variant="danger" size="sm" onClick={() => onArchive(row)}>
-                    Archive
-                  </Button>
+                  {row.is_active ? (
+                    <Button variant="danger" size="sm" onClick={() => onArchive(row)}>
+                      Archive
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="volt"
+                      size="sm"
+                      disabled={reactivatingId === row.session_type_id}
+                      onClick={() => onReactivate(row)}
+                      data-testid="session-type-reactivate"
+                    >
+                      {reactivatingId === row.session_type_id
+                        ? "Reactivating..."
+                        : "Reactivate"}
+                    </Button>
+                  )}
                 </div>
               </td>
             </tr>

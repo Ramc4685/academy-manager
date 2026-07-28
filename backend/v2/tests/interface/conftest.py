@@ -592,6 +592,9 @@ def _build_use_cases(seed_data) -> CoachUseCases:
         async def list_active(self):
             return []
 
+        async def list_all(self):
+            return []
+
         async def soft_delete(self, stid):
             pass
 

@@ -42,8 +42,17 @@ export interface UpdateSessionTypeRequest {
   is_active?: boolean;
 }
 
-export function listSessionTypes(): Promise<SessionTypeList> {
-  return apiFetch<SessionTypeList>("/admin/session-types");
+/**
+ * Archived (soft-deleted) types are excluded unless `includeArchived` is set —
+ * the backend defaults `include_archived` to false.
+ */
+export function listSessionTypes(
+  options: { includeArchived?: boolean } = {},
+): Promise<SessionTypeList> {
+  const path = options.includeArchived
+    ? "/admin/session-types?include_archived=true"
+    : "/admin/session-types";
+  return apiFetch<SessionTypeList>(path);
 }
 
 export function createSessionType(
