@@ -222,6 +222,14 @@ class LoginInviteResponse(BaseModel):
     sent_at: datetime
 
 
+class StudentLoginInviteRequest(BaseModel):
+    """UIM12: admin-supplied email to provision a student's own login."""
+
+    email: str = Field(min_length=1, max_length=254)
+    display_name: str | None = Field(default=None, max_length=120)
+    reason: str = Field(default="student login invite", min_length=1, max_length=500)
+
+
 # --- Session Type Billing ---
 
 

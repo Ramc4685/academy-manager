@@ -32,7 +32,13 @@ from pydantic import BaseModel, EmailStr, Field, field_validator, model_validato
 
 # Academy-scoped roles. These are the roles a user can hold *within* a
 # single academy via an `AcademyMembership`. They are NOT platform roles.
-Role = Literal["admin", "coach", "parent"]
+#
+# "student" (UIM12) is granted only via `ProvisionStudentLogin`, which links
+# the membership's `user_id` to a `Student.student_user_id`. It is gated
+# end-to-end by `settings.enable_student_login` — a `student` membership can
+# exist while the flag is off (the invite already went out); the BFF just
+# 404s until the flag flips.
+Role = Literal["admin", "coach", "parent", "student"]
 
 # Platform-wide roles. Granted via `PlatformRole` records and carried on
 # `AuthClaims.platform_roles` separately from academy roles.

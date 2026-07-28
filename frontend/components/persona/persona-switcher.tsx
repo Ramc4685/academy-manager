@@ -18,15 +18,17 @@ const PERSONA_HOME: Record<UserRole, string> = {
   admin: "/admin",
   coach: "/coach/today",
   parent: "/parent/payments",
+  student: "/student/dashboard",
 };
 
 const PERSONA_LABEL: Record<UserRole, string> = {
   admin: "Admin view",
   coach: "Coach view",
   parent: "Parent view",
+  student: "Student view",
 };
 
-const PERSONA_ORDER: UserRole[] = ["admin", "coach", "parent"];
+const PERSONA_ORDER: UserRole[] = ["admin", "coach", "parent", "student"];
 
 export function PersonaSwitcher({
   current,

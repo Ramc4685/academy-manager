@@ -29,6 +29,9 @@ from backend.v2.contexts.identity.application.use_cases.admin_directory import (
 from backend.v2.contexts.identity.application.use_cases.manage_user_roles import (
     ModifyUserRoleCommand,
 )
+from backend.v2.contexts.identity.application.use_cases.provision_student_login import (
+    ProvisionStudentLoginCommand,
+)
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
     AdminStudentDetailView,
@@ -45,11 +48,13 @@ from backend.v2.interfaces.admin.views import (
     CreateAdminUserRequest,
     LoginInviteResponse,
     ModifyUserRoleRequest,
+    StudentLoginInviteRequest,
     UpdateAdminStudentRequest,
     UpdateAdminUserRequest,
     UpdateAdminUserRoleRequest,
 )
 from backend.v2.shared.auth.claims import AuthClaims
+from backend.v2.shared.config import get_settings
 from backend.v2.shared.http import require_persona
 
 logger = logging.getLogger(__name__)
@@ -326,6 +331,66 @@ async def get_student(
     data = student.model_dump()
     await _attach_tuition_discounts(data, use_cases)
     return AdminStudentDetailView(**data)
+
+
+@router.post("/students/{student_id}/login-invite", response_model=LoginInviteResponse)
+async def send_student_login_invite(
+    student_id: str,
+    payload: StudentLoginInviteRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> LoginInviteResponse:
+    """UIM12: provision a student's own login and email a set-password invite.
+
+    Two-step, same shape as `create_user` + its inline invite (lines ~92-118
+    above): provision the account, then reuse `send_login_invite` unchanged.
+    `StudentNotFound` / `StudentAlreadyLinked` / `UserAlreadyLinkedToStudent`
+    / `UserOutsideAcademy` from the provisioning step map to 404/409 via the
+    registered `DomainError` handler.
+
+    Gated by `enable_student_login` exactly like the `/student/*` read
+    surface: with the flag off (the shipping default, and the incident kill
+    switch) this route must not mint Firebase accounts, grant `student`
+    memberships, or send mail. 404 — not 403 — to match the persona-mismatch
+    convention in `docs/security-matrix.md`.
+    """
+    if not get_settings().enable_student_login:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    provision = use_cases.provision_student_login
+    if provision is None:
+        raise HTTPException(status_code=503, detail="Student login invites are not configured")
+
+    display_name = payload.display_name
+    if not display_name:
+        get_student = use_cases.get_admin_student
+        if get_student is None:
+            raise HTTPException(status_code=503, detail="Admin student detail is not configured")
+        student = await get_student.execute(student_id)
+        display_name = student.full_name
+
+    user_id = await provision.execute(
+        ProvisionStudentLoginCommand(
+            student_id=student_id,
+            email=payload.email,
+            display_name=display_name,
+            actor_id=claims.user_id,
+            reason=payload.reason,
+        ),
+        academy_id=claims.academy_id,
+    )
+
+    invite = use_cases.send_login_invite
+    if invite is None:
+        raise HTTPException(status_code=503, detail="Login invites are not configured")
+    try:
+        result = await invite.execute(user_id, academy_id=claims.academy_id)
+    except LoginInviteSendFailed as exc:
+        logger.exception("student login invite failed for %s", student_id)
+        raise HTTPException(
+            status_code=502, detail=f"Could not send the invite email: {exc}"
+        ) from exc
+    return LoginInviteResponse(sent_at=result.sent_at)
 
 
 @router.patch("/students/{student_id}", response_model=AdminStudentDetailView)

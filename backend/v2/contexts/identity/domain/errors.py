@@ -73,6 +73,50 @@ class MagicLinkInvalid(DomainError):
     status_code = 401
 
 
+class StudentNotFound(DomainError):
+    """No student roster record for the given id in the resolved academy."""
+
+    code = "Identity.StudentNotFound"
+    status_code = 404
+
+
+class StudentAlreadyLinked(DomainError):
+    """The student already has a login (`Student.student_user_id` is set).
+
+    Enforces "one user per student per academy" (UIM12) — a second invite
+    attempt is rejected rather than silently re-linking to a new user.
+    """
+
+    code = "Identity.StudentAlreadyLinked"
+    status_code = 409
+
+
+class UserAlreadyLinkedToStudent(DomainError):
+    """This email/user is already another student's login (UIM12).
+
+    The other half of "one user per student per academy". Without it, two
+    siblings invited with the same family email would share one user, and
+    `/student/*` would resolve to whichever student doc Mongo returned
+    first — each sibling seeing the other's schedule and progress.
+    """
+
+    code = "Identity.UserAlreadyLinkedToStudent"
+    status_code = 409
+
+
+class UserOutsideAcademy(DomainError):
+    """The email belongs to an existing user who is not a member of this academy.
+
+    Refusing here stops an admin of academy A from attaching a stranger's
+    existing account (a real person in academy B, with a password they
+    already know) to one of A's students — which would hand that stranger
+    an immediate, verified login into the student's data (UIM12 review P2).
+    """
+
+    code = "Identity.UserOutsideAcademy"
+    status_code = 409
+
+
 class MagicLinkExpired(DomainError):
     """The magic-link token was valid but has passed its TTL.
 

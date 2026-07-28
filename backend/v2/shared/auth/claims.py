@@ -30,8 +30,12 @@ from fastapi import HTTPException, Request
 from pydantic import BaseModel, Field
 
 # Re-exported from the identity domain so route files can import role types
-# directly from the auth surface without crossing context boundaries.
-Role = Literal["admin", "coach", "parent"]
+# directly from the auth surface without crossing context boundaries. Kept
+# in sync by hand with `contexts.identity.domain.models.Role` (shared/ must
+# not import contexts/ — that would invert the dependency direction) —
+# when a role is added there, it must be added here too, or membership rows
+# holding it fail to deserialize into AuthClaims (see UIM12 postmortem).
+Role = Literal["admin", "coach", "parent", "student"]
 PlatformRoleName = Literal["platform_admin", "platform_support"]
 
 

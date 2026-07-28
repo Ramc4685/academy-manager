@@ -2945,6 +2945,102 @@
         "Risk evidence: \"Mail-scanner prefetch\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"Open-redirect next_path\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
+    },
+    {
+      "route": "/student/dashboard",
+      "role": "student",
+      "source": "frontend/app/(student)/student/dashboard/page.tsx",
+      "workflows": [
+        "Level summary",
+        "Next sessions"
+      ],
+      "controls": {
+        "buttons": [
+          "Persona switcher",
+          "Logout"
+        ],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty state",
+        "error",
+        "access denied"
+      ],
+      "risk_edges": [
+        "wrong-role access",
+        "tenant leakage across academies"
+      ],
+      "acceptance": [
+        "Workflow evidence: \"Level summary\" completes for the student route /student/dashboard with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Next sessions\" completes for the student route /student/dashboard with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"wrong-role access\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"tenant leakage across academies\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/student/schedule",
+      "role": "student",
+      "source": "frontend/app/(student)/student/schedule/page.tsx",
+      "workflows": [
+        "View upcoming schedule"
+      ],
+      "controls": {
+        "buttons": [
+          "Persona switcher",
+          "Logout"
+        ],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty state",
+        "error",
+        "access denied"
+      ],
+      "risk_edges": [
+        "wrong-role access",
+        "stale schedule after enrollment change"
+      ],
+      "acceptance": [
+        "Workflow evidence: \"View upcoming schedule\" completes for the student route /student/schedule with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"wrong-role access\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"stale schedule after enrollment change\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/student/progress",
+      "role": "student",
+      "source": "frontend/app/(student)/student/progress/page.tsx",
+      "workflows": [
+        "View skill passport"
+      ],
+      "controls": {
+        "buttons": [
+          "Persona switcher",
+          "Logout"
+        ],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty state",
+        "error",
+        "access denied",
+        "not found"
+      ],
+      "risk_edges": [
+        "wrong-role access",
+        "stale progress after coach update"
+      ],
+      "acceptance": [
+        "Workflow evidence: \"View skill passport\" completes for the student route /student/progress with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"wrong-role access\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"stale progress after coach update\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
     }
   ],
   "global_surfaces": [
