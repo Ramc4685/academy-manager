@@ -114,7 +114,6 @@ export const queryKeys = {
       ["admin", "self-service", "cancellations"] as const,
     tuitionDiscounts: (period: string) =>
       ["admin", "tuition-discounts", period] as const,
-    sessionTypes: () => ["admin", "session-types"] as const,
     billingEnrollments: (studentId: string) =>
       ["admin", "billing-enrollments", studentId] as const,
   },
