@@ -64,7 +64,7 @@ Plans: one file per item under [plans/](plans/). Each plan is self-contained —
 
 | ID | Item | Plan | Size | Depends on | Status | PR/Issue |
 |---|---|---|---|---|---|---|
-| UIM1 | Platform/tenant-admin persona UI | [plans/UIM1-platform-persona.md](plans/UIM1-platform-persona.md) | L | DS1-3 recommended | TODO | |
+| UIM1 | Platform/tenant-admin persona UI | [plans/UIM1-platform-persona.md](plans/UIM1-platform-persona.md) | L | DS1-3 recommended | PARTIAL | [#377](https://github.com/Ramc4685/academy-manager/pull/377) — Phase 1 (shell + tenants) done; Phases 2-4 (billing, governance, audit+Connect) still TODO |
 | UIM2 | GET /me/memberships + real TenantSwitcher | [plans/UIM2-memberships-route.md](plans/UIM2-memberships-route.md) | S | — | DONE | [#366](https://github.com/Ramc4685/academy-manager/pull/366) |
 | UIM3 | Funnel/attendance/utilization reports UI | [plans/UIM3-analytics-reports.md](plans/UIM3-analytics-reports.md) | M | UIC3 (same surface) | DONE | [#362](https://github.com/Ramc4685/academy-manager/pull/362) |
 | UIM4 | Session-type management UI | [plans/UIM4-session-types.md](plans/UIM4-session-types.md) | S | — | TODO | |
