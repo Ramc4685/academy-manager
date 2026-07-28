@@ -13,7 +13,15 @@ export default function MessagesPage() {
     getCurrentUser()
       .then((data) => {
         if (cancelled) return;
-        router.replace(data.roles.includes("admin") ? "/admin/messages" : "/post-login");
+        const roles = data.roles;
+        const href = roles.includes("admin")
+          ? "/admin/messages"
+          : roles.includes("coach")
+            ? "/coach/messages"
+            : roles.includes("parent")
+              ? "/parent/messages"
+              : "/post-login";
+        router.replace(href);
       })
       .catch(() => {
         if (!cancelled) router.replace("/login");

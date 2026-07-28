@@ -1,5 +1,5 @@
 # UIM13 — Real Messages inbox + Calendar (coach/parent)
-Status: TODO
+Status: DONE (PR #PRNUM, 2026-07-28)
 Size: L · Depends on: coordinates with UIC8 (shared-stub deletion) · Tracker: ../TRACKER.md
 
 ## User value
@@ -57,6 +57,25 @@ Admins already send broadcasts and DMs, but coaches and parents have nowhere to 
 - All phases additive; rollback = revert the phase PR (stubs can be restored from git if UIC8 ordering goes sideways).
 
 ## PR checklist (per phase)
-- [ ] Release note line
-- [ ] TRACKER.md row updated (Status, PR/Issue)
-- [ ] This plan's Status → DONE (PR #NNN, date) after Phase 3
+- [x] Release note line — `docs/release-notes/2026-07-28-fix-uim13-messages-calendar.md`
+- [x] TRACKER.md row updated (Status, PR/Issue)
+- [x] This plan's Status → DONE (PR #NNN, date) after Phase 3
+
+## Execution notes (2026-07-28)
+All three phases shipped in a single branch/PR (`fix/UIM13-messages-calendar`)
+rather than three, per the execution brief.
+
+Deviations from the plan as written:
+- The `(shared)/messages` and `(shared)/calendar` pages were **not** deleted.
+  UIC8 (#327) had already converted them from stubs into role-aware redirect
+  pages, so they were repointed at the new persona routes
+  (`/coach/messages`, `/parent/messages`, `/coach/calendar`,
+  `/parent/calendar`) instead of removed. Deleting them would have churned
+  the QA route manifest for no user-visible gain.
+- The calendar grid reuses FullCalendar via a new shared
+  `frontend/components/calendar/PersonaCalendarView.tsx`, mirroring the
+  existing `components/admin/AdminCalendarView.tsx` (dynamic import,
+  `ssr: false`) rather than introducing a hand-rolled grid.
+- No dedicated unread-count endpoint, per the plan — the badge derives the
+  count client-side from the list query, which both persona layouts share
+  with the inbox page via the same TanStack Query key.

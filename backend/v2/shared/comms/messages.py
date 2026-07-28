@@ -79,6 +79,25 @@ class MongoMessageRepository(TenantScopedRepository):
         cursor = self._find_many({"kind": "announcement"}, sort=[("created_at", -1)], limit=200)
         return [self._to_domain(d) async for d in cursor]
 
+    async def mark_read(self, message_id: str, user_id: str) -> None:
+        """Idempotently record that ``user_id`` has read ``message_id``.
+
+        Scoped to what the caller can actually read — the same
+        ``recipient_id``/announcement predicate as :meth:`for_recipient`, on
+        top of the ``academy_id`` the tenant-scoped base class injects. Without
+        it any user in the academy could stamp their id onto the ``read_by`` of
+        someone else's DM (a forged read receipt the moment admin surfaces
+        ``read_by``). A non-matching id is simply a no-op: callers always get
+        the same response, so this is not an existence oracle.
+        """
+        await self._update_one(
+            {
+                "message_id": message_id,
+                "$or": [{"recipient_id": user_id}, {"kind": "announcement"}],
+            },
+            {"$addToSet": {"read_by": user_id}},
+        )
+
 
 @dataclass
 class CommsService:

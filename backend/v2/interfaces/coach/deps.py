@@ -47,6 +47,7 @@ from backend.v2.contexts.enrollment.application.use_cases.get_session_roster imp
 from backend.v2.contexts.enrollment.application.use_cases.list_coach_occurrences_for_date import (
     ListCoachOccurrencesForDate,
 )
+from backend.v2.shared.comms import Message
 
 
 @dataclass
@@ -97,6 +98,10 @@ class CoachUseCases:
     # it; real composition always sets it. today_routes.py falls back to
     # `get_roster` (plain, session-scoped) when this is None.
     get_occurrence_roster: GetOccurrenceRoster | None = None
+    # Messages inbox (UIM13). Optional for backward compat with fixtures that
+    # predate it; real coach composition always sets both.
+    list_messages: Callable[[str], Awaitable[list[Message]]] | None = None
+    mark_message_read: Callable[[str, str], Awaitable[None]] | None = None
 
 
 def get_coach_use_cases(request: Request) -> CoachUseCases:

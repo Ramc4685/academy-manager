@@ -2945,6 +2945,155 @@
         "Risk evidence: \"Mail-scanner prefetch\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"Open-redirect next_path\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
+    },
+    {
+      "route": "/coach/messages",
+      "role": "coach",
+      "source": "frontend/app/(coach)/coach/messages/page.tsx",
+      "workflows": [
+        "Read inbox",
+        "Mark message read"
+      ],
+      "controls": {
+        "buttons": [
+          "Retry"
+        ],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty",
+        "error",
+        "unread",
+        "read"
+      ],
+      "risk_edges": [
+        "Wrong-role sees another coach's DM",
+        "Stale unread badge after read",
+        "Race between poll refetch and mark-read"
+      ],
+      "acceptance": [
+        "Coach sees only their own DMs plus academy announcements",
+        "Workflow evidence: \"Read inbox\" completes for the coach route /coach/messages with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Mark message read\" completes for the coach route /coach/messages with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Wrong-role sees another coach's DM\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Stale unread badge after read\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Race between poll refetch and mark-read\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/parent/messages",
+      "role": "parent",
+      "source": "frontend/app/(parent)/parent/messages/page.tsx",
+      "workflows": [
+        "Read inbox",
+        "Mark message read"
+      ],
+      "controls": {
+        "buttons": [
+          "Retry"
+        ],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty",
+        "error",
+        "unread",
+        "read"
+      ],
+      "risk_edges": [
+        "Wrong-role sees another parent's DM",
+        "Stale unread badge after read",
+        "Race between poll refetch and mark-read"
+      ],
+      "acceptance": [
+        "Parent sees only their own DMs plus academy announcements",
+        "Workflow evidence: \"Read inbox\" completes for the parent route /parent/messages with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Mark message read\" completes for the parent route /parent/messages with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Wrong-role sees another parent's DM\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Stale unread badge after read\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Race between poll refetch and mark-read\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/coach/calendar",
+      "role": "coach",
+      "source": "frontend/app/(coach)/coach/calendar/page.tsx",
+      "workflows": [
+        "Browse month",
+        "Open day detail",
+        "Open session from calendar"
+      ],
+      "controls": {
+        "buttons": [
+          "Prev",
+          "Next"
+        ],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty",
+        "error",
+        "day selected"
+      ],
+      "risk_edges": [
+        "Timezone shifts session onto wrong day",
+        "Double-booked day rendering",
+        "Stale schedule after navigation"
+      ],
+      "acceptance": [
+        "Calendar entries match /coach/sessions for the signed-in coach",
+        "Workflow evidence: \"Browse month\" completes for the coach route /coach/calendar with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Open day detail\" completes for the coach route /coach/calendar with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Open session from calendar\" completes for the coach route /coach/calendar with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Timezone shifts session onto wrong day\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Double-booked day rendering\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Stale schedule after navigation\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/parent/calendar",
+      "role": "parent",
+      "source": "frontend/app/(parent)/parent/calendar/page.tsx",
+      "workflows": [
+        "Browse month",
+        "Open day detail",
+        "View multi-child schedule"
+      ],
+      "controls": {
+        "buttons": [
+          "Prev",
+          "Next"
+        ],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty",
+        "error",
+        "day selected",
+        "partial child load failure"
+      ],
+      "risk_edges": [
+        "One child's schedule failing does not blank the whole calendar",
+        "Timezone shifts session onto wrong day",
+        "Color coding ambiguous with many children"
+      ],
+      "acceptance": [
+        "Calendar merges every child's schedule, color-coded per child",
+        "Workflow evidence: \"Browse month\" completes for the parent route /parent/calendar with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Open day detail\" completes for the parent route /parent/calendar with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"View multi-child schedule\" completes for the parent route /parent/calendar with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"One child's schedule failing does not blank the whole calendar\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Timezone shifts session onto wrong day\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Color coding ambiguous with many children\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
     }
   ],
   "global_surfaces": [

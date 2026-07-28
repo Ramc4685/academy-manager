@@ -191,6 +191,7 @@ from backend.v2.contexts.onboarding.infrastructure.mongo_parent_waiver_repo impo
 from backend.v2.contexts.onboarding.infrastructure.mongo_registration_waiver_repo import (
     MongoRegistrationWaiverRepository,
 )
+from backend.v2.shared.comms import MongoMessageRepository
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore
@@ -247,6 +248,9 @@ class ParentComposition:
     get_registration_waiver: object  # callable -> Waiver | None
     student_progress: StudentProgressComposition
     curriculum: CurriculumComposition
+    # Messages inbox (UIM13)
+    list_messages: object = None  # Callable[[str], Awaitable[list[Message]]]
+    mark_message_read: object = None  # Callable[[str, str], Awaitable[None]]
 
 
 class _MongoTransactionRunner:
@@ -1600,6 +1604,8 @@ def compose_parent(
 
     sp_composition = compose_student_progress(db, outbox)
     curriculum_composition = compose_curriculum(db)
+    # Messages inbox (UIM13) — shared comms store, per-recipient read routes.
+    messages_repo = MongoMessageRepository(db)
 
     return ParentComposition(
         start_application=start_app,
@@ -1644,6 +1650,8 @@ def compose_parent(
         get_registration_waiver=get_registration_waiver,
         student_progress=sp_composition,
         curriculum=curriculum_composition,
+        list_messages=messages_repo.for_recipient,
+        mark_message_read=messages_repo.mark_read,
     )
 
 

@@ -257,3 +257,25 @@ class UpdateCoachProfileRequest(BaseModel):
     display_name: str | None = None
     phone: str | None = None
     email: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Messages inbox (UIM13)
+# ---------------------------------------------------------------------------
+
+
+class CoachMessageView(BaseModel):
+    message_id: str
+    kind: Literal["dm", "announcement"]
+    sender_persona: Literal["admin", "coach", "parent"]
+    body: str
+    created_at: datetime
+    read: bool
+
+
+class CoachMessagesResponse(BaseModel):
+    messages: list[CoachMessageView]
+
+
+class CoachMarkMessageReadResponse(BaseModel):
+    status: Literal["ok"] = "ok"
