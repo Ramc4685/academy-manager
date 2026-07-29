@@ -23,6 +23,7 @@ from backend.v2.composition.digests import (
 )
 from backend.v2.composition.email_adapters import (
     AddCardReminderEmailAdapter,
+    DuesReminderEmailAdapter,
     InvoiceEmailAdapter,
     LoginInviteEmailAdapter,
 )
@@ -484,6 +485,7 @@ from backend.v2.shared.idempotency import IdempotencyStore
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.occurrences import occurrence_session_id
 from backend.v2.shared.tenancy import TenantContextUnset, current_academy_id, tenant_scope
+from backend.v2.shared.tenancy.academy_url import academy_frontend_url
 
 
 class _StudentLoginProvisionerAdapter:
@@ -982,7 +984,17 @@ def compose_admin(
         if _s.frontend_url
         else "noreply@academy.app"
     )
-    if _s.email_delivery_enabled and _s.resend_api_key:
+    # Beyond email_delivery_enabled + resend_api_key, real delivery is only
+    # wired in an approved environment (staging/prod) -- mirrors
+    # digests.py::_build_email_sender / _REAL_EMAIL_ENVS. A dev or test stack
+    # that has inherited delivery flags and Resend credentials must still
+    # fall back to the stub (AGENTS.md: "Do not send real email from
+    # local/test environments").
+    _email_env = str(getattr(_s, "env", "") or "").lower()
+    _email_sender_is_real = bool(
+        _s.email_delivery_enabled and _s.resend_api_key and _email_env in {"staging", "prod"}
+    )
+    if _email_sender_is_real and _s.resend_api_key:
         _email_sender = ResendEmailSendPort(api_key=_s.resend_api_key, from_address=_from_addr)
     else:
         _email_sender = StubEmailSendPort()
@@ -1028,11 +1040,17 @@ def compose_admin(
         return InvoiceEmailAdapter(
             memberships=MongoMembershipRepository(db),
             users=MongoUserRepository(db, default_academy_id=academy_id),
+            academies=academy_repo,
             sender=_email_sender,
         )
 
     async def send_billing_invoice(invoice_id: str) -> dict[str, Any]:
-        frontend_url = (settings.frontend_url or "https://app.example.com").rstrip("/")
+        academy_doc = await academy_repo.find_by_id(current_academy_id())
+        academy_slug = str(academy_doc.get("slug") or "") if academy_doc else ""
+        frontend_url = academy_frontend_url(
+            frontend_url=settings.frontend_url or "https://app.example.com",
+            academy_slug=academy_slug,
+        )
         invoice_stripe = stripe if hasattr(stripe, "create_invoice_checkout_session") else None
         result = await SendInvoice(
             ledger=billing_ledger_repo,
@@ -4093,6 +4111,8 @@ def compose_admin(
         )
         return {"artifact_id": artifact_id, "artifact_type": artifact_type, "status": "generated"}
 
+    _dues_reminder_email = DuesReminderEmailAdapter(academies=academy_repo, sender=_email_sender)
+
     class _DuesReminderSender:
         async def send_dues_reminders(
             self,
@@ -4132,23 +4152,72 @@ def compose_admin(
                             "invoice_pdf",
                         )
                         generated += 1
+
+            if not _email_sender_is_real:
+                return {
+                    "sent": 0,
+                    "blocked": True,
+                    "reason": (
+                        f"Local/test safety block: {len(rows)} reminder(s) were not sent "
+                        "(email delivery is not enabled for this environment)."
+                    ),
+                    "selected_parent_ids": parent_ids or [str(row["parent_id"]) for row in rows],
+                    "generated_invoice_artifacts": generated,
+                }
+
+            academy_doc = await academy_repo.find_by_id(request_academy_id)
+            academy_slug = str(academy_doc.get("slug") or "") if academy_doc else ""
+            frontend_url = academy_frontend_url(
+                frontend_url=settings.frontend_url, academy_slug=academy_slug
+            )
+            pay_url = f"{frontend_url}/parent/payments" if frontend_url else None
+            membership_repo = MongoMembershipRepository(db)
+            sent = 0
+            skipped = 0
+            for row in rows:
+                parent_id = str(row["parent_id"])
+                membership = await membership_repo.get_membership(request_academy_id, parent_id)
+                if (
+                    membership is None
+                    or not membership.is_active()
+                    or "parent" not in membership.roles
+                ):
+                    skipped += 1
+                    continue
+                user = await users_r.get_by_id(parent_id)
+                email = str(user.email if user else "").strip()
+                if not email:
+                    skipped += 1
+                    continue
+                ok = await _dues_reminder_email.send_reminder(
+                    parent_id=parent_id,
+                    email=email,
+                    display_name=str(user.display_name if user else "") or None,
+                    total_due_cents=int(row["total_due_cents"]),
+                    pending_count=int(row["pending_count"]),
+                    currency="usd",
+                    pay_url=pay_url,
+                )
+                if ok:
+                    sent += 1
+                else:
+                    skipped += 1
+
+            reason = (
+                f"{skipped} parent(s) skipped (no active membership, no email on file, "
+                "or delivery failed)."
+                if skipped
+                else None
+            )
             return {
-                "sent": 0,
-                "blocked": True,
-                "reason": f"Local/test safety block: {len(rows)} reminder(s) were not sent.",
+                "sent": sent,
+                "blocked": False,
+                "reason": reason,
                 "selected_parent_ids": parent_ids or [str(row["parent_id"]) for row in rows],
                 "generated_invoice_artifacts": generated,
             }
 
     send_dues_reminders = SendDuesReminders(sender=_DuesReminderSender())
-
-    async def _legacy_send_dues_reminders():
-        rows = await list_dues_followup()
-        return {
-            "sent": 0,
-            "blocked": True,
-            "reason": f"Local/test safety block: {len(rows)} reminder(s) were not sent.",
-        }
 
     get_refunds_report = make_refunds_report(db)
     get_revenue_by_category_report = make_revenue_by_category_report(db)
