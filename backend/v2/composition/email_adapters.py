@@ -249,7 +249,9 @@ class DuesReminderEmailAdapter:
         currency: str,
         pay_url: str | None,
     ) -> bool:
-        academy_name = await self._academies.get_academy_name(current_academy_id()) or "Your academy"
+        academy_name = (
+            await self._academies.get_academy_name(current_academy_id()) or "Your academy"
+        )
         safe_name = html.escape(display_name or "there")
         amount = f"{currency.upper()} {total_due_cents / 100:.2f}"
         safe_amount = html.escape(amount)
