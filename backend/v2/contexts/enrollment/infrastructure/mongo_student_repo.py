@@ -48,6 +48,15 @@ class MongoStudentRepository(TenantScopedRepository):
             parent_id=str(doc["parent_id"]),
             full_name=str(doc["full_name"]),
             date_of_birth=(str(doc["date_of_birth"]) if doc.get("date_of_birth") else None),
+            emergency_contact_name=(
+                str(doc["emergency_contact_name"]) if doc.get("emergency_contact_name") else None
+            ),
+            emergency_contact_phone=(
+                str(doc["emergency_contact_phone"])
+                if doc.get("emergency_contact_phone")
+                else None
+            ),
+            medical_notes=(str(doc["medical_notes"]) if doc.get("medical_notes") else None),
             student_user_id=(str(doc["student_user_id"]) if doc.get("student_user_id") else None),
         )
 

@@ -188,7 +188,10 @@ from backend.v2.contexts.onboarding.application.use_cases.parent_student_waivers
     AcceptParentWaiver,
     GetParentWaiverRequirement,
 )
-from backend.v2.contexts.onboarding.domain.errors import MissingSelectedSession
+from backend.v2.contexts.onboarding.domain.errors import (
+    IncompleteApplication,
+    MissingSelectedSession,
+)
 from backend.v2.contexts.onboarding.infrastructure.mongo_application_repo import (
     MongoApplicationRepository,
 )
@@ -562,7 +565,11 @@ def compose_parent(
     enrollment_events = MongoEnrollmentEventRepository(db)
     students_writer = MongoStudentWriter(db)
     students_query = MongoStudentRepository(db)
-    users_query = MongoUserRepository(db, default_academy_id=settings.default_academy_id)
+    # No boot-time academy fallback passed here — compose_parent must stay free
+    # of that setting (see test_no_raw_tenant_mongo_access.py); every read/write
+    # below is either unscoped by user_id or takes academy_id explicitly at
+    # call time via current_academy_id().
+    users_query = MongoUserRepository(db)
     occurrences_query = MongoSessionOccurrenceRepository(db)
     waitlist = MongoWaitlistRepository(db)
     pause_requests = MongoPauseRequestRepository(db)
@@ -1496,6 +1503,25 @@ def compose_parent(
     ):
         _validate_checkout_redirect_urls(success_url, cancel_url)
         app = await get_status.execute(application_id, caller_user_id=parent_id)
+        # Stop new registrations from landing incomplete (issue #380). This
+        # runs BEFORE the paid/zero-amount branch below — the $0 path skips
+        # Stripe entirely and jumps straight to PENDING_APPROVAL, so a guard
+        # placed after that branch would let free registrations through with
+        # missing safety details.
+        missing_fields = [
+            field
+            for field, value in (
+                ("date_of_birth", app.child_profile.date_of_birth),
+                ("emergency_contact_name", app.child_profile.emergency_contact_name),
+                ("emergency_contact_phone", app.child_profile.emergency_contact_phone),
+                ("parent_phone", app.parent_profile.phone),
+            )
+            if not value.strip()
+        ]
+        if missing_fields:
+            raise IncompleteApplication(
+                f"Application is missing required details: {', '.join(missing_fields)}"
+            )
         if not app.selected_session_id:
             raise MissingSelectedSession(
                 "application must have a selected session",

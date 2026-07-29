@@ -11,6 +11,7 @@ from backend.v2.composition.parent import compose_parent, compose_parent_webhook
 from backend.v2.contexts.billing.domain.connected_account import ConnectedAccount
 from backend.v2.contexts.billing.domain.errors import CheckoutCreationFailed
 from backend.v2.contexts.billing.domain.ledger import LedgerInvoice
+from backend.v2.contexts.onboarding.domain.errors import IncompleteApplication
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.tenancy import tenant_scope
 
@@ -984,6 +985,14 @@ async def test_zero_amount_checkout_skips_stripe_and_moves_to_pending_approval(
             "expires_at": now + timedelta(days=7),
             "created_at": now,
             "updated_at": now,
+            "parent_profile": {"first_name": "Meera", "last_name": "Raghavan", "phone": "+1 555 0100"},
+            "child_profile": {
+                "first_name": "Aanya",
+                "last_name": "Raghavan",
+                "date_of_birth": "2015-04-02",
+                "emergency_contact_name": "Vikram Raghavan",
+                "emergency_contact_phone": "+1 555 0111",
+            },
         }
     )
     # A bookable one-off session whose only class starts inside the 2-hour
@@ -1034,6 +1043,71 @@ async def test_zero_amount_checkout_skips_stripe_and_moves_to_pending_approval(
     app_doc = await db["onboarding_applications"].find_one({"application_id": "app-1"})
     assert app_doc["status"] == "PENDING_APPROVAL"
     assert app_doc["zero_quote_period"] == now.strftime("%Y-%m")
+
+
+async def test_zero_amount_checkout_still_rejects_an_incomplete_application(
+    allow_app_origin,
+) -> None:
+    """The completeness guard (issue #380) must run BEFORE the zero-amount
+    branch — otherwise a $0 registration could skip Stripe AND skip ever
+    having to supply DOB/emergency contact, landing a permanently incomplete
+    student record with no further checkout to catch it."""
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["zero-amount-checkout-incomplete"]
+
+    now = datetime.now(UTC)
+    from datetime import timedelta
+
+    await db["onboarding_applications"].insert_one(
+        {
+            "application_id": "app-1",
+            "academy_id": "acad",
+            "parent_user_id": "parent-1",
+            "parent_email": "parent@example.com",
+            "status": "DRAFT",
+            "selected_session_id": "sess-1",
+            "expires_at": now + timedelta(days=7),
+            "created_at": now,
+            "updated_at": now,
+            # No parent_profile/child_profile at all — the common case for an
+            # application started before issue #380's wizard fields existed.
+        }
+    )
+    await db["sessions"].insert_one(
+        {
+            "session_id": "sess-1",
+            "academy_id": "acad",
+            "status": "scheduled",
+            "title": "Beginner",
+            "start_at": now + timedelta(minutes=10),
+            "end_at": now + timedelta(minutes=70),
+            "capacity": 8,
+            "amount_cents": 6_000,
+        }
+    )
+
+    class _RefusingStripe:
+        async def create_checkout_session(self, **kwargs: Any) -> tuple[str, str]:
+            raise AssertionError("Stripe must not be reached for an incomplete application")
+
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=_RefusingStripe(),  # type: ignore[arg-type]
+        academy_id="acad",
+    )
+
+    with tenant_scope("acad"), pytest.raises(IncompleteApplication):
+        await parent.start_checkout_for_application(
+            parent_id="parent-1",
+            application_id="app-1",
+            success_url="https://app.example.com/parent/checkout/return?application_id=app-1",
+            cancel_url="https://app.example.com/parent/onboarding",
+        )
+
+    app_doc = await db["onboarding_applications"].find_one({"application_id": "app-1"})
+    assert app_doc["status"] == "DRAFT"  # never transitioned
 
 
 # ---------------------------------------------------------------------------

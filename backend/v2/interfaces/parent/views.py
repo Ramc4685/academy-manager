@@ -26,6 +26,11 @@ class ChildProfileView(BaseModel):
     last_name: str = ""
     date_of_birth: str = ""
     skill_level: Literal["beginner", "intermediate", "advanced", ""] = ""
+    # Optional on the DTO — the wizard autosaves partial drafts per step.
+    # Completeness is enforced at checkout, not here. Issue #380.
+    emergency_contact_name: str = ""
+    emergency_contact_phone: str = ""
+    medical_notes: str = ""
 
     @field_validator("date_of_birth")
     @classmethod
