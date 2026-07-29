@@ -53,6 +53,7 @@ def admin_db(monkeypatch):
     monkeypatch.delenv("RESEND_API_KEY", raising=False)
     monkeypatch.delenv("V2_RESEND_API_KEY", raising=False)
     monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.delenv("V2_ENV", raising=False)
     get_settings.cache_clear()
     try:
         client = mongomock_motor.AsyncMongoMockClient()
@@ -68,6 +69,10 @@ def approved_env(monkeypatch):
     itself is stubbed so the test stays hermetic."""
     import resend
 
+    # V2_ENV wins over the APP_ENV fallback whenever it's present (e.g. CI
+    # sets V2_ENV=test at the job level), so set it directly rather than
+    # relying on APP_ENV alone.
+    monkeypatch.setenv("V2_ENV", "staging")
     monkeypatch.setenv("APP_ENV", "staging")
     monkeypatch.setenv("EMAIL_DELIVERY_ENABLED", "true")
     monkeypatch.setenv("V2_RESEND_API_KEY", "test-key")

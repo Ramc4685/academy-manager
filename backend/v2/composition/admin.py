@@ -994,7 +994,7 @@ def compose_admin(
     _email_sender_is_real = bool(
         _s.email_delivery_enabled and _s.resend_api_key and _email_env in {"staging", "prod"}
     )
-    if _email_sender_is_real:
+    if _email_sender_is_real and _s.resend_api_key:
         _email_sender = ResendEmailSendPort(api_key=_s.resend_api_key, from_address=_from_addr)
     else:
         _email_sender = StubEmailSendPort()
