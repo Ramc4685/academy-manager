@@ -143,7 +143,10 @@ def test_confirm_email_marks_confirmed(client: TestClient) -> None:
 def test_patch_child_updates_emergency_contact(client: TestClient) -> None:
     response = client.patch(
         f"/api/v2/parent/children/{_OWNED_STUDENT_ID}",
-        json={"emergency_contact_name": "Vikram Raghavan", "emergency_contact_phone": "+1 555 0111"},
+        json={
+            "emergency_contact_name": "Vikram Raghavan",
+            "emergency_contact_phone": "+1 555 0111",
+        },
     )
 
     assert response.status_code == 200

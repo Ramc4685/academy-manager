@@ -919,9 +919,7 @@ def compose_parent(
         return ChildFacts(
             student_id=str(student.get("student_id") or student["_id"]),
             full_name=student.get("full_name"),
-            date_of_birth=(
-                str(student["date_of_birth"]) if student.get("date_of_birth") else None
-            ),
+            date_of_birth=(str(student["date_of_birth"]) if student.get("date_of_birth") else None),
             emergency_contact_name=student.get("emergency_contact_name"),
             emergency_contact_phone=student.get("emergency_contact_phone"),
             medical_notes=str(raw_medical) if raw_medical else None,

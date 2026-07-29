@@ -985,7 +985,11 @@ async def test_zero_amount_checkout_skips_stripe_and_moves_to_pending_approval(
             "expires_at": now + timedelta(days=7),
             "created_at": now,
             "updated_at": now,
-            "parent_profile": {"first_name": "Meera", "last_name": "Raghavan", "phone": "+1 555 0100"},
+            "parent_profile": {
+                "first_name": "Meera",
+                "last_name": "Raghavan",
+                "phone": "+1 555 0100",
+            },
             "child_profile": {
                 "first_name": "Aanya",
                 "last_name": "Raghavan",

@@ -52,9 +52,7 @@ class MongoStudentRepository(TenantScopedRepository):
                 str(doc["emergency_contact_name"]) if doc.get("emergency_contact_name") else None
             ),
             emergency_contact_phone=(
-                str(doc["emergency_contact_phone"])
-                if doc.get("emergency_contact_phone")
-                else None
+                str(doc["emergency_contact_phone"]) if doc.get("emergency_contact_phone") else None
             ),
             medical_notes=(str(doc["medical_notes"]) if doc.get("medical_notes") else None),
             student_user_id=(str(doc["student_user_id"]) if doc.get("student_user_id") else None),
