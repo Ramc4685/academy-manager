@@ -52,6 +52,16 @@ const REPORTS = [
 
 const FINANCIAL_REPORTS = [
   {
+    href: "/admin/reports/session-economics",
+    title: "Session economics",
+    description: "Revenue, cost and profit by session.",
+  },
+  {
+    href: "/admin/reports/dues",
+    title: "Dues follow-up",
+    description: "Outstanding balances and reminders.",
+  },
+  {
     href: "/admin/reports/refunds",
     title: "Refunds & credits",
     description: "Money returned to families and account credits issued, by month.",
