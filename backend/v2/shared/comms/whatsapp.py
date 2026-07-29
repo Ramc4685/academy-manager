@@ -43,9 +43,12 @@ def normalize_wa_number(raw: str | None, *, default_country_code: str = "1") -> 
         international = digits[2:] if digits.startswith("00") else digits
         return international if len(international) >= _MIN_INTERNATIONAL_DIGITS else None
 
-    # National trunk prefix (e.g. "09876543210") -- drop the leading 0.
-    if len(digits) == _NATIONAL_DIGITS + 1 and digits.startswith("0"):
-        digits = digits[1:]
+    # A leading trunk '0' (UK "07911...", AU, FR, IN landline) is a positive
+    # signal the number is NOT from the default country -- no country uses a
+    # trunk prefix on its own international number. Applying the default here
+    # would silently produce a real number belonging to a stranger, so refuse.
+    if digits.startswith("0"):
+        return None
 
     if len(digits) == _NATIONAL_DIGITS:
         return f"{default_country_code}{digits}"

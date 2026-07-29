@@ -26,8 +26,6 @@ from backend.v2.shared.comms.whatsapp import (
         ("+91 98765 43210", "919876543210"),
         ("+44 20 7946 0100", "442079460100"),
         ("0091 98765 43210", "919876543210"),
-        # National trunk prefix is dropped before applying the default.
-        ("05550100100", "15550100100"),
     ],
 )
 def test_normalize_wa_number_resolves_international_digits(raw: str, expected: str) -> None:
@@ -44,6 +42,12 @@ def test_normalize_wa_number_resolves_international_digits(raw: str, expected: s
         "555-0100",  # too short to dial
         "+12345",  # explicit international but implausibly short
         "5550100100123456",  # length we cannot attribute without guessing
+        # A leading trunk '0' means the number is NOT from the default country
+        # (UK/AU/FR/IN national format). Stripping it and prepending the US
+        # code would yield a real number belonging to a stranger.
+        "07911123456",  # UK mobile
+        "05550100100",
+        "0412345678",  # AU mobile
     ],
 )
 def test_normalize_wa_number_refuses_to_guess(raw: str | None) -> None:

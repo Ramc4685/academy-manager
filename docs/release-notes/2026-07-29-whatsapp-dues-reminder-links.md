@@ -37,19 +37,24 @@ the response stays backward compatible. Parent phone numbers are stored as
 free text: a bare 10-digit number is assumed to be US (+1), an explicit `+`
 or `00` prefix is honoured as written, and anything that cannot be resolved
 confidently yields no link at all (the row shows `-`) rather than risking a
-chat with the wrong person. Email delivery is untouched. If academies expand
-outside the US, the default country code should become a per-academy setting.
+chat with the wrong person. In particular a number with a leading trunk `0`
+(UK `07911…`, AU, FR, IN national format) is **refused**, not coerced — no
+country uses a trunk prefix on its own international number, so a leading `0`
+positively signals the number is not US, and prepending `+1` would produce a
+real number belonging to a stranger. Email delivery is untouched. Today the
+US default is hardcoded; if academies expand outside the US, that default
+must become a per-academy setting before non-US parents get links.
 
 ## Risk / rollback
 Low, and read-only: the change adds two fields to one admin-only list
 endpoint and one column to one admin page. It sends nothing itself — every
 WhatsApp message still requires a human to press send inside WhatsApp — so
 there is no new outbound-delivery path to misfire. New tests:
-`backend/v2/tests/unit/test_whatsapp_link.py` (23 cases covering phone
-normalisation, refusal to guess ambiguous numbers, message copy, and URL
-encoding) plus two `list_dues_followup` cases in
+`backend/v2/tests/unit/test_whatsapp_link.py` (25 cases covering phone
+normalisation, refusal to guess ambiguous or non-US-format numbers, message
+copy, and URL encoding) plus two `list_dues_followup` cases in
 `backend/v2/tests/unit/test_admin_composition_tenancy.py` (link built for a
-parent with a phone; `null` for one without). Full backend suite green (2692
+parent with a phone; `null` for one without). Full backend suite green (2694
 passed); frontend typecheck, lint, and build green. Adding a return
 annotation to `list_dues_followup` also resolved 4 entries in
 `backend/mypy-baseline.txt`, which is synced in this PR. Rollback = revert the
