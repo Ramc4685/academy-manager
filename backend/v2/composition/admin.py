@@ -23,6 +23,7 @@ from backend.v2.composition.digests import (
 )
 from backend.v2.composition.email_adapters import (
     AddCardReminderEmailAdapter,
+    DuesReminderEmailAdapter,
     InvoiceEmailAdapter,
     LoginInviteEmailAdapter,
 )
@@ -1028,6 +1029,7 @@ def compose_admin(
         return InvoiceEmailAdapter(
             memberships=MongoMembershipRepository(db),
             users=MongoUserRepository(db, default_academy_id=academy_id),
+            academies=academy_repo,
             sender=_email_sender,
         )
 
@@ -4093,6 +4095,8 @@ def compose_admin(
         )
         return {"artifact_id": artifact_id, "artifact_type": artifact_type, "status": "generated"}
 
+    _dues_reminder_email = DuesReminderEmailAdapter(academies=academy_repo, sender=_email_sender)
+
     class _DuesReminderSender:
         async def send_dues_reminders(
             self,
@@ -4132,23 +4136,44 @@ def compose_admin(
                             "invoice_pdf",
                         )
                         generated += 1
+
+            frontend_url = (settings.frontend_url or "").rstrip("/")
+            pay_url = f"{frontend_url}/parent/payments" if frontend_url else None
+            sent = 0
+            skipped = 0
+            for row in rows:
+                email = str(row.get("email") or "").strip()
+                if not email:
+                    skipped += 1
+                    continue
+                ok = await _dues_reminder_email.send_reminder(
+                    parent_id=str(row["parent_id"]),
+                    email=email,
+                    display_name=row.get("parent_name") or None,
+                    total_due_cents=int(row["total_due_cents"]),
+                    pending_count=int(row["pending_count"]),
+                    currency="usd",
+                    pay_url=pay_url,
+                )
+                if ok:
+                    sent += 1
+                else:
+                    skipped += 1
+
+            reason = (
+                f"{skipped} parent(s) skipped (no email on file or delivery failed)."
+                if skipped
+                else None
+            )
             return {
-                "sent": 0,
-                "blocked": True,
-                "reason": f"Local/test safety block: {len(rows)} reminder(s) were not sent.",
+                "sent": sent,
+                "blocked": False,
+                "reason": reason,
                 "selected_parent_ids": parent_ids or [str(row["parent_id"]) for row in rows],
                 "generated_invoice_artifacts": generated,
             }
 
     send_dues_reminders = SendDuesReminders(sender=_DuesReminderSender())
-
-    async def _legacy_send_dues_reminders():
-        rows = await list_dues_followup()
-        return {
-            "sent": 0,
-            "blocked": True,
-            "reason": f"Local/test safety block: {len(rows)} reminder(s) were not sent.",
-        }
 
     get_refunds_report = make_refunds_report(db)
     get_revenue_by_category_report = make_revenue_by_category_report(db)

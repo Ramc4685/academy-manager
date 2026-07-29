@@ -27,11 +27,49 @@ from backend.v2.contexts.communications.application.ports import (
 from backend.v2.contexts.identity.application.use_cases.send_login_invite import (
     InviteEmailOutcome,
 )
+from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
+    MongoAcademyRepository,
+)
 from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
     MongoMembershipRepository,
 )
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
 from backend.v2.shared.tenancy import current_academy_id
+
+_BRAND_HEADING = "#0a0f1c"
+_BRAND_ACCENT = "#2545d3"
+_BRAND_MUTED = "#64748b"
+_BRAND_FONT = "-apple-system, 'Segoe UI', sans-serif"
+
+
+def _branded_shell(*, academy_name: str, inner_html: str) -> str:
+    """Wraps a message body in the academy-branded header/footer shared by
+    every billing email. Uses the same color and font conventions as
+    ``send_login_invite._invite_body`` so all outbound mail reads as one
+    product."""
+    safe_academy_name = html.escape(academy_name)
+    return f"""
+<div style="font-family: {_BRAND_FONT}; max-width: 520px; margin: 0 auto;">
+  <div style="padding-bottom: 14px; margin-bottom: 20px; border-bottom: 2px solid {_BRAND_ACCENT};">
+    <span style="font-size: 16px; font-weight: 700; color: {_BRAND_HEADING};">{safe_academy_name}</span>
+  </div>
+  {inner_html}
+  <p style="color: {_BRAND_MUTED}; font-size: 12px; margin-top: 32px; border-top: 1px solid #e2e8f0; padding-top: 16px;">
+    Sent by {safe_academy_name}. If you've already taken care of this, please disregard this message.
+  </p>
+</div>
+"""
+
+
+def _branded_button(*, label: str, url: str) -> str:
+    safe_url = html.escape(url, quote=True)
+    safe_label = html.escape(label)
+    return (
+        f'<p style="margin: 24px 0;"><a href="{safe_url}" '
+        f'style="background: {_BRAND_ACCENT}; color: #ffffff; padding: 12px 20px; '
+        f'border-radius: 8px; text-decoration: none; font-weight: 600; display: inline-block;">'
+        f"{safe_label}</a></p>"
+    )
 
 
 class LoginInviteEmailAdapter:
@@ -72,10 +110,12 @@ class InvoiceEmailAdapter:
         *,
         memberships: MongoMembershipRepository,
         users: MongoUserRepository,
+        academies: MongoAcademyRepository,
         sender: EmailSendPort,
     ) -> None:
         self._memberships = memberships
         self._users = users
+        self._academies = academies
         self._sender = sender
 
     async def send_invoice_email(
@@ -100,6 +140,7 @@ class InvoiceEmailAdapter:
             raise ValueError("invoice parent email not found")
 
         display_name = str(user.display_name if user else "")
+        academy_name = await self._academies.get_academy_name(academy_id) or "Your academy"
         amount = f"{currency.upper()} {balance_due_cents / 100:.2f}"
         total = f"{currency.upper()} {total_cents / 100:.2f}"
         safe_invoice = html.escape(invoice_id)
@@ -107,16 +148,18 @@ class InvoiceEmailAdapter:
         safe_amount = html.escape(amount)
         safe_total = html.escape(total)
         pay_line = (
-            f'<p><a href="{html.escape(checkout_url, quote=True)}">Pay invoice</a></p>'
+            _branded_button(label="Pay invoice", url=checkout_url)
             if checkout_url
-            else "<p>Please contact the academy to arrange payment.</p>"
+            else f"<p style='color: {_BRAND_MUTED};'>Please contact the academy to arrange payment.</p>"
         )
-        body = (
+        inner = (
+            f"<h2 style='color: {_BRAND_HEADING}; font-size: 18px; margin: 0 0 12px;'>Invoice ready</h2>"
             f"<p>Your invoice <strong>{safe_invoice}</strong> for {safe_period} is ready.</p>"
             f"<p>Balance due: <strong>{safe_amount}</strong> "
             f"(invoice total {safe_total}).</p>"
             f"{pay_line}"
         )
+        body = _branded_shell(academy_name=academy_name, inner_html=inner)
         outcome = await self._sender.send(
             recipient=ResolvedRecipient(
                 user_id=parent_id,
@@ -151,13 +194,15 @@ class InvoiceEmailAdapter:
         if not email:
             raise ValueError("dunning parent email not found")
 
+        academy_name = await self._academies.get_academy_name(academy_id) or "Your academy"
         amount = f"{currency.upper()} {balance_due_cents / 100:.2f}"
         safe_invoice = html.escape(invoice_id)
         safe_period = html.escape(period)
         safe_amount = html.escape(amount)
         if terminal:
             subject = f"Autopay disabled for invoice {invoice_id}"
-            body = (
+            inner = (
+                f"<h2 style='color: {_BRAND_HEADING}; font-size: 18px; margin: 0 0 12px;'>Autopay disabled</h2>"
                 f"<p>We could not collect invoice <strong>{safe_invoice}</strong> "
                 f"for {safe_period} after {attempt_no} attempts.</p>"
                 f"<p>Balance due: <strong>{safe_amount}</strong>. "
@@ -165,12 +210,14 @@ class InvoiceEmailAdapter:
             )
         else:
             subject = f"Autopay attempt {attempt_no} failed for invoice {invoice_id}"
-            body = (
+            inner = (
+                f"<h2 style='color: {_BRAND_HEADING}; font-size: 18px; margin: 0 0 12px;'>Autopay attempt failed</h2>"
                 f"<p>We could not collect invoice <strong>{safe_invoice}</strong> "
                 f"for {safe_period}.</p>"
                 f"<p>Balance due: <strong>{safe_amount}</strong>. "
                 "We will retry automatically on the published retry schedule.</p>"
             )
+        body = _branded_shell(academy_name=academy_name, inner_html=inner)
         outcome = await self._sender.send(
             recipient=ResolvedRecipient(
                 user_id=parent_id,
@@ -182,6 +229,54 @@ class InvoiceEmailAdapter:
         )
         if not outcome.ok:
             raise ValueError(outcome.failed_reason or "dunning email delivery failed")
+
+
+class DuesReminderEmailAdapter:
+    """Bridges the admin dues-followup action to communications' `EmailSendPort`."""
+
+    def __init__(self, *, academies: MongoAcademyRepository, sender: EmailSendPort) -> None:
+        self._academies = academies
+        self._sender = sender
+
+    async def send_reminder(
+        self,
+        *,
+        parent_id: str,
+        email: str,
+        display_name: str | None,
+        total_due_cents: int,
+        pending_count: int,
+        currency: str,
+        pay_url: str | None,
+    ) -> bool:
+        academy_name = await self._academies.get_academy_name(current_academy_id()) or "Your academy"
+        safe_name = html.escape(display_name or "there")
+        amount = f"{currency.upper()} {total_due_cents / 100:.2f}"
+        safe_amount = html.escape(amount)
+        invoice_word = "invoice" if pending_count == 1 else "invoices"
+        pay_line = (
+            _branded_button(label="Pay now", url=pay_url)
+            if pay_url
+            else f"<p style='color: {_BRAND_MUTED};'>Please log in to the parent portal to pay.</p>"
+        )
+        inner = (
+            f"<h2 style='color: {_BRAND_HEADING}; font-size: 18px; margin: 0 0 12px;'>Payment reminder</h2>"
+            f"<p>Hi {safe_name},</p>"
+            f"<p>You have {pending_count} open {invoice_word} totaling "
+            f"<strong>{safe_amount}</strong>.</p>"
+            f"{pay_line}"
+        )
+        body = _branded_shell(academy_name=academy_name, inner_html=inner)
+        outcome = await self._sender.send(
+            recipient=ResolvedRecipient(
+                user_id=parent_id,
+                email=email,
+                display_name=display_name or None,
+            ),
+            subject="Payment reminder: outstanding balance",
+            body=body,
+        )
+        return outcome.ok
 
 
 class AddCardReminderEmailAdapter:
