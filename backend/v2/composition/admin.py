@@ -479,6 +479,7 @@ from backend.v2.contexts.student_progress.infrastructure.mongo_skill_progress_re
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases
 from backend.v2.shared.comms import CommsService, MongoMessageRepository
+from backend.v2.shared.comms.whatsapp import dues_reminder_text, whatsapp_deep_link
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore
@@ -3829,7 +3830,28 @@ def compose_admin(
             )
         return rows
 
-    async def list_dues_followup():
+    async def _parent_payments_link(request_academy_id: str) -> tuple[str | None, str]:
+        """Resolve one academy's parent-payments URL and display name.
+
+        Outbound links must point at the academy's own subdomain (ADR-0007),
+        never the deployment's generic ``frontend_url``. Returns ``None`` for
+        the URL when no frontend URL is configured, so callers fall back to
+        "log in to the parent portal" wording instead of a broken link.
+        """
+        academy_doc = await academy_repo.find_by_id(request_academy_id)
+        academy_slug = str(academy_doc.get("slug") or "") if academy_doc else ""
+        academy_name = (
+            str(academy_doc.get("display_name") or academy_doc.get("name") or "")
+            if academy_doc
+            else ""
+        )
+        frontend_url = academy_frontend_url(
+            frontend_url=settings.frontend_url, academy_slug=academy_slug
+        )
+        pay_url = f"{frontend_url}/parent/payments" if frontend_url else None
+        return pay_url, academy_name
+
+    async def list_dues_followup() -> list[dict[str, Any]]:
         from backend.v2.shared.tenancy import current_academy_id
 
         request_academy_id = current_academy_id()
@@ -3859,8 +3881,10 @@ def compose_admin(
                     "parent_id": parent_id,
                     "parent_name": None,
                     "email": None,
+                    "phone": None,
                     "pending_count": 0,
                     "total_due_cents": 0,
+                    "whatsapp_url": None,
                 },
             )
             entry["pending_count"] += 1
@@ -3900,8 +3924,10 @@ def compose_admin(
                     "parent_id": parent_id,
                     "parent_name": None,
                     "email": None,
+                    "phone": None,
                     "pending_count": 0,
                     "total_due_cents": 0,
+                    "whatsapp_url": None,
                 },
             )
             entry["pending_count"] += 1
@@ -3929,7 +3955,27 @@ def compose_admin(
                             or ""
                         )
                         totals[key]["email"] = user.get("email")
-        return sorted(totals.values(), key=lambda row: int(row["total_due_cents"]), reverse=True)
+                        totals[key]["phone"] = user.get("phone")
+        rows: list[dict[str, Any]] = sorted(
+            totals.values(), key=lambda entry: int(entry["total_due_cents"]), reverse=True
+        )
+        if rows:
+            # One lookup for the whole page: every row shares the same academy,
+            # so the pay link and academy name are resolved once, not per row.
+            pay_url, academy_name = await _parent_payments_link(request_academy_id)
+            for followup in rows:
+                followup["whatsapp_url"] = whatsapp_deep_link(
+                    phone=followup["phone"],
+                    message=dues_reminder_text(
+                        display_name=followup["parent_name"],
+                        total_due_cents=int(followup["total_due_cents"]),
+                        pending_count=int(followup["pending_count"]),
+                        currency="usd",
+                        pay_url=pay_url,
+                        academy_name=academy_name,
+                    ),
+                )
+        return rows
 
     async def get_billing_invoice_detail(invoice_id: str) -> dict[str, Any]:
         from backend.v2.shared.tenancy import current_academy_id
@@ -4165,12 +4211,7 @@ def compose_admin(
                     "generated_invoice_artifacts": generated,
                 }
 
-            academy_doc = await academy_repo.find_by_id(request_academy_id)
-            academy_slug = str(academy_doc.get("slug") or "") if academy_doc else ""
-            frontend_url = academy_frontend_url(
-                frontend_url=settings.frontend_url, academy_slug=academy_slug
-            )
-            pay_url = f"{frontend_url}/parent/payments" if frontend_url else None
+            pay_url, _academy_name = await _parent_payments_link(request_academy_id)
             membership_repo = MongoMembershipRepository(db)
             sent = 0
             skipped = 0
