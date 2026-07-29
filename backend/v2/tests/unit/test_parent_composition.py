@@ -1034,3 +1034,167 @@ async def test_zero_amount_checkout_skips_stripe_and_moves_to_pending_approval(
     app_doc = await db["onboarding_applications"].find_one({"application_id": "app-1"})
     assert app_doc["status"] == "PENDING_APPROVAL"
     assert app_doc["zero_quote_period"] == now.strftime("%Y-%m")
+
+
+# ---------------------------------------------------------------------------
+# Self-service profile (issue #380)
+# ---------------------------------------------------------------------------
+
+
+async def _compose_profile_parent(db: Any) -> Any:
+    return compose_parent(
+        db,
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=object(),  # type: ignore[arg-type]
+        academy_id="acad",
+    )
+
+
+async def _seed_profile_fixture(db: Any, *, phone: str | None = "+1 555 0100") -> None:
+    await db["users"].insert_one(
+        {
+            "user_id": "parent-1",
+            "academy_id": "acad",
+            "email": "parent@example.com",
+            "display_name": "Meera Raghavan",
+            "phone": phone,
+            "roles": ["parent"],
+        }
+    )
+    await db["students"].insert_one(
+        {
+            "student_id": "stu-1",
+            "academy_id": "acad",
+            "parent_id": "parent-1",
+            "full_name": "Aanya Raghavan",
+            "date_of_birth": "2015-04-02",
+        }
+    )
+    await db["students"].insert_one(
+        {
+            "student_id": "stu-other-parent",
+            "academy_id": "acad",
+            "parent_id": "someone-else",
+            "full_name": "Not Aanya",
+        }
+    )
+
+
+async def test_get_parent_profile_reports_gaps_for_missing_fields() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-profile"]
+    await _seed_profile_fixture(db, phone=None)
+    parent = await _compose_profile_parent(db)
+
+    with tenant_scope("acad"):
+        profile = await parent.get_parent_profile("parent-1")
+
+    assert profile["display_name"] == "Meera Raghavan"
+    assert profile["email_confirmed"] is False
+    assert set(profile["gaps"]["parent"]) == {"phone", "email_confirmed"}
+    child_gaps = profile["gaps"]["children"]["stu-1"]
+    assert set(child_gaps) == {
+        "emergency_contact_name",
+        "emergency_contact_phone",
+        "medical_notes",
+    }
+    assert profile["gaps"]["is_complete"] is False
+    # Another parent's child never appears in this parent's profile at all.
+    assert "stu-other-parent" not in profile["gaps"]["children"]
+
+
+async def test_update_parent_profile_closes_the_phone_gap() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-profile"]
+    await _seed_profile_fixture(db, phone=None)
+    parent = await _compose_profile_parent(db)
+
+    class _Request:
+        display_name = None
+        phone = "+1 555 0199"
+
+    with tenant_scope("acad"):
+        profile = await parent.update_parent_profile("parent-1", _Request())
+
+    assert profile["phone"] == "+1 555 0199"
+    assert "phone" not in profile["gaps"]["parent"]
+
+
+async def test_confirm_parent_email_closes_the_email_gap() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-profile"]
+    await _seed_profile_fixture(db)
+    parent = await _compose_profile_parent(db)
+
+    with tenant_scope("acad"):
+        profile = await parent.confirm_parent_email("parent-1")
+
+    assert profile["email_confirmed"] is True
+    assert "email_confirmed" not in profile["gaps"]["parent"]
+
+
+async def test_update_parent_child_writes_emergency_contact_and_closes_gaps() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-profile"]
+    await _seed_profile_fixture(db)
+    parent = await _compose_profile_parent(db)
+
+    class _Request:
+        date_of_birth = None
+        emergency_contact_name = "Vikram Raghavan"
+        emergency_contact_phone = "+1 555 0111"
+        medical_notes = None
+        no_medical_conditions = True
+
+    with tenant_scope("acad"):
+        profile = await parent.update_parent_child("parent-1", "stu-1", _Request())
+
+    child = next(c for c in profile["children"] if c["student_id"] == "stu-1")
+    assert child["emergency_contact_name"] == "Vikram Raghavan"
+    assert child["no_medical_conditions"] is True
+    assert child["medical_notes"] is None  # sentinel is never surfaced to the parent
+    assert profile["gaps"]["children"]["stu-1"] == []
+
+    student_doc = await db["students"].find_one({"student_id": "stu-1"})
+    assert student_doc["medical_notes"] == "__none_declared__"
+
+
+async def test_update_parent_child_refuses_a_student_owned_by_another_parent() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-profile"]
+    await _seed_profile_fixture(db)
+    parent = await _compose_profile_parent(db)
+
+    class _Request:
+        date_of_birth = None
+        emergency_contact_name = "Someone"
+        emergency_contact_phone = None
+        medical_notes = None
+        no_medical_conditions = False
+
+    with tenant_scope("acad"):
+        result = await parent.update_parent_child("parent-1", "stu-other-parent", _Request())
+
+    assert result is None
+    untouched = await db["students"].find_one({"student_id": "stu-other-parent"})
+    assert untouched["full_name"] == "Not Aanya"  # confirms nothing was written
+
+
+async def test_update_parent_child_refuses_an_unknown_student_id() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-profile"]
+    await _seed_profile_fixture(db)
+    parent = await _compose_profile_parent(db)
+
+    class _Request:
+        date_of_birth = None
+        emergency_contact_name = "Someone"
+        emergency_contact_phone = None
+        medical_notes = None
+        no_medical_conditions = False
+
+    with tenant_scope("acad"):
+        result = await parent.update_parent_child("parent-1", "does-not-exist", _Request())
+
+    assert result is None
