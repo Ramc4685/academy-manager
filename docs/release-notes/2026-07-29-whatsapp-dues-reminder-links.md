@@ -1,6 +1,6 @@
 # whatsapp-dues-reminder-links
 
-PR: #PENDING
+PR: #382
 
 ## What changed
 Dues reminder emails are easy for a parent to miss, so the admin "Dues
