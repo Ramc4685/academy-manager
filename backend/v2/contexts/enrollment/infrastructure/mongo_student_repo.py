@@ -456,6 +456,16 @@ class MongoStudentRepository(TenantScopedRepository):
         student_id: str,
         command: UpdateAdminStudentCommand,
     ) -> AdminStudentDetail | None:
+        """Admin-facing entry point. Delegates to the persona-neutral write below
+        so parent self-service (which must not import an admin-named symbol)
+        shares the same diff/audit behaviour instead of duplicating it."""
+        return await self.update_student_profile(student_id, command)
+
+    async def update_student_profile(
+        self,
+        student_id: str,
+        command: UpdateAdminStudentCommand,
+    ) -> AdminStudentDetail | None:
         academy_id = current_academy_id()
         before = await self._find_one(self._id_filter(student_id))
         if before is None:
