@@ -22,8 +22,17 @@ class FakeStudentDirectory:
         status: str | None,
         limit: int,
         cursor: str | None,
+        missing: tuple[str, ...] = (),
     ) -> AdminStudentPage:
-        self.calls.append({"search": search, "status": status, "limit": limit, "cursor": cursor})
+        self.calls.append(
+            {
+                "search": search,
+                "status": status,
+                "limit": limit,
+                "cursor": cursor,
+                "missing": missing,
+            }
+        )
         return AdminStudentPage(
             students=[
                 AdminStudentSummary(
@@ -52,6 +61,24 @@ async def test_list_admin_students_forwards_filters_to_query():
         cursor="opaque",
     )
 
-    assert query.calls == [{"search": "alice", "status": "active", "limit": 25, "cursor": "opaque"}]
+    assert query.calls == [
+        {
+            "search": "alice",
+            "status": "active",
+            "limit": 25,
+            "cursor": "opaque",
+            "missing": (),
+        }
+    ]
     assert page.students[0].attendance_rate == 0.75
     assert page.students[0].dues_status == "due"
+
+
+@pytest.mark.asyncio
+async def test_list_admin_students_forwards_missing_filter():
+    query = FakeStudentDirectory()
+    use_case = ListAdminStudents(query)
+
+    await use_case.execute(missing=("date_of_birth", "emergency_contact_name"))
+
+    assert query.calls[0]["missing"] == ("date_of_birth", "emergency_contact_name")

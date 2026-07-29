@@ -31,6 +31,7 @@ from backend.v2.contexts.enrollment.domain.errors import (
     StudentParentNotFound,
 )
 from backend.v2.contexts.enrollment.domain.models import Student
+from backend.v2.shared.profile.completeness import CHILD_REQUIRED, ChildFacts, child_gaps
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 
 log = logging.getLogger(__name__)
@@ -592,8 +593,12 @@ class MongoStudentRepository(TenantScopedRepository):
         status: str | None,
         limit: int,
         cursor: str | None,
+        missing: tuple[str, ...] = (),
     ) -> AdminStudentPage:
         academy_id = current_academy_id()
+        unknown_missing_keys = set(missing) - set(CHILD_REQUIRED)
+        if unknown_missing_keys:
+            raise ValueError(f"Unknown missing field(s): {', '.join(sorted(unknown_missing_keys))}")
         docs = [
             doc
             async for doc in self._find_many(
@@ -662,6 +667,22 @@ class MongoStudentRepository(TenantScopedRepository):
                 continue
             if search_key and search_key not in haystack:
                 continue
+            if missing:
+                raw_medical = doc.get("medical_notes")
+                gaps = child_gaps(
+                    ChildFacts(
+                        student_id=student_id,
+                        full_name=student_name,
+                        date_of_birth=(
+                            str(doc["date_of_birth"]) if doc.get("date_of_birth") else None
+                        ),
+                        emergency_contact_name=doc.get("emergency_contact_name"),
+                        emergency_contact_phone=doc.get("emergency_contact_phone"),
+                        medical_notes=str(raw_medical) if raw_medical else None,
+                    )
+                )
+                if not (set(missing) & set(gaps)):
+                    continue
             rows.append(
                 {
                     "doc": doc,
