@@ -319,6 +319,23 @@ async function stubAdminBff(page: Page, memberships = SINGLE_MEMBERSHIP) {
   await page.route("**/api/v2/admin/reports/dashboard*", (route) =>
     fulfillJson(route, REPORTS_DASHBOARD_EMPTY),
   );
+  await page.route("**/api/v2/admin/reports/session-economics*", (route) =>
+    fulfillJson(route, {
+      period: "2026-05",
+      summary: {
+        expected_revenue_cents: 0,
+        paid_cents: 0,
+        unpaid_cents: 0,
+        coach_payroll_cents: 0,
+        rent_cents: 0,
+        other_expenses_cents: 0,
+        expected_profit_cents: 0,
+        profit_margin: null,
+      },
+      sessions: [],
+      empty_states: [],
+    }),
+  );
   await page.route("**/api/v2/admin/reports/enrollment-funnel*", (route) =>
     fulfillJson(route, {
       leads: 0,
