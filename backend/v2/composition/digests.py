@@ -109,6 +109,7 @@ from backend.v2.contexts.student_progress.application.use_cases.get_teaching_foc
 )
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.tenancy import current_academy_id
+from backend.v2.shared.tenancy.academy_url import academy_frontend_url
 
 
 @dataclass(frozen=True, slots=True)
@@ -351,7 +352,14 @@ class _ParentDigestProvider:
             return None
 
         settings = get_settings()
-        frontend = (settings.frontend_url or "").rstrip("/")
+        try:
+            academy_doc = await self._academies.find_by_id(current_academy_id())
+            academy_slug = str(academy_doc.get("slug") or "") if academy_doc else ""
+        except Exception:
+            academy_slug = ""
+        frontend = academy_frontend_url(
+            frontend_url=settings.frontend_url, academy_slug=academy_slug
+        )
 
         # on_portal decides Variant A vs B up front so per-child deep links are
         # only populated when there is a portal to land on.

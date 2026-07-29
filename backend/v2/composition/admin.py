@@ -485,6 +485,7 @@ from backend.v2.shared.idempotency import IdempotencyStore
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.occurrences import occurrence_session_id
 from backend.v2.shared.tenancy import TenantContextUnset, current_academy_id, tenant_scope
+from backend.v2.shared.tenancy.academy_url import academy_frontend_url
 
 
 class _StudentLoginProvisionerAdapter:
@@ -1044,7 +1045,12 @@ def compose_admin(
         )
 
     async def send_billing_invoice(invoice_id: str) -> dict[str, Any]:
-        frontend_url = (settings.frontend_url or "https://app.example.com").rstrip("/")
+        academy_doc = await academy_repo.find_by_id(current_academy_id())
+        academy_slug = str(academy_doc.get("slug") or "") if academy_doc else ""
+        frontend_url = academy_frontend_url(
+            frontend_url=settings.frontend_url or "https://app.example.com",
+            academy_slug=academy_slug,
+        )
         invoice_stripe = stripe if hasattr(stripe, "create_invoice_checkout_session") else None
         result = await SendInvoice(
             ledger=billing_ledger_repo,
@@ -4159,7 +4165,11 @@ def compose_admin(
                     "generated_invoice_artifacts": generated,
                 }
 
-            frontend_url = (settings.frontend_url or "").rstrip("/")
+            academy_doc = await academy_repo.find_by_id(request_academy_id)
+            academy_slug = str(academy_doc.get("slug") or "") if academy_doc else ""
+            frontend_url = academy_frontend_url(
+                frontend_url=settings.frontend_url, academy_slug=academy_slug
+            )
             pay_url = f"{frontend_url}/parent/payments" if frontend_url else None
             membership_repo = MongoMembershipRepository(db)
             sent = 0
