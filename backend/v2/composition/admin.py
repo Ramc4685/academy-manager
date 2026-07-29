@@ -983,7 +983,17 @@ def compose_admin(
         if _s.frontend_url
         else "noreply@academy.app"
     )
-    if _s.email_delivery_enabled and _s.resend_api_key:
+    # Beyond email_delivery_enabled + resend_api_key, real delivery is only
+    # wired in an approved environment (staging/prod) -- mirrors
+    # digests.py::_build_email_sender / _REAL_EMAIL_ENVS. A dev or test stack
+    # that has inherited delivery flags and Resend credentials must still
+    # fall back to the stub (AGENTS.md: "Do not send real email from
+    # local/test environments").
+    _email_env = str(getattr(_s, "env", "") or "").lower()
+    _email_sender_is_real = bool(
+        _s.email_delivery_enabled and _s.resend_api_key and _email_env in {"staging", "prod"}
+    )
+    if _email_sender_is_real:
         _email_sender = ResendEmailSendPort(api_key=_s.resend_api_key, from_address=_from_addr)
     else:
         _email_sender = StubEmailSendPort()
@@ -4137,19 +4147,42 @@ def compose_admin(
                         )
                         generated += 1
 
+            if not _email_sender_is_real:
+                return {
+                    "sent": 0,
+                    "blocked": True,
+                    "reason": (
+                        f"Local/test safety block: {len(rows)} reminder(s) were not sent "
+                        "(email delivery is not enabled for this environment)."
+                    ),
+                    "selected_parent_ids": parent_ids or [str(row["parent_id"]) for row in rows],
+                    "generated_invoice_artifacts": generated,
+                }
+
             frontend_url = (settings.frontend_url or "").rstrip("/")
             pay_url = f"{frontend_url}/parent/payments" if frontend_url else None
+            membership_repo = MongoMembershipRepository(db)
             sent = 0
             skipped = 0
             for row in rows:
-                email = str(row.get("email") or "").strip()
+                parent_id = str(row["parent_id"])
+                membership = await membership_repo.get_membership(request_academy_id, parent_id)
+                if (
+                    membership is None
+                    or not membership.is_active()
+                    or "parent" not in membership.roles
+                ):
+                    skipped += 1
+                    continue
+                user = await users_r.get_by_id(parent_id)
+                email = str(user.email if user else "").strip()
                 if not email:
                     skipped += 1
                     continue
                 ok = await _dues_reminder_email.send_reminder(
-                    parent_id=str(row["parent_id"]),
+                    parent_id=parent_id,
                     email=email,
-                    display_name=row.get("parent_name") or None,
+                    display_name=str(user.display_name if user else "") or None,
                     total_due_cents=int(row["total_due_cents"]),
                     pending_count=int(row["pending_count"]),
                     currency="usd",
@@ -4161,7 +4194,8 @@ def compose_admin(
                     skipped += 1
 
             reason = (
-                f"{skipped} parent(s) skipped (no email on file or delivery failed)."
+                f"{skipped} parent(s) skipped (no active membership, no email on file, "
+                "or delivery failed)."
                 if skipped
                 else None
             )
