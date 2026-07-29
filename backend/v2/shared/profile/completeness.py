@@ -21,8 +21,7 @@ from pydantic import BaseModel, Field
 MEDICAL_NONE_SENTINEL = "__none_declared__"
 
 PARENT_REQUIRED: tuple[str, ...] = (
-    "first_name",
-    "last_name",
+    "display_name",
     "phone",
     "email_confirmed",
 )
@@ -45,8 +44,7 @@ def _blank(value: str | None) -> bool:
 class ParentFacts(BaseModel):
     model_config = {"frozen": True}
 
-    first_name: str | None = None
-    last_name: str | None = None
+    display_name: str | None = None
     phone: str | None = None
     email_confirmed_at: datetime | None = None
 
@@ -85,10 +83,8 @@ def medical_notes_answered(value: str | None) -> bool:
 
 def parent_gaps(parent: ParentFacts) -> list[str]:
     gaps: list[str] = []
-    if _blank(parent.first_name):
-        gaps.append("first_name")
-    if _blank(parent.last_name):
-        gaps.append("last_name")
+    if _blank(parent.display_name):
+        gaps.append("display_name")
     if _blank(parent.phone):
         gaps.append("phone")
     if parent.email_confirmed_at is None:

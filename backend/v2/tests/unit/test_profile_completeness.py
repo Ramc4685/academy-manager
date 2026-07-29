@@ -21,8 +21,7 @@ CONFIRMED_AT = datetime(2026, 7, 29, 12, 0, tzinfo=UTC)
 def complete_parent(**overrides: object) -> ParentFacts:
     return ParentFacts(
         **{
-            "first_name": "Meera",
-            "last_name": "Raghavan",
+            "display_name": "Meera Raghavan",
             "phone": "+1 555 0100",
             "email_confirmed_at": CONFIRMED_AT,
             **overrides,
@@ -55,7 +54,7 @@ def test_fully_populated_profile_has_no_gaps() -> None:
 
 @pytest.mark.parametrize(
     "field",
-    ["first_name", "last_name", "phone"],
+    ["display_name", "phone"],
 )
 def test_each_missing_parent_field_is_reported(field: str) -> None:
     assert parent_gaps(complete_parent(**{field: None})) == [field]
