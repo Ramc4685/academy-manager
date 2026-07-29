@@ -294,6 +294,9 @@ function ChildStep({
   saving: boolean;
 }) {
   const [v, setV] = useState(app.child_profile);
+  const [noMedicalConditions, setNoMedicalConditions] = useState(
+    app.child_profile.medical_notes === "__none_declared__",
+  );
   return (
     <form
       onSubmit={(e) => {
@@ -352,6 +355,42 @@ function ChildStep({
           })}
         </div>
       </fieldset>
+      <Field label="Emergency contact name">
+        <input
+          value={v.emergency_contact_name ?? ""}
+          onChange={(e) => setV({ ...v, emergency_contact_name: e.target.value })}
+          required
+        />
+      </Field>
+      <Field label="Emergency contact phone">
+        <input
+          type="tel"
+          value={v.emergency_contact_phone ?? ""}
+          onChange={(e) => setV({ ...v, emergency_contact_phone: e.target.value })}
+          required
+        />
+      </Field>
+      <Field label="Medical notes">
+        <textarea
+          rows={2}
+          placeholder="Allergies, conditions, or anything a coach should know"
+          disabled={noMedicalConditions}
+          value={noMedicalConditions ? "" : (v.medical_notes ?? "")}
+          onChange={(e) => setV({ ...v, medical_notes: e.target.value })}
+        />
+      </Field>
+      <label className="flex items-center gap-2 text-sm" style={{ color: "var(--rally-ink)" }}>
+        <input
+          type="checkbox"
+          checked={noMedicalConditions}
+          onChange={(e) => {
+            setNoMedicalConditions(e.target.checked);
+            if (e.target.checked) setV({ ...v, medical_notes: "__none_declared__" });
+            else if (v.medical_notes === "__none_declared__") setV({ ...v, medical_notes: "" });
+          }}
+        />
+        No known conditions or allergies
+      </label>
       <button type="submit" disabled={saving} className="primary">
         Next
       </button>

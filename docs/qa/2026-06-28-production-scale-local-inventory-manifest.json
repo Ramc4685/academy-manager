@@ -2635,6 +2635,51 @@
       ]
     },
     {
+      "route": "/parent/profile",
+      "role": "parent",
+      "source": "frontend/app/(parent)/parent/profile/page.tsx",
+      "workflows": [
+        "Update parent details",
+        "Confirm login email",
+        "Update child safety details"
+      ],
+      "controls": {
+        "buttons": [
+          "Save",
+          "Yes, that's right",
+          "Dismiss"
+        ],
+        "inputs": [
+          "Your name",
+          "Phone",
+          "Date of birth",
+          "Emergency contact name",
+          "Emergency contact phone",
+          "Medical notes",
+          "No known conditions or allergies"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "error",
+        "validation",
+        "saved"
+      ],
+      "risk_edges": [
+        "Wrong-family child write",
+        "Email silently changed instead of confirmed"
+      ],
+      "acceptance": [
+        "Only the parent's own children can be edited; another parent's child returns not-found",
+        "Workflow evidence: \"Update parent details\" completes for the parent route /parent/profile with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Confirm login email\" completes for the parent route /parent/profile with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Update child safety details\" completes for the parent route /parent/profile with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Wrong-family child write\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Email silently changed instead of confirmed\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
       "route": "/parent/dashboard",
       "role": "parent",
       "source": "frontend/app/(parent)/parent/dashboard/page.tsx",
