@@ -7,6 +7,7 @@ PR: #400
 - This disagreed with the actual login path: `load_auth_claims` resolves membership via `user_id`, not `firebase_uid` — so an account could be able to sign in while being un-invitable.
 - Both methods now match the active membership against any known identity alias (`user_id`, `auth_uid`, `firebase_uid`), the same pattern `_id_filter` already uses for the initial user lookup.
 - Adds `backend/scripts/parent_account_audit.py`, a read-only report of which parents can log in, which have a working invite button, and which still need credentials sent.
+- Bumps `aiohttp` 3.14.1 → 3.14.3 and `cryptography` 48.0.1 → 50.0.0 to clear six CVEs (PYSEC-2026-3545/3546/3547 and PYSEC-2026-3552/3553/3554) that were failing the `Backend` job's dependency vulnerability scan. Unrelated to the invite fix — the scan gates the test suite, so it also failed on `main`.
 
 ## Deploy notes
 No migration, environment variable, or manual deployment step is required. Affected parents become invitable as soon as the backend is deployed; no data backfill is needed.
