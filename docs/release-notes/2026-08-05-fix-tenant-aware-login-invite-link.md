@@ -1,6 +1,6 @@
 # fix-tenant-aware-login-invite-link
 
-PR: #PENDING
+PR: #401
 
 ## What changed
 Parent login invites now land on the parent's **own academy portal**, on an
