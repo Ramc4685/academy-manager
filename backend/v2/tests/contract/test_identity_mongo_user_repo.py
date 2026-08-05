@@ -282,3 +282,101 @@ async def test_billing_setup_provisioning_remains_invite_pending_for_safe_resend
     )
     assert delivered is not None and "login_invite_pending" not in delivered
     assert await repo.list_existing_user_ids(["parent-1"], academy_id="academy-b") == {"parent-1"}
+
+
+@pytest.mark.asyncio
+async def test_recorded_login_invite_is_visible_on_admin_detail(db) -> None:
+    """Regression: `record_login_invite` writes `login_invite_sent_at` to the
+    `academy_memberships` row, but the admin detail view used to read it back
+    off the `users` doc -- which is never written -- so the field was always
+    None. The admin user page therefore kept showing "No invite sent yet"
+    after a successful send, admins re-sent, and every re-send mints a fresh
+    Firebase oobCode that invalidates the link already emailed to the parent.
+
+    Uses the production shape where the membership is keyed by `firebase_uid`
+    rather than the roster `user_id`.
+    """
+    from datetime import UTC, datetime
+
+    await db["users"].insert_one(
+        {
+            "user_id": "roster-parent-1",
+            "auth_uid": "fb-uid-1",
+            "firebase_uid": "fb-uid-1",
+            "email": "invited@example.com",
+            "display_name": "Invited Parent",
+            "role": "parent",
+            "roles": ["parent"],
+            "academy_id": "academy-b",
+        }
+    )
+    await db["academy_memberships"].insert_one(
+        {
+            "academy_id": "academy-b",
+            "user_id": "fb-uid-1",
+            "roles": ["parent"],
+            "status": "active",
+        }
+    )
+    repo = MongoUserRepository(db, default_academy_id="academy-b")
+
+    before = await repo.get_admin_user("roster-parent-1", academy_id="academy-b")
+    assert before is not None and before.login_invite_sent_at is None
+
+    await repo.record_login_invite(
+        "roster-parent-1", academy_id="academy-b", sent_at=datetime.now(UTC)
+    )
+
+    detail = await repo.get_admin_user("roster-parent-1", academy_id="academy-b")
+    assert detail is not None
+    assert detail.login_invite_sent_at is not None
+
+    invite_target = await repo.get_login_invite_user("roster-parent-1", academy_id="academy-b")
+    assert invite_target is not None
+    assert invite_target.login_invite_sent_at is not None
+
+    # The users doc stays untouched: the membership row is the only writer, so
+    # re-reading the field from `users` would silently regress it to None.
+    user_doc = await db["users"].find_one({"user_id": "roster-parent-1"})
+    assert user_doc is not None and "login_invite_sent_at" not in user_doc
+
+
+@pytest.mark.asyncio
+async def test_admin_detail_login_invite_is_scoped_to_the_requesting_academy(db) -> None:
+    """An invite sent in one tenant must not read as sent in another: the
+    timestamp lives on the per-academy membership row, not on the shared
+    global `users` doc."""
+    from datetime import UTC, datetime
+
+    await db["users"].insert_one(
+        {
+            "user_id": "shared-parent",
+            "auth_uid": "shared-parent",
+            "firebase_uid": "shared-parent",
+            "email": "shared@example.com",
+            "display_name": "Shared Parent",
+            "role": "parent",
+            "roles": ["parent"],
+            "academy_id": "academy-b",
+        }
+    )
+    for academy_id in ("academy-b", "academy-c"):
+        await db["academy_memberships"].insert_one(
+            {
+                "academy_id": academy_id,
+                "user_id": "shared-parent",
+                "roles": ["parent"],
+                "status": "active",
+            }
+        )
+    repo = MongoUserRepository(db, default_academy_id="academy-b")
+
+    await repo.record_login_invite(
+        "shared-parent", academy_id="academy-b", sent_at=datetime.now(UTC)
+    )
+
+    invited = await repo.get_login_invite_user("shared-parent", academy_id="academy-b")
+    assert invited is not None and invited.login_invite_sent_at is not None
+
+    other = await repo.get_login_invite_user("shared-parent", academy_id="academy-c")
+    assert other is not None and other.login_invite_sent_at is None
