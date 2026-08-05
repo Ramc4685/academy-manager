@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from bson import ObjectId
 from pymongo import ReturnDocument
@@ -187,7 +187,12 @@ class MongoUserRepository:
         )
 
     def _to_admin_detail(
-        self, doc: dict[str, object], *, linked_student_count: int, session_count: int = 0
+        self,
+        doc: dict[str, object],
+        *,
+        linked_student_count: int,
+        session_count: int = 0,
+        login_invite_sent_at: datetime | None = None,
     ) -> AdminUserDetail:
         user = self._to_domain(doc)
         summary = self._to_admin_summary(doc)
@@ -196,7 +201,13 @@ class MongoUserRepository:
             roles=user.roles,
             linked_student_count=linked_student_count,
             session_count=session_count,
-            login_invite_sent_at=doc.get("login_invite_sent_at"),
+            # Passed in from the tenant's `academy_memberships` row, never read
+            # off `doc`: `record_login_invite` only ever writes the timestamp
+            # to the membership. Reading it here yielded None on every request,
+            # so the admin page kept offering "Send login invite" after a
+            # successful send -- and each re-send mints a new Firebase oobCode
+            # that invalidates the link already emailed to the parent.
+            login_invite_sent_at=login_invite_sent_at,
         )
 
     @staticmethod
@@ -630,11 +641,22 @@ class MongoUserRepository:
         membership = await self._active_membership_for_doc(doc, academy_id=academy_id)
         if membership is None:
             return None
-        return await self._admin_detail_for_doc(doc, academy_id=academy_id)
+        return await self._admin_detail_for_doc(doc, academy_id=academy_id, membership=membership)
 
     async def _admin_detail_for_doc(
-        self, doc: dict[str, object], *, academy_id: str
+        self,
+        doc: dict[str, object],
+        *,
+        academy_id: str,
+        membership: dict[str, object] | None = None,
     ) -> AdminUserDetail:
+        """Assemble the admin detail view for a `users` doc.
+
+        Pass ``membership`` when the caller has already resolved the active
+        membership row, so we do not query `academy_memberships` twice.
+        """
+        if membership is None:
+            membership = await self._active_membership_for_doc(doc, academy_id=academy_id)
         lookup_ids = [
             str(value)
             for value in (
@@ -661,7 +683,12 @@ class MongoUserRepository:
             }
         )
         return self._to_admin_detail(
-            doc, linked_student_count=linked_student_count, session_count=session_count
+            doc,
+            linked_student_count=linked_student_count,
+            session_count=session_count,
+            login_invite_sent_at=cast(
+                "datetime | None", (membership or {}).get("login_invite_sent_at")
+            ),
         )
 
     async def record_login_invite(
