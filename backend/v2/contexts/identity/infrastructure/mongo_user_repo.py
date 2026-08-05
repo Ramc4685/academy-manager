@@ -615,9 +615,10 @@ class MongoUserRepository:
         aliases = self._identity_aliases(doc)
         if not aliases:
             return None
-        return await self._db["academy_memberships"].find_one(
+        membership: dict[str, object] | None = await self._db["academy_memberships"].find_one(
             {"academy_id": academy_id, "user_id": {"$in": aliases}, "status": "active"}
         )
+        return membership
 
     async def get_login_invite_user(
         self, user_id: str, *, academy_id: str
