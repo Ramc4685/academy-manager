@@ -48,6 +48,22 @@ New pieces:
 - **`frontend/lib/auth/continue-url.ts`** — `safeContinuePath` open-redirect
   guard.
 
+### Dependency overrides (unrelated to the feature, but required to land)
+`pnpm audit --audit-level=high` began failing on three newly-published high
+advisories affecting transitive dev/build dependencies, which blocked the
+Frontend Static job on this branch and on `main`:
+
+- `undici` → `^7.29.0` (GHSA-4cwx-7wf7-3272)
+- `ip-address` → `>=10.3.1` (GHSA-mwp4-54f8-5fhr)
+- `brace-expansion` → `^1.1.18` / `^2.1.4` / `^5.0.9` (GHSA-rgw5-rvv9-x895 —
+  unbounded intermediate arrays, bypassing the CVE-2026-14257 mitigation)
+
+Unlike GHSA-mh99-v99m-4gvg — which remains in `auditConfig.ignoreGhsas`
+because upstream never shipped a patched 1.x/2.x, and forcing v5 there breaks
+`minimatch`'s `require("brace-expansion")(...)` call shape — this advisory
+*does* have patched 1.x and 2.x releases, so all three ranges are bumped and
+fixed outright rather than ignored. No new ignore entries were added.
+
 ## Security
 - **`emailVerified` is preserved.** `confirmPasswordReset` hits the same
   Identity Toolkit `accounts:resetPassword` endpoint as Firebase's hosted page,
@@ -110,7 +126,11 @@ To roll back, revert this PR: invites return to the generic
 entries added during deploy are harmless if left in place.
 
 ## Verification
-- `backend/v2/tests` — 2685 passed.
+Re-run after merging `origin/main` (PRs #400, #402, #382, #399).
+
+- `backend/v2/tests` — 2714 passed.
+- `pnpm audit --audit-level=high` — exit 0 (was 7 high; 3 low + 2 moderate
+  remain, all below the gate threshold).
 - `lint-imports` — 6 contracts kept, 0 broken.
 - `ruff check v2` and `ruff format --check v2` — clean (886 files).
 - `pnpm typecheck` and `pnpm lint` — clean (5 warnings, all pre-existing).
