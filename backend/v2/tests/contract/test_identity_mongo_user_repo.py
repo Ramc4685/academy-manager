@@ -197,6 +197,50 @@ async def test_billing_setup_login_signal_is_global_membership_aware_and_firebas
 
 
 @pytest.mark.asyncio
+async def test_login_invite_finds_legacy_parent_with_membership_keyed_by_user_id(db) -> None:
+    """Regression: a roster parent imported before Firebase provisioning has
+    no `firebase_uid`/`auth_uid` at all, and its `academy_memberships` row is
+    keyed by the plain `user_id`. `get_login_invite_user` previously required
+    `firebase_uid` and matched membership only on that field, so this legacy
+    shape 404'd even though the account can otherwise log in (see
+    `load_auth_claims.py`, which resolves membership the same way `user_id`
+    is resolved here)."""
+    from datetime import UTC, datetime
+
+    await db["users"].insert_one(
+        {
+            "user_id": "legacy-parent-1",
+            "email": "legacy@example.com",
+            "display_name": "Legacy Parent",
+            "role": "parent",
+            "roles": ["parent"],
+            "academy_id": "academy-b",
+        }
+    )
+    await db["academy_memberships"].insert_one(
+        {
+            "academy_id": "academy-b",
+            "user_id": "legacy-parent-1",
+            "roles": ["parent"],
+            "status": "active",
+        }
+    )
+    repo = MongoUserRepository(db, default_academy_id="academy-b")
+
+    found = await repo.get_login_invite_user("legacy-parent-1", academy_id="academy-b")
+    assert found is not None
+    assert found.email == "legacy@example.com"
+
+    sent_at = datetime.now(UTC)
+    await repo.record_login_invite("legacy-parent-1", academy_id="academy-b", sent_at=sent_at)
+    membership = await db["academy_memberships"].find_one(
+        {"academy_id": "academy-b", "user_id": "legacy-parent-1"}
+    )
+    assert membership is not None
+    assert membership["login_invite_sent_at"] is not None
+
+
+@pytest.mark.asyncio
 async def test_billing_setup_provisioning_remains_invite_pending_for_safe_resend(
     db, monkeypatch
 ) -> None:

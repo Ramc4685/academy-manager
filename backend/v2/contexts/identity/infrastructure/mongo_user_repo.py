@@ -592,6 +592,34 @@ class MongoUserRepository:
             return None
         return await self._admin_detail_for_doc(doc, academy_id=academy_id)
 
+    @staticmethod
+    def _identity_aliases(doc: dict[str, object]) -> list[str]:
+        """Every identifier this account might be keyed by in `academy_memberships`.
+
+        `users.user_id` and `academy_memberships.user_id` are supposed to be
+        the same value, but `ensure_parent_login`/`ensure_student_login`
+        preserve a pre-existing roster `user_id` while keying the new
+        membership row by the freshly-provisioned `firebase_uid` (see those
+        methods below), so the two can legitimately diverge in either
+        direction. Check every alias rather than betting on one field.
+        """
+        return [
+            str(value)
+            for value in (doc.get("user_id"), doc.get("auth_uid"), doc.get("firebase_uid"))
+            if value
+        ]
+
+    async def _active_membership_for_doc(
+        self, doc: dict[str, object], *, academy_id: str
+    ) -> dict[str, object] | None:
+        aliases = self._identity_aliases(doc)
+        if not aliases:
+            return None
+        membership: dict[str, object] | None = await self._db["academy_memberships"].find_one(
+            {"academy_id": academy_id, "user_id": {"$in": aliases}, "status": "active"}
+        )
+        return membership
+
     async def get_login_invite_user(
         self, user_id: str, *, academy_id: str
     ) -> AdminUserDetail | None:
@@ -599,17 +627,7 @@ class MongoUserRepository:
         doc = await self.collection.find_one(self._id_filter(user_id))
         if doc is None:
             return None
-        firebase_uid = doc.get("firebase_uid") or doc.get("auth_uid")
-        if not firebase_uid:
-            return None
-        membership = await self._db["academy_memberships"].find_one(
-            {
-                "academy_id": academy_id,
-                "user_id": str(firebase_uid),
-                "status": "active",
-            },
-            {"_id": 1},
-        )
+        membership = await self._active_membership_for_doc(doc, academy_id=academy_id)
         if membership is None:
             return None
         return await self._admin_detail_for_doc(doc, academy_id=academy_id)
@@ -650,11 +668,11 @@ class MongoUserRepository:
         self, user_id: str, *, academy_id: str, sent_at: datetime
     ) -> None:
         doc = await self.collection.find_one(self._id_filter(user_id))
-        firebase_uid = (doc or {}).get("firebase_uid") or (doc or {}).get("auth_uid")
-        if not firebase_uid:
+        aliases = self._identity_aliases(doc) if doc else []
+        if not aliases:
             raise UserCreateFailed("login invite target has no active academy membership")
         result = await self._db["academy_memberships"].update_one(
-            {"academy_id": academy_id, "user_id": str(firebase_uid), "status": "active"},
+            {"academy_id": academy_id, "user_id": {"$in": aliases}, "status": "active"},
             {
                 "$set": {"login_invite_sent_at": sent_at, "updated_at": sent_at},
                 "$unset": {"login_invite_pending": ""},
