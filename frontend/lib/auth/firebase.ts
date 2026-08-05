@@ -10,6 +10,7 @@ import { FirebaseApp, getApps, initializeApp } from "firebase/app";
 import {
   Auth,
   GoogleAuthProvider,
+  confirmPasswordReset,
   connectAuthEmulator,
   createUserWithEmailAndPassword,
   getAuth,
@@ -22,6 +23,7 @@ import {
   signInWithPopup,
   signInWithRedirect,
   signOut,
+  verifyPasswordResetCode,
   type User,
 } from "firebase/auth";
 import { resolveAuthDomain } from "@/lib/auth/auth-domain";
@@ -206,6 +208,36 @@ export async function completeGoogleRedirectSignIn(): Promise<User | null> {
 
 export async function sendPasswordReset(email: string): Promise<void> {
   await sendPasswordResetEmail(auth(), email);
+}
+
+/**
+ * Validate a password-reset `oobCode` and return the email it belongs to.
+ *
+ * Throws for an expired, already-used, or malformed code, which is how
+ * `/auth/action` tells those states apart before showing a password form.
+ */
+export async function verifyPasswordResetCodeValue(oobCode: string): Promise<string> {
+  if (E2E_BYPASS) return "e2e-parent@example.com";
+  return verifyPasswordResetCode(auth(), oobCode);
+}
+
+/**
+ * Complete a password reset.
+ *
+ * This hits the same Identity Toolkit `accounts:resetPassword` endpoint as
+ * Firebase's own hosted action page, so it keeps that endpoint's side effect of
+ * marking the account's email verified — redeeming the code proves the parent
+ * controls the mailbox. That side effect is load-bearing: password sign-in is
+ * rejected without it by `_require_verified_password_provider_email` in
+ * `backend/v2/contexts/identity/application/use_cases/load_auth_claims.py`.
+ * Do not swap this for a custom reset endpoint without re-verifying that.
+ */
+export async function confirmPasswordResetValue(
+  oobCode: string,
+  newPassword: string
+): Promise<void> {
+  if (E2E_BYPASS) return;
+  await confirmPasswordReset(auth(), oobCode, newPassword);
 }
 
 export async function signOutCurrent(): Promise<void> {
