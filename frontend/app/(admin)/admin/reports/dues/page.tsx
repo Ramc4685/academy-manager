@@ -128,6 +128,7 @@ function AdminDuesContent() {
                 <th className="px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Email</th>
                 <th className="px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted text-right">Open invoices</th>
                 <th className="px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted text-right">Due</th>
+                <th className="px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted text-right">WhatsApp</th>
               </tr>
             </thead>
             <tbody>
@@ -154,6 +155,21 @@ function AdminDuesContent() {
                   <td className="px-4 py-3 text-right font-mono tabular-nums">{parent.pending_count}</td>
                   <td className="px-4 py-3 text-right font-mono tabular-nums font-medium">
                     {money(parent.total_due_cents)}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    {parent.whatsapp_url ? (
+                      <a
+                        href={parent.whatsapp_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        data-testid={`admin-dues-whatsapp-${parent.parent_id}`}
+                        className="font-medium text-emerald-700 underline underline-offset-2 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300"
+                      >
+                        Send
+                      </a>
+                    ) : (
+                      <span className="text-neutral-400 dark:text-neutral-500">-</span>
+                    )}
                   </td>
                 </tr>
               ))}
