@@ -99,7 +99,7 @@ tqdm==4.70.0
 typer==0.26.8
 typing-inspection==0.4.2
 typing_extensions==4.15.0
-tzdata==2026.2
+tzdata==2026.3
 tzlocal==5.4.4
 uritemplate==4.2.0
 urllib3==2.7.0
