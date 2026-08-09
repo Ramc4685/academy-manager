@@ -277,9 +277,9 @@ async def test_financial_status_unchanged_by_send_key_invariant() -> None:
             invoices=[_invoice(status=initial_status, balance_due_cents=balance)]
         )
         result = await _uc(repo, email=FakeInvoiceEmail()).execute("inv-1")
-        assert (
-            result.invoice.status == expected_status
-        ), f"financial status changed from {initial_status!r} to {result.invoice.status!r}"
+        assert result.invoice.status == expected_status, (
+            f"financial status changed from {initial_status!r} to {result.invoice.status!r}"
+        )
 
 
 async def test_raises_when_invoice_not_found() -> None:

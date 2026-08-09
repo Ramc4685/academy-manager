@@ -3153,8 +3153,10 @@ def compose_admin(
         ]
         combined = attempt_rows + invoice_rows + ledger_rows + deduped_legacy
         combined.sort(
-            key=lambda r: (r.get("created_at") if isinstance(r, dict) else None)
-            or datetime.min.replace(tzinfo=UTC),
+            key=lambda r: (
+                (r.get("created_at") if isinstance(r, dict) else None)
+                or datetime.min.replace(tzinfo=UTC)
+            ),
             reverse=True,
         )
         return combined[:fetch_cap]

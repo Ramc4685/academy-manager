@@ -452,8 +452,7 @@ class MongoUserRepository:
         if str(user_doc.get("academy_id") or "") == academy_id:
             return
         raise UserOutsideAcademy(
-            "that email belongs to an account outside this academy; "
-            "use a different email address"
+            "that email belongs to an account outside this academy; use a different email address"
         )
 
     async def ensure_student_login(

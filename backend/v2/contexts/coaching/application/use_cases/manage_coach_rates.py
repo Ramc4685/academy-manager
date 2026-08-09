@@ -165,7 +165,7 @@ def diagnose_rate_timeline(coach_id: str, rates: list[CoachRate]) -> CoachRateTi
         )
 
     for prev, current in pairwise(ordered):
-        prev_start, prev_until = _rate_window(prev)
+        _prev_start, prev_until = _rate_window(prev)
         current_start, _ = _rate_window(current)
         if prev_until is None:
             issues.append(
