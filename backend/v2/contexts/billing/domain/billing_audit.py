@@ -26,6 +26,10 @@ BillingAuditAction = Literal[
     "platform_fallback_toggled",
     "admin_charge_initiated",
     "autopay_resumed",
+    # Invoicing config, not money movement: billing_day/invoice_due_days decide
+    # when invoices are generated and when the dunning ladder's first autopay
+    # charge fires, so changes get the same actor/before/after trail.
+    "invoice_schedule_changed",
 ]
 
 

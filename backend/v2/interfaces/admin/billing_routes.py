@@ -16,6 +16,7 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
     UndoPaymentPaidCommand,
 )
 from backend.v2.contexts.billing.application.use_cases.billing_settings_admin import (
+    SetInvoiceScheduleCommand,
     SetPlatformChargeFallbackCommand,
 )
 from backend.v2.contexts.billing.application.use_cases.finance import (  # FINANCE
@@ -140,6 +141,59 @@ async def set_platform_charge_fallback(
     )
     return PlatformChargeFallbackResponse(
         allow_platform_charge_fallback=result.allow_platform_charge_fallback
+    )
+
+
+class InvoiceScheduleResponse(BaseModel):
+    billing_day: int
+    invoice_due_days: int
+
+
+class SetInvoiceScheduleRequest(BaseModel):
+    billing_day: int = Field(ge=1, le=28)
+    invoice_due_days: int = Field(ge=0, le=60)
+    reason: str | None = None
+
+
+@router.get(
+    "/billing/settings/invoice-schedule",
+    response_model=InvoiceScheduleResponse,
+    summary="Read the automated monthly-invoicing schedule",
+)
+async def get_invoice_schedule(
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> InvoiceScheduleResponse:
+    use_case = _required_callable(use_cases.get_invoice_schedule, "get_invoice_schedule")
+    result = await use_case.execute()  # type: ignore[attr-defined]
+    return InvoiceScheduleResponse(
+        billing_day=result.billing_day,
+        invoice_due_days=result.invoice_due_days,
+    )
+
+
+@router.put(
+    "/billing/settings/invoice-schedule",
+    response_model=InvoiceScheduleResponse,
+    summary="Set the automated monthly-invoicing schedule (audited)",
+)
+async def set_invoice_schedule(
+    body: SetInvoiceScheduleRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> InvoiceScheduleResponse:
+    use_case = _required_callable(use_cases.set_invoice_schedule, "set_invoice_schedule")
+    result = await use_case.execute(  # type: ignore[attr-defined]
+        SetInvoiceScheduleCommand(
+            billing_day=body.billing_day,
+            invoice_due_days=body.invoice_due_days,
+            actor_id=claims.user_id,
+            reason=body.reason,
+        )
+    )
+    return InvoiceScheduleResponse(
+        billing_day=result.billing_day,
+        invoice_due_days=result.invoice_due_days,
     )
 
 
