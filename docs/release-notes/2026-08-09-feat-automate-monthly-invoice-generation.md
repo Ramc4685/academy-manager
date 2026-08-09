@@ -1,6 +1,6 @@
 # feat-automate-monthly-invoice-generation
 
-PR: #TBD
+PR: #413
 
 ## What changed
 Monthly invoices are now generated automatically (issue #288). Previously
