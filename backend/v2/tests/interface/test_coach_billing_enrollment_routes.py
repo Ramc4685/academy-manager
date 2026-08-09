@@ -379,8 +379,7 @@ def test_move_preview_returns_proration(coach_client):
 
 def test_move_preview_missing_enrollment_returns_404(coach_client):
     resp = coach_client.get(
-        f"/api/v2/coach/billing-enrollments/nonexistent/move/preview"
-        f"?to_session_type_id={_ST_TO_ID}"
+        f"/api/v2/coach/billing-enrollments/nonexistent/move/preview?to_session_type_id={_ST_TO_ID}"
     )
     assert resp.status_code == 404, resp.text
 

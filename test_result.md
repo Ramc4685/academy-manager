@@ -72,6 +72,7 @@ Use the per-task ledgers under `docs/test-results/active/` for current handoffs.
 - [2026-07-20-ci-production-release-automation](docs/test-results/active/2026-07-20-ci-production-release-automation.md)
 - [2026-07-24-pr-346-frontend-static-fix](docs/test-results/active/2026-07-24-pr-346-frontend-static-fix.md)
 - [2026-07-28-session-edit-update-persistence-defect](docs/test-results/active/2026-07-28-session-edit-update-persistence-defect.md)
+- [2026-08-09-dependency-pr-repair](docs/test-results/active/2026-08-09-dependency-pr-repair.md)
 - [slice-i-connect](docs/test-results/active/slice-i-connect.md)
 
 ## Required Workflow

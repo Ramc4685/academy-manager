@@ -86,7 +86,7 @@ async def test_happy_path_saves_feedback():
 
 @pytest.mark.asyncio
 async def test_happy_path_with_rating():
-    uc, repo, _ = _make_use_case(assigned={"sess-1"})
+    uc, _repo, _ = _make_use_case(assigned={"sess-1"})
     cmd = CreateFeedbackCommand(session_id="sess-1", student_id="stu-1", body="Good", rating=5)
     result = await uc.execute(cmd, coach_id="coach-1")
     assert result.rating == 5

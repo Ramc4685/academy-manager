@@ -590,7 +590,7 @@ class MongoMonthlyBillingGenerator:
                 gross_amount_cents,
                 discount_cents,
                 net_amount_cents,
-                snapshot_id,
+                _snapshot_id,
                 discount_policy,
             ) = await _resolve_charge_for_enrollment(
                 repo=self._repo,
