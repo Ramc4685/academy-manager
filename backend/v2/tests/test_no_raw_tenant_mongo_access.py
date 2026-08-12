@@ -98,9 +98,9 @@ GLOBAL_COLLECTIONS = {
     "academy_domains",
 }
 
-assert not (
-    TENANT_OWNED_COLLECTIONS & GLOBAL_COLLECTIONS
-), "A collection cannot be both tenant-owned and global"
+assert not (TENANT_OWNED_COLLECTIONS & GLOBAL_COLLECTIONS), (
+    "A collection cannot be both tenant-owned and global"
+)
 
 MONGO_METHODS = {
     "aggregate",

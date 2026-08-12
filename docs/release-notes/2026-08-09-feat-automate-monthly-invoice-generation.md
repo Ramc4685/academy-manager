@@ -28,9 +28,6 @@ state for every open invoice past its `due_date`, and `DUNNING_SCHEDULE_DAYS`
 begins at `0` — that leading zero *is* the first charge attempt. A second
 trigger would risk double-charging saved cards.
 
-Also folded in: `ruff check`/`ruff format` fixes for four test files that were
-already failing lint on `main` and would otherwise turn this PR's CI red.
-
 ## Deploy notes
 No migration. `billing_settings` documents without the new fields fall back to
 the model defaults (`billing_day=1`, `invoice_due_days=7`), so existing
