@@ -1504,7 +1504,7 @@ async def test_complete_autopay_optin_missing_enrollment_doc_attempts_all_then_r
         now=now,
     )
 
-    with pytest.raises(RuntimeError, match="enr-1.*enr-2"):
+    with pytest.raises(RuntimeError, match=r"enr-1.*enr-2"):
         await uc.execute_from_payment_checkout(
             _optin_payment_checkout(enrollment_ids="enr-1,enr-2")
         )

@@ -92,7 +92,7 @@ async def dashboard_attention(
                 title="Overdue dues",
                 detail=f"{overdue_count} parent account{'s' if overdue_count != 1 else ''} need follow-up.",
                 severity="high",
-                href="/admin/dues",
+                href="/admin/reports/dues",
                 count=overdue_count,
             )
         )

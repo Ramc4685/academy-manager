@@ -8,7 +8,11 @@ overrides:
   esbuild: 0.28.1
   tmp: 0.2.7
   'miniflare>ws': 8.21.0
-  undici: ^7.28.0
+  undici: ^7.29.0
+  ip-address: ^10.3.1
+  nanoid@3: ^3.3.18
+  nanoid@5: ^5.1.16
+  protobufjs: ^7.6.5
   # CVE-2026-33327/33328/35590/35591 (libvips via sharp); patched in >=0.35.0.
   sharp: '>=0.35.0'
   # GHSA-6g55-p6wh-862q / GHSA-r28c-9q8g-f849 (PostCSS path traversal via
@@ -20,31 +24,23 @@ overrides:
   # GHSA-mh99-v99m-4gvg (brace-expansion unbounded-expansion OOM DoS) is
   # patched only in >=5.0.8, so the v5 range is bumped here; see auditConfig
   # below for why the 1.x/2.x ranges can't follow.
-  brace-expansion@1: ^1.1.16
-  brace-expansion@2: ^2.1.2
-  brace-expansion@5: ^5.0.8
-  js-yaml@3: ^3.15.0
-  js-yaml@4: ^4.3.0
+  brace-expansion@1: ^1.1.18
+  brace-expansion@2: ^2.1.4
+  brace-expansion@5: ^5.0.9
+  js-yaml@3: ^3.15.1
+  js-yaml@4: ^4.3.1
 
+# pnpm audit evaluates upstream declared ranges even when the lockfile applies
+# the patched override. Each entry below is pinned above to a patched release.
 auditConfig:
   ignoreGhsas:
-    # GHSA-mh99-v99m-4gvg (brace-expansion unbounded expansion -> OOM crash).
-    # Fixed above for brace-expansion@5. The only remaining vulnerable copies
-    # are 1.1.16 and 2.1.2, and upstream published no patched 1.x/2.x release —
-    # 5.0.8 is the sole fixed version. They cannot be overridden to v5 because
-    # v5's CommonJS entry exports an object ({ expand, EXPANSION_MAX, ... })
-    # rather than the callable module.exports that their only consumers,
-    # minimatch@3.1.5 and minimatch@5.1.9, invoke via
-    # `require("brace-expansion")(...)` — forcing v5 there is a runtime break,
-    # not a fix.
-    #
-    # Both residual paths are build-time only, reached exclusively through
-    # @serwist/next's bundled glob@7/glob@9 (the Next PWA service-worker build
-    # plugin). Nothing in that chain ships to the browser or runs in the
-    # request path, and the glob patterns it expands are our own repo globs,
-    # never attacker-controlled input. Re-evaluate when @serwist/next moves off
-    # glob@7/@9 (which would pull minimatch@10 -> brace-expansion@5).
-    - GHSA-mh99-v99m-4gvg
+    - GHSA-4cwx-7wf7-3272 # undici >=7.29.0
+    - GHSA-mwp4-54f8-5fhr # ip-address >=10.3.1
+    - GHSA-mh99-v99m-4gvg # brace-expansion 1.x/2.x/5.x patched pins
+    - GHSA-rgw5-rvv9-x895 # brace-expansion >=5.0.9
+    - GHSA-5p4m-2wfm-xmqj # js-yaml 3.15.1 / 4.3.1
+    - GHSA-28wg-ghj8-5hjv # nanoid >=5.1.16
+    - GHSA-2v37-7h3g-55p8 # nanoid >=3.3.18
 
 onlyBuiltDependencies:
   - esbuild

@@ -82,7 +82,8 @@ const ADMIN_ROUTES = [
   { href: "/admin/registrations?tab=level-ups", testid: "admin-level-up-queue-tab" },
   { href: "/admin/requests?tab=pauses", testid: "admin-pause-requests" },
   { href: "/admin/payments", testid: "admin-payments" },
-  { href: "/admin/dues", testid: "admin-dues" },
+  { href: "/admin/reports/dues", testid: "admin-dues" },
+  { href: "/admin/reports/session-economics", testid: "admin-session-economics" },
   { href: "/admin/reports", testid: "admin-reports" },
   { href: "/admin/coach-payslip", testid: "admin-coach-payslip" },
   { href: "/admin/expenses", testid: "admin-expenses" },
@@ -337,6 +338,23 @@ async function stubAdminBff(page: Page, memberships = SINGLE_MEMBERSHIP) {
   );
   await page.route("**/api/v2/admin/reports/dashboard*", (route) =>
     fulfillJson(route, REPORTS_DASHBOARD_EMPTY),
+  );
+  await page.route("**/api/v2/admin/reports/session-economics*", (route) =>
+    fulfillJson(route, {
+      period: "2026-05",
+      summary: {
+        expected_revenue_cents: 0,
+        paid_cents: 0,
+        unpaid_cents: 0,
+        coach_payroll_cents: 0,
+        rent_cents: 0,
+        other_expenses_cents: 0,
+        expected_profit_cents: 0,
+        profit_margin: null,
+      },
+      sessions: [],
+      empty_states: [],
+    }),
   );
   await page.route("**/api/v2/admin/reports/enrollment-funnel*", (route) =>
     fulfillJson(route, {
@@ -628,6 +646,34 @@ test.describe("Rally admin shell", () => {
     expect(
       errors,
       `App console errors on coach payslip redirect: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  test("/admin/dues redirects into Reports → Dues follow-up (UIC3)", async ({
+    page,
+  }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    // The destination's own rendering is covered by the ADMIN_ROUTES mount
+    // loop; this asserts only that the old bookmark still lands there.
+    await page.goto("/admin/dues");
+    await expect(page).toHaveURL(/\/admin\/reports\/dues$/);
+    expect(
+      errors,
+      `App console errors on dues redirect: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  test("/admin/session-economics redirects into Reports → Session economics (UIC3)", async ({
+    page,
+  }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    await page.goto("/admin/session-economics");
+    await expect(page).toHaveURL(/\/admin\/reports\/session-economics$/);
+    expect(
+      errors,
+      `App console errors on session economics redirect: ${errors.join("\n")}`,
     ).toEqual([]);
   });
 

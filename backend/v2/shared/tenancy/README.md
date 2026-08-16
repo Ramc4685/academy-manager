@@ -19,14 +19,16 @@ Tenant scoping per [ADR-0006](../../../../docs/adr/0006-tenant-ready-single-tena
 # ❌ Application code passing academy_id around.
 async def list_sessions_for_coach(academy_id: str, coach_id: str): ...
 
+
 # ❌ Repository filtering by hand.
 await db.sessions.find({"academy_id": "...", "coach_id": ...})
+
 
 # ❌ Background handler reading academy_id from the event.
 @handler(event=AttendanceMarked)
 async def something(event):
     repo = SessionRepository(db)
-    set_academy_id(event.academy_id)   # wrong — use tenant_scope context manager
+    set_academy_id(event.academy_id)  # wrong — use tenant_scope context manager
     ...
 ```
 
@@ -36,12 +38,15 @@ async def something(event):
 # ✅ Use case takes only domain inputs.
 async def list_sessions_for_coach(coach_id: str): ...
 
+
 # ✅ Repository inherits scoping.
 class MongoSessionRepository(TenantScopedRepository):
     collection_name = "sessions"
+
     async def for_coach_on_date(self, coach_id: str, date: date) -> list[Session]:
         cursor = self._find_many({"coach_id": coach_id, "start_at": ...})
         ...
+
 
 # ✅ Background handler uses tenant_scope.
 @handler(event=AttendanceMarked)

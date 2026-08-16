@@ -1202,7 +1202,7 @@ async def test_default_idempotency_key_remains_slice_c_shape_without_retry_scope
 
     assert stripe.create_calls[0]["idempotency_key"] == "autopay:inv-default-scope:2026-06:10000"
     assert repo.payment_attempts[0]["idempotency_key"] == (
-        "autopay-attempt:inv-default-scope:2026-06:10000:" "succeeded:pi_test_123"
+        "autopay-attempt:inv-default-scope:2026-06:10000:succeeded:pi_test_123"
     )
 
 
@@ -1221,10 +1221,8 @@ async def test_dunning_retry_scope_changes_pi_and_attempt_idempotency_keys() -> 
         "autopay:inv-dunning-scope:2026-06:10000:dunning-attempt:2",
     ]
     assert [attempt["idempotency_key"] for attempt in repo.payment_attempts] == [
-        "autopay-attempt:inv-dunning-scope:2026-06:10000:"
-        "dunning-attempt:1:succeeded:pi_test_123",
-        "autopay-attempt:inv-dunning-scope:2026-06:10000:"
-        "dunning-attempt:2:succeeded:pi_test_456",
+        "autopay-attempt:inv-dunning-scope:2026-06:10000:dunning-attempt:1:succeeded:pi_test_123",
+        "autopay-attempt:inv-dunning-scope:2026-06:10000:dunning-attempt:2:succeeded:pi_test_456",
     ]
 
 

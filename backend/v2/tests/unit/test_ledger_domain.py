@@ -145,7 +145,7 @@ def test_add_line_threads_explicit_allocated_cents() -> None:
     inv = _invoice(subtotal_cents=5_000, total_cents=5_000, balance_due_cents=0, status="open")
     existing = [_line(5_000, line_id="l1")]
     new_line = _line(3_000, line_id="l2")
-    updated, lines = add_line(inv, existing, new_line, now=NOW, allocated_cents=5_000)
+    updated, _lines = add_line(inv, existing, new_line, now=NOW, allocated_cents=5_000)
     # total = 8000, allocated = 5000 -> balance 3000
     assert updated.total_cents == 8_000
     assert updated.balance_due_cents == 3_000
@@ -168,7 +168,7 @@ def test_add_line_allowed_in_draft() -> None:
 def test_add_line_allowed_in_open() -> None:
     inv = _invoice(status="open")
     new_line = _line(1_000, line_id="line-new")
-    updated_inv, updated_lines = add_line(inv, [], new_line, now=NOW)
+    _updated_inv, updated_lines = add_line(inv, [], new_line, now=NOW)
     assert len(updated_lines) == 1
 
 

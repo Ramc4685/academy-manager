@@ -250,6 +250,11 @@ class _FakeUserRepo:
         return None
 
 
+class _FakeAcademyRepo:
+    async def get_academy_name(self, academy_id: str) -> str | None:
+        return "Test Academy"
+
+
 def _student_detail(
     *,
     student_id: str = "student-1",
@@ -1030,6 +1035,7 @@ async def test_invoice_email_adapter_requires_parent_membership_in_request_acade
     adapter = InvoiceEmailAdapter(
         memberships=memberships,
         users=users,
+        academies=_FakeAcademyRepo(),
         sender=sender,
     )
 
@@ -1065,6 +1071,7 @@ async def test_invoice_email_adapter_sends_after_membership_match() -> None:
     adapter = InvoiceEmailAdapter(
         memberships=memberships,
         users=users,
+        academies=_FakeAcademyRepo(),
         sender=sender,
     )
 

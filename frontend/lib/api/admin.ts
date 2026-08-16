@@ -1209,8 +1209,11 @@ export interface DuesFollowupParentView {
   parent_id: string;
   parent_name: string | null;
   email: string | null;
+  phone: string | null;
   pending_count: number;
   total_due_cents: number;
+  /** Pre-filled wa.me link; null when the parent has no usable phone on file. */
+  whatsapp_url: string | null;
 }
 
 export interface DuesFollowupResponse {
