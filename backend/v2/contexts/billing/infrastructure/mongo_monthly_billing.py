@@ -20,6 +20,7 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
     GenerateMonthlyPaymentsResult,
     MonthlyGenerationSkippedDetail,
 )
+from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
 from backend.v2.contexts.billing.domain.ledger import InvoiceLine, LedgerInvoice
 from backend.v2.contexts.billing.domain.proration import (
     BillingCalculationSnapshot,
@@ -32,6 +33,9 @@ from backend.v2.contexts.billing.domain.tuition_discount import (
     TuitionDiscount,
     display_label,
     monthly_discount_cents,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo import (
+    MongoBillingSettingsRepository,
 )
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import current_academy_id
@@ -56,6 +60,27 @@ class MongoMonthlyBillingGenerator:
         self._clock = repo._clock
         self._credit_ledger = repo._credit_ledger
         self._ledger_repo = repo._ledger_repo
+        # Resolved once per generation run (see generate_monthly_payments) so
+        # every invoice in a run shares one grace window even if the run
+        # straddles midnight or an admin edits the setting mid-run.
+        self._invoice_due_days = BillingSettings.default("").invoice_due_days
+
+    async def _load_invoice_due_days(self) -> int:
+        """Read this academy's grace window, falling back to the model default.
+
+        Settings are advisory for generation: a missing or unreadable
+        billing_settings doc must never block the monthly run, so any failure
+        degrades to the default rather than raising.
+        """
+        try:
+            settings = await MongoBillingSettingsRepository(self._db).get()
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "monthly_generation_billing_settings_unreadable; using default due days",
+                exc_info=True,
+            )
+            return BillingSettings.default("").invoice_due_days
+        return settings.invoice_due_days
 
     @staticmethod
     def _monthly_invoice_id(enrollment_id: str, period: str) -> str:
@@ -191,12 +216,12 @@ class MongoMonthlyBillingGenerator:
         idempotency_key = f"monthly-ledger-{enrollment_id}-{period}"
         academy_id = current_academy_id()
 
-        # Compute due_date as last day of the period month
-        year, month = int(period[:4]), int(period[5:7])
-        if month == 12:
-            due_date = date(year + 1, 1, 1) - timedelta(days=1)
-        else:
-            due_date = date(year, month + 1, 1) - timedelta(days=1)
+        # due_date = generation date + the academy's grace window (issue #288
+        # R4). Anchoring to the generation date rather than the period's last
+        # day guarantees every invoice gets the full grace window before the
+        # dunning ladder's first autopay attempt fires on the due date, even
+        # when a period is generated late or backfilled by an admin.
+        due_date = now.date() + timedelta(days=self._invoice_due_days)
 
         invoice = LedgerInvoice(
             invoice_id=invoice_id,
@@ -524,6 +549,7 @@ class MongoMonthlyBillingGenerator:
 
     async def generate_monthly_payments(self, period: str) -> GenerateMonthlyPaymentsResult:
         academy_id = current_academy_id()
+        self._invoice_due_days = await self._load_invoice_due_days()
         cursor = self._db["enrollments"].find(
             {
                 "academy_id": academy_id,
