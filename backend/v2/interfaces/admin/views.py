@@ -1246,8 +1246,12 @@ class DuesFollowupParentView(BaseModel):
     parent_id: str
     parent_name: str | None = None
     email: str | None = None
+    phone: str | None = None
     pending_count: int
     total_due_cents: int
+    # Pre-filled wa.me link the admin clicks to open WhatsApp; None when the
+    # parent has no usable phone on file.
+    whatsapp_url: str | None = None
 
 
 class DuesFollowupResponse(BaseModel):

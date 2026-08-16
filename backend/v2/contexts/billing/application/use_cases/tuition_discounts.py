@@ -256,5 +256,5 @@ def _cents_value(
             return int(doc[key])
     for key in money_keys:
         if doc.get(key) is not None:
-            return int(round(float(doc[key]) * 100))
+            return round(float(doc[key]) * 100)
     return None

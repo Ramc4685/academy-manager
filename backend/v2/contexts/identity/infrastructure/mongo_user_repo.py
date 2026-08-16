@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from bson import ObjectId
 from pymongo import ReturnDocument
@@ -187,7 +187,12 @@ class MongoUserRepository:
         )
 
     def _to_admin_detail(
-        self, doc: dict[str, object], *, linked_student_count: int, session_count: int = 0
+        self,
+        doc: dict[str, object],
+        *,
+        linked_student_count: int,
+        session_count: int = 0,
+        login_invite_sent_at: datetime | None = None,
     ) -> AdminUserDetail:
         user = self._to_domain(doc)
         summary = self._to_admin_summary(doc)
@@ -196,7 +201,13 @@ class MongoUserRepository:
             roles=user.roles,
             linked_student_count=linked_student_count,
             session_count=session_count,
-            login_invite_sent_at=doc.get("login_invite_sent_at"),
+            # Passed in from the tenant's `academy_memberships` row, never read
+            # off `doc`: `record_login_invite` only ever writes the timestamp
+            # to the membership. Reading it here yielded None on every request,
+            # so the admin page kept offering "Send login invite" after a
+            # successful send -- and each re-send mints a new Firebase oobCode
+            # that invalidates the link already emailed to the parent.
+            login_invite_sent_at=login_invite_sent_at,
         )
 
     @staticmethod
@@ -441,8 +452,7 @@ class MongoUserRepository:
         if str(user_doc.get("academy_id") or "") == academy_id:
             return
         raise UserOutsideAcademy(
-            "that email belongs to an account outside this academy; "
-            "use a different email address"
+            "that email belongs to an account outside this academy; use a different email address"
         )
 
     async def ensure_student_login(
@@ -592,6 +602,34 @@ class MongoUserRepository:
             return None
         return await self._admin_detail_for_doc(doc, academy_id=academy_id)
 
+    @staticmethod
+    def _identity_aliases(doc: dict[str, object]) -> list[str]:
+        """Every identifier this account might be keyed by in `academy_memberships`.
+
+        `users.user_id` and `academy_memberships.user_id` are supposed to be
+        the same value, but `ensure_parent_login`/`ensure_student_login`
+        preserve a pre-existing roster `user_id` while keying the new
+        membership row by the freshly-provisioned `firebase_uid` (see those
+        methods below), so the two can legitimately diverge in either
+        direction. Check every alias rather than betting on one field.
+        """
+        return [
+            str(value)
+            for value in (doc.get("user_id"), doc.get("auth_uid"), doc.get("firebase_uid"))
+            if value
+        ]
+
+    async def _active_membership_for_doc(
+        self, doc: dict[str, object], *, academy_id: str
+    ) -> dict[str, object] | None:
+        aliases = self._identity_aliases(doc)
+        if not aliases:
+            return None
+        membership: dict[str, object] | None = await self._db["academy_memberships"].find_one(
+            {"academy_id": academy_id, "user_id": {"$in": aliases}, "status": "active"}
+        )
+        return membership
+
     async def get_login_invite_user(
         self, user_id: str, *, academy_id: str
     ) -> AdminUserDetail | None:
@@ -599,24 +637,25 @@ class MongoUserRepository:
         doc = await self.collection.find_one(self._id_filter(user_id))
         if doc is None:
             return None
-        firebase_uid = doc.get("firebase_uid") or doc.get("auth_uid")
-        if not firebase_uid:
-            return None
-        membership = await self._db["academy_memberships"].find_one(
-            {
-                "academy_id": academy_id,
-                "user_id": str(firebase_uid),
-                "status": "active",
-            },
-            {"_id": 1},
-        )
+        membership = await self._active_membership_for_doc(doc, academy_id=academy_id)
         if membership is None:
             return None
-        return await self._admin_detail_for_doc(doc, academy_id=academy_id)
+        return await self._admin_detail_for_doc(doc, academy_id=academy_id, membership=membership)
 
     async def _admin_detail_for_doc(
-        self, doc: dict[str, object], *, academy_id: str
+        self,
+        doc: dict[str, object],
+        *,
+        academy_id: str,
+        membership: dict[str, object] | None = None,
     ) -> AdminUserDetail:
+        """Assemble the admin detail view for a `users` doc.
+
+        Pass ``membership`` when the caller has already resolved the active
+        membership row, so we do not query `academy_memberships` twice.
+        """
+        if membership is None:
+            membership = await self._active_membership_for_doc(doc, academy_id=academy_id)
         lookup_ids = [
             str(value)
             for value in (
@@ -643,18 +682,23 @@ class MongoUserRepository:
             }
         )
         return self._to_admin_detail(
-            doc, linked_student_count=linked_student_count, session_count=session_count
+            doc,
+            linked_student_count=linked_student_count,
+            session_count=session_count,
+            login_invite_sent_at=cast(
+                "datetime | None", (membership or {}).get("login_invite_sent_at")
+            ),
         )
 
     async def record_login_invite(
         self, user_id: str, *, academy_id: str, sent_at: datetime
     ) -> None:
         doc = await self.collection.find_one(self._id_filter(user_id))
-        firebase_uid = (doc or {}).get("firebase_uid") or (doc or {}).get("auth_uid")
-        if not firebase_uid:
+        aliases = self._identity_aliases(doc) if doc else []
+        if not aliases:
             raise UserCreateFailed("login invite target has no active academy membership")
         result = await self._db["academy_memberships"].update_one(
-            {"academy_id": academy_id, "user_id": str(firebase_uid), "status": "active"},
+            {"academy_id": academy_id, "user_id": {"$in": aliases}, "status": "active"},
             {
                 "$set": {"login_invite_sent_at": sent_at, "updated_at": sent_at},
                 "$unset": {"login_invite_pending": ""},
