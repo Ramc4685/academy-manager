@@ -1102,13 +1102,22 @@ async def test_zero_amount_checkout_still_rejects_an_incomplete_application(
         academy_id="acad",
     )
 
-    with tenant_scope("acad"), pytest.raises(IncompleteApplication):
+    with tenant_scope("acad"), pytest.raises(IncompleteApplication) as excinfo:
         await parent.start_checkout_for_application(
             parent_id="parent-1",
             application_id="app-1",
             success_url="https://app.example.com/parent/checkout/return?application_id=app-1",
             cancel_url="https://app.example.com/parent/onboarding",
         )
+
+    # The wizard reads `missing` to send the parent back to the step that owns
+    # the field, so the names are part of the contract, not just the message.
+    assert excinfo.value.details["missing"] == [
+        "date_of_birth",
+        "emergency_contact_name",
+        "emergency_contact_phone",
+        "parent_phone",
+    ]
 
     app_doc = await db["onboarding_applications"].find_one({"application_id": "app-1"})
     assert app_doc["status"] == "DRAFT"  # never transitioned

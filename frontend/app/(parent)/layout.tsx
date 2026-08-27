@@ -186,6 +186,12 @@ function ProfileGapBanner({ pathname }: { pathname: string | null }) {
   const { data } = useQuery({
     queryKey: queryKeys.parent.profile(),
     queryFn: getParentProfile,
+    // This runs in the layout, so it mounts on every parent page. Cache it
+    // for the session-ish window the banner cares about rather than
+    // refetching on each tab change, and don't retry: the banner is a nudge,
+    // so a failed fetch should cost one request and then render nothing.
+    staleTime: 5 * 60_000,
+    retry: false,
   });
   const [dismissed, setDismissed] = useState(true);
 

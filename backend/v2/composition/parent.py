@@ -1517,8 +1517,12 @@ def compose_parent(
             if not value.strip()
         ]
         if missing_fields:
+            # `missing` rides along in DomainError.details so the wizard can
+            # send the parent back to the step that owns the field instead of
+            # stranding them on the review screen with a raw field name.
             raise IncompleteApplication(
-                f"Application is missing required details: {', '.join(missing_fields)}"
+                f"Application is missing required details: {', '.join(missing_fields)}",
+                missing=missing_fields,
             )
         if not app.selected_session_id:
             raise MissingSelectedSession(

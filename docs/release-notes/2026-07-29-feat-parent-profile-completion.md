@@ -29,6 +29,14 @@ details, and stops new registrations from creating the same gap.
   entirely and would otherwise let a free registration through incomplete.
   The wizard's fields are carried onto the created/matched student on both
   the approve and waitlist-promote paths.
+- The wizard's parent step now marks Phone `required`, matching the checkout
+  guard. It was optional, so a parent could complete every step and only be
+  refused at the payment button — a registration that succeeds on `main`
+  today. When the guard does fire (an application drafted before these fields
+  existed), the error names the missing details in plain language and returns
+  the parent to the step that owns them instead of stranding them on the
+  review screen; the backend ships the field list in `DomainError.details`
+  rather than only in the message string.
 - Fixed a pre-existing bug found while building this: `MongoUserRepository
   ._to_domain` never read `phone` off the Mongo document, so `User.phone`
   was always `None` — including through the existing coach self-service
@@ -49,8 +57,14 @@ student belonging to another parent or another academy both return 404,
 undistinguished, matching the existing `_verify_child_ownership` pattern
 elsewhere in the parent BFF. `extra="forbid"` on both parent-facing request
 DTOs enforces the field allow-list (a parent cannot set `status`,
-`parent_id`, or any admin-only field). 2708/2708 backend tests passing;
-`pnpm build`/`typecheck`/`lint` clean. Rollback = revert the single PR; no
+`parent_id`, or any admin-only field).
+
+The checkout guard reads only the application draft the parent fills in
+during this session — never a stored `Student` or `User` — so no existing
+family with an incomplete record can be blocked from registering by it. The
+one way it could have blocked a currently-registerable family was the
+optional-Phone mismatch above, now fixed. 2782/2782 backend tests passing;
+`pnpm build`/`typecheck`/`lint`/`e2e` clean. Rollback = revert the single PR; no
 data migration to reverse, since all new fields are additive and optional.
 
 Two follow-ups were spawned from risks surfaced while building this, not
