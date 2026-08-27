@@ -4527,3 +4527,90 @@ async def test_unpaid_ach_balance_checkout_parks_each_invoice_then_settles_once(
         "invoice-checkout-alloc:cs_ach:inv-ach-1",
         "invoice-checkout-alloc:cs_ach:inv-ach-2",
     ]
+
+
+@pytest.mark.asyncio
+async def test_ach_async_failure_records_the_payment_intent_decline_reason() -> None:
+    ledger = FakeBillingLedger(_ledger_invoice(invoice_id="inv-ach", parent_id="parent-ach"))
+    stripe = _OptinFakeStripeGateway()
+    stripe.payment_intent_objects["pi_ach"] = {
+        "id": "pi_ach",
+        "object": "payment_intent",
+        "last_payment_error": {
+            "code": "payment_intent_payment_attempt_failed",
+            "decline_code": "debit_not_authorized",
+            "message": "The customer's bank did not authorize the debit.",
+        },
+    }
+    uc = _build(FakePaymentRepo(), billing_ledger=ledger, stripe=stripe)
+
+    await uc.execute(
+        _ach_checkout_event(
+            event_id="evt_ach_bounced",
+            event_type="checkout.session.async_payment_failed",
+            payment_status="unpaid",
+            metadata=_ACH_INVOICE_METADATA,
+        ),
+        "test_signature",
+    )
+
+    failed = ledger.payment_attempts["invoice-checkout-failed:inv-ach:pi_ach"]
+    assert failed["failure_code"] == "debit_not_authorized"
+    assert failed["failure_message"] == "The customer's bank did not authorize the debit."
+
+
+@pytest.mark.asyncio
+async def test_ach_settlement_does_not_double_credit_a_reconciled_payment_intent() -> None:
+    """The scheduled PaymentIntent reconciler can repair a missed settlement
+    webhook first; the late webhook must not credit the same PaymentIntent again."""
+    ledger = FakeBillingLedger(_ledger_invoice(invoice_id="inv-ach", parent_id="parent-ach"))
+    uc = _build(FakePaymentRepo(), billing_ledger=ledger)
+
+    await uc.execute(
+        _ach_checkout_event(
+            event_id="evt_ach_completed",
+            event_type="checkout.session.completed",
+            payment_status="unpaid",
+            metadata=_ACH_INVOICE_METADATA,
+        ),
+        "test_signature",
+    )
+
+    # Reconciliation wins the race and credits the invoice under its own ids.
+    now = datetime.now(UTC)
+    reconciled = LedgerPayment(
+        payment_id="ledger-pay-reconcile:pi_ach",
+        academy_id="acad",
+        parent_id="parent-ach",
+        amount_cents=10_000,
+        unapplied_amount_cents=10_000,
+        currency="usd",
+        status="succeeded",
+        payment_method="stripe_checkout",
+        stripe_payment_intent_id="pi_ach",
+        paid_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    await ledger.record_payment(reconciled, idempotency_key="stripe-reconcile:pi_ach")
+    await ledger.allocate_payment(
+        payment_id=reconciled.payment_id,
+        invoice_id="inv-ach",
+        amount_cents=10_000,
+        idempotency_key="stripe-reconcile-alloc:pi_ach",
+    )
+
+    await uc.execute(
+        _ach_checkout_event(
+            event_id="evt_ach_settled",
+            event_type="checkout.session.async_payment_succeeded",
+            payment_status="paid",
+            metadata=_ACH_INVOICE_METADATA,
+        ),
+        "test_signature",
+    )
+
+    assert list(ledger.payments) == ["ledger-pay-reconcile:pi_ach"]
+    assert [a["idempotency_key"] for a in ledger.allocations] == ["stripe-reconcile-alloc:pi_ach"]
+    assert ledger.invoices["inv-ach"].status == "paid"
+    assert ledger.invoices["inv-ach"].balance_due_cents == 0
