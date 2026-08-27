@@ -8,6 +8,7 @@ rather than extending TenantScopedRepository.  The query ALWAYS includes
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -75,21 +76,49 @@ class MongoMembershipRepository:
     # Membership operations
     # ------------------------------------------------------------------
 
-    async def get_membership(self, academy_id: str, user_id: str) -> AcademyMembership | None:
+    @staticmethod
+    def _user_id_filter(user_id: str, aliases: Sequence[str] | None) -> dict[str, object]:
+        """Match `academy_memberships.user_id` against every known alias.
+
+        `users.user_id` and `academy_memberships.user_id` are supposed to hold
+        the same value, but `ensure_parent_login`/`ensure_student_login`
+        preserve a pre-existing roster `user_id` on the users doc while keying
+        the new membership row by the freshly-provisioned `firebase_uid`, so
+        the two legitimately diverge. PR #400 gave the login-invite path the
+        same alias matching; the login path must agree with it or a parent
+        signs in to Firebase and is then rejected at `/api/v2/me`.
+
+        This widens only the identity side of the query — `academy_id` stays
+        an explicit, mandatory term, so tenant isolation is unchanged.
+        """
+        candidates = [str(value) for value in (user_id, *(aliases or [])) if value]
+        unique = list(dict.fromkeys(candidates))
+        if len(unique) <= 1:
+            return {"user_id": unique[0] if unique else user_id}
+        return {"user_id": {"$in": unique}}
+
+    async def get_membership(
+        self, academy_id: str, user_id: str, *, aliases: Sequence[str] | None = None
+    ) -> AcademyMembership | None:
         """Return the membership row for (academy_id, user_id), any status.
 
         The caller is responsible for checking `.is_active()` — this method
         returns invited/suspended/removed memberships so the auth layer can
         produce a specific rejection reason rather than a generic 403.
+
+        `aliases` carries the other identifiers the same account may be keyed
+        by (`auth_uid` / `firebase_uid`); see `_user_id_filter`.
         """
-        doc = await self._memberships.find_one({"academy_id": academy_id, "user_id": user_id})
+        doc = await self._memberships.find_one(
+            {"academy_id": academy_id, **self._user_id_filter(user_id, aliases)}
+        )
         return self._to_membership(doc) if doc else None
 
     async def get_for_user_in_academy(
-        self, *, user_id: str, academy_id: str
+        self, *, user_id: str, academy_id: str, aliases: Sequence[str] | None = None
     ) -> AcademyMembership | None:
         """Auth-port alias for `(academy_id, user_id)` membership lookup."""
-        return await self.get_membership(academy_id, user_id)
+        return await self.get_membership(academy_id, user_id, aliases=aliases)
 
     async def list_memberships_for_user(self, user_id: str) -> list[AcademyMembership]:
         """Return all membership rows across all academies for a user."""

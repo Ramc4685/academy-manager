@@ -87,6 +87,37 @@ async def test_repo_satisfies_auth_membership_lookup_port(db) -> None:
     assert result.membership_id == "m-auth"
 
 
+@pytest.mark.asyncio
+async def test_lookup_matches_membership_keyed_by_identity_alias(db) -> None:
+    """Regression (#424): a membership row keyed by the account's
+    `firebase_uid`/`auth_uid` rather than its roster `user_id` must still
+    resolve, matching the alias semantics PR #400 gave the invite path."""
+    await _insert_membership(db, membership_id="m-alias", academy_id="acad-a", user_id="fb-uid-7")
+    repo = _make_repo(db)
+
+    assert await repo.get_for_user_in_academy(user_id="roster-7", academy_id="acad-a") is None
+
+    result = await repo.get_for_user_in_academy(
+        user_id="roster-7", academy_id="acad-a", aliases=["fb-uid-7"]
+    )
+
+    assert result is not None
+    assert result.membership_id == "m-alias"
+
+
+@pytest.mark.asyncio
+async def test_alias_lookup_still_refuses_another_academys_membership(db) -> None:
+    """Aliases widen identity only — `academy_id` stays a mandatory term."""
+    await _insert_membership(db, membership_id="m-alias-b", academy_id="acad-b", user_id="fb-uid-7")
+    repo = _make_repo(db)
+
+    result = await repo.get_for_user_in_academy(
+        user_id="roster-7", academy_id="acad-a", aliases=["fb-uid-7"]
+    )
+
+    assert result is None
+
+
 # ---------------------------------------------------------------------------
 # Membership lookup — cross-tenant isolation
 # ---------------------------------------------------------------------------

@@ -30,6 +30,7 @@ from backend.v2.contexts.identity.domain.errors import (
     UserInactive,
     UserNotFound,
 )
+from backend.v2.contexts.identity.domain.models import User
 from backend.v2.shared.auth.claims import AuthClaims, PlatformRoleName
 
 
@@ -77,8 +78,17 @@ class LoadAuthClaims:
         if not _user_is_active(user):
             raise UserInactive(f"user {user.user_id} disabled")
 
+        # The membership row may be keyed by any of this account's identity
+        # aliases: `ensure_parent_login`/`ensure_student_login` keep a
+        # pre-existing roster `user_id` on the users doc while keying the new
+        # membership row by the provisioned `firebase_uid`. PR #400 taught the
+        # login-invite path to match every alias; the login path must agree, or
+        # such a parent signs in to Firebase and is then rejected here.
+        # Tenant scope is untouched — `resolved_academy_id` stays mandatory.
         membership = await self._memberships.get_for_user_in_academy(
-            user_id=user.user_id, academy_id=resolved_academy_id
+            user_id=user.user_id,
+            academy_id=resolved_academy_id,
+            aliases=_identity_aliases(user),
         )
         if membership is None or not membership.is_active():
             raise MembershipNotFound(
@@ -98,6 +108,20 @@ class LoadAuthClaims:
             roles=membership.roles,
             platform_roles=platform_role_names,
         )
+
+
+def _identity_aliases(user: User) -> tuple[str, ...]:
+    """Identifiers the membership row for this account may be keyed by.
+
+    Values are read off the already-resolved `User` record (the users doc),
+    never off the token, so this can never be used to claim another
+    account's membership.
+    """
+    return tuple(
+        dict.fromkeys(
+            str(value) for value in (user.user_id, getattr(user, "firebase_uid", None)) if value
+        )
+    )
 
 
 def _user_is_active(user) -> bool:
