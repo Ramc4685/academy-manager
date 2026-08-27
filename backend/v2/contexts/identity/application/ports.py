@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Protocol
 
@@ -74,9 +75,18 @@ class MembershipRepository(Protocol):
     takes an explicit `academy_id` so cross-tenant leakage is impossible.
     """
 
-    async def get_membership(self, academy_id: str, user_id: str) -> AcademyMembership | None: ...
+    # `aliases` lists the other identifiers the same account may be keyed by
+    # in `academy_memberships` (`auth_uid` / `firebase_uid`) — see
+    # `domain/identity_aliases.py`. Implementations match any of them and
+    # never widen the academy scope.
 
-    async def list_memberships_for_user(self, user_id: str) -> list[AcademyMembership]: ...
+    async def get_membership(
+        self, academy_id: str, user_id: str, *, aliases: Sequence[str] | None = None
+    ) -> AcademyMembership | None: ...
+
+    async def list_memberships_for_user(
+        self, user_id: str, *, aliases: Sequence[str] | None = None
+    ) -> list[AcademyMembership]: ...
 
     async def upsert_membership(self, membership: AcademyMembership) -> AcademyMembership: ...
 
@@ -104,9 +114,14 @@ class MembershipLookup(Protocol):
     """
 
     async def get_for_user_in_academy(
-        self, *, user_id: str, academy_id: str
+        self, *, user_id: str, academy_id: str, aliases: Sequence[str] | None = None
     ) -> AcademyMembership | None:
-        """Return the membership row for `(academy_id, user_id)` or None."""
+        """Return the membership row for `(academy_id, user_id)` or None.
+
+        `aliases` lists the other identifiers the same account may be keyed by
+        in `academy_memberships` (`auth_uid` / `firebase_uid`); implementations
+        match any of them, never widening the academy scope.
+        """
         ...
 
 

@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import os
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 
@@ -34,6 +34,9 @@ from backend.v2.composition.owner import compose_owner
 from backend.v2.composition.parent import compose_parent, compose_parent_webhook_handler
 from backend.v2.composition.student import compose_student
 from backend.v2.contexts.billing.application.ports import StripeGateway
+from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
+    GenerateMonthlyPaymentsCommand,
+)
 from backend.v2.contexts.billing.application.use_cases.connect_onboarding import (
     StartConnectOnboarding,
 )
@@ -45,6 +48,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import
 )
 from backend.v2.contexts.billing.infrastructure.mongo_billing_reconciliation_run_repo import (
     MongoBillingReconciliationRunRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo import (
+    MongoBillingSettingsRepository,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_connected_account_repo import (
     MongoConnectedAccountRepository,
@@ -500,6 +506,77 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         if totals["processed"] or totals["dunned"] or totals["autopay_disabled"]:
             log.info("dunning_retries_processed", extra=totals)
 
+    async def _generate_monthly_invoices() -> None:
+        # 30-minute TTL: a full generation run walks every active enrollment in
+        # every academy, so the lease must outlive a slow run rather than let a
+        # second machine start a duplicate pass mid-flight.
+        async with job_lease(
+            db, "generate_monthly_invoices", timedelta(minutes=30), scheduler_worker_id
+        ) as acquired:
+            if not acquired:
+                return
+            await _generate_monthly_invoices_body()
+
+    async def _generate_monthly_invoices_body() -> None:
+        # Daily tick. Each academy generates on its own configured billing_day
+        # (billing_settings.billing_day, default 1, capped at 28 so no academy
+        # is skipped in February). Re-running on the same day is safe:
+        # generate_monthly_payments is idempotent via deterministic invoice ids
+        # plus the billing_invoice_keys guard, so a restart or a lease handover
+        # re-reports the invoices as skipped_existing instead of duplicating.
+        #
+        # NOTE: billing_day is interpreted in the scheduler timezone
+        # (settings.scheduler_tz), NOT each academy's local timezone — same
+        # tradeoff as the coach/parent digest hour above.
+        now = datetime.now(scheduler.timezone)  # type: ignore[union-attr]
+        period = now.strftime("%Y-%m")
+        totals = {
+            "academy_count": 0,
+            "created": 0,
+            "skipped_existing": 0,
+            "skipped_no_charge": 0,
+            "skipped_autopay": 0,
+            "skipped_paused": 0,
+            "repaired_orphan_keys": 0,
+            "repaired_partial_invoices": 0,
+            "failed_repair": 0,
+        }
+        for academy_id in await _scheduler_academy_ids(
+            MongoAcademyRepository(db),
+            runtime_academy_id,
+        ):
+            with tenant_scope(academy_id):
+                billing_settings = await MongoBillingSettingsRepository(db).get()
+                if billing_settings.billing_day != now.day:
+                    continue
+                try:
+                    result = await app.state.admin.generate_monthly_payments.execute(
+                        GenerateMonthlyPaymentsCommand(period=period)
+                    )
+                except Exception:
+                    # One academy's failure must not abort the run for the
+                    # rest — a missed month is only recoverable by an admin.
+                    log.exception(
+                        "monthly_invoice_generation_failed academy=%s period=%s",
+                        academy_id,
+                        period,
+                    )
+                    continue
+            totals["academy_count"] += 1
+            for key in (
+                "created",
+                "skipped_existing",
+                "skipped_no_charge",
+                "skipped_autopay",
+                "skipped_paused",
+                "repaired_orphan_keys",
+                "repaired_partial_invoices",
+                "failed_repair",
+            ):
+                totals[key] += int(getattr(result, key, 0) or 0)
+        if totals["academy_count"]:
+            log.info("monthly_invoices_generated", extra={**totals, "period": period})
+
     async def _send_coach_daily_digests() -> None:
         async with job_lease(
             db, "send_coach_daily_digests", timedelta(minutes=10), scheduler_worker_id
@@ -668,6 +745,21 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         "interval",
         minutes=60,
         id="process_dunning_retries",
+        replace_existing=True,
+        max_instances=1,
+    )
+    # Automated monthly invoice generation (issue #288). Runs daily and only
+    # generates for academies whose billing_day matches today; the first autopay
+    # charge is NOT scheduled here — it is already the attempt-0 rung of the
+    # existing dunning ladder, which picks up any invoice once its due_date
+    # passes (see prepare_due_states / DUNNING_SCHEDULE_DAYS). Adding a second
+    # charge trigger here would risk double-charging the same invoice.
+    scheduler.add_job(
+        _generate_monthly_invoices,
+        "cron",
+        hour=3,
+        minute=0,
+        id="generate_monthly_invoices",
         replace_existing=True,
         max_instances=1,
     )
@@ -928,8 +1020,12 @@ class _LegacyUserMembershipAdapter:
         self._default_academy_id = default_academy_id
 
     async def get_for_user_in_academy(
-        self, *, user_id: str, academy_id: str
+        self, *, user_id: str, academy_id: str, aliases: Sequence[str] | None = None
     ) -> AcademyMembership | None:
+        # `aliases` is accepted for port compatibility. This adapter resolves
+        # the User by id (which already matches user_id/auth_uid/_id) and
+        # synthesizes the membership from that row, so there is no separate
+        # membership key to alias-match.
         user: User | None = await self._users.get_by_id(user_id)
         if user is None:
             return None

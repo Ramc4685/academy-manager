@@ -75,6 +75,11 @@ class User(BaseModel):
 
     user_id: str
     firebase_uid: str | None = None
+    # Older records carry the auth identifier under `auth_uid`, and a doc may
+    # hold a stale `auth_uid` alongside a newer `firebase_uid`. Kept as a
+    # distinct field so membership lookups can match every alias this account
+    # may be keyed by (see `domain/identity_aliases.py`).
+    auth_uid: str | None = None
     email: EmailStr
     normalized_email: str | None = None
     display_name: str

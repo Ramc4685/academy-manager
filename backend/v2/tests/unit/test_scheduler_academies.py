@@ -60,3 +60,33 @@ def test_scheduler_registers_dunning_retry_job() -> None:
 
     assert "_process_dunning_retries" in source
     assert 'id="process_dunning_retries"' in source
+
+
+def test_scheduler_registers_monthly_invoice_generation_job() -> None:
+    """Issue #288: the 2026-07-01 miss was caused by nothing *generating*
+    invoices. Without this registration the whole feature is inert, which is
+    exactly the failure mode that shipped."""
+    source = inspect.getsource(_lifespan)
+
+    assert "_generate_monthly_invoices" in source
+    assert 'id="generate_monthly_invoices"' in source
+
+
+def test_monthly_invoice_job_runs_daily_and_gates_on_billing_day() -> None:
+    """The cron fires every day; the per-academy billing_day decides who is
+    generated for. A monthly cron would silently skip any academy configured
+    for a day other than the cron's own."""
+    source = inspect.getsource(_lifespan)
+    job = source.split("_generate_monthly_invoices,", 1)[1].split(")", 1)[0]
+
+    assert '"cron"' in job
+    assert "day=" not in job  # daily tick, not a fixed day-of-month
+    assert "billing_settings.billing_day != now.day" in source
+
+
+def test_monthly_invoice_job_holds_a_distributed_lease() -> None:
+    """Two Fly machines running generation concurrently would race on the same
+    invoices; the lease is what keeps exactly one machine generating."""
+    source = inspect.getsource(_lifespan)
+
+    assert 'job_lease(\n            db, "generate_monthly_invoices"' in source

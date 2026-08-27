@@ -98,9 +98,9 @@ GLOBAL_COLLECTIONS = {
     "academy_domains",
 }
 
-assert not (
-    TENANT_OWNED_COLLECTIONS & GLOBAL_COLLECTIONS
-), "A collection cannot be both tenant-owned and global"
+assert not (TENANT_OWNED_COLLECTIONS & GLOBAL_COLLECTIONS), (
+    "A collection cannot be both tenant-owned and global"
+)
 
 MONGO_METHODS = {
     "aggregate",
@@ -283,8 +283,7 @@ def test_unscoped_cross_collection_read_is_flagged(tmp_path) -> None:
 def test_global_collection_raw_access_is_clean(tmp_path) -> None:
     path = tmp_path / "ok_global.py"
     path.write_text(
-        "async def by_email(db, email):\n"
-        "    return await db['users'].find_one({'email': email})\n",
+        "async def by_email(db, email):\n    return await db['users'].find_one({'email': email})\n",
         encoding="utf-8",
     )
     assert _raw_mongo_accesses(path, Path("ok_global.py")) == []

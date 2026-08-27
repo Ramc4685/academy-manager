@@ -59,7 +59,9 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
     UndoPaymentPaid,
 )
 from backend.v2.contexts.billing.application.use_cases.billing_settings_admin import (
+    GetInvoiceScheduleSettings,
     GetPlatformChargeFallback,
+    SetInvoiceScheduleSettings,
     SetPlatformChargeFallback,
 )
 from backend.v2.contexts.billing.application.use_cases.billing_setup_registration import (
@@ -918,6 +920,11 @@ def compose_admin(
     list_payout_audit_entries = ListPayoutAuditEntries(audit=payout_audit_log)
     get_platform_charge_fallback = GetPlatformChargeFallback(settings=billing_settings_repo)
     set_platform_charge_fallback = SetPlatformChargeFallback(
+        settings=billing_settings_repo,
+        audit=billing_audit_log,
+    )
+    get_invoice_schedule = GetInvoiceScheduleSettings(settings=billing_settings_repo)
+    set_invoice_schedule = SetInvoiceScheduleSettings(
         settings=billing_settings_repo,
         audit=billing_audit_log,
     )
@@ -3171,8 +3178,10 @@ def compose_admin(
         ]
         combined = attempt_rows + invoice_rows + ledger_rows + deduped_legacy
         combined.sort(
-            key=lambda r: (r.get("created_at") if isinstance(r, dict) else None)
-            or datetime.min.replace(tzinfo=UTC),
+            key=lambda r: (
+                (r.get("created_at") if isinstance(r, dict) else None)
+                or datetime.min.replace(tzinfo=UTC)
+            ),
             reverse=True,
         )
         return combined[:fetch_cap]
@@ -4413,6 +4422,8 @@ def compose_admin(
         list_self_cancellations_for_admin=list_self_cancellations_for_admin,
         get_platform_charge_fallback=get_platform_charge_fallback,
         set_platform_charge_fallback=set_platform_charge_fallback,
+        get_invoice_schedule=get_invoice_schedule,
+        set_invoice_schedule=set_invoice_schedule,
         generate_monthly_payments=generate_monthly_payments,
         mark_payment_paid=mark_payment_paid,
         apply_payment_discount=apply_payment_discount,
