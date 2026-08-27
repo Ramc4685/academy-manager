@@ -148,7 +148,10 @@ from backend.v2.shared.observability import (
     configure_logging,
     configure_tracing,
 )
-from backend.v2.shared.observability.ops_alerts import handle_scheduler_job_event
+from backend.v2.shared.observability.ops_alerts import (
+    capture_message,
+    handle_scheduler_job_event,
+)
 from backend.v2.shared.observability.ops_digest import (
     INVOICE_GENERATION_JOB,
     collect_ops_digest,
@@ -587,8 +590,17 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         if totals["academy_count"]:
             log.info("monthly_invoices_generated", extra={**totals, "period": period})
         # Persist the run so the daily ops digest can report it from whichever
-        # machine happens to hold the digest lease (issue #428).
-        await record_job_run(db, INVOICE_GENERATION_JOB, {**totals, "period": period})
+        # machine happens to hold the digest lease (issue #428). This is a DAILY
+        # tick but generation only runs on each academy's billing_day, so on the
+        # ~29 other days every total is zero: record those as a heartbeat only
+        # (`meaningful=False`) or they would erase the last real run's counts —
+        # the very signal the digest exists to surface.
+        await record_job_run(
+            db,
+            INVOICE_GENERATION_JOB,
+            {**totals, "period": period},
+            meaningful=bool(totals["academy_count"]),
+        )
 
     async def _send_ops_digest() -> None:
         async with job_lease(
@@ -607,7 +619,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         if not recipient_email:
             log.info("ops_digest_skipped: OPS_ALERT_EMAIL is not configured")
             return
-        snapshot = await collect_ops_digest(db)
+        # Stamp the snapshot in the scheduler timezone: the cron fires at 07:00
+        # local, so a UTC stamp would put yesterday's date on the subject line
+        # in any UTC+ deployment.
+        snapshot = await collect_ops_digest(db, now=datetime.now(scheduler.timezone))  # type: ignore[union-attr]
         subject, body = render_ops_digest(snapshot)
         outcome = await app.state.ops_digest_sender.send(
             recipient=ResolvedRecipient(
@@ -618,18 +633,25 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             subject=subject,
             body=body,
         )
-        log.info(
-            "ops_digest_processed",
-            extra={
-                "ok": bool(getattr(outcome, "ok", False)),
-                "failed_reason": getattr(outcome, "failed_reason", None),
-                "webhooks_quarantined": snapshot.webhooks_quarantined,
-                "webhooks_failed": snapshot.webhooks_failed,
-                "dead_letter_total": snapshot.dead_letter_total,
-                "dead_letter_recent": snapshot.dead_letter_recent,
-                "dunning_terminals_recent": snapshot.dunning_terminals_recent,
-            },
-        )
+        extra = {
+            "ok": bool(getattr(outcome, "ok", False)),
+            "failed_reason": getattr(outcome, "failed_reason", None),
+            "webhooks_quarantined": snapshot.webhooks_quarantined,
+            "webhooks_quarantined_recent": snapshot.webhooks_quarantined_recent,
+            "webhooks_failed": snapshot.webhooks_failed,
+            "webhooks_failed_stale": snapshot.webhooks_failed_stale,
+            "dead_letter_total": snapshot.dead_letter_total,
+            "dead_letter_recent": snapshot.dead_letter_recent,
+            "dunning_terminals_recent": snapshot.dunning_terminals_recent,
+        }
+        if extra["ok"]:
+            log.info("ops_digest_processed", extra=extra)
+        else:
+            # The alerting channel failing is itself an alert. Resend never
+            # raises — a rejected send comes back as SendOutcome(ok=False) — so
+            # without this the digest would go missing in silence.
+            log.error("ops_digest_send_failed", extra=extra)
+            capture_message(f"Ops digest send failed: {extra['failed_reason']}")
 
     async def _send_coach_daily_digests() -> None:
         async with job_lease(
@@ -756,7 +778,15 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         if totals["parents"]:
             log.info("parent_daily_digests_processed", extra=totals)
 
-    scheduler = AsyncIOScheduler(timezone=settings.scheduler_tz)
+    scheduler = AsyncIOScheduler(
+        timezone=settings.scheduler_tz,
+        # APScheduler's default misfire_grace_time is 1 second, so any event-loop
+        # stall longer than that counts as a miss. With the EVENT_JOB_MISSED
+        # listener registered below, that default would turn routine stalls on
+        # the 60s webhook-drain job into a steady stream of alerts. 30s is well
+        # inside every job's own interval and still catches a real stall.
+        job_defaults={"misfire_grace_time": 30},
+    )
     scheduler.add_job(
         _process_scheduled_resumes,
         "cron",

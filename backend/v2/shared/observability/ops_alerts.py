@@ -64,6 +64,21 @@ def capture_message(message: str, *, level: str = "error") -> bool:
     return True
 
 
+def should_report_failure(consecutive_failures: int) -> bool:
+    """Backoff for a hot retry loop: report the 1st, 10th, then every 100th.
+
+    A tight poll loop that keeps failing (a Mongo outage, say) is one incident,
+    not one incident per iteration. The first failure reports immediately so the
+    alert is not delayed; the rest are throttled so the issue stays readable and
+    the quota survives.
+    """
+    if consecutive_failures <= 0:
+        return False
+    if consecutive_failures in (1, 10):
+        return True
+    return consecutive_failures % 100 == 0
+
+
 def handle_scheduler_job_event(event: Any) -> None:
     """APScheduler listener for ``EVENT_JOB_ERROR | EVENT_JOB_MISSED``.
 
@@ -92,8 +107,12 @@ def handle_scheduler_job_event(event: Any) -> None:
             capture_exception(exc)
         else:
             # EVENT_JOB_MISSED carries no exception — the run never happened
-            # (process busy/asleep past ``misfire_grace_time``).
-            log.error("scheduler_job_missed job_id=%s", job_id, extra=extra)
-            capture_message(f"Scheduler job missed: {job_id}")
+            # (process busy/asleep past ``misfire_grace_time``). Reported at
+            # warning, not error: even with the 30s grace time configured in
+            # main.py, a single misfire on a 60s interval job is usually a
+            # transient event-loop stall, not an outage. A real outage shows up
+            # as a run of them.
+            log.warning("scheduler_job_missed job_id=%s", job_id, extra=extra)
+            capture_message(f"Scheduler job missed: {job_id}", level="warning")
     except Exception:  # pragma: no cover - defensive; listeners must not raise
         log.exception("scheduler_job_event_listener_failed")
