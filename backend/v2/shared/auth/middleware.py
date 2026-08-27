@@ -143,6 +143,7 @@ class TenancyMiddleware(BaseHTTPMiddleware):
         # --- 2. Verify token + load claims only when tenant is known -----
         token = self._extract_bearer(request)
         claims: AuthClaims | None = None
+        auth_error_code: str | None = None
         if token and resolved_academy_id and self._load_claims is not None:
             try:
                 claims = await self._load_claims(token, resolved_academy_id=resolved_academy_id)
@@ -154,6 +155,15 @@ class TenancyMiddleware(BaseHTTPMiddleware):
                 # raises 401 if it actually needs auth; unauthenticated
                 # routes (healthz) keep working.
                 log.info("auth_failed: %s", exc.code)
+                auth_error_code = exc.code
+        elif token and not resolved_academy_id:
+            # A bearer token arrived but no tenant resolved, so the claims
+            # loader never ran; without a marker this 401 is
+            # indistinguishable from a bad token on the login surface.
+            auth_error_code = "Auth.TenantUnresolved"
+        # Only the machine-readable code crosses this boundary — never the
+        # exception message, which may embed user ids or emails.
+        request.state.auth_error_code = auth_error_code
 
         # Expose the resolved tenant (if any) on request.state so public
         # routes that intentionally run before membership is established
