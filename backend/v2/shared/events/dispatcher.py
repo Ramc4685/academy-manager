@@ -84,6 +84,17 @@ class EventDispatcher:
         self._stop.clear()
         self._task = asyncio.create_task(self._run_loop())
 
+    def is_running(self) -> bool:
+        """True while the outbox poll loop is alive (issue #429).
+
+        Read by ``/api/v2/healthz``: a dispatcher whose task has finished
+        keeps the process up while every appended event sits in the outbox
+        forever, which is exactly the class of silent failure the health check
+        exists to surface. Exposed as a method so callers never have to reach
+        into ``_task``.
+        """
+        return self._task is not None and not self._task.done()
+
     async def stop(self) -> None:
         if self._task is None:
             return

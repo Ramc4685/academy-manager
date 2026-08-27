@@ -21,7 +21,7 @@ from typing import Any
 
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_MISSED
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from pymongo.errors import DuplicateKeyError
 from starlette.middleware.cors import CORSMiddleware
@@ -151,6 +151,7 @@ from backend.v2.shared.observability import (
     configure_logging,
     configure_tracing,
 )
+from backend.v2.shared.observability.health import build_health_report
 from backend.v2.shared.observability.ops_alerts import (
     capture_message,
     handle_scheduler_job_event,
@@ -1234,8 +1235,24 @@ def create_app() -> FastAPI:
     app.add_middleware(RequestContextMiddleware)
 
     @app.get("/api/v2/healthz")
-    async def healthz() -> dict[str, str]:
-        return {"status": "ok"}
+    async def healthz(response: Response) -> dict[str, Any]:
+        """Liveness for Fly's 30s check and any external uptime monitor.
+
+        503 on a fault a machine restart can actually fix (issue #429) — a
+        lost Mongo connection, a stopped scheduler, a dead dispatcher task.
+        Job heartbeats are reported but never fail the check: restarting the
+        process does not make an overdue job run, and flapping the machine
+        would make it worse.
+        """
+        report, healthy = await build_health_report(
+            db=getattr(app.state, "db", None),
+            scheduler=getattr(app.state, "scheduler", None),
+            dispatcher=getattr(app.state, "dispatcher", None),
+        )
+        if not healthy:
+            response.status_code = 503
+            log.warning("healthz_degraded", extra={"checks": report["checks"]})
+        return report
 
     # Persona route packages.
     app.include_router(me_router, prefix="/api/v2")
