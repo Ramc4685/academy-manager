@@ -150,7 +150,7 @@ def test_current_inventory_manifest_has_no_acceptance_coverage_findings() -> Non
         for item in entry["acceptance"]
     )
 
-    assert report["routes"] == 79
+    assert report["routes"] == 80
     assert report["global_surfaces"] == 4
     assert report["finding_count"] == 0
     assert report["summary"]["routes_with_acceptance_below_workflows"] == 0
