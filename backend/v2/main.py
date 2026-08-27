@@ -14,13 +14,14 @@ from __future__ import annotations
 import logging
 import os
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
+from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
-from motor.motor_asyncio import AsyncIOMotorClient
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from starlette.middleware.cors import CORSMiddleware
 
 from backend.v2.composition.admin import compose_admin
@@ -518,64 +519,33 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             await _generate_monthly_invoices_body()
 
     async def _generate_monthly_invoices_body() -> None:
-        # Daily tick. Each academy generates on its own configured billing_day
-        # (billing_settings.billing_day, default 1, capped at 28 so no academy
-        # is skipped in February). Re-running on the same day is safe:
-        # generate_monthly_payments is idempotent via deterministic invoice ids
-        # plus the billing_invoice_keys guard, so a restart or a lease handover
-        # re-reports the invoices as skipped_existing instead of duplicating.
+        # Daily tick. The per-academy gate and catch-up rules live in
+        # _run_monthly_invoice_generation (module level, directly testable).
         #
         # NOTE: billing_day is interpreted in the scheduler timezone
         # (settings.scheduler_tz), NOT each academy's local timezone — same
         # tradeoff as the coach/parent digest hour above.
         now = datetime.now(scheduler.timezone)  # type: ignore[union-attr]
-        period = now.strftime("%Y-%m")
-        totals = {
-            "academy_count": 0,
-            "created": 0,
-            "skipped_existing": 0,
-            "skipped_no_charge": 0,
-            "skipped_autopay": 0,
-            "skipped_paused": 0,
-            "repaired_orphan_keys": 0,
-            "repaired_partial_invoices": 0,
-            "failed_repair": 0,
-        }
-        for academy_id in await _scheduler_academy_ids(
+        academy_ids = await _scheduler_academy_ids(
             MongoAcademyRepository(db),
             runtime_academy_id,
-        ):
-            with tenant_scope(academy_id):
-                billing_settings = await MongoBillingSettingsRepository(db).get()
-                if billing_settings.billing_day != now.day:
-                    continue
-                try:
-                    result = await app.state.admin.generate_monthly_payments.execute(
-                        GenerateMonthlyPaymentsCommand(period=period)
-                    )
-                except Exception:
-                    # One academy's failure must not abort the run for the
-                    # rest — a missed month is only recoverable by an admin.
-                    log.exception(
-                        "monthly_invoice_generation_failed academy=%s period=%s",
-                        academy_id,
-                        period,
-                    )
-                    continue
-            totals["academy_count"] += 1
-            for key in (
-                "created",
-                "skipped_existing",
-                "skipped_no_charge",
-                "skipped_autopay",
-                "skipped_paused",
-                "repaired_orphan_keys",
-                "repaired_partial_invoices",
-                "failed_repair",
-            ):
-                totals[key] += int(getattr(result, key, 0) or 0)
-        if totals["academy_count"]:
-            log.info("monthly_invoices_generated", extra={**totals, "period": period})
+        )
+
+        async def _get_billing_settings() -> Any:
+            return await MongoBillingSettingsRepository(db).get()
+
+        async def _generate(period: str) -> Any:
+            return await app.state.admin.generate_monthly_payments.execute(
+                GenerateMonthlyPaymentsCommand(period=period)
+            )
+
+        await _run_monthly_invoice_generation(
+            db=db,
+            academy_ids=academy_ids,
+            get_billing_settings=_get_billing_settings,
+            generate=_generate,
+            now=now,
+        )
 
     async def _send_coach_daily_digests() -> None:
         async with job_lease(
@@ -808,6 +778,167 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             scheduler.shutdown(wait=False)
         await dispatcher.stop()
         client.close()
+
+
+MONTHLY_GENERATION_RUNS_COLLECTION = "billing_generation_runs"
+
+
+async def _monthly_generation_recorded(
+    db: AsyncIOMotorDatabase[Any],
+    academy_id: str,
+    period: str,
+) -> bool:
+    """True iff a monthly generation run for ``(academy_id, period)`` succeeded.
+
+    Issue #431: the scheduler retries an academy every day once its billing_day
+    has passed until one run completes, so it needs a record of success. This
+    is a scheduling optimisation, not an invoice-level guard — duplicate
+    invoices are prevented by the deterministic invoice ids and the
+    ``billing_invoice_keys`` unique index inside generate_monthly_payments.
+    """
+    doc = await db[MONTHLY_GENERATION_RUNS_COLLECTION].find_one(
+        {"academy_id": academy_id, "period": period},
+        {"_id": 1},
+    )
+    return doc is not None
+
+
+async def _record_monthly_generation(
+    db: AsyncIOMotorDatabase[Any],
+    academy_id: str,
+    period: str,
+    now: datetime,
+) -> None:
+    """Record a completed generation run so later ticks skip this period.
+
+    Written only after ``generate_monthly_payments`` returns without raising:
+    a partially-failed run leaves no record and is retried on the next tick.
+    """
+    await db[MONTHLY_GENERATION_RUNS_COLLECTION].update_one(
+        {"academy_id": academy_id, "period": period},
+        {
+            "$set": {"completed_at": now},
+            "$setOnInsert": {"academy_id": academy_id, "period": period},
+        },
+        upsert=True,
+    )
+
+
+async def _run_monthly_invoice_generation(
+    *,
+    db: AsyncIOMotorDatabase[Any],
+    academy_ids: list[str],
+    get_billing_settings: Callable[[], Awaitable[Any]],
+    generate: Callable[[str], Awaitable[Any]],
+    now: datetime,
+) -> dict[str, int]:
+    """Generate monthly invoices for every academy whose period is due.
+
+    Each academy generates on its own configured billing_day
+    (``billing_settings.billing_day``, default 1, capped at 28 so no academy is
+    skipped in February).
+
+    Issue #431: the gate is "billing_day has passed in the current period AND
+    no successful generation is recorded for the period", not
+    ``billing_day == now.day``. An exact-day match meant a single failed 03:00
+    run (Mongo blip, lease handover, crash) silently skipped the whole month,
+    recoverable only by an admin. Now the next daily tick retries until one run
+    completes without raising.
+
+    The per-(academy, period) record in ``billing_generation_runs`` is what
+    stops that retry. Without it every academy would re-walk every active
+    enrollment every day for the rest of the month, and — more importantly —
+    enrollments created *after* billing_day would start getting a full
+    current-period invoice, a behaviour change this fix does not intend.
+    Correctness does not depend on the record: ``generate_monthly_payments``
+    is idempotent via deterministic invoice ids plus the
+    ``billing_invoice_keys`` guard, so a lost or unwritten record only costs a
+    redundant pass that re-reports ``skipped_existing``.
+
+    ``get_billing_settings`` and ``generate`` are called inside the academy's
+    ``tenant_scope``. Both are injected so the scheduling rules above can be
+    tested without a running app.
+    """
+    period = now.strftime("%Y-%m")
+    totals = {
+        "academy_count": 0,
+        "catch_up_academy_count": 0,
+        "created": 0,
+        "skipped_existing": 0,
+        "skipped_no_charge": 0,
+        "skipped_autopay": 0,
+        "skipped_paused": 0,
+        "repaired_orphan_keys": 0,
+        "repaired_partial_invoices": 0,
+        "failed_repair": 0,
+    }
+    log = logging.getLogger("backend.v2.scheduler")
+    for academy_id in academy_ids:
+        with tenant_scope(academy_id):
+            try:
+                # Read settings inside the try: one academy with an unreadable
+                # or invalid billing_settings document must not abort
+                # generation for every academy after it.
+                billing_settings = await get_billing_settings()
+                billing_day = int(billing_settings.billing_day)
+                if now.day < billing_day:
+                    continue
+                if await _monthly_generation_recorded(db, academy_id, period):
+                    continue
+                result = await generate(period)
+                await _record_monthly_generation(db, academy_id, period, now)
+            except Exception:
+                # One academy's failure must not abort the run for the rest.
+                # No run record is written, so the next daily tick retries this
+                # academy for the same period.
+                log.exception(
+                    "monthly_invoice_generation_failed academy=%s period=%s",
+                    academy_id,
+                    period,
+                )
+                continue
+            else:
+                # ``else`` (not the try body) so a failure while summarising is
+                # never mis-logged as a generation failure, and so ``result`` /
+                # ``billing_day`` are provably bound here.
+                created = int(getattr(result, "created", 0) or 0)
+                if now.day > billing_day:
+                    totals["catch_up_academy_count"] += 1
+                    if created:
+                        # Distinct signal: this academy's billing-day run did
+                        # not complete, and this late run is what actually
+                        # invoiced the month.
+                        log.warning(
+                            "monthly_invoices_generated_by_catch_up",
+                            extra={
+                                "academy_id": academy_id,
+                                "period": period,
+                                "billing_day": billing_day,
+                                "run_day": now.day,
+                                "created_count": created,
+                            },
+                        )
+                totals["academy_count"] += 1
+                for key in (
+                    "created",
+                    "skipped_existing",
+                    "skipped_no_charge",
+                    "skipped_autopay",
+                    "skipped_paused",
+                    "repaired_orphan_keys",
+                    "repaired_partial_invoices",
+                    "failed_repair",
+                ):
+                    totals[key] += int(getattr(result, key, 0) or 0)
+    if totals["academy_count"]:
+        # ``created`` is a reserved LogRecord attribute (the record's own
+        # timestamp) and logging raises KeyError rather than letting an
+        # ``extra`` key shadow it — which made this very summary line throw
+        # out of the job on every run that generated anything.
+        summary = {key: value for key, value in totals.items() if key != "created"}
+        summary["created_count"] = totals["created"]
+        log.info("monthly_invoices_generated", extra={**summary, "period": period})
+    return totals
 
 
 async def _scheduler_academy_ids(
