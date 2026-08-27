@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from fastapi import Request
@@ -45,6 +46,7 @@ from backend.v2.contexts.onboarding.application.use_cases.parent_student_waivers
     AcceptParentWaiver,
     GetParentWaiverRequirement,
 )
+from backend.v2.shared.comms import Message
 
 
 @dataclass
@@ -96,6 +98,10 @@ class ParentUseCases:
     # the skill routes are the only consumers.
     student_progress: StudentProgressComposition | None = None
     curriculum: CurriculumComposition | None = None
+    # Messages inbox (UIM13). Optional for backward compat with fixtures that
+    # predate it; real parent composition always sets both.
+    list_messages: Callable[[str], Awaitable[list[Message]]] | None = None
+    mark_message_read: Callable[[str, str], Awaitable[None]] | None = None
     # Self-service profile (issue #380)
     get_parent_profile: object | None = None  # callable
     update_parent_profile: object | None = None  # callable
