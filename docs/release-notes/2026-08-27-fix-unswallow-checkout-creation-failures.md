@@ -1,6 +1,6 @@
 # fix(billing): stop swallowing Stripe checkout-creation failures in SendInvoice
 
-PR: #TBD
+PR: #441
 
 ## What changed
 
