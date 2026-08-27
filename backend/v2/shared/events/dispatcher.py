@@ -12,6 +12,11 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReturnDocument
 
+from backend.v2.shared.observability.ops_alerts import (
+    capture_exception,
+    should_report_failure,
+)
+
 from .base import DomainEvent
 
 log = logging.getLogger(__name__)
@@ -87,6 +92,7 @@ class EventDispatcher:
         self._task = None
 
     async def _run_loop(self) -> None:
+        consecutive_failures = 0
         while not self._stop.is_set():
             try:
                 for _ in range(50):
@@ -94,8 +100,22 @@ class EventDispatcher:
                     if doc is None:
                         break
                     await self._process_event(doc)
-            except Exception:  # pragma: no cover - defensive top-level guard
+                consecutive_failures = 0
+            except Exception as exc:  # pragma: no cover - defensive top-level guard
+                consecutive_failures += 1
                 log.exception("Dispatcher loop iteration failed")
+                # Issue #428: without this the loop guard was the end of the
+                # line — the dispatcher kept polling and nothing left the box.
+                # Throttled, because the loop polls once a second: a sustained
+                # Mongo outage would otherwise emit ~86k events a day.
+                if should_report_failure(consecutive_failures):
+                    try:
+                        capture_exception(exc)
+                    except Exception:
+                        # This IS the last-resort guard. A Sentry transport or
+                        # serialization error must never escape it and kill the
+                        # dispatcher for the lifetime of the process.
+                        log.exception("Dispatcher error reporting failed")
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=self._poll_interval)
             except TimeoutError:
