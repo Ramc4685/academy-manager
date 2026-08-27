@@ -1049,6 +1049,9 @@ test.describe("Rally admin shell", () => {
   });
 
   test("session detail page mounts", async ({ page }) => {
+    // Mount regularly exceeds the default expect budget on webkit-mobile under
+    // full-suite load (observed across unrelated branches and in CI).
+    test.slow();
     const errors = collectConsoleErrors(page);
     await stubAdminBff(page);
     await page.goto("/admin/sessions/some-session-id");
