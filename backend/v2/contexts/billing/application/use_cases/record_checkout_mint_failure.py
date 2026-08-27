@@ -23,7 +23,7 @@ Design notes
 from __future__ import annotations
 
 import logging
-from typing import Protocol
+from typing import Any, Protocol
 
 from backend.v2.contexts.billing.domain.ledger import LedgerInvoice
 from backend.v2.contexts.billing.domain.payment_attempt_kinds import (
@@ -58,7 +58,7 @@ class _AttemptRecorder(Protocol):
         failure_message: str | None,
         idempotency_key: str,
         created_by_event_id: str | None = None,
-    ) -> dict: ...
+    ) -> dict[str, Any]: ...
 
 
 async def record_checkout_mint_failure(
