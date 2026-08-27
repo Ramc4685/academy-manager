@@ -35,6 +35,9 @@ export async function attachPersistence(client: QueryClient): Promise<void> {
         shouldDehydrateQuery: (q) =>
           Array.isArray(q.queryKey) &&
           q.queryKey[0] === "coach" &&
+          // Student pricing is not offline-critical; keep it out of
+          // localStorage so shared coach devices don't retain it.
+          q.queryKey[1] !== "billing-enrollments" &&
           q.state.status === "success",
       },
     });
