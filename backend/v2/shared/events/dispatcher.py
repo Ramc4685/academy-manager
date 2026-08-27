@@ -12,6 +12,8 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReturnDocument
 
+from backend.v2.shared.observability.ops_alerts import capture_exception
+
 from .base import DomainEvent
 
 log = logging.getLogger(__name__)
@@ -94,8 +96,11 @@ class EventDispatcher:
                     if doc is None:
                         break
                     await self._process_event(doc)
-            except Exception:  # pragma: no cover - defensive top-level guard
+            except Exception as exc:  # pragma: no cover - defensive top-level guard
                 log.exception("Dispatcher loop iteration failed")
+                # Issue #428: without this the loop guard was the end of the
+                # line — the dispatcher kept polling and nothing left the box.
+                capture_exception(exc)
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=self._poll_interval)
             except TimeoutError:
