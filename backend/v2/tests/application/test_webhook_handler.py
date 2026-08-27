@@ -2367,6 +2367,7 @@ async def test_balance_checkout_completed_allocates_across_all_invoice_ids() -> 
             "data": {
                 "object": {
                     "id": "cs_balance",
+                    "payment_status": "paid",
                     "payment_intent": "pi_balance",
                     "amount_total": 10_000,
                     "currency": "usd",
@@ -4059,6 +4060,7 @@ def _optin_invoice_checkout_event(
                 "object": {
                     "id": session_id,
                     "mode": "payment",
+                    "payment_status": "paid",
                     "payment_intent": "pi_optin",
                     "amount_total": 10_000,
                     "currency": "usd",
@@ -4256,3 +4258,272 @@ async def test_invoice_checkout_completed_without_optin_does_not_touch_autopay()
     assert enrollment_autopay.setup_completed == []
     assert consent_repo.consents == []
     assert parent_customers.default_methods == []
+
+
+# --- Delayed-settlement (ACH) Checkout sessions -------------------------------
+# Issue #433: checkout.session.completed fires for us_bank_account with
+# payment_status "unpaid". Nothing may be allocated until the async event says
+# the money actually landed.
+
+_ACH_INVOICE_METADATA = {
+    "academy_id": "acad",
+    "source": "invoice_pay_link",
+    "invoice_id": "inv-ach",
+    "parent_id": "parent-ach",
+}
+
+_ACH_BALANCE_METADATA = {
+    "academy_id": "acad",
+    "type": "balance_payment",
+    "invoice_ids": "inv-ach-1,inv-ach-2",
+    "parent_id": "parent-ach",
+}
+
+
+def _ach_checkout_event(
+    *,
+    event_id: str,
+    event_type: str,
+    payment_status: str,
+    metadata: dict[str, str],
+    session_id: str = "cs_ach",
+    amount_total: int = 10_000,
+) -> bytes:
+    return json.dumps(
+        {
+            "id": event_id,
+            "type": event_type,
+            "data": {
+                "object": {
+                    "id": session_id,
+                    "mode": "payment",
+                    "payment_status": payment_status,
+                    "payment_intent": "pi_ach",
+                    "amount_total": amount_total,
+                    "currency": "usd",
+                    "metadata": metadata,
+                }
+            },
+        }
+    ).encode()
+
+
+@pytest.mark.asyncio
+async def test_unpaid_ach_checkout_completed_does_not_allocate_or_mark_invoice_paid() -> None:
+    ledger = FakeBillingLedger(_ledger_invoice(invoice_id="inv-ach", parent_id="parent-ach"))
+    uc = _build(FakePaymentRepo(), billing_ledger=ledger)
+
+    await uc.execute(
+        _ach_checkout_event(
+            event_id="evt_ach_completed",
+            event_type="checkout.session.completed",
+            payment_status="unpaid",
+            metadata=_ACH_INVOICE_METADATA,
+        ),
+        "test_signature",
+    )
+
+    assert ledger.invoices["inv-ach"].status == "open"
+    assert ledger.invoices["inv-ach"].balance_due_cents == 10_000
+    assert ledger.payments == {}
+    assert ledger.allocations == []
+    attempt = ledger.payment_attempts["invoice-checkout-processing:inv-ach:cs_ach"]
+    assert attempt["status"] == "processing"
+    assert attempt["amount_cents"] == 10_000
+    assert attempt["stripe_checkout_session_id"] == "cs_ach"
+    assert attempt["stripe_payment_intent_id"] == "pi_ach"
+    assert len(ledger.payment_attempts) == 1
+
+
+@pytest.mark.asyncio
+async def test_ach_async_payment_succeeded_allocates_exactly_once_and_replay_converges() -> None:
+    ledger = FakeBillingLedger(_ledger_invoice(invoice_id="inv-ach", parent_id="parent-ach"))
+    uc = _build(FakePaymentRepo(), billing_ledger=ledger)
+
+    await uc.execute(
+        _ach_checkout_event(
+            event_id="evt_ach_completed",
+            event_type="checkout.session.completed",
+            payment_status="unpaid",
+            metadata=_ACH_INVOICE_METADATA,
+        ),
+        "test_signature",
+    )
+    for event_id in ("evt_ach_settled_1", "evt_ach_settled_2"):
+        await uc.execute(
+            _ach_checkout_event(
+                event_id=event_id,
+                event_type="checkout.session.async_payment_succeeded",
+                payment_status="paid",
+                metadata=_ACH_INVOICE_METADATA,
+            ),
+            "test_signature",
+        )
+    # A late redelivery of the original unsettled event must not undo settlement.
+    await uc.execute(
+        _ach_checkout_event(
+            event_id="evt_ach_completed_replay",
+            event_type="checkout.session.completed",
+            payment_status="unpaid",
+            metadata=_ACH_INVOICE_METADATA,
+        ),
+        "test_signature",
+    )
+
+    assert ledger.invoices["inv-ach"].status == "paid"
+    assert ledger.invoices["inv-ach"].balance_due_cents == 0
+    assert list(ledger.payments) == ["ledger-pay-cs:cs_ach"]
+    assert ledger.payments["ledger-pay-cs:cs_ach"].status == "succeeded"
+    assert ledger.allocations == [
+        {
+            "payment_id": "ledger-pay-cs:cs_ach",
+            "invoice_id": "inv-ach",
+            "amount_cents": 10_000,
+            "idempotency_key": "invoice-checkout-alloc:cs_ach",
+        }
+    ]
+    assert len(ledger.payment_attempts) == 1
+
+
+@pytest.mark.asyncio
+async def test_ach_async_payment_failed_leaves_invoice_open_and_payable() -> None:
+    ledger = FakeBillingLedger(_ledger_invoice(invoice_id="inv-ach", parent_id="parent-ach"))
+    uc = _build(FakePaymentRepo(), billing_ledger=ledger)
+
+    await uc.execute(
+        _ach_checkout_event(
+            event_id="evt_ach_completed",
+            event_type="checkout.session.completed",
+            payment_status="unpaid",
+            metadata=_ACH_INVOICE_METADATA,
+        ),
+        "test_signature",
+    )
+    for event_id in ("evt_ach_bounced_1", "evt_ach_bounced_2"):
+        await uc.execute(
+            _ach_checkout_event(
+                event_id=event_id,
+                event_type="checkout.session.async_payment_failed",
+                payment_status="unpaid",
+                metadata=_ACH_INVOICE_METADATA,
+            ),
+            "test_signature",
+        )
+
+    assert ledger.invoices["inv-ach"].status == "open"
+    assert ledger.invoices["inv-ach"].balance_due_cents == 10_000
+    assert ledger.payments == {}
+    assert ledger.allocations == []
+    failed = ledger.payment_attempts["invoice-checkout-failed:inv-ach:pi_ach"]
+    assert failed["status"] == "failed"
+    assert failed["failure_code"] == "async_payment_failed"
+    assert failed["amount_cents"] == 10_000
+    assert sorted(a["status"] for a in ledger.payment_attempts.values()) == [
+        "failed",
+        "processing",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ach_async_failure_and_payment_intent_failure_share_one_attempt_row() -> None:
+    ledger = FakeBillingLedger(_ledger_invoice(invoice_id="inv-ach", parent_id="parent-ach"))
+    stripe = FakeStripeGateway()
+    stripe.checkouts.append(
+        {
+            "checkout_id": "cs_ach",
+            "parent_id": "parent-ach",
+            "session_id": "invoice-pay-link",
+            "amount_cents": 10_000,
+            "metadata": dict(_ACH_INVOICE_METADATA),
+        }
+    )
+    uc = _build(FakePaymentRepo(), billing_ledger=ledger, stripe=stripe)
+
+    await uc.execute(
+        _ach_checkout_event(
+            event_id="evt_ach_bounced",
+            event_type="checkout.session.async_payment_failed",
+            payment_status="unpaid",
+            metadata=_ACH_INVOICE_METADATA,
+        ),
+        "test_signature",
+    )
+    await uc.execute(
+        json.dumps(
+            {
+                "id": "evt_ach_pi_failed",
+                "type": "payment_intent.payment_failed",
+                "data": {
+                    "object": {
+                        "id": "pi_ach",
+                        "amount": 10_000,
+                        "currency": "usd",
+                        "metadata": {},
+                        "payment_details": {"order_reference": "cs_ach"},
+                        "last_payment_error": {
+                            "code": "debit_not_authorized",
+                            "message": "The debit was not authorized.",
+                        },
+                    }
+                },
+            }
+        ).encode(),
+        "test_signature",
+    )
+
+    assert list(ledger.payment_attempts) == ["invoice-checkout-failed:inv-ach:pi_ach"]
+    assert ledger.invoices["inv-ach"].status == "open"
+    assert ledger.payments == {}
+
+
+@pytest.mark.asyncio
+async def test_unpaid_ach_balance_checkout_parks_each_invoice_then_settles_once() -> None:
+    first = _ledger_invoice(invoice_id="inv-ach-1", parent_id="parent-ach", balance_due_cents=4_000)
+    second = _ledger_invoice(
+        invoice_id="inv-ach-2", parent_id="parent-ach", balance_due_cents=6_000
+    )
+    ledger = FakeBillingLedger(first)
+    ledger.invoices[second.invoice_id] = second
+    uc = _build(FakePaymentRepo(), billing_ledger=ledger)
+
+    await uc.execute(
+        _ach_checkout_event(
+            event_id="evt_ach_balance_completed",
+            event_type="checkout.session.completed",
+            payment_status="unpaid",
+            metadata=_ACH_BALANCE_METADATA,
+        ),
+        "test_signature",
+    )
+
+    assert ledger.invoices["inv-ach-1"].status == "open"
+    assert ledger.invoices["inv-ach-2"].status == "open"
+    assert ledger.payments == {}
+    assert ledger.allocations == []
+    assert (
+        ledger.payment_attempts["invoice-checkout-processing:inv-ach-1:cs_ach"]["amount_cents"]
+        == 4_000
+    )
+    assert (
+        ledger.payment_attempts["invoice-checkout-processing:inv-ach-2:cs_ach"]["amount_cents"]
+        == 6_000
+    )
+
+    for event_id in ("evt_ach_balance_settled_1", "evt_ach_balance_settled_2"):
+        await uc.execute(
+            _ach_checkout_event(
+                event_id=event_id,
+                event_type="checkout.session.async_payment_succeeded",
+                payment_status="paid",
+                metadata=_ACH_BALANCE_METADATA,
+            ),
+            "test_signature",
+        )
+
+    assert ledger.invoices["inv-ach-1"].status == "paid"
+    assert ledger.invoices["inv-ach-2"].status == "paid"
+    assert list(ledger.payments) == ["ledger-pay-cs:cs_ach"]
+    assert [a["idempotency_key"] for a in ledger.allocations] == [
+        "invoice-checkout-alloc:cs_ach:inv-ach-1",
+        "invoice-checkout-alloc:cs_ach:inv-ach-2",
+    ]
