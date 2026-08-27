@@ -1,6 +1,6 @@
 # real-healthz
 
-PR: #TBD
+PR: #458
 
 ## What changed
 `/api/v2/healthz` now reports real liveness instead of returning
