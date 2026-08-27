@@ -89,6 +89,8 @@ export const queryKeys = {
     dunningFailures: () => ["admin", "billing", "dunning-failures"] as const,
     quarantinedEvents: () =>
       ["admin", "billing", "quarantined-events"] as const,
+    connectReadiness: () =>
+      ["admin", "billing", "connect-readiness"] as const,
     invoiceAttempts: (invoiceId: string) =>
       ["admin", "billing", "invoice-attempts", invoiceId] as const,
     billingSetupAll: () => ["admin", "billing", "setup"] as const,
