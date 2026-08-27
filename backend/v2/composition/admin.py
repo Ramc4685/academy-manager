@@ -108,6 +108,10 @@ from backend.v2.contexts.billing.application.use_cases.remove_invoice_line impor
 from backend.v2.contexts.billing.application.use_cases.send_add_card_reminder import (
     SendAddCardReminder,
 )
+from backend.v2.contexts.billing.application.use_cases.send_generated_invoices import (
+    DEFAULT_SEND_LIMIT,
+    SendGeneratedInvoices,
+)
 from backend.v2.contexts.billing.application.use_cases.send_invoice import SendInvoice
 from backend.v2.contexts.billing.application.use_cases.session_type_ops import (
     CreateSessionType,
@@ -1077,6 +1081,22 @@ def compose_admin(
             "checkout_url": result.checkout_url,
             "checkout_failure_code": result.checkout_failure_code,
         }
+
+    async def send_generated_invoices(
+        period: str, *, limit: int = DEFAULT_SEND_LIMIT
+    ) -> dict[str, Any]:
+        """Email every invoice the monthly generation run left undelivered.
+
+        Reuses ``send_billing_invoice`` so an auto-sent invoice is identical to
+        one an admin sends by hand — same pay link, same bundling, same
+        delivery tracking.
+        """
+        result = await SendGeneratedInvoices(
+            ledger=billing_ledger_repo,
+            autopay=student_billing_enrollment_repo,
+            send=send_billing_invoice,
+        ).execute(period, limit=limit)
+        return result.model_dump()
 
     async def charge_invoice_via_autopay(
         invoice_id: str,
@@ -4384,6 +4404,7 @@ def compose_admin(
         get_billing_invoice_detail=get_billing_invoice_detail,
         generate_billing_invoice_artifact=generate_billing_invoice_artifact,
         send_billing_invoice=send_billing_invoice,
+        send_generated_invoices=send_generated_invoices,
         charge_invoice_via_autopay=charge_invoice_via_autopay,
         list_reconciliation_runs=list_reconciliation_runs,
         run_reconciliation=run_reconciliation,

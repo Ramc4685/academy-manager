@@ -554,12 +554,18 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 GenerateMonthlyPaymentsCommand(period=period)
             )
 
+        # Issue #430: generation creates invoices, this sends them. Absent on
+        # an older composition bundle, in which case generation behaves as it
+        # did before and nothing is emailed.
+        send_invoices = getattr(app.state.admin, "send_generated_invoices", None)
+
         totals = await _run_monthly_invoice_generation(
             db=db,
             academy_ids=academy_ids,
             get_billing_settings=_get_billing_settings,
             generate=_generate,
             now=now,
+            send_invoices=send_invoices,
         )
         # Job-level record for the daily ops digest (issue #428), kept here in
         # the job wrapper rather than inside _run_monthly_invoice_generation so
@@ -578,11 +584,19 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # the structured log read the same.
         record["created_count"] = totals["created"]
         record["period"] = now.strftime("%Y-%m")
+        # A tick that only emailed (issue #430's retry path: generation was
+        # already recorded, but invoices were still undelivered) is meaningful
+        # too — otherwise a month-long email outage would be invisible in the
+        # digest on all 29 days that did not generate.
         await record_job_run(
             db,
             INVOICE_GENERATION_JOB,
             record,
-            meaningful=bool(totals["academy_count"]),
+            meaningful=bool(
+                totals["academy_count"]
+                or totals["invoices_emailed"]
+                or totals["invoice_emails_failed"]
+            ),
         )
 
     async def _send_ops_digest() -> None:
@@ -1019,6 +1033,7 @@ async def _run_monthly_invoice_generation(
     get_billing_settings: Callable[[], Awaitable[Any]],
     generate: Callable[[str], Awaitable[Any]],
     now: datetime,
+    send_invoices: Callable[[str], Awaitable[Any]] | None = None,
 ) -> dict[str, int]:
     """Generate monthly invoices for every academy with an unfinished period.
 
@@ -1049,9 +1064,15 @@ async def _run_monthly_invoice_generation(
     ``billing_invoice_keys`` guard, so a lost or unwritten record only costs a
     redundant pass that re-reports ``skipped_existing``.
 
-    ``get_billing_settings`` and ``generate`` are called inside the academy's
-    ``tenant_scope``. Both are injected so the scheduling rules above can be
-    tested without a running app.
+    ``get_billing_settings``, ``generate`` and ``send_invoices`` are called
+    inside the academy's ``tenant_scope``. All three are injected so the
+    scheduling rules above can be tested without a running app.
+
+    ``send_invoices`` (issue #430) emails the period's undelivered invoices.
+    It runs on every tick, not only the ones that generate — it is its own
+    retry mechanism, since the generation gate above deliberately stops
+    yielding a period once it has been generated. Its failures are contained:
+    generation must never be re-attempted because an email provider was down.
     """
     period = now.strftime("%Y-%m")
     prior_period = _previous_period(period)
@@ -1068,6 +1089,9 @@ async def _run_monthly_invoice_generation(
         "repaired_orphan_keys": 0,
         "repaired_partial_invoices": 0,
         "failed_repair": 0,
+        "invoices_emailed": 0,
+        "invoice_emails_failed": 0,
+        "invoice_emails_skipped_autopay": 0,
     }
     log = logging.getLogger("backend.v2.scheduler")
     for academy_id in academy_ids:
@@ -1092,6 +1116,7 @@ async def _run_monthly_invoice_generation(
                 )
                 continue
             ran_any = False
+            generated_periods: list[str] = []
             for run_period, is_catch_up in due:
                 try:
                     result = await generate(run_period)
@@ -1105,6 +1130,7 @@ async def _run_monthly_invoice_generation(
                     )
                     continue
                 ran_any = True
+                generated_periods.append(run_period)
                 totals["period_run_count"] += 1
                 created = int(getattr(result, "created", 0) or 0)
                 failed_repair = int(getattr(result, "failed_repair", 0) or 0)
@@ -1155,6 +1181,28 @@ async def _run_monthly_invoice_generation(
                     totals[key] += int(getattr(result, key, 0) or 0)
             if ran_any:
                 totals["academy_count"] += 1
+            if send_invoices is not None:
+                # Deliberately outside the `due` loop, and so run on every
+                # tick rather than only on generation ticks. `_due_periods`
+                # stops yielding a period the moment generation is recorded,
+                # so a send pass gated on it would get exactly one attempt per
+                # month: a single email-provider blip on billing day would
+                # mean nobody was ever told they owe money. Re-running is safe
+                # because the query only selects invoices that were never
+                # delivered.
+                #
+                # The current period is always swept; a catch-up period is
+                # swept on the tick that generates it. A catch-up period whose
+                # emails fail is therefore not retried — that gap is left
+                # rather than sweeping every historical period daily.
+                for email_period in sorted({period, *generated_periods}):
+                    await _email_generated_invoices(
+                        send_invoices=send_invoices,
+                        academy_id=academy_id,
+                        run_period=email_period,
+                        totals=totals,
+                        log=log,
+                    )
     if totals["academy_count"]:
         # ``created`` is a reserved LogRecord attribute (the record's own
         # timestamp) and logging raises KeyError rather than letting an
@@ -1164,6 +1212,46 @@ async def _run_monthly_invoice_generation(
         summary["created_count"] = totals["created"]
         log.info("monthly_invoices_generated", extra={**summary, "period": period})
     return totals
+
+
+async def _email_generated_invoices(
+    *,
+    send_invoices: Callable[[str], Awaitable[Any]],
+    academy_id: str,
+    run_period: str,
+    totals: dict[str, int],
+    log: logging.Logger,
+) -> None:
+    """Email this academy's undelivered invoices and fold the counts in.
+
+    Called inside the academy's ``tenant_scope``. Swallows every failure by
+    design: generation has already been recorded at this point, and a raised
+    email error would abort the remaining academies in the run.
+    """
+    try:
+        outcome = await send_invoices(run_period)
+    except Exception:
+        log.exception(
+            "generated_invoice_emails_failed academy=%s period=%s",
+            academy_id,
+            run_period,
+        )
+        return
+    for total_key, outcome_key in (
+        ("invoices_emailed", "emailed"),
+        ("invoice_emails_failed", "email_failed"),
+        ("invoice_emails_skipped_autopay", "skipped_autopay"),
+    ):
+        totals[total_key] += int(_outcome_count(outcome, outcome_key))
+
+
+def _outcome_count(outcome: Any, key: str) -> int:
+    """Read a count off either a mapping or an attribute-bearing result."""
+    if isinstance(outcome, dict):
+        value = outcome.get(key, 0)
+    else:
+        value = getattr(outcome, key, 0)
+    return int(value or 0)
 
 
 async def _due_periods(

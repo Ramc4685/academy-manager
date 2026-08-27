@@ -340,6 +340,9 @@ class AdminUseCases:
     send_coach_digest_test: object | None = None  # SendCoachDigestTest
     get_digest_delivery_log: object | None = None  # GetDigestDeliveryLog
     send_billing_invoice: object | None = None
+    # Scheduler-only (issue #430): the post-generation email pass. No route
+    # exposes it — the monthly generation job calls it directly.
+    send_generated_invoices: object | None = None
     charge_invoice_via_autopay: object | None = None
     # Billing Health (#235): observability + recovery actions.
     list_reconciliation_runs: object | None = None  # async () -> list[dict]
