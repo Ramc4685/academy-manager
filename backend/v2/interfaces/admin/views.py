@@ -46,6 +46,10 @@ class AdminStudentView(BaseModel):
     parent_email: str | None = None
     status: str
     active_session_count: int
+    # Distinct active sessions and their names, capped server-side (issue #104).
+    # The remainder beyond the cap is active_session_total - len(names).
+    active_session_total: int = 0
+    active_session_names: list[str] = Field(default_factory=list)
     last_seen_at: datetime | None = None
     attendance_rate: float | None = None
     dues_status: Literal["current", "due", "overdue"] = "current"

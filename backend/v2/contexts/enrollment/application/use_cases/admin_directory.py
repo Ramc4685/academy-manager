@@ -22,6 +22,12 @@ class AdminStudentCursor(BaseModel):
     student_id: str = Field(min_length=1)
 
 
+# Issue #104: the directory shows which sessions a student is in, not just how
+# many. Names are capped so a student enrolled in many sessions keeps the list
+# payload and the table row bounded; active_session_count carries the remainder.
+MAX_ACTIVE_SESSION_NAMES = 3
+
+
 class AdminStudentSummary(BaseModel):
     model_config = {"frozen": True}
 
@@ -31,7 +37,15 @@ class AdminStudentSummary(BaseModel):
     parent_name: str | None = None
     parent_email: str | None = None
     status: str
+    # Active enrollment documents. Predates active_session_total and can exceed
+    # it when a student holds two active enrollments for the same session.
     active_session_count: int = 0
+    # Distinct active sessions, and their names capped at
+    # MAX_ACTIVE_SESSION_NAMES so a student in many sessions cannot blow up a
+    # directory row. The total always agrees with the names, so the remainder
+    # beyond the cap is total - len(names).
+    active_session_total: int = 0
+    active_session_names: list[str] = Field(default_factory=list)
     last_seen_at: datetime | None = None
     attendance_rate: float | None = None
     dues_status: DuesStatus = "current"

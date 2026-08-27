@@ -1133,7 +1133,16 @@ export interface AdminStudentView {
   parent_name: string | null;
   parent_email: string | null;
   status: string;
+  /** Active enrollment documents; can exceed active_session_total. */
   active_session_count: number;
+  /**
+   * Distinct active sessions, and their names capped server-side (issue #104).
+   * The total always agrees with the names, so the count beyond what is listed
+   * is `active_session_total - active_session_names.length`. Older responses
+   * omit both, so treat them as possibly undefined.
+   */
+  active_session_total?: number;
+  active_session_names?: string[];
   last_seen_at: string | null;
   attendance_rate: number | null;
   dues_status: "current" | "due" | "overdue";
