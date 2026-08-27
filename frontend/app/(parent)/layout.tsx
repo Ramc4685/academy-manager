@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
@@ -13,6 +14,12 @@ import { PersonaLogoutButton } from "@/components/persona/logout-button";
 import { ToastProvider } from "@/components/ds/toast";
 import { listParentMessages } from "@/lib/api/v2/messages";
 import { queryKeys } from "@/lib/query/keys";
+import { getParentProfile } from "@/lib/api/parent";
+
+// Session-scoped dismissal (issue #380): the banner returns on the next
+// login rather than being permanently dismissible — nothing here blocks the
+// parent from using the app, it's a nudge, not a gate.
+const DISMISS_KEY = "am.parent.profileBannerDismissed";
 
 export default function ParentLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -112,6 +119,7 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
       {/* Content */}
       <main className="mx-auto w-full max-w-md px-4 py-5 animate-fade-in">
         <AccessDeniedNotice />
+        <ProfileGapBanner pathname={pathname} />
         {children}
       </main>
 
@@ -222,5 +230,65 @@ function MessagesIcon() {
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
     </svg>
+  );
+}
+
+function ProfileGapBanner({ pathname }: { pathname: string | null }) {
+  const { data } = useQuery({
+    queryKey: queryKeys.parent.profile(),
+    queryFn: getParentProfile,
+    // This runs in the layout, so it mounts on every parent page. Cache it
+    // for the session-ish window the banner cares about rather than
+    // refetching on each tab change, and don't retry: the banner is a nudge,
+    // so a failed fetch should cost one request and then render nothing.
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+  const [dismissed, setDismissed] = useState(true);
+
+  useEffect(() => {
+    setDismissed(typeof window !== "undefined" && window.sessionStorage.getItem(DISMISS_KEY) === "1");
+  }, []);
+
+  if (pathname === "/parent/profile") return null;
+  if (!data || data.gaps.is_complete || dismissed) return null;
+
+  const childCount = Object.values(data.gaps.children).filter((gaps) => gaps.length > 0).length;
+  const total = data.gaps.parent.length + childCount;
+  const subject =
+    childCount > 0 && data.gaps.parent.length > 0
+      ? "your profile and a child's"
+      : childCount > 0
+        ? "a child's profile"
+        : "your profile";
+
+  return (
+    <div
+      className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 animate-fade-in-up"
+      role="status"
+    >
+      <p className="text-sm text-amber-900">
+        {total} detail{total === 1 ? "" : "s"} missing from {subject}.
+      </p>
+      <div className="flex shrink-0 items-center gap-2">
+        <Link
+          href="/parent/profile"
+          className="rounded-lg bg-amber-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-amber-700"
+        >
+          Add now
+        </Link>
+        <button
+          type="button"
+          aria-label="Dismiss"
+          className="rounded-lg px-1.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-100"
+          onClick={() => {
+            window.sessionStorage.setItem(DISMISS_KEY, "1");
+            setDismissed(true);
+          }}
+        >
+          Dismiss
+        </button>
+      </div>
+    </div>
   );
 }

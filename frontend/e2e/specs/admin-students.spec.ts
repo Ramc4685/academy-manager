@@ -329,6 +329,16 @@ test.describe("admin students", () => {
       if (route.request().method() !== "GET") return route.fallback();
       return fulfillJson(route, { programs: [] });
     });
+    // The Billing tab's session-type panel reads these; without mocks they 401
+    // and trip this spec's "no console errors" assertion.
+    await page.route("**/api/v2/admin/billing-enrollments*", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, { enrollments: [] });
+    });
+    await page.route("**/api/v2/admin/session-types*", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, { session_types: [] });
+    });
     await page.route("**/api/v2/admin/billing/invoices/pay-1", (route) => {
       if (route.request().method() !== "GET") return route.fallback();
       return fulfillJson(route, {

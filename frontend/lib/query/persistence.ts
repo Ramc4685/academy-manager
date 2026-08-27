@@ -47,6 +47,9 @@ export function shouldPersistQuery(queryKey: unknown, status: string): boolean {
   // online-only by design (UIM13).
   if (queryKey[0] !== "coach") return false;
   if (queryKey[1] === "messages") return false;
+  // Student pricing is not offline-critical; keep proration/pricing out
+  // of localStorage so shared coach devices do not retain it.
+  if (queryKey[1] === "billing-enrollments") return false;
   return status === "success";
 }
 
