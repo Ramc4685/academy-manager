@@ -49,6 +49,7 @@ TENANT_OWNED_COLLECTIONS = {
     "billing_generation_runs",
     "billing_invoice_keys",
     "billing_policies",
+    "dunning_states",
     "enrollment_events",
     "enrollments",
     "invoices",
@@ -62,6 +63,7 @@ TENANT_OWNED_COLLECTIONS = {
     "session_occurrence_overrides",
     "session_occurrences",
     "sessions",
+    "stripe_webhook_events",
     "students",
     "subscriptions",
     "waiver_acceptances",
@@ -141,6 +143,25 @@ APPROVED_COMPOSITION_EXCEPTIONS = {
 }
 
 
+# By-design cross-tenant readers. Unlike the transitional entries above these
+# are NOT scheduled for removal: the file's whole purpose is to aggregate across
+# academies, so threading `academy_id` through would defeat it. Each entry must
+# say what it reads and why the read cannot be tenant-scoped. Admission bar:
+# read-only, operator-facing, never reachable from a tenant request path.
+APPROVED_CROSS_TENANT_EXCEPTIONS = {
+    Path("shared/observability/ops_digest.py"): (
+        "By design cross-tenant and read-only: the daily owner ops digest counts "
+        "stripe_webhook_events, dead_letter_events and dunning_states across every "
+        "academy. It runs only from the scheduler (no request path reaches it) and "
+        "its single write targets the global ops_job_runs collection."
+    ),
+}
+
+assert not (APPROVED_COMPOSITION_EXCEPTIONS.keys() & APPROVED_CROSS_TENANT_EXCEPTIONS.keys()), (
+    "A file cannot be both a transitional and a by-design exception"
+)
+
+
 @dataclass(frozen=True)
 class RawMongoAccess:
     path: Path
@@ -173,6 +194,15 @@ def test_composition_exceptions_are_explicit_and_documented() -> None:
         assert "Transitional" in rationale
         # Every exception must document how/when it is removed.
         assert "until" in rationale, rel_path
+
+
+def test_cross_tenant_exceptions_are_explicit_and_documented() -> None:
+    for rel_path, rationale in APPROVED_CROSS_TENANT_EXCEPTIONS.items():
+        assert (V2_ROOT / rel_path).exists(), f"Missing approved exception path: {rel_path}"
+        # The bar for a permanent exception: say it is cross-tenant on purpose,
+        # and say it does not write tenant-owned data.
+        assert "cross-tenant" in rationale, rel_path
+        assert "read-only" in rationale, rel_path
 
 
 def test_infrastructure_and_transitional_composition_are_no_longer_blanket_exempt() -> None:
@@ -307,7 +337,9 @@ def _is_approved_path(rel_path: Path) -> bool:
         return True
     if rel_path == Path("shared/tenancy/repository.py"):
         return True
-    return rel_path in APPROVED_COMPOSITION_EXCEPTIONS
+    return (
+        rel_path in APPROVED_COMPOSITION_EXCEPTIONS or rel_path in APPROVED_CROSS_TENANT_EXCEPTIONS
+    )
 
 
 def _raw_mongo_accesses(path: Path, rel_path: Path) -> list[RawMongoAccess]:

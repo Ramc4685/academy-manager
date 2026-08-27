@@ -19,6 +19,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Any
 
+from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_MISSED
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
@@ -28,6 +29,7 @@ from starlette.middleware.cors import CORSMiddleware
 from backend.v2.composition.admin import compose_admin
 from backend.v2.composition.coach import compose_coach
 from backend.v2.composition.digests import (
+    compose_ops_digest_sender,
     compose_send_coach_daily_digest,
     compose_send_parent_daily_digest,
     resolve_digest_schedule,
@@ -58,6 +60,7 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo impo
 from backend.v2.contexts.billing.infrastructure.mongo_connected_account_repo import (
     MongoConnectedAccountRepository,
 )
+from backend.v2.contexts.communications.application.ports import ResolvedRecipient
 from backend.v2.contexts.communications.application.use_cases.send_coach_daily_digest import (
     SendCoachDailyDigestCommand,
 )
@@ -147,6 +150,16 @@ from backend.v2.shared.observability import (
     configure_error_tracking,
     configure_logging,
     configure_tracing,
+)
+from backend.v2.shared.observability.ops_alerts import (
+    capture_message,
+    handle_scheduler_job_event,
+)
+from backend.v2.shared.observability.ops_digest import (
+    INVOICE_GENERATION_JOB,
+    collect_ops_digest,
+    record_job_run,
+    render_ops_digest,
 )
 from backend.v2.shared.scheduling import job_lease
 from backend.v2.shared.tenancy.context import tenant_scope
@@ -541,13 +554,87 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 GenerateMonthlyPaymentsCommand(period=period)
             )
 
-        await _run_monthly_invoice_generation(
+        totals = await _run_monthly_invoice_generation(
             db=db,
             academy_ids=academy_ids,
             get_billing_settings=_get_billing_settings,
             generate=_generate,
             now=now,
         )
+        # Job-level record for the daily ops digest (issue #428), kept here in
+        # the job wrapper rather than inside _run_monthly_invoice_generation so
+        # that helper stays a pure, injectable unit. It is complementary to the
+        # per-(academy, period) rows _record_monthly_generation writes to
+        # `billing_generation_runs`: those drive the catch-up gate, this answers
+        # "did the scheduled job run, and what did the last real run do".
+        #
+        # `academy_count` counts only academies that actually attempted
+        # generation this tick, which is exactly the "meaningful" bar: on the
+        # ~29 days a month when nothing is due, record a heartbeat only
+        # (`meaningful=False`) instead of overwriting the last real run's counts
+        # with zeros — those counts are the signal the digest exists to surface.
+        record: dict[str, Any] = {key: value for key, value in totals.items() if key != "created"}
+        # Match the log line's `created_count` naming (#440) so the email and
+        # the structured log read the same.
+        record["created_count"] = totals["created"]
+        record["period"] = now.strftime("%Y-%m")
+        await record_job_run(
+            db,
+            INVOICE_GENERATION_JOB,
+            record,
+            meaningful=bool(totals["academy_count"]),
+        )
+
+    async def _send_ops_digest() -> None:
+        async with job_lease(
+            db, "send_ops_digest", timedelta(minutes=30), scheduler_worker_id
+        ) as acquired:
+            if not acquired:
+                return
+            await _send_ops_digest_body()
+
+    async def _send_ops_digest_body() -> None:
+        # Owner-facing, cross-academy summary of the things that fail silently:
+        # quarantined/failed Stripe webhooks, dead-letter events, dunning
+        # terminals, and the last invoice-generation run. Unset OPS_ALERT_EMAIL
+        # ⇒ log and skip (no recipient to fail over to).
+        recipient_email = (settings.ops_alert_email or "").strip()
+        if not recipient_email:
+            log.info("ops_digest_skipped: OPS_ALERT_EMAIL is not configured")
+            return
+        # Stamp the snapshot in the scheduler timezone: the cron fires at 07:00
+        # local, so a UTC stamp would put yesterday's date on the subject line
+        # in any UTC+ deployment.
+        snapshot = await collect_ops_digest(db, now=datetime.now(scheduler.timezone))  # type: ignore[union-attr]
+        subject, body = render_ops_digest(snapshot)
+        outcome = await app.state.ops_digest_sender.send(
+            recipient=ResolvedRecipient(
+                user_id="ops-alert",
+                email=recipient_email,
+                display_name="Ops",
+            ),
+            subject=subject,
+            body=body,
+        )
+        extra = {
+            "ok": bool(getattr(outcome, "ok", False)),
+            "failed_reason": getattr(outcome, "failed_reason", None),
+            "webhooks_quarantined": snapshot.webhooks_quarantined,
+            "webhooks_quarantined_recent": snapshot.webhooks_quarantined_recent,
+            "webhooks_failed": snapshot.webhooks_failed,
+            "webhooks_failed_stale": snapshot.webhooks_failed_stale,
+            "dead_letter_total": snapshot.dead_letter_total,
+            "dead_letter_recent": snapshot.dead_letter_recent,
+            "dunning_terminals_recent": snapshot.dunning_terminals_recent,
+        }
+        if extra["ok"]:
+            log.info("ops_digest_processed", extra=extra)
+        else:
+            # The alerting channel failing is itself an alert. Resend never
+            # raises — a rejected send comes back as SendOutcome(ok=False) — so
+            # without this the digest would go missing in silence.
+            log.error("ops_digest_send_failed", extra=extra)
+            capture_message(f"Ops digest send failed: {extra['failed_reason']}")
 
     async def _send_coach_daily_digests() -> None:
         async with job_lease(
@@ -674,7 +761,15 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         if totals["parents"]:
             log.info("parent_daily_digests_processed", extra=totals)
 
-    scheduler = AsyncIOScheduler(timezone=settings.scheduler_tz)
+    scheduler = AsyncIOScheduler(
+        timezone=settings.scheduler_tz,
+        # APScheduler's default misfire_grace_time is 1 second, so any event-loop
+        # stall longer than that counts as a miss. With the EVENT_JOB_MISSED
+        # listener registered below, that default would turn routine stalls on
+        # the 60s webhook-drain job into a steady stream of alerts. 30s is well
+        # inside every job's own interval and still catches a real stall.
+        job_defaults={"misfire_grace_time": 30},
+    )
     scheduler.add_job(
         _process_scheduled_resumes,
         "cron",
@@ -768,6 +863,23 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         replace_existing=True,
         max_instances=1,
     )
+    # Daily owner ops digest (issue #428) — the counterpart to the scheduler
+    # error listener below: the listener reports failures as they happen, this
+    # reports the state that accumulates silently. Fixed daily cron in
+    # settings.scheduler_tz; skipped entirely when OPS_ALERT_EMAIL is unset.
+    app.state.ops_digest_sender = compose_ops_digest_sender()
+    scheduler.add_job(
+        _send_ops_digest,
+        "cron",
+        hour=7,
+        minute=0,
+        id="send_ops_digest",
+        replace_existing=True,
+        max_instances=1,
+    )
+    # Job crashes and misfires previously died in APScheduler's own logger and
+    # never reached Sentry (only the request path was instrumented).
+    scheduler.add_listener(handle_scheduler_job_event, EVENT_JOB_ERROR | EVENT_JOB_MISSED)
     scheduler.start()
     app.state.scheduler = scheduler
 

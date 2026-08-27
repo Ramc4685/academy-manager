@@ -744,6 +744,15 @@ def _build_email_sender(settings: Any) -> Any:
     return StubEmailSendPort()
 
 
+def compose_ops_digest_sender() -> Any:
+    """Email port for the daily owner ops digest (issue #428).
+
+    Reuses the parent/coach digest gating verbatim so the ops digest cannot be
+    the one path that sends real email from a dev or test deployment.
+    """
+    return _build_email_sender(get_settings())
+
+
 def compose_send_parent_daily_digest(
     db: AsyncIOMotorDatabase[Any],
 ) -> SendParentDailyDigest:
