@@ -298,6 +298,7 @@ def _override_ledger(admin_client, ledger: _FakeLedger) -> None:
             "sent_at": result.invoice.sent_at,
             "last_sent_at": result.invoice.last_sent_at,
             "checkout_url": result.checkout_url,
+            "checkout_failure_code": result.checkout_failure_code,
         }
 
     async def add_invoice_line(**kwargs) -> dict:
