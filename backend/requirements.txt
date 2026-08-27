@@ -58,7 +58,7 @@ packaging==26.2
 pandas==3.0.5
 passlib==1.7.4
 pillow==12.3.0
-platformdirs==4.11.2
+platformdirs==4.11.4
 propcache==0.5.2
 proto-plus==1.28.0
 protobuf==6.33.5
