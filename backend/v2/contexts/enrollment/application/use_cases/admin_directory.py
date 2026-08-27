@@ -196,6 +196,7 @@ class AdminStudentDirectoryQuery(Protocol):
         status: str | None,
         limit: int,
         cursor: str | None,
+        missing: tuple[str, ...] = (),
     ) -> AdminStudentPage: ...
 
 
@@ -230,12 +231,14 @@ class ListAdminStudents:
         status: str | None = None,
         limit: int = 50,
         cursor: str | None = None,
+        missing: tuple[str, ...] = (),
     ) -> AdminStudentPage:
         return await self._students.list_admin_students(
             search=search,
             status=status,
             limit=limit,
             cursor=cursor,
+            missing=missing,
         )
 
 

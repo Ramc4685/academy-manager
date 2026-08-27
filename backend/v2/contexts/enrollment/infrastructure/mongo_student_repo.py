@@ -31,6 +31,7 @@ from backend.v2.contexts.enrollment.domain.errors import (
     StudentParentNotFound,
 )
 from backend.v2.contexts.enrollment.domain.models import Student
+from backend.v2.shared.profile.completeness import CHILD_REQUIRED, ChildFacts, child_gaps
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 
 log = logging.getLogger(__name__)
@@ -47,6 +48,13 @@ class MongoStudentRepository(TenantScopedRepository):
             parent_id=str(doc["parent_id"]),
             full_name=str(doc["full_name"]),
             date_of_birth=(str(doc["date_of_birth"]) if doc.get("date_of_birth") else None),
+            emergency_contact_name=(
+                str(doc["emergency_contact_name"]) if doc.get("emergency_contact_name") else None
+            ),
+            emergency_contact_phone=(
+                str(doc["emergency_contact_phone"]) if doc.get("emergency_contact_phone") else None
+            ),
+            medical_notes=(str(doc["medical_notes"]) if doc.get("medical_notes") else None),
             student_user_id=(str(doc["student_user_id"]) if doc.get("student_user_id") else None),
         )
 
@@ -456,6 +464,16 @@ class MongoStudentRepository(TenantScopedRepository):
         student_id: str,
         command: UpdateAdminStudentCommand,
     ) -> AdminStudentDetail | None:
+        """Admin-facing entry point. Delegates to the persona-neutral write below
+        so parent self-service (which must not import an admin-named symbol)
+        shares the same diff/audit behaviour instead of duplicating it."""
+        return await self.update_student_profile(student_id, command)
+
+    async def update_student_profile(
+        self,
+        student_id: str,
+        command: UpdateAdminStudentCommand,
+    ) -> AdminStudentDetail | None:
         academy_id = current_academy_id()
         before = await self._find_one(self._id_filter(student_id))
         if before is None:
@@ -582,8 +600,12 @@ class MongoStudentRepository(TenantScopedRepository):
         status: str | None,
         limit: int,
         cursor: str | None,
+        missing: tuple[str, ...] = (),
     ) -> AdminStudentPage:
         academy_id = current_academy_id()
+        unknown_missing_keys = set(missing) - set(CHILD_REQUIRED)
+        if unknown_missing_keys:
+            raise ValueError(f"Unknown missing field(s): {', '.join(sorted(unknown_missing_keys))}")
         docs = [
             doc
             async for doc in self._find_many(
@@ -652,6 +674,22 @@ class MongoStudentRepository(TenantScopedRepository):
                 continue
             if search_key and search_key not in haystack:
                 continue
+            if missing:
+                raw_medical = doc.get("medical_notes")
+                gaps = child_gaps(
+                    ChildFacts(
+                        student_id=student_id,
+                        full_name=student_name,
+                        date_of_birth=(
+                            str(doc["date_of_birth"]) if doc.get("date_of_birth") else None
+                        ),
+                        emergency_contact_name=doc.get("emergency_contact_name"),
+                        emergency_contact_phone=doc.get("emergency_contact_phone"),
+                        medical_notes=str(raw_medical) if raw_medical else None,
+                    )
+                )
+                if not (set(missing) & set(gaps)):
+                    continue
             rows.append(
                 {
                     "doc": doc,

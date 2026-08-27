@@ -131,6 +131,7 @@ export const queryKeys = {
     trials: () => ["parent", "trials"] as const,
     cancellationPreview: (enrollmentId: string) =>
       ["parent", "enrollments", enrollmentId, "cancellation-preview"] as const,
+    profile: () => ["parent", "profile"] as const,
   },
   student: {
     all: ["student"] as const,

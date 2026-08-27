@@ -244,6 +244,9 @@ class AdminRegistrationReview:
                     parent_id=app.parent_user_id,
                     full_name=full_name,
                     date_of_birth=app.child_profile.date_of_birth or None,
+                    emergency_contact_name=app.child_profile.emergency_contact_name or None,
+                    emergency_contact_phone=app.child_profile.emergency_contact_phone or None,
+                    medical_notes=app.child_profile.medical_notes or None,
                 )
             )
             await self._claim_student_registration(student_id, app)
@@ -373,6 +376,9 @@ class AdminRegistrationReview:
                     parent_id=app.parent_user_id,
                     full_name=self._student_name(app),
                     date_of_birth=app.child_profile.date_of_birth or None,
+                    emergency_contact_name=app.child_profile.emergency_contact_name or None,
+                    emergency_contact_phone=app.child_profile.emergency_contact_phone or None,
+                    medical_notes=app.child_profile.medical_notes or None,
                 )
             )
             await self._claim_student_registration(student_id, app)

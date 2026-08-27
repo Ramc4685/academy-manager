@@ -85,7 +85,7 @@ def test_control_evidence_cli_outputs_json_for_current_manifest(capsys) -> None:
     )
     report = json.loads(capsys.readouterr().out)
 
-    assert report["routes"] == 80
+    assert report["routes"] == 81
     assert report["totals"]["buttons"] > 0
     assert report["totals"]["inputs"] > 0
     assert report["totals"]["modals"] >= 0

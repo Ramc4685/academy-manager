@@ -96,6 +96,11 @@ class ParentUseCases:
     # the skill routes are the only consumers.
     student_progress: StudentProgressComposition | None = None
     curriculum: CurriculumComposition | None = None
+    # Self-service profile (issue #380)
+    get_parent_profile: object | None = None  # callable
+    update_parent_profile: object | None = None  # callable
+    confirm_parent_email: object | None = None  # callable
+    update_parent_child: object | None = None  # callable
 
 
 def get_parent_use_cases(request: Request) -> ParentUseCases:

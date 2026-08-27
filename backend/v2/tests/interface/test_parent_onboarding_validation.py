@@ -85,4 +85,7 @@ def test_parent_onboarding_accepts_iso_child_date_of_birth() -> None:
         "last_name": "",
         "date_of_birth": "2018-02-28",
         "skill_level": "",
+        "emergency_contact_name": "",
+        "emergency_contact_phone": "",
+        "medical_notes": "",
     }

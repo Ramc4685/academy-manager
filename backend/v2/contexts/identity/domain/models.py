@@ -85,6 +85,11 @@ class User(BaseModel):
     display_name: str
     phone: str | None = None
     global_status: GlobalUserStatus = "active"
+    # Stamped when the user confirms their login email is correct via the
+    # parent self-service profile (email itself is never editable there — it
+    # is the Firebase login identifier). Optional/defaulted so existing
+    # documents deserialize unchanged; no migration required.
+    email_confirmed_at: datetime | None = None
 
     # ---- Legacy single-tenant compatibility ---------------------------------
     # These are NOT the SaaS source of truth. They are kept so existing code
