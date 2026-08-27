@@ -189,6 +189,35 @@ async def test_membership_keyed_by_firebase_alias_still_resolves_claims() -> Non
 
 
 @pytest.mark.asyncio
+async def test_membership_keyed_by_stale_auth_uid_still_resolves_claims() -> None:
+    """Regression (#424): a users doc can carry a stale `auth_uid` alongside a
+    newer `firebase_uid`. The domain `User` collapses the two for display, so
+    the alias set must carry `auth_uid` separately — otherwise a membership
+    row keyed by the stale value stays unmatched, while the invite path
+    (PR #400) matches all three raw fields."""
+    parent = User(
+        user_id="roster-parent-9",
+        firebase_uid="fb-uid-9",
+        auth_uid="legacy-uid-9",
+        email="stale@example.com",
+        display_name="Stale Alias Parent",
+        global_status="active",
+    )
+    membership = AcademyMembership(
+        membership_id="m-stale-alias",
+        academy_id="academy-court",
+        user_id="legacy-uid-9",
+        roles=("parent",),
+        status="active",
+    )
+    uc = _build(token_email="stale@example.com", users=[parent], memberships=[membership])
+
+    claims = await uc.execute("fake-token", resolved_academy_id="academy-court")
+
+    assert claims.membership_id == "m-stale-alias"
+
+
+@pytest.mark.asyncio
 async def test_alias_match_does_not_cross_academies() -> None:
     """Alias matching widens identity, never tenant scope."""
     parent = User(

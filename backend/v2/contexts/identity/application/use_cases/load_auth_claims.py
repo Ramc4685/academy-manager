@@ -30,6 +30,7 @@ from backend.v2.contexts.identity.domain.errors import (
     UserInactive,
     UserNotFound,
 )
+from backend.v2.contexts.identity.domain.identity_aliases import identity_aliases
 from backend.v2.contexts.identity.domain.models import User
 from backend.v2.shared.auth.claims import AuthClaims, PlatformRoleName
 
@@ -88,7 +89,7 @@ class LoadAuthClaims:
         membership = await self._memberships.get_for_user_in_academy(
             user_id=user.user_id,
             academy_id=resolved_academy_id,
-            aliases=_identity_aliases(user),
+            aliases=_aliases_for(user),
         )
         if membership is None or not membership.is_active():
             raise MembershipNotFound(
@@ -110,18 +111,16 @@ class LoadAuthClaims:
         )
 
 
-def _identity_aliases(user: User) -> tuple[str, ...]:
+def _aliases_for(user: User) -> tuple[str, ...]:
     """Identifiers the membership row for this account may be keyed by.
 
     Values are read off the already-resolved `User` record (the users doc),
     never off the token, so this can never be used to claim another
-    account's membership.
+    account's membership. `auth_uid` is carried separately from
+    `firebase_uid` because a record may hold a stale one alongside a newer
+    one — the invite path matches all three, and so must this.
     """
-    return tuple(
-        dict.fromkeys(
-            str(value) for value in (user.user_id, getattr(user, "firebase_uid", None)) if value
-        )
-    )
+    return identity_aliases(user.user_id, user.firebase_uid, user.auth_uid)
 
 
 def _user_is_active(user) -> bool:

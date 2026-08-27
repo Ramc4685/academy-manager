@@ -75,9 +75,18 @@ class MembershipRepository(Protocol):
     takes an explicit `academy_id` so cross-tenant leakage is impossible.
     """
 
-    async def get_membership(self, academy_id: str, user_id: str) -> AcademyMembership | None: ...
+    # `aliases` lists the other identifiers the same account may be keyed by
+    # in `academy_memberships` (`auth_uid` / `firebase_uid`) — see
+    # `domain/identity_aliases.py`. Implementations match any of them and
+    # never widen the academy scope.
 
-    async def list_memberships_for_user(self, user_id: str) -> list[AcademyMembership]: ...
+    async def get_membership(
+        self, academy_id: str, user_id: str, *, aliases: Sequence[str] | None = None
+    ) -> AcademyMembership | None: ...
+
+    async def list_memberships_for_user(
+        self, user_id: str, *, aliases: Sequence[str] | None = None
+    ) -> list[AcademyMembership]: ...
 
     async def upsert_membership(self, membership: AcademyMembership) -> AcademyMembership: ...
 
