@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from bson import ObjectId
 from pymongo import ReturnDocument
@@ -29,6 +29,7 @@ from backend.v2.contexts.identity.domain.errors import (
     UserEmailUpdateFailed,
     UserOutsideAcademy,
 )
+from backend.v2.contexts.identity.domain.identity_aliases import aliases_from_doc
 from backend.v2.contexts.identity.domain.models import Role, User, normalize_email
 from backend.v2.contexts.identity.infrastructure.firebase_admin_adapter import (
     get_firebase_admin_adapter,
@@ -60,6 +61,7 @@ class MongoUserRepository:
         is_active = bool(doc.get("is_active", status != "inactive" and status != "disabled"))
 
         raw_fuid = doc.get("firebase_uid") or doc.get("auth_uid")
+        raw_auth_uid = doc.get("auth_uid")
         raw_nemail = doc.get("normalized_email")
         raw_phone = doc.get("phone")
         raw_confirmed = doc.get("email_confirmed_at")
@@ -67,6 +69,7 @@ class MongoUserRepository:
         return User(
             user_id=str(doc.get("user_id") or doc.get("auth_uid") or doc["_id"]),
             firebase_uid=str(raw_fuid) if raw_fuid else None,
+            auth_uid=str(raw_auth_uid) if raw_auth_uid else None,
             email=str(doc["email"]),
             normalized_email=str(raw_nemail) if raw_nemail else None,
             display_name=str(doc.get("display_name") or doc.get("name") or doc["email"]),
@@ -201,7 +204,12 @@ class MongoUserRepository:
         )
 
     def _to_admin_detail(
-        self, doc: dict[str, object], *, linked_student_count: int, session_count: int = 0
+        self,
+        doc: dict[str, object],
+        *,
+        linked_student_count: int,
+        session_count: int = 0,
+        login_invite_sent_at: datetime | None = None,
     ) -> AdminUserDetail:
         user = self._to_domain(doc)
         summary = self._to_admin_summary(doc)
@@ -210,7 +218,13 @@ class MongoUserRepository:
             roles=user.roles,
             linked_student_count=linked_student_count,
             session_count=session_count,
-            login_invite_sent_at=doc.get("login_invite_sent_at"),
+            # Passed in from the tenant's `academy_memberships` row, never read
+            # off `doc`: `record_login_invite` only ever writes the timestamp
+            # to the membership. Reading it here yielded None on every request,
+            # so the admin page kept offering "Send login invite" after a
+            # successful send -- and each re-send mints a new Firebase oobCode
+            # that invalidates the link already emailed to the parent.
+            login_invite_sent_at=login_invite_sent_at,
         )
 
     @staticmethod
@@ -455,8 +469,7 @@ class MongoUserRepository:
         if str(user_doc.get("academy_id") or "") == academy_id:
             return
         raise UserOutsideAcademy(
-            "that email belongs to an account outside this academy; "
-            "use a different email address"
+            "that email belongs to an account outside this academy; use a different email address"
         )
 
     async def ensure_student_login(
@@ -606,6 +619,27 @@ class MongoUserRepository:
             return None
         return await self._admin_detail_for_doc(doc, academy_id=academy_id)
 
+    @staticmethod
+    def _identity_aliases(doc: dict[str, object]) -> list[str]:
+        """Every identifier this account might be keyed by in `academy_memberships`.
+
+        Thin wrapper over the shared `domain.identity_aliases` helper, which
+        the membership repository and `load_auth_claims` also use so the
+        invite path and the login path can never drift apart again.
+        """
+        return list(aliases_from_doc(doc))
+
+    async def _active_membership_for_doc(
+        self, doc: dict[str, object], *, academy_id: str
+    ) -> dict[str, object] | None:
+        aliases = self._identity_aliases(doc)
+        if not aliases:
+            return None
+        membership: dict[str, object] | None = await self._db["academy_memberships"].find_one(
+            {"academy_id": academy_id, "user_id": {"$in": aliases}, "status": "active"}
+        )
+        return membership
+
     async def get_login_invite_user(
         self, user_id: str, *, academy_id: str
     ) -> AdminUserDetail | None:
@@ -613,24 +647,25 @@ class MongoUserRepository:
         doc = await self.collection.find_one(self._id_filter(user_id))
         if doc is None:
             return None
-        firebase_uid = doc.get("firebase_uid") or doc.get("auth_uid")
-        if not firebase_uid:
-            return None
-        membership = await self._db["academy_memberships"].find_one(
-            {
-                "academy_id": academy_id,
-                "user_id": str(firebase_uid),
-                "status": "active",
-            },
-            {"_id": 1},
-        )
+        membership = await self._active_membership_for_doc(doc, academy_id=academy_id)
         if membership is None:
             return None
-        return await self._admin_detail_for_doc(doc, academy_id=academy_id)
+        return await self._admin_detail_for_doc(doc, academy_id=academy_id, membership=membership)
 
     async def _admin_detail_for_doc(
-        self, doc: dict[str, object], *, academy_id: str
+        self,
+        doc: dict[str, object],
+        *,
+        academy_id: str,
+        membership: dict[str, object] | None = None,
     ) -> AdminUserDetail:
+        """Assemble the admin detail view for a `users` doc.
+
+        Pass ``membership`` when the caller has already resolved the active
+        membership row, so we do not query `academy_memberships` twice.
+        """
+        if membership is None:
+            membership = await self._active_membership_for_doc(doc, academy_id=academy_id)
         lookup_ids = [
             str(value)
             for value in (
@@ -657,18 +692,23 @@ class MongoUserRepository:
             }
         )
         return self._to_admin_detail(
-            doc, linked_student_count=linked_student_count, session_count=session_count
+            doc,
+            linked_student_count=linked_student_count,
+            session_count=session_count,
+            login_invite_sent_at=cast(
+                "datetime | None", (membership or {}).get("login_invite_sent_at")
+            ),
         )
 
     async def record_login_invite(
         self, user_id: str, *, academy_id: str, sent_at: datetime
     ) -> None:
         doc = await self.collection.find_one(self._id_filter(user_id))
-        firebase_uid = (doc or {}).get("firebase_uid") or (doc or {}).get("auth_uid")
-        if not firebase_uid:
+        aliases = self._identity_aliases(doc) if doc else []
+        if not aliases:
             raise UserCreateFailed("login invite target has no active academy membership")
         result = await self._db["academy_memberships"].update_one(
-            {"academy_id": academy_id, "user_id": str(firebase_uid), "status": "active"},
+            {"academy_id": academy_id, "user_id": {"$in": aliases}, "status": "active"},
             {
                 "$set": {"login_invite_sent_at": sent_at, "updated_at": sent_at},
                 "$unset": {"login_invite_pending": ""},

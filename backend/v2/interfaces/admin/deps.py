@@ -387,6 +387,10 @@ class AdminUseCases:
     # audited admin toggle for billing_settings.allow_platform_charge_fallback.
     get_platform_charge_fallback: object | None = None  # GetPlatformChargeFallback
     set_platform_charge_fallback: object | None = None  # SetPlatformChargeFallback
+    # audited admin control for billing_settings.billing_day/invoice_due_days,
+    # which drive the automated monthly invoice generation job.
+    get_invoice_schedule: object | None = None  # GetInvoiceScheduleSettings
+    set_invoice_schedule: object | None = None  # SetInvoiceScheduleSettings
 
 
 def get_admin_use_cases(request: Request) -> AdminUseCases:

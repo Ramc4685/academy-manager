@@ -34,7 +34,7 @@ class LocalTenantExportArtifactWriter:
     async def write_metadata(self, request: TenantExportRequest) -> dict[str, object]:
         return {
             "storage": "local_test",
-            "uri": (f"{self._base_uri}/{request.academy_id}/" f"{request.export_request_id}.json"),
+            "uri": (f"{self._base_uri}/{request.academy_id}/{request.export_request_id}.json"),
             "include_pii": request.include_pii,
             "record_counts": {},
             "destructive": False,

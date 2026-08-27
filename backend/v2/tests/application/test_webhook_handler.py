@@ -2159,7 +2159,7 @@ async def test_metadata_only_funding_type_with_payment_failed_return_code_does_n
             "failure_code": "insufficient_funds",
             "failure_message": "Payment failed",
             "idempotency_key": (
-                "autopay-failed:" "inv-metadata-pi-false-positive:pi_metadata_pi_false_positive"
+                "autopay-failed:inv-metadata-pi-false-positive:pi_metadata_pi_false_positive"
             ),
             "created_by_event_id": "evt_metadata_pi_false_positive_failed",
         }

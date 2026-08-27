@@ -373,7 +373,7 @@ class _ParentDigestProvider:
             session = await self._session_today(student.student_id, on_date)
             if session is None:
                 continue
-            session_id, session_time, session_label = session
+            _session_id, session_time, session_label = session
             focus_skill, focus_status = await self._focus(
                 student.student_id, student.full_name, program_id
             )
@@ -517,9 +517,7 @@ class _ParentDigestProvider:
 
         if meridiem(local_start) == meridiem(local_end):
             return f"{hm(local_start)} - {hm(local_end)} {meridiem(local_end)}"
-        return (
-            f"{hm(local_start)} {meridiem(local_start)} - " f"{hm(local_end)} {meridiem(local_end)}"
-        )
+        return f"{hm(local_start)} {meridiem(local_start)} - {hm(local_end)} {meridiem(local_end)}"
 
     async def _focus(self, student_id: str, student_name: str, program_id: str) -> tuple[str, str]:
         if not program_id:

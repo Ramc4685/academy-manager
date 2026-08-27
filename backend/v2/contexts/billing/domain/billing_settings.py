@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class BillingSettings(BaseModel):
@@ -33,6 +33,15 @@ class BillingSettings(BaseModel):
     # platform funds settle to the same Stripe account — remove once Connect
     # onboarding is fully rolled out.
     allow_platform_charge_fallback: bool = False
+
+    # Automated monthly invoicing (issue #288). ``billing_day`` is the
+    # day-of-month the generation job runs for this academy; it is capped at 28
+    # so every month has the day and no academy silently skips February.
+    # ``invoice_due_days`` is the grace window added to the generation date to
+    # get the invoice due_date, which is also when the existing dunning ladder
+    # makes its first autopay charge attempt (DUNNING_SCHEDULE_DAYS starts at 0).
+    billing_day: int = Field(default=1, ge=1, le=28)
+    invoice_due_days: int = Field(default=7, ge=0, le=60)
 
     @classmethod
     def default(cls, academy_id: str) -> BillingSettings:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 
@@ -254,6 +254,95 @@ async def test_generate_monthly_creates_ledger_invoice_for_active_autopay_enroll
     assert invoice["total_cents"] == 10_000
     assert invoice["balance_due_cents"] == 10_000
     assert invoice.get("stripe_invoice_id") is None
+
+
+def _due_date_of(invoice: dict) -> date:
+    """due_date round-trips through Mongo as a midnight-UTC datetime."""
+    raw = invoice["due_date"]
+    return raw.date() if isinstance(raw, datetime) else raw
+
+
+@pytest.mark.asyncio
+async def test_generate_monthly_due_date_is_generation_date_plus_configured_grace(db, acad) -> None:
+    """Issue #288 R4: the grace window is anchored to the generation date, not
+    to the period's last day, so a late or backfilled period still gets the
+    full window before the dunning ladder's first autopay attempt fires."""
+    await db["billing_settings"].insert_one({"academy_id": acad, "invoice_due_days": 10})
+    repo = MongoPaymentRepository(
+        db,
+        clock=lambda: datetime(2026, 6, 1, 12, 0, tzinfo=UTC),
+        ledger_repo=MongoBillingLedgerRepository(db),
+    )
+    await _seed_monthly_enrollment(
+        db,
+        acad,
+        enrollment_id="enroll-due",
+        session_id="sess-due",
+        student_id="student-due",
+        parent_id="parent-due",
+    )
+
+    result = await repo.generate_monthly_payments("2026-06")
+
+    assert result.created == 1
+    invoice = await db["invoices"].find_one({"academy_id": acad, "enrollment_id": "enroll-due"})
+    assert invoice is not None
+    assert _due_date_of(invoice) == date(2026, 6, 11)
+
+
+@pytest.mark.asyncio
+async def test_generate_monthly_due_date_falls_back_to_default_grace_without_settings(
+    db, acad
+) -> None:
+    """Settings are advisory for generation: an academy with no
+    billing_settings doc must still be invoiced, on the 7-day default."""
+    repo = MongoPaymentRepository(
+        db,
+        clock=lambda: datetime(2026, 6, 1, 12, 0, tzinfo=UTC),
+        ledger_repo=MongoBillingLedgerRepository(db),
+    )
+    await _seed_monthly_enrollment(
+        db,
+        acad,
+        enrollment_id="enroll-nodue",
+        session_id="sess-nodue",
+        student_id="student-nodue",
+        parent_id="parent-nodue",
+    )
+
+    result = await repo.generate_monthly_payments("2026-06")
+
+    assert result.created == 1
+    invoice = await db["invoices"].find_one({"academy_id": acad, "enrollment_id": "enroll-nodue"})
+    assert invoice is not None
+    assert _due_date_of(invoice) == date(2026, 6, 8)
+
+
+@pytest.mark.asyncio
+async def test_generate_monthly_survives_unreadable_billing_settings(db, acad) -> None:
+    """A corrupt settings doc must never block the monthly run — a missed month
+    is only recoverable by an admin noticing it."""
+    await db["billing_settings"].insert_one({"academy_id": acad, "invoice_due_days": 999})
+    repo = MongoPaymentRepository(
+        db,
+        clock=lambda: datetime(2026, 6, 1, 12, 0, tzinfo=UTC),
+        ledger_repo=MongoBillingLedgerRepository(db),
+    )
+    await _seed_monthly_enrollment(
+        db,
+        acad,
+        enrollment_id="enroll-bad",
+        session_id="sess-bad",
+        student_id="student-bad",
+        parent_id="parent-bad",
+    )
+
+    result = await repo.generate_monthly_payments("2026-06")
+
+    assert result.created == 1
+    invoice = await db["invoices"].find_one({"academy_id": acad, "enrollment_id": "enroll-bad"})
+    assert invoice is not None
+    assert _due_date_of(invoice) == date(2026, 6, 8)
 
 
 @pytest.mark.asyncio

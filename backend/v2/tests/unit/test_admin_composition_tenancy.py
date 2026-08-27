@@ -412,6 +412,7 @@ async def test_admin_dues_followup_uses_open_ledger_invoices_without_legacy_paym
             "user_id": "parent-request",
             "display_name": "Request Parent",
             "email": "request@example.com",
+            "phone": "(555) 010-0100",
         }
     )
 
@@ -424,6 +425,49 @@ async def test_admin_dues_followup_uses_open_ledger_invoices_without_legacy_paym
     assert rows[0]["email"] == "request@example.com"
     assert rows[0]["pending_count"] == 2
     assert rows[0]["total_due_cents"] == 16000
+    # The admin clicks this to open WhatsApp with the reminder pre-filled.
+    assert rows[0]["phone"] == "(555) 010-0100"
+    whatsapp_url = rows[0]["whatsapp_url"]
+    assert whatsapp_url is not None
+    assert whatsapp_url.startswith("https://wa.me/15550100100?text=")
+    assert "USD%20160.00" in whatsapp_url
+
+
+@pytest.mark.asyncio
+async def test_admin_dues_followup_omits_whatsapp_link_without_phone(mongo_db) -> None:
+    """A parent with no phone on file must not get a broken wa.me link."""
+    now = datetime(2026, 6, 16, tzinfo=UTC)
+    await mongo_db["invoices"].insert_one(
+        {
+            "invoice_id": "inv-no-phone",
+            "academy_id": "request-acad",
+            "parent_id": "parent-request",
+            "student_id": "student-request",
+            "period": "2026-06",
+            "status": "open",
+            "total_cents": 12000,
+            "balance_due_cents": 12000,
+            "currency": "usd",
+            "due_date": now,
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+    await mongo_db["users"].insert_one(
+        {
+            "academy_id": "request-acad",
+            "user_id": "parent-request",
+            "display_name": "Request Parent",
+            "email": "request@example.com",
+        }
+    )
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope("request-acad"):
+        rows = await admin.list_dues_followup()
+
+    assert rows[0]["phone"] is None
+    assert rows[0]["whatsapp_url"] is None
 
 
 @pytest.mark.asyncio
