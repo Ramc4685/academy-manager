@@ -1,6 +1,6 @@
 # fix(billing): catch-up window for monthly invoice generation
 
-PR: #TBD
+PR: #440
 
 ## What changed
 
