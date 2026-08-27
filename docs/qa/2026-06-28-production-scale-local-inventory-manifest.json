@@ -1957,6 +1957,51 @@
       ]
     },
     {
+      "route": "/auth/action",
+      "role": "public",
+      "source": "frontend/app/(marketing)/auth/action/page.tsx",
+      "workflows": [
+        "Set password from a login invite",
+        "Expired or reused link recovery to sign-in"
+      ],
+      "controls": {
+        "buttons": [
+          "Set password and sign in",
+          "Go to sign in"
+        ],
+        "inputs": [
+          "New password",
+          "Confirm password"
+        ],
+        "modals": []
+      },
+      "states": [
+        "verifying",
+        "ready",
+        "submitting",
+        "done",
+        "expired",
+        "invalid",
+        "unsupported",
+        "error",
+        "validation"
+      ],
+      "risk_edges": [
+        "Reused or already-consumed oobCode",
+        "Open-redirect continueUrl",
+        "Cross-tenant continueUrl",
+        "emailVerified not set after reset blocks password login"
+      ],
+      "acceptance": [
+        "Workflow evidence: \"Set password from a login invite\" completes for the public route /auth/action with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Expired or reused link recovery to sign-in\" completes for the public route /auth/action with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Reused or already-consumed oobCode\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Open-redirect continueUrl\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Cross-tenant continueUrl\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"emailVerified not set after reset blocks password login\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
       "route": "/auth/magic",
       "role": "public",
       "source": "frontend/app/(marketing)/auth/magic/page.tsx",
@@ -2923,7 +2968,8 @@
         "loading",
         "no role",
         "access denied",
-        "fallback redirect"
+        "fallback redirect",
+        "error"
       ],
       "risk_edges": [
         "/me 500 after Firebase success",

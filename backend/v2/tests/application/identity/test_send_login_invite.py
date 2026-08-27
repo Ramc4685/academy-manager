@@ -28,7 +28,7 @@ def _user() -> AdminUserDetail:
     )
 
 
-def _use_case(users, links=None, sender=None, academies=None):
+def _use_case(users, links=None, sender=None, academies=None, portals=None):
     if links is None:
         links = AsyncMock()
         links.generate_password_reset_link.return_value = "https://reset.example/link"
@@ -38,8 +38,13 @@ def _use_case(users, links=None, sender=None, academies=None):
     if academies is None:
         academies = AsyncMock()
         academies.get_academy_name.return_value = "Smash Academy"
+    if portals is None:
+        portals = AsyncMock()
+        portals.get_academy_portal_url.return_value = "https://blno-academy.courtmastr.com"
     return (
-        SendLoginInvite(users=users, links=links, sender=sender, academies=academies),
+        SendLoginInvite(
+            users=users, links=links, sender=sender, academies=academies, portals=portals
+        ),
         links,
         sender,
     )
@@ -54,7 +59,10 @@ async def test_sends_branded_set_password_email_and_records_invite():
     result = await use_case.execute("parent-1", academy_id="acad")
 
     links.generate_password_reset_link.assert_awaited_once_with(
-        "parent@yahoo.com", uid="parent-1", display_name="Pat Parent"
+        "parent@yahoo.com",
+        uid="parent-1",
+        display_name="Pat Parent",
+        portal_url="https://blno-academy.courtmastr.com",
     )
     sender.send_invite_email.assert_awaited_once()
     kwargs = sender.send_invite_email.await_args.kwargs
@@ -109,7 +117,10 @@ async def test_passes_uid_and_display_name_to_reset_link_port_for_self_heal():
     await use_case.execute("parent-1", academy_id="acad")
 
     links.generate_password_reset_link.assert_awaited_once_with(
-        "parent@yahoo.com", uid="parent-1", display_name="Pat Parent"
+        "parent@yahoo.com",
+        uid="parent-1",
+        display_name="Pat Parent",
+        portal_url="https://blno-academy.courtmastr.com",
     )
 
 
@@ -134,6 +145,54 @@ async def test_wraps_unexpected_academy_name_error_as_send_failed():
     academies = AsyncMock()
     academies.get_academy_name.side_effect = RuntimeError("db unreachable")
     use_case, _, sender = _use_case(users, academies=academies)
+
+    with pytest.raises(LoginInviteSendFailed):
+        await use_case.execute("parent-1", academy_id="acad")
+    sender.send_invite_email.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_passes_each_academys_own_portal_url_to_the_reset_link_port():
+    """ADR-0007: the invite must carry the recipient academy's own host, not a
+    single deployment-wide FRONTEND_URL, or the parent lands on another tenant."""
+    users = AsyncMock()
+    users.get_admin_user.return_value = _user()
+    portals = AsyncMock()
+    portals.get_academy_portal_url.return_value = "https://other-academy.courtmastr.com"
+    use_case, links, _ = _use_case(users, portals=portals)
+
+    await use_case.execute("parent-1", academy_id="other")
+
+    portals.get_academy_portal_url.assert_awaited_once_with("other")
+    assert (
+        links.generate_password_reset_link.await_args.kwargs["portal_url"]
+        == "https://other-academy.courtmastr.com"
+    )
+
+
+@pytest.mark.asyncio
+async def test_sends_without_portal_url_when_academy_has_no_resolvable_host():
+    """A missing slug must not block the invite — the link simply falls back to
+    Firebase's own hosted page rather than the branded in-app handler."""
+    users = AsyncMock()
+    users.get_admin_user.return_value = _user()
+    portals = AsyncMock()
+    portals.get_academy_portal_url.return_value = None
+    use_case, links, sender = _use_case(users, portals=portals)
+
+    await use_case.execute("parent-1", academy_id="acad")
+
+    assert links.generate_password_reset_link.await_args.kwargs["portal_url"] is None
+    sender.send_invite_email.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_wraps_unexpected_portal_lookup_error_as_send_failed():
+    users = AsyncMock()
+    users.get_admin_user.return_value = _user()
+    portals = AsyncMock()
+    portals.get_academy_portal_url.side_effect = RuntimeError("db unreachable")
+    use_case, _, sender = _use_case(users, portals=portals)
 
     with pytest.raises(LoginInviteSendFailed):
         await use_case.execute("parent-1", academy_id="acad")

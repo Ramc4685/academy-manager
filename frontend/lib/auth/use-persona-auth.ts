@@ -12,6 +12,7 @@ import {
   type UserRole,
 } from "@/lib/api/me";
 import { onAuthChange } from "@/lib/auth/firebase";
+import { loginPathForError } from "@/lib/auth/login-error";
 
 export type PersonaAuthState =
   | { checked: false; authorized: false; user: null }
@@ -53,10 +54,10 @@ export function usePersonaAuth(requiredRole: UserRole): PersonaAuthState {
           target.searchParams.set("access_denied", requiredRole);
           replaceLocation(router, `${target.pathname}${target.search}`);
         })
-        .catch(() => {
+        .catch((err: unknown) => {
           if (!cancelled) {
             setState({ checked: true, authorized: false, user: null });
-            replaceLocation(router, "/login");
+            replaceLocation(router, loginPathForError(err));
           }
         });
     });

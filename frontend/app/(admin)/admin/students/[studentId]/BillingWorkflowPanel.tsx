@@ -24,6 +24,7 @@ import {
   sendAdminInvoice,
   voidAdminInvoice,
   type AdminInvoiceDetail,
+  type SendInvoiceResponse,
 } from "@/lib/api/admin";
 import {
   createAdminStudentInvoice,
@@ -45,6 +46,38 @@ import {
 } from "./billing-dialogs";
 
 type BillingModal = "add-line" | "manual-payment" | "void" | "create-invoice" | null;
+
+/**
+ * Why a pay link could not be created, in admin-actionable language. A failure
+ * code means the invoice email was NOT sent (backend issue #426), so the
+ * message has to say so — the old copy blamed "delivery is not configured",
+ * which sent admins to the email settings for a Stripe problem.
+ */
+const CHECKOUT_FAILURE_MESSAGES: Record<string, string> = {
+  checkout_creation_failed:
+    "Invoice NOT sent — Stripe rejected the payment link. The parent was not emailed. Check Stripe status, then send again.",
+  connected_account_not_ready:
+    "Invoice NOT sent — this academy's Stripe account can't accept charges yet. The parent was not emailed. Finish Stripe onboarding, then send again.",
+  connected_accounts_not_configured:
+    "Invoice NOT sent — Stripe Connect is not configured on this deployment. The parent was not emailed.",
+};
+
+function sendInvoiceMessage(result: SendInvoiceResponse): string {
+  if (result.checkout_failure_code) {
+    return (
+      CHECKOUT_FAILURE_MESSAGES[result.checkout_failure_code] ??
+      "Invoice NOT sent — the payment link could not be created. The parent was not emailed."
+    );
+  }
+  if (result.delivery_status === "sent") {
+    return result.checkout_url
+      ? `Invoice sent. Checkout link: ${result.checkout_url}`
+      : "Invoice sent. No online payment link — this academy collects payment directly.";
+  }
+  return result.checkout_url
+    ? `Checkout link generated: ${result.checkout_url}`
+    : "Invoice delivery is not configured.";
+}
 
 function BillingWorkflowPanel({
   student,
@@ -143,15 +176,7 @@ function BillingWorkflowPanel({
   const sendMutation = useMutation({
     mutationFn: () => sendAdminInvoice(invoiceId!),
     onSuccess: (result) => {
-      setActionMessage(
-        result.delivery_status === "sent" && result.checkout_url
-          ? `Invoice sent. Checkout link: ${result.checkout_url}`
-          : result.delivery_status === "sent"
-            ? "Invoice sent."
-            : result.checkout_url
-              ? `Checkout link generated: ${result.checkout_url}`
-              : "Invoice delivery is not configured.",
-      );
+      setActionMessage(sendInvoiceMessage(result));
       refreshInvoice();
     },
   });

@@ -45,12 +45,18 @@ from backend.v2.contexts.billing.application.use_cases.quote_enrollment import (
     QuoteEnrollment,
     QuoteEnrollmentCommand,
 )
+from backend.v2.contexts.billing.application.use_cases.record_checkout_mint_failure import (
+    CHECKOUT_FAILURE_ACCOUNT_NOT_READY,
+    CHECKOUT_FAILURE_STRIPE_ERROR,
+    record_checkout_mint_failure,
+)
 from backend.v2.contexts.billing.application.use_cases.send_invoice import SendInvoice
 from backend.v2.contexts.billing.application.use_cases.start_checkout import (
     StartCheckout,
     StartCheckoutCommand,
     StartCheckoutResult,
 )
+from backend.v2.contexts.billing.domain.errors import InvoicePayLinkUnavailable
 from backend.v2.contexts.billing.domain.ledger import InvoiceLine
 from backend.v2.contexts.billing.infrastructure.mongo_autopay_consent_repo import (
     MongoAutopayConsentRepository,
@@ -1212,7 +1218,12 @@ def compose_parent(
             cancel_url=cancel_url,
         ).execute(invoice_id, enroll_autopay=enroll_autopay)
         if not result.checkout_url:
-            raise ValueError("invoice payment link unavailable")
+            # Still 409, but now with a machine-readable code and the concrete
+            # reason SendInvoice recorded (issue #426) instead of a bare string.
+            raise InvoicePayLinkUnavailable(
+                "invoice payment link unavailable",
+                reason=result.checkout_failure_code,
+            )
         return {
             "invoice_id": result.invoice.invoice_id,
             "checkout_url": result.checkout_url,
@@ -1248,7 +1259,9 @@ def compose_parent(
             return {"redirect_url": result["checkout_url"]}
         invoice_stripe = stripe if hasattr(stripe, "create_invoice_checkout_session") else None
         if invoice_stripe is None:
-            raise ValueError("balance payment unavailable")
+            # No Stripe wiring at all — nothing is broken, this academy just
+            # does not collect online. Same 409, no failure recorded.
+            raise InvoicePayLinkUnavailable("balance payment unavailable")
         # Destination-charge routing (Slice I posture): funds must settle to the
         # academy's connected account; refuse a platform charge if not ready
         # unless the temporary allow_platform_charge_fallback escape hatch is on.
@@ -1270,7 +1283,31 @@ def compose_parent(
                     exc,
                 )
             if not fallback_enabled:
-                raise ValueError("balance payment unavailable")
+                # Same split as SendInvoice (issue #426): an academy with no
+                # Connect account at all has simply never onboarded online
+                # payments — nothing is broken, so record nothing. An account
+                # that EXISTS but cannot charge is a real, operator-visible
+                # failure.
+                if account is not None:
+                    log.error(
+                        "start_balance_payment: refusing pay link parent=%s invoice_count=%d "
+                        "— connected account not ready",
+                        parent_id,
+                        len(payable),
+                    )
+                    await record_checkout_mint_failure(
+                        billing_ledger_repo,
+                        invoices=payable,
+                        failure_code=CHECKOUT_FAILURE_ACCOUNT_NOT_READY,
+                        failure_message=(
+                            "Academy Stripe connected account exists but is not ready for "
+                            "charges, and platform-charge fallback is off."
+                        ),
+                    )
+                raise InvoicePayLinkUnavailable(
+                    "balance payment unavailable",
+                    reason=(CHECKOUT_FAILURE_ACCOUNT_NOT_READY if account is not None else None),
+                )
             log.warning(
                 "start_balance_payment: connected account not ready — falling back to "
                 "PLATFORM charge (allow_platform_charge_fallback=on) parent=%s",
@@ -1328,13 +1365,28 @@ def compose_parent(
                 **autopay_kwargs,
             )
         except Exception as exc:
-            log.warning(
-                "start_balance_payment: checkout creation failed parent=%s invoice_count=%d err=%s",
+            # Loud, and recorded per invoice (issue #426) — this is the parent
+            # portal's primary payment CTA, so a broken gateway here is exactly
+            # the outage signal an operator needs the same day.
+            log.error(
+                "start_balance_payment: checkout creation FAILED parent=%s invoice_count=%d "
+                "idempotency_key=%s err=%s",
                 parent_id,
                 len(payable),
+                idempotency_key,
                 exc,
+                exc_info=True,
             )
-            raise ValueError("balance payment unavailable") from exc
+            await record_checkout_mint_failure(
+                billing_ledger_repo,
+                invoices=payable,
+                failure_code=CHECKOUT_FAILURE_STRIPE_ERROR,
+                failure_message=str(exc),
+            )
+            raise InvoicePayLinkUnavailable(
+                "balance payment unavailable",
+                reason=CHECKOUT_FAILURE_STRIPE_ERROR,
+            ) from exc
         return {"redirect_url": url}
 
     async def quote_enrollment(

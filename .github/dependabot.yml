@@ -5,15 +5,30 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # One combined PR per run instead of one per dependency. Dependabot cannot
+    # author release notes, so each separate PR fails the release-notes check
+    # and has to be consolidated by hand (see #444, #446).
+    groups:
+      backend-deps:
+        patterns:
+          - "*"
 
   - package-ecosystem: npm
     directory: /frontend
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      frontend-deps:
+        patterns:
+          - "*"
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
     open-pull-requests-limit: 10
+    groups:
+      actions-deps:
+        patterns:
+          - "*"
