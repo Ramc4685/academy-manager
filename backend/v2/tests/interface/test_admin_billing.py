@@ -6,7 +6,7 @@ from datetime import UTC, date, datetime
 
 import pytest
 
-from backend.v2.composition.admin import _InvoiceEmailAdapter
+from backend.v2.composition.email_adapters import InvoiceEmailAdapter
 from backend.v2.contexts.billing.application.ports import StripeResourceNotFound
 from backend.v2.contexts.billing.application.use_cases.add_invoice_line import (
     AddInvoiceLine,
@@ -248,6 +248,11 @@ class _FakeUserRepo:
         if self.user is not None and self.user.user_id == user_id:
             return self.user
         return None
+
+
+class _FakeAcademyRepo:
+    async def get_academy_name(self, academy_id: str) -> str | None:
+        return "Test Academy"
 
 
 def _student_detail(
@@ -1027,9 +1032,10 @@ async def test_invoice_email_adapter_requires_parent_membership_in_request_acade
     users = _FakeUserRepo(
         User(user_id="parent-1", email="parent@example.com", display_name="Parent One")
     )
-    adapter = _InvoiceEmailAdapter(
+    adapter = InvoiceEmailAdapter(
         memberships=memberships,
         users=users,
+        academies=_FakeAcademyRepo(),
         sender=sender,
     )
 
@@ -1062,9 +1068,10 @@ async def test_invoice_email_adapter_sends_after_membership_match() -> None:
     users = _FakeUserRepo(
         User(user_id="parent-1", email="parent@example.com", display_name="Parent One")
     )
-    adapter = _InvoiceEmailAdapter(
+    adapter = InvoiceEmailAdapter(
         memberships=memberships,
         users=users,
+        academies=_FakeAcademyRepo(),
         sender=sender,
     )
 

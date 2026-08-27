@@ -39,6 +39,14 @@ sweep, which seeds only admin/coach/parent users and has no platform operator
 to sign in as. The `platform` role is excluded from that sweep the way
 `proxy` already is.
 
-Verified: backend `v2/tests` (2593 tests) green and `ruff check v2` clean;
-frontend `pnpm typecheck` and `pnpm lint` clean; full
-`scripts/dev/pre-push-checks.sh` green end-to-end including `pnpm e2e`.
+Both of those claims are now pinned by tests rather than by reading: an
+interface test asserts every mutating `/platform/*` route (create, bootstrap,
+activate, suspend, cancel, reactivate, plan) returns 404 for a
+`platform_support` caller and leaves tenant state untouched, and a repository
+contract test asserts the skipped legacy row logs a warning naming its
+`academy_id`.
+
+Verified after merging `origin/main`: backend `v2/tests` 2747 passed,
+`ruff check v2` / `ruff format --check` clean, `lint-imports` 6 contracts
+kept, mypy baseline filter reports 0 new errors; frontend `pnpm typecheck`,
+`pnpm lint` (0 errors), and `pnpm build` all green.

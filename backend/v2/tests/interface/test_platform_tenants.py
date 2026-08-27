@@ -226,6 +226,42 @@ def test_platform_support_can_read_status_but_cannot_mutate(repo: FakeTenantRepo
     assert mutate_response.status_code == 404
 
 
+def test_platform_support_is_blocked_from_every_lifecycle_mutation(
+    repo: FakeTenantRepository,
+) -> None:
+    """Hiding the buttons in the UI is cosmetic — the server must refuse.
+
+    Every mutating platform route is asserted here, not just one, so a new
+    mutation added without `require_platform_admin` fails this test.
+    """
+    with TestClient(_app(_platform_admin_claims(), repo)) as admin_client:
+        _create(admin_client)
+
+    mutations = [
+        ("post", "/api/v2/platform/tenants", _payload()),
+        ("post", "/api/v2/platform/academies/bootstrap", None),
+        ("post", "/api/v2/platform/tenants/tenant_test/activate", None),
+        ("post", "/api/v2/platform/tenants/tenant_test/suspend", {"reason": "nope"}),
+        ("post", "/api/v2/platform/tenants/tenant_test/cancel", {"reason": "nope"}),
+        ("post", "/api/v2/platform/tenants/tenant_test/reactivate", None),
+        (
+            "patch",
+            "/api/v2/platform/tenants/tenant_test/plan",
+            {"plan_code": "pro", "limits": {}},
+        ),
+    ]
+
+    with TestClient(_app(_platform_support_claims(), repo)) as support_client:
+        results = {
+            path: getattr(support_client, method)(path, json=body).status_code
+            for method, path, body in mutations
+        }
+
+    assert results == {path: 404 for _, path, _ in mutations}
+    # And nothing was actually mutated.
+    assert repo.tenants["tenant_test"].status == "provisioning"
+
+
 def test_academy_roles_cannot_access_platform_lifecycle(repo: FakeTenantRepository) -> None:
     with TestClient(_app(_academy_admin_claims(), repo)) as client:
         create_response = client.post("/api/v2/platform/tenants", json=_payload())

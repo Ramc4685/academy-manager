@@ -622,6 +622,10 @@ class SessionTypeRepository(Protocol):
     async def save(self, session_type: SessionType) -> None: ...
     async def get(self, session_type_id: str) -> SessionType | None: ...
     async def list_active(self) -> list[SessionType]: ...
+    async def list_all(self) -> list[SessionType]:
+        """Active *and* archived rows — the only way to reach a soft-deleted type."""
+        ...
+
     async def soft_delete(self, session_type_id: str) -> None: ...
 
 
@@ -769,3 +773,40 @@ class LedgerRepository(Protocol):
     async def apply_invoice_refund(
         self, *, invoice_id: str, amount_cents: int
     ) -> LedgerInvoice: ...
+
+
+# --- Owner (franchise) rollup ports (UIM11) ---------------------------------
+#
+# The rollup is the one read surface that spans academies. Both ports take an
+# explicit `academy_id` so the aggregation layer iterates a membership-derived
+# academy list rather than issuing any cross-tenant query.
+
+
+class OwnerAcademyRef(BaseModel):
+    """An academy the caller owns, resolved from their own memberships."""
+
+    model_config = {"frozen": True}
+
+    academy_id: str
+    academy_name: str | None = None
+
+
+class OwnerAcademyDirectory(Protocol):
+    """Resolves the academy set a user owns. The ONLY source of rollup scope."""
+
+    async def list_owner_academies(self, user_id: str) -> list[OwnerAcademyRef]: ...
+
+
+class AcademyFinancialSnapshot(BaseModel):
+    model_config = {"frozen": True}
+
+    revenue_by_month: dict[str, int] = {}
+    collected_cents: int = 0
+    outstanding_cents: int = 0
+    outstanding_invoice_count: int = 0
+
+
+class AcademyFinancialSnapshotReader(Protocol):
+    async def read(
+        self, *, academy_id: str, months: tuple[str, ...] | None = None
+    ) -> AcademyFinancialSnapshot: ...

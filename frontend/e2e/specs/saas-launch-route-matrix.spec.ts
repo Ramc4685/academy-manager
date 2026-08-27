@@ -114,7 +114,7 @@ const ADMIN_ROUTE_MATRIX = [
     testId: "admin-pause-requests",
   },
   { label: "payments", href: "/admin/payments", testId: "admin-payments" },
-  { label: "dues", href: "/admin/dues", testId: "admin-dues" },
+  { label: "dues", href: "/admin/reports/dues", testId: "admin-dues" },
   { label: "expenses", href: "/admin/expenses", testId: "admin-expenses" },
   { label: "payouts", href: "/admin/payouts", testId: "admin-payouts" },
   { label: "reports", href: "/admin/reports", testId: "admin-reports" },

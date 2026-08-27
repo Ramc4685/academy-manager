@@ -53,6 +53,37 @@ async def test_session_type_repo_crud_is_tenant_isolated(db, acad) -> None:
 
 
 @pytest.mark.asyncio
+async def test_session_type_list_all_returns_archived_rows_and_stays_tenant_scoped(
+    db, acad
+) -> None:
+    """Archiving is a soft delete, so restoring one needs a read that sees it."""
+    repo = MongoSessionTypeRepository(db)
+    now = _now()
+    for session_type_id, name in (("type-live", "Active plan"), ("type-gone", "Archived plan")):
+        await repo.save(
+            SessionType(
+                session_type_id=session_type_id,
+                academy_id=acad,
+                name=name,
+                price_cents=10_000,
+                billing_period="monthly",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+    await repo.soft_delete("type-gone")
+
+    assert [row.session_type_id for row in await repo.list_active()] == ["type-live"]
+    archived_and_active = await repo.list_all()
+    # Sorted by name: "Active plan" then "Archived plan".
+    assert [row.session_type_id for row in archived_and_active] == ["type-live", "type-gone"]
+    assert [row.is_active for row in archived_and_active] == [True, False]
+
+    with tenant_scope("other-academy"):
+        assert await MongoSessionTypeRepository(db).list_all() == []
+
+
+@pytest.mark.asyncio
 async def test_student_billing_enrollment_repo_reads_are_tenant_isolated(db, acad) -> None:
     repo = MongoStudentBillingEnrollmentRepository(db)
     now = _now()

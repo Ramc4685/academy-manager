@@ -75,6 +75,11 @@ export const queryKeys = {
     notifications: () => ["admin", "academy", "notifications"] as const,
     gateway: () => ["admin", "academy", "gateway"] as const,
     platformFallback: () => ["admin", "billing", "platform-fallback"] as const,
+    // sessionTypes() is the invalidation prefix; sessionTypesList() is the
+    // per-view cache key, since the archived and active lists differ.
+    sessionTypes: () => ["admin", "session-types"] as const,
+    sessionTypesList: (includeArchived: boolean) =>
+      ["admin", "session-types", { includeArchived }] as const,
     lessonCards: (programId: string) =>
       ["admin", "pathway", programId, "lesson-cards"] as const,
     coachDigestLog: () => ["admin", "comms", "digests", "log"] as const,
@@ -104,6 +109,11 @@ export const queryKeys = {
     tuitionDiscounts: (period: string) =>
       ["admin", "tuition-discounts", period] as const,
   },
+  owner: {
+    all: ["owner"] as const,
+    rollup: (months?: string[]) =>
+      ["owner", "rollup", months?.join(",") ?? "all"] as const,
+  },
   parent: {
     all: ["parent"] as const,
     absences: () => ["parent", "absences"] as const,
@@ -122,6 +132,12 @@ export const queryKeys = {
     tenantHealth: (academyId: string) =>
       ["platform", "tenant", academyId, "health"] as const,
   },
+  student: {
+    all: ["student"] as const,
+    me: () => ["student", "me"] as const,
+    schedule: () => ["student", "schedule"] as const,
+    progress: () => ["student", "progress"] as const,
+  },
 } as const;
 
 type QueryKeyFactory = (...args: never[]) => readonly unknown[];
@@ -130,5 +146,7 @@ type QueryKeyFrom<T> = T extends QueryKeyFactory ? ReturnType<T> : never;
 export type QueryKey =
   | QueryKeyFrom<(typeof queryKeys.coach)[keyof typeof queryKeys.coach]>
   | QueryKeyFrom<(typeof queryKeys.admin)[keyof typeof queryKeys.admin]>
+  | QueryKeyFrom<(typeof queryKeys.owner)[keyof typeof queryKeys.owner]>
   | QueryKeyFrom<(typeof queryKeys.parent)[keyof typeof queryKeys.parent]>
-  | QueryKeyFrom<(typeof queryKeys.platform)[keyof typeof queryKeys.platform]>;
+  | QueryKeyFrom<(typeof queryKeys.platform)[keyof typeof queryKeys.platform]>
+  | QueryKeyFrom<(typeof queryKeys.student)[keyof typeof queryKeys.student]>;

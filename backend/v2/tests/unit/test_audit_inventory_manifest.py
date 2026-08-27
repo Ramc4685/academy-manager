@@ -65,7 +65,16 @@ def test_each_inventory_route_has_controls_states_risks_and_acceptance() -> None
     data = json.loads(MANIFEST.read_text())
     # "platform" is the cross-tenant operator persona (UIM1) — guarded by
     # `platform_roles`, never by a tenant-scoped role.
-    allowed_roles = {"admin", "authenticated", "coach", "parent", "platform", "proxy", "public"}
+    allowed_roles = {
+        "admin",
+        "authenticated",
+        "coach",
+        "parent",
+        "platform",
+        "proxy",
+        "public",
+        "student",
+    }
 
     for entry in data["routes"]:
         assert entry["role"] in allowed_roles, entry["route"]

@@ -26,7 +26,6 @@ backend/v2/contexts/student_progress/application/use_cases/get_coach_engagement_
 backend/v2/contexts/student_progress/application/use_cases/get_coach_engagement_stats.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
 backend/v2/contexts/coaching/application/use_cases/compute_payout.py:0: error: Item "None" of "CoachRate | None" has no attribute "percent_bps"  [union-attr]
 backend/v2/contexts/billing/domain/ledger.py:0: error: Missing type arguments for generic type "dict"  [type-arg]
-backend/v2/contexts/identity/infrastructure/mongo_membership_repo.py:0: error: Argument 1 to "tuple" has incompatible type "object"; expected "Iterable[Literal['admin', 'coach', 'parent']]"  [arg-type]
 backend/v2/contexts/communications/application/use_cases/send_campaign.py:0: error: Argument "recipient" to "queued" of "Delivery" has incompatible type "ResolvedRecipient"; expected "ResolvedRecipientLike"  [arg-type]
 backend/v2/contexts/coaching/application/use_cases/manage_coach_rates.py:0: error: Missing type arguments for generic type "dict"  [type-arg]
 backend/v2/contexts/coaching/application/use_cases/manage_coach_rates.py:0: error: Missing type arguments for generic type "dict"  [type-arg]
@@ -799,20 +798,7 @@ backend/v2/interfaces/admin/billing_products_routes.py:0: error: No overload var
 backend/v2/interfaces/admin/billing_products_routes.py:0: note: Possible overload variants:
 backend/v2/interfaces/admin/billing_products_routes.py:0: note: def int(str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc = ..., /) -> int
 backend/v2/interfaces/admin/billing_products_routes.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
-backend/v2/composition/admin.py:0: error: Argument 1 to "aggregate" of "AsyncIOMotorCollection" has incompatible type "list[object]"; expected "Sequence[Mapping[str, Any]]"  [arg-type]
-backend/v2/composition/admin.py:0: error: Argument 1 to "aggregate" of "AsyncIOMotorCollection" has incompatible type "list[object]"; expected "Sequence[Mapping[str, Any]]"  [arg-type]
-backend/v2/composition/admin.py:0: error: Argument 1 to "aggregate" of "AsyncIOMotorCollection" has incompatible type "list[object]"; expected "Sequence[Mapping[str, Any]]"  [arg-type]
-backend/v2/composition/admin.py:0: error: Generator has incompatible item type "object"; expected "bool"  [misc]
-backend/v2/composition/admin.py:0: error: Generator has incompatible item type "object"; expected "bool"  [misc]
 backend/v2/composition/admin.py:0: error: "object" not callable  [operator]
-backend/v2/composition/admin.py:0: error: "object" not callable  [operator]
-backend/v2/composition/admin.py:0: error: "object" not callable  [operator]
-backend/v2/composition/admin.py:0: error: "object" not callable  [operator]
-backend/v2/composition/admin.py:0: error: "object" not callable  [operator]
-backend/v2/composition/admin.py:0: error: "object" not callable  [operator]
-backend/v2/composition/admin.py:0: error: Incompatible types in assignment (expression has type "str | None", variable has type "str")  [assignment]
-backend/v2/composition/admin.py:0: error: Incompatible types in assignment (expression has type "str | None", variable has type "str")  [assignment]
-backend/v2/composition/admin.py:0: error: Incompatible types in assignment (expression has type "str | None", variable has type "str")  [assignment]
 backend/v2/composition/admin.py:0: error: Missing type arguments for generic type "dict"  [type-arg]
 backend/v2/composition/admin.py:0: error: Argument "skill_progress" to "GetCoachEngagementStats" has incompatible type "MongoStudentSkillProgressRepository"; expected "CoachEngagementStatsRepository"  [arg-type]
 backend/v2/composition/admin.py:0: note: Following member(s) of "MongoStudentSkillProgressRepository" have conflicts:
@@ -820,18 +806,10 @@ backend/v2/composition/admin.py:0: note: Expected:
 backend/v2/composition/admin.py:0: note: def count_updates_by_coach(self, *, start_at: datetime, end_at: datetime) -> Coroutine[Any, Any, list[object]]
 backend/v2/composition/admin.py:0: note: Got:
 backend/v2/composition/admin.py:0: note: def count_updates_by_coach(self, *, start_at: datetime, end_at: datetime) -> Coroutine[Any, Any, list[dict[str, object]]]
-backend/v2/composition/admin.py:0: error: Argument "calculator" to "GeneratePayoutPeriod" has incompatible type "_FinancePayoutCalculator"; expected "PayoutCalculator"  [arg-type]
-backend/v2/composition/admin.py:0: note: Following member(s) of "_FinancePayoutCalculator" have conflicts:
 backend/v2/composition/admin.py:0: note: Expected:
-backend/v2/composition/admin.py:0: note: def calculate(self, *, coach_id: str, academy_id: str, period_start: datetime, period_end: datetime) -> Coroutine[Any, Any, PayoutCalculation]
 backend/v2/composition/admin.py:0: note: Got:
-backend/v2/composition/admin.py:0: note: def calculate(self, *, coach_id: str, academy_id: str, period_start: datetime, period_end: datetime) -> Coroutine[Any, Any, object]
-backend/v2/composition/admin.py:0: error: Argument "calculator" to "RecomputePayoutPeriod" has incompatible type "_FinancePayoutCalculator"; expected "PayoutCalculator"  [arg-type]
-backend/v2/composition/admin.py:0: note: Following member(s) of "_FinancePayoutCalculator" have conflicts:
 backend/v2/composition/admin.py:0: note: Expected:
-backend/v2/composition/admin.py:0: note: def calculate(self, *, coach_id: str, academy_id: str, period_start: datetime, period_end: datetime) -> Coroutine[Any, Any, PayoutCalculation]
 backend/v2/composition/admin.py:0: note: Got:
-backend/v2/composition/admin.py:0: note: def calculate(self, *, coach_id: str, academy_id: str, period_start: datetime, period_end: datetime) -> Coroutine[Any, Any, object]
 backend/v2/composition/admin.py:0: error: Incompatible types in assignment (expression has type "StubEmailSendPort", variable has type "ResendEmailSendPort")  [assignment]
 backend/v2/composition/admin.py:0: error: Argument "enrollment_autopay" to "ChargeInvoiceViaAutopay" has incompatible type "MongoStudentBillingEnrollmentRepository"; expected "EnrollmentAutopayGateway | None"  [arg-type]
 backend/v2/composition/admin.py:0: note: Following member(s) of "MongoStudentBillingEnrollmentRepository" have conflicts:
@@ -841,15 +819,11 @@ backend/v2/composition/admin.py:0: note: Got:
 backend/v2/composition/admin.py:0: note: def record_attempt_outcome(self, *, enrollment_id: str, outcome: Literal['succeeded', 'declined', 'requires_action', 'error'], occurred_at: datetime, failure_code: str | None) -> Coroutine[Any, Any, None]
 backend/v2/composition/admin.py:0: error: Argument "enrollment_autopay" to "ChargeInvoiceViaAutopay" has incompatible type "MongoStudentBillingEnrollmentRepository"; expected "EnrollmentAutopayGateway | None"  [arg-type]
 backend/v2/composition/admin.py:0: note: Following member(s) of "MongoStudentBillingEnrollmentRepository" have conflicts:
-backend/v2/composition/admin.py:0: note: Expected:
 backend/v2/composition/admin.py:0: note: def record_attempt_outcome(self, *, enrollment_id: str, outcome: str, occurred_at: datetime, failure_code: str | None) -> Coroutine[Any, Any, None]
-backend/v2/composition/admin.py:0: note: Got:
 backend/v2/composition/admin.py:0: note: def record_attempt_outcome(self, *, enrollment_id: str, outcome: Literal['succeeded', 'declined', 'requires_action', 'error'], occurred_at: datetime, failure_code: str | None) -> Coroutine[Any, Any, None]
 backend/v2/composition/admin.py:0: error: Argument "enrollment_autopay" to "ProcessDunningRetries" has incompatible type "MongoStudentBillingEnrollmentRepository"; expected "DunningEnrollmentAutopayPort | None"  [arg-type]
 backend/v2/composition/admin.py:0: note: Following member(s) of "MongoStudentBillingEnrollmentRepository" have conflicts:
-backend/v2/composition/admin.py:0: note: Expected:
 backend/v2/composition/admin.py:0: note: def set_autopay_enrollment_status(self, *, enrollment_id: str, status: str) -> Coroutine[Any, Any, bool]
-backend/v2/composition/admin.py:0: note: Got:
 backend/v2/composition/admin.py:0: note: def set_autopay_enrollment_status(self, *, enrollment_id: str, status: Literal['not_offered', 'offered', 'setup_started', 'active', 'paused', 'disabled'], session: Any | None = ...) -> Coroutine[Any, Any, bool]
 backend/v2/composition/admin.py:0: error: Returning Any from function declared to return "dict[str, Any]"  [no-any-return]
 backend/v2/composition/admin.py:0: error: Returning Any from function declared to return "dict[str, Any]"  [no-any-return]
@@ -873,7 +847,6 @@ backend/v2/composition/admin.py:0: error: Function is missing a type annotation 
 backend/v2/composition/admin.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
 backend/v2/composition/admin.py:0: error: Function is missing a return type annotation  [no-untyped-def]
 backend/v2/composition/admin.py:0: error: Function is missing a return type annotation  [no-untyped-def]
-backend/v2/composition/admin.py:0: error: Missing type arguments for generic type "dict"  [type-arg]
 backend/v2/composition/admin.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
 backend/v2/composition/admin.py:0: error: Function is missing a return type annotation  [no-untyped-def]
 backend/v2/composition/admin.py:0: error: Function is missing a return type annotation  [no-untyped-def]
@@ -898,17 +871,6 @@ backend/v2/composition/admin.py:0: note: def int(str | bytes | bytearray, /, bas
 backend/v2/composition/admin.py:0: error: Argument 1 to "int" has incompatible type "object | Any"; expected "str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc"  [arg-type]
 backend/v2/composition/admin.py:0: error: Argument 1 to "int" has incompatible type "Any | object"; expected "str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc"  [arg-type]
 backend/v2/composition/admin.py:0: error: Argument 1 to "int" has incompatible type "Any | object"; expected "str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc"  [arg-type]
-backend/v2/composition/admin.py:0: error: Call to untyped function "list_dues_followup" in typed context  [no-untyped-call]
-backend/v2/composition/admin.py:0: error: Function is missing a return type annotation  [no-untyped-def]
-backend/v2/composition/admin.py:0: error: Call to untyped function "list_dues_followup" in typed context  [no-untyped-call]
-backend/v2/composition/admin.py:0: error: Function is missing a return type annotation  [no-untyped-def]
-backend/v2/composition/admin.py:0: error: "object" not callable  [operator]
-backend/v2/composition/admin.py:0: error: Argument "calculator" to "ListMonthlyPayroll" has incompatible type "_FinancePayoutCalculator"; expected "PayoutCalculator"  [arg-type]
-backend/v2/composition/admin.py:0: note: Following member(s) of "_FinancePayoutCalculator" have conflicts:
-backend/v2/composition/admin.py:0: note: Expected:
-backend/v2/composition/admin.py:0: note: def calculate(self, *, coach_id: str, academy_id: str, period_start: datetime, period_end: datetime) -> Coroutine[Any, Any, PayoutCalculation]
-backend/v2/composition/admin.py:0: note: Got:
-backend/v2/composition/admin.py:0: note: def calculate(self, *, coach_id: str, academy_id: str, period_start: datetime, period_end: datetime) -> Coroutine[Any, Any, object]
 backend/v2/composition/admin.py:0: error: Function is missing a return type annotation  [no-untyped-def]
 backend/v2/composition/admin.py:0: error: Function is missing a return type annotation  [no-untyped-def]
 backend/v2/composition/admin.py:0: error: Function is missing a return type annotation  [no-untyped-def]

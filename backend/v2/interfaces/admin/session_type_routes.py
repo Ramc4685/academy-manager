@@ -39,10 +39,13 @@ def _billing_enrollment_view(enrollment) -> StudentBillingEnrollmentView:
 
 @router.get("/session-types", response_model=SessionTypeList)
 async def list_session_types(
+    include_archived: bool = Query(default=False),
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> SessionTypeList:
-    rows = await use_cases.list_session_types.execute()  # type: ignore[union-attr]
+    rows = await use_cases.list_session_types.execute(  # type: ignore[union-attr]
+        include_archived=include_archived,
+    )
     return SessionTypeList(session_types=[_session_type_view(row) for row in rows])
 
 

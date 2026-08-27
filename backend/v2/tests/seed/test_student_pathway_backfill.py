@@ -6,7 +6,6 @@ from datetime import UTC, datetime
 
 import pytest
 from mongomock_motor import AsyncMongoMockClient
-
 from scripts.dev.backfill_student_pathway_placements import (
     backfill_student_pathway_placements,
 )

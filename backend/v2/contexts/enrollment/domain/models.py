@@ -75,6 +75,12 @@ class Student(BaseModel):
     parent_id: str
     full_name: str
     date_of_birth: str | None = None
+    # UIM12: the identity-context user_id linked to this student's own login,
+    # set once by `ProvisionStudentLogin`. `None` means no student login has
+    # been provisioned (the default, and the common case pre-UIM12). One
+    # user per student per academy — link time enforces this is only ever
+    # set once (see `MongoStudentWriter.link_student_user`).
+    student_user_id: str | None = None
 
 
 class Enrollment(BaseModel):

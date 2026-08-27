@@ -82,7 +82,8 @@ const ADMIN_ROUTES = [
   { href: "/admin/registrations?tab=level-ups", testid: "admin-level-up-queue-tab" },
   { href: "/admin/requests?tab=pauses", testid: "admin-pause-requests" },
   { href: "/admin/payments", testid: "admin-payments" },
-  { href: "/admin/dues", testid: "admin-dues" },
+  { href: "/admin/reports/dues", testid: "admin-dues" },
+  { href: "/admin/reports/session-economics", testid: "admin-session-economics" },
   { href: "/admin/reports", testid: "admin-reports" },
   { href: "/admin/coach-payslip", testid: "admin-coach-payslip" },
   { href: "/admin/expenses", testid: "admin-expenses" },
@@ -100,7 +101,37 @@ const SETTINGS_PANELS = [
   { key: "roles", label: "Roles", testid: "admin-settings-roles" },
   { key: "branding", label: "Branding", testid: "admin-settings-branding" },
   { key: "data", label: "Data", testid: "admin-settings-data" },
+  {
+    key: "session-types",
+    label: "Session types",
+    testid: "admin-settings-session-types",
+  },
 ] as const;
+
+const SESSION_TYPE_E2E = {
+  session_type_id: "st-e2e",
+  name: "Monthly Unlimited",
+  description: "All weekday squads",
+  price_cents: 12000,
+  billing_period: "monthly",
+  overage_rate_cents: 1500,
+  is_active: true,
+  created_at: "2026-07-01T00:00:00Z",
+  updated_at: "2026-07-01T00:00:00Z",
+} as const;
+
+/** Soft-deleted: only returned when the panel asks for include_archived=true. */
+const ARCHIVED_SESSION_TYPE_E2E = {
+  session_type_id: "st-e2e-archived",
+  name: "Retired Saturday Squad",
+  description: null,
+  price_cents: 8000,
+  billing_period: "monthly",
+  overage_rate_cents: null,
+  is_active: false,
+  created_at: "2026-05-01T00:00:00Z",
+  updated_at: "2026-06-01T00:00:00Z",
+} as const;
 
 const BENIGN_PATTERNS: RegExp[] = [
   /Download the React DevTools/i,
@@ -174,6 +205,14 @@ const MULTI_MEMBERSHIP = {
   active_academy_id: "academy-e2e",
 };
 
+const OWNER_MEMBERSHIP = {
+  memberships: MULTI_MEMBERSHIP.memberships.map((m) => ({
+    ...m,
+    roles: ["admin", "owner"],
+  })),
+  active_academy_id: "academy-e2e",
+};
+
 async function stubMemberships(page: Page, body = SINGLE_MEMBERSHIP) {
   await page.route("**/api/v2/me/memberships", (route) => {
     if (route.request().method() !== "GET") return route.fallback();
@@ -218,6 +257,17 @@ async function stubAdminBff(page: Page, memberships = SINGLE_MEMBERSHIP) {
           status: "active",
         },
       ],
+    });
+  });
+  await page.route("**/api/v2/admin/session-types*", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    // Mirrors the backend: archived rows only when include_archived is set.
+    const includeArchived =
+      new URL(route.request().url()).searchParams.get("include_archived") === "true";
+    return fulfillJson(route, {
+      session_types: includeArchived
+        ? [SESSION_TYPE_E2E, ARCHIVED_SESSION_TYPE_E2E]
+        : [SESSION_TYPE_E2E],
     });
   });
   await page.route("**/api/v2/admin/students*", (route) =>
@@ -288,6 +338,23 @@ async function stubAdminBff(page: Page, memberships = SINGLE_MEMBERSHIP) {
   );
   await page.route("**/api/v2/admin/reports/dashboard*", (route) =>
     fulfillJson(route, REPORTS_DASHBOARD_EMPTY),
+  );
+  await page.route("**/api/v2/admin/reports/session-economics*", (route) =>
+    fulfillJson(route, {
+      period: "2026-05",
+      summary: {
+        expected_revenue_cents: 0,
+        paid_cents: 0,
+        unpaid_cents: 0,
+        coach_payroll_cents: 0,
+        rent_cents: 0,
+        other_expenses_cents: 0,
+        expected_profit_cents: 0,
+        profit_margin: null,
+      },
+      sessions: [],
+      empty_states: [],
+    }),
   );
   await page.route("**/api/v2/admin/reports/enrollment-funnel*", (route) =>
     fulfillJson(route, {
@@ -449,6 +516,71 @@ test.describe("Rally admin shell", () => {
     ).toEqual([]);
   });
 
+  test("franchise rollup entry appears only for multi-academy owners", async ({
+    page,
+  }) => {
+    await stubAdminBff(page, MULTI_MEMBERSHIP);
+    await page.goto("/admin");
+    await expect(page.getByTestId("admin-dashboard")).toBeVisible();
+
+    // Admin in both academies, owner in neither — no rollup entry.
+    await page.getByTestId("tenant-switcher-button").click();
+    await expect(page.getByTestId("tenant-switcher-menu")).toBeVisible();
+    await expect(
+      page.getByTestId("tenant-switcher-all-academies"),
+    ).toHaveCount(0);
+  });
+
+  test("multi-academy owner can reach the franchise rollup from the switcher", async ({
+    page,
+  }) => {
+    await stubAdminBff(page, OWNER_MEMBERSHIP);
+    await page.route("**/api/v2/owner/rollup*", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, {
+        academies: [
+          {
+            academy_id: "academy-e2e",
+            academy_name: "Academy E2E",
+            revenue_by_month: { "2026-07": 120_000 },
+            collected_cents: 120_000,
+            outstanding_cents: 5_000,
+            outstanding_invoice_count: 2,
+          },
+          {
+            academy_id: "academy-e2e-2",
+            academy_name: "Academy E2E Two",
+            revenue_by_month: { "2026-07": 80_000 },
+            collected_cents: 80_000,
+            outstanding_cents: 1_000,
+            outstanding_invoice_count: 1,
+          },
+        ],
+        totals: {
+          academy_count: 2,
+          revenue_by_month: { "2026-07": 200_000 },
+          collected_cents: 200_000,
+          outstanding_cents: 6_000,
+          outstanding_invoice_count: 3,
+        },
+      });
+    });
+
+    await page.goto("/admin");
+    await expect(page.getByTestId("admin-dashboard")).toBeVisible();
+
+    await page.getByTestId("tenant-switcher-button").click();
+    const entry = page.getByTestId("tenant-switcher-all-academies");
+    await expect(entry).toBeVisible();
+    await entry.click();
+
+    await expect(page).toHaveURL(/\/owner$/);
+    await expect(page.getByTestId("owner-rollup-totals")).toContainText("$2,000.00");
+    await expect(
+      page.getByTestId("owner-rollup-row-academy-e2e-2"),
+    ).toContainText("Academy E2E Two");
+  });
+
   test("admin navigation renders all nav groups, and mobile drawer closes", async ({
     page,
   }) => {
@@ -514,6 +646,34 @@ test.describe("Rally admin shell", () => {
     expect(
       errors,
       `App console errors on coach payslip redirect: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  test("/admin/dues redirects into Reports → Dues follow-up (UIC3)", async ({
+    page,
+  }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    // The destination's own rendering is covered by the ADMIN_ROUTES mount
+    // loop; this asserts only that the old bookmark still lands there.
+    await page.goto("/admin/dues");
+    await expect(page).toHaveURL(/\/admin\/reports\/dues$/);
+    expect(
+      errors,
+      `App console errors on dues redirect: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  test("/admin/session-economics redirects into Reports → Session economics (UIC3)", async ({
+    page,
+  }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    await page.goto("/admin/session-economics");
+    await expect(page).toHaveURL(/\/admin\/reports\/session-economics$/);
+    expect(
+      errors,
+      `App console errors on session economics redirect: ${errors.join("\n")}`,
     ).toEqual([]);
   });
 
@@ -699,6 +859,102 @@ test.describe("Rally admin shell", () => {
       errors,
       `App console errors on settings: ${errors.join("\n")}`,
     ).toEqual([]);
+  });
+
+  test("session types panel lists the catalog and posts a new type", async ({
+    page,
+  }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    const created: Array<Record<string, unknown>> = [];
+    await page.route("**/api/v2/admin/session-types", (route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      created.push(route.request().postDataJSON());
+      return fulfillJson(route, {
+        ...SESSION_TYPE_E2E,
+        session_type_id: "st-new",
+        name: "Drop-in",
+      });
+    });
+
+    await page.goto("/admin/settings?panel=session-types");
+    await expect(page.getByTestId("admin-settings-session-types")).toBeVisible();
+    await expect(page.getByTestId("session-type-row")).toHaveCount(1);
+    // price_cents 12000 / overage 1500 must render as dollars, not raw cents.
+    await expect(page.getByText("$120.00")).toBeVisible();
+    await expect(page.getByText("$15.00")).toBeVisible();
+
+    await page.getByTestId("session-type-new").click();
+    await page.locator("#st-name").fill("Drop-in");
+    await page.locator("#st-price").fill("25.50");
+    await page.locator("#st-period").selectOption("per_session");
+    await page.getByTestId("session-type-save").click();
+
+    await expect.poll(() => created.length).toBe(1);
+    expect(created[0]).toMatchObject({
+      name: "Drop-in",
+      price_cents: 2550,
+      billing_period: "per_session",
+    });
+    expect(
+      errors,
+      `App console errors on session types: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  test("session types show-archived toggle lists archived rows and reactivates one", async ({
+    page,
+  }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    const patched: Array<Record<string, unknown>> = [];
+    await page.route("**/api/v2/admin/session-types/*", (route) => {
+      if (route.request().method() !== "PATCH") return route.fallback();
+      patched.push({
+        url: route.request().url(),
+        body: route.request().postDataJSON(),
+      });
+      return fulfillJson(route, { ...ARCHIVED_SESSION_TYPE_E2E, is_active: true });
+    });
+
+    await page.goto("/admin/settings?panel=session-types");
+    // Archived rows are hidden by default.
+    await expect(page.getByTestId("session-type-row")).toHaveCount(1);
+    await expect(page.getByText("Retired Saturday Squad")).toHaveCount(0);
+
+    await page.getByTestId("session-types-show-archived").check();
+    await expect(page.getByTestId("session-type-row")).toHaveCount(2);
+    const archivedRow = page
+      .getByTestId("session-type-row")
+      .filter({ hasText: "Retired Saturday Squad" });
+    await expect(archivedRow).toHaveAttribute("data-archived", "true");
+    await expect(archivedRow.getByText("ARCHIVED")).toBeVisible();
+
+    // The active row keeps Archive; only the archived row offers Reactivate.
+    await expect(page.getByTestId("session-type-reactivate")).toHaveCount(1);
+    await archivedRow.getByTestId("session-type-reactivate").click();
+
+    await expect.poll(() => patched.length).toBe(1);
+    expect(patched[0].body).toEqual({ is_active: true });
+    expect(String(patched[0].url)).toContain("st-e2e-archived");
+    expect(
+      errors,
+      `App console errors on archived session types: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  test("session types archive confirm warns that enrollments keep billing", async ({
+    page,
+  }) => {
+    await stubAdminBff(page);
+    await page.goto("/admin/settings?panel=session-types");
+    await expect(page.getByTestId("session-type-row")).toHaveCount(1);
+
+    await page.getByRole("button", { name: "Archive", exact: true }).click();
+    await expect(
+      page.getByText(/keep billing at their current price/i),
+    ).toBeVisible();
+    await expect(page.getByTestId("session-type-archive-confirm")).toBeVisible();
   });
 
   test("students search sends BFF query and renders returned rich fields", async ({

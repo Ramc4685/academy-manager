@@ -46,10 +46,12 @@ TENANT_OWNED_COLLECTIONS = {
     "attendance",
     "audit_logs",
     "billing_calculation_snapshots",
+    "billing_generation_runs",
     "billing_invoice_keys",
     "billing_policies",
     "enrollment_events",
     "enrollments",
+    "invoices",
     "expenses",
     "lesson_plans",
     "messages",
@@ -97,9 +99,9 @@ GLOBAL_COLLECTIONS = {
     "academy_domains",
 }
 
-assert not (
-    TENANT_OWNED_COLLECTIONS & GLOBAL_COLLECTIONS
-), "A collection cannot be both tenant-owned and global"
+assert not (TENANT_OWNED_COLLECTIONS & GLOBAL_COLLECTIONS), (
+    "A collection cannot be both tenant-owned and global"
+)
 
 MONGO_METHODS = {
     "aggregate",
@@ -127,12 +129,11 @@ SCOPING_TOKENS = ("academy_id", "_scoped(")
 # Narrow, per-file composition allowlist. Each entry MUST name the tracker item
 # that removes it. The blanket ``composition/{parent,coach}.py`` entries were
 # dropped once C4 (#317) moved those paths onto request-time tenant claims.
+# The ``composition/admin.py`` entry was removed by MT1 Phases B-E: the report
+# pipelines and payout read models that carried its raw reads now live in
+# ``contexts/{billing,coaching}/infrastructure``, and the file is scanned like
+# any other.
 APPROVED_COMPOSITION_EXCEPTIONS = {
-    Path("composition/admin.py"): (
-        "Transitional Admin BFF read-model composition. Raw reads remain until "
-        "MT1 drains the composition root (billing math -> application layer); "
-        "removed then."
-    ),
     Path("interfaces/admin/progress_routes.py"): (
         "Transitional: fire-and-forget audit_logs.insert_one written inline as a "
         "pathway-placement side effect until an AuditLogRepository is introduced."
@@ -182,6 +183,9 @@ def test_infrastructure_and_transitional_composition_are_no_longer_blanket_exemp
     assert not _is_approved_path(Path("composition/coach.py"))
     assert Path("composition/parent.py") not in APPROVED_COMPOSITION_EXCEPTIONS
     assert Path("composition/coach.py") not in APPROVED_COMPOSITION_EXCEPTIONS
+    # MT1 drained the admin composition root; its exemption must not come back.
+    assert not _is_approved_path(Path("composition/admin.py"))
+    assert Path("composition/admin.py") not in APPROVED_COMPOSITION_EXCEPTIONS
 
 
 def test_hardened_admin_composition_paths_use_request_tenant_not_default() -> None:
@@ -280,8 +284,7 @@ def test_unscoped_cross_collection_read_is_flagged(tmp_path) -> None:
 def test_global_collection_raw_access_is_clean(tmp_path) -> None:
     path = tmp_path / "ok_global.py"
     path.write_text(
-        "async def by_email(db, email):\n"
-        "    return await db['users'].find_one({'email': email})\n",
+        "async def by_email(db, email):\n    return await db['users'].find_one({'email': email})\n",
         encoding="utf-8",
     )
     assert _raw_mongo_accesses(path, Path("ok_global.py")) == []

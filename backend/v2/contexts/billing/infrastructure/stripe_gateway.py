@@ -642,9 +642,7 @@ class RealStripeGateway(StripeGateway):
         """Return (stripe_customer_id, payment_method_id) or None if no saved card."""
 
         def _find() -> tuple[str, str] | None:
-            query = (
-                f'metadata["academy_id"]:"{academy_id}" ' f'AND metadata["parent_id"]:"{parent_id}"'
-            )
+            query = f'metadata["academy_id"]:"{academy_id}" AND metadata["parent_id"]:"{parent_id}"'
             customers = self._stripe.Customer.search(
                 query=query,
                 limit=1,

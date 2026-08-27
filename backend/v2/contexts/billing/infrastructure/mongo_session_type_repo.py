@@ -40,6 +40,11 @@ class MongoSessionTypeRepository(TenantScopedRepository):
         cursor = self._find_many({"is_active": True}, sort=[("name", 1)])
         return [self._to_domain(doc) async for doc in cursor]
 
+    async def list_all(self) -> list[SessionType]:
+        """Archived rows included, so the admin UI can restore a soft-deleted type."""
+        cursor = self._find_many({}, sort=[("name", 1)])
+        return [self._to_domain(doc) async for doc in cursor]
+
     async def soft_delete(self, session_type_id: str) -> None:
         await self._update_one(
             {"session_type_id": session_type_id},

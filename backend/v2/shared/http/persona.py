@@ -21,7 +21,7 @@ from fastapi import Depends, HTTPException
 
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 
-Persona = Literal["coach", "parent", "admin"]
+Persona = Literal["coach", "parent", "admin", "student"]
 
 
 def require_persona(persona: Persona) -> Callable[..., AuthClaims]:
