@@ -63,6 +63,8 @@ class MongoUserRepository:
         raw_fuid = doc.get("firebase_uid") or doc.get("auth_uid")
         raw_auth_uid = doc.get("auth_uid")
         raw_nemail = doc.get("normalized_email")
+        raw_phone = doc.get("phone")
+        raw_confirmed = doc.get("email_confirmed_at")
 
         return User(
             user_id=str(doc.get("user_id") or doc.get("auth_uid") or doc["_id"]),
@@ -71,9 +73,11 @@ class MongoUserRepository:
             email=str(doc["email"]),
             normalized_email=str(raw_nemail) if raw_nemail else None,
             display_name=str(doc.get("display_name") or doc.get("name") or doc["email"]),
+            phone=str(raw_phone) if raw_phone else None,
             roles=normalized_roles,
             is_active=is_active,
             academy_id=str(doc.get("academy_id") or self._default_academy_id),
+            email_confirmed_at=raw_confirmed if isinstance(raw_confirmed, datetime) else None,
         )
 
     async def get_by_email(self, email: str) -> User | None:
@@ -91,6 +95,16 @@ class MongoUserRepository:
     async def get_by_id(self, user_id: str) -> User | None:
         doc = await self.collection.find_one(
             {"$or": [{"user_id": user_id}, {"auth_uid": user_id}, {"_id": user_id}]}
+        )
+        return self._to_domain(doc) if doc else None
+
+    async def confirm_email(self, user_id: str) -> User | None:
+        """Stamp ``email_confirmed_at`` — self-service confirmation only, never
+        an address change. The parent profile route is the only caller."""
+        doc = await self.collection.find_one_and_update(
+            {"$or": [{"user_id": user_id}, {"auth_uid": user_id}, {"_id": user_id}]},
+            {"$set": {"email_confirmed_at": datetime.now(UTC)}},
+            return_document=ReturnDocument.AFTER,
         )
         return self._to_domain(doc) if doc else None
 

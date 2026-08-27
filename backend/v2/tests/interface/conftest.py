@@ -1917,7 +1917,12 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
             return [u for u in users if role is None or u.role == role]
 
     class _ListAdminStudents:
-        async def execute(self, search=None, status=None, limit=50, cursor=None):
+        async def execute(self, search=None, status=None, limit=50, cursor=None, missing=()):
+            from backend.v2.shared.profile.completeness import CHILD_REQUIRED
+
+            unknown = set(missing) - set(CHILD_REQUIRED)
+            if unknown:
+                raise ValueError(f"Unknown missing field(s): {', '.join(sorted(unknown))}")
             rows = []
             search_key = full_name_key(search or "") if search else None
             for s in students.students.values():

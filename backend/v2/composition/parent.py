@@ -101,6 +101,9 @@ from backend.v2.contexts.enrollment.application.use_cases.absence_notices import
     ListParentAbsences,
     SubmitAbsenceNotice,
 )
+from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
+    UpdateAdminStudentCommand,
+)
 from backend.v2.contexts.enrollment.application.use_cases.confirm_enrollment import (
     ConfirmEnrollment,
 )
@@ -177,6 +180,10 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_trial_request_repo impo
 from backend.v2.contexts.enrollment.infrastructure.mongo_waitlist_repo import (
     MongoWaitlistRepository,
 )
+from backend.v2.contexts.identity.application.use_cases.admin_directory import (
+    UpdateAdminUserCommand,
+)
+from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
 from backend.v2.contexts.onboarding.application.use_cases.manage_application import (
     GetApplicationStatus,
     PatchApplication,
@@ -187,7 +194,10 @@ from backend.v2.contexts.onboarding.application.use_cases.parent_student_waivers
     AcceptParentWaiver,
     GetParentWaiverRequirement,
 )
-from backend.v2.contexts.onboarding.domain.errors import MissingSelectedSession
+from backend.v2.contexts.onboarding.domain.errors import (
+    IncompleteApplication,
+    MissingSelectedSession,
+)
 from backend.v2.contexts.onboarding.infrastructure.mongo_application_repo import (
     MongoApplicationRepository,
 )
@@ -200,6 +210,12 @@ from backend.v2.contexts.onboarding.infrastructure.mongo_registration_waiver_rep
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore
+from backend.v2.shared.profile.completeness import (
+    MEDICAL_NONE_SENTINEL,
+    ChildFacts,
+    ParentFacts,
+    evaluate,
+)
 from backend.v2.shared.security.redirect import validate_redirect_url
 from backend.v2.shared.tenancy import TenantContextUnset, current_academy_id, tenant_scope
 
@@ -253,6 +269,11 @@ class ParentComposition:
     get_registration_waiver: object  # callable -> Waiver | None
     student_progress: StudentProgressComposition
     curriculum: CurriculumComposition
+    # Self-service profile (issue #380)
+    get_parent_profile: object  # callable
+    update_parent_profile: object  # callable
+    confirm_parent_email: object  # callable
+    update_parent_child: object  # callable
 
 
 class _MongoTransactionRunner:
@@ -550,6 +571,11 @@ def compose_parent(
     enrollment_events = MongoEnrollmentEventRepository(db)
     students_writer = MongoStudentWriter(db)
     students_query = MongoStudentRepository(db)
+    # No boot-time academy fallback passed here — compose_parent must stay free
+    # of that setting (see test_no_raw_tenant_mongo_access.py); every read/write
+    # below is either unscoped by user_id or takes academy_id explicitly at
+    # call time via current_academy_id().
+    users_query = MongoUserRepository(db)
     occurrences_query = MongoSessionOccurrenceRepository(db)
     waitlist = MongoWaitlistRepository(db)
     pause_requests = MongoPauseRequestRepository(db)
@@ -893,6 +919,112 @@ def compose_parent(
                 }
             )
         return rows
+
+    def _child_facts(student: dict[str, Any]) -> ChildFacts:
+        raw_medical = student.get("medical_notes")
+        return ChildFacts(
+            student_id=str(student.get("student_id") or student["_id"]),
+            full_name=student.get("full_name"),
+            date_of_birth=(str(student["date_of_birth"]) if student.get("date_of_birth") else None),
+            emergency_contact_name=student.get("emergency_contact_name"),
+            emergency_contact_phone=student.get("emergency_contact_phone"),
+            medical_notes=str(raw_medical) if raw_medical else None,
+        )
+
+    def _child_view(student: dict[str, Any]) -> dict[str, Any]:
+        facts = _child_facts(student)
+        no_medical_conditions = facts.medical_notes == MEDICAL_NONE_SENTINEL
+        return {
+            "student_id": facts.student_id,
+            "full_name": facts.full_name or "Unnamed student",
+            "date_of_birth": facts.date_of_birth,
+            "emergency_contact_name": facts.emergency_contact_name,
+            "emergency_contact_phone": facts.emergency_contact_phone,
+            "medical_notes": None if no_medical_conditions else facts.medical_notes,
+            "no_medical_conditions": no_medical_conditions,
+        }
+
+    async def get_parent_profile(parent_id: str) -> dict[str, Any] | None:
+        """Parent's own editable fields, their children's, and the computed
+        completeness gaps — backs GET /api/v2/parent/profile (issue #380)."""
+        user = await users_query.get_by_id(parent_id)
+        if user is None:
+            return None
+        students = await _parent_students(parent_id)
+        parent_facts = ParentFacts(
+            display_name=user.display_name,
+            phone=user.phone,
+            email_confirmed_at=user.email_confirmed_at,
+        )
+        child_facts = [_child_facts(s) for s in students]
+        gaps = evaluate(parent_facts, child_facts)
+        return {
+            "user_id": user.user_id,
+            "display_name": user.display_name,
+            "email": str(user.email),
+            "email_confirmed": user.email_confirmed_at is not None,
+            "phone": user.phone,
+            "children": [_child_view(s) for s in students],
+            "gaps": {
+                "parent": gaps.parent,
+                "children": gaps.children,
+                "is_complete": gaps.is_complete,
+            },
+        }
+
+    async def update_parent_profile(parent_id: str, request: Any) -> dict[str, Any] | None:
+        """Parent editing their own display name / phone. Reuses the audited
+        admin-user write with the parent as both actor and target — matching
+        how the coach self-service profile already updates identity.User."""
+        academy_id = current_academy_id()
+        command = UpdateAdminUserCommand(
+            display_name=request.display_name,
+            phone=request.phone,
+            actor_id=parent_id,
+            reason="parent self-service profile update",
+        )
+        result = await users_query.update_admin_user(parent_id, command, academy_id=academy_id)
+        if result is None:
+            return None
+        return await get_parent_profile(parent_id)
+
+    async def confirm_parent_email(parent_id: str) -> dict[str, Any] | None:
+        user = await users_query.confirm_email(parent_id)
+        if user is None:
+            return None
+        return await get_parent_profile(parent_id)
+
+    async def update_parent_child(
+        parent_id: str, student_id: str, request: Any
+    ) -> dict[str, Any] | None:
+        """Parent editing their own child's safety details. Ownership is
+        verified against the tenant-scoped student list before any write —
+        this is the first parent write path in the codebase, so a student
+        belonging to another parent (or another academy) must never be
+        reachable, and both cases return None (404) rather than distinguishing
+        them, matching the existing _verify_child_ownership convention used
+        elsewhere in the parent BFF (progress_skill_routes.py)."""
+        students = await _parent_students(parent_id)
+        owned_ids = {str(s.get("student_id") or s["_id"]) for s in students}
+        if student_id not in owned_ids:
+            return None
+
+        medical_notes = request.medical_notes
+        if request.no_medical_conditions:
+            medical_notes = MEDICAL_NONE_SENTINEL
+
+        command = UpdateAdminStudentCommand(
+            date_of_birth=request.date_of_birth,
+            emergency_contact_name=request.emergency_contact_name,
+            emergency_contact_phone=request.emergency_contact_phone,
+            medical_notes=medical_notes,
+            actor_id=parent_id,
+            reason="parent self-service profile update",
+        )
+        updated = await students_query.update_student_profile(student_id, command)
+        if updated is None:
+            return None
+        return await get_parent_profile(parent_id)
 
     async def list_enrollments_for_parent(parent_id: str) -> list[dict[str, Any]]:
         academy_id = current_academy_id()  # request-time tenant (C4)
@@ -1421,6 +1553,29 @@ def compose_parent(
     ):
         _validate_checkout_redirect_urls(success_url, cancel_url)
         app = await get_status.execute(application_id, caller_user_id=parent_id)
+        # Stop new registrations from landing incomplete (issue #380). This
+        # runs BEFORE the paid/zero-amount branch below — the $0 path skips
+        # Stripe entirely and jumps straight to PENDING_APPROVAL, so a guard
+        # placed after that branch would let free registrations through with
+        # missing safety details.
+        missing_fields = [
+            field
+            for field, value in (
+                ("date_of_birth", app.child_profile.date_of_birth),
+                ("emergency_contact_name", app.child_profile.emergency_contact_name),
+                ("emergency_contact_phone", app.child_profile.emergency_contact_phone),
+                ("parent_phone", app.parent_profile.phone),
+            )
+            if not value.strip()
+        ]
+        if missing_fields:
+            # `missing` rides along in DomainError.details so the wizard can
+            # send the parent back to the step that owns the field instead of
+            # stranding them on the review screen with a raw field name.
+            raise IncompleteApplication(
+                f"Application is missing required details: {', '.join(missing_fields)}",
+                missing=missing_fields,
+            )
         if not app.selected_session_id:
             raise MissingSelectedSession(
                 "application must have a selected session",
@@ -1696,6 +1851,10 @@ def compose_parent(
         get_registration_waiver=get_registration_waiver,
         student_progress=sp_composition,
         curriculum=curriculum_composition,
+        get_parent_profile=get_parent_profile,
+        update_parent_profile=update_parent_profile,
+        confirm_parent_email=confirm_parent_email,
+        update_parent_child=update_parent_child,
     )
 
 

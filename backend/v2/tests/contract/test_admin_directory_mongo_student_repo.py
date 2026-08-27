@@ -296,6 +296,67 @@ async def test_list_admin_students_filters_search_and_status(db, acad) -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_admin_students_missing_filter_returns_only_incomplete(db, acad) -> None:
+    """Issue #380 admin gap report: none of the three seeded students has an
+    emergency contact, so all three match; only st-bob has no DOB either."""
+    await _seed_directory(db, acad)
+    repo = MongoStudentRepository(db)
+
+    page = await repo.list_admin_students(
+        search=None,
+        status=None,
+        limit=50,
+        cursor=None,
+        missing=("date_of_birth",),
+    )
+
+    assert {s.student_id for s in page.students} == {"st-bob", "st-alice", "st-alana"}
+
+
+@pytest.mark.asyncio
+async def test_list_admin_students_missing_filter_rejects_unknown_key(db, acad) -> None:
+    await _seed_directory(db, acad)
+    repo = MongoStudentRepository(db)
+
+    with pytest.raises(ValueError, match="status"):
+        await repo.list_admin_students(
+            search=None,
+            status=None,
+            limit=50,
+            cursor=None,
+            missing=("status",),  # not a completeness field — must be rejected
+        )
+
+
+@pytest.mark.asyncio
+async def test_list_admin_students_missing_filter_excludes_complete_students(db, acad) -> None:
+    await _seed_directory(db, acad)
+    await db["students"].update_one(
+        {"student_id": "st-alice"},
+        {
+            "$set": {
+                "date_of_birth": "2015-04-02",
+                "emergency_contact_name": "Someone",
+                "emergency_contact_phone": "+1 555 0111",
+                "medical_notes": "__none_declared__",
+            }
+        },
+    )
+    repo = MongoStudentRepository(db)
+
+    page = await repo.list_admin_students(
+        search=None,
+        status=None,
+        limit=50,
+        cursor=None,
+        missing=("date_of_birth", "emergency_contact_name"),
+    )
+
+    assert "st-alice" not in {s.student_id for s in page.students}
+    assert {s.student_id for s in page.students} == {"st-bob", "st-alana"}
+
+
+@pytest.mark.asyncio
 async def test_list_admin_students_cursor_returns_next_page_and_opaque_next_cursor(
     db, acad
 ) -> None:
