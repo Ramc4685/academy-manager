@@ -1,6 +1,6 @@
 # chore-ci-audit-ignore-extract-zip
 
-PR: (pending)
+PR: #442
 
 ## What changed
 Unblocked the CI **Frontend Static** job, which has failed on every PR since
