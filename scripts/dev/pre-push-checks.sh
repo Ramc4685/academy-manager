@@ -57,10 +57,13 @@ fi
 header "Backend"
 cd "$BACKEND"
 
-if ! source .venv/bin/activate 2>/dev/null; then
-  fail "backend .venv not found — run: cd backend && python -m venv .venv && pip install -r requirements-dev.txt"
+# A plain `source` of a missing file aborts the whole script under bash, even
+# inside an if-condition — test for the file first so the error is visible.
+if [ ! -f .venv/bin/activate ]; then
+  fail "backend/.venv missing — in a worktree, symlink the main checkout's venv: ln -s <main-checkout>/backend/.venv \"$BACKEND/.venv\" — or create one: cd backend && python -m venv .venv && pip install -r requirements-dev.txt"
   ERRORS=$((ERRORS + 1))
 else
+  source .venv/bin/activate
   run_check "ruff format --check v2" ruff format --check v2
   run_check "ruff check v2"          ruff check v2
   run_check "pytest v2/tests"        pytest v2/tests -n auto -q --tb=short

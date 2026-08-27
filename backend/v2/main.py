@@ -19,8 +19,9 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Any
 
+from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_MISSED
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from pymongo.errors import DuplicateKeyError
 from starlette.middleware.cors import CORSMiddleware
@@ -28,6 +29,7 @@ from starlette.middleware.cors import CORSMiddleware
 from backend.v2.composition.admin import compose_admin
 from backend.v2.composition.coach import compose_coach
 from backend.v2.composition.digests import (
+    compose_ops_digest_sender,
     compose_send_coach_daily_digest,
     compose_send_parent_daily_digest,
     resolve_digest_schedule,
@@ -58,6 +60,7 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo impo
 from backend.v2.contexts.billing.infrastructure.mongo_connected_account_repo import (
     MongoConnectedAccountRepository,
 )
+from backend.v2.contexts.communications.application.ports import ResolvedRecipient
 from backend.v2.contexts.communications.application.use_cases.send_coach_daily_digest import (
     SendCoachDailyDigestCommand,
 )
@@ -147,6 +150,17 @@ from backend.v2.shared.observability import (
     configure_error_tracking,
     configure_logging,
     configure_tracing,
+)
+from backend.v2.shared.observability.health import build_health_report
+from backend.v2.shared.observability.ops_alerts import (
+    capture_message,
+    handle_scheduler_job_event,
+)
+from backend.v2.shared.observability.ops_digest import (
+    INVOICE_GENERATION_JOB,
+    collect_ops_digest,
+    record_job_run,
+    render_ops_digest,
 )
 from backend.v2.shared.scheduling import job_lease
 from backend.v2.shared.tenancy.context import tenant_scope
@@ -541,13 +555,101 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 GenerateMonthlyPaymentsCommand(period=period)
             )
 
-        await _run_monthly_invoice_generation(
+        # Issue #430: generation creates invoices, this sends them. Absent on
+        # an older composition bundle, in which case generation behaves as it
+        # did before and nothing is emailed.
+        send_invoices = getattr(app.state.admin, "send_generated_invoices", None)
+
+        totals = await _run_monthly_invoice_generation(
             db=db,
             academy_ids=academy_ids,
             get_billing_settings=_get_billing_settings,
             generate=_generate,
             now=now,
+            send_invoices=send_invoices,
         )
+        # Job-level record for the daily ops digest (issue #428), kept here in
+        # the job wrapper rather than inside _run_monthly_invoice_generation so
+        # that helper stays a pure, injectable unit. It is complementary to the
+        # per-(academy, period) rows _record_monthly_generation writes to
+        # `billing_generation_runs`: those drive the catch-up gate, this answers
+        # "did the scheduled job run, and what did the last real run do".
+        #
+        # `academy_count` counts only academies that actually attempted
+        # generation this tick, which is exactly the "meaningful" bar: on the
+        # ~29 days a month when nothing is due, record a heartbeat only
+        # (`meaningful=False`) instead of overwriting the last real run's counts
+        # with zeros — those counts are the signal the digest exists to surface.
+        record: dict[str, Any] = {key: value for key, value in totals.items() if key != "created"}
+        # Match the log line's `created_count` naming (#440) so the email and
+        # the structured log read the same.
+        record["created_count"] = totals["created"]
+        record["period"] = now.strftime("%Y-%m")
+        # A tick that only emailed (issue #430's retry path: generation was
+        # already recorded, but invoices were still undelivered) is meaningful
+        # too — otherwise a month-long email outage would be invisible in the
+        # digest on all 29 days that did not generate.
+        await record_job_run(
+            db,
+            INVOICE_GENERATION_JOB,
+            record,
+            meaningful=bool(
+                totals["academy_count"]
+                or totals["invoices_emailed"]
+                or totals["invoice_emails_failed"]
+            ),
+        )
+
+    async def _send_ops_digest() -> None:
+        async with job_lease(
+            db, "send_ops_digest", timedelta(minutes=30), scheduler_worker_id
+        ) as acquired:
+            if not acquired:
+                return
+            await _send_ops_digest_body()
+
+    async def _send_ops_digest_body() -> None:
+        # Owner-facing, cross-academy summary of the things that fail silently:
+        # quarantined/failed Stripe webhooks, dead-letter events, dunning
+        # terminals, and the last invoice-generation run. Unset OPS_ALERT_EMAIL
+        # ⇒ log and skip (no recipient to fail over to).
+        recipient_email = (settings.ops_alert_email or "").strip()
+        if not recipient_email:
+            log.info("ops_digest_skipped: OPS_ALERT_EMAIL is not configured")
+            return
+        # Stamp the snapshot in the scheduler timezone: the cron fires at 07:00
+        # local, so a UTC stamp would put yesterday's date on the subject line
+        # in any UTC+ deployment.
+        snapshot = await collect_ops_digest(db, now=datetime.now(scheduler.timezone))  # type: ignore[union-attr]
+        subject, body = render_ops_digest(snapshot)
+        outcome = await app.state.ops_digest_sender.send(
+            recipient=ResolvedRecipient(
+                user_id="ops-alert",
+                email=recipient_email,
+                display_name="Ops",
+            ),
+            subject=subject,
+            body=body,
+        )
+        extra = {
+            "ok": bool(getattr(outcome, "ok", False)),
+            "failed_reason": getattr(outcome, "failed_reason", None),
+            "webhooks_quarantined": snapshot.webhooks_quarantined,
+            "webhooks_quarantined_recent": snapshot.webhooks_quarantined_recent,
+            "webhooks_failed": snapshot.webhooks_failed,
+            "webhooks_failed_stale": snapshot.webhooks_failed_stale,
+            "dead_letter_total": snapshot.dead_letter_total,
+            "dead_letter_recent": snapshot.dead_letter_recent,
+            "dunning_terminals_recent": snapshot.dunning_terminals_recent,
+        }
+        if extra["ok"]:
+            log.info("ops_digest_processed", extra=extra)
+        else:
+            # The alerting channel failing is itself an alert. Resend never
+            # raises — a rejected send comes back as SendOutcome(ok=False) — so
+            # without this the digest would go missing in silence.
+            log.error("ops_digest_send_failed", extra=extra)
+            capture_message(f"Ops digest send failed: {extra['failed_reason']}")
 
     async def _send_coach_daily_digests() -> None:
         async with job_lease(
@@ -674,7 +776,15 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         if totals["parents"]:
             log.info("parent_daily_digests_processed", extra=totals)
 
-    scheduler = AsyncIOScheduler(timezone=settings.scheduler_tz)
+    scheduler = AsyncIOScheduler(
+        timezone=settings.scheduler_tz,
+        # APScheduler's default misfire_grace_time is 1 second, so any event-loop
+        # stall longer than that counts as a miss. With the EVENT_JOB_MISSED
+        # listener registered below, that default would turn routine stalls on
+        # the 60s webhook-drain job into a steady stream of alerts. 30s is well
+        # inside every job's own interval and still catches a real stall.
+        job_defaults={"misfire_grace_time": 30},
+    )
     scheduler.add_job(
         _process_scheduled_resumes,
         "cron",
@@ -768,6 +878,23 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         replace_existing=True,
         max_instances=1,
     )
+    # Daily owner ops digest (issue #428) — the counterpart to the scheduler
+    # error listener below: the listener reports failures as they happen, this
+    # reports the state that accumulates silently. Fixed daily cron in
+    # settings.scheduler_tz; skipped entirely when OPS_ALERT_EMAIL is unset.
+    app.state.ops_digest_sender = compose_ops_digest_sender()
+    scheduler.add_job(
+        _send_ops_digest,
+        "cron",
+        hour=7,
+        minute=0,
+        id="send_ops_digest",
+        replace_existing=True,
+        max_instances=1,
+    )
+    # Job crashes and misfires previously died in APScheduler's own logger and
+    # never reached Sentry (only the request path was instrumented).
+    scheduler.add_listener(handle_scheduler_job_event, EVENT_JOB_ERROR | EVENT_JOB_MISSED)
     scheduler.start()
     app.state.scheduler = scheduler
 
@@ -907,6 +1034,7 @@ async def _run_monthly_invoice_generation(
     get_billing_settings: Callable[[], Awaitable[Any]],
     generate: Callable[[str], Awaitable[Any]],
     now: datetime,
+    send_invoices: Callable[[str], Awaitable[Any]] | None = None,
 ) -> dict[str, int]:
     """Generate monthly invoices for every academy with an unfinished period.
 
@@ -937,9 +1065,15 @@ async def _run_monthly_invoice_generation(
     ``billing_invoice_keys`` guard, so a lost or unwritten record only costs a
     redundant pass that re-reports ``skipped_existing``.
 
-    ``get_billing_settings`` and ``generate`` are called inside the academy's
-    ``tenant_scope``. Both are injected so the scheduling rules above can be
-    tested without a running app.
+    ``get_billing_settings``, ``generate`` and ``send_invoices`` are called
+    inside the academy's ``tenant_scope``. All three are injected so the
+    scheduling rules above can be tested without a running app.
+
+    ``send_invoices`` (issue #430) emails the period's undelivered invoices.
+    It runs on every tick, not only the ones that generate — it is its own
+    retry mechanism, since the generation gate above deliberately stops
+    yielding a period once it has been generated. Its failures are contained:
+    generation must never be re-attempted because an email provider was down.
     """
     period = now.strftime("%Y-%m")
     prior_period = _previous_period(period)
@@ -956,6 +1090,9 @@ async def _run_monthly_invoice_generation(
         "repaired_orphan_keys": 0,
         "repaired_partial_invoices": 0,
         "failed_repair": 0,
+        "invoices_emailed": 0,
+        "invoice_emails_failed": 0,
+        "invoice_emails_skipped_autopay": 0,
     }
     log = logging.getLogger("backend.v2.scheduler")
     for academy_id in academy_ids:
@@ -980,6 +1117,7 @@ async def _run_monthly_invoice_generation(
                 )
                 continue
             ran_any = False
+            generated_periods: list[str] = []
             for run_period, is_catch_up in due:
                 try:
                     result = await generate(run_period)
@@ -993,6 +1131,7 @@ async def _run_monthly_invoice_generation(
                     )
                     continue
                 ran_any = True
+                generated_periods.append(run_period)
                 totals["period_run_count"] += 1
                 created = int(getattr(result, "created", 0) or 0)
                 failed_repair = int(getattr(result, "failed_repair", 0) or 0)
@@ -1043,6 +1182,28 @@ async def _run_monthly_invoice_generation(
                     totals[key] += int(getattr(result, key, 0) or 0)
             if ran_any:
                 totals["academy_count"] += 1
+            if send_invoices is not None:
+                # Deliberately outside the `due` loop, and so run on every
+                # tick rather than only on generation ticks. `_due_periods`
+                # stops yielding a period the moment generation is recorded,
+                # so a send pass gated on it would get exactly one attempt per
+                # month: a single email-provider blip on billing day would
+                # mean nobody was ever told they owe money. Re-running is safe
+                # because the query only selects invoices that were never
+                # delivered.
+                #
+                # The current period is always swept; a catch-up period is
+                # swept on the tick that generates it. A catch-up period whose
+                # emails fail is therefore not retried — that gap is left
+                # rather than sweeping every historical period daily.
+                for email_period in sorted({period, *generated_periods}):
+                    await _email_generated_invoices(
+                        send_invoices=send_invoices,
+                        academy_id=academy_id,
+                        run_period=email_period,
+                        totals=totals,
+                        log=log,
+                    )
     if totals["academy_count"]:
         # ``created`` is a reserved LogRecord attribute (the record's own
         # timestamp) and logging raises KeyError rather than letting an
@@ -1052,6 +1213,46 @@ async def _run_monthly_invoice_generation(
         summary["created_count"] = totals["created"]
         log.info("monthly_invoices_generated", extra={**summary, "period": period})
     return totals
+
+
+async def _email_generated_invoices(
+    *,
+    send_invoices: Callable[[str], Awaitable[Any]],
+    academy_id: str,
+    run_period: str,
+    totals: dict[str, int],
+    log: logging.Logger,
+) -> None:
+    """Email this academy's undelivered invoices and fold the counts in.
+
+    Called inside the academy's ``tenant_scope``. Swallows every failure by
+    design: generation has already been recorded at this point, and a raised
+    email error would abort the remaining academies in the run.
+    """
+    try:
+        outcome = await send_invoices(run_period)
+    except Exception:
+        log.exception(
+            "generated_invoice_emails_failed academy=%s period=%s",
+            academy_id,
+            run_period,
+        )
+        return
+    for total_key, outcome_key in (
+        ("invoices_emailed", "emailed"),
+        ("invoice_emails_failed", "email_failed"),
+        ("invoice_emails_skipped_autopay", "skipped_autopay"),
+    ):
+        totals[total_key] += int(_outcome_count(outcome, outcome_key))
+
+
+def _outcome_count(outcome: Any, key: str) -> int:
+    """Read a count off either a mapping or an attribute-bearing result."""
+    if isinstance(outcome, dict):
+        value = outcome.get(key, 0)
+    else:
+        value = getattr(outcome, key, 0)
+    return int(value or 0)
 
 
 async def _due_periods(
@@ -1122,8 +1323,24 @@ def create_app() -> FastAPI:
     app.add_middleware(RequestContextMiddleware)
 
     @app.get("/api/v2/healthz")
-    async def healthz() -> dict[str, str]:
-        return {"status": "ok"}
+    async def healthz(response: Response) -> dict[str, Any]:
+        """Liveness for Fly's 30s check and any external uptime monitor.
+
+        503 on a fault a machine restart can actually fix (issue #429) — a
+        lost Mongo connection, a stopped scheduler, a dead dispatcher task.
+        Job heartbeats are reported but never fail the check: restarting the
+        process does not make an overdue job run, and flapping the machine
+        would make it worse.
+        """
+        report, healthy = await build_health_report(
+            db=getattr(app.state, "db", None),
+            scheduler=getattr(app.state, "scheduler", None),
+            dispatcher=getattr(app.state, "dispatcher", None),
+        )
+        if not healthy:
+            response.status_code = 503
+            log.warning("healthz_degraded", extra={"checks": report["checks"]})
+        return report
 
     # Persona route packages.
     app.include_router(me_router, prefix="/api/v2")

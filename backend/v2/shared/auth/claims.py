@@ -29,6 +29,8 @@ from typing import Literal
 from fastapi import HTTPException, Request
 from pydantic import BaseModel, Field
 
+from backend.v2.shared.http.errors import DomainError
+
 # Re-exported from the identity domain so route files can import role types
 # directly from the auth surface without crossing context boundaries. Kept
 # in sync by hand with `contexts.identity.domain.models.Role` (shared/ must
@@ -71,16 +73,49 @@ class AuthClaims(BaseModel, frozen=True):
         return "platform_admin" in self.platform_roles
 
 
+class NotAuthenticated(DomainError, HTTPException):
+    """401 raised when a protected route has no attached AuthClaims.
+
+    When `TenancyMiddleware` swallowed a concrete auth failure it stashes the
+    domain error *code* on `request.state.auth_error_code`; that code is
+    surfaced here as `details.reason` so the login surface can tell the user
+    why sign-in bounced (issue #425). Only the machine-readable code is ever
+    exposed — never the underlying exception message.
+
+    It is also an `HTTPException` so that apps which never registered the
+    `DomainError` handler (test harnesses mounting a single router) still
+    answer 401 rather than raising. `DomainError` precedes `HTTPException`
+    in the MRO, so the richer envelope wins wherever the handler is
+    registered — which includes the real app.
+    """
+
+    code = "Auth.NotAuthenticated"
+    status_code = 401
+
+    def __init__(self, message: str = "", **details: object) -> None:
+        # `DomainError.__init__` is deliberately not delegated to: its
+        # `super().__init__(message)` would land on `HTTPException` through
+        # this class's MRO and be read as a status code. The two fields it
+        # sets are assigned directly instead.
+        HTTPException.__init__(self, status_code=self.status_code, detail=message or self.code)
+        self.message = message or self.code
+        self.details = details
+
+
 async def get_auth_claims(request: Request) -> AuthClaims:
     """Resolve AuthClaims from the request state.
 
     Reads `request.state.auth_claims` set by `TenancyMiddleware` after the
     `load_auth_claims` use case verifies the bearer token. Raises 401 when
     no claims were attached (e.g. missing/invalid token on a protected
-    route). Tests inject claims via FastAPI's dependency override.
+    route), carrying the middleware's failure code as `details.reason`.
+    Tests inject claims via FastAPI's dependency override.
     """
 
     claims: AuthClaims | None = getattr(request.state, "auth_claims", None)
     if claims is None:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+        reason = getattr(request.state, "auth_error_code", None)
+        if reason:
+            raise NotAuthenticated("Not authenticated", reason=reason)
+        raise NotAuthenticated("Not authenticated")
     return claims

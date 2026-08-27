@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { onAuthChange } from "@/lib/auth/firebase";
 import { clearBffIdentityCookie } from "@/lib/api/auth-bridge-cookie";
 import { getCurrentUserWithToken, homeForRoles } from "@/lib/api/me";
+import { loginPathForError } from "@/lib/auth/login-error";
 
 export default function PostLoginPage() {
   const router = useRouter();
@@ -24,9 +25,9 @@ export default function PostLoginPage() {
           .then((currentUser) => {
             replaceLocation(router, homeForRoles(currentUser.roles));
           })
-          .catch(() => {
+          .catch((err: unknown) => {
             clearBffIdentityCookie();
-            replaceLocation(router, "/login");
+            replaceLocation(router, loginPathForError(err));
           });
       }),
     [router]
@@ -45,7 +46,8 @@ function replaceLocation(
 ): void {
   router.replace(path as Parameters<typeof router.replace>[0]);
   window.setTimeout(() => {
-    if (window.location.pathname !== path) {
+    const current = `${window.location.pathname}${window.location.search}`;
+    if (current !== path) {
       window.location.replace(path);
     }
   }, 500);

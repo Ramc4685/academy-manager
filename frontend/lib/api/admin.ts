@@ -583,6 +583,18 @@ export interface SendInvoiceResponse {
   sent_at: string | null;
   last_sent_at: string | null;
   checkout_url: string | null;
+  /**
+   * Set when the pay link was attempted and FAILED, in which case no parent
+   * email was sent. Absent/null means either the link was minted, or the
+   * academy simply has no online payments set up (a normal email still went
+   * out). See backend issue #426.
+   */
+  checkout_failure_code?:
+    | "checkout_creation_failed"
+    | "connected_account_not_ready"
+    | "connected_accounts_not_configured"
+    | string
+    | null;
 }
 
 export interface ChargeAutopayResponse {
