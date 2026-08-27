@@ -206,6 +206,9 @@ test.describe("QA defect regressions", () => {
     await expect(parentForm.getByRole("heading", { name: "Your details" })).toBeVisible();
     await parentForm.getByLabel("First name").fill("Rina");
     await parentForm.getByLabel("Last name").fill("Patel");
+    // Required since issue #380 — the checkout guard rejects an application
+    // with no parent phone, so the step won't submit without it.
+    await parentForm.getByLabel("Phone").fill("555-0100");
     await parentForm.getByRole("button", { name: "Next" }).click();
 
     const childForm = page.locator("form").filter({ hasText: "Your child" });
@@ -215,6 +218,9 @@ test.describe("QA defect regressions", () => {
     await childForm.getByLabel("Date of birth").fill("2014-02-03");
     await expect(childForm.getByLabel("First name")).toHaveValue("Ava");
     await childForm.getByRole("radio", { name: "Beginner" }).click();
+    // Also required since issue #380.
+    await childForm.getByLabel("Emergency contact name").fill("Dev Patel");
+    await childForm.getByLabel("Emergency contact phone").fill("555-0199");
     await childForm.getByRole("button", { name: "Next" }).click();
 
     await expect(page.getByText("BLNO Liability Waiver")).toBeVisible();
