@@ -9,7 +9,10 @@ import pytest
 
 from backend.v2.composition.parent import compose_parent, compose_parent_webhook_handler
 from backend.v2.contexts.billing.domain.connected_account import ConnectedAccount
-from backend.v2.contexts.billing.domain.errors import CheckoutCreationFailed
+from backend.v2.contexts.billing.domain.errors import (
+    CheckoutCreationFailed,
+    InvoicePayLinkUnavailable,
+)
 from backend.v2.contexts.billing.domain.ledger import LedgerInvoice
 from backend.v2.contexts.onboarding.domain.errors import IncompleteApplication
 from backend.v2.shared.config import get_settings
@@ -69,6 +72,9 @@ class _FakeCollection:
 
     async def update_one(self, query: dict[str, Any], update: dict[str, Any], **_: Any) -> None:
         self.updates.append({"query": query, "update": update})
+
+    async def insert_one(self, doc: dict[str, Any], **_: Any) -> None:
+        self.docs.append(doc)
 
 
 class _FakeDb:
@@ -302,7 +308,9 @@ async def test_parent_single_invoice_payment_refuses_platform_charge_without_rea
     )
 
     with tenant_scope("acad"):
-        with pytest.raises(ValueError, match="invoice payment link unavailable"):
+        with pytest.raises(
+            InvoicePayLinkUnavailable, match="invoice payment link unavailable"
+        ) as exc_info:
             await parent.start_invoice_payment_for_parent(
                 parent_id="parent-1",
                 invoice_id="inv-1",
@@ -311,6 +319,9 @@ async def test_parent_single_invoice_payment_refuses_platform_charge_without_rea
             )
 
     assert stripe.invoice_checkout_calls == []
+    # 409 preserved, but now with a code the parent app can map (issue #426).
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.code == "Billing.InvoicePayLinkUnavailable"
 
 
 @pytest.mark.asyncio
@@ -531,7 +542,7 @@ async def test_parent_balance_payment_refuses_platform_charge_without_ready_acco
     )
 
     with tenant_scope("acad"):
-        with pytest.raises(ValueError, match="balance payment unavailable"):
+        with pytest.raises(InvoicePayLinkUnavailable, match="balance payment unavailable") as exc:
             await parent.start_balance_payment_for_parent(
                 parent_id="parent-1",
                 success_url="https://app.example.com/parent/payments?invoice=paid",
@@ -539,6 +550,10 @@ async def test_parent_balance_payment_refuses_platform_charge_without_ready_acco
             )
 
     assert stripe.invoice_checkout_calls == []
+    assert exc.value.status_code == 409, "still a 409, now with a code"
+    # No connected-account row at all: this academy never onboarded online
+    # payments, so nothing is "broken" and no failure reason is attributed.
+    assert exc.value.details.get("reason") is None
 
 
 @pytest.mark.asyncio
@@ -604,7 +619,7 @@ async def test_parent_balance_payment_provider_failure_returns_unavailable(
     )
 
     with tenant_scope("acad"):
-        with pytest.raises(ValueError, match="balance payment unavailable"):
+        with pytest.raises(InvoicePayLinkUnavailable, match="balance payment unavailable") as exc:
             await parent.start_balance_payment_for_parent(
                 parent_id="parent-1",
                 success_url="https://app.example.com/parent/payments?invoice=paid",
@@ -612,6 +627,14 @@ async def test_parent_balance_payment_provider_failure_returns_unavailable(
             )
 
     assert stripe.invoice_checkout_calls[0]["connected_account_id"] == "acct_ready"
+    # The parent portal's primary CTA blew up: loud, attributed, and recorded
+    # once per invoice behind the link (issue #426).
+    assert exc.value.details.get("reason") == "checkout_creation_failed"
+    attempts = db["payment_attempts"].docs
+    assert {a["invoice_id"] for a in attempts} == {"inv-1", "inv-2"}
+    assert all(a["status"] == "checkout_mint_failed" for a in attempts)
+    # Each invoice's OWN balance, not the 12_000 bundle total.
+    assert {a["amount_cents"] for a in attempts} == {7_000, 5_000}
 
 
 @pytest.mark.asyncio

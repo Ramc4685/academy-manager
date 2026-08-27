@@ -288,3 +288,53 @@ async def test_replay_returns_false_when_not_quarantined(db) -> None:
         academy_id="acad",
     )
     assert await dedup.replay("evt_r", academy_id="acad") is False
+
+
+# --------------------------------------------------------------------------- #
+# issue #426 — pay-link mint failures share this collection but are NOT charge
+# outcomes. The billing-health list drives a Retry button that fires an
+# off-session CARD CHARGE, which is the wrong remedy for a broken pay link.
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_list_open_failed_attempts_excludes_checkout_mint_failures(db, acad) -> None:
+    repo = MongoBillingLedgerRepository(db)
+    await _open_invoice(db, acad, "inv-mint", status="open")
+    await _attempt(
+        repo,
+        invoice_id="inv-mint",
+        status="checkout_mint_failed",
+        when=NOW,
+        code="connected_account_not_ready",
+    )
+
+    rows = await repo.list_open_failed_attempts()
+
+    assert [r["invoice_id"] for r in rows] == []
+
+
+@pytest.mark.asyncio
+async def test_mint_failure_does_not_mask_a_real_decline(db, acad) -> None:
+    """Filtering happens BEFORE the group: a later mint failure must not
+    become the invoice's latest_decline_code, nor drop a genuinely declined
+    invoice off the operator's list."""
+    repo = MongoBillingLedgerRepository(db)
+    await _open_invoice(db, acad, "inv-both", status="open")
+    await _attempt(
+        repo,
+        invoice_id="inv-both",
+        status="failed",
+        when=NOW - timedelta(days=1),
+        code="card_declined",
+    )
+    await _attempt(
+        repo,
+        invoice_id="inv-both",
+        status="checkout_mint_failed",
+        when=NOW,
+        code="checkout_creation_failed",
+    )
+
+    rows = await repo.list_open_failed_attempts()
+
+    assert [r["invoice_id"] for r in rows] == ["inv-both"]
+    assert rows[0]["latest_decline_code"] == "card_declined"

@@ -19,6 +19,9 @@ from backend.v2.contexts.billing.domain.ledger import (
     recompute_totals,
 )
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry
+from backend.v2.contexts.billing.domain.payment_attempt_kinds import (
+    exclude_non_charge_attempts,
+)
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 
@@ -350,10 +353,18 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         and invoices whose latest attempt succeeded are excluded. Newest failed
         attempt first. Single aggregation (no per-invoice round-trips), capped
         at ``limit`` rows like the other admin list reads in this module.
+
+        Pay-link mint failures (issue #426) are excluded **before** the group,
+        not after: this list drives a Retry button that fires an off-session
+        card charge, which is the wrong remedy for a broken pay link and may
+        target a parent with no saved card. Filtering before the group also
+        keeps a later mint failure from masking a genuine ``card_declined`` as
+        the invoice's ``latest_decline_code``. Mint failures get their own
+        admin surface in issue #432.
         """
         academy_id = current_academy_id()
         pipeline: list[dict[str, Any]] = [
-            {"$match": {"academy_id": academy_id}},
+            {"$match": exclude_non_charge_attempts({"academy_id": academy_id})},
             {"$sort": {"created_at": -1}},
             {
                 "$group": {

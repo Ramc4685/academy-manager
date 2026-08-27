@@ -912,6 +912,10 @@ class SendInvoiceResponse(BaseModel):
     sent_at: datetime | None = None
     last_sent_at: datetime | None = None
     checkout_url: str | None = None
+    #: Set when the pay link was attempted and failed (Stripe error, or the
+    #: academy's connected account cannot receive charges). When set, no parent
+    #: email was sent and delivery_status is "delivery_failed" (issue #426).
+    checkout_failure_code: str | None = None
 
 
 class ChargeAutopayResponse(BaseModel):
