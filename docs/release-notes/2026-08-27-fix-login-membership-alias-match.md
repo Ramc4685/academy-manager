@@ -1,6 +1,6 @@
 # Login membership matching by identity alias
 
-PR: #TBD
+PR: #438
 
 ## What changed
 - `LoadAuthClaims` resolved the caller's `academy_memberships` row by an exact `user_id` match. `ensure_parent_login` / `ensure_student_login` preserve a pre-existing roster `user_id` on the `users` doc while keying the new membership row by the freshly provisioned `firebase_uid`, so the two legitimately diverge. Those parents signed in to Firebase successfully and were then rejected with a bare 401 from `/api/v2/me` and silently bounced back to the login page.
