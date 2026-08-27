@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from typing import Any, NamedTuple
+from typing import Any
 
 from bson import ObjectId as BsonObjectId
 from pymongo import ReturnDocument
@@ -38,8 +39,13 @@ from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 log = logging.getLogger(__name__)
 
 
-class _ActiveSessions(NamedTuple):
-    """A student's active-session facts for one directory row (issue #104)."""
+@dataclass(frozen=True)
+class _ActiveSessions:
+    """A student's active-session facts for one directory row (issue #104).
+
+    A dataclass rather than a NamedTuple: ``count`` would shadow
+    ``tuple.count`` and mypy rejects the override.
+    """
 
     count: int = 0  # active enrollment documents
     total: int = 0  # distinct active sessions
