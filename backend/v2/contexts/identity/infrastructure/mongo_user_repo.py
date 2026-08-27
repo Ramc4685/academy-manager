@@ -29,6 +29,7 @@ from backend.v2.contexts.identity.domain.errors import (
     UserEmailUpdateFailed,
     UserOutsideAcademy,
 )
+from backend.v2.contexts.identity.domain.identity_aliases import aliases_from_doc
 from backend.v2.contexts.identity.domain.models import Role, User, normalize_email
 from backend.v2.contexts.identity.infrastructure.firebase_admin_adapter import (
     get_firebase_admin_adapter,
@@ -60,11 +61,13 @@ class MongoUserRepository:
         is_active = bool(doc.get("is_active", status != "inactive" and status != "disabled"))
 
         raw_fuid = doc.get("firebase_uid") or doc.get("auth_uid")
+        raw_auth_uid = doc.get("auth_uid")
         raw_nemail = doc.get("normalized_email")
 
         return User(
             user_id=str(doc.get("user_id") or doc.get("auth_uid") or doc["_id"]),
             firebase_uid=str(raw_fuid) if raw_fuid else None,
+            auth_uid=str(raw_auth_uid) if raw_auth_uid else None,
             email=str(doc["email"]),
             normalized_email=str(raw_nemail) if raw_nemail else None,
             display_name=str(doc.get("display_name") or doc.get("name") or doc["email"]),
@@ -606,18 +609,11 @@ class MongoUserRepository:
     def _identity_aliases(doc: dict[str, object]) -> list[str]:
         """Every identifier this account might be keyed by in `academy_memberships`.
 
-        `users.user_id` and `academy_memberships.user_id` are supposed to be
-        the same value, but `ensure_parent_login`/`ensure_student_login`
-        preserve a pre-existing roster `user_id` while keying the new
-        membership row by the freshly-provisioned `firebase_uid` (see those
-        methods below), so the two can legitimately diverge in either
-        direction. Check every alias rather than betting on one field.
+        Thin wrapper over the shared `domain.identity_aliases` helper, which
+        the membership repository and `load_auth_claims` also use so the
+        invite path and the login path can never drift apart again.
         """
-        return [
-            str(value)
-            for value in (doc.get("user_id"), doc.get("auth_uid"), doc.get("firebase_uid"))
-            if value
-        ]
+        return list(aliases_from_doc(doc))
 
     async def _active_membership_for_doc(
         self, doc: dict[str, object], *, academy_id: str

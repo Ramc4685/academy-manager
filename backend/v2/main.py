@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import os
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Any
@@ -1292,8 +1292,12 @@ class _LegacyUserMembershipAdapter:
         self._default_academy_id = default_academy_id
 
     async def get_for_user_in_academy(
-        self, *, user_id: str, academy_id: str
+        self, *, user_id: str, academy_id: str, aliases: Sequence[str] | None = None
     ) -> AcademyMembership | None:
+        # `aliases` is accepted for port compatibility. This adapter resolves
+        # the User by id (which already matches user_id/auth_uid/_id) and
+        # synthesizes the membership from that row, so there is no separate
+        # membership key to alias-match.
         user: User | None = await self._users.get_by_id(user_id)
         if user is None:
             return None
