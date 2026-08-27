@@ -57,6 +57,26 @@ Set in `package.json` under `size-limit` for the coach Today, parent onboarding,
 and admin landing chunks. The CI workflow reports this gate with
 `continue-on-error: true`.
 
+## Dependency vulnerability scan
+
+CI runs `pnpm audit --audit-level=high` (Frontend Static job) before typecheck,
+lint, and build. The gate stays at `high` — do not lower the level or skip the
+step.
+
+Suppressions live in `pnpm-workspace.yaml` under `auditConfig.ignoreGhsas`
+(pnpm 11 no longer reads a `pnpm` field in `package.json`). Almost every entry
+there is paired with a patched `overrides` pin — the ignore exists only because
+`pnpm audit` still evaluates the upstream declared range.
+
+The one exception is **GHSA-jmr9-qjv8-65gv** (`extract-zip <=2.0.1`,
+unvalidated symlink path traversal), which has no patched release to pin to.
+It is reached only transitively through **devDependencies** (`@lhci/cli` →
+lighthouse → puppeteer-core → `@puppeteer/browsers`, and `size-limit` → estimo
+→ find-chrome-bin → `@puppeteer/browsers`), so it never ships in the deployed
+bundle. The advisory names `>=2.0.2` as patched, but no such version has been
+published — `extract-zip@2.0.1` is still the latest release. Remove the entry
+once upstream publishes a fix or the puppeteer chain drops `extract-zip`.
+
 ## Scripts
 
 ```bash

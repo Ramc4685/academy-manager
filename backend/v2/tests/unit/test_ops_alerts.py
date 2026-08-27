@@ -6,6 +6,7 @@ content assembly. Both use fakes — no Mongo, no Sentry, no Resend.
 
 from __future__ import annotations
 
+import inspect
 import logging
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
@@ -480,3 +481,26 @@ def test_render_escapes_collection_errors() -> None:
 
     assert "<script>" not in body
     assert "&lt;script&gt;" in body
+
+
+# --- main.py integration seam ----------------------------------------------
+
+
+def test_invoice_job_records_a_heartbeat_only_when_nothing_was_generated() -> None:
+    """Issue #428 x #440: the ops_job_runs write must stay gated on the totals
+    returned by _run_monthly_invoice_generation.
+
+    `academy_count` counts only academies that actually attempted generation
+    (`ran_any`), so it is the right "meaningful" bar. If a refactor ever drops
+    the gate, ~29 heartbeat ticks a month would overwrite the last real run's
+    counts with zeros and the digest would report nothing but zeros forever.
+    """
+    from backend.v2.main import _lifespan
+
+    body = inspect.getsource(_lifespan).split("_generate_monthly_invoices_body", 2)[2]
+    call = body.split("record_job_run(", 1)[1].split("        )", 1)[0]
+
+    assert 'meaningful=bool(totals["academy_count"])' in call
+    # The stored record must use #440's `created_count` naming so the email and
+    # the structured log line agree.
+    assert 'record["created_count"] = totals["created"]' in body

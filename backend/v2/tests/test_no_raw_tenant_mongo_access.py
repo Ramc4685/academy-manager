@@ -46,6 +46,7 @@ TENANT_OWNED_COLLECTIONS = {
     "attendance",
     "audit_logs",
     "billing_calculation_snapshots",
+    "billing_generation_runs",
     "billing_invoice_keys",
     "billing_policies",
     "dunning_states",

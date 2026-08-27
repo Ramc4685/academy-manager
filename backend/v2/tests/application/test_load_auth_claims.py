@@ -69,10 +69,11 @@ class FakeMembershipRepo:
         self._rows = list(memberships)
 
     async def get_for_user_in_academy(
-        self, *, user_id: str, academy_id: str
+        self, *, user_id: str, academy_id: str, aliases=None
     ) -> AcademyMembership | None:
+        candidates = {user_id, *(aliases or ())}
         for row in self._rows:
-            if row.user_id == user_id and row.academy_id == academy_id:
+            if row.user_id in candidates and row.academy_id == academy_id:
                 return row
         return None
 
@@ -154,6 +155,93 @@ async def test_valid_token_valid_tenant_active_membership_returns_claims() -> No
     assert claims.membership_id == "m-coach-court"
     assert claims.roles == ("coach",)
     assert claims.platform_roles == ()
+
+
+@pytest.mark.asyncio
+async def test_membership_keyed_by_firebase_alias_still_resolves_claims() -> None:
+    """Regression (#424): the membership row is keyed by the provisioned
+    `firebase_uid` while the users doc keeps its roster `user_id`
+    (`ensure_parent_login` writes exactly this shape). The login path matched
+    `user_id` only, so such a parent signed in to Firebase and then got a bare
+    401 from `/api/v2/me`. PR #400 already fixed the invite path the same way."""
+    parent = User(
+        user_id="roster-parent-7",
+        firebase_uid="fb-uid-7",
+        email="parent@example.com",
+        display_name="Roster Parent",
+        global_status="active",
+    )
+    membership = AcademyMembership(
+        membership_id="m-parent-alias",
+        academy_id="academy-court",
+        user_id="fb-uid-7",  # keyed by the alias, not users.user_id
+        roles=("parent",),
+        status="active",
+    )
+    uc = _build(token_email="parent@example.com", users=[parent], memberships=[membership])
+
+    claims = await uc.execute("fake-token", resolved_academy_id="academy-court")
+
+    assert claims.membership_id == "m-parent-alias"
+    assert claims.roles == ("parent",)
+    assert claims.user_id == "roster-parent-7"
+    assert claims.academy_id == "academy-court"
+
+
+@pytest.mark.asyncio
+async def test_membership_keyed_by_stale_auth_uid_still_resolves_claims() -> None:
+    """Regression (#424): a users doc can carry a stale `auth_uid` alongside a
+    newer `firebase_uid`. The domain `User` collapses the two for display, so
+    the alias set must carry `auth_uid` separately — otherwise a membership
+    row keyed by the stale value stays unmatched, while the invite path
+    (PR #400) matches all three raw fields."""
+    parent = User(
+        user_id="roster-parent-9",
+        firebase_uid="fb-uid-9",
+        auth_uid="legacy-uid-9",
+        email="stale@example.com",
+        display_name="Stale Alias Parent",
+        global_status="active",
+    )
+    membership = AcademyMembership(
+        membership_id="m-stale-alias",
+        academy_id="academy-court",
+        user_id="legacy-uid-9",
+        roles=("parent",),
+        status="active",
+    )
+    uc = _build(token_email="stale@example.com", users=[parent], memberships=[membership])
+
+    claims = await uc.execute("fake-token", resolved_academy_id="academy-court")
+
+    assert claims.membership_id == "m-stale-alias"
+
+
+@pytest.mark.asyncio
+async def test_alias_match_does_not_cross_academies() -> None:
+    """Alias matching widens identity, never tenant scope."""
+    parent = User(
+        user_id="roster-parent-7",
+        firebase_uid="fb-uid-7",
+        email="parent@example.com",
+        display_name="Roster Parent",
+        global_status="active",
+    )
+    other_academy_membership = AcademyMembership(
+        membership_id="m-elsewhere",
+        academy_id="academy-other",
+        user_id="fb-uid-7",
+        roles=("parent",),
+        status="active",
+    )
+    uc = _build(
+        token_email="parent@example.com",
+        users=[parent],
+        memberships=[other_academy_membership],
+    )
+
+    with pytest.raises(MembershipNotFound):
+        await uc.execute("fake-token", resolved_academy_id="academy-court")
 
 
 @pytest.mark.asyncio

@@ -272,6 +272,13 @@ def render_ops_digest(snapshot: OpsDigestSnapshot) -> tuple[str, str]:
 
 
 def _render_invoice_run(snapshot: OpsDigestSnapshot) -> str:
+    """Job-level view of the invoice generator.
+
+    Distinct from the per-(academy, period) rows in ``billing_generation_runs``,
+    which drive the catch-up gate: this section answers "did the scheduled job
+    run, and what did the last run that actually generated anything do". The
+    heartbeat line is what makes a job that stopped ticking visible at all.
+    """
     run = snapshot.last_invoice_run
     tick = snapshot.last_invoice_tick_at
     tick_line = f"<p>Last generation tick: {escape(_stamp(tick))}.</p>" if tick is not None else ""
