@@ -2968,7 +2968,8 @@
         "loading",
         "no role",
         "access denied",
-        "fallback redirect"
+        "fallback redirect",
+        "error"
       ],
       "risk_edges": [
         "/me 500 after Firebase success",
