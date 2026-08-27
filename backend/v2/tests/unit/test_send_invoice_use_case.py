@@ -775,7 +775,9 @@ async def test_stripe_exception_records_failed_payment_attempt() -> None:
 
     assert len(repo.payment_attempts) == 1
     attempt = repo.payment_attempts[0]
-    assert attempt["status"] == "failed"
+    # NOT "failed": that status means a charge outcome and would contaminate
+    # the dunning sweep and the billing-health failed-payments list.
+    assert attempt["status"] == "checkout_mint_failed"
     assert attempt["failure_code"] == "checkout_creation_failed"
     assert attempt["failure_message"] == "card gateway exploded"
     assert attempt["invoice_id"] == "inv-1"
@@ -820,7 +822,7 @@ async def test_connected_account_blocked_records_failed_payment_attempt() -> Non
     await _blocked_uc(repo, email=None).execute("inv-1")
 
     assert len(repo.payment_attempts) == 1
-    assert repo.payment_attempts[0]["status"] == "failed"
+    assert repo.payment_attempts[0]["status"] == "checkout_mint_failed"
     assert repo.payment_attempts[0]["failure_code"] == "connected_account_not_ready"
 
 
@@ -922,3 +924,110 @@ async def test_financial_status_unchanged_by_checkout_failure() -> None:
 
     assert result.invoice.status == "open"
     assert result.invoice.balance_due_cents == 10_000
+
+
+# ---------------------------------------------------------------------------
+# #426 review follow-ups — the production shapes the first pass got wrong
+# ---------------------------------------------------------------------------
+
+
+async def test_academy_without_connect_account_still_emails_parent() -> None:
+    """THE production case the first fix broke.
+
+    compose_admin always passes the PLATFORM Stripe client, so `stripe=None`
+    never happens in multi-tenant prod. An academy that simply never onboarded
+    Connect has a live Stripe client but no connected-account row — it must
+    still get its normal invoice email (with the contact-the-academy copy),
+    and must NOT be recorded as a failure.
+    """
+    email = FakeInvoiceEmail()
+    stripe = FakeInvoiceStripe()
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open", balance_due_cents=10_000)])
+    uc = SendInvoice(
+        ledger=repo,
+        stripe=stripe,  # platform client present, as in prod
+        email=email,  # type: ignore[arg-type]
+        connected_accounts=_FakeConnectedAccounts(None),  # never onboarded
+        settings=_FakeBillingSettings(
+            BillingSettings(academy_id="acad-1", allow_platform_charge_fallback=False)
+        ),  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    )
+    result = await uc.execute("inv-1")
+
+    assert stripe.calls == [], "must not mint a platform-charge link"
+    assert len(email.calls) == 1, "parent must still receive the invoice"
+    assert email.calls[0]["checkout_url"] is None
+    assert result.invoice.delivery_status == "sent"
+    assert result.checkout_failure_code is None
+    assert repo.payment_attempts == [], "not onboarding Connect is not a failure"
+
+
+async def test_connect_account_present_but_not_ready_is_still_a_failure() -> None:
+    """Counterpart to the test above: an account that EXISTS but cannot charge
+    means the academy wants online payments and is broken."""
+    email = FakeInvoiceEmail()
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open", balance_due_cents=10_000)])
+    result = await _blocked_uc(repo, email=email).execute("inv-1")
+
+    assert email.calls == []
+    assert result.checkout_failure_code == "connected_account_not_ready"
+    assert len(repo.payment_attempts) == 1
+
+
+async def test_previously_sent_invoice_is_not_downgraded_on_resend_failure() -> None:
+    """Admin re-send with a broken pay link must not erase the record that the
+    parent already received an earlier email, nor stamp a fake last_sent_at."""
+    email = FakeInvoiceEmail()
+    repo = FakeLedgerRepository(
+        invoices=[
+            _invoice(
+                status="open",
+                balance_due_cents=10_000,
+                delivery_status="sent",
+                sent_at=FIRST_SEND,
+                last_sent_at=FIRST_SEND,
+            )
+        ]
+    )
+    result = await _blocked_uc(repo, email=email).execute("inv-1")
+
+    assert email.calls == [], "still suppressed — no dead-end email"
+    assert result.invoice.delivery_status == "sent", "March's delivery still happened"
+    assert result.invoice.sent_at == FIRST_SEND
+    assert result.invoice.last_sent_at == FIRST_SEND, "no send was attempted now"
+    assert len(repo.payment_attempts) == 1, "but the failure is still recorded"
+
+
+async def test_never_sent_invoice_is_marked_delivery_failed() -> None:
+    email = FakeInvoiceEmail()
+    repo = FakeLedgerRepository(
+        invoices=[_invoice(status="open", balance_due_cents=10_000, delivery_status="not_sent")]
+    )
+    result = await _blocked_uc(repo, email=email).execute("inv-1")
+
+    assert result.invoice.delivery_status == "delivery_failed"
+    assert result.invoice.sent_at is None
+
+
+async def test_bundled_failure_records_each_invoices_own_balance() -> None:
+    """A bundled link over 3 x $100 is $300 of exposure, not 3 x $300."""
+    invoices = [
+        _invoice(invoice_id="inv-1", status="open", balance_due_cents=10_000),
+        _invoice(invoice_id="inv-2", status="open", balance_due_cents=10_000),
+        _invoice(invoice_id="inv-3", status="open", balance_due_cents=10_000),
+    ]
+    repo = FakeLedgerRepository(invoices=invoices)
+    uc = SendInvoice(
+        ledger=repo,
+        stripe=_RaisingInvoiceStripe(),  # type: ignore[arg-type]
+        email=None,
+        connected_accounts=_FakeConnectedAccounts(_StubConnectedAccount(ready=True)),  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    )
+    await uc.execute("inv-1", bundle_student_balance=True)
+
+    assert len(repo.payment_attempts) == 3, "one row per invoice behind the link"
+    assert {a["invoice_id"] for a in repo.payment_attempts} == {"inv-1", "inv-2", "inv-3"}
+    assert [a["amount_cents"] for a in repo.payment_attempts] == [10_000, 10_000, 10_000]
+    assert sum(a["amount_cents"] for a in repo.payment_attempts) == 30_000

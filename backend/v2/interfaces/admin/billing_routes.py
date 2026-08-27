@@ -878,7 +878,7 @@ async def send_billing_invoice(
         sent_at=result["sent_at"],
         last_sent_at=result["last_sent_at"],
         checkout_url=result["checkout_url"],
-        checkout_failure_code=result.get("checkout_failure_code"),
+        checkout_failure_code=result["checkout_failure_code"],
     )
 
 
