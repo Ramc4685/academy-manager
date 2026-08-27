@@ -41,6 +41,16 @@ auditConfig:
     - GHSA-5p4m-2wfm-xmqj # js-yaml 3.15.1 / 4.3.1
     - GHSA-28wg-ghj8-5hjv # nanoid >=5.1.16
     - GHSA-2v37-7h3g-55p8 # nanoid >=3.3.18
+  # The entry below is the exception: it has NO patched release to pin to.
+  # GHSA-jmr9-qjv8-65gv (extract-zip <=2.0.1, unvalidated symlink path
+  # traversal) names >=2.0.2 as patched, but 2.0.1 is still the latest version
+  # published to the registry — there is nothing to upgrade or override to.
+  # Dev-only and transitive: @lhci/cli -> lighthouse -> puppeteer-core ->
+  # @puppeteer/browsers, and size-limit -> estimo -> find-chrome-bin ->
+  # @puppeteer/browsers. It never reaches the deployed bundle. Remove this
+  # entry once upstream publishes a fix or the puppeteer chain drops
+  # extract-zip.
+    - GHSA-jmr9-qjv8-65gv # extract-zip <=2.0.1, dev-only, no patched release
 
 onlyBuiltDependencies:
   - esbuild
