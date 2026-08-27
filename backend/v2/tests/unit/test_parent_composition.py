@@ -9,7 +9,10 @@ import pytest
 
 from backend.v2.composition.parent import compose_parent, compose_parent_webhook_handler
 from backend.v2.contexts.billing.domain.connected_account import ConnectedAccount
-from backend.v2.contexts.billing.domain.errors import CheckoutCreationFailed
+from backend.v2.contexts.billing.domain.errors import (
+    CheckoutCreationFailed,
+    InvoicePayLinkUnavailable,
+)
 from backend.v2.contexts.billing.domain.ledger import LedgerInvoice
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.tenancy import tenant_scope
@@ -301,7 +304,9 @@ async def test_parent_single_invoice_payment_refuses_platform_charge_without_rea
     )
 
     with tenant_scope("acad"):
-        with pytest.raises(ValueError, match="invoice payment link unavailable"):
+        with pytest.raises(
+            InvoicePayLinkUnavailable, match="invoice payment link unavailable"
+        ) as exc_info:
             await parent.start_invoice_payment_for_parent(
                 parent_id="parent-1",
                 invoice_id="inv-1",
@@ -310,6 +315,9 @@ async def test_parent_single_invoice_payment_refuses_platform_charge_without_rea
             )
 
     assert stripe.invoice_checkout_calls == []
+    # 409 preserved, but now with a code the parent app can map (issue #426).
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.code == "Billing.InvoicePayLinkUnavailable"
 
 
 @pytest.mark.asyncio

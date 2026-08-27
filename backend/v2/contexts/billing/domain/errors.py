@@ -35,6 +35,21 @@ class CheckoutCreationFailed(DomainError):
     status_code = 502
 
 
+class InvoicePayLinkUnavailable(DomainError):
+    """A parent asked to pay an open invoice but no Stripe Checkout URL could be
+    produced — the gateway raised, or funds cannot be routed to the academy's
+    connected account (issue #426).
+
+    409 (not 502) preserves the status the parent portal's "Pay now" flow has
+    always returned for an unusable invoice; the ``code`` is what is new, so the
+    frontend payment-error mapper can render a real explanation instead of a
+    generic "something went wrong".
+    """
+
+    code = "Billing.InvoicePayLinkUnavailable"
+    status_code = 409
+
+
 class ConnectOnboardingFailed(DomainError):
     code = "Billing.ConnectOnboardingFailed"
     status_code = 502

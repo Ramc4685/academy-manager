@@ -51,6 +51,7 @@ from backend.v2.contexts.billing.application.use_cases.start_checkout import (
     StartCheckoutCommand,
     StartCheckoutResult,
 )
+from backend.v2.contexts.billing.domain.errors import InvoicePayLinkUnavailable
 from backend.v2.contexts.billing.domain.ledger import InvoiceLine
 from backend.v2.contexts.billing.infrastructure.mongo_autopay_consent_repo import (
     MongoAutopayConsentRepository,
@@ -1212,7 +1213,12 @@ def compose_parent(
             cancel_url=cancel_url,
         ).execute(invoice_id, enroll_autopay=enroll_autopay)
         if not result.checkout_url:
-            raise ValueError("invoice payment link unavailable")
+            # Still 409, but now with a machine-readable code and the concrete
+            # reason SendInvoice recorded (issue #426) instead of a bare string.
+            raise InvoicePayLinkUnavailable(
+                "invoice payment link unavailable",
+                reason=result.checkout_failure_code,
+            )
         return {
             "invoice_id": result.invoice.invoice_id,
             "checkout_url": result.checkout_url,
