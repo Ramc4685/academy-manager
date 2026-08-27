@@ -12,6 +12,7 @@ import { GatewayPanel } from "@/components/admin/settings/gateway-panel";
 import { NotifyPanel } from "@/components/admin/settings/notify-panel";
 import { RolesPanel } from "@/components/admin/settings/roles-panel";
 import { SelfServicePanel } from "@/components/admin/settings/self-service-panel";
+import { SessionTypesPanel } from "@/components/admin/settings/session-types-panel";
 import {
   SETTINGS_TABS,
   SettingsTabs,
@@ -62,6 +63,7 @@ export default function AdminSettingsPage() {
       {active === "branding" && <BrandingPanel />}
       {active === "data" && <DataPanel />}
       {active === "self-service" && <SelfServicePanel />}
+      {active === "session-types" && <SessionTypesPanel />}
     </section>
   );
 }

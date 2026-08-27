@@ -155,6 +155,9 @@ from backend.v2.contexts.identity.application.use_cases.manage_user_roles import
 from backend.v2.contexts.identity.application.use_cases.provision_parent_login import (
     ProvisionParentLogin,
 )
+from backend.v2.contexts.identity.application.use_cases.provision_student_login import (
+    ProvisionStudentLogin,
+)
 from backend.v2.contexts.identity.application.use_cases.send_login_invite import (
     SendLoginInvite,
 )
@@ -269,6 +272,7 @@ class AdminUseCases:
     update_admin_user: UpdateAdminUser | None = None
     create_admin_user: CreateAdminUser | None = None
     provision_parent_login: ProvisionParentLogin | None = None
+    provision_student_login: ProvisionStudentLogin | None = None
     send_login_invite: SendLoginInvite | None = None
     add_user_role: AddUserRole | None = None
     remove_user_role: RemoveUserRole | None = None
@@ -383,6 +387,10 @@ class AdminUseCases:
     # audited admin toggle for billing_settings.allow_platform_charge_fallback.
     get_platform_charge_fallback: object | None = None  # GetPlatformChargeFallback
     set_platform_charge_fallback: object | None = None  # SetPlatformChargeFallback
+    # audited admin control for billing_settings.billing_day/invoice_due_days,
+    # which drive the automated monthly invoice generation job.
+    get_invoice_schedule: object | None = None  # GetInvoiceScheduleSettings
+    set_invoice_schedule: object | None = None  # SetInvoiceScheduleSettings
 
 
 def get_admin_use_cases(request: Request) -> AdminUseCases:

@@ -23,6 +23,7 @@ from backend.v2.composition.digests import (
 )
 from backend.v2.composition.email_adapters import (
     AddCardReminderEmailAdapter,
+    DuesReminderEmailAdapter,
     InvoiceEmailAdapter,
     LoginInviteEmailAdapter,
 )
@@ -58,7 +59,9 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
     UndoPaymentPaid,
 )
 from backend.v2.contexts.billing.application.use_cases.billing_settings_admin import (
+    GetInvoiceScheduleSettings,
     GetPlatformChargeFallback,
+    SetInvoiceScheduleSettings,
     SetPlatformChargeFallback,
 )
 from backend.v2.contexts.billing.application.use_cases.billing_setup_registration import (
@@ -425,6 +428,9 @@ from backend.v2.contexts.identity.application.use_cases.manage_user_roles import
 from backend.v2.contexts.identity.application.use_cases.provision_parent_login import (
     ProvisionParentLogin,
 )
+from backend.v2.contexts.identity.application.use_cases.provision_student_login import (
+    ProvisionStudentLogin,
+)
 from backend.v2.contexts.identity.application.use_cases.send_login_invite import (
     SendLoginInvite,
 )
@@ -432,6 +438,11 @@ from backend.v2.contexts.identity.application.use_cases.stripe_connect import (
     CompleteStripeConnectUseCase,
     DisconnectStripeUseCase,
     StartStripeConnectUseCase,
+)
+from backend.v2.contexts.identity.domain.errors import (
+    StudentAlreadyLinked,
+    StudentNotFound,
+    UserAlreadyLinkedToStudent,
 )
 from backend.v2.contexts.identity.infrastructure.firebase_admin_adapter import (
     get_firebase_admin_adapter,
@@ -470,12 +481,112 @@ from backend.v2.contexts.student_progress.infrastructure.mongo_skill_progress_re
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases
 from backend.v2.shared.comms import CommsService, MongoMessageRepository
+from backend.v2.shared.comms.whatsapp import dues_reminder_text, whatsapp_deep_link
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.occurrences import occurrence_session_id
 from backend.v2.shared.tenancy import TenantContextUnset, current_academy_id, tenant_scope
+from backend.v2.shared.tenancy.academy_url import academy_frontend_url
+
+
+class _StudentLoginProvisionerAdapter:
+    """Bridges identity's `ProvisionStudentLogin` use case across the
+    identity/enrollment boundary (UIM12). The use case itself only knows
+    about the `StudentLoginProvisioner` port; this adapter — composition
+    root, not an interface — is what's allowed to touch both
+    `MongoUserRepository` (identity) and `MongoStudentWriter`/
+    `MongoStudentRepository` (enrollment) in one call.
+
+    "One user per student per academy" is enforced in BOTH directions,
+    in layers (the review found the first cut only guarded the student
+    side, letting two siblings invited with one family email share a
+    login and see each other's data):
+
+    1. Pre-checks below — clean 404/409 before any Firebase account or
+       membership row is created. The student must be unlinked, and the
+       user this email would resolve to must not already be another
+       student's login.
+    2. `link_student_user` — conditional `$set` (student side) plus the
+       unique partial index from migration 0150 (user side). This is
+       the race-safe layer: concurrent invites that both pass the
+       pre-checks cannot both commit.
+    3. `get_by_student_user_id` fails closed if a duplicate ever exists
+       anyway, so corruption degrades to "no access", not "wrong data".
+    """
+
+    def __init__(
+        self,
+        users: MongoUserRepository,
+        students_read: MongoStudentRepository,
+        students_write: MongoStudentWriter,
+    ) -> None:
+        self._users = users
+        self._students_r = students_read
+        self._students_w = students_write
+
+    async def _reject_if_user_linked_elsewhere(self, user_id: str, *, student_id: str) -> None:
+        already = await self._students_r.count_students_linked_to_user(
+            user_id, excluding_student_id=student_id
+        )
+        if already:
+            raise UserAlreadyLinkedToStudent(
+                "that email is already another student's login; use a different email",
+                student_id=student_id,
+            )
+
+    async def ensure_student_login(
+        self,
+        *,
+        student_id: str,
+        email: str,
+        display_name: str,
+        academy_id: str,
+        actor_id: str,
+        reason: str = "student login invite",
+    ) -> str:
+        students = await self._students_r.by_ids([student_id])
+        student = students[0] if students else None
+        if student is None:
+            raise StudentNotFound(f"student {student_id!r} not found")
+        if student.student_user_id:
+            raise StudentAlreadyLinked(
+                f"student {student_id!r} already has a login", student_id=student_id
+            )
+
+        # Pre-check against the user this email already resolves to, so
+        # the sibling-shared-email case is rejected before we create a
+        # Firebase account or grant a membership.
+        existing_user = await self._users.get_by_email(email)
+        if existing_user is not None:
+            await self._reject_if_user_linked_elsewhere(
+                existing_user.user_id, student_id=student_id
+            )
+
+        user_id = await self._users.ensure_student_login(
+            student_id=student_id,
+            email=email,
+            display_name=display_name,
+            academy_id=academy_id,
+            actor_id=actor_id,
+            reason=reason,
+        )
+        # Re-check with the *resolved* uid: get_by_email may miss (legacy
+        # docs, casing) where ensure_student_login's own lookup hits.
+        await self._reject_if_user_linked_elsewhere(user_id, student_id=student_id)
+
+        outcome = await self._students_w.link_student_user(student_id, user_id)
+        if outcome == "student_already_linked":
+            raise StudentAlreadyLinked(
+                f"student {student_id!r} already has a login", student_id=student_id
+            )
+        if outcome == "user_already_linked":
+            raise UserAlreadyLinkedToStudent(
+                "that email is already another student's login; use a different email",
+                student_id=student_id,
+            )
+        return user_id
 
 
 class _ConnectedAccountGatewayReader:
@@ -812,6 +923,11 @@ def compose_admin(
         settings=billing_settings_repo,
         audit=billing_audit_log,
     )
+    get_invoice_schedule = GetInvoiceScheduleSettings(settings=billing_settings_repo)
+    set_invoice_schedule = SetInvoiceScheduleSettings(
+        settings=billing_settings_repo,
+        audit=billing_audit_log,
+    )
 
     async def _describe_payout_occurrences(
         occurrence_ids: list[str],
@@ -876,7 +992,17 @@ def compose_admin(
         if _s.frontend_url
         else "noreply@academy.app"
     )
-    if _s.email_delivery_enabled and _s.resend_api_key:
+    # Beyond email_delivery_enabled + resend_api_key, real delivery is only
+    # wired in an approved environment (staging/prod) -- mirrors
+    # digests.py::_build_email_sender / _REAL_EMAIL_ENVS. A dev or test stack
+    # that has inherited delivery flags and Resend credentials must still
+    # fall back to the stub (AGENTS.md: "Do not send real email from
+    # local/test environments").
+    _email_env = str(getattr(_s, "env", "") or "").lower()
+    _email_sender_is_real = bool(
+        _s.email_delivery_enabled and _s.resend_api_key and _email_env in {"staging", "prod"}
+    )
+    if _email_sender_is_real and _s.resend_api_key:
         _email_sender = ResendEmailSendPort(api_key=_s.resend_api_key, from_address=_from_addr)
     else:
         _email_sender = StubEmailSendPort()
@@ -922,11 +1048,17 @@ def compose_admin(
         return InvoiceEmailAdapter(
             memberships=MongoMembershipRepository(db),
             users=MongoUserRepository(db, default_academy_id=academy_id),
+            academies=academy_repo,
             sender=_email_sender,
         )
 
     async def send_billing_invoice(invoice_id: str) -> dict[str, Any]:
-        frontend_url = (settings.frontend_url or "https://app.example.com").rstrip("/")
+        academy_doc = await academy_repo.find_by_id(current_academy_id())
+        academy_slug = str(academy_doc.get("slug") or "") if academy_doc else ""
+        frontend_url = academy_frontend_url(
+            frontend_url=settings.frontend_url or "https://app.example.com",
+            academy_slug=academy_slug,
+        )
         invoice_stripe = stripe if hasattr(stripe, "create_invoice_checkout_session") else None
         result = await SendInvoice(
             ledger=billing_ledger_repo,
@@ -1641,6 +1773,10 @@ def compose_admin(
         academies=academy_repo,
     )
     provision_parent_login = ProvisionParentLogin(users_r)
+
+    provision_student_login = ProvisionStudentLogin(
+        _StudentLoginProvisionerAdapter(users_r, students_r, students_w)
+    )
     add_user_role = AddUserRole(users_r)
     remove_user_role = RemoveUserRole(users_r)
     list_admin_students = ListAdminStudents(students_r)
@@ -3024,8 +3160,10 @@ def compose_admin(
         ]
         combined = attempt_rows + invoice_rows + ledger_rows + deduped_legacy
         combined.sort(
-            key=lambda r: (r.get("created_at") if isinstance(r, dict) else None)
-            or datetime.min.replace(tzinfo=UTC),
+            key=lambda r: (
+                (r.get("created_at") if isinstance(r, dict) else None)
+                or datetime.min.replace(tzinfo=UTC)
+            ),
             reverse=True,
         )
         return combined[:fetch_cap]
@@ -3701,7 +3839,28 @@ def compose_admin(
             )
         return rows
 
-    async def list_dues_followup():
+    async def _parent_payments_link(request_academy_id: str) -> tuple[str | None, str]:
+        """Resolve one academy's parent-payments URL and display name.
+
+        Outbound links must point at the academy's own subdomain (ADR-0007),
+        never the deployment's generic ``frontend_url``. Returns ``None`` for
+        the URL when no frontend URL is configured, so callers fall back to
+        "log in to the parent portal" wording instead of a broken link.
+        """
+        academy_doc = await academy_repo.find_by_id(request_academy_id)
+        academy_slug = str(academy_doc.get("slug") or "") if academy_doc else ""
+        academy_name = (
+            str(academy_doc.get("display_name") or academy_doc.get("name") or "")
+            if academy_doc
+            else ""
+        )
+        frontend_url = academy_frontend_url(
+            frontend_url=settings.frontend_url, academy_slug=academy_slug
+        )
+        pay_url = f"{frontend_url}/parent/payments" if frontend_url else None
+        return pay_url, academy_name
+
+    async def list_dues_followup() -> list[dict[str, Any]]:
         from backend.v2.shared.tenancy import current_academy_id
 
         request_academy_id = current_academy_id()
@@ -3731,8 +3890,10 @@ def compose_admin(
                     "parent_id": parent_id,
                     "parent_name": None,
                     "email": None,
+                    "phone": None,
                     "pending_count": 0,
                     "total_due_cents": 0,
+                    "whatsapp_url": None,
                 },
             )
             entry["pending_count"] += 1
@@ -3772,8 +3933,10 @@ def compose_admin(
                     "parent_id": parent_id,
                     "parent_name": None,
                     "email": None,
+                    "phone": None,
                     "pending_count": 0,
                     "total_due_cents": 0,
+                    "whatsapp_url": None,
                 },
             )
             entry["pending_count"] += 1
@@ -3801,7 +3964,27 @@ def compose_admin(
                             or ""
                         )
                         totals[key]["email"] = user.get("email")
-        return sorted(totals.values(), key=lambda row: int(row["total_due_cents"]), reverse=True)
+                        totals[key]["phone"] = user.get("phone")
+        rows: list[dict[str, Any]] = sorted(
+            totals.values(), key=lambda entry: int(entry["total_due_cents"]), reverse=True
+        )
+        if rows:
+            # One lookup for the whole page: every row shares the same academy,
+            # so the pay link and academy name are resolved once, not per row.
+            pay_url, academy_name = await _parent_payments_link(request_academy_id)
+            for followup in rows:
+                followup["whatsapp_url"] = whatsapp_deep_link(
+                    phone=followup["phone"],
+                    message=dues_reminder_text(
+                        display_name=followup["parent_name"],
+                        total_due_cents=int(followup["total_due_cents"]),
+                        pending_count=int(followup["pending_count"]),
+                        currency="usd",
+                        pay_url=pay_url,
+                        academy_name=academy_name,
+                    ),
+                )
+        return rows
 
     async def get_billing_invoice_detail(invoice_id: str) -> dict[str, Any]:
         from backend.v2.shared.tenancy import current_academy_id
@@ -3983,6 +4166,8 @@ def compose_admin(
         )
         return {"artifact_id": artifact_id, "artifact_type": artifact_type, "status": "generated"}
 
+    _dues_reminder_email = DuesReminderEmailAdapter(academies=academy_repo, sender=_email_sender)
+
     class _DuesReminderSender:
         async def send_dues_reminders(
             self,
@@ -4022,23 +4207,67 @@ def compose_admin(
                             "invoice_pdf",
                         )
                         generated += 1
+
+            if not _email_sender_is_real:
+                return {
+                    "sent": 0,
+                    "blocked": True,
+                    "reason": (
+                        f"Local/test safety block: {len(rows)} reminder(s) were not sent "
+                        "(email delivery is not enabled for this environment)."
+                    ),
+                    "selected_parent_ids": parent_ids or [str(row["parent_id"]) for row in rows],
+                    "generated_invoice_artifacts": generated,
+                }
+
+            pay_url, _academy_name = await _parent_payments_link(request_academy_id)
+            membership_repo = MongoMembershipRepository(db)
+            sent = 0
+            skipped = 0
+            for row in rows:
+                parent_id = str(row["parent_id"])
+                membership = await membership_repo.get_membership(request_academy_id, parent_id)
+                if (
+                    membership is None
+                    or not membership.is_active()
+                    or "parent" not in membership.roles
+                ):
+                    skipped += 1
+                    continue
+                user = await users_r.get_by_id(parent_id)
+                email = str(user.email if user else "").strip()
+                if not email:
+                    skipped += 1
+                    continue
+                ok = await _dues_reminder_email.send_reminder(
+                    parent_id=parent_id,
+                    email=email,
+                    display_name=str(user.display_name if user else "") or None,
+                    total_due_cents=int(row["total_due_cents"]),
+                    pending_count=int(row["pending_count"]),
+                    currency="usd",
+                    pay_url=pay_url,
+                )
+                if ok:
+                    sent += 1
+                else:
+                    skipped += 1
+
+            reason = (
+                f"{skipped} parent(s) skipped (no active membership, no email on file, "
+                "or delivery failed)."
+                if skipped
+                else None
+            )
             return {
-                "sent": 0,
-                "blocked": True,
-                "reason": f"Local/test safety block: {len(rows)} reminder(s) were not sent.",
+                "sent": sent,
+                "blocked": False,
+                "reason": reason,
                 "selected_parent_ids": parent_ids or [str(row["parent_id"]) for row in rows],
                 "generated_invoice_artifacts": generated,
             }
 
     send_dues_reminders = SendDuesReminders(sender=_DuesReminderSender())
-
-    async def _legacy_send_dues_reminders():
-        rows = await list_dues_followup()
-        return {
-            "sent": 0,
-            "blocked": True,
-            "reason": f"Local/test safety block: {len(rows)} reminder(s) were not sent.",
-        }
 
     get_refunds_report = make_refunds_report(db)
     get_revenue_by_category_report = make_revenue_by_category_report(db)
@@ -4175,6 +4404,8 @@ def compose_admin(
         list_self_cancellations_for_admin=list_self_cancellations_for_admin,
         get_platform_charge_fallback=get_platform_charge_fallback,
         set_platform_charge_fallback=set_platform_charge_fallback,
+        get_invoice_schedule=get_invoice_schedule,
+        set_invoice_schedule=set_invoice_schedule,
         generate_monthly_payments=generate_monthly_payments,
         mark_payment_paid=mark_payment_paid,
         apply_payment_discount=apply_payment_discount,
@@ -4266,6 +4497,7 @@ def compose_admin(
         update_admin_user=update_admin_user,
         create_admin_user=create_admin_user,
         provision_parent_login=provision_parent_login,
+        provision_student_login=provision_student_login,
         send_login_invite=send_login_invite,
         add_user_role=add_user_role,
         remove_user_role=remove_user_role,

@@ -33,11 +33,17 @@ from pydantic import BaseModel, EmailStr, Field, field_validator, model_validato
 # Academy-scoped roles. These are the roles a user can hold *within* a
 # single academy via an `AcademyMembership`. They are NOT platform roles.
 #
+# "student" (UIM12) is granted only via `ProvisionStudentLogin`, which links
+# the membership's `user_id` to a `Student.student_user_id`. It is gated
+# end-to-end by `settings.enable_student_login` — a `student` membership can
+# exist while the flag is off (the invite already went out); the BFF just
+# 404s until the flag flips.
+#
 # `owner` is the franchise role: a user holding it in several academies can
 # read a cross-academy financial rollup (UIM11). It is still an academy-scoped
 # role — the rollup unions the user's own `owner` memberships and never widens
 # from the request tenant.
-Role = Literal["admin", "coach", "parent", "owner"]
+Role = Literal["admin", "coach", "parent", "student", "owner"]
 
 # Platform-wide roles. Granted via `PlatformRole` records and carried on
 # `AuthClaims.platform_roles` separately from academy roles.
@@ -69,6 +75,11 @@ class User(BaseModel):
 
     user_id: str
     firebase_uid: str | None = None
+    # Older records carry the auth identifier under `auth_uid`, and a doc may
+    # hold a stale `auth_uid` alongside a newer `firebase_uid`. Kept as a
+    # distinct field so membership lookups can match every alias this account
+    # may be keyed by (see `domain/identity_aliases.py`).
+    auth_uid: str | None = None
     email: EmailStr
     normalized_email: str | None = None
     display_name: str

@@ -386,6 +386,45 @@
       ]
     },
     {
+      "route": "/admin/reports/dues",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/reports/dues/page.tsx",
+      "workflows": [
+        "Review dues",
+        "Send reminders"
+      ],
+      "controls": {
+        "buttons": [
+          "Select all",
+          "Send reminders",
+          "Refresh"
+        ],
+        "inputs": [
+          "Family checkboxes",
+          "Period"
+        ],
+        "modals": [
+          "Reminder confirmation"
+        ]
+      },
+      "states": [
+        "loading",
+        "empty",
+        "email disabled",
+        "send failed",
+        "error state"
+      ],
+      "risk_edges": [
+        "Local email disabled but UI claims sent"
+      ],
+      "acceptance": [
+        "Disabled email state is truthful",
+        "Workflow evidence: \"Review dues\" completes for the admin route /admin/reports/dues with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Send reminders\" completes for the admin route /admin/reports/dues with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Local email disabled but UI claims sent\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
       "route": "/admin/expenses",
       "role": "admin",
       "source": "frontend/app/(admin)/admin/expenses/page.tsx",
@@ -1153,6 +1192,41 @@
       ]
     },
     {
+      "route": "/admin/reports/session-economics",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/reports/session-economics/page.tsx",
+      "workflows": [
+        "Review session profitability"
+      ],
+      "controls": {
+        "buttons": [
+          "Refresh",
+          "Export"
+        ],
+        "inputs": [
+          "Period",
+          "Session filter"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty",
+        "partial unavailable",
+        "error state"
+      ],
+      "risk_edges": [
+        "Revenue/payroll disagree",
+        "Scale query slow"
+      ],
+      "acceptance": [
+        "Report distinguishes unavailable payroll from zero payroll",
+        "Workflow evidence: \"Review session profitability\" completes for the admin route /admin/reports/session-economics with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Revenue/payroll disagree\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Scale query slow\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
       "route": "/admin/sessions",
       "role": "admin",
       "source": "frontend/app/(admin)/admin/sessions/page.tsx",
@@ -1319,34 +1393,45 @@
         "Gateway",
         "Notifications",
         "Branding",
-        "Data"
+        "Data",
+        "Manage session types"
       ],
       "controls": {
         "buttons": [
           "Save",
           "Cancel",
-          "Connect Stripe"
+          "Connect Stripe",
+          "New session type",
+          "Archive"
         ],
         "inputs": [
           "Academy name",
           "Fees",
           "Notification toggles",
-          "Branding"
+          "Branding",
+          "Session type name",
+          "Session type price",
+          "Billing period",
+          "Overage rate"
         ],
         "modals": [
           "Stripe gateway",
-          "Data action confirmation"
+          "Data action confirmation",
+          "Session type form",
+          "Archive session type confirmation"
         ]
       },
       "states": [
         "loading",
         "saved",
         "validation error",
-        "provider unavailable"
+        "provider unavailable",
+        "empty"
       ],
       "risk_edges": [
         "CORS/origin mismatch",
-        "Stripe connect unavailable"
+        "Stripe connect unavailable",
+        "Archiving a session type referenced by active billing enrollments"
       ],
       "acceptance": [
         "Each panel saves or shows specific failure",
@@ -1357,7 +1442,9 @@
         "Workflow evidence: \"Branding\" completes for the admin route /admin/settings with real-user evidence and no framework or runtime errors.",
         "Workflow evidence: \"Data\" completes for the admin route /admin/settings with real-user evidence and no framework or runtime errors.",
         "Risk evidence: \"CORS/origin mismatch\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Stripe connect unavailable\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+        "Risk evidence: \"Stripe connect unavailable\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Workflow evidence: \"Manage session types\" completes for the admin route /admin/settings with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Archiving a session type referenced by active billing enrollments\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     },
     {
@@ -1642,10 +1729,10 @@
         "submitting",
         "validation error",
         "create failed (email exists)",
-        "created \u2192 redirect to user detail"
+        "created → redirect to user detail"
       ],
       "risk_edges": [
-        "duplicate email \u2192 creation fails, surfaced inline",
+        "duplicate email → creation fails, surfaced inline",
         "parent auto-invite send failure is best-effort (user created, invite re-sendable)"
       ],
       "acceptance": [
@@ -2980,6 +3067,102 @@
         "Workflow evidence: \"Read terms\" completes for the public route /terms with real-user evidence and no framework or runtime errors.",
         "Risk evidence: \"Missing legal content\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"Broken navigation\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/student/dashboard",
+      "role": "student",
+      "source": "frontend/app/(student)/student/dashboard/page.tsx",
+      "workflows": [
+        "Level summary",
+        "Next sessions"
+      ],
+      "controls": {
+        "buttons": [
+          "Persona switcher",
+          "Logout"
+        ],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty state",
+        "error",
+        "access denied"
+      ],
+      "risk_edges": [
+        "wrong-role access",
+        "tenant leakage across academies"
+      ],
+      "acceptance": [
+        "Workflow evidence: \"Level summary\" completes for the student route /student/dashboard with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Next sessions\" completes for the student route /student/dashboard with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"wrong-role access\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"tenant leakage across academies\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/student/schedule",
+      "role": "student",
+      "source": "frontend/app/(student)/student/schedule/page.tsx",
+      "workflows": [
+        "View upcoming schedule"
+      ],
+      "controls": {
+        "buttons": [
+          "Persona switcher",
+          "Logout"
+        ],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty state",
+        "error",
+        "access denied"
+      ],
+      "risk_edges": [
+        "wrong-role access",
+        "stale schedule after enrollment change"
+      ],
+      "acceptance": [
+        "Workflow evidence: \"View upcoming schedule\" completes for the student route /student/schedule with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"wrong-role access\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"stale schedule after enrollment change\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/student/progress",
+      "role": "student",
+      "source": "frontend/app/(student)/student/progress/page.tsx",
+      "workflows": [
+        "View skill passport"
+      ],
+      "controls": {
+        "buttons": [
+          "Persona switcher",
+          "Logout"
+        ],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty state",
+        "error",
+        "access denied",
+        "not found"
+      ],
+      "risk_edges": [
+        "wrong-role access",
+        "stale progress after coach update"
+      ],
+      "acceptance": [
+        "Workflow evidence: \"View skill passport\" completes for the student route /student/progress with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"wrong-role access\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"stale progress after coach update\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     },
     {

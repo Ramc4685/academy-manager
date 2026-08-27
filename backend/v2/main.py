@@ -14,13 +14,15 @@ from __future__ import annotations
 import logging
 import os
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
+from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
-from motor.motor_asyncio import AsyncIOMotorClient
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
+from pymongo.errors import DuplicateKeyError
 from starlette.middleware.cors import CORSMiddleware
 
 from backend.v2.composition.admin import compose_admin
@@ -32,18 +34,26 @@ from backend.v2.composition.digests import (
 )
 from backend.v2.composition.owner import compose_owner
 from backend.v2.composition.parent import compose_parent, compose_parent_webhook_handler
+from backend.v2.composition.student import compose_student
 from backend.v2.contexts.billing.application.ports import StripeGateway
+from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
+    GenerateMonthlyPaymentsCommand,
+)
 from backend.v2.contexts.billing.application.use_cases.connect_onboarding import (
     StartConnectOnboarding,
 )
 from backend.v2.contexts.billing.application.use_cases.reconcile_stripe_payment_intents import (
     ReconcileStripePaymentIntents,
 )
+from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
 from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
     MongoBillingLedgerRepository,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_billing_reconciliation_run_repo import (
     MongoBillingReconciliationRunRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo import (
+    MongoBillingSettingsRepository,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_connected_account_repo import (
     MongoConnectedAccountRepository,
@@ -125,6 +135,7 @@ from backend.v2.interfaces.owner.router import router as owner_router
 from backend.v2.interfaces.parent.router import router as parent_router
 from backend.v2.interfaces.platform.router import router as platform_router
 from backend.v2.interfaces.registration_routes import router as registration_router
+from backend.v2.interfaces.student.router import router as student_router
 from backend.v2.migrations import run_pending_migrations
 from backend.v2.shared.auth.middleware import TenancyMiddleware
 from backend.v2.shared.config import Settings, get_settings
@@ -281,6 +292,15 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         academy_id=runtime_academy_id,
     )
     stripe_webhook_processors = {runtime_academy_id: app.state.parent.handle_webhook_event}
+
+    # Student BFF wiring (UIM12) — entirely behind enable_student_login.
+    # With the flag off the router is not mounted at all (see the
+    # include_router call below), so /student/* 404s at routing. This
+    # composition is skipped for the same reason; the belt-and-braces 404 in
+    # interfaces/student/deps.get_student_use_cases covers the case where a
+    # test (or a future caller) mounts the router without composing state.
+    if settings.enable_student_login:
+        app.state.student = compose_student(db, parent=app.state.parent)
 
     # Platform Stripe Connect onboarding (Slice I). Composition root wires the
     # real repo + gateway into the use case; the platform BFF route only sees
@@ -489,6 +509,46 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         if totals["processed"] or totals["dunned"] or totals["autopay_disabled"]:
             log.info("dunning_retries_processed", extra=totals)
 
+    async def _generate_monthly_invoices() -> None:
+        # 30-minute TTL: a full generation run walks every active enrollment in
+        # every academy, so the lease must outlive a slow run rather than let a
+        # second machine start a duplicate pass mid-flight.
+        async with job_lease(
+            db, "generate_monthly_invoices", timedelta(minutes=30), scheduler_worker_id
+        ) as acquired:
+            if not acquired:
+                return
+            await _generate_monthly_invoices_body()
+
+    async def _generate_monthly_invoices_body() -> None:
+        # Daily tick. The per-academy gate and catch-up rules live in
+        # _run_monthly_invoice_generation (module level, directly testable).
+        #
+        # NOTE: billing_day is interpreted in the scheduler timezone
+        # (settings.scheduler_tz), NOT each academy's local timezone — same
+        # tradeoff as the coach/parent digest hour above.
+        now = datetime.now(scheduler.timezone)  # type: ignore[union-attr]
+        academy_ids = await _scheduler_academy_ids(
+            MongoAcademyRepository(db),
+            runtime_academy_id,
+        )
+
+        async def _get_billing_settings() -> Any:
+            return await MongoBillingSettingsRepository(db).get()
+
+        async def _generate(period: str) -> Any:
+            return await app.state.admin.generate_monthly_payments.execute(
+                GenerateMonthlyPaymentsCommand(period=period)
+            )
+
+        await _run_monthly_invoice_generation(
+            db=db,
+            academy_ids=academy_ids,
+            get_billing_settings=_get_billing_settings,
+            generate=_generate,
+            now=now,
+        )
+
     async def _send_coach_daily_digests() -> None:
         async with job_lease(
             db, "send_coach_daily_digests", timedelta(minutes=10), scheduler_worker_id
@@ -660,6 +720,23 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         replace_existing=True,
         max_instances=1,
     )
+    # Automated monthly invoice generation (issue #288). Runs daily; each tick
+    # generates for any academy with an unfinished period — its billing_day has
+    # passed and no successful run is recorded yet, so a failed run self-heals
+    # on the next tick (issue #431). The first autopay charge is NOT scheduled
+    # here — it is already the attempt-0 rung of the
+    # existing dunning ladder, which picks up any invoice once its due_date
+    # passes (see prepare_due_states / DUNNING_SCHEDULE_DAYS). Adding a second
+    # charge trigger here would risk double-charging the same invoice.
+    scheduler.add_job(
+        _generate_monthly_invoices,
+        "cron",
+        hour=3,
+        minute=0,
+        id="generate_monthly_invoices",
+        replace_existing=True,
+        max_instances=1,
+    )
     # Coach teaching-plan digest. The sender is composed unconditionally so the
     # per-academy override (and the test-send use case) work regardless of the
     # env flag; the composed sender is still the stub unless email delivery is
@@ -705,6 +782,304 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             scheduler.shutdown(wait=False)
         await dispatcher.stop()
         client.close()
+
+
+MONTHLY_GENERATION_RUNS_COLLECTION = "billing_generation_runs"
+
+
+def _previous_period(period: str) -> str:
+    """``"2026-01"`` -> ``"2025-12"``."""
+    year, month = (int(part) for part in period.split("-", 1))
+    return f"{year - 1}-12" if month == 1 else f"{year}-{month - 1:02d}"
+
+
+async def _monthly_generation_recorded(
+    db: AsyncIOMotorDatabase[Any],
+    academy_id: str,
+    period: str,
+) -> bool:
+    """True iff a monthly generation run for ``(academy_id, period)`` succeeded.
+
+    Issue #431: the scheduler retries an academy every day until one run
+    completes, so it needs a record of success. This is a scheduling
+    stop-condition, not an invoice-level guard — duplicate invoices are
+    prevented by the deterministic invoice ids and the ``billing_invoice_keys``
+    unique index inside generate_monthly_payments.
+    """
+    doc = await db[MONTHLY_GENERATION_RUNS_COLLECTION].find_one(
+        {"academy_id": academy_id, "period": period},
+        {"_id": 1},
+    )
+    return doc is not None
+
+
+async def _has_monthly_generation_history(
+    db: AsyncIOMotorDatabase[Any],
+    academy_id: str,
+) -> bool:
+    """True iff this academy has *any* recorded generation run.
+
+    Gates the prior-period catch-up. An academy with no history at all is
+    either newly onboarded or predates this feature; attempting the prior
+    period for it would invoice enrollments for a month they may not have been
+    enrolled in (``generate_monthly_payments`` charges every currently active
+    enrollment for the requested period regardless of when it was created).
+    Once an academy has generated at least once, a *missing* prior period
+    genuinely means "we were running and lost that month" — which is exactly
+    the case this catch-up exists to repair.
+    """
+    doc = await db[MONTHLY_GENERATION_RUNS_COLLECTION].find_one(
+        {"academy_id": academy_id},
+        {"_id": 1},
+    )
+    return doc is not None
+
+
+async def _record_monthly_generation(
+    db: AsyncIOMotorDatabase[Any],
+    academy_id: str,
+    period: str,
+    now: datetime,
+    log: logging.Logger,
+) -> bool:
+    """Record a completed generation run so later ticks skip this period.
+
+    Never raises. The write lives outside the generation ``try`` on purpose: a
+    ``DuplicateKeyError`` from two machines racing the 0151 unique index (or
+    any transient write blip) must not be logged as a *generation* failure for
+    a run that actually created invoices, nor drop that academy from the run
+    summary. A lost record only costs a redundant idempotent pass next tick.
+    """
+    try:
+        await db[MONTHLY_GENERATION_RUNS_COLLECTION].update_one(
+            {"academy_id": academy_id, "period": period},
+            {
+                "$set": {"completed_at": now},
+                "$setOnInsert": {"academy_id": academy_id, "period": period},
+            },
+            upsert=True,
+        )
+    except DuplicateKeyError:
+        # Another machine recorded the same (academy, period) first. Benign:
+        # the stop-condition this write exists to create already holds.
+        return True
+    except Exception:
+        log.warning(
+            "monthly_generation_run_record_failed academy=%s period=%s; "
+            "generation succeeded, next tick will re-attempt idempotently",
+            academy_id,
+            period,
+            exc_info=True,
+        )
+        return False
+    return True
+
+
+async def _resolve_billing_day(
+    get_billing_settings: Callable[[], Awaitable[Any]],
+    academy_id: str,
+    log: logging.Logger,
+) -> int:
+    """This academy's billing_day, degrading to the model default on failure.
+
+    Settings are advisory for generation: the billing context's own rule is
+    that a missing or unreadable billing_settings doc "must never block the
+    monthly run" (see MongoMonthlyBilling._load_invoice_due_days). Skipping the
+    academy on a read failure would make an unreadable settings doc a permanent
+    silent skip — the exact failure mode issue #431 set out to remove.
+    """
+    try:
+        settings = await get_billing_settings()
+        return int(settings.billing_day)
+    except Exception:
+        log.warning(
+            "monthly_generation_billing_settings_unreadable academy=%s; using default billing_day",
+            academy_id,
+            exc_info=True,
+        )
+        return int(BillingSettings.default("").billing_day)
+
+
+async def _run_monthly_invoice_generation(
+    *,
+    db: AsyncIOMotorDatabase[Any],
+    academy_ids: list[str],
+    get_billing_settings: Callable[[], Awaitable[Any]],
+    generate: Callable[[str], Awaitable[Any]],
+    now: datetime,
+) -> dict[str, int]:
+    """Generate monthly invoices for every academy with an unfinished period.
+
+    Each academy generates on its own configured billing_day
+    (``billing_settings.billing_day``, default 1, capped at 28 so no academy is
+    skipped in February).
+
+    Issue #431: the gate is "billing_day has passed AND no successful
+    generation is recorded for the period", not ``billing_day == now.day``. An
+    exact-day match meant a single failed 03:00 run (Mongo blip, lease
+    handover, crash) silently skipped the whole month, recoverable only by an
+    admin. Now the next daily tick retries until one run completes.
+
+    Two periods are considered each tick: the current one, and the immediately
+    prior one when it is unrecorded *and* the academy has generation history
+    (see _has_monthly_generation_history). Without the prior period the
+    catch-up window would end at month end, so a February billing_day=28
+    academy would still get exactly one attempt and a failure spanning the
+    month boundary would lose that month forever.
+
+    The per-(academy, period) record in ``billing_generation_runs`` is what
+    stops the retry. Without it every academy would re-walk every active
+    enrollment every day for the rest of the month, and — more importantly —
+    enrollments created *after* billing_day would start getting a full
+    current-period invoice, a behaviour change this fix does not intend.
+    Correctness does not depend on the record: ``generate_monthly_payments``
+    is idempotent via deterministic invoice ids plus the
+    ``billing_invoice_keys`` guard, so a lost or unwritten record only costs a
+    redundant pass that re-reports ``skipped_existing``.
+
+    ``get_billing_settings`` and ``generate`` are called inside the academy's
+    ``tenant_scope``. Both are injected so the scheduling rules above can be
+    tested without a running app.
+    """
+    period = now.strftime("%Y-%m")
+    prior_period = _previous_period(period)
+    totals = {
+        "academy_count": 0,
+        "period_run_count": 0,
+        "catch_up_run_count": 0,
+        "partial_run_count": 0,
+        "created": 0,
+        "skipped_existing": 0,
+        "skipped_no_charge": 0,
+        "skipped_autopay": 0,
+        "skipped_paused": 0,
+        "repaired_orphan_keys": 0,
+        "repaired_partial_invoices": 0,
+        "failed_repair": 0,
+    }
+    log = logging.getLogger("backend.v2.scheduler")
+    for academy_id in academy_ids:
+        with tenant_scope(academy_id):
+            try:
+                due = await _due_periods(
+                    db=db,
+                    academy_id=academy_id,
+                    period=period,
+                    prior_period=prior_period,
+                    get_billing_settings=get_billing_settings,
+                    now=now,
+                    log=log,
+                )
+            except Exception:
+                # One academy's gate failure must not abort the run for the
+                # rest. Nothing is recorded, so the next tick retries it.
+                log.exception(
+                    "monthly_invoice_generation_gate_failed academy=%s period=%s",
+                    academy_id,
+                    period,
+                )
+                continue
+            ran_any = False
+            for run_period, is_catch_up in due:
+                try:
+                    result = await generate(run_period)
+                except Exception:
+                    # A failing academy/period leaves no record, so the next
+                    # daily tick retries exactly this (academy, period).
+                    log.exception(
+                        "monthly_invoice_generation_failed academy=%s period=%s",
+                        academy_id,
+                        run_period,
+                    )
+                    continue
+                ran_any = True
+                totals["period_run_count"] += 1
+                created = int(getattr(result, "created", 0) or 0)
+                failed_repair = int(getattr(result, "failed_repair", 0) or 0)
+                if failed_repair:
+                    # The run returned normally but swallowed per-enrollment
+                    # repair failures. Recording success here would switch off
+                    # the daily retry for exactly the enrollments that still
+                    # need it, so leave the period unrecorded and let the next
+                    # tick re-attempt (idempotent for everything that worked).
+                    totals["partial_run_count"] += 1
+                    log.warning(
+                        "monthly_invoice_generation_partial",
+                        extra={
+                            "academy_id": academy_id,
+                            "period": run_period,
+                            "failed_repair": failed_repair,
+                            "created_count": created,
+                        },
+                    )
+                else:
+                    await _record_monthly_generation(db, academy_id, run_period, now, log)
+                if is_catch_up:
+                    totals["catch_up_run_count"] += 1
+                    if created:
+                        # Distinct signal: this academy's billing-day run did
+                        # not complete, and this late run is what actually
+                        # invoiced the month.
+                        log.warning(
+                            "monthly_invoices_generated_by_catch_up",
+                            extra={
+                                "academy_id": academy_id,
+                                "period": run_period,
+                                "current_period": period,
+                                "run_day": now.day,
+                                "created_count": created,
+                            },
+                        )
+                for key in (
+                    "created",
+                    "skipped_existing",
+                    "skipped_no_charge",
+                    "skipped_autopay",
+                    "skipped_paused",
+                    "repaired_orphan_keys",
+                    "repaired_partial_invoices",
+                    "failed_repair",
+                ):
+                    totals[key] += int(getattr(result, key, 0) or 0)
+            if ran_any:
+                totals["academy_count"] += 1
+    if totals["academy_count"]:
+        # ``created`` is a reserved LogRecord attribute (the record's own
+        # timestamp) and logging raises KeyError rather than letting an
+        # ``extra`` key shadow it — which made this very summary line throw
+        # out of the job on every run that generated anything.
+        summary = {key: value for key, value in totals.items() if key != "created"}
+        summary["created_count"] = totals["created"]
+        log.info("monthly_invoices_generated", extra={**summary, "period": period})
+    return totals
+
+
+async def _due_periods(
+    *,
+    db: AsyncIOMotorDatabase[Any],
+    academy_id: str,
+    period: str,
+    prior_period: str,
+    get_billing_settings: Callable[[], Awaitable[Any]],
+    now: datetime,
+    log: logging.Logger,
+) -> list[tuple[str, bool]]:
+    """Periods this academy still owes, oldest first, as ``(period, is_catch_up)``.
+
+    The run records are checked *before* the settings read so the steady-state
+    tick (everything already generated) costs two cheap indexed lookups and no
+    settings read at all.
+    """
+    due: list[tuple[str, bool]] = []
+    if not await _monthly_generation_recorded(db, academy_id, prior_period):
+        if await _has_monthly_generation_history(db, academy_id):
+            # A prior period is always past its billing_day by definition.
+            due.append((prior_period, True))
+    if not await _monthly_generation_recorded(db, academy_id, period):
+        billing_day = await _resolve_billing_day(get_billing_settings, academy_id, log)
+        if now.day >= billing_day:
+            due.append((period, now.day > billing_day))
+    return due
 
 
 async def _scheduler_academy_ids(
@@ -759,6 +1134,11 @@ def create_app() -> FastAPI:
     app.include_router(coach_router, prefix="/api/v2")
     app.include_router(parent_router, prefix="/api/v2")
     app.include_router(admin_router, prefix="/api/v2")
+    if settings.enable_student_login:
+        # Not registered at all when the flag is off — true 404 (no route
+        # match), matching the enable_platform_routes pattern above, rather
+        # than a route that exists but always errors.
+        app.include_router(student_router, prefix="/api/v2")
     if settings.enable_owner_role:
         app.include_router(owner_router, prefix="/api/v2")
 
@@ -912,8 +1292,12 @@ class _LegacyUserMembershipAdapter:
         self._default_academy_id = default_academy_id
 
     async def get_for_user_in_academy(
-        self, *, user_id: str, academy_id: str
+        self, *, user_id: str, academy_id: str, aliases: Sequence[str] | None = None
     ) -> AcademyMembership | None:
+        # `aliases` is accepted for port compatibility. This adapter resolves
+        # the User by id (which already matches user_id/auth_uid/_id) and
+        # synthesizes the membership from that row, so there is no separate
+        # membership key to alias-match.
         user: User | None = await self._users.get_by_id(user_id)
         if user is None:
             return None

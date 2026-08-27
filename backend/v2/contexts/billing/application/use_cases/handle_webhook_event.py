@@ -1781,8 +1781,7 @@ class HandleWebhookEvent:
         # used by the other subscription/invoice handlers in this file.
         if enrollment.academy_id != self._academy_id:
             raise _QuarantineStripeEvent(
-                f"academy mismatch: enrollment={enrollment.academy_id} "
-                f"expected={self._academy_id}"
+                f"academy mismatch: enrollment={enrollment.academy_id} expected={self._academy_id}"
             )
 
         now = self._now()

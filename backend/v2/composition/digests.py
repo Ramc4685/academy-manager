@@ -109,6 +109,7 @@ from backend.v2.contexts.student_progress.application.use_cases.get_teaching_foc
 )
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.tenancy import current_academy_id
+from backend.v2.shared.tenancy.academy_url import academy_frontend_url
 
 
 @dataclass(frozen=True, slots=True)
@@ -351,7 +352,14 @@ class _ParentDigestProvider:
             return None
 
         settings = get_settings()
-        frontend = (settings.frontend_url or "").rstrip("/")
+        try:
+            academy_doc = await self._academies.find_by_id(current_academy_id())
+            academy_slug = str(academy_doc.get("slug") or "") if academy_doc else ""
+        except Exception:
+            academy_slug = ""
+        frontend = academy_frontend_url(
+            frontend_url=settings.frontend_url, academy_slug=academy_slug
+        )
 
         # on_portal decides Variant A vs B up front so per-child deep links are
         # only populated when there is a portal to land on.
@@ -365,7 +373,7 @@ class _ParentDigestProvider:
             session = await self._session_today(student.student_id, on_date)
             if session is None:
                 continue
-            session_id, session_time, session_label = session
+            _session_id, session_time, session_label = session
             focus_skill, focus_status = await self._focus(
                 student.student_id, student.full_name, program_id
             )
@@ -509,9 +517,7 @@ class _ParentDigestProvider:
 
         if meridiem(local_start) == meridiem(local_end):
             return f"{hm(local_start)} - {hm(local_end)} {meridiem(local_end)}"
-        return (
-            f"{hm(local_start)} {meridiem(local_start)} - " f"{hm(local_end)} {meridiem(local_end)}"
-        )
+        return f"{hm(local_start)} {meridiem(local_start)} - {hm(local_end)} {meridiem(local_end)}"
 
     async def _focus(self, student_id: str, student_name: str, program_id: str) -> tuple[str, str]:
         if not program_id:

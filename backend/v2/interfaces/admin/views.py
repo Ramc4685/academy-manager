@@ -222,6 +222,14 @@ class LoginInviteResponse(BaseModel):
     sent_at: datetime
 
 
+class StudentLoginInviteRequest(BaseModel):
+    """UIM12: admin-supplied email to provision a student's own login."""
+
+    email: str = Field(min_length=1, max_length=254)
+    display_name: str | None = Field(default=None, max_length=120)
+    reason: str = Field(default="student login invite", min_length=1, max_length=500)
+
+
 # --- Session Type Billing ---
 
 
@@ -1238,8 +1246,12 @@ class DuesFollowupParentView(BaseModel):
     parent_id: str
     parent_name: str | None = None
     email: str | None = None
+    phone: str | None = None
     pending_count: int
     total_due_cents: int
+    # Pre-filled wa.me link the admin clicks to open WhatsApp; None when the
+    # parent has no usable phone on file.
+    whatsapp_url: str | None = None
 
 
 class DuesFollowupResponse(BaseModel):

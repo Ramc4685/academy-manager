@@ -96,6 +96,9 @@ class _FakeSessionTypeRepo:
     async def list_active(self) -> list[SessionType]:
         return [st for st in self.rows.values() if st.is_active]
 
+    async def list_all(self) -> list[SessionType]:
+        return list(self.rows.values())
+
     async def soft_delete(self, session_type_id: str) -> None:
         st = self.rows[session_type_id]
         self.rows[session_type_id] = st.model_copy(update={"is_active": False})
@@ -376,8 +379,7 @@ def test_move_preview_returns_proration(coach_client):
 
 def test_move_preview_missing_enrollment_returns_404(coach_client):
     resp = coach_client.get(
-        f"/api/v2/coach/billing-enrollments/nonexistent/move/preview"
-        f"?to_session_type_id={_ST_TO_ID}"
+        f"/api/v2/coach/billing-enrollments/nonexistent/move/preview?to_session_type_id={_ST_TO_ID}"
     )
     assert resp.status_code == 404, resp.text
 

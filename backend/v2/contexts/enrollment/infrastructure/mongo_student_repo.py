@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -32,6 +33,8 @@ from backend.v2.contexts.enrollment.domain.errors import (
 from backend.v2.contexts.enrollment.domain.models import Student
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 
+log = logging.getLogger(__name__)
+
 
 class MongoStudentRepository(TenantScopedRepository):
     collection_name = "students"
@@ -44,6 +47,7 @@ class MongoStudentRepository(TenantScopedRepository):
             parent_id=str(doc["parent_id"]),
             full_name=str(doc["full_name"]),
             date_of_birth=(str(doc["date_of_birth"]) if doc.get("date_of_birth") else None),
+            student_user_id=(str(doc["student_user_id"]) if doc.get("student_user_id") else None),
         )
 
     @staticmethod
@@ -226,6 +230,57 @@ class MongoStudentRepository(TenantScopedRepository):
             {"academy_id": academy_id, "$or": or_filter}
         )
         return doc
+
+    async def get_by_student_user_id(self, student_user_id: str) -> Student | None:
+        """UIM12: resolve the Student a login user_id is linked to.
+
+        Used by the student BFF composition to turn `AuthClaims.user_id`
+        into the caller's own `student_id`. Tenant-scoped like every other
+        read here — a student login can only ever resolve within the
+        academy the request was resolved for.
+
+        **Fails closed on ambiguity.** If two student docs in this academy
+        somehow carry the same `student_user_id` (the unique index in
+        migration 0150 and the provisioning-path checks both exist to make
+        this impossible), returning either one would show the signed-in
+        student someone else's data. A duplicate degrades to "no access",
+        never to "wrong student's data", and is logged loudly so the
+        corrupt link is repaired rather than silently served.
+        """
+        if not student_user_id:
+            return None
+        docs = [doc async for doc in self._find_many({"student_user_id": student_user_id}, limit=2)]
+        if not docs:
+            return None
+        if len(docs) > 1:
+            log.warning(
+                "student_user_id_ambiguous: %s student docs share student_user_id=%s in "
+                "academy=%s; refusing to resolve (fail closed)",
+                len(docs),
+                student_user_id,
+                current_academy_id(),
+            )
+            return None
+        return self._to_domain(docs[0])
+
+    async def count_students_linked_to_user(
+        self, student_user_id: str, *, excluding_student_id: str | None = None
+    ) -> int:
+        """UIM12: how many students in this academy already link to this user.
+
+        Used as the provisioning-path pre-check so an admin gets a clean
+        409 *before* any Firebase account or membership is created. Counts
+        rather than fetching, because the answer that matters is "more than
+        zero" even when the link table is already corrupt (which is exactly
+        the case `get_by_student_user_id` refuses to resolve).
+        """
+        if not student_user_id:
+            return 0
+        filter_: dict[str, object] = {"student_user_id": student_user_id}
+        if excluding_student_id is not None:
+            filter_["student_id"] = {"$ne": excluding_student_id}
+        count: int = await self.collection.count_documents(self._scoped(filter_))
+        return count
 
     async def get_for_parent(self, parent_id: str, student_id: str) -> Student | None:
         # legacy docs use parent_user_id; newer docs use parent_id — query both during migration
