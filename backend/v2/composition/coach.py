@@ -110,6 +110,7 @@ from backend.v2.contexts.identity.application.use_cases.admin_directory import (
 )
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
 from backend.v2.interfaces.coach.views import CoachProfileResponse, UpdateCoachProfileRequest
+from backend.v2.shared.comms import MongoMessageRepository
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore
@@ -165,6 +166,9 @@ class CoachComposition:
     # Occurrence-scoped roster (expected-absence flags + one-time makeup/
     # trial entries) for /coach/today.
     get_occurrence_roster: GetOccurrenceRoster | None = None
+    # Messages inbox (UIM13)
+    list_messages: object = None  # Callable[[str], Awaitable[list[Message]]]
+    mark_message_read: object = None  # Callable[[str, str], Awaitable[None]]
 
 
 class CoachAssignedSessionLookup:
@@ -234,6 +238,8 @@ def compose_coach(
     billing_enrollment_repo = MongoStudentBillingEnrollmentRepository(db)
     # Skill note repo
     skill_note_repo = MongoSkillNoteRepository(db)
+    # Messages inbox (UIM13) — shared comms store, per-recipient read routes.
+    messages_repo = MongoMessageRepository(db)
 
     def request_academy_id() -> str:
         try:
@@ -415,4 +421,6 @@ def compose_coach(
         student_progress=student_progress_comp,
         curriculum=compose_curriculum(db),
         generate_daily_teaching_plan=generate_daily_teaching_plan,
+        list_messages=messages_repo.for_recipient,
+        mark_message_read=messages_repo.mark_read,
     )

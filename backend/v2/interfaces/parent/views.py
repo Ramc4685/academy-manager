@@ -445,6 +445,26 @@ class ParentAcademyView(BaseModel):
     logo_url: str | None = None
 
 
+# ---------------------------------------------------------------------------
+# Messages inbox (UIM13)
+# ---------------------------------------------------------------------------
+
+
+class ParentMessageView(BaseModel):
+    message_id: str
+    kind: Literal["dm", "announcement"]
+    sender_persona: Literal["admin", "coach", "parent"]
+    body: str
+    created_at: datetime
+    read: bool
+
+
+class ParentMessagesResponse(BaseModel):
+    messages: list[ParentMessageView]
+
+
+class ParentMarkMessageReadResponse(BaseModel):
+    status: Literal["ok"] = "ok"
 # --- Self-service profile (issue #380) ---
 
 

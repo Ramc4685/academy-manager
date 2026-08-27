@@ -21,6 +21,8 @@ export const queryKeys = {
       ["coach", "session", sessionId, "skills", date, programId ?? "default"] as const,
     skillNotes: (studentId: string, skillId: string) =>
       ["coach", "skill-notes", studentId, skillId] as const,
+    messages: () => ["coach", "messages"] as const,
+    calendar: () => ["coach", "calendar"] as const,
     billingEnrollments: (sessionId: string) =>
       ["coach", "billing-enrollments", sessionId] as const,
     // Second segment must stay "billing-enrollments": persistence.ts keys its
@@ -131,6 +133,8 @@ export const queryKeys = {
     trials: () => ["parent", "trials"] as const,
     cancellationPreview: (enrollmentId: string) =>
       ["parent", "enrollments", enrollmentId, "cancellation-preview"] as const,
+    messages: () => ["parent", "messages"] as const,
+    calendar: () => ["parent", "calendar"] as const,
     profile: () => ["parent", "profile"] as const,
   },
   student: {

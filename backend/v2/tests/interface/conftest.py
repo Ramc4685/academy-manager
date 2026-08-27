@@ -507,6 +507,7 @@ def _build_use_cases(seed_data) -> CoachUseCases:
     occurrences = FakeOccurrenceQuery(seed_data["occurrences"])
     absence_notices = FakeAbsenceNoticeQuery(seed_data.get("absence_notices"))
     occurrence_roster = FakeOccurrenceRosterQuery(seed_data.get("occurrence_roster_entries"))
+    _coach_messages_repo = FakeMessageRepo()
 
     # Adapters wiring coach lookups to enrollment queries.
     class _SL:
@@ -628,7 +629,7 @@ def _build_use_cases(seed_data) -> CoachUseCases:
 
     _get_roster = GetSessionRoster(enrollments=enrollments, students=students)
 
-    return CoachUseCases(
+    use_cases = CoachUseCases(
         list_today=ListCoachOccurrencesForDate(occurrences=occurrences, sessions=sessions),
         get_roster=_get_roster,
         get_occurrence_roster=GetOccurrenceRoster(
@@ -695,7 +696,11 @@ def _build_use_cases(seed_data) -> CoachUseCases:
         ).execute,
         get_profile=_async_none,
         update_profile=_async_none,
+        list_messages=_coach_messages_repo.for_recipient,
+        mark_message_read=_coach_messages_repo.mark_read,
     )
+    use_cases._messages_repo = _coach_messages_repo  # type: ignore[attr-defined]
+    return use_cases
 
 
 def _make_app(claims: AuthClaims, use_cases: CoachUseCases) -> FastAPI:
@@ -720,6 +725,7 @@ def coach_client(seed) -> Iterator[TestClient]:
     app = _make_app(_coach_claims(), use_cases)
     with TestClient(app) as client:
         client.coach_use_cases = use_cases  # type: ignore[attr-defined]
+        client.messages_repo = use_cases._messages_repo  # type: ignore[attr-defined]
         yield client
 
 
@@ -1495,6 +1501,17 @@ class FakeMessageRepo:
 
     async def list_announcements(self):
         return [m for m in self.rows.values() if m.kind == "announcement"]
+
+    async def mark_read(self, message_id, user_id):
+        # Mirrors MongoMessageRepository.mark_read: only messages the caller
+        # can actually read (own DM or an announcement) are markable.
+        m = self.rows.get(message_id)
+        if m is None:
+            return
+        if m.recipient_id != user_id and m.kind != "announcement":
+            return
+        if user_id not in m.read_by:
+            m.read_by.append(user_id)
 
 
 @dataclass
