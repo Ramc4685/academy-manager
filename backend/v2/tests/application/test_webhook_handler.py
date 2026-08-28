@@ -15,6 +15,9 @@ from typing import Any
 import pytest
 from pymongo.errors import DuplicateKeyError
 
+from backend.v2.contexts.billing.application.use_cases import (
+    handle_webhook_event as handle_webhook_event_module,
+)
 from backend.v2.contexts.billing.application.use_cases.handle_webhook_event import (
     HandleWebhookEvent,
     _QuarantineStripeEvent,
@@ -24,6 +27,11 @@ from backend.v2.contexts.billing.domain.models import Payment, Subscription
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import (
     FakeStripeGateway,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_stripe_dedup import (
+    MAX_WEBHOOK_ATTEMPTS,
+    QUARANTINE_REJECTED,
+    QUARANTINE_RETRY_LIMIT,
+)
 
 
 class FakePaymentRepo:
@@ -32,6 +40,8 @@ class FakePaymentRepo:
         self.by_checkout: dict[str, Payment] = {}
         self.by_pi: dict[str, Payment] = {}
         self.fail_next_save = False
+        # Issue #437: a permanently broken write, to drive an event to the cap.
+        self.always_fail_save = False
 
     def seed(self, p: Payment) -> None:
         self.by_id[p.payment_id] = p
@@ -41,6 +51,8 @@ class FakePaymentRepo:
             self.by_pi[p.stripe_payment_intent_id] = p
 
     async def save(self, p: Payment) -> None:
+        if self.always_fail_save:
+            raise RuntimeError("permanent payment write failure")
         if self.fail_next_save:
             self.fail_next_save = False
             raise RuntimeError("transient payment write failed")
@@ -109,14 +121,25 @@ class FakeDedup:
             self.events[event_id]["processed_at"] = datetime.now(UTC)
 
     async def mark_failed(self, event_id, error):
-        if event_id in self.events:
-            self.events[event_id]["status"] = "failed"
-            self.events[event_id]["error_message"] = error
+        # Mirrors MongoStripeEventDedup: retries are bounded, and running out
+        # of them auto-quarantines (issue #437).
+        if event_id not in self.events:
+            return "failed"
+        event = self.events[event_id]
+        if int(event.get("retry_count") or 0) >= MAX_WEBHOOK_ATTEMPTS:
+            await self.mark_quarantined(
+                event_id, f"gave up: {error}", reason_code=QUARANTINE_RETRY_LIMIT
+            )
+            return "quarantined"
+        event["status"] = "failed"
+        event["error_message"] = error
+        return "failed"
 
-    async def mark_quarantined(self, event_id, error):
+    async def mark_quarantined(self, event_id, error, *, reason_code=QUARANTINE_REJECTED):
         if event_id in self.events:
             self.events[event_id]["status"] = "quarantined"
             self.events[event_id]["error_message"] = error
+            self.events[event_id]["quarantine_reason"] = reason_code
 
     async def store_received(self, event, *, raw_payload, academy_id):
         event_id = str(event["id"])
@@ -144,6 +167,7 @@ class FakeDedup:
                 continue
             if event["status"] in {"received", "failed"}:
                 event["status"] = "processing"
+                event["retry_count"] = int(event.get("retry_count") or 0) + 1
                 event["processor_id"] = processor_id
                 event["processing_started_at"] = now
                 event["processing_locked_until"] = now + timedelta(seconds=lock_seconds)
@@ -4614,3 +4638,144 @@ async def test_ach_settlement_does_not_double_credit_a_reconciled_payment_intent
     assert [a["idempotency_key"] for a in ledger.allocations] == ["stripe-reconcile-alloc:pi_ach"]
     assert ledger.invoices["inv-ach"].status == "paid"
     assert ledger.invoices["inv-ach"].balance_due_cents == 0
+
+
+# ---------------------------------------------------------------------------
+# Bounded webhook retries (issue #437)
+# ---------------------------------------------------------------------------
+
+
+async def _drain_until_quarantined(uc, dedup, event_id: str, *, limit: int = 60) -> list[str]:
+    """Run the drain repeatedly, returning the status of every attempt."""
+    statuses: list[str] = []
+    for _ in range(limit):
+        result = await uc.process_next(processor_id="test-worker")
+        if result.get("empty"):
+            break
+        statuses.append(str(result.get("status")))
+        if dedup.events[event_id]["status"] == "quarantined":
+            break
+    return statuses
+
+
+@pytest.mark.asyncio
+async def test_a_permanently_failing_event_quarantines_instead_of_looping(monkeypatch) -> None:
+    """Before #437 this loop was unbounded: the event retried hourly forever and
+    kept taking one of the 25 slots in every drain tick."""
+    alerts: list[str] = []
+    monkeypatch.setattr(
+        handle_webhook_event_module,
+        "capture_message",
+        lambda msg, **_: alerts.append(msg) or True,
+    )
+
+    repo = FakePaymentRepo()
+    _seed_pending_payment(repo)
+    repo.fail_next_save = True
+    repo.always_fail_save = True
+    dedup = FakeDedup()
+    uc = _build(repo, dedup=dedup)
+    body = json.dumps(
+        {
+            "id": "evt_poisoned",
+            "type": "checkout.session.completed",
+            "data": {"object": {"id": "cs_1", "payment_intent": "pi_1"}},
+        }
+    ).encode()
+    await uc.accept(body, "test_signature")
+
+    statuses = await _drain_until_quarantined(uc, dedup, "evt_poisoned")
+
+    assert dedup.events["evt_poisoned"]["status"] == "quarantined"
+    assert dedup.events["evt_poisoned"]["quarantine_reason"] == QUARANTINE_RETRY_LIMIT
+    # Exactly MAX_WEBHOOK_ATTEMPTS attempts were made — the retry count is
+    # incremented on claim, so the last attempt is the one that gives up.
+    assert len(statuses) == MAX_WEBHOOK_ATTEMPTS
+    assert statuses.count("failed") == MAX_WEBHOOK_ATTEMPTS - 1
+    assert statuses[-1] == "quarantined"
+
+    # Exactly one alert — the transition happens once, not once per retry.
+    assert len(alerts) == 1
+    assert "evt_poisoned" in alerts[0]
+    assert QUARANTINE_RETRY_LIMIT in alerts[0]
+
+
+@pytest.mark.asyncio
+async def test_a_quarantined_event_stops_consuming_drain_slots(monkeypatch) -> None:
+    """The point of the cap: a poisoned event must stop competing with fresh
+    payment events for the 25 attempts each drain tick gets."""
+    monkeypatch.setattr(handle_webhook_event_module, "capture_message", lambda msg, **_: True)
+    repo = FakePaymentRepo()
+    _seed_pending_payment(repo)
+    repo.fail_next_save = True
+    repo.always_fail_save = True
+    dedup = FakeDedup()
+    uc = _build(repo, dedup=dedup)
+    body = json.dumps(
+        {
+            "id": "evt_poisoned",
+            "type": "checkout.session.completed",
+            "data": {"object": {"id": "cs_1", "payment_intent": "pi_1"}},
+        }
+    ).encode()
+    await uc.accept(body, "test_signature")
+    await _drain_until_quarantined(uc, dedup, "evt_poisoned")
+
+    # Nothing left to claim: the drain is free for real work.
+    assert (await uc.process_next(processor_id="test-worker")).get("empty") is True
+
+
+@pytest.mark.asyncio
+async def test_a_guard_rejection_still_quarantines_immediately_and_alerts(monkeypatch) -> None:
+    """A deliberate rejection must not wait out 24 attempts, and it is recorded
+    with a different reason so the two are distinguishable."""
+    alerts: list[str] = []
+    monkeypatch.setattr(
+        handle_webhook_event_module,
+        "capture_message",
+        lambda msg, **_: alerts.append(msg) or True,
+    )
+    dedup = FakeDedup()
+    uc = _build(FakePaymentRepo(), dedup=dedup, expected_livemode=True)
+    body = json.dumps(
+        {
+            "id": "evt_wrong_mode",
+            "type": "checkout.session.completed",
+            "livemode": False,
+            "data": {"object": {"id": "cs_1", "payment_intent": "pi_1"}},
+        }
+    ).encode()
+    await uc.accept(body, "test_signature")
+
+    result = await uc.process_next(processor_id="test-worker")
+
+    assert result["status"] == "quarantined"
+    assert dedup.events["evt_wrong_mode"]["quarantine_reason"] == QUARANTINE_REJECTED
+    assert len(alerts) == 1
+    assert QUARANTINE_REJECTED in alerts[0]
+
+
+@pytest.mark.asyncio
+async def test_a_transient_failure_still_retries_and_recovers(monkeypatch) -> None:
+    """The cap must not turn a one-off blip into a quarantine."""
+    monkeypatch.setattr(handle_webhook_event_module, "capture_message", lambda msg, **_: True)
+    repo = FakePaymentRepo()
+    _seed_pending_payment(repo)
+    repo.fail_next_save = True
+    dedup = FakeDedup()
+    uc = _build(repo, dedup=dedup)
+    body = json.dumps(
+        {
+            "id": "evt_blip",
+            "type": "checkout.session.completed",
+            "data": {"object": {"id": "cs_1", "payment_intent": "pi_1"}},
+        }
+    ).encode()
+    await uc.accept(body, "test_signature")
+
+    first = await uc.process_next(processor_id="test-worker")
+    second = await uc.process_next(processor_id="test-worker")
+
+    assert first["status"] == "failed"
+    assert second["processed"] is True
+    assert dedup.events["evt_blip"]["status"] == "processed"
