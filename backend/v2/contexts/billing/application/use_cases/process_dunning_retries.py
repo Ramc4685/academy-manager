@@ -9,7 +9,12 @@ from typing import Any, Protocol
 from pydantic import BaseModel
 
 from backend.v2.contexts.billing.domain.dunning import DunningState
+from backend.v2.contexts.billing.domain.events import (
+    DunningNoticeRequested,
+    DunningNoticeRequestedPayload,
+)
 from backend.v2.contexts.billing.domain.ledger import LedgerInvoice
+from backend.v2.shared.events.outbox import Outbox
 
 log = logging.getLogger(__name__)
 
@@ -109,12 +114,14 @@ class ProcessDunningRetries:
         charge_invoice: ChargeInvoicePort,
         notifier: DunningNotificationPort | None = None,
         enrollment_autopay: DunningEnrollmentAutopayPort | None = None,
+        outbox: Outbox | None = None,
         clock=lambda: datetime.now(UTC),
     ) -> None:
         self._dunning = dunning
         self._charge_invoice = charge_invoice
         self._notifier = notifier
         self._enrollment_autopay = enrollment_autopay
+        self._outbox = outbox
         self._now = clock
 
     async def execute(
@@ -235,19 +242,50 @@ class ProcessDunningRetries:
             await self._disable_autopay(state, counts=counts, now=now)
 
     async def _notify_parent(self, *, invoice: LedgerInvoice, state: DunningState) -> bool:
+        """Tell the parent this attempt failed. Returns True once the notice is
+        *durably owed* — enqueued or sent — not necessarily delivered.
+
+        Issue #435: with an outbox wired, the notice becomes an event and the
+        dispatcher's retry ladder owns delivery, so a Resend blip no longer
+        means the parent is never told their payment failed. Without one (no
+        e-mail configured, or older wiring) the direct best-effort send is kept
+        so behaviour is unchanged where nothing can deliver anyway.
+
+        ``mark_notification_sent`` is recorded on enqueue, not on delivery: it
+        is the guard that stops the *next* worker tick from queuing a second
+        notice for the same attempt. Duplicate suppression on delivery is the
+        dispatcher's job — it tracks ``(event_id, handler_name)``.
+        """
         attempt_no = state.attempt_count
         if self._notifier is None or attempt_no in state.notification_attempts:
             return False
         try:
-            await self._notifier.send_dunning_notice(
-                parent_id=invoice.parent_id,
-                invoice_id=invoice.invoice_id,
-                period=invoice.period,
-                balance_due_cents=invoice.balance_due_cents,
-                currency=invoice.currency,
-                attempt_no=attempt_no,
-                terminal=state.status == "dunned",
-            )
+            if self._outbox is not None:
+                await self._outbox.append(
+                    DunningNoticeRequested(
+                        aggregate_id=invoice.invoice_id,
+                        academy_id=invoice.academy_id,
+                        payload=DunningNoticeRequestedPayload(
+                            invoice_id=invoice.invoice_id,
+                            parent_id=invoice.parent_id,
+                            period=invoice.period,
+                            balance_due_cents=invoice.balance_due_cents,
+                            currency=invoice.currency,
+                            attempt_no=attempt_no,
+                            terminal=state.status == "dunned",
+                        ),
+                    )
+                )
+            else:
+                await self._notifier.send_dunning_notice(
+                    parent_id=invoice.parent_id,
+                    invoice_id=invoice.invoice_id,
+                    period=invoice.period,
+                    balance_due_cents=invoice.balance_due_cents,
+                    currency=invoice.currency,
+                    attempt_no=attempt_no,
+                    terminal=state.status == "dunned",
+                )
             await self._dunning.mark_notification_sent(
                 invoice_id=invoice.invoice_id,
                 attempt_no=attempt_no,

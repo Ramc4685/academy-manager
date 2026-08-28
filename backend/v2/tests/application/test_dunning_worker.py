@@ -315,3 +315,132 @@ async def test_terminal_disable_failure_is_recorded_and_retried() -> None:
     assert result.autopay_disable_failed == 1
     assert enrollment_autopay.disabled == ["enr-1"]
     assert dunning.disable_results == [("inv-1", False, "transition rejected")]
+
+
+# ---------------------------------------------------------------------------
+# The failure notice goes through the outbox (issue #435)
+# ---------------------------------------------------------------------------
+
+
+class _FakeOutbox:
+    def __init__(self, raises: Exception | None = None) -> None:
+        self.appended: list = []
+        self.raises = raises
+
+    async def append(self, event, *, session=None) -> None:
+        if self.raises is not None:
+            raise self.raises
+        self.appended.append(event)
+
+    async def pull_unprocessed(self, limit: int = 100) -> list:
+        return []
+
+    async def mark_processed(self, event_id: str) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_failure_notice_is_enqueued_not_sent_directly() -> None:
+    """With an outbox wired, delivery (and its retries) belong to the
+    dispatcher — the worker must not also send the mail itself, or a parent
+    would get two notices for one failed attempt."""
+    invoice = _invoice()
+    dunning = _FakeDunningRepo(invoice)
+    notifier = _FakeNotifier()
+    outbox = _FakeOutbox()
+
+    result = await ProcessDunningRetries(
+        dunning=dunning,
+        charge_invoice=_FakeCharge(success=False, decline_code="insufficient_funds"),
+        notifier=notifier,
+        enrollment_autopay=_FakeEnrollmentAutopay(),
+        outbox=outbox,
+        clock=lambda: NOW,
+    ).execute(limit=5, worker_id="worker-1")
+
+    assert result.notifications_sent == 1
+    assert notifier.calls == [], "the worker must not send directly when enqueuing"
+    assert len(outbox.appended) == 1
+    event = outbox.appended[0]
+    assert event.name == "Billing.DunningNoticeRequested"
+    assert event.academy_id == invoice.academy_id
+    assert event.aggregate_id == invoice.invoice_id
+    assert event.payload.attempt_no == 1
+    assert event.payload.invoice_id == "inv-1"
+    assert event.payload.terminal is False
+    # Recorded on enqueue: this is what stops the next tick queuing a duplicate.
+    assert dunning.notified == [1]
+
+
+@pytest.mark.asyncio
+async def test_reprocessing_the_same_attempt_does_not_enqueue_a_duplicate() -> None:
+    """A worker that crashes after enqueuing but before finishing leaves the
+    attempt to be processed again. ``notification_attempts`` is the guard that
+    stops the parent getting a second copy of the same notice."""
+    invoice = _invoice()
+    dunning = _FakeDunningRepo(invoice)
+    outbox = _FakeOutbox()
+
+    def _worker():
+        return ProcessDunningRetries(
+            dunning=dunning,
+            charge_invoice=_FakeCharge(success=False, decline_code="insufficient_funds"),
+            notifier=_FakeNotifier(),
+            enrollment_autopay=_FakeEnrollmentAutopay(),
+            outbox=outbox,
+            clock=lambda: NOW,
+        )
+
+    await _worker().execute(limit=5, worker_id="worker-1")
+    assert len(outbox.appended) == 1
+
+    # Rewind to *the same* attempt and let the worker claim it again.
+    dunning._claimed = False
+    dunning.state = dunning.state.model_copy(
+        update={"status": "active", "attempt_count": 0, "next_attempt_at": NOW}
+    )
+    result = await _worker().execute(limit=5, worker_id="worker-1")
+
+    assert len(outbox.appended) == 1, "the same attempt must not be notified twice"
+    assert result.notifications_sent == 0
+    assert dunning.notified == [1]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_enqueue_is_counted_not_swallowed_as_sent() -> None:
+    invoice = _invoice()
+    dunning = _FakeDunningRepo(invoice)
+    outbox = _FakeOutbox(raises=RuntimeError("mongo down"))
+
+    result = await ProcessDunningRetries(
+        dunning=dunning,
+        charge_invoice=_FakeCharge(success=False, decline_code="insufficient_funds"),
+        notifier=_FakeNotifier(),
+        enrollment_autopay=_FakeEnrollmentAutopay(),
+        outbox=outbox,
+        clock=lambda: NOW,
+    ).execute(limit=5, worker_id="worker-1")
+
+    assert result.notifications_sent == 0
+    assert result.notifications_failed == 1
+    # Not marked notified, so the next tick can try to enqueue it again.
+    assert dunning.notified == []
+
+
+@pytest.mark.asyncio
+async def test_without_an_outbox_the_direct_send_is_unchanged() -> None:
+    """Older wiring (and any deployment without the outbox) keeps working."""
+    invoice = _invoice()
+    dunning = _FakeDunningRepo(invoice)
+    notifier = _FakeNotifier()
+
+    result = await ProcessDunningRetries(
+        dunning=dunning,
+        charge_invoice=_FakeCharge(success=False, decline_code="insufficient_funds"),
+        notifier=notifier,
+        enrollment_autopay=_FakeEnrollmentAutopay(),
+        clock=lambda: NOW,
+    ).execute(limit=5, worker_id="worker-1")
+
+    assert result.notifications_sent == 1
+    assert len(notifier.calls) == 1

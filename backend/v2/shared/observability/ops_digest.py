@@ -21,6 +21,11 @@ Attention-signal design — the subject line must stay actionable:
   next 60s drain tick — so the raw count is informational only. The flag uses
   the events whose ``next_retry_at`` is well past due, i.e. the ones that are
   genuinely stuck rather than mid-retry.
+* Failed digest sends follow the same shape (issue #435): a send that still has
+  retries left will very likely land on the next hourly tick, so only the ones
+  that burned every attempt raise the flag. A run of those is the visible
+  symptom of a Resend key that died after boot, when the boot-time credential
+  check can no longer help.
 
 ``record_job_run`` is the one write: the monthly invoice generator stores its
 totals under ``ops_job_runs`` so the digest can report them even though the
@@ -50,6 +55,14 @@ LOOKBACK = timedelta(hours=24)
 # an hour, so anything overdue by this much is stuck, not retrying.
 FAILED_STALE_AFTER = timedelta(hours=1)
 
+# Digest-send collections are read by collection name for the same reason the
+# webhook counts are: this module deliberately imports no context repository.
+DIGEST_SEND_COLLECTIONS = ("coach_digest_sends", "parent_digest_sends")
+# Mirror of communications' MAX_DIGEST_SEND_ATTEMPTS. shared/ may not import a
+# bounded context, so the value is duplicated here and pinned by
+# ``test_ops_alerts.py::test_digest_attempt_ceiling_matches_the_domain``.
+DIGEST_ATTEMPT_CEILING = 3
+
 
 @dataclass(frozen=True)
 class OpsDigestSnapshot:
@@ -64,6 +77,8 @@ class OpsDigestSnapshot:
     dead_letter_total: int = 0
     dead_letter_recent: int = 0
     dunning_terminals_recent: int = 0
+    digest_sends_failed: int = 0
+    digest_sends_failed_exhausted: int = 0
     last_invoice_run: dict[str, Any] | None = None
     last_invoice_tick_at: datetime | None = None
     errors: list[str] = field(default_factory=list)
@@ -76,6 +91,7 @@ class OpsDigestSnapshot:
             or self.webhooks_failed_stale
             or self.dead_letter_recent
             or self.dunning_terminals_recent
+            or self.digest_sends_failed_exhausted
             or self.errors
         )
 
@@ -163,6 +179,42 @@ async def _dunning_terminal_count(db: AsyncIOMotorDatabase[Any], since: datetime
     return {"dunning_terminals_recent": int(count)}
 
 
+async def _digest_send_failure_counts(
+    db: AsyncIOMotorDatabase[Any], since: datetime
+) -> dict[str, int]:
+    """Failed coach + parent digest sends in the window.
+
+    ``digest_sends_failed`` includes rows that will retry on the next hourly
+    tick; ``digest_sends_failed_exhausted`` counts only the ones that used every
+    attempt, which is the number that means "someone lost their digest today".
+
+    Rows flagged ``retryable: false`` are excluded from the actionable count:
+    they are recipients with no e-mail address on file, a standing data problem
+    that regenerates daily. Counting them would pin the digest's subject line to
+    "attention needed" forever over something no send will ever fix. They still
+    appear in the informational total and in the admin delivery log.
+    """
+    failed = 0
+    exhausted = 0
+    for name in DIGEST_SEND_COLLECTIONS:
+        base = {"status": "failed", "created_at": {"$gte": since}}
+        failed += int(await db[name].count_documents(base))
+        exhausted += int(
+            await db[name].count_documents(
+                {
+                    **base,
+                    "attempt_count": {"$gte": DIGEST_ATTEMPT_CEILING},
+                    # `$ne: False` so rows predating the field still count.
+                    "retryable": {"$ne": False},
+                }
+            )
+        )
+    return {
+        "digest_sends_failed": failed,
+        "digest_sends_failed_exhausted": exhausted,
+    }
+
+
 async def collect_ops_digest(
     db: AsyncIOMotorDatabase[Any],
     *,
@@ -183,6 +235,7 @@ async def collect_ops_digest(
         ("webhooks", _webhook_counts(db, since, stale_before)),
         ("dead_letter", _dead_letter_counts(db, since)),
         ("dunning_terminals", _dunning_terminal_count(db, since)),
+        ("digest_sends", _digest_send_failure_counts(db, since)),
         ("last_invoice_run", _last_invoice_run(db)),
     ]
     results = await asyncio.gather(*(coro for _, coro in probes), return_exceptions=True)
@@ -246,6 +299,13 @@ def render_ops_digest(snapshot: OpsDigestSnapshot) -> tuple[str, str]:
         ("Dead-letter events", snapshot.dead_letter_recent, window, True),
         ("Dead-letter events", snapshot.dead_letter_total, "all time", False),
         ("Dunning terminals", snapshot.dunning_terminals_recent, window, True),
+        (
+            "Digest sends failed (no retries left)",
+            snapshot.digest_sends_failed_exhausted,
+            window,
+            True,
+        ),
+        ("Digest sends failed", snapshot.digest_sends_failed, "incl. will-retry", False),
     ]
     row_html = "".join(
         f"<tr><td>{escape(label)}</td><td align='right'>"
