@@ -479,13 +479,8 @@ class HandleWebhookEvent:
         checkout_session_id = str(obj.get("id") or "")
         if not checkout_session_id:
             return
-        metadata = self._event_metadata(event)
-        invoice_ids = [item.strip() for item in str(metadata.get("invoice_ids") or "").split(",")]
-        single = str(metadata.get("invoice_id") or "").strip()
-        if single:
-            invoice_ids.append(single)
         now = self._now()
-        for invoice_id in {item for item in invoice_ids if item}:
+        for invoice_id in _checkout_invoice_ids(self._event_metadata(event)):
             try:
                 invoice = await self._billing_ledger.get_invoice(invoice_id)
                 if invoice is None:

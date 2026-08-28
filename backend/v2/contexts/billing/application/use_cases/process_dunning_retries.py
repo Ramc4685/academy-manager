@@ -178,11 +178,34 @@ class ProcessDunningRetries:
         }
         await self._process_pending_autopay_disables(limit=limit, counts=counts, now=now)
 
+        # Parking leaves next_attempt_at=None, and claim_next_due sorts on that column
+        # ascending — BSON puts Null before Date, so a state parked a moment ago is
+        # handed straight back ahead of the invoices that are genuinely due. Left alone,
+        # one parent mid-checkout would spend the whole tick being claimed and re-parked
+        # while real retries never got a turn. Re-park a repeat immediately (no charge
+        # call), and stop once every remaining candidate is one we already parked.
+        parked_this_tick: dict[str, str] = {}
+        repeat_claims = 0
+
         for _ in range(limit):
             claimed = await self._dunning.claim_next_due(now=now, worker_id=worker_id)
             if claimed is None:
                 break
             invoice, state = claimed
+
+            previous_reason = parked_this_tick.get(invoice.invoice_id)
+            if previous_reason is not None:
+                await self._dunning.park_attempt(
+                    state=state,
+                    reason=previous_reason,
+                    now=now,
+                )
+                repeat_claims += 1
+                if repeat_claims >= len(parked_this_tick):
+                    break
+                continue
+            repeat_claims = 0
+
             counts["processed"] += 1
 
             try:
@@ -202,6 +225,7 @@ class ProcessDunningRetries:
                     reason="charge_technical_failure",
                     now=now,
                 )
+                parked_this_tick[invoice.invoice_id] = "charge_technical_failure"
                 counts["technical_failures"] += 1
                 counts["parked"] += 1
                 continue
@@ -210,13 +234,13 @@ class ProcessDunningRetries:
             succeeded = bool(result.get("success"))
             failure_code = _failure_code(result)
             if not succeeded and (bool(result.get("processing")) or failure_code is None):
-                await self._dunning.park_attempt(
-                    state=state,
-                    reason="payment_processing"
+                reason = (
+                    "payment_processing"
                     if bool(result.get("processing"))
-                    else "attempt_indeterminate",
-                    now=now,
+                    else "attempt_indeterminate"
                 )
+                await self._dunning.park_attempt(state=state, reason=reason, now=now)
+                parked_this_tick[invoice.invoice_id] = reason
                 counts["parked"] += 1
                 if not bool(result.get("processing")):
                     counts["transient"] += 1
@@ -227,6 +251,7 @@ class ProcessDunningRetries:
                     reason=failure_code,
                     now=now,
                 )
+                parked_this_tick[invoice.invoice_id] = failure_code
                 if failure_code in _PARK_REASONS_NEEDING_OPERATOR:
                     counts["technical_failures"] += 1
                 counts["parked"] += 1

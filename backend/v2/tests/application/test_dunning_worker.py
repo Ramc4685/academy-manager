@@ -534,3 +534,46 @@ def test_every_park_reason_is_re_claimable_by_the_repository() -> None:
 
     stranded = _PARK_REASONS - MongoDunningStateRepository.retryable_parked_reasons
     assert not stranded, f"park reasons never re-claimed: {sorted(stranded)}"
+
+
+class _RepeatClaimDunningRepo(_FakeDunningRepo):
+    """Hands the same parked state back every time, like Mongo does.
+
+    park() leaves next_attempt_at=None and claim_next_due sorts that column ascending,
+    so a just-parked state is returned ahead of genuinely-due ones on the very next
+    call within the same tick.
+    """
+
+    async def claim_next_due(self, *, now: datetime, worker_id: str):
+        if self.state.status != "active":
+            return None
+        attempt_no = self.state.attempt_count + 1
+        self.state = self.state.claim(attempt_no=attempt_no, worker_id=worker_id, now=now)
+        return self.invoice, self.state
+
+
+@pytest.mark.asyncio
+async def test_a_parked_invoice_cannot_consume_the_whole_tick() -> None:
+    """One parent mid-checkout must not starve every other due invoice.
+
+    Without the repeat guard the worker claims, charges and re-parks the same held
+    invoice `limit` times, so the invoices whose retry is actually due never get a turn.
+    """
+    invoice = _invoice()
+    dunning = _RepeatClaimDunningRepo(invoice)
+    charge = _FakeCharge(success=False, decline_code="checkout_session_open")
+
+    result = await ProcessDunningRetries(
+        dunning=dunning,
+        charge_invoice=charge,
+        notifier=_FakeNotifier(),
+        enrollment_autopay=_FakeEnrollmentAutopay(),
+        clock=lambda: NOW,
+    ).execute(limit=50, worker_id="worker-1")
+
+    # Charged (and counted) once, not once per loop iteration.
+    assert charge.calls == [("inv-1", "dunning-attempt:1")]
+    assert result.processed == 1
+    assert result.parked == 1
+    assert dunning.state.suppression_reason == "checkout_session_open"
+    assert dunning.state.attempt_count == 0
