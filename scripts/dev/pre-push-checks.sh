@@ -68,43 +68,11 @@ else
 fi
 
 # ── Classify the change ───────────────────────────────────────────────────────
-DOCS_ONLY=true
-BACKEND_CHANGED=false
-FRONTEND_CHANGED=false
-HIGH_RISK=false
-RUN_E2E=false
-
-# Paths where a mistake is expensive enough to always warrant the broad tier:
-# auth/tenancy/billing/payments, migrations, CI, deployment, shared infra.
-HIGH_RISK_RE='^\.github/workflows/|^scripts/|^docker|compose.*\.ya?ml$|^fly\.toml|requirements.*\.txt$|pnpm-lock\.yaml$|package\.json$|auth|tenan|billing|stripe|payment|invoice|checkout|webhook|migrat|middleware|composition'
-
-while IFS= read -r f; do
-  [ -z "$f" ] && continue
-  case "$f" in
-    docs/*|*.md|.github/ISSUE_TEMPLATE/*|LICENSE*) ;;
-    *) DOCS_ONLY=false ;;
-  esac
-  case "$f" in
-    backend/*)  BACKEND_CHANGED=true ;;
-    frontend/*) FRONTEND_CHANGED=true ;;
-  esac
-  case "$f" in
-    frontend/e2e/*) RUN_E2E=true ;;
-  esac
-  if printf '%s' "$f" | grep -qiE "$HIGH_RISK_RE"; then
-    HIGH_RISK=true
-  fi
-done <<< "${CHANGED}"
-
-if [ "$FULL" = "--full" ]; then
-  RUN_E2E=true
-fi
-
-# Broad tier: --full, high-risk paths, or a mixed backend+frontend change.
-BROAD=false
-if [ "$FULL" = "--full" ] || [ "$HIGH_RISK" = true ] || { [ "$BACKEND_CHANGED" = true ] && [ "$FRONTEND_CHANGED" = true ]; }; then
-  BROAD=true
-fi
+# Tier logic lives in lib/classify-changes.sh, covered by
+# scripts/dev/pre-push-checks.test.sh (run in CI as Hook Classifier Tests).
+# shellcheck source=scripts/dev/lib/classify-changes.sh
+source "$ROOT/scripts/dev/lib/classify-changes.sh"
+classify_changes "${CHANGED}" "${FULL}"
 
 if [ "$FULL" = "--full" ]; then
   info "Tier: full (--full requested)"
