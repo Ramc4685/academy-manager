@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Literal, Protocol
 
 from pydantic import BaseModel, EmailStr, Field
 
 from backend.v2.contexts.identity.domain.models import Role
+
+logger = logging.getLogger(__name__)
 
 
 class AdminUserSummary(BaseModel):
@@ -81,6 +84,37 @@ class AdminUserCreator(Protocol):
     ) -> AdminUserDetail: ...
 
 
+class LoginInviteOutcome(BaseModel):
+    """Whether an email edit triggered a fresh login invite, and how it went.
+
+    Firebase clears `email_verified` whenever an account's email changes
+    (`FirebaseAdminAdapter.update_user_email`), and `load_auth_claims`
+    rejects password-provider tokens with an unverified email — so an admin
+    correcting a typo locks the parent out until they complete a new
+    set-password link. We send that link automatically; this outcome is what
+    tells the admin whether it actually went out (issue #436).
+    """
+
+    model_config = {"frozen": True}
+
+    status: Literal["not_needed", "sent", "failed"]
+    sent_at: datetime | None = None
+    error: str | None = None
+
+
+class UpdateAdminUserResult(BaseModel):
+    model_config = {"frozen": True}
+
+    user: AdminUserDetail
+    login_invite: LoginInviteOutcome
+
+
+class LoginInviteDispatcher(Protocol):
+    """Narrow view of `SendLoginInvite` so this module stays decoupled."""
+
+    async def execute(self, user_id: str, *, academy_id: str) -> object: ...
+
+
 class ListAdminUsers:
     def __init__(self, users: AdminUserDirectoryQuery) -> None:
         self._users = users
@@ -119,9 +153,32 @@ class CreateAdminUser:
         return await self._users.create_admin_user(command, academy_id=academy_id)
 
 
+def _same_email(left: str | None, right: str | None) -> bool:
+    return (left or "").strip().lower() == (right or "").strip().lower()
+
+
 class UpdateAdminUser:
-    def __init__(self, users: AdminUserWriter) -> None:
+    """Edit an admin-visible user, re-inviting them when their email moves.
+
+    Changing the email in Firebase clears `email_verified`, which locks a
+    password-login user out until they complete a fresh set-password link.
+    So when (and only when) the address actually changes, we send one login
+    invite through the existing `SendLoginInvite` path. A failed send is
+    reported back to the caller rather than swallowed — the edit itself has
+    already committed, so failing the whole request would be a lie in the
+    other direction (issue #436).
+    """
+
+    def __init__(
+        self,
+        users: AdminUserWriter,
+        *,
+        reader: AdminUserDetailQuery | None = None,
+        invites: LoginInviteDispatcher | None = None,
+    ) -> None:
         self._users = users
+        self._reader = reader
+        self._invites = invites
 
     async def execute(
         self,
@@ -129,8 +186,12 @@ class UpdateAdminUser:
         command: UpdateAdminUserCommand,
         *,
         academy_id: str,
-    ) -> AdminUserDetail:
+    ) -> UpdateAdminUserResult:
         from backend.v2.contexts.identity.domain.errors import UserNotFound
+
+        before: AdminUserDetail | None = None
+        if command.email is not None and self._reader is not None:
+            before = await self._reader.get_admin_user(user_id, academy_id=academy_id)
 
         updated = await self._users.update_admin_user(
             user_id,
@@ -139,4 +200,33 @@ class UpdateAdminUser:
         )
         if updated is None:
             raise UserNotFound("user not found")
-        return updated
+
+        invite = await self._maybe_reinvite(before, updated, academy_id=academy_id)
+        return UpdateAdminUserResult(user=updated, login_invite=invite)
+
+    async def _maybe_reinvite(
+        self,
+        before: AdminUserDetail | None,
+        updated: AdminUserDetail,
+        *,
+        academy_id: str,
+    ) -> LoginInviteOutcome:
+        not_needed = LoginInviteOutcome(status="not_needed")
+        if self._invites is None or before is None:
+            return not_needed
+        if _same_email(str(before.email), str(updated.email)):
+            return not_needed
+
+        try:
+            result = await self._invites.execute(updated.user_id, academy_id=academy_id)
+        except Exception as exc:
+            logger.exception(
+                "re-invite after email change failed for %s",
+                updated.user_id,
+            )
+            return LoginInviteOutcome(status="failed", error=str(exc) or exc.__class__.__name__)
+        sent_at = getattr(result, "sent_at", None)
+        return LoginInviteOutcome(
+            status="sent",
+            sent_at=sent_at if isinstance(sent_at, datetime) else None,
+        )

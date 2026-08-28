@@ -29,6 +29,24 @@ class AdminUserDetailView(AdminUserView):
     login_invite_sent_at: datetime | None = None
 
 
+class LoginInviteOutcomeView(BaseModel):
+    """Result of the automatic re-invite that follows an email edit (#436)."""
+
+    status: Literal["not_needed", "sent", "failed"]
+    sent_at: datetime | None = None
+    error: str | None = None
+
+
+class AdminUserUpdatedView(AdminUserDetailView):
+    """PATCH /admin/users/{id} response.
+
+    Superset of the detail view: the edit itself succeeded either way, but the
+    admin also needs to know whether the user got a working set-password link.
+    """
+
+    login_invite: LoginInviteOutcomeView | None = None
+
+
 class AdminUserList(BaseModel):
     users: list[AdminUserView]
 

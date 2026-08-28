@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 
 from backend.v2.contexts.identity.application.change_user_role_use_case import (
@@ -15,7 +17,10 @@ from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     UpdateAdminUser,
     UpdateAdminUserCommand,
 )
-from backend.v2.contexts.identity.domain.errors import UserNotFound
+from backend.v2.contexts.identity.application.use_cases.send_login_invite import (
+    LoginInviteResult,
+)
+from backend.v2.contexts.identity.domain.errors import LoginInviteSendFailed, UserNotFound
 
 
 class FakeUserEditor:
@@ -50,6 +55,7 @@ class FakeUserEditor:
             return None
         self.user = self.user.model_copy(
             update={
+                "email": command.email or self.user.email,
                 "display_name": command.display_name or self.user.display_name,
                 "phone": command.phone,
                 "status": command.status or self.user.status,
@@ -98,9 +104,10 @@ async def test_update_admin_user_forwards_safe_fields_with_audit_context() -> No
 
     result = await UpdateAdminUser(repo).execute("user-1", command, academy_id="acad")
 
-    assert result.display_name == "Parent Updated"
-    assert result.phone == "555-0199"
-    assert result.status == "inactive"
+    assert result.user.display_name == "Parent Updated"
+    assert result.user.phone == "555-0199"
+    assert result.user.status == "inactive"
+    assert result.login_invite.status == "not_needed"
     assert repo.update_commands == [command]
 
 
@@ -134,3 +141,72 @@ async def test_update_admin_user_raises_when_missing() -> None:
             UpdateAdminUserCommand(actor_id="admin-1", reason="correction"),
             academy_id="acad",
         )
+
+
+class RecordingInvites:
+    """Stands in for `SendLoginInvite` (issue #436)."""
+
+    def __init__(self, *, fail_with: Exception | None = None) -> None:
+        self.calls: list[tuple[str, str]] = []
+        self._fail_with = fail_with
+
+    async def execute(self, user_id: str, *, academy_id: str) -> LoginInviteResult:
+        self.calls.append((user_id, academy_id))
+        if self._fail_with is not None:
+            raise self._fail_with
+        return LoginInviteResult(sent_at=datetime(2026, 8, 28, 12, 0, tzinfo=UTC))
+
+
+def _edit(**kwargs: object) -> UpdateAdminUserCommand:
+    return UpdateAdminUserCommand(actor_id="admin-1", reason="typo fix", **kwargs)  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_email_change_sends_exactly_one_login_invite() -> None:
+    """The email edit clears Firebase's `email_verified`, so it must carry a
+    fresh set-password link or the parent is locked out of password login."""
+    repo = FakeUserEditor()
+    invites = RecordingInvites()
+
+    result = await UpdateAdminUser(repo, reader=repo, invites=invites).execute(
+        "user-1",
+        _edit(email="corrected@example.com"),
+        academy_id="acad",
+    )
+
+    assert invites.calls == [("user-1", "acad")]
+    assert result.user.email == "corrected@example.com"
+    assert result.login_invite.status == "sent"
+    assert result.login_invite.sent_at == datetime(2026, 8, 28, 12, 0, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_edit_without_email_change_sends_no_invite() -> None:
+    repo = FakeUserEditor()
+    invites = RecordingInvites()
+    use_case = UpdateAdminUser(repo, reader=repo, invites=invites)
+
+    await use_case.execute("user-1", _edit(display_name="Parent Renamed"), academy_id="acad")
+    # Same address re-submitted (only the casing differs) is not a change.
+    await use_case.execute("user-1", _edit(email="Parent@Example.com"), academy_id="acad")
+
+    assert invites.calls == []
+
+
+@pytest.mark.asyncio
+async def test_failed_invite_is_surfaced_not_swallowed() -> None:
+    """The edit has already committed, so the request still succeeds — but the
+    admin must be told the parent never got a working link."""
+    repo = FakeUserEditor()
+    invites = RecordingInvites(fail_with=LoginInviteSendFailed("resend rejected the address"))
+
+    result = await UpdateAdminUser(repo, reader=repo, invites=invites).execute(
+        "user-1",
+        _edit(email="corrected@example.com"),
+        academy_id="acad",
+    )
+
+    assert invites.calls == [("user-1", "acad")]
+    assert result.user.email == "corrected@example.com"
+    assert result.login_invite.status == "failed"
+    assert "resend rejected the address" in (result.login_invite.error or "")

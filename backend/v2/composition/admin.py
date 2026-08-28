@@ -1780,7 +1780,6 @@ def compose_admin(
 
     list_admin_users = ListAdminUsers(users_r)
     get_admin_user = GetAdminUser(users_r)
-    update_admin_user = UpdateAdminUser(users_r)
     create_admin_user = CreateAdminUser(users_r)
 
     class _MembershipAwareLoginInviteRecorder:
@@ -1815,6 +1814,15 @@ def compose_admin(
         sender=LoginInviteEmailAdapter(sender=_email_sender),
         academies=academy_repo,
         portals=_AcademyPortalUrlAdapter(),
+    )
+    # #436: an admin email edit clears Firebase's `email_verified`, so the
+    # edit must carry a fresh set-password invite or the user is locked out
+    # of password login with nobody told. Wired after `send_login_invite`
+    # exists so the edit path reuses that one invite implementation.
+    update_admin_user = UpdateAdminUser(
+        users_r,
+        reader=users_r,
+        invites=send_login_invite,
     )
     provision_parent_login = ProvisionParentLogin(users_r)
 
