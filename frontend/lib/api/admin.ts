@@ -1780,6 +1780,35 @@ export function listBillingWebhookEvents(params: {
   return apiFetch<BillingWebhookQueue>(`/admin/billing/webhooks${suffix}`, { method: "GET" });
 }
 
+// --- Connect readiness (#432) ---------------------------------------------- //
+export interface ConnectedAccountReadiness {
+  configured: boolean;
+  status: string | null;
+  charges_enabled: boolean;
+  payouts_enabled: boolean;
+  ready_for_charges: boolean;
+  account_id_masked: string | null;
+}
+
+export interface ConnectReadiness {
+  connected_account: ConnectedAccountReadiness;
+  allow_platform_charge_fallback: boolean;
+  /** Whether a parent payment can succeed at all right now. */
+  payments_possible: boolean;
+  /**
+   * False while `payments_possible` is true means money is landing on the
+   * platform account through the fallback, not the academy's own.
+   */
+  funds_route_to_academy: boolean;
+  webhook_events: { quarantined: number; failed: number };
+}
+
+export function fetchConnectReadiness(): Promise<ConnectReadiness> {
+  return apiFetch<ConnectReadiness>("/admin/billing/connect-readiness", {
+    method: "GET",
+  });
+}
+
 // --- Billing Health (#235) ------------------------------------------------- //
 export interface ReconciliationRun {
   run_id: string;
