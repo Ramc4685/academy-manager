@@ -338,3 +338,59 @@ async def test_mint_failure_does_not_mask_a_real_decline(db, acad) -> None:
 
     assert [r["invoice_id"] for r in rows] == ["inv-both"]
     assert rows[0]["latest_decline_code"] == "card_declined"
+
+
+# --------------------------------------------------------------------------- #
+# stuck webhook counts (#432)
+# --------------------------------------------------------------------------- #
+
+
+async def _seed_event(db, *, event_id: str, status: str, academy_id: str | None) -> None:
+    doc = {
+        "event_id": event_id,
+        "event_type": "payment_intent.succeeded",
+        "status": status,
+        "received_at": NOW,
+        "retry_count": 1,
+    }
+    if academy_id is not None:
+        doc["academy_id"] = academy_id
+    await db["stripe_webhook_events"].insert_one(doc)
+
+
+@pytest.mark.asyncio
+async def test_stuck_webhook_counts_are_real_counts_not_a_capped_page(db, acad) -> None:
+    """The page used to count the length of a 50-capped list, so any backlog
+    at or above the cap read the same."""
+    for n in range(60):
+        await _seed_event(db, event_id=f"evt-q{n}", status="quarantined", academy_id=acad)
+    for n in range(3):
+        await _seed_event(db, event_id=f"evt-f{n}", status="failed", academy_id=acad)
+
+    counts = await MongoStripeEventDedup(db).count_stuck_by_status(academy_id=acad)
+
+    assert counts == {"quarantined": 60, "failed": 3}
+
+
+@pytest.mark.asyncio
+async def test_stuck_webhook_counts_do_not_cross_academies(db, acad, other_acad) -> None:
+    await _seed_event(db, event_id="evt-mine", status="quarantined", academy_id=acad)
+    await _seed_event(db, event_id="evt-theirs", status="quarantined", academy_id=other_acad)
+    # A pre-tenant event that was never attributed must not be counted against
+    # anyone — it is not this academy's backlog.
+    await _seed_event(db, event_id="evt-orphan", status="failed", academy_id=None)
+
+    counts = await MongoStripeEventDedup(db).count_stuck_by_status(academy_id=acad)
+
+    assert counts == {"quarantined": 1, "failed": 0}
+
+
+@pytest.mark.asyncio
+async def test_stuck_webhook_counts_ignore_healthy_events(db, acad) -> None:
+    await _seed_event(db, event_id="evt-done", status="processed", academy_id=acad)
+    await _seed_event(db, event_id="evt-busy", status="processing", academy_id=acad)
+    await _seed_event(db, event_id="evt-new", status="received", academy_id=acad)
+
+    counts = await MongoStripeEventDedup(db).count_stuck_by_status(academy_id=acad)
+
+    assert counts == {"quarantined": 0, "failed": 0}

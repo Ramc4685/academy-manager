@@ -691,6 +691,71 @@ async def test_fixture_invoice_pay_link_checkout_records_ledger_payment_and_allo
     assert alloc["payment_id"] == lp.payment_id
 
 
+def _seed_ach_checkout_invoice(ledger: FakeBillingLedger) -> None:
+    now = datetime(2026, 6, 17, 12, 0, tzinfo=UTC)
+    ledger.invoices["inv-ach-checkout-01"] = LedgerInvoice(
+        invoice_id="inv-ach-checkout-01",
+        academy_id="test-academy",
+        parent_id="parent-ach-checkout",
+        period="2026-06",
+        status="open",
+        subtotal_cents=10_000,
+        discount_cents=0,
+        total_cents=10_000,
+        balance_due_cents=10_000,
+        currency="usd",
+        due_date=date(2026, 6, 30),
+        created_at=now,
+        updated_at=now,
+    )
+
+
+@pytest.mark.asyncio
+async def test_fixture_ach_checkout_unpaid_does_not_allocate_until_settlement() -> None:
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger()
+    _seed_ach_checkout_invoice(ledger)
+    uc = _build_with_ledger(repo, ledger)
+
+    await uc.execute(_load("checkout_session_completed_ach_unpaid.json"), "test_signature")
+
+    invoice = ledger.invoices["inv-ach-checkout-01"]
+    assert invoice.status == "open"
+    assert invoice.balance_due_cents == 10_000
+    assert ledger.payments == {}
+    assert ledger.allocations == []
+    assert next(iter(ledger.payment_attempts.values()))["status"] == "processing"
+
+    await uc.execute(_load("checkout_session_async_payment_succeeded_ach.json"), "test_signature")
+
+    invoice = ledger.invoices["inv-ach-checkout-01"]
+    assert invoice.status == "paid"
+    assert invoice.balance_due_cents == 0
+    assert list(ledger.payments) == ["ledger-pay-cs:cs_test_ach0000000001"]
+    assert len(ledger.allocations) == 1
+
+
+@pytest.mark.asyncio
+async def test_fixture_ach_checkout_async_failure_leaves_invoice_open() -> None:
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger()
+    _seed_ach_checkout_invoice(ledger)
+    uc = _build_with_ledger(repo, ledger)
+
+    await uc.execute(_load("checkout_session_completed_ach_unpaid.json"), "test_signature")
+    await uc.execute(_load("checkout_session_async_payment_failed_ach.json"), "test_signature")
+
+    invoice = ledger.invoices["inv-ach-checkout-01"]
+    assert invoice.status == "open"
+    assert invoice.balance_due_cents == 10_000
+    assert ledger.payments == {}
+    assert ledger.allocations == []
+    failed = ledger.payment_attempts[
+        "invoice-checkout-failed:inv-ach-checkout-01:pi_test_ach00000001"
+    ]
+    assert failed["status"] == "failed"
+
+
 @pytest.mark.asyncio
 async def test_fixture_subscription_invoice_paid_api_2026_converges_ledger() -> None:
     repo = FakePaymentRepo()
