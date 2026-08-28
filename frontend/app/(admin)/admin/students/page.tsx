@@ -205,7 +205,7 @@ function StudentsTable({ students }: { students: AdminStudentView[] }) {
           <tr className="border-b border-neutral-200 bg-neutral-50 text-left dark:border-neutral-800">
             <th className="px-5 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Student</th>
             <th className="px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Parent</th>
-            <th className="px-3 py-3 text-right font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Sessions</th>
+            <th className="px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Sessions</th>
             <th className="px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Attendance</th>
             <th className="px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Dues</th>
             <th className="px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Last attendance</th>
@@ -237,8 +237,12 @@ function StudentsTable({ students }: { students: AdminStudentView[] }) {
                   {student.parent_email ?? "No email on file"}
                 </div>
               </td>
-              <td className="px-3 py-4 text-right font-mono tabular-nums text-rally-base">
-                {student.active_session_count}
+              <td className="px-3 py-4">
+                <SessionsCell
+                  count={student.active_session_count}
+                  total={student.active_session_total}
+                  names={student.active_session_names}
+                />
               </td>
               <td className="px-3 py-4">
                 <AttendanceCell rate={student.attendance_rate} />
@@ -256,6 +260,52 @@ function StudentsTable({ students }: { students: AdminStudentView[] }) {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// Issue #104: the roster needs to say WHICH sessions, not just how many. The
+// backend caps the names it sends and reports the distinct-session total
+// alongside them, so the remainder is total - listed. `count` is the older
+// enrollment-document tally and is only a fallback — it can exceed the total
+// when a student holds two active enrollments for one session, and using it
+// here would claim a session that does not exist.
+function SessionsCell({
+  count,
+  total,
+  names,
+}: {
+  count: number;
+  total?: number;
+  names?: string[];
+}) {
+  const listed = names ?? [];
+  const sessionTotal = total ?? count;
+
+  if (sessionTotal <= 0) {
+    return <span className="text-xs text-rally-subtle">No active session</span>;
+  }
+  if (listed.length === 0) {
+    // Older payloads carry only the count.
+    return (
+      <span className="font-mono tabular-nums text-rally-base">
+        {sessionTotal} {sessionTotal === 1 ? "session" : "sessions"}
+      </span>
+    );
+  }
+
+  const [first, ...rest] = listed;
+  const unlisted = Math.max(sessionTotal - listed.length, 0);
+  return (
+    <div className="min-w-0 max-w-[15rem]" title={listed.join(", ")}>
+      <div className="truncate text-rally-base">{first}</div>
+      {(rest.length > 0 || unlisted > 0) && (
+        <div className="truncate text-xs text-rally-subtle">
+          {rest.length > 0 && rest.join(", ")}
+          {rest.length > 0 && unlisted > 0 && ", "}
+          {unlisted > 0 && `+${unlisted} more`}
+        </div>
+      )}
     </div>
   );
 }
