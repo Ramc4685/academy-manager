@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 
 import pytest
@@ -68,3 +69,32 @@ async def test_academy_lookup_resolves_verified_domain_mapping(db) -> None:
     lookup = _AcademyLookupAdapter(MongoAcademyRepository(db))
 
     assert await lookup.find_by_domain("blno-academy.courtmastr.com") == "acad_blno_badminton"
+
+
+@pytest.mark.asyncio
+async def test_list_tenants_skips_invalid_legacy_docs_and_warns_with_academy_id(
+    db, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A legacy `academies` row must not take the whole operator list down.
+
+    It is skipped, but the skip has to be observable: the warning names the
+    offending academy id so an operator can find the row that was dropped.
+    """
+    repo = MongoTenantLifecycleRepository(db)
+    await repo.create(_tenant())
+    # Legacy row: predates the platform context, so it has no domain at all
+    # and cannot satisfy `Tenant`.
+    await db["academies"].insert_one(
+        {"academy_id": "acad_legacy_no_domain", "name": "Legacy Academy"}
+    )
+
+    with caplog.at_level(
+        logging.WARNING,
+        logger="backend.v2.contexts.platform.infrastructure.mongo_tenant_lifecycle_repo",
+    ):
+        tenants = await repo.list_tenants()
+
+    assert [t.academy_id for t in tenants] == ["tenant_north"]
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "acad_legacy_no_domain" in warnings[0].getMessage()

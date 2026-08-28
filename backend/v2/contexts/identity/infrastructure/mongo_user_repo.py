@@ -819,9 +819,16 @@ class MongoUserRepository:
         email_change: tuple[str, str] | None = None
         if command.email is not None:
             email = normalize_email(str(command.email))
+            # Only touch Firebase when the address actually moves: the write
+            # also clears `email_verified`, which locks password login until
+            # a new set-password link is completed (#436). Re-submitting the
+            # same address (a no-op edit, or a casing-only difference) must
+            # not cost the user their verified state.
+            previous_email = str(before.get("email") or before.get("normalized_email") or "")
+            unchanged = bool(previous_email) and normalize_email(previous_email) == email
             await self._ensure_email_available(email, exclude_user_id=user_id)
             auth_uid = self._firebase_uid(before)
-            if auth_uid:
+            if auth_uid and not unchanged:
                 email_change = (auth_uid, email)
             set_doc["email"] = email
             set_doc["normalized_email"] = email

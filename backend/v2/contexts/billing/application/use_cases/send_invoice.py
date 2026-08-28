@@ -69,6 +69,7 @@ from backend.v2.contexts.billing.application.use_cases.record_checkout_mint_fail
     CHECKOUT_FAILURE_STRIPE_ERROR,
     record_checkout_mint_failure,
 )
+from backend.v2.contexts.billing.domain.checkout_hold import place_checkout_hold
 from backend.v2.contexts.billing.domain.ledger import (
     LedgerInvoice,
     finalize,
@@ -178,6 +179,50 @@ class SendInvoice:
         self._success_url = success_url
         self._cancel_url = cancel_url
         self._now = clock
+
+    async def _hold_invoices_for_checkout(
+        self,
+        *,
+        primary: LedgerInvoice,
+        payable_invoices: list[LedgerInvoice],
+        checkout_session_id: str,
+        now: datetime,
+    ) -> LedgerInvoice:
+        """Stamp the open session on every invoice this pay link collects.
+
+        A bundled link settles one balance across several invoices, so autopay has to
+        stand off all of them — holding only the invoice that was sent would leave the
+        others double-chargeable. Returns the (re-saved) primary so the caller's later
+        delivery write does not clobber the hold with its stale copy.
+
+        Best-effort per invoice: a hold that fails to persist costs us the guard on that
+        one invoice, which is strictly better than withholding the pay link the parent
+        asked for. The failure is logged loudly because it re-opens the double-charge
+        window for that invoice.
+        """
+        held_primary = primary
+        for candidate in payable_invoices:
+            try:
+                stamped = await self._ledger.save_invoice(
+                    place_checkout_hold(
+                        candidate,
+                        checkout_session_id=checkout_session_id,
+                        now=now,
+                    )
+                )
+            except Exception as exc:
+                log.error(
+                    "send_invoice: FAILED to hold invoice=%s for checkout session=%s — "
+                    "autopay may double-charge this invoice err=%s",
+                    candidate.invoice_id,
+                    checkout_session_id,
+                    exc,
+                    exc_info=True,
+                )
+                continue
+            if stamped.invoice_id == primary.invoice_id:
+                held_primary = stamped
+        return held_primary
 
     async def execute(
         self,
@@ -365,6 +410,15 @@ class SendInvoice:
                     invoice_id,
                     session_id,
                     is_bundled,
+                )
+                # From here the parent may pay at any moment, and the invoice will keep
+                # reading "open" until the success webhook drains. Hold it so the dunning
+                # tick stands off instead of charging the same balance again (issue #434).
+                invoice = await self._hold_invoices_for_checkout(
+                    primary=invoice,
+                    payable_invoices=payable_invoices,
+                    checkout_session_id=session_id,
+                    now=now,
                 )
             except Exception as exc:
                 # Loud, not swallowed (issue #426). The idempotency key above is

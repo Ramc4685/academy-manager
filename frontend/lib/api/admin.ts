@@ -1122,6 +1122,21 @@ export interface AdminUserDetail extends AdminUserView {
   login_invite_sent_at?: string | null;
 }
 
+/**
+ * Outcome of the automatic login invite that follows an email edit (#436).
+ * Changing the email clears Firebase's `email_verified`, which blocks
+ * password login until the user completes a fresh set-password link.
+ */
+export interface LoginInviteOutcome {
+  status: "not_needed" | "sent" | "failed";
+  sent_at?: string | null;
+  error?: string | null;
+}
+
+export interface AdminUserUpdated extends AdminUserDetail {
+  login_invite?: LoginInviteOutcome | null;
+}
+
 export interface AdminUserList {
   users: AdminUserView[];
 }
@@ -1133,7 +1148,16 @@ export interface AdminStudentView {
   parent_name: string | null;
   parent_email: string | null;
   status: string;
+  /** Active enrollment documents; can exceed active_session_total. */
   active_session_count: number;
+  /**
+   * Distinct active sessions, and their names capped server-side (issue #104).
+   * The total always agrees with the names, so the count beyond what is listed
+   * is `active_session_total - active_session_names.length`. Older responses
+   * omit both, so treat them as possibly undefined.
+   */
+  active_session_total?: number;
+  active_session_names?: string[];
   last_seen_at: string | null;
   attendance_rate: number | null;
   dues_status: "current" | "due" | "overdue";
@@ -1343,8 +1367,8 @@ export function updateAdminUser(
     status: string;
     reason: string;
   }>,
-): Promise<AdminUserDetail> {
-  return apiFetch<AdminUserDetail>(`/admin/users/${encodeURIComponent(userId)}`, {
+): Promise<AdminUserUpdated> {
+  return apiFetch<AdminUserUpdated>(`/admin/users/${encodeURIComponent(userId)}`, {
     method: "PATCH",
     body: JSON.stringify(payload),
   });

@@ -160,6 +160,14 @@ async def create_tenant(
     return _tenant_response(tenant)
 
 
+@router.get("/tenants", response_model=list[TenantLifecycleResponse])
+async def list_tenants(
+    _: AuthClaims = Depends(require_platform_operator),
+    use_case: TenantLifecycleService = Depends(get_tenant_lifecycle),
+) -> list[TenantLifecycleResponse]:
+    return [_tenant_response(tenant) for tenant in await use_case.list_tenants()]
+
+
 @router.get("/tenants/{academy_id}/status", response_model=TenantLifecycleResponse)
 async def get_tenant_status(
     academy_id: str,

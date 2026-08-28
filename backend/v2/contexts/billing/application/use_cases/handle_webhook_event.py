@@ -45,6 +45,7 @@ from backend.v2.contexts.billing.application.use_cases.parent_billing import (
     CompleteAutopaySetup,
 )
 from backend.v2.contexts.billing.domain.ach_returns import normalize_nacha_return_code
+from backend.v2.contexts.billing.domain.checkout_hold import release_checkout_hold
 from backend.v2.contexts.billing.domain.errors import InvalidWebhookSignature, PaymentNotFound
 from backend.v2.contexts.billing.domain.events import (
     CheckoutExpired,
@@ -72,9 +73,23 @@ from backend.v2.contexts.billing.domain.models import (
 )
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.ids import new_ulid
+from backend.v2.shared.observability.ops_alerts import capture_message
 from backend.v2.shared.tenancy import tenant_scope
 
 log = logging.getLogger(__name__)
+
+# Terminal Checkout Session outcomes. After any of these the session can no longer
+# collect, so the manual-pay hold has to come off or autopay waits out the backstop
+# for nothing. An unsettled (ACH) completion is included deliberately: it records a
+# "processing" payment attempt, and the dunning claim already parks on that.
+_CHECKOUT_HOLD_RELEASING_EVENTS = frozenset(
+    {
+        "checkout.session.completed",
+        "checkout.session.expired",
+        "checkout.session.async_payment_succeeded",
+        "checkout.session.async_payment_failed",
+    }
+)
 
 SUBSCRIPTION_INVOICE_RECOVERY_POINTS = {
     "received",
@@ -247,6 +262,12 @@ class HandleWebhookEvent:
                 return {"processed": True, "event_id": event_id, "type": event_type}
             except _QuarantineStripeEvent as exc:
                 await self._dedup.mark_quarantined(event_id, str(exc))
+                self._alert_quarantined(
+                    event_id=event_id,
+                    event_type=event_type,
+                    reason="rejected_by_guard",
+                    error=str(exc),
+                )
                 return {
                     "processed": False,
                     "event_id": event_id,
@@ -255,14 +276,50 @@ class HandleWebhookEvent:
                     "error": str(exc),
                 }
             except Exception as exc:
-                await self._dedup.mark_failed(event_id, str(exc))
+                # Retries are bounded (#437): this may be the attempt that gives
+                # up, in which case the event is now quarantined and nothing will
+                # look at it again unless someone is told.
+                status = await self._dedup.mark_failed(event_id, str(exc))
+                if status == "quarantined":
+                    self._alert_quarantined(
+                        event_id=event_id,
+                        event_type=event_type,
+                        reason="retry_limit_exceeded",
+                        error=str(exc),
+                    )
                 return {
                     "processed": False,
                     "event_id": event_id,
                     "type": event_type,
-                    "status": "failed",
+                    "status": status,
                     "error": str(exc),
                 }
+
+    def _alert_quarantined(
+        self, *, event_id: str, event_type: str, reason: str, error: str
+    ) -> None:
+        """Tell someone an event has stopped being retried (issues #437, #428).
+
+        Quarantine is terminal — the drain never claims the event again — so
+        this fires exactly once per event, not once per retry. Before this, a
+        poisoned event's only trace was a `failed` tally in a log line.
+
+        Never raises: an alerting problem must not turn a recorded quarantine
+        into an unrecorded crash.
+        """
+        extra = {
+            "event_id": event_id,
+            "event_type": event_type,
+            "academy_id": self._academy_id,
+            "quarantine_reason": reason,
+        }
+        try:
+            log.error("stripe_webhook_event_quarantined", extra=extra)
+            capture_message(
+                f"Stripe webhook event quarantined ({reason}): {event_id} [{event_type}] — {error}"
+            )
+        except Exception:  # pragma: no cover - defensive
+            log.warning("stripe_webhook_quarantine_alert_failed", exc_info=True)
 
     async def execute(self, payload: bytes, signature: str) -> dict[str, Any]:
         event = self._verify(payload, signature)
@@ -284,6 +341,12 @@ class HandleWebhookEvent:
                     await mark_quarantined(event_id, str(exc))
                 else:
                     await self._dedup.mark_failed(event_id, str(exc))
+                self._alert_quarantined(
+                    event_id=event_id,
+                    event_type=event_type,
+                    reason="rejected_by_guard",
+                    error=str(exc),
+                )
                 return {
                     "received": True,
                     "type": event_type,
@@ -291,7 +354,14 @@ class HandleWebhookEvent:
                     "error": str(exc),
                 }
             except Exception as exc:
-                await self._dedup.mark_failed(event_id, str(exc))
+                status = await self._dedup.mark_failed(event_id, str(exc))
+                if status == "quarantined":
+                    self._alert_quarantined(
+                        event_id=event_id,
+                        event_type=event_type,
+                        reason="retry_limit_exceeded",
+                        error=str(exc),
+                    )
                 raise
 
     def _verify(self, payload: bytes, signature: str) -> dict[str, Any]:
@@ -440,6 +510,59 @@ class HandleWebhookEvent:
         return hydrated
 
     async def _dispatch(self, event_type: str, event: dict[str, Any]) -> None:
+        await self._dispatch_event(event_type, event)
+        # Only once the handler has actually settled the outcome. Releasing before (or
+        # in a finally) would hand a still-open invoice back to autopay after a parent
+        # has already paid through the session — the exact double charge this guards.
+        # A handler that raised keeps the hold; Stripe retries the event, and the
+        # 90-minute backstop covers a webhook that never lands at all (issue #434).
+        if event_type in _CHECKOUT_HOLD_RELEASING_EVENTS:
+            await self._release_checkout_holds(event)
+
+    async def _release_checkout_holds(self, event: dict[str, Any]) -> None:
+        """Free every invoice this Checkout Session was holding.
+
+        Scoped to the session in the event: a late webhook for a session the parent
+        already abandoned must not unlock an invoice whose newer session is still open.
+        Best-effort per invoice — a hold we fail to clear lapses on its own within
+        CHECKOUT_HOLD_WINDOW, so a failure here delays collection rather than losing it.
+        """
+        if self._billing_ledger is None:
+            return
+        obj = event.get("data", {}).get("object", {})
+        if not isinstance(obj, dict):
+            return
+        checkout_session_id = str(obj.get("id") or "")
+        if not checkout_session_id:
+            return
+        now = self._now()
+        for invoice_id in _checkout_invoice_ids(self._event_metadata(event)):
+            try:
+                invoice = await self._billing_ledger.get_invoice(invoice_id)
+                if invoice is None:
+                    continue
+                released = release_checkout_hold(
+                    invoice,
+                    now=now,
+                    checkout_session_id=checkout_session_id,
+                )
+                if released is None:
+                    continue
+                await self._billing_ledger.save_invoice(released)
+                log.info(
+                    "checkout hold released invoice=%s session=%s",
+                    invoice_id,
+                    checkout_session_id,
+                )
+            except Exception as exc:
+                log.warning(
+                    "failed to release checkout hold invoice=%s session=%s err=%s",
+                    invoice_id,
+                    checkout_session_id,
+                    exc,
+                )
+
+    async def _dispatch_event(self, event_type: str, event: dict[str, Any]) -> None:
         if event_type == "checkout.session.completed":
             metadata = self._event_metadata(event)
             if metadata.get("source") == "autopay_setup":

@@ -92,7 +92,9 @@ class SendParentDailyDigest:
                 continue
 
             if not parent.email:
-                await self.digests.mark_failed(claim.digest_id, "no email address")
+                # Not retryable — see the coach digest: a missing address is a
+                # data problem, and retrying only rebuilds the view to fail again.
+                await self.digests.mark_failed(claim.digest_id, "no email address", retryable=False)
                 failed += 1
                 continue
 

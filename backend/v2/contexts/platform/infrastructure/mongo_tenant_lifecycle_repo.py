@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from pydantic import ValidationError
 from pymongo import ReturnDocument
 
 from backend.v2.contexts.platform.domain.models import Tenant, TenantLimits
+
+log = logging.getLogger(__name__)
 
 
 class MongoTenantLifecycleRepository:
@@ -25,6 +29,25 @@ class MongoTenantLifecycleRepository:
     async def get_by_id(self, academy_id: str) -> Tenant | None:
         doc = await self._collection.find_one({"academy_id": academy_id})
         return self._to_tenant(doc) if doc else None
+
+    async def list_tenants(self) -> list[Tenant]:
+        """Return every academy doc that parses as a platform tenant.
+
+        The `academies` collection predates the platform context, so some docs
+        were written without the fields `Tenant` requires (notably a domain).
+        Those are skipped with a warning rather than failing the whole list —
+        one legacy row must not take the operator tenant list down.
+        """
+        tenants: list[Tenant] = []
+        async for doc in self._collection.find({}):
+            try:
+                tenants.append(self._to_tenant(doc))
+            except ValidationError:
+                log.warning(
+                    "skipping academy doc that is not a valid platform tenant: %s",
+                    doc.get("academy_id"),
+                )
+        return tenants
 
     async def get_by_slug(self, slug: str) -> Tenant | None:
         doc = await self._collection.find_one({"slug": slug})

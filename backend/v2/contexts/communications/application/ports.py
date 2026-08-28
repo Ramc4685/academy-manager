@@ -106,6 +106,13 @@ class DigestSendRepository(Protocol):
     ``DigestSend`` on success and ``None`` when a row already exists (the
     duplicate-key error is the idempotency guard — a second scheduler run for
     the same day sends nothing).
+
+    One exception to "a row already exists ⇒ None": a row left in ``FAILED``
+    with attempts remaining is *re-claimed* and returned, so the next hourly
+    tick retries a send that a transient provider outage lost. The re-claim is
+    a single conditional update, so two concurrent ticks cannot both win it,
+    and it can never match a ``SENT`` or in-flight ``QUEUED`` row — retrying a
+    failure must never turn into sending twice.
     """
 
     async def try_claim(
@@ -118,7 +125,7 @@ class DigestSendRepository(Protocol):
 
     async def mark_sent(self, digest_id: str, provider_message_id: str | None) -> None: ...
 
-    async def mark_failed(self, digest_id: str, reason: str) -> None: ...
+    async def mark_failed(self, digest_id: str, reason: str, *, retryable: bool = True) -> None: ...
 
     async def mark_skipped_empty(self, digest_id: str) -> None: ...
 

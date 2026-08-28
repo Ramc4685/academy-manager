@@ -201,6 +201,10 @@ class MonthlyCoachOccurrenceReaderAdapter:
 
     Paying coach = actual_coach_id when set, else scheduled_coach_id.
     Clock-derived completion: end_at < now OR status == 'completed'.
+
+    A scheduled coach displaced by a replacement is also returned, with
+    ``session_count`` 0, so payroll generation still produces a period for
+    them to carry the ``replaced_by_actual_coach`` trace.
     """
 
     def __init__(self, collection: Any) -> None:
@@ -221,20 +225,39 @@ class MonthlyCoachOccurrenceReaderAdapter:
             session_count: int
 
         now = datetime.now(tz=UTC)
+        match: dict[str, Any] = {
+            "academy_id": academy_id,
+            "start_at": {"$gte": period_start, "$lt": period_end},
+            "is_payable": {"$ne": False},
+            "status": {"$ne": "cancelled"},
+            "$or": [{"status": "completed"}, {"end_at": {"$lt": now}}],
+        }
         pipeline = [
-            {
-                "$match": {
-                    "academy_id": academy_id,
-                    "start_at": {"$gte": period_start, "$lt": period_end},
-                    "is_payable": {"$ne": False},
-                    "status": {"$ne": "cancelled"},
-                    "$or": [{"status": "completed"}, {"end_at": {"$lt": now}}],
-                }
-            },
+            {"$match": match},
             {"$project": {"coach": {"$ifNull": ["$actual_coach_id", "$scheduled_coach_id"]}}},
             {"$group": {"_id": "$coach", "session_count": {"$sum": 1}}},
         ]
-        return [
+        rows = [
             _Row(coach_id=str(doc["_id"]), session_count=int(doc["session_count"]))
             async for doc in self._col.aggregate(pipeline)
         ]
+
+        # A scheduled coach displaced by a replacement is not the paying coach,
+        # so the grouping above misses them. They still need a payout period to
+        # carry the ``replaced_by_actual_coach`` trace (#228) — without one, a
+        # mistaken ``actual_coach_id`` has no review surface. They are added with
+        # ``session_count`` 0: the occurrence is one session of work and belongs
+        # to whoever was paid, so it must not be double-counted.
+        known = {row.coach_id for row in rows}
+        displaced: set[str] = set()
+        cursor = self._col.find(
+            {**match, "actual_coach_id": {"$nin": [None, ""]}},
+            {"scheduled_coach_id": 1, "actual_coach_id": 1},
+        )
+        async for doc in cursor:
+            scheduled = doc.get("scheduled_coach_id")
+            actual = doc.get("actual_coach_id")
+            if scheduled and actual != scheduled and scheduled not in known:
+                displaced.add(str(scheduled))
+        rows.extend(_Row(coach_id=coach_id, session_count=0) for coach_id in sorted(displaced))
+        return rows

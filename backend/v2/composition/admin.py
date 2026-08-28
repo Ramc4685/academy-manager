@@ -28,6 +28,7 @@ from backend.v2.composition.email_adapters import (
     InvoiceEmailAdapter,
     LoginInviteEmailAdapter,
 )
+from backend.v2.composition.event_handlers import install_dunning_notifier
 from backend.v2.composition.pathway import (
     compose_curriculum,
     compose_student_progress,
@@ -1333,6 +1334,10 @@ def compose_admin(
             ),
             notifier=_invoice_email_port(),
             enrollment_autopay=student_billing_enrollment_repo,
+            # Issue #435: the failure notice goes through the outbox, so a
+            # transient Resend error is retried by the dispatcher instead of
+            # being logged once and losing the parent's only warning.
+            outbox=outbox,
         )
 
     # ---- Billing Health (#235): observability + recovery actions ----------- #
@@ -1780,7 +1785,6 @@ def compose_admin(
 
     list_admin_users = ListAdminUsers(users_r)
     get_admin_user = GetAdminUser(users_r)
-    update_admin_user = UpdateAdminUser(users_r)
     create_admin_user = CreateAdminUser(users_r)
 
     class _MembershipAwareLoginInviteRecorder:
@@ -1815,6 +1819,15 @@ def compose_admin(
         sender=LoginInviteEmailAdapter(sender=_email_sender),
         academies=academy_repo,
         portals=_AcademyPortalUrlAdapter(),
+    )
+    # #436: an admin email edit clears Firebase's `email_verified`, so the
+    # edit must carry a fresh set-password invite or the user is locked out
+    # of password login with nobody told. Wired after `send_login_invite`
+    # exists so the edit path reuses that one invite implementation.
+    update_admin_user = UpdateAdminUser(
+        users_r,
+        reader=users_r,
+        invites=send_login_invite,
     )
     provision_parent_login = ProvisionParentLogin(users_r)
 
@@ -4654,6 +4667,14 @@ def compose_admin(
 
     admin.curriculum = curriculum
     admin.student_progress = student_progress
+
+    # The dunning-notice handler runs on the dispatcher, outside any request, so
+    # it cannot reach this closure's adapter by itself (issue #435). Installing
+    # it here keeps the billing e-mail wiring in one place; `None` when delivery
+    # is unconfigured, in which case the worker enqueues no notices at all.
+    # Must come after every repo above is bound — `_invoice_email_port` closes
+    # over `academy_repo`.
+    install_dunning_notifier(_invoice_email_port())
 
     return admin
 

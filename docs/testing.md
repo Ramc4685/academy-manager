@@ -207,17 +207,26 @@ scripts/dev/pre-push-checks.sh
 scripts/dev/pre-push-checks.sh --full   # force E2E
 ```
 
-The script mirrors CI:
+The script is change-aware and fail-fast (PR #477): it classifies the
+outgoing diff and runs only the tier that matches. The full 2,719-test
+backend suite and all frontend suites remain the enforced CI merge gate —
+the required **CI Gate** status check on `main` — so the local hook is a
+fast first filter, not the last line of defense.
 
-| Check | Command |
-| --- | --- |
-| Backend format | `ruff format --check v2` |
-| Backend lint | `ruff check v2` |
-| Backend tests | `pytest v2/tests -q` |
-| Frontend unit | `node --no-warnings --test lib/api/*.node-test.mjs lib/auth/*.node-test.mjs` |
-| Frontend types | `pnpm typecheck` |
-| Frontend lint | `pnpm lint` |
-| E2E | `pnpm e2e`, auto-skipped unless E2E files changed; `--full` forces it |
+| Tier | Triggered by | What runs |
+| --- | --- | --- |
+| docs-only | only `docs/`, `*.md`, issue templates changed | nothing — push completes in seconds |
+| backend-only | only `backend/` changed, no high-risk paths | `ruff format --check` / `ruff check --force-exclude` on changed `v2/*.py` files; `pytest` on changed test files + `v2/tests/structural` |
+| frontend-only | only `frontend/` changed, no high-risk paths | node unit tests, `pnpm typecheck`, `eslint --no-warn-ignored` on changed files |
+| broad | high-risk paths (auth, tenancy, billing/Stripe/payments, migrations, `.github/workflows/`, `scripts/`, deploy/infra, lockfiles) or mixed backend+frontend | full backend suite + all frontend static checks (the pre-#477 behavior) |
+| `--full` | flag | broad tier plus E2E |
+
+E2E also runs automatically when `frontend/e2e/` files changed. Checks are
+fail-fast: the first failure stops the run.
+
+The tier classifier lives in `scripts/dev/lib/classify-changes.sh` and is
+covered by `scripts/dev/pre-push-checks.test.sh` (run in CI as the Hook
+Classifier Tests job — part of CI Gate).
 
 If pre-push fails locally, fix it before pushing. Do not push just to unblock CI.
 

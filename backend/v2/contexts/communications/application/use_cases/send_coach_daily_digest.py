@@ -114,7 +114,10 @@ class SendCoachDailyDigest:
                 continue
 
             if not coach.email:
-                await self.digests.mark_failed(claim.digest_id, "no email address")
+                # Not retryable: the address is missing from the coach's user
+                # record, so the next tick would regenerate the plan and fail
+                # identically. Fixing it is a data task, not a delivery retry.
+                await self.digests.mark_failed(claim.digest_id, "no email address", retryable=False)
                 failed += 1
                 continue
 

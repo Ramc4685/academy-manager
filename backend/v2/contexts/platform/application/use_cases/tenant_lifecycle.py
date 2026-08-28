@@ -162,6 +162,15 @@ class TenantLifecycleService:
             raise TenantNotFound(f"tenant not found: {academy_id}")
         return tenant
 
+    async def list_tenants(self) -> list[Tenant]:
+        """Return every tenant the platform knows about, newest first.
+
+        Read-only operator view backing the platform tenants list; no audit
+        event is emitted because nothing changes.
+        """
+        tenants = await self._tenants.list_tenants()
+        return sorted(tenants, key=lambda tenant: tenant.created_at, reverse=True)
+
     async def get_tenant_health(self, academy_id: str) -> TenantHealth:
         return (await self.get_tenant(academy_id)).health()
 

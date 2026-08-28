@@ -29,6 +29,24 @@ class AdminUserDetailView(AdminUserView):
     login_invite_sent_at: datetime | None = None
 
 
+class LoginInviteOutcomeView(BaseModel):
+    """Result of the automatic re-invite that follows an email edit (#436)."""
+
+    status: Literal["not_needed", "sent", "failed"]
+    sent_at: datetime | None = None
+    error: str | None = None
+
+
+class AdminUserUpdatedView(AdminUserDetailView):
+    """PATCH /admin/users/{id} response.
+
+    Superset of the detail view: the edit itself succeeded either way, but the
+    admin also needs to know whether the user got a working set-password link.
+    """
+
+    login_invite: LoginInviteOutcomeView | None = None
+
+
 class AdminUserList(BaseModel):
     users: list[AdminUserView]
 
@@ -46,6 +64,10 @@ class AdminStudentView(BaseModel):
     parent_email: str | None = None
     status: str
     active_session_count: int
+    # Distinct active sessions and their names, capped server-side (issue #104).
+    # The remainder beyond the cap is active_session_total - len(names).
+    active_session_total: int = 0
+    active_session_names: list[str] = Field(default_factory=list)
     last_seen_at: datetime | None = None
     attendance_rate: float | None = None
     dues_status: Literal["current", "due", "overdue"] = "current"
@@ -989,10 +1011,10 @@ class AdminPayoutPeriodLineView(BaseModel):
 class AdminUnpaidOccurrenceView(BaseModel):
     """An occurrence in the window that produced no pay line.
 
-    Covers coach-marked-absent occurrences and occurrences whose pay
-    could not be computed (e.g. session price missing for a percent
-    rate). Rendered alongside the paid lines so the period reads as a
-    complete session log.
+    Covers coach-marked-absent occurrences, occurrences reassigned to a
+    replacement coach, and occurrences whose pay could not be computed
+    (e.g. session price missing for a percent rate). Rendered alongside the
+    paid lines so the period reads as a complete session log.
     """
 
     occurrence_id: str
@@ -1004,6 +1026,7 @@ class AdminUnpaidOccurrenceView(BaseModel):
         "rate_gap",
         "missing_session_price_for_percent_revenue",
         "attendance_override",
+        "replaced_by_actual_coach",
         "unknown_unpaid_reason",
         "missing_rate",
         "missing_percent",
@@ -1014,6 +1037,8 @@ class AdminUnpaidOccurrenceView(BaseModel):
     message: str | None = None
     coach_id: str | None = None
     repair_action: str | None = None
+    attributed_coach_id: str | None = None
+    """For ``replaced_by_actual_coach``, the coach paid instead of this one."""
 
 
 class AdminPayoutWarningView(BaseModel):
