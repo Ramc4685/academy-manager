@@ -569,26 +569,13 @@ jobs:
     name: Production Approval
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs:
-      [
-        backend,
-        frontend-static,
-        frontend-e2e-chromium,
-        frontend-e2e-chromium-desktop,
-        frontend-e2e-webkit,
-        frontend-e2e-real-auth,
-        backend-advisory,
-        changes,
-      ]
+    needs: [changes, ci-gate]
+    # ci-gate aggregates every validation job and fails on failure OR
+    # cancelled, so requiring its success (not merely "no failure") means a
+    # cancelled validation can never proceed toward deployment (#480).
     if: >
       always() &&
-      needs.backend.result != 'failure' &&
-      needs.frontend-static.result != 'failure' &&
-      needs.frontend-e2e-chromium.result != 'failure' &&
-      needs.frontend-e2e-chromium-desktop.result != 'failure' &&
-      needs.frontend-e2e-webkit.result != 'failure' &&
-      needs.frontend-e2e-real-auth.result != 'failure' &&
-      needs.backend-advisory.result != 'failure' &&
+      needs.ci-gate.result == 'success' &&
       (
         needs.changes.outputs.backend == 'true' ||
         needs.changes.outputs.frontend == 'true' ||

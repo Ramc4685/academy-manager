@@ -135,11 +135,14 @@ if [ "$BACKEND_CHANGED" = true ] || [ "$BROAD" = true ]; then
   else
     # Focused tier: lint only what changed; run changed tests plus the fast
     # structural suite (repo invariants like the route manifest).
+    # CI parity: CI lints only `v2` (ruff check v2), and pyproject excludes
+    # scripts/ and tests/ — so scope to v2 files and pass --force-exclude so
+    # explicitly-named files still honor the configured exclusions (#478).
     CHANGED_PY=()
     CHANGED_TESTS=()
     while IFS= read -r f; do
       case "$f" in
-        backend/*.py)
+        backend/v2/*.py)
           rel="${f#backend/}"
           [ -f "$rel" ] || continue
           CHANGED_PY+=("$rel")
@@ -151,8 +154,8 @@ if [ "$BACKEND_CHANGED" = true ] || [ "$BROAD" = true ]; then
     done <<< "${CHANGED}"
 
     if [ ${#CHANGED_PY[@]} -gt 0 ]; then
-      run_check "ruff format --check (changed files)" ruff format --check "${CHANGED_PY[@]}"
-      run_check "ruff check (changed files)"          ruff check "${CHANGED_PY[@]}"
+      run_check "ruff format --check (changed files)" ruff format --check --force-exclude "${CHANGED_PY[@]}"
+      run_check "ruff check (changed files)"          ruff check --force-exclude "${CHANGED_PY[@]}"
     fi
     run_check "pytest (changed tests + structural)" \
       pytest ${CHANGED_TESTS[@]+"${CHANGED_TESTS[@]}"} v2/tests/structural -n auto -q --tb=short
@@ -207,7 +210,9 @@ if [ "$FRONTEND_CHANGED" = true ] || [ "$BROAD" = true ]; then
       esac
     done <<< "${CHANGED}"
     if [ ${#CHANGED_FE[@]} -gt 0 ]; then
-      run_check "eslint (changed files)" pnpm exec eslint "${CHANGED_FE[@]}"
+      # --no-warn-ignored: config-ignored files passed explicitly are skipped
+      # silently instead of warning, keeping parity with `pnpm lint` (#478).
+      run_check "eslint (changed files)" pnpm exec eslint --no-warn-ignored "${CHANGED_FE[@]}"
     else
       info "no lintable frontend files changed — skipping eslint"
     fi
