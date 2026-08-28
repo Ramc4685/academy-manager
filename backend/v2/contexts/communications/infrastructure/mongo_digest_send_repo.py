@@ -4,6 +4,12 @@
 ``(academy_id, coach_id, digest_date)`` index. A duplicate-key error means a row
 already exists for that coach/day, so the claim is refused (returns ``None``).
 That single guard makes the daily digest idempotent across scheduler retries.
+
+A row already in ``failed`` is the one case where refusing is wrong: before #435
+a transient Resend outage cost that coach the whole day's digest, because the
+claim stayed held by a row nothing would ever retry. The duplicate-key branch
+now attempts a conditional re-claim (``digest_claim.reclaim_failed_send``) that
+can only ever match a failed row with attempts left.
 """
 
 from __future__ import annotations
@@ -15,6 +21,7 @@ from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.communications.application.ports import DigestSendRepository
 from backend.v2.contexts.communications.domain.models import DigestSend, DigestSendStatus
+from backend.v2.contexts.communications.infrastructure.digest_claim import reclaim_failed_send
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import TenantScopedRepository
 
@@ -36,7 +43,14 @@ class MongoDigestSendRepository(TenantScopedRepository, DigestSendRepository):
         try:
             await self.collection.insert_one(self._to_doc(digest))
         except DuplicateKeyError:
-            return None
+            doc = await reclaim_failed_send(
+                self.collection,
+                academy_id=academy_id,
+                recipient_field="coach_id",
+                recipient_id=coach_id,
+                digest_date=digest_date,
+            )
+            return self._from_doc(doc) if doc is not None else None
         return digest
 
     async def record_test_send(
@@ -77,7 +91,7 @@ class MongoDigestSendRepository(TenantScopedRepository, DigestSendRepository):
             },
         )
 
-    async def mark_failed(self, digest_id: str, reason: str) -> None:
+    async def mark_failed(self, digest_id: str, reason: str, *, retryable: bool = True) -> None:
         await self.collection.update_one(
             {"digest_id": digest_id},
             {
@@ -85,6 +99,7 @@ class MongoDigestSendRepository(TenantScopedRepository, DigestSendRepository):
                     "status": str(DigestSendStatus.FAILED),
                     "failed_reason": reason,
                     "provider_message_id": None,
+                    "retryable": retryable,
                 }
             },
         )
@@ -117,6 +132,8 @@ class MongoDigestSendRepository(TenantScopedRepository, DigestSendRepository):
             "failed_reason": d.failed_reason,
             "created_at": d.created_at,
             "kind": d.kind,
+            "attempt_count": d.attempt_count,
+            "retryable": d.retryable,
         }
 
     @staticmethod
@@ -137,4 +154,7 @@ class MongoDigestSendRepository(TenantScopedRepository, DigestSendRepository):
             failed_reason=doc.get("failed_reason"),
             created_at=doc.get("created_at"),
             kind=str(doc.get("kind") or "daily"),
+            # Rows written before migration 0153 have no attempt_count.
+            attempt_count=int(doc.get("attempt_count") or 1),
+            retryable=bool(doc.get("retryable", True)),
         )

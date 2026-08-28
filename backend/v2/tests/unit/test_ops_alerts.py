@@ -237,6 +237,11 @@ def _matches(doc: dict[str, Any], query: dict[str, Any]) -> bool:
         if isinstance(expected, dict) and "$gte" in expected:
             if actual is None or actual < expected["$gte"]:
                 return False
+        elif isinstance(expected, dict) and "$ne" in expected:
+            # Mongo's $ne matches missing fields too, which is exactly why the
+            # digest queries use it — rows predating a field must still count.
+            if actual == expected["$ne"]:
+                return False
         elif actual != expected:
             return False
     return True
@@ -515,3 +520,99 @@ def test_invoice_job_records_a_heartbeat_only_when_nothing_was_generated() -> No
     # The stored record must use #440's `created_count` naming so the email and
     # the structured log line agree.
     assert 'record["created_count"] = totals["created"]' in body
+
+
+# ---------------------------------------------------------------------------
+# Failed digest sends (issue #435)
+# ---------------------------------------------------------------------------
+
+
+def test_digest_attempt_ceiling_matches_the_domain() -> None:
+    """``shared/`` may not import a bounded context, so the retry ceiling is
+    duplicated in ops_digest. If the two ever drift, the digest silently counts
+    the wrong rows as "no retries left" — this pins them together."""
+    from backend.v2.contexts.communications.domain.models import MAX_DIGEST_SEND_ATTEMPTS
+    from backend.v2.shared.observability.ops_digest import DIGEST_ATTEMPT_CEILING
+
+    assert DIGEST_ATTEMPT_CEILING == MAX_DIGEST_SEND_ATTEMPTS
+
+
+@pytest.mark.asyncio
+async def test_digest_send_failures_split_retryable_from_exhausted() -> None:
+    """Both digest collections are counted, and only rows that used every
+    attempt are the actionable number."""
+    snapshot = await collect_ops_digest(
+        _db(  # type: ignore[arg-type]
+            coach_digest_sends=_FakeCollection(
+                [
+                    {"status": "failed", "created_at": RECENT, "attempt_count": 3},
+                    {"status": "failed", "created_at": RECENT, "attempt_count": 1},
+                    {"status": "sent", "created_at": RECENT, "attempt_count": 1},
+                    # Outside the 24h window.
+                    {"status": "failed", "created_at": OLD, "attempt_count": 3},
+                ]
+            ),
+            parent_digest_sends=_FakeCollection(
+                [{"status": "failed", "created_at": RECENT, "attempt_count": 3}]
+            ),
+        ),
+        now=NOW,
+    )
+
+    assert snapshot.digest_sends_failed == 3
+    assert snapshot.digest_sends_failed_exhausted == 2
+    assert snapshot.has_attention_items
+
+
+@pytest.mark.asyncio
+async def test_retryable_digest_failures_alone_do_not_raise_attention() -> None:
+    """A failure with retries left almost always lands on the next hourly tick.
+    Flagging it would make "attention needed" mean nothing."""
+    snapshot = await collect_ops_digest(
+        _db(  # type: ignore[arg-type]
+            stripe_webhook_events=_FakeCollection([], aggregate_rows=[]),
+            dead_letter_events=_FakeCollection([]),
+            dunning_states=_FakeCollection([]),
+            coach_digest_sends=_FakeCollection(
+                [{"status": "failed", "created_at": RECENT, "attempt_count": 1}]
+            ),
+        ),
+        now=NOW,
+    )
+
+    assert snapshot.digest_sends_failed == 1
+    assert snapshot.digest_sends_failed_exhausted == 0
+    assert not snapshot.has_attention_items
+    subject, body = render_ops_digest(snapshot)
+    assert "all clear" in subject
+    # Still reported in the body — informational, not actionable.
+    assert "Digest sends failed" in body
+
+
+@pytest.mark.asyncio
+async def test_unreachable_recipients_do_not_pin_the_attention_flag() -> None:
+    """A coach with no e-mail address fails every day forever. Counting it as a
+    lost digest would make "attention needed" permanent and therefore useless —
+    it stays in the informational total only."""
+    snapshot = await collect_ops_digest(
+        _db(  # type: ignore[arg-type]
+            stripe_webhook_events=_FakeCollection([], aggregate_rows=[]),
+            dead_letter_events=_FakeCollection([]),
+            dunning_states=_FakeCollection([]),
+            coach_digest_sends=_FakeCollection(
+                [
+                    {
+                        "status": "failed",
+                        "created_at": RECENT,
+                        "attempt_count": 3,
+                        "retryable": False,
+                    }
+                ]
+            ),
+        ),
+        now=NOW,
+    )
+
+    assert snapshot.digest_sends_failed == 1
+    assert snapshot.digest_sends_failed_exhausted == 0
+    assert not snapshot.has_attention_items
