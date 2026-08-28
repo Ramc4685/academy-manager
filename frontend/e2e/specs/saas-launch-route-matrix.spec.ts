@@ -171,6 +171,24 @@ async function stubAdminLaunchBff(page: Page): Promise<void> {
   await page.route("**/api/v2/admin/billing/webhooks*", (route) =>
     fulfillJson(route, { events: [] })
   );
+  // #432: the catch-all's `{}` would leave the readiness card without a
+  // connected_account and crash /admin/billing-health.
+  await page.route("**/api/v2/admin/billing/connect-readiness", (route) =>
+    fulfillJson(route, {
+      connected_account: {
+        configured: true,
+        status: "active",
+        charges_enabled: true,
+        payouts_enabled: true,
+        ready_for_charges: true,
+        account_id_masked: "acct...6f21",
+      },
+      allow_platform_charge_fallback: false,
+      payments_possible: true,
+      funds_route_to_academy: true,
+      webhook_events: { quarantined: 0, failed: 0 },
+    })
+  );
   await page.route("**/api/v2/admin/dues-followup*", (route) =>
     fulfillJson(route, { parents: [] })
   );
