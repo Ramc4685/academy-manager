@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  buildSessionSkillBoardHref,
   buildStudentProgressHref,
   resolveStudentProgressReturn,
 } from "./admin-student-progress-return.ts";
@@ -47,5 +48,50 @@ test("falls back when return target is missing or unsafe", () => {
       href: "/admin/students",
       label: "All students",
     },
+  );
+});
+
+// Issue #169: leaving the skill board to place an unplaced student dropped the
+// program, so the placement screen fell back to the default program and the
+// return trip landed on a board where the student still looked unplaced.
+test("pins the program on the skill board href", () => {
+  assert.equal(
+    buildSessionSkillBoardHref({ sessionId: "sess 1", programId: "program/abc" }),
+    "/admin/sessions/sess%201/skill-board?program_id=program%2Fabc",
+  );
+});
+
+test("omits the program when the board has none", () => {
+  assert.equal(
+    buildSessionSkillBoardHref({ sessionId: "sess-1", programId: "" }),
+    "/admin/sessions/sess-1/skill-board",
+  );
+  assert.equal(
+    buildSessionSkillBoardHref({ sessionId: "sess-1" }),
+    "/admin/sessions/sess-1/skill-board",
+  );
+});
+
+test("round-trips the program through the placement link and back", () => {
+  const boardHref = buildSessionSkillBoardHref({
+    sessionId: "sess-1",
+    programId: "prog-9",
+  });
+  const href = buildStudentProgressHref({
+    studentId: "stu-1",
+    programId: "prog-9",
+    returnTo: boardHref,
+    returnLabel: "Back to skill board",
+  });
+
+  const url = new URL(href, "https://academy.local");
+  assert.equal(url.searchParams.get("program_id"), "prog-9");
+  assert.equal(url.searchParams.get("return_to"), boardHref);
+  assert.deepEqual(
+    resolveStudentProgressReturn({
+      returnTo: url.searchParams.get("return_to"),
+      returnLabel: url.searchParams.get("return_label"),
+    }),
+    { href: boardHref, label: "Back to skill board" },
   );
 });

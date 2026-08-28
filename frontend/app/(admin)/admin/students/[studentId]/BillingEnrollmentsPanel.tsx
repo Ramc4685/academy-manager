@@ -24,6 +24,7 @@ import {
   dollarsToCents,
   formatCurrencyCents,
   formatDate,
+  formatDateUtc,
   getErrorMessage,
 } from "./format";
 import { Field } from "./StudentEditForm";
@@ -334,7 +335,7 @@ function MoveEnrollmentDialog({
           <p className="font-semibold">This changes what the parent is billed.</p>
           <p>
             Moving to <span className="font-semibold">{target?.name}</span> on{" "}
-            {formatDate(moveDate)} switches the enrollment and records a prorated
+            {formatDateUtc(moveDate)} switches the enrollment and records a prorated
             adjustment against the{" "}
             {period
               ? new Date(period.periodStart).toLocaleDateString(undefined, {

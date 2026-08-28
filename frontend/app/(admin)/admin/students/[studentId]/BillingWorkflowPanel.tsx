@@ -36,7 +36,7 @@ import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
 
 import { DetailList } from "./DetailList";
-import { formatCurrencyCents, formatDate, formatDateTime, getErrorMessage } from "./format";
+import { formatCurrencyCents, formatDateTime, formatInvoiceDate, getErrorMessage } from "./format";
 import { OPEN_BILLING_STATUSES, StatusChip } from "./StatusChip";
 import {
   AddInvoiceLineDialog,
@@ -531,7 +531,7 @@ function StudentInvoiceList({
                     {invoice.invoice_number ?? `Invoice ${invoice.period ?? invoice.payment_id}`}
                   </span>
                   <span className="mt-1 block text-xs text-rally-muted">
-                    {invoice.period ?? "No period"} · Created {formatDate(invoice.created_at)}
+                    {invoice.period ?? "No period"} · Created {formatInvoiceDate(invoice.created_at)}
                   </span>
                   {payable && (
                     <span className="mt-1 block text-xs text-rally-muted">
