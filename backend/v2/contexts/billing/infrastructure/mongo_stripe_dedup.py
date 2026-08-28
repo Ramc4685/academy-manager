@@ -11,6 +11,12 @@ Insert-first lock pattern with a retry path:
   Stripe event "failed" and Stripe's retries would forever be 200/deduped
   while the domain state remains incorrect.
 
+Retries are bounded (issue #437). An event that keeps failing is auto-quarantined
+after ``MAX_WEBHOOK_ATTEMPTS``; ``quarantined`` therefore means "a human needs to
+look at this", and ``failed`` keeps meaning "still retrying". Without the cap a
+poisoned event retried hourly forever and took one of the 25 slots in every
+drain tick with it, delaying real payment events.
+
 NOT tenant-scoped — Stripe events are globally unique by Stripe event id.
 """
 
@@ -27,6 +33,20 @@ from pymongo.errors import DuplicateKeyError
 # (the previous attempt crashed before completing). Stripe retries will
 # reclaim it.
 STALE_PROCESSING_AFTER = timedelta(minutes=5)
+
+# Issue #437: how many attempts an event gets before it is auto-quarantined.
+# The backoff is 1m, 5m, 15m, then hourly, so 24 attempts is roughly a day of
+# trying — long enough to ride out any outage worth retrying through, short
+# enough that a genuinely poisoned event stops competing for the 25 slots in
+# each drain tick instead of looping for weeks.
+MAX_WEBHOOK_ATTEMPTS = 24
+
+# Why an event is in `quarantined`. Kept distinct so "retried until we gave up"
+# can be told apart from "a guard deliberately rejected this", and so any future
+# automatic replay sweep has a precise predicate to select on rather than
+# guessing from an error string.
+QUARANTINE_RETRY_LIMIT = "retry_limit_exceeded"
+QUARANTINE_REJECTED = "rejected_by_guard"
 
 
 class MongoStripeEventDedup:
@@ -240,10 +260,29 @@ class MongoStripeEventDedup:
             },
         )
 
-    async def mark_failed(self, event_id: str, error: str) -> None:
+    async def mark_failed(self, event_id: str, error: str) -> str:
+        """Record a failed attempt, or auto-quarantine once attempts run out.
+
+        Returns the resulting status — ``"failed"`` or ``"quarantined"`` — so the
+        caller can alert on the moment an event gives up. Before #437 there was
+        no cap at all: a permanently poisoned event retried 1m/5m/15m/hourly
+        forever, visible only as a log counter, while occupying one of the 25
+        slots in every drain tick and so delaying real payment events.
+
+        The transition to ``quarantined`` happens exactly once, because a
+        quarantined event is never claimed again — that is what makes alerting
+        here a single alert per event rather than one per retry.
+        """
         now = datetime.now(UTC)
         existing = await self._coll.find_one({"event_id": event_id})
         retry_count = int((existing or {}).get("retry_count") or 0)
+        if retry_count >= MAX_WEBHOOK_ATTEMPTS:
+            await self.mark_quarantined(
+                event_id,
+                f"gave up after {retry_count} attempts; last error: {error}",
+                reason_code=QUARANTINE_RETRY_LIMIT,
+            )
+            return "quarantined"
         delay = self._retry_delay(retry_count)
         await self._coll.update_many(
             {"event_id": event_id},
@@ -260,8 +299,11 @@ class MongoStripeEventDedup:
                 }
             },
         )
+        return "failed"
 
-    async def mark_quarantined(self, event_id: str, error: str) -> None:
+    async def mark_quarantined(
+        self, event_id: str, error: str, *, reason_code: str = QUARANTINE_REJECTED
+    ) -> None:
         now = datetime.now(UTC)
         await self._coll.update_many(
             {"event_id": event_id},
@@ -269,6 +311,8 @@ class MongoStripeEventDedup:
                 "$set": {
                     "status": "quarantined",
                     "last_attempt_at": now,
+                    "quarantined_at": now,
+                    "quarantine_reason": reason_code,
                     "processing_locked_until": None,
                     "processor_id": None,
                     "next_retry_at": None,
@@ -295,6 +339,10 @@ class MongoStripeEventDedup:
                     "status": "received",
                     "next_retry_at": now,
                     "retry_count": 0,
+                    # Clear the quarantine metadata too, or a replayed event
+                    # would keep claiming it gave up while it is running again.
+                    "quarantine_reason": None,
+                    "quarantined_at": None,
                     "processing_locked_until": None,
                     "processor_id": None,
                     "error_message": None,
