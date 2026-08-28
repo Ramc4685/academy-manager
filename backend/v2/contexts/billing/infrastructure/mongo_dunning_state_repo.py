@@ -21,12 +21,20 @@ from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 
 class MongoDunningStateRepository(TenantScopedRepository):
     collection_name = "dunning_states"
+    # Park reasons a later tick re-claims. A parked state has next_attempt_at=None, so
+    # anything missing from this set is parked forever and that invoice is never
+    # collected again — every reason ProcessDunningRetries can park with must appear
+    # here. checkout_session_open in particular is the release valve for the manual-pay
+    # hold: the tick after the session settles or lapses picks the invoice back up on
+    # the same rung (issue #434).
     retryable_parked_reasons: ClassVar[set[str]] = {
         "payment_processing",
         "charge_technical_failure",
         "attempt_indeterminate",
         "autopay_not_active",
         "connected_account_not_ready",
+        "checkout_session_open",
+        "stripe_not_configured",
     }
 
     @staticmethod

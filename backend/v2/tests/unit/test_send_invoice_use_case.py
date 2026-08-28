@@ -11,6 +11,7 @@ import pytest
 
 from backend.v2.contexts.billing.application.use_cases.send_invoice import SendInvoice
 from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
+from backend.v2.contexts.billing.domain.checkout_hold import active_checkout_hold
 from backend.v2.contexts.billing.domain.ledger import InvoiceLine, LedgerInvoice
 
 # ---------------------------------------------------------------------------
@@ -1031,3 +1032,52 @@ async def test_bundled_failure_records_each_invoices_own_balance() -> None:
     assert {a["invoice_id"] for a in repo.payment_attempts} == {"inv-1", "inv-2", "inv-3"}
     assert [a["amount_cents"] for a in repo.payment_attempts] == [10_000, 10_000, 10_000]
     assert sum(a["amount_cents"] for a in repo.payment_attempts) == 30_000
+
+
+# ---------------------------------------------------------------------------
+# Checkout hold placement (issue #434)
+# ---------------------------------------------------------------------------
+
+
+async def test_minting_a_pay_link_holds_the_invoice_against_autopay() -> None:
+    """The pay link is live from here, so autopay must stand off this invoice."""
+    stripe = FakeInvoiceStripe()
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open", balance_due_cents=10_000)])
+
+    result = await _uc_with_stripe(repo, stripe).execute("inv-1")
+
+    assert result.checkout_url == "https://checkout.stripe.com/pay/test"
+    held = await repo.get_invoice("inv-1")
+    assert held is not None
+    assert held.checkout_hold_session_id == "cs_test_123"
+    assert active_checkout_hold(held, now=NOW) == "cs_test_123"
+
+
+async def test_bundled_pay_link_holds_every_invoice_behind_it() -> None:
+    """One link settles all three balances, so holding only inv-1 leaves two exposed."""
+    stripe = FakeInvoiceStripe()
+    repo = FakeLedgerRepository(
+        invoices=[
+            _invoice(invoice_id="inv-1", status="open", balance_due_cents=7_000),
+            _invoice(invoice_id="inv-2", status="open", balance_due_cents=7_000),
+            _invoice(invoice_id="inv-3", status="open", balance_due_cents=7_000),
+        ]
+    )
+
+    await _uc_with_stripe(repo, stripe).execute("inv-1", bundle_student_balance=True)
+
+    for invoice_id in ("inv-1", "inv-2", "inv-3"):
+        invoice = await repo.get_invoice(invoice_id)
+        assert invoice is not None
+        assert invoice.checkout_hold_session_id == "cs_test_123", invoice_id
+
+
+async def test_no_pay_link_means_no_hold() -> None:
+    """A paid invoice mints nothing, so nothing may block a future charge."""
+    repo = FakeLedgerRepository(invoices=[_invoice(status="paid", balance_due_cents=0)])
+
+    await _uc_with_stripe(repo, FakeInvoiceStripe()).execute("inv-1")
+
+    invoice = await repo.get_invoice("inv-1")
+    assert invoice is not None
+    assert invoice.checkout_hold_session_id is None
