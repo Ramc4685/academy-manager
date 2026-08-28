@@ -14,6 +14,9 @@ concurrency:
 
 jobs:
   check:
+    # Stable display name: referenced as a required status check by the
+    # branch-protection ruleset on main (issue #473). Rename with care.
+    name: Release Notes Gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
