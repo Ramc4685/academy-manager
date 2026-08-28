@@ -101,22 +101,19 @@ if [ "$BACKEND_CHANGED" = true ] || [ "$BROAD" = true ]; then
     run_check "ruff check v2"          ruff check v2
     run_check "pytest v2/tests"        pytest v2/tests -n auto -q --tb=short
   else
-    # Focused tier: lint only what changed; run changed tests plus the fast
-    # structural suite (repo invariants like the route manifest).
+    # Focused tier: lint only what changed; run the tests mapped to the
+    # changed modules (#482) plus the fast structural suite (repo invariants
+    # like the route manifest).
     # CI parity: CI lints only `v2` (ruff check v2), and pyproject excludes
     # scripts/ and tests/ — so scope to v2 files and pass --force-exclude so
     # explicitly-named files still honor the configured exclusions (#478).
     CHANGED_PY=()
-    CHANGED_TESTS=()
     while IFS= read -r f; do
       case "$f" in
         backend/v2/*.py)
           rel="${f#backend/}"
           [ -f "$rel" ] || continue
           CHANGED_PY+=("$rel")
-          case "$rel" in
-            v2/tests/*) CHANGED_TESTS+=("$rel") ;;
-          esac
           ;;
       esac
     done <<< "${CHANGED}"
@@ -125,8 +122,24 @@ if [ "$BACKEND_CHANGED" = true ] || [ "$BROAD" = true ]; then
       run_check "ruff format --check (changed files)" ruff format --check --force-exclude "${CHANGED_PY[@]}"
       run_check "ruff check (changed files)"          ruff check --force-exclude "${CHANGED_PY[@]}"
     fi
-    run_check "pytest (changed tests + structural)" \
-      pytest ${CHANGED_TESTS[@]+"${CHANGED_TESTS[@]}"} v2/tests/structural -n auto -q --tb=short
+
+    # Selection lives in lib/select-backend-tests.sh, covered by
+    # scripts/dev/pre-push-checks.test.sh: changed test files, mirrored
+    # context test dirs, and test files importing a changed module. Empty
+    # selection falls back to structural-only, which always runs.
+    # shellcheck source=scripts/dev/lib/select-backend-tests.sh
+    source "$ROOT/scripts/dev/lib/select-backend-tests.sh"
+    SELECTED_TESTS=()
+    while IFS= read -r t; do
+      [ -n "$t" ] && SELECTED_TESTS+=("$t")
+    done < <(select_backend_tests "$(printf '%s\n' ${CHANGED_PY[@]+"${CHANGED_PY[@]}"})")
+    if [ ${#SELECTED_TESTS[@]} -gt 0 ]; then
+      info "focused tests: ${SELECTED_TESTS[*]}"
+    else
+      info "no tests mapped to changed modules — running structural suite only"
+    fi
+    run_check "pytest (focused + structural)" \
+      pytest ${SELECTED_TESTS[@]+"${SELECTED_TESTS[@]}"} v2/tests/structural -n auto -q --tb=short
   fi
 fi
 
