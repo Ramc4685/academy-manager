@@ -314,8 +314,18 @@ class MongoMonthlyBillingGenerator:
         *,
         enrollment_id: str,
         period: str,
-        amount_cents: int,
+        gross_cents: int,
+        applied_credit_cents: int = 0,
     ) -> bool:
+        """Does the monthly invoice for this enrollment/period have the canonical shape?
+
+        The canonical shape (written by both the normal generation path and orphan
+        recovery) records the tuition line and the subtotal GROSS, the tuition discount
+        in ``discount_cents`` plus its own discount line, and the amount actually owed
+        (net of discount AND of any account credit applied to the charge) in
+        ``total_cents``. ``applied_credit_cents`` must therefore be supplied by the
+        caller: it is not recoverable from the invoice document itself.
+        """
         academy_id = current_academy_id()
         invoice_id = self._monthly_invoice_id(enrollment_id, period)
         line_id = self._monthly_invoice_line_id(enrollment_id, period)
@@ -327,15 +337,90 @@ class MongoMonthlyBillingGenerator:
         line_doc = await self._db["invoice_lines"].find_one(
             {"academy_id": academy_id, "invoice_id": invoice_id, "line_id": line_id}
         )
-        if line_doc is None or int(line_doc.get("amount_cents", -1)) != amount_cents:
+        if line_doc is None or int(line_doc.get("amount_cents", -1)) != gross_cents:
             return False
         total_cents = int(invoice_doc.get("total_cents", -1))
         balance_due_cents = int(invoice_doc.get("balance_due_cents", -1))
         discount_cents = int(invoice_doc.get("discount_cents", 0))
         return (
-            int(invoice_doc.get("subtotal_cents", -1)) == amount_cents
-            and total_cents == max(amount_cents - discount_cents, 0)
+            int(invoice_doc.get("subtotal_cents", -1)) == gross_cents
+            and total_cents == max(gross_cents - discount_cents - applied_credit_cents, 0)
             and 0 <= balance_due_cents <= total_cents
+        )
+
+    async def _monthly_invoice_applied_credit_cents(
+        self,
+        *,
+        enrollment_id: str,
+        period: str,
+    ) -> int:
+        """Credit applied to the charge behind an already-generated monthly invoice.
+
+        The tuition line carries the originating payment id in ``source_id``, which is
+        the key credit applications are recorded under.
+        """
+        line_doc = await self._db["invoice_lines"].find_one(
+            {
+                "academy_id": current_academy_id(),
+                "invoice_id": self._monthly_invoice_id(enrollment_id, period),
+                "line_id": self._monthly_invoice_line_id(enrollment_id, period),
+            }
+        )
+        payment_id = str((line_doc or {}).get("source_id") or "")
+        return await self._applied_credit_cents(payment_id) if payment_id else 0
+
+    async def _reconcile_monthly_invoice_header(
+        self,
+        *,
+        enrollment_id: str,
+        period: str,
+        gross_cents: int,
+        discount_cents: int,
+        total_cents: int,
+        now: datetime,
+    ) -> None:
+        """Force a pre-existing monthly invoice header onto the canonical shape.
+
+        ``create_invoice`` never updates an existing header, and when it back-fills a
+        missing line it recomputes totals from the lines alone - which knows nothing
+        about applied credit and double-subtracts a discount line. Recovery repairs a
+        header that predates it, so it restates the header itself. Only the header is
+        touched, and only when the lines already match what we expect; a conflicting
+        line is left for the caller to report as a failed repair. Allocations already
+        recorded against the invoice are preserved.
+        """
+        if self._ledger_repo is None:
+            return
+        invoice_id = self._monthly_invoice_id(enrollment_id, period)
+        invoice = await self._ledger_repo.get_invoice(invoice_id)
+        if invoice is None:
+            return
+        if (
+            invoice.subtotal_cents == gross_cents
+            and invoice.discount_cents == discount_cents
+            and invoice.total_cents == total_cents
+        ):
+            return
+        lines = await self._ledger_repo.get_lines_for_invoice(invoice_id)
+        tuition_cents = sum(
+            line.amount_cents for line in lines if line.source_type != "tuition_discount"
+        )
+        discount_line_cents = sum(
+            abs(line.amount_cents) for line in lines if line.source_type == "tuition_discount"
+        )
+        if tuition_cents != gross_cents or discount_line_cents != discount_cents:
+            return
+        allocated = max(invoice.total_cents - invoice.balance_due_cents, 0)
+        await self._ledger_repo.save_invoice(
+            invoice.model_copy(
+                update={
+                    "subtotal_cents": gross_cents,
+                    "discount_cents": discount_cents,
+                    "total_cents": total_cents,
+                    "balance_due_cents": max(total_cents - allocated, 0),
+                    "updated_at": now,
+                }
+            )
         )
 
     async def _invoice_has_consistent_lines(
@@ -441,6 +526,9 @@ class MongoMonthlyBillingGenerator:
         student_id: str,
         period: str,
         gross_amount_cents: int,
+        discount_cents: int,
+        net_amount_cents: int,
+        discount_policy: TuitionDiscount | None,
         invoice_key: dict[str, object] | None,
         now: datetime,
     ) -> str:
@@ -452,7 +540,7 @@ class MongoMonthlyBillingGenerator:
 
         payment_id = str(invoice_key.get("payment_id") or "")
         applied_credit_cents = await self._applied_credit_cents(payment_id) if payment_id else 0
-        amount_cents = max(gross_amount_cents - applied_credit_cents, 0)
+        amount_cents = max(net_amount_cents - applied_credit_cents, 0)
         if existing_invoice_id is None:
             existing_invoice_id = await self._find_existing_invoice_for_enrollment_period(
                 enrollment_id=enrollment_id,
@@ -463,7 +551,8 @@ class MongoMonthlyBillingGenerator:
             and await self._monthly_invoice_is_complete(
                 enrollment_id=enrollment_id,
                 period=period,
-                amount_cents=amount_cents,
+                gross_cents=gross_amount_cents,
+                applied_credit_cents=applied_credit_cents,
             )
         ) or (
             existing_invoice_id is not None
@@ -484,9 +573,9 @@ class MongoMonthlyBillingGenerator:
             applied_credit_cents = await self._credit_ledger.apply_available_credits(
                 parent_id=parent_id,
                 invoice_id=payment_id,
-                amount_due_cents=gross_amount_cents,
+                amount_due_cents=net_amount_cents,
             )
-            amount_cents = max(gross_amount_cents - applied_credit_cents, 0)
+            amount_cents = max(net_amount_cents - applied_credit_cents, 0)
         if existing_invoice_id and existing_invoice_id != invoice_id:
             await self._mark_monthly_invoice_key(
                 enrollment_id=enrollment_id,
@@ -497,6 +586,9 @@ class MongoMonthlyBillingGenerator:
             )
             return "failed"
 
+        # Recovery writes the same invoice shape as the normal generation path: the
+        # tuition line and subtotal gross, the discount broken out on its own line, and
+        # only total_cents/balance_due_cents net of discount and applied credit.
         await self._dual_write_ledger_invoice(
             ledger_repo=self._ledger_repo,
             payment_id=payment_id,
@@ -504,14 +596,25 @@ class MongoMonthlyBillingGenerator:
             parent_id=parent_id,
             student_id=student_id,
             period=period,
-            gross_cents=amount_cents,
+            gross_cents=gross_amount_cents,
+            discount_cents=discount_cents,
+            total_cents=amount_cents,
+            discount_policy=discount_policy,
+            now=now,
+        )
+        await self._reconcile_monthly_invoice_header(
+            enrollment_id=enrollment_id,
+            period=period,
+            gross_cents=gross_amount_cents,
+            discount_cents=discount_cents,
             total_cents=amount_cents,
             now=now,
         )
         if await self._monthly_invoice_is_complete(
             enrollment_id=enrollment_id,
             period=period,
-            amount_cents=amount_cents,
+            gross_cents=gross_amount_cents,
+            applied_credit_cents=applied_credit_cents,
         ):
             await self._mark_monthly_invoice_key(
                 enrollment_id=enrollment_id,
@@ -648,7 +751,11 @@ class MongoMonthlyBillingGenerator:
                 and await self._monthly_invoice_is_complete(
                     enrollment_id=enrollment_id,
                     period=period,
-                    amount_cents=gross_amount_cents,
+                    gross_cents=gross_amount_cents,
+                    applied_credit_cents=await self._monthly_invoice_applied_credit_cents(
+                        enrollment_id=enrollment_id,
+                        period=period,
+                    ),
                 )
             ) or (
                 existing_invoice_id is not None
@@ -692,6 +799,9 @@ class MongoMonthlyBillingGenerator:
                     student_id=student_id,
                     period=period,
                     gross_amount_cents=gross_amount_cents,
+                    discount_cents=discount_cents,
+                    net_amount_cents=net_amount_cents,
+                    discount_policy=discount_policy,
                     invoice_key=invoice_key,
                     now=now,
                 )

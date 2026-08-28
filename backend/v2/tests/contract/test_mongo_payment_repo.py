@@ -1021,8 +1021,23 @@ async def test_generate_monthly_applies_approved_account_credit(db, acad) -> Non
     assert legacy is None
     invoice = await db["invoices"].find_one({"academy_id": acad, "enrollment_id": "enroll-1"})
     assert invoice is not None
+    assert invoice["subtotal_cents"] == 10_000
     assert invoice["total_cents"] == 6_250  # 10_000 gross - 3_750 credit
     assert await credits.balance_for_parent("parent-1") == 0
+
+    # The completeness pre-check must recognise a credited invoice as already generated;
+    # it used to compare the gross charge against a total that is net of credit.
+    replay = await repo.generate_monthly_payments("2026-06")
+
+    assert replay.created == 0
+    assert replay.skipped_existing == 1
+    assert replay.failed_repair == 0
+    assert (
+        await db["invoices"].count_documents(
+            {"academy_id": acad, "enrollment_id": "enroll-1", "period": "2026-06"}
+        )
+        == 1
+    )
 
 
 @pytest.mark.asyncio
@@ -1124,8 +1139,21 @@ async def test_generate_monthly_recovers_orphan_invoice_key_with_existing_credit
         {"academy_id": acad, "invoice_id": "inv-monthly-enroll-orphan-key-2026-06"}
     )
     assert invoice is not None
+    # Recovery records the same shape as the normal path: line and subtotal gross,
+    # with only total/balance_due net of the applied credit.
+    assert invoice["subtotal_cents"] == 10_000
+    assert invoice["discount_cents"] == 0
     assert invoice["total_cents"] == 6_250
     assert invoice["balance_due_cents"] == 6_250
+    line = await db["invoice_lines"].find_one(
+        {
+            "academy_id": acad,
+            "invoice_id": "inv-monthly-enroll-orphan-key-2026-06",
+            "line_id": "line-monthly-enroll-orphan-key-2026-06",
+        }
+    )
+    assert line is not None
+    assert line["amount_cents"] == 10_000
     assert await credits.balance_for_parent("parent-1") == 0
     assert (
         await db["credit_applications"].count_documents(
