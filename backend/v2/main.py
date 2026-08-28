@@ -29,6 +29,7 @@ from starlette.middleware.cors import CORSMiddleware
 from backend.v2.composition.admin import compose_admin
 from backend.v2.composition.coach import compose_coach
 from backend.v2.composition.digests import (
+    compose_email_credential_probe,
     compose_ops_digest_sender,
     compose_send_coach_daily_digest,
     compose_send_parent_daily_digest,
@@ -170,6 +171,37 @@ from backend.v2.shared.tenancy.resolver import (
 )
 
 log = logging.getLogger(__name__)
+
+
+async def _verify_email_credentials(sender: Any) -> bool | None:
+    """Probe the outbound-email credential once at boot (issue #435).
+
+    Returns the verdict: ``True`` valid, ``False`` definitely broken, ``None``
+    undetermined or not applicable. Duck-typed on purpose, and ``None``-tolerant:
+    a deployment with no Resend credential configured has nothing to validate
+    and is skipped silently, so local and test boots pay nothing for this.
+
+    Only ``False`` alerts. Treating a timeout as a dead key would make the
+    alert channel untrustworthy the first time Resend had a slow minute.
+    """
+    validate = getattr(sender, "validate_credentials", None) if sender is not None else None
+    if validate is None:
+        return None
+    try:
+        check = await validate()
+    except Exception:  # pragma: no cover - defensive; boot must not fail on this
+        log.warning("email_credential_check_errored", exc_info=True)
+        return None
+    ok: bool | None = check.ok
+    extra = {"ok": ok, "detail": check.detail}
+    if ok is False:
+        log.error("email_credential_invalid", extra=extra)
+        capture_message(f"Outbound email credential rejected by provider: {check.detail}")
+    elif ok:
+        log.info("email_credential_ok", extra=extra)
+    else:
+        log.warning("email_credential_unverified", extra=extra)
+    return ok
 
 
 @asynccontextmanager
@@ -641,6 +673,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             "dead_letter_total": snapshot.dead_letter_total,
             "dead_letter_recent": snapshot.dead_letter_recent,
             "dunning_terminals_recent": snapshot.dunning_terminals_recent,
+            "digest_sends_failed": snapshot.digest_sends_failed,
+            "digest_sends_failed_exhausted": snapshot.digest_sends_failed_exhausted,
         }
         if extra["ok"]:
             log.info("ops_digest_processed", extra=extra)
@@ -883,6 +917,13 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # reports the state that accumulates silently. Fixed daily cron in
     # settings.scheduler_tz; skipped entirely when OPS_ALERT_EMAIL is unset.
     app.state.ops_digest_sender = compose_ops_digest_sender()
+    # Issue #435: an expired Resend key used to be invisible — every send became
+    # SendOutcome(ok=False) and mail stopped for weeks. Probe it once at boot so
+    # a dead credential is reported on the deploy that broke it. Only a real
+    # authentication verdict alerts; a timeout or provider 5xx is undetermined
+    # and must not page anyone. Never fatal: a mail outage must not stop the app
+    # from serving requests.
+    await _verify_email_credentials(compose_email_credential_probe())
     scheduler.add_job(
         _send_ops_digest,
         "cron",

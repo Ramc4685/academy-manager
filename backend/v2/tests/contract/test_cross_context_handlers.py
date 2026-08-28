@@ -385,3 +385,105 @@ async def test_on_enrollment_cancelled_promotes_oldest_waitlist_entry(db, acad) 
     # Outbox got the WaitlistPromoted event.
     events = [doc async for doc in db["outbox_events"].find({})]
     assert any(e["name"] == "Enrollment.WaitlistPromoted" for e in events)
+
+
+# ---------------------------------------------------------------------------
+# Dunning failure notice (issue #435)
+# ---------------------------------------------------------------------------
+
+
+def _dunning_event(*, terminal: bool = False):
+    from backend.v2.contexts.billing.domain.events import (
+        DunningNoticeRequested,
+        DunningNoticeRequestedPayload,
+    )
+
+    return DunningNoticeRequested(
+        aggregate_id="inv-1",
+        academy_id="acad",
+        payload=DunningNoticeRequestedPayload(
+            invoice_id="inv-1",
+            parent_id="parent-1",
+            period="2026-08",
+            balance_due_cents=12_500,
+            currency="usd",
+            attempt_no=2,
+            terminal=terminal,
+        ),
+    )
+
+
+class _RecordingNotifier:
+    def __init__(self, raises: Exception | None = None) -> None:
+        self.calls: list[dict] = []
+        self.academies: list[str | None] = []
+        self.raises = raises
+
+    async def send_dunning_notice(self, **kwargs) -> None:
+        from backend.v2.shared.tenancy import current_academy_id
+
+        self.academies.append(current_academy_id())
+        if self.raises is not None:
+            raise self.raises
+        self.calls.append(kwargs)
+
+
+@pytest.mark.asyncio
+async def test_dunning_notice_handler_sends_inside_the_event_tenant_scope() -> None:
+    """The handler runs on the dispatcher, outside any request, so the tenant
+    must come from the event — the adapter resolves the parent's membership and
+    academy name with ``current_academy_id()``."""
+    from backend.v2.composition.event_handlers import (
+        install_dunning_notifier,
+        on_dunning_notice_requested,
+    )
+
+    notifier = _RecordingNotifier()
+    install_dunning_notifier(notifier)
+    try:
+        await on_dunning_notice_requested(_dunning_event(terminal=True))
+    finally:
+        install_dunning_notifier(None)
+
+    assert notifier.academies == ["acad"]
+    assert notifier.calls == [
+        {
+            "parent_id": "parent-1",
+            "invoice_id": "inv-1",
+            "period": "2026-08",
+            "balance_due_cents": 12_500,
+            "currency": "usd",
+            "attempt_no": 2,
+            "terminal": True,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_dunning_notice_handler_propagates_failure_for_retry() -> None:
+    """Raising is how the notice reaches the dispatcher's retry ladder. If this
+    handler ever swallowed the error we would be back to the original bug: a
+    parent never told that their payment failed."""
+    from backend.v2.composition.event_handlers import (
+        install_dunning_notifier,
+        on_dunning_notice_requested,
+    )
+
+    install_dunning_notifier(_RecordingNotifier(raises=RuntimeError("resend 503")))
+    try:
+        with pytest.raises(RuntimeError, match="resend 503"):
+            await on_dunning_notice_requested(_dunning_event())
+    finally:
+        install_dunning_notifier(None)
+
+
+@pytest.mark.asyncio
+async def test_dunning_notice_handler_raises_when_not_installed() -> None:
+    from backend.v2.composition.event_handlers import (
+        install_dunning_notifier,
+        on_dunning_notice_requested,
+    )
+
+    install_dunning_notifier(None)
+    with pytest.raises(RuntimeError, match="install_dunning_notifier"):
+        await on_dunning_notice_requested(_dunning_event())

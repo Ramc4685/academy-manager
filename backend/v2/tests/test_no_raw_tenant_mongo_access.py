@@ -151,7 +151,8 @@ APPROVED_COMPOSITION_EXCEPTIONS = {
 APPROVED_CROSS_TENANT_EXCEPTIONS = {
     Path("shared/observability/ops_digest.py"): (
         "By design cross-tenant and read-only: the daily owner ops digest counts "
-        "stripe_webhook_events, dead_letter_events and dunning_states across every "
+        "stripe_webhook_events, dead_letter_events, dunning_states and the coach/"
+        "parent digest_sends collections across every "
         "academy. It runs only from the scheduler (no request path reaches it) and "
         "its single write targets the global ops_job_runs collection."
     ),
