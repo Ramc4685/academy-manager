@@ -20,6 +20,7 @@ import pytest
 from backend.v2.contexts.billing.application.use_cases.finance import MongoPayoutRepository
 from backend.v2.contexts.coaching.infrastructure.mongo_payout_read_models import (
     MongoPayableOccurrenceQuery,
+    MonthlyCoachOccurrenceReaderAdapter,
 )
 
 
@@ -117,3 +118,63 @@ async def test_payable_occurrence_query_derives_completion_and_revenue(db, acad)
     # 2 active enrollments x $150.00 monthly price / 2 non-cancelled occurrences.
     assert by_id["occ-past"].expected_revenue_minor == 15000
     assert by_id["occ-past"].coach_attendance[0].status == "absent"
+
+
+@pytest.mark.asyncio
+async def test_monthly_reader_includes_scheduled_coach_displaced_by_replacement(db, acad) -> None:
+    """A displaced scheduled coach must still show up in the month's payroll.
+
+    Regression for #228: without a payout period the coach has nowhere to
+    carry the ``replaced_by_actual_coach`` trace, so a mistaken attribution
+    stays invisible. The occurrence must not be double-counted though — it is
+    one session of work, and it belongs to the coach who was paid.
+    """
+    await db["session_occurrences"].insert_many(
+        [
+            _occurrence_doc(
+                acad,
+                "occ-replaced",
+                scheduled_coach_id="coach-A",
+                actual_coach_id="coach-B",
+            ),
+            _occurrence_doc(acad, "occ-plain", scheduled_coach_id="coach-B"),
+        ]
+    )
+
+    rows = await MonthlyCoachOccurrenceReaderAdapter(
+        db["session_occurrences"]
+    ).coaches_with_occurrences(
+        academy_id=acad, period_start=_hours_ago(48), period_end=_hours_ahead(48)
+    )
+
+    counts = {row.coach_id: row.session_count for row in rows}
+    assert counts == {"coach-A": 0, "coach-B": 2}
+
+
+@pytest.mark.asyncio
+async def test_monthly_reader_ignores_self_attribution_and_cancelled(db, acad) -> None:
+    await db["session_occurrences"].insert_many(
+        [
+            _occurrence_doc(
+                acad,
+                "occ-self",
+                scheduled_coach_id="coach-A",
+                actual_coach_id="coach-A",
+            ),
+            _occurrence_doc(
+                acad,
+                "occ-cancelled",
+                status="cancelled",
+                scheduled_coach_id="coach-A",
+                actual_coach_id="coach-B",
+            ),
+        ]
+    )
+
+    rows = await MonthlyCoachOccurrenceReaderAdapter(
+        db["session_occurrences"]
+    ).coaches_with_occurrences(
+        academy_id=acad, period_start=_hours_ago(48), period_end=_hours_ahead(48)
+    )
+
+    assert {row.coach_id: row.session_count for row in rows} == {"coach-A": 1}

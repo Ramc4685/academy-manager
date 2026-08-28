@@ -21,6 +21,14 @@ export const queryKeys = {
       ["coach", "session", sessionId, "skills", date, programId ?? "default"] as const,
     skillNotes: (studentId: string, skillId: string) =>
       ["coach", "skill-notes", studentId, skillId] as const,
+    messages: () => ["coach", "messages"] as const,
+    calendar: () => ["coach", "calendar"] as const,
+    billingEnrollments: (sessionId: string) =>
+      ["coach", "billing-enrollments", sessionId] as const,
+    // Second segment must stay "billing-enrollments": persistence.ts keys its
+    // localStorage exclusion off it so proration/pricing never lands on disk.
+    billingMovePreview: (enrollmentId: string, toSessionTypeId: string) =>
+      ["coach", "billing-enrollments", "preview", enrollmentId, toSessionTypeId] as const,
   },
   admin: {
     all: ["admin"] as const,
@@ -89,6 +97,8 @@ export const queryKeys = {
     dunningFailures: () => ["admin", "billing", "dunning-failures"] as const,
     quarantinedEvents: () =>
       ["admin", "billing", "quarantined-events"] as const,
+    connectReadiness: () =>
+      ["admin", "billing", "connect-readiness"] as const,
     invoiceAttempts: (invoiceId: string) =>
       ["admin", "billing", "invoice-attempts", invoiceId] as const,
     billingSetupAll: () => ["admin", "billing", "setup"] as const,
@@ -108,6 +118,8 @@ export const queryKeys = {
       ["admin", "self-service", "cancellations"] as const,
     tuitionDiscounts: (period: string) =>
       ["admin", "tuition-discounts", period] as const,
+    billingEnrollments: (studentId: string) =>
+      ["admin", "billing-enrollments", studentId] as const,
   },
   owner: {
     all: ["owner"] as const,
@@ -123,6 +135,17 @@ export const queryKeys = {
     trials: () => ["parent", "trials"] as const,
     cancellationPreview: (enrollmentId: string) =>
       ["parent", "enrollments", enrollmentId, "cancellation-preview"] as const,
+    messages: () => ["parent", "messages"] as const,
+    calendar: () => ["parent", "calendar"] as const,
+    profile: () => ["parent", "profile"] as const,
+  },
+  platform: {
+    all: ["platform"] as const,
+    tenants: () => ["platform", "tenants"] as const,
+    tenantStatus: (academyId: string) =>
+      ["platform", "tenant", academyId, "status"] as const,
+    tenantHealth: (academyId: string) =>
+      ["platform", "tenant", academyId, "health"] as const,
   },
   student: {
     all: ["student"] as const,
@@ -140,4 +163,5 @@ export type QueryKey =
   | QueryKeyFrom<(typeof queryKeys.admin)[keyof typeof queryKeys.admin]>
   | QueryKeyFrom<(typeof queryKeys.owner)[keyof typeof queryKeys.owner]>
   | QueryKeyFrom<(typeof queryKeys.parent)[keyof typeof queryKeys.parent]>
+  | QueryKeyFrom<(typeof queryKeys.platform)[keyof typeof queryKeys.platform]>
   | QueryKeyFrom<(typeof queryKeys.student)[keyof typeof queryKeys.student]>;

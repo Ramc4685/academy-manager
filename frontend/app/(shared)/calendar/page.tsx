@@ -17,9 +17,9 @@ export default function CalendarPage() {
         const href = roles.includes("admin")
           ? "/admin/sessions"
           : roles.includes("coach")
-            ? "/coach/sessions"
+            ? "/coach/calendar"
             : roles.includes("parent")
-              ? "/parent/dashboard"
+              ? "/parent/calendar"
               : "/login";
         router.replace(href);
       })

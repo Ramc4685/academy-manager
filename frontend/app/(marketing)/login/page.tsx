@@ -12,6 +12,7 @@ import {
   signOutCurrent,
 } from "@/lib/auth/firebase";
 import { toAuthErrorMessage } from "@/lib/auth/auth-error";
+import { loginErrorMessage } from "@/lib/auth/login-error";
 import { registerPublicParent } from "@/lib/api/registration";
 import {
   clearPendingParentRegistration,
@@ -45,6 +46,12 @@ function LoginPageContent() {
       setEmail(prefillEmail);
       setNotice("An account already exists for this email. Sign in to continue.");
     }
+
+    // A bounce back from post-login / a persona guard carries the backend's
+    // reason code (issue #425) so the parent sees why sign-in failed instead
+    // of a blank form.
+    const bounceMessage = loginErrorMessage(searchParams.get("error"));
+    if (bounceMessage) setError(bounceMessage);
 
     completeGoogleRedirectSignIn()
       .then((user) => {

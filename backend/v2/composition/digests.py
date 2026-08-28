@@ -744,6 +744,38 @@ def _build_email_sender(settings: Any) -> Any:
     return StubEmailSendPort()
 
 
+def compose_email_credential_probe() -> Any | None:
+    """A port for the boot-time credential check, or ``None`` when there is no
+    credential to check (issue #435).
+
+    Deliberately *not* ``compose_ops_digest_sender()``: that one is env-gated to
+    staging/prod, while ``_build_digest_parts`` wires the real Resend adapter
+    whenever delivery is enabled and a key is present. Probing the ops-digest
+    port would therefore validate a stub on exactly the deployments that are
+    sending live mail through an unvalidated key. The question this answers is
+    "is the configured Resend key alive", so it follows the credential, not the
+    environment.
+
+    The probe only ever issues a read (``Domains.list``); ``from_address`` is
+    never used, so no send path is reachable from it.
+    """
+    settings = get_settings()
+    if not (settings.email_delivery_enabled and settings.resend_api_key):
+        return None
+    return ResendEmailSendPort(
+        api_key=settings.resend_api_key, from_address="credential-probe@invalid"
+    )
+
+
+def compose_ops_digest_sender() -> Any:
+    """Email port for the daily owner ops digest (issue #428).
+
+    Reuses the parent/coach digest gating verbatim so the ops digest cannot be
+    the one path that sends real email from a dev or test deployment.
+    """
+    return _build_email_sender(get_settings())
+
+
 def compose_send_parent_daily_digest(
     db: AsyncIOMotorDatabase[Any],
 ) -> SendParentDailyDigest:

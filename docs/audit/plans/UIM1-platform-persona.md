@@ -1,5 +1,5 @@
 # UIM1 — Platform/tenant-admin persona UI
-Status: TODO
+Status: PARTIAL — Phase 1 (shell + tenants) done in PR #377, 2026-07-28. Phases 2-4 (platform billing, governance, audit viewer + Connect) still TODO.
 Size: L · Depends on: DS1-3 recommended (Modal/FormField/Toast primitives) · Tracker: ../TRACKER.md
 
 ## User value
@@ -70,6 +70,22 @@ Pages:
 - Rollback: route group is additive; deleting `(platform)` dir + manifest entries reverts cleanly. Backend list route is additive.
 
 ## PR checklist (release note · TRACKER.md · plan Status → DONE)
-- [ ] Release note per phase
-- [ ] Update TRACKER.md row UIM1 (status/PR)
+- [x] Release note per phase — Phase 1: `docs/release-notes/2026-07-28-uim1-platform-persona.md`
+- [x] Update TRACKER.md row UIM1 (status/PR) — PARTIAL, #377
 - [ ] Flip this plan's Status to DONE after Phase 4
+
+## Phase 1 notes (PR #377)
+
+- **Plan correction**: this plan claimed `/me` "already returns `platform_roles` — the
+  frontend guard can use it". The backend does, but `frontend/lib/api/me.ts`'s
+  `CurrentUser` omitted the field and `usePersonaAuth` only checks tenant-scoped
+  `roles`. Phase 1 added `platform_roles` to the type plus a separate
+  `usePlatformAuth` hook rather than overloading the persona hook.
+- **Coverage gap**: the local-auth e2e inventory sweep seeds only admin/coach/parent
+  users, so there is no platform operator to sign in as. The `platform` role is
+  excluded from that sweep the way `proxy` already is (`UNSEEDED_ROLES` in
+  `frontend/e2e/specs/local-auth-inventory.spec.ts`). Seeding a `platform_admin`
+  would let these routes join the sweep.
+- **Robustness**: `MongoTenantLifecycleRepository.list_tenants()` skips `academies`
+  docs that fail `Tenant` validation (legacy rows commonly lack `primary_domain`)
+  so one malformed row cannot 500 the operator list.

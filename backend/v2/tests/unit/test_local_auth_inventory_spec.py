@@ -88,10 +88,13 @@ def test_local_auth_inventory_spec_declares_seeded_dynamic_route_env_vars() -> N
 def test_dynamic_manifest_routes_have_exact_playwright_env_contract() -> None:
     spec = LOCAL_AUTH_SPEC.read_text()
     manifest = json.loads(MANIFEST.read_text())
+    # Mirrors UNSEEDED_ROLES in the spec: roles the local-auth sweep cannot
+    # sign in as, so they need no dynamic-route env contract.
+    unseeded_roles = {"proxy", "platform"}
     dynamic_routes = sorted(
         entry["route"]
         for entry in manifest["routes"]
-        if "[" in entry["route"] and entry["role"] != "proxy"
+        if "[" in entry["route"] and entry["role"] not in unseeded_roles
     )
 
     assert "const DYNAMIC_ROUTE_ENV_CONTRACT" in spec

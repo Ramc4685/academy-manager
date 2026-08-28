@@ -176,6 +176,9 @@ export default function AdminReportsPage() {
     [revenueData, period],
   );
   const dashboard = dashboardQuery.data;
+  // The backend decides whether payroll is complete enough for a final P&L;
+  // this page only presents the reason it gives.
+  const payrollBlockedBy = dashboard?.payroll.blocked_by ?? null;
   const failedRows = failedPaymentsQuery.data?.rows ?? [];
   const failedTotalCents = failedRows.reduce((total, row) => total + row.balance_due_cents, 0);
   const projected = projectedIncomeQuery.data;
@@ -306,8 +309,20 @@ export default function AdminReportsPage() {
           />
           <KpiCard
             label="Net profit"
-            value={dashboard ? formatNullableCurrency(dashboard.profit_and_loss.net_profit_cents) : dashboardQuery.isLoading ? "Loading" : "No data"}
-            description="Revenue less expenses and available coach payroll."
+            value={
+              payrollBlockedBy
+                ? "Blocked"
+                : dashboard
+                  ? formatNullableCurrency(dashboard.profit_and_loss.net_profit_cents)
+                  : dashboardQuery.isLoading
+                    ? "Loading"
+                    : "No data"
+            }
+            description={
+              payrollBlockedBy
+                ? `Payroll is incomplete, so profit is not final. ${payrollBlockedBy}`
+                : "Revenue less expenses and coach payroll."
+            }
           />
           <KpiCard
             label="Expenses"
@@ -431,6 +446,14 @@ export default function AdminReportsPage() {
               <DashboardTerm label="Net profit" value={dashboard ? formatNullableCurrency(dashboard.profit_and_loss.net_profit_cents) : "No data"} />
               <DashboardTerm label="Margin" value={dashboard ? formatNullablePercent(dashboard.profit_and_loss.profit_margin) : "No data"} />
             </dl>
+            {payrollBlockedBy ? (
+              <p
+                className="mt-4 rounded-md border border-dashed border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+                data-testid="pnl-payroll-blocked"
+              >
+                Profit is not final until payroll is complete. {payrollBlockedBy}
+              </p>
+            ) : null}
           </Card>
 
           <Card p={24}>

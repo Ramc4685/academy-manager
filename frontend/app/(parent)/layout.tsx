@@ -1,7 +1,9 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
 
 import { usePersonaAuth } from "@/lib/auth/use-persona-auth";
 import { useOnline } from "@/lib/pwa/online";
@@ -10,12 +12,28 @@ import { PersonaSwitcher } from "@/components/persona/persona-switcher";
 import { AccessDeniedNotice } from "@/components/persona/access-denied-notice";
 import { PersonaLogoutButton } from "@/components/persona/logout-button";
 import { ToastProvider } from "@/components/ds/toast";
+import { listParentMessages } from "@/lib/api/v2/messages";
+import { queryKeys } from "@/lib/query/keys";
+import { getParentProfile } from "@/lib/api/parent";
+
+// Session-scoped dismissal (issue #380): the banner returns on the next
+// login rather than being permanently dismissible — nothing here blocks the
+// parent from using the app, it's a nudge, not a gate.
+const DISMISS_KEY = "am.parent.profileBannerDismissed";
 
 export default function ParentLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const online = useOnline();
   const { hasUpdate, applyUpdate } = useServiceWorkerUpdate();
   const auth = usePersonaAuth("parent");
+
+  const { data: messagesData } = useQuery({
+    queryKey: queryKeys.parent.messages(),
+    queryFn: listParentMessages,
+    enabled: auth.authorized,
+    refetchInterval: 30_000,
+  });
+  const unreadCount = (messagesData?.messages ?? []).filter((m) => !m.read).length;
 
   if (!auth.checked) {
     return (
@@ -53,6 +71,29 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
           <span className="font-semibold text-white text-[15px] tracking-tight">Academy</span>
         </Link>
         <div className="flex items-center gap-2">
+          <Link
+            href="/parent/calendar"
+            data-testid="nav-calendar"
+            aria-label="Calendar"
+            className="min-h-touch min-w-touch flex items-center justify-center rounded-lg p-2 text-slate-400 hover:bg-white/10"
+          >
+            <CalendarIcon />
+          </Link>
+          <Link
+            href="/parent/messages"
+            data-testid="nav-messages"
+            aria-label="Messages"
+            className="relative min-h-touch min-w-touch flex items-center justify-center rounded-lg p-2 text-slate-400 hover:bg-white/10"
+          >
+            <MessagesIcon />
+            {unreadCount > 0 && (
+              <span
+                data-testid="messages-unread-badge"
+                className="absolute top-1 right-1 h-2 w-2 rounded-full"
+                style={{ background: "#facc15" }}
+              />
+            )}
+          </Link>
           <PersonaSwitcher current="parent" variant="dark" />
           {!online && (
             <span className="rounded-full px-2.5 py-0.5 text-xs font-medium text-amber-300 border border-amber-400/30" style={{ background: "rgba(251,191,36,0.1)" }}>
@@ -78,6 +119,7 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
       {/* Content */}
       <main className="mx-auto w-full max-w-md px-4 py-5 animate-fade-in">
         <AccessDeniedNotice />
+        <ProfileGapBanner pathname={pathname} />
         {children}
       </main>
 
@@ -169,5 +211,84 @@ function ProgressIcon() {
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
     </svg>
+  );
+}
+
+function CalendarIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+      <line x1="16" y1="2" x2="16" y2="6" />
+      <line x1="8" y1="2" x2="8" y2="6" />
+      <line x1="3" y1="10" x2="21" y2="10" />
+    </svg>
+  );
+}
+
+function MessagesIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </svg>
+  );
+}
+
+function ProfileGapBanner({ pathname }: { pathname: string | null }) {
+  const { data } = useQuery({
+    queryKey: queryKeys.parent.profile(),
+    queryFn: getParentProfile,
+    // This runs in the layout, so it mounts on every parent page. Cache it
+    // for the session-ish window the banner cares about rather than
+    // refetching on each tab change, and don't retry: the banner is a nudge,
+    // so a failed fetch should cost one request and then render nothing.
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+  const [dismissed, setDismissed] = useState(true);
+
+  useEffect(() => {
+    setDismissed(typeof window !== "undefined" && window.sessionStorage.getItem(DISMISS_KEY) === "1");
+  }, []);
+
+  if (pathname === "/parent/profile") return null;
+  if (!data || data.gaps.is_complete || dismissed) return null;
+
+  const childCount = Object.values(data.gaps.children).filter((gaps) => gaps.length > 0).length;
+  const total = data.gaps.parent.length + childCount;
+  const subject =
+    childCount > 0 && data.gaps.parent.length > 0
+      ? "your profile and a child's"
+      : childCount > 0
+        ? "a child's profile"
+        : "your profile";
+
+  return (
+    <div
+      className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 animate-fade-in-up"
+      role="status"
+    >
+      <p className="text-sm text-amber-900">
+        {total} detail{total === 1 ? "" : "s"} missing from {subject}.
+      </p>
+      <div className="flex shrink-0 items-center gap-2">
+        <Link
+          href="/parent/profile"
+          className="rounded-lg bg-amber-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-amber-700"
+        >
+          Add now
+        </Link>
+        <button
+          type="button"
+          aria-label="Dismiss"
+          className="rounded-lg px-1.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-100"
+          onClick={() => {
+            window.sessionStorage.setItem(DISMISS_KEY, "1");
+            setDismissed(true);
+          }}
+        >
+          Dismiss
+        </button>
+      </div>
+    </div>
   );
 }

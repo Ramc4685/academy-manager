@@ -380,3 +380,90 @@ async def test_admin_detail_login_invite_is_scoped_to_the_requesting_academy(db)
 
     other = await repo.get_login_invite_user("shared-parent", academy_id="academy-c")
     assert other is not None and other.login_invite_sent_at is None
+
+
+class _RecordingFirebase:
+    def __init__(self) -> None:
+        self.email_updates: list[tuple[str, str]] = []
+
+    async def update_user_email(self, uid: str, email: str) -> None:
+        self.email_updates.append((uid, email))
+
+
+async def _seed_editable_parent(db) -> None:
+    await db["users"].insert_one(
+        {
+            "user_id": "roster-parent-9",
+            "auth_uid": "fb-uid-9",
+            "firebase_uid": "fb-uid-9",
+            "email": "Parent@Example.com",
+            "normalized_email": "parent@example.com",
+            "display_name": "Parent Nine",
+            "role": "parent",
+            "roles": ["parent"],
+            "status": "active",
+            "academy_id": "academy-b",
+        }
+    )
+    await db["academy_memberships"].insert_one(
+        {
+            "academy_id": "academy-b",
+            "user_id": "fb-uid-9",
+            "roles": ["parent"],
+            "status": "active",
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_resubmitting_the_same_email_does_not_touch_firebase(db, monkeypatch) -> None:
+    """#436: `update_user_email` clears `email_verified`, which blocks password
+    login. A no-op edit (or a casing-only one) must not cost the parent their
+    verified state, since nothing about the address actually changed."""
+    from backend.v2.contexts.identity.application.use_cases.admin_directory import (
+        UpdateAdminUserCommand,
+    )
+
+    firebase = _RecordingFirebase()
+    monkeypatch.setattr(user_repo_module, "get_firebase_admin_adapter", lambda: firebase)
+    await _seed_editable_parent(db)
+    repo = MongoUserRepository(db, default_academy_id="academy-b")
+
+    updated = await repo.update_admin_user(
+        "roster-parent-9",
+        UpdateAdminUserCommand(
+            email="PARENT@example.com",
+            display_name="Parent Renamed",
+            actor_id="admin-1",
+            reason="name fix",
+        ),
+        academy_id="academy-b",
+    )
+
+    assert updated is not None and updated.display_name == "Parent Renamed"
+    assert firebase.email_updates == []
+
+
+@pytest.mark.asyncio
+async def test_changing_the_email_updates_firebase(db, monkeypatch) -> None:
+    from backend.v2.contexts.identity.application.use_cases.admin_directory import (
+        UpdateAdminUserCommand,
+    )
+
+    firebase = _RecordingFirebase()
+    monkeypatch.setattr(user_repo_module, "get_firebase_admin_adapter", lambda: firebase)
+    await _seed_editable_parent(db)
+    repo = MongoUserRepository(db, default_academy_id="academy-b")
+
+    updated = await repo.update_admin_user(
+        "roster-parent-9",
+        UpdateAdminUserCommand(
+            email="corrected@example.com",
+            actor_id="admin-1",
+            reason="typo fix",
+        ),
+        academy_id="academy-b",
+    )
+
+    assert updated is not None and updated.email == "corrected@example.com"
+    assert firebase.email_updates == [("fb-uid-9", "corrected@example.com")]

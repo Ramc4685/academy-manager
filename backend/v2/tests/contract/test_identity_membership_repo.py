@@ -87,6 +87,81 @@ async def test_repo_satisfies_auth_membership_lookup_port(db) -> None:
     assert result.membership_id == "m-auth"
 
 
+@pytest.mark.asyncio
+async def test_lookup_matches_membership_keyed_by_identity_alias(db) -> None:
+    """Regression (#424): a membership row keyed by the account's
+    `firebase_uid`/`auth_uid` rather than its roster `user_id` must still
+    resolve, matching the alias semantics PR #400 gave the invite path."""
+    await _insert_membership(db, membership_id="m-alias", academy_id="acad-a", user_id="fb-uid-7")
+    repo = _make_repo(db)
+
+    assert await repo.get_for_user_in_academy(user_id="roster-7", academy_id="acad-a") is None
+
+    result = await repo.get_for_user_in_academy(
+        user_id="roster-7", academy_id="acad-a", aliases=["fb-uid-7"]
+    )
+
+    assert result is not None
+    assert result.membership_id == "m-alias"
+
+
+@pytest.mark.asyncio
+async def test_alias_lookup_prefers_the_active_row_when_two_rows_match(db) -> None:
+    """Regression (#424): the accounts alias matching unblocks are exactly the
+    ones likely to have TWO rows in one academy — `ensure_parent_login` upserts
+    a firebase-keyed row without removing the roster-keyed one, so a stale
+    `removed` row can sit beside the live one. The live row must win, every
+    time, not whichever Mongo happens to return first."""
+    await _insert_membership(
+        db, membership_id="m-stale", academy_id="acad-a", user_id="roster-7", status="removed"
+    )
+    await _insert_membership(
+        db, membership_id="m-live", academy_id="acad-a", user_id="fb-uid-7", status="active"
+    )
+    repo = _make_repo(db)
+
+    for _ in range(5):
+        result = await repo.get_for_user_in_academy(
+            user_id="roster-7", academy_id="acad-a", aliases=["fb-uid-7"]
+        )
+        assert result is not None
+        assert result.membership_id == "m-live"
+        assert result.is_active()
+
+
+@pytest.mark.asyncio
+async def test_alias_lookup_prefers_exact_user_id_among_equally_active_rows(db) -> None:
+    """With nothing to separate them on status, the exact `user_id` hit wins
+    over the alias hit — again deterministically."""
+    await _insert_membership(
+        db, membership_id="m-alias-active", academy_id="acad-a", user_id="fb-uid-7"
+    )
+    await _insert_membership(
+        db, membership_id="m-exact-active", academy_id="acad-a", user_id="roster-7"
+    )
+    repo = _make_repo(db)
+
+    result = await repo.get_for_user_in_academy(
+        user_id="roster-7", academy_id="acad-a", aliases=["fb-uid-7"]
+    )
+
+    assert result is not None
+    assert result.membership_id == "m-exact-active"
+
+
+@pytest.mark.asyncio
+async def test_alias_lookup_still_refuses_another_academys_membership(db) -> None:
+    """Aliases widen identity only — `academy_id` stays a mandatory term."""
+    await _insert_membership(db, membership_id="m-alias-b", academy_id="acad-b", user_id="fb-uid-7")
+    repo = _make_repo(db)
+
+    result = await repo.get_for_user_in_academy(
+        user_id="roster-7", academy_id="acad-a", aliases=["fb-uid-7"]
+    )
+
+    assert result is None
+
+
 # ---------------------------------------------------------------------------
 # Membership lookup — cross-tenant isolation
 # ---------------------------------------------------------------------------
@@ -224,6 +299,23 @@ async def test_list_memberships_for_user_returns_only_that_users_memberships(db)
 
     assert len(u2_memberships) == 1
     assert u2_memberships[0].academy_id == "acad-a"
+
+
+@pytest.mark.asyncio
+async def test_list_memberships_for_user_matches_rows_keyed_by_identity_alias(db) -> None:
+    """Regression (#424): `/me/memberships` must not tell an alias-diverged
+    parent they belong to no academies right after they logged in."""
+    await db["users"].insert_one(
+        {"user_id": "roster-7", "auth_uid": "legacy-uid-7", "firebase_uid": "fb-uid-7"}
+    )
+    await _insert_membership(
+        db, membership_id="m-alias-list", academy_id="acad-a", user_id="fb-uid-7"
+    )
+    repo = _make_repo(db)
+
+    rows = await repo.list_memberships_for_user("roster-7")
+
+    assert [row.membership_id for row in rows] == ["m-alias-list"]
 
 
 @pytest.mark.asyncio

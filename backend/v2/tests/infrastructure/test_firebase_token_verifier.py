@@ -376,3 +376,142 @@ async def test_mongo_user_repo_firebase_helpers_call_v2_adapter(
         ("update", {"uid": "firebase-user", "email": "updated@example.com"}),
         ("delete", {"uid": "firebase-user"}),
     ]
+
+
+class _FakeActionCodeSettings:
+    def __init__(self, url: str, handle_code_in_app: bool = False) -> None:
+        self.url = url
+        self.handle_code_in_app = handle_code_in_app
+
+
+def _tenant_aware_fake_auth(seen: list[tuple[str, dict[str, object]]], *, reject_domain=False):
+    """FakeAuth that records whether ActionCodeSettings reached Firebase.
+
+    `reject_domain` simulates a continue URL whose domain is not yet in the
+    project's Firebase Authorized Domains list.
+    """
+
+    class UnauthorizedDomain(Exception):
+        pass
+
+    class FakeAuth:
+        UserNotFoundError = type("UserNotFoundError", (Exception,), {})
+        ActionCodeSettings = _FakeActionCodeSettings
+
+        @staticmethod
+        def get_user_by_email(email: str) -> object:
+            return object()
+
+        @staticmethod
+        def generate_password_reset_link(email: str, settings: object | None = None) -> str:
+            if settings is None:
+                seen.append(("reset_link_plain", {"email": email}))
+            else:
+                seen.append(("reset_link_with_settings", {"url": settings.url}))
+                if reject_domain:
+                    raise UnauthorizedDomain("UNAUTHORIZED_DOMAIN: Domain not allowlisted")
+            return (
+                "https://academy-courtmastr.firebaseapp.com/__/auth/action"
+                "?mode=resetPassword&oobCode=abc123&apiKey=key"
+            )
+
+    return FakeAuth
+
+
+@pytest.mark.asyncio
+async def test_password_reset_link_is_rehosted_on_the_academys_own_portal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ADR-0007: the parent must land on their own academy's host, running the
+    in-app branded handler -- not the project-wide Firebase page."""
+    seen: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(adapter_module, "firebase_admin_auth", _tenant_aware_fake_auth(seen))
+    monkeypatch.setattr(adapter_module, "_ensure_firebase_app", lambda: object())
+
+    link = await FirebaseAdminAdapter().generate_password_reset_link(
+        "parent@example.com",
+        uid="parent-1",
+        display_name="Pat Parent",
+        portal_url="https://blno-academy.courtmastr.com",
+    )
+
+    assert link.startswith("https://blno-academy.courtmastr.com/auth/action?")
+    assert "oobCode=abc123" in link
+    # The continue URL returns them to their own academy's sign-in, not the
+    # deployment-wide FRONTEND_URL.
+    assert seen == [
+        ("reset_link_with_settings", {"url": "https://blno-academy.courtmastr.com/login"})
+    ]
+
+
+@pytest.mark.asyncio
+async def test_password_reset_link_falls_back_when_continue_domain_not_authorized(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An academy domain missing from Firebase Authorized Domains must cost the
+    continueUrl, never the invite itself."""
+    seen: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        adapter_module, "firebase_admin_auth", _tenant_aware_fake_auth(seen, reject_domain=True)
+    )
+    monkeypatch.setattr(adapter_module, "_ensure_firebase_app", lambda: object())
+
+    link = await FirebaseAdminAdapter().generate_password_reset_link(
+        "parent@example.com",
+        uid="parent-1",
+        display_name="Pat Parent",
+        portal_url="https://unauthorized-academy.courtmastr.com",
+    )
+
+    assert [name for name, _ in seen] == ["reset_link_with_settings", "reset_link_plain"]
+    # Branded in-app landing survives: the rewrite needs no Authorized Domain.
+    assert link.startswith("https://unauthorized-academy.courtmastr.com/auth/action?")
+    assert "oobCode=abc123" in link
+
+
+@pytest.mark.asyncio
+async def test_password_reset_link_reraises_unrelated_firebase_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only unauthorized-domain failures degrade; anything else must surface."""
+
+    class Boom(Exception):
+        pass
+
+    class FakeAuth:
+        UserNotFoundError = type("UserNotFoundError", (Exception,), {})
+        ActionCodeSettings = _FakeActionCodeSettings
+
+        @staticmethod
+        def get_user_by_email(email: str) -> object:
+            return object()
+
+        @staticmethod
+        def generate_password_reset_link(email: str, settings: object | None = None) -> str:
+            raise Boom("QUOTA_EXCEEDED")
+
+    monkeypatch.setattr(adapter_module, "firebase_admin_auth", FakeAuth)
+    monkeypatch.setattr(adapter_module, "_ensure_firebase_app", lambda: object())
+
+    with pytest.raises(Boom):
+        await FirebaseAdminAdapter().generate_password_reset_link(
+            "parent@example.com", uid="parent-1", portal_url="https://blno.courtmastr.com"
+        )
+
+
+@pytest.mark.asyncio
+async def test_password_reset_link_without_portal_url_keeps_legacy_behaviour(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No tenant portal known -> no ActionCodeSettings, no rewrite: exactly the
+    link Firebase produced before this feature."""
+    seen: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(adapter_module, "firebase_admin_auth", _tenant_aware_fake_auth(seen))
+    monkeypatch.setattr(adapter_module, "_ensure_firebase_app", lambda: object())
+
+    link = await FirebaseAdminAdapter().generate_password_reset_link(
+        "parent@example.com", uid="parent-1", display_name="Pat Parent"
+    )
+
+    assert seen == [("reset_link_plain", {"email": "parent@example.com"})]
+    assert link.startswith("https://academy-courtmastr.firebaseapp.com/__/auth/action?")

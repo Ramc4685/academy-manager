@@ -1710,3 +1710,420 @@ async def test_admin_ops_work_on_ledger_resident_payment(db, acad) -> None:
     )
 
     assert MongoBillingLedgerRepository._payment_from_doc(doc).status == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_generate_monthly_recovers_net_invoice_when_every_credit_audit_write_is_lost(
+    db, acad
+) -> None:
+    """Issue #233: the crash window between the credit decrement and the audit writes.
+
+    Real-world ordering inside ``generate_monthly_payments``:
+
+    1. ``billing_invoice_keys`` row is inserted (payment_id ``pay-crash``)  -- durable
+    2. ``apply_available_credits`` atomically decrements the credit document
+       and pushes ``pay-crash`` into ``applied_invoice_ids``                -- durable
+    3. *** process dies here ***  neither the ``credit_applications`` audit row
+       nor the ``CREDIT_APPLIED`` ledger document is ever written
+    4. the invoice itself is never written
+
+    Deleting both projections after the fact reproduces byte-for-byte the database
+    state a crash at (3) leaves behind. On rerun the generator must recover the
+    invoice at NET (6_250), not at gross (10_000) -- the family already spent the
+    credit, so billing them the full amount overcharges them.
+    """
+    await db["billing_invoice_keys"].create_index(
+        [("academy_id", 1), ("enrollment_id", 1), ("period", 1)],
+        unique=True,
+        name="uniq_monthly_invoice_key",
+    )
+    credits = MongoCreditLedgerRepository(db)
+    ledger_repo = MongoBillingLedgerRepository(db)
+    repo = MongoPaymentRepository(
+        db,
+        clock=lambda: datetime(2026, 6, 1, 12, 0, tzinfo=UTC),
+        credit_ledger=credits,
+        ledger_repo=ledger_repo,
+    )
+    now = datetime(2026, 5, 20, tzinfo=UTC)
+    await credits.create(
+        CreditLedgerEntry(
+            credit_id="credit-crash",
+            academy_id=acad,
+            parent_id="parent-crash",
+            student_id="student-crash",
+            enrollment_id="enroll-crash",
+            type="EARLY_WITHDRAWAL_CREDIT",
+            status="APPROVED",
+            amount_cents=3_750,
+            remaining_amount_cents=3_750,
+            currency="usd",
+            reason="withdrawal",
+            calculation_snapshot_id="snap-crash",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    await credits.apply_available_credits(
+        parent_id="parent-crash",
+        invoice_id="pay-crash",
+        amount_due_cents=10_000,
+    )
+    # The crash: both projections of the credit application are lost.
+    await db["credit_applications"].delete_many({"academy_id": acad, "invoice_id": "pay-crash"})
+    await db["account_credit_ledger"].delete_many(
+        {"academy_id": acad, "invoice_id": "pay-crash", "type": "CREDIT_APPLIED"}
+    )
+    # Sanity: the money really did leave the credit, and nothing but the credit
+    # document itself records where it went.
+    assert await credits.balance_for_parent("parent-crash") == 0
+    assert (
+        await db["credit_applications"].count_documents(
+            {"academy_id": acad, "invoice_id": "pay-crash"}
+        )
+        == 0
+    )
+
+    await db["billing_invoice_keys"].insert_one(
+        {
+            "academy_id": acad,
+            "invoice_key_id": "key-crash",
+            "payment_id": "pay-crash",
+            "enrollment_id": "enroll-crash",
+            "period": "2026-06",
+            "status": "claimed",
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+    await _seed_monthly_enrollment(
+        db,
+        acad,
+        enrollment_id="enroll-crash",
+        session_id="sess-crash",
+        student_id="student-crash",
+        parent_id="parent-crash",
+    )
+
+    result = await repo.generate_monthly_payments("2026-06")
+
+    assert result.failed_repair == 0
+    assert result.repaired_orphan_keys == 1
+    invoice = await db["invoices"].find_one(
+        {"academy_id": acad, "invoice_id": "inv-monthly-enroll-crash-2026-06"}
+    )
+    assert invoice is not None
+    # 10_000 gross - 3_750 credit already consumed before the crash.
+    assert invoice["total_cents"] == 6_250
+    assert invoice["balance_due_cents"] == 6_250
+    # The credit was not spent a second time.
+    assert await credits.balance_for_parent("parent-crash") == 0
+    credit_doc = await db["account_credit_ledger"].find_one(
+        {"academy_id": acad, "credit_id": "credit-crash"}
+    )
+    assert credit_doc is not None
+    assert credit_doc["remaining_amount_cents"] == 0
+    assert credit_doc.get("applied_invoice_ids") == ["pay-crash"]
+
+    # A second rerun converges: no new invoice, no second correction.
+    replay = await repo.generate_monthly_payments("2026-06")
+
+    assert replay.created == 0
+    assert replay.repaired_orphan_keys == 0
+    assert replay.failed_repair == 0
+    assert replay.skipped_existing == 1
+    assert (
+        await db["invoices"].count_documents(
+            {"academy_id": acad, "invoice_id": "inv-monthly-enroll-crash-2026-06"}
+        )
+        == 1
+    )
+    invoice_after = await db["invoices"].find_one(
+        {"academy_id": acad, "invoice_id": "inv-monthly-enroll-crash-2026-06"}
+    )
+    assert invoice_after is not None
+    assert invoice_after["total_cents"] == 6_250
+    assert invoice_after["balance_due_cents"] == 6_250
+    assert await credits.balance_for_parent("parent-crash") == 0
+
+
+@pytest.mark.asyncio
+async def test_generate_monthly_refuses_to_bill_gross_when_credit_amount_is_unrecoverable(
+    db, acad
+) -> None:
+    """Issue #233: unknown-but-spent credit must fail loudly, never bill gross.
+
+    A legacy credit document carries the invoice in ``applied_invoice_ids`` but
+    predates the embedded amount record, and both audit projections are gone.
+    Nothing anywhere says how much was consumed, so the generator must refuse to
+    price the invoice rather than guess gross and overcharge the family.
+    """
+    await db["billing_invoice_keys"].create_index(
+        [("academy_id", 1), ("enrollment_id", 1), ("period", 1)],
+        unique=True,
+        name="uniq_monthly_invoice_key",
+    )
+    credits = MongoCreditLedgerRepository(db)
+    ledger_repo = MongoBillingLedgerRepository(db)
+    repo = MongoPaymentRepository(
+        db,
+        clock=lambda: datetime(2026, 6, 1, 12, 0, tzinfo=UTC),
+        credit_ledger=credits,
+        ledger_repo=ledger_repo,
+    )
+    now = datetime(2026, 5, 20, tzinfo=UTC)
+    await credits.create(
+        CreditLedgerEntry(
+            credit_id="credit-legacy",
+            academy_id=acad,
+            parent_id="parent-legacy",
+            student_id="student-legacy",
+            enrollment_id="enroll-legacy",
+            type="MANUAL_CREDIT",
+            status="APPROVED",
+            amount_cents=3_750,
+            remaining_amount_cents=0,
+            currency="usd",
+            reason="legacy credit",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    # Legacy shape: tagged as applied, no embedded amount, no audit rows at all.
+    await db["account_credit_ledger"].update_one(
+        {"academy_id": acad, "credit_id": "credit-legacy"},
+        {"$set": {"applied_invoice_ids": ["pay-legacy"]}},
+    )
+    await db["billing_invoice_keys"].insert_one(
+        {
+            "academy_id": acad,
+            "invoice_key_id": "key-legacy",
+            "payment_id": "pay-legacy",
+            "enrollment_id": "enroll-legacy",
+            "period": "2026-06",
+            "status": "claimed",
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+    await _seed_monthly_enrollment(
+        db,
+        acad,
+        enrollment_id="enroll-legacy",
+        session_id="sess-legacy",
+        student_id="student-legacy",
+        parent_id="parent-legacy",
+    )
+
+    result = await repo.generate_monthly_payments("2026-06")
+
+    assert result.failed_repair == 1
+    assert result.created == 0
+    # No invoice at all beats an invoice at gross.
+    assert (
+        await db["invoices"].count_documents(
+            {"academy_id": acad, "invoice_id": "inv-monthly-enroll-legacy-2026-06"}
+        )
+        == 0
+    )
+    # The drift is observable to an admin on the invoice key.
+    invoice_key = await db["billing_invoice_keys"].find_one(
+        {"academy_id": acad, "enrollment_id": "enroll-legacy", "period": "2026-06"}
+    )
+    assert invoice_key is not None
+    assert invoice_key["status"] == "repair_failed"
+    assert "credit-legacy" in invoice_key["repair_error"]
+
+
+@pytest.mark.asyncio
+async def test_generate_monthly_resumes_partial_credit_application_across_credits(db, acad) -> None:
+    """Issue #233: an interrupted multi-credit application resumes, not restarts.
+
+    The first run applied credit A (3_000) and died before touching credit B and
+    before writing the invoice. The rerun must count A's 3_000 from the source of
+    truth, top the invoice up from B, and bill the remainder.
+    """
+    await db["billing_invoice_keys"].create_index(
+        [("academy_id", 1), ("enrollment_id", 1), ("period", 1)],
+        unique=True,
+        name="uniq_monthly_invoice_key",
+    )
+    credits = MongoCreditLedgerRepository(db)
+    ledger_repo = MongoBillingLedgerRepository(db)
+    repo = MongoPaymentRepository(
+        db,
+        clock=lambda: datetime(2026, 6, 1, 12, 0, tzinfo=UTC),
+        credit_ledger=credits,
+        ledger_repo=ledger_repo,
+    )
+    now = datetime(2026, 5, 20, tzinfo=UTC)
+    for credit_id, cents in (("credit-part-a", 3_000), ("credit-part-b", 2_000)):
+        await credits.create(
+            CreditLedgerEntry(
+                credit_id=credit_id,
+                academy_id=acad,
+                parent_id="parent-part",
+                student_id="student-part",
+                enrollment_id="enroll-part",
+                type="MANUAL_CREDIT",
+                status="APPROVED",
+                amount_cents=cents,
+                remaining_amount_cents=cents,
+                currency="usd",
+                reason="partial",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+    # First run got as far as consuming credit A only, then died.
+    await credits.apply_available_credits(
+        parent_id="parent-part",
+        invoice_id="pay-part",
+        amount_due_cents=3_000,
+    )
+    await db["credit_applications"].delete_many({"academy_id": acad, "invoice_id": "pay-part"})
+    await db["account_credit_ledger"].delete_many(
+        {"academy_id": acad, "invoice_id": "pay-part", "type": "CREDIT_APPLIED"}
+    )
+    assert await credits.balance_for_parent("parent-part") == 2_000
+
+    await db["billing_invoice_keys"].insert_one(
+        {
+            "academy_id": acad,
+            "invoice_key_id": "key-part",
+            "payment_id": "pay-part",
+            "enrollment_id": "enroll-part",
+            "period": "2026-06",
+            "status": "claimed",
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+    await _seed_monthly_enrollment(
+        db,
+        acad,
+        enrollment_id="enroll-part",
+        session_id="sess-part",
+        student_id="student-part",
+        parent_id="parent-part",
+    )
+
+    result = await repo.generate_monthly_payments("2026-06")
+
+    assert result.failed_repair == 0
+    invoice = await db["invoices"].find_one(
+        {"academy_id": acad, "invoice_id": "inv-monthly-enroll-part-2026-06"}
+    )
+    assert invoice is not None
+    # 10_000 gross - 3_000 (already spent) - 2_000 (topped up on the rerun).
+    assert invoice["total_cents"] == 5_000
+    assert invoice["balance_due_cents"] == 5_000
+    assert await credits.balance_for_parent("parent-part") == 0
+    # Both applications are durably recorded and their audit rows rebuilt.
+    assert (
+        await db["credit_applications"].count_documents(
+            {"academy_id": acad, "invoice_id": "pay-part"}
+        )
+        == 2
+    )
+
+    replay = await repo.generate_monthly_payments("2026-06")
+
+    assert replay.created == 0
+    assert replay.failed_repair == 0
+    assert await credits.balance_for_parent("parent-part") == 0
+    assert (
+        await db["invoices"].count_documents(
+            {"academy_id": acad, "invoice_id": "inv-monthly-enroll-part-2026-06"}
+        )
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_generate_monthly_recovery_honours_tuition_discount_and_credit(db, acad) -> None:
+    """Recovery must price from net, not gross (issue #233 follow-on).
+
+    The normal path bills ``net - credit``. Recovery pricing from gross would
+    overcharge a discounted family by the whole discount, and would let credit
+    be consumed against the 2_000 of tuition they never owed.
+    """
+    await db["billing_invoice_keys"].create_index(
+        [("academy_id", 1), ("enrollment_id", 1), ("period", 1)],
+        unique=True,
+        name="uniq_monthly_invoice_key",
+    )
+    credits = MongoCreditLedgerRepository(db)
+    ledger_repo = MongoBillingLedgerRepository(db)
+    repo = MongoPaymentRepository(
+        db,
+        clock=lambda: datetime(2026, 6, 1, 12, 0, tzinfo=UTC),
+        credit_ledger=credits,
+        ledger_repo=ledger_repo,
+    )
+    now = datetime(2026, 5, 20, tzinfo=UTC)
+    # 10_000 gross, 2_000 off => 8_000 net.
+    await db["enrollment_discounts"].insert_one(
+        {
+            "academy_id": acad,
+            "discount_id": "disc-recover",
+            "enrollment_id": "enroll-disc",
+            "student_id": "student-disc",
+            "category": "sibling",
+            "kind": "amount_off",
+            "amount_off_cents": 2_000,
+            "effective_start": "2026-01-01",
+            "status": "active",
+        }
+    )
+    # Parent holds 9_000 of credit — more than the 8_000 net they actually owe.
+    await credits.create(
+        CreditLedgerEntry(
+            credit_id="credit-disc",
+            academy_id=acad,
+            parent_id="parent-disc",
+            student_id="student-disc",
+            enrollment_id="enroll-disc",
+            type="MANUAL_CREDIT",
+            status="APPROVED",
+            amount_cents=9_000,
+            remaining_amount_cents=9_000,
+            currency="usd",
+            reason="goodwill",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    await db["billing_invoice_keys"].insert_one(
+        {
+            "academy_id": acad,
+            "invoice_key_id": "key-disc",
+            "payment_id": "pay-disc",
+            "enrollment_id": "enroll-disc",
+            "period": "2026-06",
+            "status": "claimed",
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+    await _seed_monthly_enrollment(
+        db,
+        acad,
+        enrollment_id="enroll-disc",
+        session_id="sess-disc",
+        student_id="student-disc",
+        parent_id="parent-disc",
+    )
+
+    result = await repo.generate_monthly_payments("2026-06")
+
+    assert result.failed_repair == 0
+    invoice = await db["invoices"].find_one(
+        {"academy_id": acad, "invoice_id": "inv-monthly-enroll-disc-2026-06"}
+    )
+    assert invoice is not None
+    # 8_000 net fully covered by credit, so nothing is owed...
+    assert invoice["total_cents"] == 0
+    assert invoice["balance_due_cents"] == 0
+    # ...and only the 8_000 they owed was taken, not the 10_000 gross.
+    assert await credits.balance_for_parent("parent-disc") == 1_000

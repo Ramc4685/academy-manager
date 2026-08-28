@@ -26,7 +26,12 @@ from backend.v2.contexts.identity.domain.errors import (
 
 class PasswordResetLinkPort(Protocol):
     async def generate_password_reset_link(
-        self, email: str, *, uid: str | None = None, display_name: str | None = None
+        self,
+        email: str,
+        *,
+        uid: str | None = None,
+        display_name: str | None = None,
+        portal_url: str | None = None,
     ) -> str: ...
 
 
@@ -69,6 +74,21 @@ class AcademyNameLookup(Protocol):
     async def get_academy_name(self, academy_id: str) -> str | None: ...
 
 
+class AcademyPortalUrlLookup(Protocol):
+    """Resolves an academy's own portal origin, e.g.
+    ``https://blno-academy.courtmastr.com``.
+
+    Per ADR-0007 the tenant is resolved from the request host, so an invite
+    must link to *that* academy's host — not the deployment-wide
+    ``FRONTEND_URL``, which points at a generic default and would land the
+    parent in the wrong tenant (or one that resolves to no tenant at all).
+    Composition owns the slug→URL rewrite so this context stays free of
+    deployment settings.
+    """
+
+    async def get_academy_portal_url(self, academy_id: str) -> str | None: ...
+
+
 class LoginInviteResult(BaseModel):
     model_config = {"frozen": True}
 
@@ -107,11 +127,13 @@ class SendLoginInvite:
         links: PasswordResetLinkPort,
         sender: InviteEmailPort,
         academies: AcademyNameLookup,
+        portals: AcademyPortalUrlLookup | None = None,
     ) -> None:
         self._users = users
         self._links = links
         self._sender = sender
         self._academies = academies
+        self._portals = portals
 
     async def execute(self, user_id: str, *, academy_id: str) -> LoginInviteResult:
         user = await self._users.get_admin_user(user_id, academy_id=academy_id)
@@ -119,8 +141,16 @@ class SendLoginInvite:
             raise UserNotFound(user_id)
 
         try:
+            portal_url = (
+                await self._portals.get_academy_portal_url(academy_id)
+                if self._portals is not None
+                else None
+            )
             reset_link = await self._links.generate_password_reset_link(
-                str(user.email), uid=user.user_id, display_name=user.display_name
+                str(user.email),
+                uid=user.user_id,
+                display_name=user.display_name,
+                portal_url=portal_url,
             )
             academy_name = await self._academies.get_academy_name(academy_id) or "your academy"
         except Exception as exc:

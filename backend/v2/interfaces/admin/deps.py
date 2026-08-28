@@ -268,6 +268,9 @@ class AdminUseCases:
     reconcile_stripe_billing: object | None = None  # callable
     get_billing_reconciliation_report: object | None = None  # callable
     list_billing_webhook_events: object | None = None  # callable
+    # Issue #432: async () -> dict — Connect readiness + webhook backlog for
+    # the admin Billing Health card.
+    get_connect_readiness: object | None = None
     get_admin_user: GetAdminUser | None = None
     update_admin_user: UpdateAdminUser | None = None
     create_admin_user: CreateAdminUser | None = None
@@ -340,6 +343,9 @@ class AdminUseCases:
     send_coach_digest_test: object | None = None  # SendCoachDigestTest
     get_digest_delivery_log: object | None = None  # GetDigestDeliveryLog
     send_billing_invoice: object | None = None
+    # Scheduler-only (issue #430): the post-generation email pass. No route
+    # exposes it — the monthly generation job calls it directly.
+    send_generated_invoices: object | None = None
     charge_invoice_via_autopay: object | None = None
     # Billing Health (#235): observability + recovery actions.
     list_reconciliation_runs: object | None = None  # async () -> list[dict]

@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
+    MAX_ACTIVE_SESSION_NAMES,
     AdminStudentCursor,
     ChangeAdminStudentParentCommand,
 )
@@ -293,6 +294,67 @@ async def test_list_admin_students_filters_search_and_status(db, acad) -> None:
     )
 
     assert [s.student_id for s in page.students] == ["st-alice"]
+
+
+@pytest.mark.asyncio
+async def test_list_admin_students_missing_filter_returns_only_incomplete(db, acad) -> None:
+    """Issue #380 admin gap report: none of the three seeded students has an
+    emergency contact, so all three match; only st-bob has no DOB either."""
+    await _seed_directory(db, acad)
+    repo = MongoStudentRepository(db)
+
+    page = await repo.list_admin_students(
+        search=None,
+        status=None,
+        limit=50,
+        cursor=None,
+        missing=("date_of_birth",),
+    )
+
+    assert {s.student_id for s in page.students} == {"st-bob", "st-alice", "st-alana"}
+
+
+@pytest.mark.asyncio
+async def test_list_admin_students_missing_filter_rejects_unknown_key(db, acad) -> None:
+    await _seed_directory(db, acad)
+    repo = MongoStudentRepository(db)
+
+    with pytest.raises(ValueError, match="status"):
+        await repo.list_admin_students(
+            search=None,
+            status=None,
+            limit=50,
+            cursor=None,
+            missing=("status",),  # not a completeness field — must be rejected
+        )
+
+
+@pytest.mark.asyncio
+async def test_list_admin_students_missing_filter_excludes_complete_students(db, acad) -> None:
+    await _seed_directory(db, acad)
+    await db["students"].update_one(
+        {"student_id": "st-alice"},
+        {
+            "$set": {
+                "date_of_birth": "2015-04-02",
+                "emergency_contact_name": "Someone",
+                "emergency_contact_phone": "+1 555 0111",
+                "medical_notes": "__none_declared__",
+            }
+        },
+    )
+    repo = MongoStudentRepository(db)
+
+    page = await repo.list_admin_students(
+        search=None,
+        status=None,
+        limit=50,
+        cursor=None,
+        missing=("date_of_birth", "emergency_contact_name"),
+    )
+
+    assert "st-alice" not in {s.student_id for s in page.students}
+    assert {s.student_id for s in page.students} == {"st-bob", "st-alana"}
 
 
 @pytest.mark.asyncio
@@ -1031,3 +1093,203 @@ async def test_change_student_parent_rejects_non_parent_inactive_and_cross_tenan
                 reason="Custody update",
             ),
         )
+
+
+async def _seed_student_with_sessions(
+    db,
+    academy_id: str,
+    *,
+    student_id: str,
+    session_titles: dict[str, str],
+    enrolled: list[tuple[str, str]],
+) -> None:
+    """Seed one student plus sessions and enrollments.
+
+    ``enrolled`` is a list of ``(session_id, status)`` pairs; ``session_titles``
+    maps session_id -> title for the session documents to create (a session id
+    used in ``enrolled`` but absent here is left dangling on purpose).
+    """
+    await db["students"].insert_one(
+        {
+            "academy_id": academy_id,
+            "student_id": student_id,
+            "full_name": f"Student {student_id}",
+            "parent_id": "parent-1",
+            "status": "active",
+        }
+    )
+    if session_titles:
+        await db["sessions"].insert_many(
+            [
+                {"academy_id": academy_id, "session_id": session_id, "title": title}
+                for session_id, title in session_titles.items()
+            ]
+        )
+    await db["enrollments"].insert_many(
+        [
+            {
+                "academy_id": academy_id,
+                "enrollment_id": f"enr-{student_id}-{index}",
+                "student_id": student_id,
+                "session_id": session_id,
+                "status": status,
+            }
+            for index, (session_id, status) in enumerate(enrolled)
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_admin_students_returns_active_session_names(db, acad) -> None:
+    """Issue #104: the directory names the sessions, not just how many."""
+    await _seed_student_with_sessions(
+        db,
+        acad,
+        student_id="st-named",
+        session_titles={
+            "sess-a": "Wednesday 6 PM Beginner",
+            "sess-b": "Saturday 9 AM Intermediate",
+            "sess-old": "Retired Session",
+        },
+        enrolled=[("sess-a", "active"), ("sess-b", "active"), ("sess-old", "cancelled")],
+    )
+
+    repo = MongoStudentRepository(db)
+    page = await repo.list_admin_students(search=None, status=None, limit=50, cursor=None)
+    student = next(s for s in page.students if s.student_id == "st-named")
+
+    assert student.active_session_count == 2
+    assert student.active_session_total == 2
+    assert student.active_session_names == [
+        "Saturday 9 AM Intermediate",
+        "Wednesday 6 PM Beginner",
+    ]
+    # Cancelled enrollments contribute neither a count nor a name.
+    assert "Retired Session" not in student.active_session_names
+
+
+@pytest.mark.asyncio
+async def test_list_admin_students_caps_active_session_names(db, acad) -> None:
+    """A student in many sessions must not blow up the row or the payload."""
+    titles = {f"sess-{i}": f"Session {i:02d}" for i in range(6)}
+    await _seed_student_with_sessions(
+        db,
+        acad,
+        student_id="st-many",
+        session_titles=titles,
+        enrolled=[(session_id, "active") for session_id in titles],
+    )
+
+    repo = MongoStudentRepository(db)
+    page = await repo.list_admin_students(search=None, status=None, limit=50, cursor=None)
+    student = next(s for s in page.students if s.student_id == "st-many")
+
+    assert student.active_session_count == 6
+    assert student.active_session_total == 6
+    assert len(student.active_session_names) == MAX_ACTIVE_SESSION_NAMES
+    # Deterministic truncation, so the row does not reshuffle between requests.
+    assert student.active_session_names == ["Session 00", "Session 01", "Session 02"]
+
+
+@pytest.mark.asyncio
+async def test_list_admin_students_without_active_sessions_returns_no_names(db, acad) -> None:
+    await _seed_student_with_sessions(
+        db,
+        acad,
+        student_id="st-none",
+        session_titles={"sess-x": "Paused Session"},
+        enrolled=[("sess-x", "paused")],
+    )
+
+    repo = MongoStudentRepository(db)
+    page = await repo.list_admin_students(search=None, status=None, limit=50, cursor=None)
+    student = next(s for s in page.students if s.student_id == "st-none")
+
+    assert student.active_session_count == 0
+    assert student.active_session_total == 0
+    assert student.active_session_names == []
+
+
+@pytest.mark.asyncio
+async def test_list_admin_students_falls_back_for_missing_session_document(db, acad) -> None:
+    """A dangling session_id still counts, and reads as a generic session."""
+    await _seed_student_with_sessions(
+        db,
+        acad,
+        student_id="st-dangling",
+        session_titles={},
+        enrolled=[("sess-gone", "active")],
+    )
+
+    repo = MongoStudentRepository(db)
+    page = await repo.list_admin_students(search=None, status=None, limit=50, cursor=None)
+    student = next(s for s in page.students if s.student_id == "st-dangling")
+
+    assert student.active_session_count == 1
+    assert student.active_session_names == ["Academy session"]
+
+
+@pytest.mark.asyncio
+async def test_list_admin_students_does_not_leak_session_names_across_tenants(db, acad) -> None:
+    await _seed_student_with_sessions(
+        db,
+        acad,
+        student_id="st-tenant",
+        session_titles={},
+        enrolled=[("sess-other", "active")],
+    )
+    await db["sessions"].insert_one(
+        {"academy_id": "other-academy", "session_id": "sess-other", "title": "Other Tenant Session"}
+    )
+
+    repo = MongoStudentRepository(db)
+    page = await repo.list_admin_students(search=None, status=None, limit=50, cursor=None)
+    student = next(s for s in page.students if s.student_id == "st-tenant")
+
+    assert student.active_session_names == ["Academy session"]
+
+
+@pytest.mark.asyncio
+async def test_list_admin_students_total_counts_distinct_sessions_not_enrollments(db, acad) -> None:
+    """Two active enrollments for one session are one session, not two.
+
+    Nothing in the schema prevents this — migration 0010 makes only
+    ``enrollment_id`` unique — and ``active_session_count`` counts enrollment
+    documents, so the directory must not render "+1 more" beside the single
+    name it actually has.
+    """
+    await _seed_student_with_sessions(
+        db,
+        acad,
+        student_id="st-dupe",
+        session_titles={"sess-dupe": "Monday 5 PM Juniors"},
+        enrolled=[("sess-dupe", "active"), ("sess-dupe", "active")],
+    )
+
+    repo = MongoStudentRepository(db)
+    page = await repo.list_admin_students(search=None, status=None, limit=50, cursor=None)
+    student = next(s for s in page.students if s.student_id == "st-dupe")
+
+    assert student.active_session_count == 2
+    assert student.active_session_total == 1
+    assert student.active_session_names == ["Monday 5 PM Juniors"]
+    # total == len(names) means the UI has nothing left to summarise.
+    assert student.active_session_total == len(student.active_session_names)
+
+
+@pytest.mark.asyncio
+async def test_get_admin_student_reports_distinct_active_session_total(db, acad) -> None:
+    await _seed_student_with_sessions(
+        db,
+        acad,
+        student_id="st-detail",
+        session_titles={"sess-d1": "Tuesday Drills", "sess-d2": "Thursday Drills"},
+        enrolled=[("sess-d1", "active"), ("sess-d2", "active"), ("sess-d1", "cancelled")],
+    )
+
+    repo = MongoStudentRepository(db)
+    detail = await repo.get_admin_student("st-detail")
+
+    assert detail is not None
+    assert detail.active_session_total == 2
+    assert detail.active_session_names == ["Thursday Drills", "Tuesday Drills"]

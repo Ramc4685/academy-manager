@@ -61,8 +61,10 @@ class FakeDigestSendRepository:
         d = self.by_id[digest_id]
         self.by_id[digest_id] = d.mark_sent(provider_message_id=provider_message_id, sent_at="now")
 
-    async def mark_failed(self, digest_id, reason):
-        self.by_id[digest_id] = self.by_id[digest_id].mark_failed(reason=reason)
+    async def mark_failed(self, digest_id, reason, *, retryable: bool = True):
+        self.by_id[digest_id] = self.by_id[digest_id].mark_failed(
+            reason=reason, retryable=retryable
+        )
 
     async def mark_skipped_empty(self, digest_id):
         self.by_id[digest_id] = self.by_id[digest_id].mark_skipped_empty()

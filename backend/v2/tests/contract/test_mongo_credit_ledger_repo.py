@@ -76,10 +76,25 @@ async def test_credit_ledger_application_is_idempotent_per_invoice(db, acad) -> 
         )
         == 1000
     )
+    # Issue #233: a rerun reports the amount this invoice already consumed
+    # instead of 0, so a caller recovering after a crash prices it net.
     assert (
         await repo.apply_available_credits(
             parent_id="parent-1", invoice_id="pay-1", amount_due_cents=1000
         )
-        == 0
+        == 1000
     )
+    # ...and the credit itself is not spent twice.
     assert await repo.balance_for_parent("parent-1") == 1000
+    credit_doc = await db["account_credit_ledger"].find_one(
+        {"academy_id": acad, "credit_id": "credit-1"}
+    )
+    assert credit_doc is not None
+    assert credit_doc["applied_invoice_ids"] == ["pay-1"]
+    assert [
+        (entry["invoice_id"], entry["amount_cents"]) for entry in credit_doc["applications"]
+    ] == [("pay-1", 1000)]
+    assert (
+        await db["credit_applications"].count_documents({"academy_id": acad, "invoice_id": "pay-1"})
+        == 1
+    )

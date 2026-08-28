@@ -72,6 +72,7 @@ def _unpaid_to_doc(row: PersistedUnpaidOccurrence) -> dict[str, Any]:
         "reason": row.reason,
         "detail": row.detail,
         "unresolved": row.unresolved,
+        "attributed_coach_id": row.attributed_coach_id,
     }
 
 
@@ -81,6 +82,7 @@ def _unpaid_from_doc(doc: dict[str, Any]) -> PersistedUnpaidOccurrence:
         reason=doc.get("reason", "unknown_unpaid_reason"),
         detail=doc.get("detail"),
         unresolved=bool(doc.get("unresolved", True)),
+        attributed_coach_id=doc.get("attributed_coach_id"),
     )
 
 

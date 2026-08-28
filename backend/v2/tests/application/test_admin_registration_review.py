@@ -369,6 +369,7 @@ def _application(
     student_id: str | None = "student-1",
     application_id: str = "app-1",
     session_id: str = "sess-1",
+    child_profile: ChildProfile | None = None,
 ) -> Application:
     return Application(
         application_id=application_id,
@@ -377,7 +378,7 @@ def _application(
         parent_email="parent@example.com",
         status="PENDING_APPROVAL",
         parent_profile=ParentProfile(first_name="Pat", last_name="Parent"),
-        child_profile=ChildProfile(first_name="Sam", last_name="Student"),
+        child_profile=child_profile or ChildProfile(first_name="Sam", last_name="Student"),
         selected_session_id=session_id,
         student_id=student_id,
         expires_at=NOW + timedelta(days=7),
@@ -440,6 +441,45 @@ async def test_approve_reuses_existing_enrollment_without_reserving_seat() -> No
     recovered = await enrollments.get(existing.enrollment_id)
     assert recovered is not None
     assert recovered.enrolled_at == app.created_at
+
+
+@pytest.mark.asyncio
+async def test_approve_carries_emergency_contact_and_medical_notes_onto_student() -> None:
+    """Issue #380: registration approval must carry the wizard's emergency
+    contact / medical notes through onto the created student record, the
+    same way date_of_birth already does."""
+    app = _application(
+        student_id="student-1",
+        child_profile=ChildProfile(
+            first_name="Sam",
+            last_name="Student",
+            date_of_birth="2015-04-02",
+            emergency_contact_name="Vikram Raghavan",
+            emergency_contact_phone="+1 555 0111",
+            medical_notes="__none_declared__",
+        ),
+    )
+    apps = InMemoryApplications(app)
+    sessions = InMemorySessions([_session()])
+    students = InMemoryStudents()
+
+    review = AdminRegistrationReview(
+        apps=apps,
+        sessions=sessions,
+        students=students,
+        enrollments=InMemoryEnrollments(),
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        clock=lambda: NOW,
+    )
+
+    await review.approve(ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1"))
+
+    upserted = students.upserts[-1]
+    assert upserted.date_of_birth == "2015-04-02"
+    assert upserted.emergency_contact_name == "Vikram Raghavan"
+    assert upserted.emergency_contact_phone == "+1 555 0111"
+    assert upserted.medical_notes == "__none_declared__"
 
 
 @pytest.mark.asyncio
@@ -881,6 +921,43 @@ async def test_waitlist_requires_existing_session_before_writes() -> None:
     assert students.upserts == []
     assert waitlist.entries == []
     assert apps.saved == []
+
+
+@pytest.mark.asyncio
+async def test_waitlist_carries_emergency_contact_and_medical_notes_onto_student() -> None:
+    """Same carry-through as approval (issue #380), for the waitlist path."""
+    app = _application(
+        student_id="student-1",
+        child_profile=ChildProfile(
+            first_name="Sam",
+            last_name="Student",
+            date_of_birth="2015-04-02",
+            emergency_contact_name="Vikram Raghavan",
+            emergency_contact_phone="+1 555 0111",
+            medical_notes="__none_declared__",
+        ),
+    )
+    apps = InMemoryApplications(app)
+    sessions = InMemorySessions([_session()])
+    students = InMemoryStudents()
+    waitlist = InMemoryWaitlist()
+
+    review = AdminRegistrationReview(
+        apps=apps,
+        sessions=sessions,
+        students=students,
+        enrollments=InMemoryEnrollments(),
+        waitlist=waitlist,
+        academy_id=ACADEMY_ID,
+        clock=lambda: NOW,
+    )
+
+    await review.waitlist(WaitlistRegistrationCommand(application_id="app-1", actor_id="admin-1"))
+
+    upserted = students.upserts[-1]
+    assert upserted.emergency_contact_name == "Vikram Raghavan"
+    assert upserted.emergency_contact_phone == "+1 555 0111"
+    assert upserted.medical_notes == "__none_declared__"
 
 
 @pytest.mark.asyncio

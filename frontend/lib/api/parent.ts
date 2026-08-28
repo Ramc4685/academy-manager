@@ -13,6 +13,9 @@ export interface ChildProfile {
   last_name: string;
   date_of_birth: string;
   skill_level: "beginner" | "intermediate" | "advanced" | "";
+  emergency_contact_name?: string;
+  emergency_contact_phone?: string;
+  medical_notes?: string;
 }
 
 export interface OnboardingApplication {
@@ -628,4 +631,66 @@ export function selfCancelEnrollment(
       body: JSON.stringify(payload),
     },
   );
+}
+
+// --- Self-service profile (issue #380) ---
+
+export interface ProfileGaps {
+  parent: string[];
+  children: Record<string, string[]>;
+  is_complete: boolean;
+}
+
+export interface ParentSelfChild {
+  student_id: string;
+  full_name: string;
+  date_of_birth: string | null;
+  emergency_contact_name: string | null;
+  emergency_contact_phone: string | null;
+  medical_notes: string | null;
+  no_medical_conditions: boolean;
+}
+
+export interface ParentSelfProfile {
+  user_id: string;
+  display_name: string;
+  email: string;
+  email_confirmed: boolean;
+  phone: string | null;
+  children: ParentSelfChild[];
+  gaps: ProfileGaps;
+}
+
+export function getParentProfile(): Promise<ParentSelfProfile> {
+  return apiFetch("/parent/profile", { method: "GET" });
+}
+
+export function updateParentProfile(payload: {
+  display_name?: string;
+  phone?: string;
+}): Promise<ParentSelfProfile> {
+  return apiFetch("/parent/profile", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function confirmParentEmail(): Promise<ParentSelfProfile> {
+  return apiFetch("/parent/profile/confirm-email", { method: "POST" });
+}
+
+export function updateParentChild(
+  studentId: string,
+  payload: {
+    date_of_birth?: string;
+    emergency_contact_name?: string;
+    emergency_contact_phone?: string;
+    medical_notes?: string;
+    no_medical_conditions?: boolean;
+  },
+): Promise<ParentSelfProfile> {
+  return apiFetch(`/parent/children/${encodeURIComponent(studentId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
 }

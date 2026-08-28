@@ -12,6 +12,7 @@ import {
   stubAcademy,
   stubMe,
   stubMemberships,
+  stubParentProfile,
 } from "../fixtures/saas-stubs";
 
 type StudentDetail = Record<string, unknown> & {
@@ -401,6 +402,8 @@ test.describe("tuition discounts", () => {
     await stubMemberships(page, [
       { academy_id: ACADEMY_A, academy_name: "Aces Academy", role: "parent" },
     ]);
+    // The parent layout fetches this on every /parent/* page (issue #380).
+    await stubParentProfile(page);
     await stubParentInvoiceDiscounts(page);
 
     await page.goto("/parent/payments");

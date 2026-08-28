@@ -29,6 +29,7 @@ from backend.v2.contexts.identity.domain.errors import (
     UserEmailUpdateFailed,
     UserOutsideAcademy,
 )
+from backend.v2.contexts.identity.domain.identity_aliases import aliases_from_doc
 from backend.v2.contexts.identity.domain.models import Role, User, normalize_email
 from backend.v2.contexts.identity.infrastructure.firebase_admin_adapter import (
     get_firebase_admin_adapter,
@@ -60,17 +61,23 @@ class MongoUserRepository:
         is_active = bool(doc.get("is_active", status != "inactive" and status != "disabled"))
 
         raw_fuid = doc.get("firebase_uid") or doc.get("auth_uid")
+        raw_auth_uid = doc.get("auth_uid")
         raw_nemail = doc.get("normalized_email")
+        raw_phone = doc.get("phone")
+        raw_confirmed = doc.get("email_confirmed_at")
 
         return User(
             user_id=str(doc.get("user_id") or doc.get("auth_uid") or doc["_id"]),
             firebase_uid=str(raw_fuid) if raw_fuid else None,
+            auth_uid=str(raw_auth_uid) if raw_auth_uid else None,
             email=str(doc["email"]),
             normalized_email=str(raw_nemail) if raw_nemail else None,
             display_name=str(doc.get("display_name") or doc.get("name") or doc["email"]),
+            phone=str(raw_phone) if raw_phone else None,
             roles=normalized_roles,
             is_active=is_active,
             academy_id=str(doc.get("academy_id") or self._default_academy_id),
+            email_confirmed_at=raw_confirmed if isinstance(raw_confirmed, datetime) else None,
         )
 
     async def get_by_email(self, email: str) -> User | None:
@@ -88,6 +95,16 @@ class MongoUserRepository:
     async def get_by_id(self, user_id: str) -> User | None:
         doc = await self.collection.find_one(
             {"$or": [{"user_id": user_id}, {"auth_uid": user_id}, {"_id": user_id}]}
+        )
+        return self._to_domain(doc) if doc else None
+
+    async def confirm_email(self, user_id: str) -> User | None:
+        """Stamp ``email_confirmed_at`` — self-service confirmation only, never
+        an address change. The parent profile route is the only caller."""
+        doc = await self.collection.find_one_and_update(
+            {"$or": [{"user_id": user_id}, {"auth_uid": user_id}, {"_id": user_id}]},
+            {"$set": {"email_confirmed_at": datetime.now(UTC)}},
+            return_document=ReturnDocument.AFTER,
         )
         return self._to_domain(doc) if doc else None
 
@@ -606,18 +623,11 @@ class MongoUserRepository:
     def _identity_aliases(doc: dict[str, object]) -> list[str]:
         """Every identifier this account might be keyed by in `academy_memberships`.
 
-        `users.user_id` and `academy_memberships.user_id` are supposed to be
-        the same value, but `ensure_parent_login`/`ensure_student_login`
-        preserve a pre-existing roster `user_id` while keying the new
-        membership row by the freshly-provisioned `firebase_uid` (see those
-        methods below), so the two can legitimately diverge in either
-        direction. Check every alias rather than betting on one field.
+        Thin wrapper over the shared `domain.identity_aliases` helper, which
+        the membership repository and `load_auth_claims` also use so the
+        invite path and the login path can never drift apart again.
         """
-        return [
-            str(value)
-            for value in (doc.get("user_id"), doc.get("auth_uid"), doc.get("firebase_uid"))
-            if value
-        ]
+        return list(aliases_from_doc(doc))
 
     async def _active_membership_for_doc(
         self, doc: dict[str, object], *, academy_id: str
@@ -809,9 +819,16 @@ class MongoUserRepository:
         email_change: tuple[str, str] | None = None
         if command.email is not None:
             email = normalize_email(str(command.email))
+            # Only touch Firebase when the address actually moves: the write
+            # also clears `email_verified`, which locks password login until
+            # a new set-password link is completed (#436). Re-submitting the
+            # same address (a no-op edit, or a casing-only difference) must
+            # not cost the user their verified state.
+            previous_email = str(before.get("email") or before.get("normalized_email") or "")
+            unchanged = bool(previous_email) and normalize_email(previous_email) == email
             await self._ensure_email_available(email, exclude_user_id=user_id)
             auth_uid = self._firebase_uid(before)
-            if auth_uid:
+            if auth_uid and not unchanged:
                 email_change = (auth_uid, email)
             set_doc["email"] = email
             set_doc["normalized_email"] = email

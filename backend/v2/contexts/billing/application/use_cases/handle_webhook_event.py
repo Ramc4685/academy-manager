@@ -72,6 +72,7 @@ from backend.v2.contexts.billing.domain.models import (
 )
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.ids import new_ulid
+from backend.v2.shared.observability.ops_alerts import capture_message
 from backend.v2.shared.tenancy import tenant_scope
 
 log = logging.getLogger(__name__)
@@ -88,8 +89,33 @@ SUBSCRIPTION_INVOICE_RECOVERY_POINTS = {
 }
 
 
+# A Checkout session only proves money arrived for these payment_status values.
+# Cards settle inline ("paid"); a zero-amount session is "no_payment_required".
+# Delayed-notification methods (ACH / us_bank_account) complete as "unpaid" and
+# settle later via checkout.session.async_payment_succeeded.
+CHECKOUT_SETTLED_PAYMENT_STATUSES = frozenset({"paid", "no_payment_required"})
+
+
 def _optional_bool(value: Any) -> bool | None:
     return value if isinstance(value, bool) else None
+
+
+def _checkout_session_is_settled(session: dict[str, Any]) -> bool:
+    """True when a Checkout session's funds have actually arrived.
+
+    Anything we cannot read as settled is treated as unsettled: a completion
+    event is not proof of payment, so the ledger waits for the async event.
+    """
+    return str(session.get("payment_status") or "") in CHECKOUT_SETTLED_PAYMENT_STATUSES
+
+
+def _checkout_invoice_ids(metadata: dict[str, Any]) -> list[str]:
+    """Target invoice ids for a Checkout session (single pay-link or balance)."""
+    single = str(metadata.get("invoice_id") or "").strip()
+    if single:
+        return [single]
+    raw = str(metadata.get("invoice_ids") or "")
+    return [item.strip() for item in raw.split(",") if item.strip()]
 
 
 class _QuarantineStripeEvent(Exception):
@@ -222,6 +248,12 @@ class HandleWebhookEvent:
                 return {"processed": True, "event_id": event_id, "type": event_type}
             except _QuarantineStripeEvent as exc:
                 await self._dedup.mark_quarantined(event_id, str(exc))
+                self._alert_quarantined(
+                    event_id=event_id,
+                    event_type=event_type,
+                    reason="rejected_by_guard",
+                    error=str(exc),
+                )
                 return {
                     "processed": False,
                     "event_id": event_id,
@@ -230,14 +262,50 @@ class HandleWebhookEvent:
                     "error": str(exc),
                 }
             except Exception as exc:
-                await self._dedup.mark_failed(event_id, str(exc))
+                # Retries are bounded (#437): this may be the attempt that gives
+                # up, in which case the event is now quarantined and nothing will
+                # look at it again unless someone is told.
+                status = await self._dedup.mark_failed(event_id, str(exc))
+                if status == "quarantined":
+                    self._alert_quarantined(
+                        event_id=event_id,
+                        event_type=event_type,
+                        reason="retry_limit_exceeded",
+                        error=str(exc),
+                    )
                 return {
                     "processed": False,
                     "event_id": event_id,
                     "type": event_type,
-                    "status": "failed",
+                    "status": status,
                     "error": str(exc),
                 }
+
+    def _alert_quarantined(
+        self, *, event_id: str, event_type: str, reason: str, error: str
+    ) -> None:
+        """Tell someone an event has stopped being retried (issues #437, #428).
+
+        Quarantine is terminal — the drain never claims the event again — so
+        this fires exactly once per event, not once per retry. Before this, a
+        poisoned event's only trace was a `failed` tally in a log line.
+
+        Never raises: an alerting problem must not turn a recorded quarantine
+        into an unrecorded crash.
+        """
+        extra = {
+            "event_id": event_id,
+            "event_type": event_type,
+            "academy_id": self._academy_id,
+            "quarantine_reason": reason,
+        }
+        try:
+            log.error("stripe_webhook_event_quarantined", extra=extra)
+            capture_message(
+                f"Stripe webhook event quarantined ({reason}): {event_id} [{event_type}] — {error}"
+            )
+        except Exception:  # pragma: no cover - defensive
+            log.warning("stripe_webhook_quarantine_alert_failed", exc_info=True)
 
     async def execute(self, payload: bytes, signature: str) -> dict[str, Any]:
         event = self._verify(payload, signature)
@@ -259,6 +327,12 @@ class HandleWebhookEvent:
                     await mark_quarantined(event_id, str(exc))
                 else:
                     await self._dedup.mark_failed(event_id, str(exc))
+                self._alert_quarantined(
+                    event_id=event_id,
+                    event_type=event_type,
+                    reason="rejected_by_guard",
+                    error=str(exc),
+                )
                 return {
                     "received": True,
                     "type": event_type,
@@ -266,7 +340,14 @@ class HandleWebhookEvent:
                     "error": str(exc),
                 }
             except Exception as exc:
-                await self._dedup.mark_failed(event_id, str(exc))
+                status = await self._dedup.mark_failed(event_id, str(exc))
+                if status == "quarantined":
+                    self._alert_quarantined(
+                        event_id=event_id,
+                        event_type=event_type,
+                        reason="retry_limit_exceeded",
+                        error=str(exc),
+                    )
                 raise
 
     def _verify(self, payload: bytes, signature: str) -> dict[str, Any]:
@@ -379,7 +460,12 @@ class HandleWebhookEvent:
         if not object_id:
             return event
         current: dict[str, Any] | None = None
-        if event_type in ("checkout.session.completed", "checkout.session.expired"):
+        if event_type in (
+            "checkout.session.completed",
+            "checkout.session.expired",
+            "checkout.session.async_payment_succeeded",
+            "checkout.session.async_payment_failed",
+        ):
             current = await self._stripe.retrieve_checkout_session(object_id)
         elif event_type in ("invoice.paid", "invoice.payment_failed"):
             current = await self._stripe.retrieve_invoice(object_id)
@@ -422,6 +508,35 @@ class HandleWebhookEvent:
                 await self._on_checkout_completed(event)
         elif event_type == "checkout.session.expired":
             await self._on_checkout_expired(event)
+        elif event_type == "checkout.session.async_payment_succeeded":
+            # Delayed-settlement funds actually arrived: the session now reads
+            # payment_status "paid", so the completed handlers do the right thing.
+            # Their session-keyed idempotency makes this converge with the earlier
+            # unsettled pass instead of double-allocating.
+            metadata = self._event_metadata(event)
+            if metadata.get("source") == "invoice_pay_link" or metadata.get("invoice_id"):
+                await self._handle_invoice_checkout_completed(event)
+            elif metadata.get("type") == "balance_payment" or metadata.get("invoice_ids"):
+                await self._handle_balance_checkout_completed(event)
+            else:
+                log.info(
+                    "checkout.session.async_payment_succeeded ignored session=%s",
+                    event.get("data", {}).get("object", {}).get("id"),
+                )
+        elif event_type == "checkout.session.async_payment_failed":
+            metadata = self._event_metadata(event)
+            if (
+                metadata.get("source") == "invoice_pay_link"
+                or metadata.get("invoice_id")
+                or metadata.get("type") == "balance_payment"
+                or metadata.get("invoice_ids")
+            ):
+                await self._handle_checkout_async_payment_failed(event)
+            else:
+                log.info(
+                    "checkout.session.async_payment_failed ignored session=%s",
+                    event.get("data", {}).get("object", {}).get("id"),
+                )
         elif event_type == "payment_intent.succeeded":
             metadata = self._event_metadata(event)
             if metadata.get("source") == "autopay":
@@ -584,9 +699,28 @@ class HandleWebhookEvent:
         amount_total = int(obj.get("amount_total") or 0)
         currency = str(obj.get("currency") or "usd").lower()
 
+        if not _checkout_session_is_settled(obj):
+            await self._record_unsettled_checkout_attempt(
+                event=event,
+                checkout_session_id=checkout_session_id,
+                invoice_ids=[invoice_id],
+                parent_id=str(metadata.get("parent_id") or "unknown"),
+                amount_cents=amount_total,
+                currency=currency,
+                payment_intent_id=payment_intent_id,
+            )
+            await self._maybe_activate_autopay_optin(obj)
+            return
+
         now = self._now()
         idempotency_key = f"invoice-checkout:{checkout_session_id}"
         ledger_payment_id = f"ledger-pay-cs:{checkout_session_id}"
+
+        if await self._payment_intent_already_credited(
+            payment_intent_id=payment_intent_id,
+            ledger_payment_id=ledger_payment_id,
+        ):
+            return
 
         payment = await self._billing_ledger.record_payment(
             LedgerPayment(
@@ -699,6 +833,25 @@ class HandleWebhookEvent:
                 )
             invoices.append(invoice)
 
+        if not _checkout_session_is_settled(obj):
+            await self._record_unsettled_checkout_attempt(
+                event=event,
+                checkout_session_id=checkout_session_id,
+                invoice_ids=invoice_ids,
+                parent_id=parent_id,
+                amount_cents=amount_total,
+                currency=currency,
+                payment_intent_id=payment_intent_id,
+            )
+            await self._maybe_activate_autopay_optin(obj)
+            return
+
+        if await self._payment_intent_already_credited(
+            payment_intent_id=payment_intent_id,
+            ledger_payment_id=ledger_payment_id,
+        ):
+            return
+
         payment = await self._billing_ledger.record_payment(
             LedgerPayment(
                 payment_id=ledger_payment_id,
@@ -732,6 +885,207 @@ class HandleWebhookEvent:
         )
 
         await self._maybe_activate_autopay_optin(obj)
+
+    async def _payment_intent_already_credited(
+        self,
+        *,
+        payment_intent_id: str | None,
+        ledger_payment_id: str,
+    ) -> bool:
+        """True when another path already recorded a ledger payment for this PI.
+
+        Delayed settlement leaves days between ``checkout.session.completed`` and
+        ``async_payment_succeeded``, and the scheduled PaymentIntent
+        reconciliation repairs a missed webhook the moment the PI reads
+        ``succeeded``. Without this check the later webhook would record a second
+        ledger payment under its own session-keyed id and try to allocate it
+        again, leaving either a double credit or a permanently failing event and
+        an unapplied phantom payment. The reconciler makes the mirror-image check.
+        """
+        if self._billing_ledger is None or not payment_intent_id:
+            return False
+        existing = await self._billing_ledger.get_payment_by_stripe_payment_intent_id(
+            payment_intent_id
+        )
+        if existing is None or existing.payment_id == ledger_payment_id:
+            return False
+        log.info(
+            "checkout_payment_already_credited: pi=%s credited as payment=%s - skipping %s",
+            payment_intent_id,
+            existing.payment_id,
+            ledger_payment_id,
+        )
+        return True
+
+    async def _async_failure_detail(self, payment_intent_id: str | None) -> tuple[str, str]:
+        """Failure code/message for a Checkout session whose async payment failed.
+
+        The session object carries no ``last_payment_error``, so read it off the
+        PaymentIntent: the ``payment_intent.payment_failed`` handler writes the
+        same attempt row (shared idempotency key) and whichever event lands first
+        should record the same real reason, not a generic placeholder.
+        """
+        fallback = ("async_payment_failed", "Checkout payment did not settle.")
+        if not payment_intent_id:
+            return fallback
+        try:
+            pi = await self._stripe.retrieve_payment_intent(payment_intent_id)
+        except Exception as exc:  # detail is best-effort; never fail the event over it
+            log.warning(
+                "checkout_async_payment_failed: could not read pi=%s for failure detail: %s",
+                payment_intent_id,
+                exc,
+            )
+            return fallback
+        last_error = pi.get("last_payment_error") or {}
+        if not isinstance(last_error, dict):
+            return fallback
+        code = str(last_error.get("decline_code") or last_error.get("code") or "")
+        message = str(last_error.get("message") or "")
+        if not code and not message:
+            return fallback
+        return (code or fallback[0], message or fallback[1])
+
+    async def _checkout_attempt_shares(
+        self,
+        *,
+        invoice_ids: list[str],
+        amount_cents: int,
+    ) -> list[tuple[str, int]]:
+        """Split a Checkout total across its invoices the way allocation would.
+
+        Mirrors ``allocate_checkout_payment_across_invoices`` (sorted by invoice
+        id, filling each balance in turn) so an attempt row shows the amount that
+        invoice actually had riding on the session.
+        """
+        if self._billing_ledger is None:
+            return []
+        if len(invoice_ids) == 1:
+            return [(invoice_ids[0], amount_cents)]
+        shares: list[tuple[str, int]] = []
+        remaining = amount_cents
+        for invoice_id in sorted(invoice_ids):
+            if remaining <= 0:
+                break
+            invoice = await self._billing_ledger.get_invoice(invoice_id)
+            balance = max(invoice.balance_due_cents, 0) if invoice is not None else 0
+            share = min(remaining, balance)
+            if share <= 0:
+                continue
+            shares.append((invoice_id, share))
+            remaining -= share
+        return shares
+
+    async def _record_unsettled_checkout_attempt(
+        self,
+        *,
+        event: dict[str, Any],
+        checkout_session_id: str,
+        invoice_ids: list[str],
+        parent_id: str,
+        amount_cents: int,
+        currency: str,
+        payment_intent_id: str | None,
+    ) -> None:
+        """Park an unsettled Checkout session as in-flight, without allocating.
+
+        Same shape as the autopay ACH path (``_handle_autopay_pi_processing``):
+        a ``processing`` attempt gives admins and reconciliation visibility while
+        the invoice stays open and dunning keeps running, until the money is
+        really there. Keyed by checkout session so replays converge on one row.
+        """
+        if self._billing_ledger is None:
+            return
+        event_id = str(event.get("id") or "")
+        for invoice_id, share_cents in await self._checkout_attempt_shares(
+            invoice_ids=invoice_ids,
+            amount_cents=amount_cents,
+        ):
+            await self._billing_ledger.record_payment_attempt(
+                invoice_id=invoice_id,
+                parent_id=parent_id,
+                amount_cents=share_cents,
+                currency=currency,
+                status="processing",
+                stripe_payment_intent_id=payment_intent_id,
+                stripe_checkout_session_id=checkout_session_id or None,
+                failure_code=None,
+                failure_message="Checkout payment submitted; awaiting settlement.",
+                idempotency_key=(
+                    f"invoice-checkout-processing:{invoice_id}:{checkout_session_id or event_id}"
+                ),
+                created_by_event_id=event_id or None,
+            )
+        log.info(
+            "checkout_unsettled: recorded processing attempts session=%s invoices=%d "
+            "- no ledger payment or allocation until settlement",
+            checkout_session_id,
+            len(invoice_ids),
+        )
+
+    async def _handle_checkout_async_payment_failed(self, event: dict[str, Any]) -> None:
+        """Handle checkout.session.async_payment_failed (the ACH debit never settled).
+
+        An unsettled session never produced a LedgerPayment, so there is nothing
+        to reverse: record the failed attempt per target invoice and leave the
+        invoice open and payable. Stripe also emits ``payment_intent.payment_failed``
+        for the same PaymentIntent; both paths share the
+        ``invoice-checkout-failed:{invoice_id}:{pi_id}`` idempotency key so the
+        invoice ends up with one failure row, not two.
+        """
+        if self._billing_ledger is None:
+            log.warning("checkout_async_payment_failed: billing_ledger not configured - skipping")
+            return
+
+        obj = event["data"]["object"]
+        event_id = str(event.get("id") or "")
+        checkout_session_id = str(obj.get("id") or "")
+        metadata = obj.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        invoice_ids = _checkout_invoice_ids(metadata)
+        if not invoice_ids:
+            log.warning(
+                "checkout_async_payment_failed: no invoice ids in metadata session=%s",
+                checkout_session_id,
+            )
+            return
+
+        payment_intent_id = obj.get("payment_intent") or None
+        if payment_intent_id:
+            payment_intent_id = str(payment_intent_id)
+        amount_total = int(obj.get("amount_total") or 0)
+        currency = str(obj.get("currency") or "usd").lower()
+        parent_id = str(metadata.get("parent_id") or "unknown")
+        failure_code, failure_message = await self._async_failure_detail(payment_intent_id)
+
+        for invoice_id, share_cents in await self._checkout_attempt_shares(
+            invoice_ids=invoice_ids,
+            amount_cents=amount_total,
+        ):
+            await self._billing_ledger.record_payment_attempt(
+                invoice_id=invoice_id,
+                parent_id=parent_id,
+                amount_cents=share_cents,
+                currency=currency,
+                status="failed",
+                stripe_payment_intent_id=payment_intent_id,
+                stripe_checkout_session_id=checkout_session_id or None,
+                failure_code=failure_code,
+                failure_message=failure_message,
+                idempotency_key=(
+                    f"invoice-checkout-failed:{invoice_id}:"
+                    f"{payment_intent_id or checkout_session_id or event_id}"
+                ),
+                created_by_event_id=event_id or None,
+            )
+        log.warning(
+            "checkout_async_payment_failed: recorded failed attempts session=%s invoices=%d "
+            "code=%s - invoice status unchanged",
+            checkout_session_id,
+            len(invoice_ids),
+            failure_code,
+        )
 
     async def _on_checkout_completed(self, event: dict[str, Any]) -> None:
         obj = event["data"]["object"]

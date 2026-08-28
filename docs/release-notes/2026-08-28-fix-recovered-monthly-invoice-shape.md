@@ -19,10 +19,10 @@ invoice.
   also rejected correctly generated *credited* invoices in the normal path's
   pre-check — which is why a second generation run over a credited period
   reported `created` instead of `skipped_existing`.
-- Recovery passes the discount, net charge, and discount policy through to the
-  ledger write, so it emits the gross tuition line, the discount line, and
-  `discount_cents` exactly as the normal path does. Credits are applied against
-  the net charge rather than the gross, also matching that path.
+- Recovery passes the gross charge, the discount, and the discount policy
+  through to the ledger write, so it emits the gross tuition line, the discount
+  line, and `discount_cents` exactly as the normal path does. It keeps pricing
+  the charge from the net amount, as PR #487 established.
 - New `_reconcile_monthly_invoice_header` restates a pre-existing header when
   recovery repairs a partial invoice. `create_invoice` never updates an
   existing header, and when it back-fills a missing line it recomputes totals
