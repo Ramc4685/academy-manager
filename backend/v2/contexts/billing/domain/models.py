@@ -115,6 +115,31 @@ class CreditLedgerEntry(BaseModel):
     updated_at: datetime
 
 
+class AppliedCreditState(BaseModel):
+    """How much account credit an invoice has already consumed (issue #233).
+
+    Derived from ``account_credit_ledger`` — the source of truth, because the
+    credit balance decrement and the per-invoice application record are written
+    in a single atomic document update. ``credit_applications`` rows and
+    ``CREDIT_APPLIED`` entries are projections of that write and can be lost if
+    the process dies between the two.
+
+    ``unresolved_credit_ids`` names credits that a) are tagged as applied to the
+    invoice but b) carry no recoverable amount anywhere. A caller that is about
+    to price an invoice must treat a non-empty tuple as "unknown credit already
+    spent" and refuse to bill, rather than billing gross and overcharging.
+    """
+
+    model_config = {"frozen": True}
+
+    applied_cents: int = Field(ge=0)
+    unresolved_credit_ids: tuple[str, ...] = ()
+
+    @property
+    def has_unresolved_drift(self) -> bool:
+        return bool(self.unresolved_credit_ids)
+
+
 class AutopayConsent(BaseModel):
     """Append-only authorization record for saved autopay payment methods."""
 

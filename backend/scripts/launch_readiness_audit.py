@@ -487,6 +487,13 @@ async def audit_billing_consistency(db: Any, *, primary_academy_id: str) -> dict
                 },
             )
 
+    # (credit_id, invoice_id) pairs the audit projection knows about, so the
+    # source-of-truth pass below can spot drift in either direction (#233).
+    audit_pairs: set[tuple[str, str]] = set()
+    async for row in db["credit_applications"].find({"academy_id": primary_academy_id}):
+        audit_pairs.add((str(row.get("credit_id") or ""), str(row.get("invoice_id") or "")))
+
+    seen_pairs: set[tuple[str, str]] = set()
     async for credit in db["account_credit_ledger"].find({"academy_id": primary_academy_id}):
         credit_count += 1
         amount = int(credit.get("amount_cents") or 0)
@@ -501,6 +508,52 @@ async def audit_billing_consistency(db: Any, *, primary_academy_id: str) -> dict
                     "remaining_amount_cents": remaining,
                 },
             )
+        if credit.get("type") == "CREDIT_APPLIED":
+            continue
+        credit_id = str(credit.get("credit_id") or credit.get("_id") or "")
+        embedded: dict[str, int] = {}
+        for entry in credit.get("applications") or []:
+            if not isinstance(entry, dict):
+                continue
+            entry_invoice = str(entry.get("invoice_id") or "")
+            embedded[entry_invoice] = embedded.get(entry_invoice, 0) + int(
+                entry.get("amount_cents") or 0
+            )
+        for applied_invoice_id in credit.get("applied_invoice_ids") or []:
+            applied_invoice_id = str(applied_invoice_id)
+            seen_pairs.add((credit_id, applied_invoice_id))
+            if applied_invoice_id in embedded:
+                continue
+            # The credit was spent on this invoice but no source records how
+            # much, so the invoice cannot be repriced net after a crash.
+            if (credit_id, applied_invoice_id) not in audit_pairs:
+                _append_failure(
+                    failures,
+                    {
+                        "check": "credit_application_amount_unrecoverable",
+                        "credit_id": credit_id,
+                        "invoice_id": applied_invoice_id,
+                    },
+                )
+            else:
+                _append_failure(
+                    failures,
+                    {
+                        "check": "credit_application_missing_source_record",
+                        "credit_id": credit_id,
+                        "invoice_id": applied_invoice_id,
+                    },
+                )
+
+    for credit_id, applied_invoice_id in sorted(audit_pairs - seen_pairs):
+        _append_failure(
+            failures,
+            {
+                "check": "credit_application_orphan_audit_row",
+                "credit_id": credit_id,
+                "invoice_id": applied_invoice_id,
+            },
+        )
 
     return {
         "status": "pass" if not failures else "fail",
