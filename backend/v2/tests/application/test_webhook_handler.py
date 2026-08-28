@@ -4641,6 +4641,96 @@ async def test_ach_settlement_does_not_double_credit_a_reconciled_payment_intent
 
 
 # ---------------------------------------------------------------------------
+# Checkout hold release (issue #434)
+# ---------------------------------------------------------------------------
+
+
+def _held_invoice(session_id: str = "cs_hold_1") -> LedgerInvoice:
+    from backend.v2.contexts.billing.domain.checkout_hold import place_checkout_hold
+
+    return place_checkout_hold(
+        _ledger_invoice(invoice_id="inv-held", parent_id="parent-1"),
+        checkout_session_id=session_id,
+        now=datetime.now(UTC),
+    )
+
+
+async def _run_checkout_event(uc, *, event_id: str, event_type: str, obj: dict[str, Any]) -> None:
+    body = json.dumps({"id": event_id, "type": event_type, "data": {"object": obj}}).encode()
+    await uc.accept(body, "test_signature")
+    await uc.process_next(processor_id="test-worker")
+
+
+@pytest.mark.asyncio
+async def test_expired_checkout_session_releases_the_hold() -> None:
+    """Parent abandoned the tab: autopay must be free to collect again."""
+    ledger = FakeBillingLedger(_held_invoice())
+    uc = _build(FakePaymentRepo(), dedup=FakeDedup(), billing_ledger=ledger)
+
+    await _run_checkout_event(
+        uc,
+        event_id="evt_cs_expired",
+        event_type="checkout.session.expired",
+        obj={
+            "id": "cs_hold_1",
+            "metadata": {"invoice_id": "inv-held", "academy_id": "acad", "parent_id": "parent-1"},
+        },
+    )
+
+    held = ledger.invoices["inv-held"]
+    assert held.checkout_hold_session_id is None
+    assert held.checkout_hold_started_at is None
+
+
+@pytest.mark.asyncio
+async def test_completed_checkout_session_releases_the_hold() -> None:
+    ledger = FakeBillingLedger(_held_invoice())
+    uc = _build(FakePaymentRepo(), dedup=FakeDedup(), billing_ledger=ledger)
+
+    await _run_checkout_event(
+        uc,
+        event_id="evt_cs_completed",
+        event_type="checkout.session.completed",
+        obj={
+            "id": "cs_hold_1",
+            "payment_status": "paid",
+            "status": "complete",
+            "amount_total": 10_000,
+            "currency": "usd",
+            "payment_intent": "pi_hold_1",
+            "metadata": {
+                "invoice_id": "inv-held",
+                "academy_id": "acad",
+                "parent_id": "parent-1",
+                "source": "invoice_pay_link",
+            },
+        },
+    )
+
+    held = ledger.invoices["inv-held"]
+    assert held.checkout_hold_session_id is None
+    assert held.checkout_hold_started_at is None
+
+
+@pytest.mark.asyncio
+async def test_late_event_for_a_superseded_session_leaves_the_current_hold_alone() -> None:
+    """A stale cs_stale expiry must not unlock the invoice cs_hold_1 still holds."""
+    ledger = FakeBillingLedger(_held_invoice("cs_hold_1"))
+    uc = _build(FakePaymentRepo(), dedup=FakeDedup(), billing_ledger=ledger)
+
+    await _run_checkout_event(
+        uc,
+        event_id="evt_cs_stale_expired",
+        event_type="checkout.session.expired",
+        obj={
+            "id": "cs_stale",
+            "metadata": {"invoice_id": "inv-held", "academy_id": "acad", "parent_id": "parent-1"},
+        },
+    )
+
+    assert ledger.invoices["inv-held"].checkout_hold_session_id == "cs_hold_1"
+
+
 # Bounded webhook retries (issue #437)
 # ---------------------------------------------------------------------------
 

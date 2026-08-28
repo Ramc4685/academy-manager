@@ -22,6 +22,10 @@ from backend.v2.contexts.billing.application.ports import (
     LedgerRepository,
 )
 from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
+from backend.v2.contexts.billing.domain.checkout_hold import (
+    CHECKOUT_HOLD_DECLINE_CODE,
+    active_checkout_hold,
+)
 from backend.v2.contexts.billing.domain.fees import compute_ach_discount
 from backend.v2.contexts.billing.domain.ledger import (
     InvoiceLine,
@@ -192,6 +196,29 @@ class ChargeInvoiceViaAutopay:
         if fresh.status not in _CHARGEABLE_STATUSES or fresh.balance_due_cents <= 0:
             raise ValueError(f"invoice {invoice_id!r} no longer chargeable")
         invoice = fresh
+
+        # 2a. Checkout hold (issue #434): a Stripe Checkout Session is open for this
+        # invoice, so a parent may be paying it manually right now. Invoice status is
+        # not proof of the contrary — it only moves when the success webhook drains,
+        # and that drain can lag by up to an hour. Charging here bills the parent twice
+        # (the dunning ladder's per-rung retry_scope defeats Stripe's idempotency).
+        # Park instead: no Stripe call, and deliberately no payment_attempt row — this
+        # is our lock, not a decline the parent caused, so it must not read as one on
+        # the attempt history or consume a rung of their retry budget.
+        held_session_id = active_checkout_hold(invoice, now=now)
+        if held_session_id is not None:
+            log.info(
+                "charge_autopay: parking invoice=%s — checkout session %s still open",
+                invoice_id,
+                held_session_id or "<unknown>",
+            )
+            return ChargeResult(
+                success=False,
+                invoice_id=invoice_id,
+                status=invoice.status,
+                balance_due_cents=invoice.balance_due_cents,
+                decline_code=CHECKOUT_HOLD_DECLINE_CODE,
+            )
 
         # 2b. Charge-eligibility gate (Security P2): the invoice's enrollment
         # must be actively autopaying. Refuse to auto-charge a paused / disabled

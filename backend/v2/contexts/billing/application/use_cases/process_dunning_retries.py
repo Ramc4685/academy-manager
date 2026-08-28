@@ -8,6 +8,7 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel
 
+from backend.v2.contexts.billing.domain.checkout_hold import CHECKOUT_HOLD_DECLINE_CODE
 from backend.v2.contexts.billing.domain.dunning import DunningState
 from backend.v2.contexts.billing.domain.events import (
     DunningNoticeRequested,
@@ -17,6 +18,35 @@ from backend.v2.contexts.billing.domain.ledger import LedgerInvoice
 from backend.v2.shared.events.outbox import Outbox
 
 log = logging.getLogger(__name__)
+
+# Charge outcomes that are NOT the parent's card saying no. None of these means "this
+# family cannot pay"; every one of them means "we could not ask". Parking re-tries the
+# same rung on a later tick, so the ladder never advances and autopay is never disabled
+# on the strength of a problem that lives on our side of the wire (issue #434).
+_PARK_REASONS = frozenset(
+    {
+        # Enrollment is not actively autopaying — nothing to charge against.
+        "autopay_not_active",
+        # A parent is paying this invoice manually right now; charging would double-bill.
+        CHECKOUT_HOLD_DECLINE_CODE,
+        # The academy's Stripe connected account is not charge-ready.
+        "connected_account_not_ready",
+        # No Stripe gateway wired at all. The card was never touched, so treating this
+        # as a decline would spend a rung — and eventually a family's autopay — on our
+        # own misconfiguration.
+        "stripe_not_configured",
+    }
+)
+
+# The subset an operator has to fix: these surface on the admin billing-health panel via
+# the technical_failures counter. autopay_not_active and an open checkout session are
+# both ordinary states, not faults, so they park quietly.
+_PARK_REASONS_NEEDING_OPERATOR = frozenset(
+    {
+        "connected_account_not_ready",
+        "stripe_not_configured",
+    }
+)
 
 
 class DunningStateRepository(Protocol):
@@ -148,11 +178,34 @@ class ProcessDunningRetries:
         }
         await self._process_pending_autopay_disables(limit=limit, counts=counts, now=now)
 
+        # Parking leaves next_attempt_at=None, and claim_next_due sorts on that column
+        # ascending — BSON puts Null before Date, so a state parked a moment ago is
+        # handed straight back ahead of the invoices that are genuinely due. Left alone,
+        # one parent mid-checkout would spend the whole tick being claimed and re-parked
+        # while real retries never got a turn. Re-park a repeat immediately (no charge
+        # call), and stop once every remaining candidate is one we already parked.
+        parked_this_tick: dict[str, str] = {}
+        repeat_claims = 0
+
         for _ in range(limit):
             claimed = await self._dunning.claim_next_due(now=now, worker_id=worker_id)
             if claimed is None:
                 break
             invoice, state = claimed
+
+            previous_reason = parked_this_tick.get(invoice.invoice_id)
+            if previous_reason is not None:
+                await self._dunning.park_attempt(
+                    state=state,
+                    reason=previous_reason,
+                    now=now,
+                )
+                repeat_claims += 1
+                if repeat_claims >= len(parked_this_tick):
+                    break
+                continue
+            repeat_claims = 0
+
             counts["processed"] += 1
 
             try:
@@ -172,6 +225,7 @@ class ProcessDunningRetries:
                     reason="charge_technical_failure",
                     now=now,
                 )
+                parked_this_tick[invoice.invoice_id] = "charge_technical_failure"
                 counts["technical_failures"] += 1
                 counts["parked"] += 1
                 continue
@@ -180,32 +234,26 @@ class ProcessDunningRetries:
             succeeded = bool(result.get("success"))
             failure_code = _failure_code(result)
             if not succeeded and (bool(result.get("processing")) or failure_code is None):
-                await self._dunning.park_attempt(
-                    state=state,
-                    reason="payment_processing"
+                reason = (
+                    "payment_processing"
                     if bool(result.get("processing"))
-                    else "attempt_indeterminate",
-                    now=now,
+                    else "attempt_indeterminate"
                 )
+                await self._dunning.park_attempt(state=state, reason=reason, now=now)
+                parked_this_tick[invoice.invoice_id] = reason
                 counts["parked"] += 1
                 if not bool(result.get("processing")):
                     counts["transient"] += 1
                 continue
-            if failure_code == "autopay_not_active":
+            if failure_code in _PARK_REASONS:
                 await self._dunning.park_attempt(
                     state=state,
-                    reason="autopay_not_active",
+                    reason=failure_code,
                     now=now,
                 )
-                counts["parked"] += 1
-                continue
-            if failure_code == "connected_account_not_ready":
-                await self._dunning.park_attempt(
-                    state=state,
-                    reason="connected_account_not_ready",
-                    now=now,
-                )
-                counts["technical_failures"] += 1
+                parked_this_tick[invoice.invoice_id] = failure_code
+                if failure_code in _PARK_REASONS_NEEDING_OPERATOR:
+                    counts["technical_failures"] += 1
                 counts["parked"] += 1
                 continue
 
