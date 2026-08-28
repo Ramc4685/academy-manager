@@ -22,6 +22,7 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
 )
 from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
 from backend.v2.contexts.billing.domain.ledger import InvoiceLine, LedgerInvoice
+from backend.v2.contexts.billing.domain.models import AppliedCreditState
 from backend.v2.contexts.billing.domain.proration import (
     BillingCalculationSnapshot,
     BillingPeriod,
@@ -38,6 +39,7 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo impo
     MongoBillingSettingsRepository,
 )
 from backend.v2.shared.ids import new_ulid
+from backend.v2.shared.observability.ops_alerts import capture_message
 from backend.v2.shared.tenancy import current_academy_id
 
 if TYPE_CHECKING:
@@ -440,10 +442,17 @@ class MongoMonthlyBillingGenerator:
         parent_id: str,
         student_id: str,
         period: str,
-        gross_amount_cents: int,
+        net_amount_cents: int,
         invoice_key: dict[str, object] | None,
         now: datetime,
     ) -> str:
+        """Rebuild the monthly invoice behind an already-claimed invoice key.
+
+        ``net_amount_cents`` is the post-discount charge, matching what the
+        normal path bills: pricing from gross here would overcharge a
+        discounted family and let their credit be spent on tuition they never
+        owed.
+        """
         if self._ledger_repo is None or invoice_key is None:
             return "failed"
         invoice_id = self._monthly_invoice_id(enrollment_id, period)
@@ -451,8 +460,13 @@ class MongoMonthlyBillingGenerator:
         existing_invoice_id = invoice_id if existing_invoice is not None else None
 
         payment_id = str(invoice_key.get("payment_id") or "")
-        applied_credit_cents = await self._applied_credit_cents(payment_id) if payment_id else 0
-        amount_cents = max(gross_amount_cents - applied_credit_cents, 0)
+        credit_state = (
+            await self._applied_credit_state(payment_id)
+            if payment_id
+            else AppliedCreditState(applied_cents=0)
+        )
+        applied_credit_cents = credit_state.applied_cents
+        amount_cents = max(net_amount_cents - applied_credit_cents, 0)
         if existing_invoice_id is None:
             existing_invoice_id = await self._find_existing_invoice_for_enrollment_period(
                 enrollment_id=enrollment_id,
@@ -480,13 +494,30 @@ class MongoMonthlyBillingGenerator:
 
         if not payment_id:
             return "failed"
-        if applied_credit_cents == 0 and self._credit_ledger is not None:
+        if credit_state.has_unresolved_drift:
+            # Credit was demonstrably spent on this invoice but no source
+            # records how much. Billing gross here would overcharge the family,
+            # so stop and make the drift visible instead (#233).
+            return await self._fail_unresolved_credit_drift(
+                enrollment_id=enrollment_id,
+                period=period,
+                payment_id=payment_id,
+                credit_state=credit_state,
+                now=now,
+            )
+        if self._credit_ledger is not None:
+            # Idempotent + resumable: returns what this invoice already
+            # consumed, and tops it up if an earlier run only applied part of
+            # the available credit before dying.
             applied_credit_cents = await self._credit_ledger.apply_available_credits(
                 parent_id=parent_id,
                 invoice_id=payment_id,
-                amount_due_cents=gross_amount_cents,
+                amount_due_cents=net_amount_cents,
             )
-            amount_cents = max(gross_amount_cents - applied_credit_cents, 0)
+            amount_cents = max(net_amount_cents - applied_credit_cents, 0)
+            # Rebuild any audit rows the crash lost, so admin credit views and
+            # the launch-readiness audit agree with the balance we just billed.
+            await self._credit_ledger.repair_credit_projections(payment_id)
         if existing_invoice_id and existing_invoice_id != invoice_id:
             await self._mark_monthly_invoice_key(
                 enrollment_id=enrollment_id,
@@ -526,6 +557,60 @@ class MongoMonthlyBillingGenerator:
             status="repair_failed",
             now=now,
             repair_error="monthly invoice did not contain expected header and line after repair",
+        )
+        return "failed"
+
+    async def _applied_credit_state(self, invoice_id: str) -> AppliedCreditState:
+        """How much credit ``invoice_id`` already consumed, source of truth first.
+
+        Delegates to the credit ledger, which reads the per-invoice application
+        record written in the same atomic update as the balance decrement. Falls
+        back to the audit projections only when no credit ledger is wired in.
+        """
+        if self._credit_ledger is None:
+            return AppliedCreditState(applied_cents=await self._applied_credit_cents(invoice_id))
+        state: AppliedCreditState = await self._credit_ledger.applied_credit_state(invoice_id)
+        projected = await self._applied_credit_cents(invoice_id)
+        if projected <= state.applied_cents:
+            return state
+        return AppliedCreditState(
+            applied_cents=projected,
+            unresolved_credit_ids=state.unresolved_credit_ids,
+        )
+
+    async def _fail_unresolved_credit_drift(
+        self,
+        *,
+        enrollment_id: str,
+        period: str,
+        payment_id: str,
+        credit_state: AppliedCreditState,
+        now: datetime,
+    ) -> str:
+        credit_ids = ", ".join(credit_state.unresolved_credit_ids)
+        detail = (
+            f"account credit was applied to payment {payment_id} but the amount is not "
+            f"recoverable from any source; unresolved credits: {credit_ids}"
+        )
+        logging.getLogger(__name__).error(
+            "monthly billing: unresolved credit application drift",
+            extra={
+                "enrollment_id": enrollment_id,
+                "period": period,
+                "payment_id": payment_id,
+                "unresolved_credit_ids": list(credit_state.unresolved_credit_ids),
+            },
+        )
+        capture_message(
+            f"Unresolved account credit drift for enrollment {enrollment_id} period {period}",
+            level="error",
+        )
+        await self._mark_monthly_invoice_key(
+            enrollment_id=enrollment_id,
+            period=period,
+            status="repair_failed",
+            now=now,
+            repair_error=detail,
         )
         return "failed"
 
@@ -691,7 +776,7 @@ class MongoMonthlyBillingGenerator:
                     parent_id=parent_id,
                     student_id=student_id,
                     period=period,
-                    gross_amount_cents=gross_amount_cents,
+                    net_amount_cents=net_amount_cents,
                     invoice_key=invoice_key,
                     now=now,
                 )
