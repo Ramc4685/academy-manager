@@ -586,6 +586,29 @@ class MongoMonthlyBillingGenerator:
             )
             return "failed"
 
+        # A tuition line that disagrees with the gross charge cannot be repaired: the
+        # line write is $setOnInsert, so it would survive untouched while a back-filled
+        # discount line dragged the recomputed header away from both shapes. Bail before
+        # writing anything. This also covers invoices recovered under the old net-of-
+        # credit shape, which are left exactly as they are for an operator to inspect.
+        conflicting_line = await self._db["invoice_lines"].find_one(
+            {
+                "academy_id": current_academy_id(),
+                "invoice_id": invoice_id,
+                "line_id": self._monthly_invoice_line_id(enrollment_id, period),
+                "amount_cents": {"$ne": gross_amount_cents},
+            }
+        )
+        if conflicting_line is not None:
+            await self._mark_monthly_invoice_key(
+                enrollment_id=enrollment_id,
+                period=period,
+                status="repair_failed",
+                now=now,
+                repair_error="existing monthly tuition line does not match the expected gross charge",
+            )
+            return "failed"
+
         # Recovery writes the same invoice shape as the normal generation path: the
         # tuition line and subtotal gross, the discount broken out on its own line, and
         # only total_cents/balance_due_cents net of discount and applied credit.
