@@ -1103,3 +1103,198 @@ async def test_period_window_excludes_occurrences_outside_range() -> None:
         period_end=_dt("2026-06-01T00:00:00"),
     )
     assert {ln.occurrence_id for ln in statement.lines} == {"occ-may"}
+
+
+@pytest.mark.asyncio
+async def test_replaced_scheduled_coach_gets_explicit_non_pay_row() -> None:
+    """A substitute is paid, and the displaced scheduled coach keeps a trace.
+
+    Regression for #228: the scheduled coach's occurrence used to vanish
+    from their statement entirely — neither paid, unpaid, nor absent.
+    """
+    rates = [
+        CoachRate(
+            rate_id="cr-sub",
+            academy_id="acad-1",
+            coach_id="coach-replacement",
+            billing_unit="per_session",
+            amount_minor=4000,
+            currency="USD",
+            effective_from=_dt("2026-01-01T00:00:00"),
+            effective_until=None,
+            status="active",
+        ),
+        CoachRate(
+            rate_id="cr-sched",
+            academy_id="acad-1",
+            coach_id="coach-A",
+            billing_unit="per_session",
+            amount_minor=5000,
+            currency="USD",
+            effective_from=_dt("2026-01-01T00:00:00"),
+            effective_until=None,
+            status="active",
+        ),
+    ]
+    occ = _occurrence(
+        "occ-1",
+        start="2026-05-10T18:00:00",
+        end="2026-05-10T19:00:00",
+        scheduled_coach_id="coach-A",
+        actual_coach_id="coach-replacement",
+    )
+    replacement_statement = await ComputeCoachPayout(
+        occurrences=FakeOccurrenceQuery([occ]),
+        rates=FakeRateRepo(rates),
+    ).execute(
+        coach_id="coach-replacement",
+        academy_id="acad-1",
+        period_start=_dt("2026-05-01T00:00:00"),
+        period_end=_dt("2026-06-01T00:00:00"),
+    )
+    scheduled_statement = await ComputeCoachPayout(
+        occurrences=FakeOccurrenceQuery([occ]),
+        rates=FakeRateRepo(rates),
+    ).execute(
+        coach_id="coach-A",
+        academy_id="acad-1",
+        period_start=_dt("2026-05-01T00:00:00"),
+        period_end=_dt("2026-06-01T00:00:00"),
+    )
+
+    # The substitute is still paid — that behaviour is deliberate.
+    assert replacement_statement.total_minor == 4000
+    assert replacement_statement.lines[0].basis == "substitute"
+    assert replacement_statement.unpaid_occurrences == []
+
+    # The scheduled coach is not paid, but the occurrence is on record.
+    assert scheduled_statement.total_minor == 0
+    assert scheduled_statement.lines == []
+    assert len(scheduled_statement.unpaid_occurrences) == 1
+    row = scheduled_statement.unpaid_occurrences[0]
+    assert row.occurrence_id == "occ-1"
+    assert row.reason == "replaced_by_actual_coach"
+    assert row.attributed_coach_id == "coach-replacement"
+    # Not a repair item: a substitution is a legitimate outcome, so it must
+    # not block approval the way a missing rate does.
+    assert row.unresolved is False
+    # And it must not be double-counted as a rate problem.
+    assert scheduled_statement.unpaid_occurrence_ids == []
+    assert scheduled_statement.payout_warnings == []
+
+
+@pytest.mark.asyncio
+async def test_replaced_row_is_recorded_even_when_scheduled_coach_has_no_rate() -> None:
+    """The trace does not depend on the displaced coach having a rate sheet."""
+    occ = _occurrence(
+        "occ-1",
+        start="2026-05-10T18:00:00",
+        end="2026-05-10T19:00:00",
+        scheduled_coach_id="coach-A",
+        actual_coach_id="coach-replacement",
+    )
+    statement = await ComputeCoachPayout(
+        occurrences=FakeOccurrenceQuery([occ]),
+        rates=FakeRateRepo([]),
+    ).execute(
+        coach_id="coach-A",
+        academy_id="acad-1",
+        period_start=_dt("2026-05-01T00:00:00"),
+        period_end=_dt("2026-06-01T00:00:00"),
+    )
+    assert [row.reason for row in statement.unpaid_occurrences] == ["replaced_by_actual_coach"]
+    assert statement.unpaid_occurrence_ids == []
+
+
+@pytest.mark.asyncio
+async def test_absent_scheduled_coach_replaced_reports_replacement_not_absence() -> None:
+    """Absence metadata must not hide behind the attribution skip.
+
+    When the scheduled coach was both marked absent and replaced, the
+    occurrence is attributed to the substitute, so the scheduled coach's row
+    explains the replacement (and names who was paid) rather than silently
+    disappearing.
+    """
+    occ = _occurrence(
+        "occ-1",
+        start="2026-05-10T18:00:00",
+        end="2026-05-10T19:00:00",
+        scheduled_coach_id="coach-A",
+        actual_coach_id="coach-replacement",
+        coach_attendance=[
+            CoachAttendanceForPayout(coach_id="coach-A", status="absent", role="lead"),
+            CoachAttendanceForPayout(coach_id="coach-replacement", status="present", role="lead"),
+        ],
+    )
+    statement = await ComputeCoachPayout(
+        occurrences=FakeOccurrenceQuery([occ]),
+        rates=FakeRateRepo([]),
+    ).execute(
+        coach_id="coach-A",
+        academy_id="acad-1",
+        period_start=_dt("2026-05-01T00:00:00"),
+        period_end=_dt("2026-06-01T00:00:00"),
+    )
+    assert [row.reason for row in statement.unpaid_occurrences] == ["replaced_by_actual_coach"]
+    assert statement.unpaid_occurrences[0].attributed_coach_id == "coach-replacement"
+
+
+@pytest.mark.asyncio
+async def test_no_replaced_row_for_uninvolved_coach_or_legacy_substitute() -> None:
+    """Only the displaced *scheduled* coach gets a trace row."""
+    replaced = _occurrence(
+        "occ-1",
+        start="2026-05-10T18:00:00",
+        end="2026-05-10T19:00:00",
+        scheduled_coach_id="coach-A",
+        actual_coach_id="coach-replacement",
+    )
+    legacy_substitute = _occurrence(
+        "occ-2",
+        start="2026-05-11T18:00:00",
+        end="2026-05-11T19:00:00",
+        scheduled_coach_id="coach-A",
+        substitute_coach_id="coach-sub",
+    )
+    cancelled = _occurrence(
+        "occ-3",
+        start="2026-05-12T18:00:00",
+        end="2026-05-12T19:00:00",
+        status="cancelled",
+        scheduled_coach_id="coach-A",
+        actual_coach_id="coach-replacement",
+    )
+    not_payable = _occurrence(
+        "occ-4",
+        start="2026-05-13T18:00:00",
+        end="2026-05-13T19:00:00",
+        is_payable=False,
+        scheduled_coach_id="coach-A",
+        actual_coach_id="coach-replacement",
+    )
+    occurrences = [replaced, legacy_substitute, cancelled, not_payable]
+
+    bystander = await ComputeCoachPayout(
+        occurrences=FakeOccurrenceQuery(occurrences),
+        rates=FakeRateRepo([]),
+    ).execute(
+        coach_id="coach-unrelated",
+        academy_id="acad-1",
+        period_start=_dt("2026-05-01T00:00:00"),
+        period_end=_dt("2026-06-01T00:00:00"),
+    )
+    assert bystander.unpaid_occurrences == []
+
+    scheduled = await ComputeCoachPayout(
+        occurrences=FakeOccurrenceQuery(occurrences),
+        rates=FakeRateRepo([]),
+    ).execute(
+        coach_id="coach-A",
+        academy_id="acad-1",
+        period_start=_dt("2026-05-01T00:00:00"),
+        period_end=_dt("2026-06-01T00:00:00"),
+    )
+    replaced_rows = [
+        row for row in scheduled.unpaid_occurrences if row.reason == "replaced_by_actual_coach"
+    ]
+    assert [row.occurrence_id for row in replaced_rows] == ["occ-1"]

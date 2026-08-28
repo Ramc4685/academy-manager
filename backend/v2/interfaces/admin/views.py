@@ -993,10 +993,10 @@ class AdminPayoutPeriodLineView(BaseModel):
 class AdminUnpaidOccurrenceView(BaseModel):
     """An occurrence in the window that produced no pay line.
 
-    Covers coach-marked-absent occurrences and occurrences whose pay
-    could not be computed (e.g. session price missing for a percent
-    rate). Rendered alongside the paid lines so the period reads as a
-    complete session log.
+    Covers coach-marked-absent occurrences, occurrences reassigned to a
+    replacement coach, and occurrences whose pay could not be computed
+    (e.g. session price missing for a percent rate). Rendered alongside the
+    paid lines so the period reads as a complete session log.
     """
 
     occurrence_id: str
@@ -1008,6 +1008,7 @@ class AdminUnpaidOccurrenceView(BaseModel):
         "rate_gap",
         "missing_session_price_for_percent_revenue",
         "attendance_override",
+        "replaced_by_actual_coach",
         "unknown_unpaid_reason",
         "missing_rate",
         "missing_percent",
@@ -1018,6 +1019,8 @@ class AdminUnpaidOccurrenceView(BaseModel):
     message: str | None = None
     coach_id: str | None = None
     repair_action: str | None = None
+    attributed_coach_id: str | None = None
+    """For ``replaced_by_actual_coach``, the coach paid instead of this one."""
 
 
 class AdminPayoutWarningView(BaseModel):
