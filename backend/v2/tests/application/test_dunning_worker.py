@@ -444,6 +444,8 @@ async def test_without_an_outbox_the_direct_send_is_unchanged() -> None:
 
     assert result.notifications_sent == 1
     assert len(notifier.calls) == 1
+
+
 @pytest.mark.asyncio
 async def test_open_checkout_session_parks_without_consuming_a_rung() -> None:
     """Issue #434: a parent paying manually must not also be charged by dunning.
