@@ -2010,3 +2010,92 @@ async def test_generate_monthly_resumes_partial_credit_application_across_credit
         )
         == 1
     )
+
+
+@pytest.mark.asyncio
+async def test_generate_monthly_recovery_honours_tuition_discount_and_credit(db, acad) -> None:
+    """Recovery must price from net, not gross (issue #233 follow-on).
+
+    The normal path bills ``net - credit``. Recovery pricing from gross would
+    overcharge a discounted family by the whole discount, and would let credit
+    be consumed against the 2_000 of tuition they never owed.
+    """
+    await db["billing_invoice_keys"].create_index(
+        [("academy_id", 1), ("enrollment_id", 1), ("period", 1)],
+        unique=True,
+        name="uniq_monthly_invoice_key",
+    )
+    credits = MongoCreditLedgerRepository(db)
+    ledger_repo = MongoBillingLedgerRepository(db)
+    repo = MongoPaymentRepository(
+        db,
+        clock=lambda: datetime(2026, 6, 1, 12, 0, tzinfo=UTC),
+        credit_ledger=credits,
+        ledger_repo=ledger_repo,
+    )
+    now = datetime(2026, 5, 20, tzinfo=UTC)
+    # 10_000 gross, 2_000 off => 8_000 net.
+    await db["enrollment_discounts"].insert_one(
+        {
+            "academy_id": acad,
+            "discount_id": "disc-recover",
+            "enrollment_id": "enroll-disc",
+            "student_id": "student-disc",
+            "category": "sibling",
+            "kind": "amount_off",
+            "amount_off_cents": 2_000,
+            "effective_start": "2026-01-01",
+            "status": "active",
+        }
+    )
+    # Parent holds 9_000 of credit — more than the 8_000 net they actually owe.
+    await credits.create(
+        CreditLedgerEntry(
+            credit_id="credit-disc",
+            academy_id=acad,
+            parent_id="parent-disc",
+            student_id="student-disc",
+            enrollment_id="enroll-disc",
+            type="MANUAL_CREDIT",
+            status="APPROVED",
+            amount_cents=9_000,
+            remaining_amount_cents=9_000,
+            currency="usd",
+            reason="goodwill",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    await db["billing_invoice_keys"].insert_one(
+        {
+            "academy_id": acad,
+            "invoice_key_id": "key-disc",
+            "payment_id": "pay-disc",
+            "enrollment_id": "enroll-disc",
+            "period": "2026-06",
+            "status": "claimed",
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+    await _seed_monthly_enrollment(
+        db,
+        acad,
+        enrollment_id="enroll-disc",
+        session_id="sess-disc",
+        student_id="student-disc",
+        parent_id="parent-disc",
+    )
+
+    result = await repo.generate_monthly_payments("2026-06")
+
+    assert result.failed_repair == 0
+    invoice = await db["invoices"].find_one(
+        {"academy_id": acad, "invoice_id": "inv-monthly-enroll-disc-2026-06"}
+    )
+    assert invoice is not None
+    # 8_000 net fully covered by credit, so nothing is owed...
+    assert invoice["total_cents"] == 0
+    assert invoice["balance_due_cents"] == 0
+    # ...and only the 8_000 they owed was taken, not the 10_000 gross.
+    assert await credits.balance_for_parent("parent-disc") == 1_000

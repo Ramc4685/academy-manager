@@ -442,10 +442,17 @@ class MongoMonthlyBillingGenerator:
         parent_id: str,
         student_id: str,
         period: str,
-        gross_amount_cents: int,
+        net_amount_cents: int,
         invoice_key: dict[str, object] | None,
         now: datetime,
     ) -> str:
+        """Rebuild the monthly invoice behind an already-claimed invoice key.
+
+        ``net_amount_cents`` is the post-discount charge, matching what the
+        normal path bills: pricing from gross here would overcharge a
+        discounted family and let their credit be spent on tuition they never
+        owed.
+        """
         if self._ledger_repo is None or invoice_key is None:
             return "failed"
         invoice_id = self._monthly_invoice_id(enrollment_id, period)
@@ -459,7 +466,7 @@ class MongoMonthlyBillingGenerator:
             else AppliedCreditState(applied_cents=0)
         )
         applied_credit_cents = credit_state.applied_cents
-        amount_cents = max(gross_amount_cents - applied_credit_cents, 0)
+        amount_cents = max(net_amount_cents - applied_credit_cents, 0)
         if existing_invoice_id is None:
             existing_invoice_id = await self._find_existing_invoice_for_enrollment_period(
                 enrollment_id=enrollment_id,
@@ -505,9 +512,9 @@ class MongoMonthlyBillingGenerator:
             applied_credit_cents = await self._credit_ledger.apply_available_credits(
                 parent_id=parent_id,
                 invoice_id=payment_id,
-                amount_due_cents=gross_amount_cents,
+                amount_due_cents=net_amount_cents,
             )
-            amount_cents = max(gross_amount_cents - applied_credit_cents, 0)
+            amount_cents = max(net_amount_cents - applied_credit_cents, 0)
             # Rebuild any audit rows the crash lost, so admin credit views and
             # the launch-readiness audit agree with the balance we just billed.
             await self._credit_ledger.repair_credit_projections(payment_id)
@@ -769,7 +776,7 @@ class MongoMonthlyBillingGenerator:
                     parent_id=parent_id,
                     student_id=student_id,
                     period=period,
-                    gross_amount_cents=gross_amount_cents,
+                    net_amount_cents=net_amount_cents,
                     invoice_key=invoice_key,
                     now=now,
                 )

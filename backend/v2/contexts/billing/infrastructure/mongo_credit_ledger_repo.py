@@ -99,6 +99,23 @@ class MongoCreditLedgerRepository(TenantScopedRepository):
         return total
 
     @staticmethod
+    def _embedded_application_applied_at(
+        credit: dict[str, object], invoice_id: str
+    ) -> datetime | None:
+        """Earliest ``applied_at`` this credit records against ``invoice_id``."""
+        applications = credit.get("applications")
+        if not isinstance(applications, list):
+            return None
+        stamps = [
+            entry["applied_at"]
+            for entry in applications
+            if isinstance(entry, dict)
+            and str(entry.get("invoice_id") or "") == invoice_id
+            and isinstance(entry.get("applied_at"), datetime)
+        ]
+        return min(stamps) if stamps else None
+
+    @staticmethod
     def _applied_projection_source_id(credit_id: str, invoice_id: str) -> str:
         return f"{credit_id}:{invoice_id}"
 
@@ -192,7 +209,14 @@ class MongoCreditLedgerRepository(TenantScopedRepository):
             if amount is None or amount <= 0:
                 continue
             parent_id = str(credit.get("parent_id") or "")
-            applied_at = credit.get("updated_at") or datetime.now(UTC)
+            # The embedded record's own timestamp, so a rebuilt audit row is
+            # dated when the credit was applied rather than when the credit
+            # document was last touched for some other invoice.
+            applied_at = (
+                self._embedded_application_applied_at(credit, invoice_id)
+                or credit.get("updated_at")
+                or datetime.now(UTC)
+            )
             audit_exists = (
                 await self._db["credit_applications"].find_one(
                     {

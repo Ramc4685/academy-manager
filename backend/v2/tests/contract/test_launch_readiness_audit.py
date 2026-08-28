@@ -349,6 +349,32 @@ async def test_billing_audit_detects_credit_application_drift(db) -> None:
             "created_at": now,
         }
     )
+    # Legacy shape: applied before the embedded record existed, but the audit
+    # row still carries the amount, so recovery can reprice. Must NOT be drift.
+    await db["account_credit_ledger"].insert_one(
+        {
+            "academy_id": acad,
+            "credit_id": "credit-legacy-recoverable",
+            "parent_id": "parent-4",
+            "amount_cents": 750,
+            "remaining_amount_cents": 0,
+            "currency": "usd",
+            "status": "APPROVED",
+            "applied_invoice_ids": ["inv-legacy"],
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+    await db["credit_applications"].insert_one(
+        {
+            "academy_id": acad,
+            "credit_id": "credit-legacy-recoverable",
+            "invoice_id": "inv-legacy",
+            "parent_id": "parent-4",
+            "amount_cents": 750,
+            "created_at": now,
+        }
+    )
     # Spent, but no source and no audit row: the amount is unrecoverable.
     await db["account_credit_ledger"].insert_one(
         {
@@ -382,8 +408,10 @@ async def test_billing_audit_detects_credit_application_drift(db) -> None:
     failures = {(failure["check"], failure.get("credit_id")) for failure in result["failures"]}
     assert ("credit_application_amount_unrecoverable", "credit-unrecoverable") in failures
     assert ("credit_application_orphan_audit_row", "credit-orphan-audit") in failures
-    # The consistent credit is not reported.
+    # Neither the fully consistent credit nor the legacy-but-recoverable one is
+    # reported — flagging every pre-existing application would bury real drift.
     assert not [f for f in result["failures"] if f.get("credit_id") == "credit-ok"]
+    assert not [f for f in result["failures"] if f.get("credit_id") == "credit-legacy-recoverable"]
 
 
 @pytest.mark.asyncio

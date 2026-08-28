@@ -524,26 +524,20 @@ async def audit_billing_consistency(db: Any, *, primary_academy_id: str) -> dict
             seen_pairs.add((credit_id, applied_invoice_id))
             if applied_invoice_id in embedded:
                 continue
-            # The credit was spent on this invoice but no source records how
-            # much, so the invoice cannot be repriced net after a crash.
-            if (credit_id, applied_invoice_id) not in audit_pairs:
-                _append_failure(
-                    failures,
-                    {
-                        "check": "credit_application_amount_unrecoverable",
-                        "credit_id": credit_id,
-                        "invoice_id": applied_invoice_id,
-                    },
-                )
-            else:
-                _append_failure(
-                    failures,
-                    {
-                        "check": "credit_application_missing_source_record",
-                        "credit_id": credit_id,
-                        "invoice_id": applied_invoice_id,
-                    },
-                )
+            if (credit_id, applied_invoice_id) in audit_pairs:
+                # Pre-dates the embedded record but the audit row still carries
+                # the amount, so recovery can reprice the invoice. Not drift.
+                continue
+            # Spent, with no source anywhere recording how much: the invoice
+            # cannot be repriced net after a crash.
+            _append_failure(
+                failures,
+                {
+                    "check": "credit_application_amount_unrecoverable",
+                    "credit_id": credit_id,
+                    "invoice_id": applied_invoice_id,
+                },
+            )
 
     for credit_id, applied_invoice_id in sorted(audit_pairs - seen_pairs):
         _append_failure(
