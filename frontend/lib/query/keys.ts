@@ -139,6 +139,14 @@ export const queryKeys = {
     calendar: () => ["parent", "calendar"] as const,
     profile: () => ["parent", "profile"] as const,
   },
+  platform: {
+    all: ["platform"] as const,
+    tenants: () => ["platform", "tenants"] as const,
+    tenantStatus: (academyId: string) =>
+      ["platform", "tenant", academyId, "status"] as const,
+    tenantHealth: (academyId: string) =>
+      ["platform", "tenant", academyId, "health"] as const,
+  },
   student: {
     all: ["student"] as const,
     me: () => ["student", "me"] as const,
@@ -155,4 +163,5 @@ export type QueryKey =
   | QueryKeyFrom<(typeof queryKeys.admin)[keyof typeof queryKeys.admin]>
   | QueryKeyFrom<(typeof queryKeys.owner)[keyof typeof queryKeys.owner]>
   | QueryKeyFrom<(typeof queryKeys.parent)[keyof typeof queryKeys.parent]>
+  | QueryKeyFrom<(typeof queryKeys.platform)[keyof typeof queryKeys.platform]>
   | QueryKeyFrom<(typeof queryKeys.student)[keyof typeof queryKeys.student]>;
