@@ -444,3 +444,93 @@ async def test_without_an_outbox_the_direct_send_is_unchanged() -> None:
 
     assert result.notifications_sent == 1
     assert len(notifier.calls) == 1
+@pytest.mark.asyncio
+async def test_open_checkout_session_parks_without_consuming_a_rung() -> None:
+    """Issue #434: a parent paying manually must not also be charged by dunning.
+
+    The charge use case refuses (checkout_session_open) because a Checkout Session is
+    still open. That is our lock, not a decline: the ladder must not advance, the
+    parent must not be emailed a dunning notice, and the attempt is re-tried on a
+    later tick once the session settles or lapses.
+    """
+    invoice = _invoice()
+    dunning = _FakeDunningRepo(invoice)
+    notifier = _FakeNotifier()
+    enrollment_autopay = _FakeEnrollmentAutopay()
+
+    result = await ProcessDunningRetries(
+        dunning=dunning,
+        charge_invoice=_FakeCharge(success=False, decline_code="checkout_session_open"),
+        notifier=notifier,
+        enrollment_autopay=enrollment_autopay,
+        clock=lambda: NOW,
+    ).execute(limit=5, worker_id="worker-1")
+
+    assert result.parked == 1
+    assert result.failed == 0
+    assert dunning.parked == ["checkout_session_open"]
+    # Ladder untouched: no attempt recorded, no notice, autopay left alone.
+    assert dunning.finished == []
+    assert dunning.state.attempt_count == 0
+    assert dunning.notified == []
+    assert notifier.calls == []
+    assert enrollment_autopay.disabled == []
+
+
+@pytest.mark.asyncio
+async def test_stripe_not_configured_parks_instead_of_disabling_autopay() -> None:
+    """Issue #434: our misconfiguration must never spend a family's retry budget.
+
+    The state is primed on the final rung, so a genuine card decline here would go
+    terminal and disable autopay. stripe_not_configured is not a decline — the card
+    was never charged — so it must park with the ladder and the family's autopay
+    both left exactly as they were.
+    """
+    invoice = _invoice()
+    dunning = _FakeDunningRepo(invoice)
+    dunning.state = dunning.state.model_copy(
+        update={
+            "attempt_count": 3,
+            "first_attempt_at": NOW - timedelta(days=7),
+            "last_attempt_at": NOW - timedelta(days=2),
+            "next_attempt_at": NOW,
+        }
+    )
+    notifier = _FakeNotifier()
+    enrollment_autopay = _FakeEnrollmentAutopay()
+
+    result = await ProcessDunningRetries(
+        dunning=dunning,
+        charge_invoice=_FakeCharge(success=False, decline_code="stripe_not_configured"),
+        notifier=notifier,
+        enrollment_autopay=enrollment_autopay,
+        clock=lambda: NOW,
+    ).execute(limit=5, worker_id="worker-1")
+
+    assert result.parked == 1
+    assert result.dunned == 0
+    assert result.failed == 0
+    assert dunning.parked == ["stripe_not_configured"]
+    # The family keeps their autopay and their last retry.
+    assert enrollment_autopay.disabled == []
+    assert dunning.disable_results == []
+    assert dunning.state.status != "dunned"
+    assert dunning.state.attempt_count == 3
+    assert dunning.finished == []
+    assert notifier.calls == []
+
+
+def test_every_park_reason_is_re_claimable_by_the_repository() -> None:
+    """A parked state has next_attempt_at=None and is only re-claimed if its reason is
+    on the repository's allow-list. A reason missing from that list parks the invoice
+    forever — it is never charged, never dunned, and never surfaces as failed. Keep the
+    two in lockstep so a future park reason cannot silently strand collection."""
+    from backend.v2.contexts.billing.application.use_cases.process_dunning_retries import (
+        _PARK_REASONS,
+    )
+    from backend.v2.contexts.billing.infrastructure.mongo_dunning_state_repo import (
+        MongoDunningStateRepository,
+    )
+
+    stranded = _PARK_REASONS - MongoDunningStateRepository.retryable_parked_reasons
+    assert not stranded, f"park reasons never re-claimed: {sorted(stranded)}"
