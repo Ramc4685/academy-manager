@@ -129,6 +129,24 @@ export async function stubParentProfile(
   });
 }
 
+/**
+ * The parent layout polls the messages inbox on every /parent/* page (UIM13,
+ * issue #450) the same way it fetches the profile. Without this stub the call
+ * 404s against the dev server, and every spec that asserts a clean console
+ * fails on a page unrelated to what it is testing (issue #465).
+ *
+ * Defaults to an empty inbox so the unread badge stays hidden.
+ */
+export async function stubParentMessages(
+  page: Page,
+  messages: unknown[] = []
+): Promise<void> {
+  await page.route("**/api/v2/parent/messages", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, { messages });
+  });
+}
+
 export async function stubAcademy(page: Page, academyId: string): Promise<void> {
   await page.route(/\/api\/v2\/admin\/academy(?:\?.*)?$/, (route) => {
     if (route.request().method() !== "GET") return route.fallback();
