@@ -73,6 +73,7 @@ from backend.v2.contexts.billing.domain.models import (
 )
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.ids import new_ulid
+from backend.v2.shared.observability.ops_alerts import capture_message
 from backend.v2.shared.tenancy import tenant_scope
 
 log = logging.getLogger(__name__)
@@ -261,6 +262,12 @@ class HandleWebhookEvent:
                 return {"processed": True, "event_id": event_id, "type": event_type}
             except _QuarantineStripeEvent as exc:
                 await self._dedup.mark_quarantined(event_id, str(exc))
+                self._alert_quarantined(
+                    event_id=event_id,
+                    event_type=event_type,
+                    reason="rejected_by_guard",
+                    error=str(exc),
+                )
                 return {
                     "processed": False,
                     "event_id": event_id,
@@ -269,14 +276,50 @@ class HandleWebhookEvent:
                     "error": str(exc),
                 }
             except Exception as exc:
-                await self._dedup.mark_failed(event_id, str(exc))
+                # Retries are bounded (#437): this may be the attempt that gives
+                # up, in which case the event is now quarantined and nothing will
+                # look at it again unless someone is told.
+                status = await self._dedup.mark_failed(event_id, str(exc))
+                if status == "quarantined":
+                    self._alert_quarantined(
+                        event_id=event_id,
+                        event_type=event_type,
+                        reason="retry_limit_exceeded",
+                        error=str(exc),
+                    )
                 return {
                     "processed": False,
                     "event_id": event_id,
                     "type": event_type,
-                    "status": "failed",
+                    "status": status,
                     "error": str(exc),
                 }
+
+    def _alert_quarantined(
+        self, *, event_id: str, event_type: str, reason: str, error: str
+    ) -> None:
+        """Tell someone an event has stopped being retried (issues #437, #428).
+
+        Quarantine is terminal — the drain never claims the event again — so
+        this fires exactly once per event, not once per retry. Before this, a
+        poisoned event's only trace was a `failed` tally in a log line.
+
+        Never raises: an alerting problem must not turn a recorded quarantine
+        into an unrecorded crash.
+        """
+        extra = {
+            "event_id": event_id,
+            "event_type": event_type,
+            "academy_id": self._academy_id,
+            "quarantine_reason": reason,
+        }
+        try:
+            log.error("stripe_webhook_event_quarantined", extra=extra)
+            capture_message(
+                f"Stripe webhook event quarantined ({reason}): {event_id} [{event_type}] — {error}"
+            )
+        except Exception:  # pragma: no cover - defensive
+            log.warning("stripe_webhook_quarantine_alert_failed", exc_info=True)
 
     async def execute(self, payload: bytes, signature: str) -> dict[str, Any]:
         event = self._verify(payload, signature)
@@ -298,6 +341,12 @@ class HandleWebhookEvent:
                     await mark_quarantined(event_id, str(exc))
                 else:
                     await self._dedup.mark_failed(event_id, str(exc))
+                self._alert_quarantined(
+                    event_id=event_id,
+                    event_type=event_type,
+                    reason="rejected_by_guard",
+                    error=str(exc),
+                )
                 return {
                     "received": True,
                     "type": event_type,
@@ -305,7 +354,14 @@ class HandleWebhookEvent:
                     "error": str(exc),
                 }
             except Exception as exc:
-                await self._dedup.mark_failed(event_id, str(exc))
+                status = await self._dedup.mark_failed(event_id, str(exc))
+                if status == "quarantined":
+                    self._alert_quarantined(
+                        event_id=event_id,
+                        event_type=event_type,
+                        reason="retry_limit_exceeded",
+                        error=str(exc),
+                    )
                 raise
 
     def _verify(self, payload: bytes, signature: str) -> dict[str, Any]:

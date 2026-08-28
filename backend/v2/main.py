@@ -436,7 +436,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             await _process_stripe_webhook_events_body()
 
     async def _process_stripe_webhook_events_body() -> None:
-        totals = {"processed": 0, "failed": 0}
+        # `quarantined` is tracked apart from `failed` (issue #437): a failure
+        # is mid-retry, a quarantine has given up. Folding them together would
+        # make the one number that reaches the logs mean two opposite things.
+        totals = {"processed": 0, "failed": 0, "quarantined": 0}
         for academy_id in await _scheduler_academy_ids(
             MongoAcademyRepository(db),
             runtime_academy_id,
@@ -458,9 +461,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                     break
                 if result.get("processed"):
                     totals["processed"] += 1
+                elif result.get("status") == "quarantined":
+                    totals["quarantined"] += 1
                 else:
                     totals["failed"] += 1
-        if totals["processed"] or totals["failed"]:
+        if totals["processed"] or totals["failed"] or totals["quarantined"]:
             log.info("stripe_webhook_events_processed", extra=totals)
 
     async def _reconcile_stripe_payment_intents() -> None:
