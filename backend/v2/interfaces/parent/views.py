@@ -465,6 +465,8 @@ class ParentMessagesResponse(BaseModel):
 
 class ParentMarkMessageReadResponse(BaseModel):
     status: Literal["ok"] = "ok"
+
+
 # --- Self-service profile (issue #380) ---
 
 
