@@ -319,6 +319,102 @@ async def test_billing_consistency_audit_catches_invoice_and_payment_mismatches(
 
 
 @pytest.mark.asyncio
+async def test_billing_audit_detects_credit_application_drift(db) -> None:
+    """Issue #233: credit spent with no recoverable amount must be visible."""
+    now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+    acad = "acad_blno_badminton"
+    # Consistent: embedded source-of-truth record plus a matching audit row.
+    await db["account_credit_ledger"].insert_one(
+        {
+            "academy_id": acad,
+            "credit_id": "credit-ok",
+            "parent_id": "parent-1",
+            "amount_cents": 1_000,
+            "remaining_amount_cents": 0,
+            "currency": "usd",
+            "status": "APPROVED",
+            "applied_invoice_ids": ["inv-ok"],
+            "applications": [{"invoice_id": "inv-ok", "amount_cents": 1_000, "applied_at": now}],
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+    await db["credit_applications"].insert_one(
+        {
+            "academy_id": acad,
+            "credit_id": "credit-ok",
+            "invoice_id": "inv-ok",
+            "parent_id": "parent-1",
+            "amount_cents": 1_000,
+            "created_at": now,
+        }
+    )
+    # Legacy shape: applied before the embedded record existed, but the audit
+    # row still carries the amount, so recovery can reprice. Must NOT be drift.
+    await db["account_credit_ledger"].insert_one(
+        {
+            "academy_id": acad,
+            "credit_id": "credit-legacy-recoverable",
+            "parent_id": "parent-4",
+            "amount_cents": 750,
+            "remaining_amount_cents": 0,
+            "currency": "usd",
+            "status": "APPROVED",
+            "applied_invoice_ids": ["inv-legacy"],
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+    await db["credit_applications"].insert_one(
+        {
+            "academy_id": acad,
+            "credit_id": "credit-legacy-recoverable",
+            "invoice_id": "inv-legacy",
+            "parent_id": "parent-4",
+            "amount_cents": 750,
+            "created_at": now,
+        }
+    )
+    # Spent, but no source and no audit row: the amount is unrecoverable.
+    await db["account_credit_ledger"].insert_one(
+        {
+            "academy_id": acad,
+            "credit_id": "credit-unrecoverable",
+            "parent_id": "parent-2",
+            "amount_cents": 2_000,
+            "remaining_amount_cents": 0,
+            "currency": "usd",
+            "status": "APPROVED",
+            "applied_invoice_ids": ["inv-unrecoverable"],
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+    # Audit row with no matching source-of-truth record on the credit.
+    await db["credit_applications"].insert_one(
+        {
+            "academy_id": acad,
+            "credit_id": "credit-orphan-audit",
+            "invoice_id": "inv-orphan-audit",
+            "parent_id": "parent-3",
+            "amount_cents": 500,
+            "created_at": now,
+        }
+    )
+
+    result = await launch_readiness_audit.audit_billing_consistency(db, primary_academy_id=acad)
+
+    assert result["status"] == "fail"
+    failures = {(failure["check"], failure.get("credit_id")) for failure in result["failures"]}
+    assert ("credit_application_amount_unrecoverable", "credit-unrecoverable") in failures
+    assert ("credit_application_orphan_audit_row", "credit-orphan-audit") in failures
+    # Neither the fully consistent credit nor the legacy-but-recoverable one is
+    # reported — flagging every pre-existing application would bury real drift.
+    assert not [f for f in result["failures"] if f.get("credit_id") == "credit-ok"]
+    assert not [f for f in result["failures"] if f.get("credit_id") == "credit-legacy-recoverable"]
+
+
+@pytest.mark.asyncio
 async def test_dead_letter_and_webhook_health_audits_fail_unrecovered_work(db) -> None:
     now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
     await db["dead_letter_events"].insert_one(

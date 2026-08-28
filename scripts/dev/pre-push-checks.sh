@@ -68,43 +68,11 @@ else
 fi
 
 # ── Classify the change ───────────────────────────────────────────────────────
-DOCS_ONLY=true
-BACKEND_CHANGED=false
-FRONTEND_CHANGED=false
-HIGH_RISK=false
-RUN_E2E=false
-
-# Paths where a mistake is expensive enough to always warrant the broad tier:
-# auth/tenancy/billing/payments, migrations, CI, deployment, shared infra.
-HIGH_RISK_RE='^\.github/workflows/|^scripts/|^docker|compose.*\.ya?ml$|^fly\.toml|requirements.*\.txt$|pnpm-lock\.yaml$|package\.json$|auth|tenan|billing|stripe|payment|invoice|checkout|webhook|migrat|middleware|composition'
-
-while IFS= read -r f; do
-  [ -z "$f" ] && continue
-  case "$f" in
-    docs/*|*.md|.github/ISSUE_TEMPLATE/*|LICENSE*) ;;
-    *) DOCS_ONLY=false ;;
-  esac
-  case "$f" in
-    backend/*)  BACKEND_CHANGED=true ;;
-    frontend/*) FRONTEND_CHANGED=true ;;
-  esac
-  case "$f" in
-    frontend/e2e/*) RUN_E2E=true ;;
-  esac
-  if printf '%s' "$f" | grep -qiE "$HIGH_RISK_RE"; then
-    HIGH_RISK=true
-  fi
-done <<< "${CHANGED}"
-
-if [ "$FULL" = "--full" ]; then
-  RUN_E2E=true
-fi
-
-# Broad tier: --full, high-risk paths, or a mixed backend+frontend change.
-BROAD=false
-if [ "$FULL" = "--full" ] || [ "$HIGH_RISK" = true ] || { [ "$BACKEND_CHANGED" = true ] && [ "$FRONTEND_CHANGED" = true ]; }; then
-  BROAD=true
-fi
+# Tier logic lives in lib/classify-changes.sh, covered by
+# scripts/dev/pre-push-checks.test.sh (run in CI as Hook Classifier Tests).
+# shellcheck source=scripts/dev/lib/classify-changes.sh
+source "$ROOT/scripts/dev/lib/classify-changes.sh"
+classify_changes "${CHANGED}" "${FULL}"
 
 if [ "$FULL" = "--full" ]; then
   info "Tier: full (--full requested)"
@@ -135,11 +103,14 @@ if [ "$BACKEND_CHANGED" = true ] || [ "$BROAD" = true ]; then
   else
     # Focused tier: lint only what changed; run changed tests plus the fast
     # structural suite (repo invariants like the route manifest).
+    # CI parity: CI lints only `v2` (ruff check v2), and pyproject excludes
+    # scripts/ and tests/ — so scope to v2 files and pass --force-exclude so
+    # explicitly-named files still honor the configured exclusions (#478).
     CHANGED_PY=()
     CHANGED_TESTS=()
     while IFS= read -r f; do
       case "$f" in
-        backend/*.py)
+        backend/v2/*.py)
           rel="${f#backend/}"
           [ -f "$rel" ] || continue
           CHANGED_PY+=("$rel")
@@ -151,8 +122,8 @@ if [ "$BACKEND_CHANGED" = true ] || [ "$BROAD" = true ]; then
     done <<< "${CHANGED}"
 
     if [ ${#CHANGED_PY[@]} -gt 0 ]; then
-      run_check "ruff format --check (changed files)" ruff format --check "${CHANGED_PY[@]}"
-      run_check "ruff check (changed files)"          ruff check "${CHANGED_PY[@]}"
+      run_check "ruff format --check (changed files)" ruff format --check --force-exclude "${CHANGED_PY[@]}"
+      run_check "ruff check (changed files)"          ruff check --force-exclude "${CHANGED_PY[@]}"
     fi
     run_check "pytest (changed tests + structural)" \
       pytest ${CHANGED_TESTS[@]+"${CHANGED_TESTS[@]}"} v2/tests/structural -n auto -q --tb=short
@@ -207,7 +178,9 @@ if [ "$FRONTEND_CHANGED" = true ] || [ "$BROAD" = true ]; then
       esac
     done <<< "${CHANGED}"
     if [ ${#CHANGED_FE[@]} -gt 0 ]; then
-      run_check "eslint (changed files)" pnpm exec eslint "${CHANGED_FE[@]}"
+      # --no-warn-ignored: config-ignored files passed explicitly are skipped
+      # silently instead of warning, keeping parity with `pnpm lint` (#478).
+      run_check "eslint (changed files)" pnpm exec eslint --no-warn-ignored "${CHANGED_FE[@]}"
     else
       info "no lintable frontend files changed — skipping eslint"
     fi

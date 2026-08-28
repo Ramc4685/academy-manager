@@ -840,6 +840,7 @@ from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     AdminUserDetail,
     AdminUserSummary,
+    UpdateAdminUser,
 )
 from backend.v2.contexts.identity.application.use_cases.manage_user_roles import (
     AddUserRole,
@@ -2036,10 +2037,64 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
             return self._detail(user_id)
 
     _role_modifier = _FakeRoleModifier()
+    _login_invite_sender = _FakeLoginInviteSender()
+
+    class _FakeAdminUserEditor:
+        """Backs PATCH /admin/users/{id} so the #436 re-invite path is testable.
+
+        `p-2` is deliberately absent from `_FakeLoginInviteSender.known`, so
+        editing its email exercises a failing invite send.
+        """
+
+        def __init__(self) -> None:
+            self.users: dict[str, AdminUserDetail] = {
+                "p-1": AdminUserDetail(
+                    user_id="p-1",
+                    email="parent@example.com",
+                    display_name="Parent One",
+                    role="parent",
+                    status="active",
+                    roles=("parent",),
+                ),
+                "p-2": AdminUserDetail(
+                    user_id="p-2",
+                    email="parent2@example.com",
+                    display_name="Parent Two",
+                    role="parent",
+                    status="active",
+                    roles=("parent",),
+                ),
+            }
+
+        async def get_admin_user(self, user_id, *, academy_id):
+            _ = academy_id
+            return self.users.get(user_id)
+
+        async def update_admin_user(self, user_id, command, *, academy_id):
+            _ = academy_id
+            user = self.users.get(user_id)
+            if user is None:
+                return None
+            update: dict[str, object] = {}
+            if command.email is not None:
+                update["email"] = str(command.email)
+            if command.display_name is not None:
+                update["display_name"] = command.display_name
+            if command.status is not None:
+                update["status"] = command.status
+            self.users[user_id] = user.model_copy(update=update)
+            return self.users[user_id]
+
+    _admin_user_editor = _FakeAdminUserEditor()
 
     return AdminUseCases(
         list_admin_users=_ListAdminUsers(),  # type: ignore[arg-type]
-        send_login_invite=_FakeLoginInviteSender(),  # type: ignore[arg-type]
+        send_login_invite=_login_invite_sender,  # type: ignore[arg-type]
+        update_admin_user=UpdateAdminUser(
+            _admin_user_editor,  # type: ignore[arg-type]
+            reader=_admin_user_editor,  # type: ignore[arg-type]
+            invites=_login_invite_sender,
+        ),
         list_admin_students=_ListAdminStudents(),  # type: ignore[arg-type]
         create_session=create_session,
         edit_session=edit_session,

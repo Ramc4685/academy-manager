@@ -531,6 +531,20 @@ jobs:
         if: always()
         run: scripts/local_test_stack.sh stop
 
+  # Guards the pre-push hook's tier classifier (#481). Always runs (no path
+  # filter): scripts/** is not covered by any changes filter, and the test
+  # takes seconds.
+  hook-tests:
+    name: Hook Classifier Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Run pre-push classifier tests
+        run: bash scripts/dev/pre-push-checks.test.sh
+
   # Aggregate gate: the single required status check for branch protection on
   # main (issue #473). Runs on every PR even when path filters skip individual
   # jobs, so a skipped job counts as pass and a missing run can never be
@@ -549,6 +563,7 @@ jobs:
         frontend-e2e-chromium-desktop,
         frontend-e2e-webkit,
         frontend-e2e-real-auth,
+        hook-tests,
       ]
     if: always()
     steps:
@@ -569,26 +584,13 @@ jobs:
     name: Production Approval
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs:
-      [
-        backend,
-        frontend-static,
-        frontend-e2e-chromium,
-        frontend-e2e-chromium-desktop,
-        frontend-e2e-webkit,
-        frontend-e2e-real-auth,
-        backend-advisory,
-        changes,
-      ]
+    needs: [changes, ci-gate]
+    # ci-gate aggregates every validation job and fails on failure OR
+    # cancelled, so requiring its success (not merely "no failure") means a
+    # cancelled validation can never proceed toward deployment (#480).
     if: >
       always() &&
-      needs.backend.result != 'failure' &&
-      needs.frontend-static.result != 'failure' &&
-      needs.frontend-e2e-chromium.result != 'failure' &&
-      needs.frontend-e2e-chromium-desktop.result != 'failure' &&
-      needs.frontend-e2e-webkit.result != 'failure' &&
-      needs.frontend-e2e-real-auth.result != 'failure' &&
-      needs.backend-advisory.result != 'failure' &&
+      needs.ci-gate.result == 'success' &&
       (
         needs.changes.outputs.backend == 'true' ||
         needs.changes.outputs.frontend == 'true' ||

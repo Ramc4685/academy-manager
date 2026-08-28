@@ -22,6 +22,7 @@ from backend.v2.contexts.billing.domain.ledger import (
     PaymentAllocation,
 )
 from backend.v2.contexts.billing.domain.models import (
+    AppliedCreditState,
     AutopayConsent,
     CreditLedgerEntry,
     Payment,
@@ -297,6 +298,8 @@ class CreditLedgerRepository(Protocol):
     async def apply_available_credits(
         self, *, parent_id: str, invoice_id: str, amount_due_cents: int
     ) -> int: ...
+    async def applied_credit_state(self, invoice_id: str) -> AppliedCreditState: ...
+    async def repair_credit_projections(self, invoice_id: str) -> int: ...
     async def find_active_for_enrollment(
         self, *, enrollment_id: str, type: str
     ) -> CreditLedgerEntry | None: ...

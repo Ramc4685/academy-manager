@@ -16,6 +16,8 @@ from backend.v2.contexts.enrollment.domain.errors import StudentParentInvalidRol
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     AdminUserDetail,
     AdminUserSummary,
+    LoginInviteOutcome,
+    UpdateAdminUserResult,
 )
 
 
@@ -130,15 +132,18 @@ class UserDetailStub:
         _ = academy_id
         if command is not None:
             self.updated = command
-            return AdminUserDetail(
-                user_id=user_id,
-                email="parent@example.com",
-                display_name=command.display_name or "Parent One",
-                phone=command.phone,
-                role="parent",
-                roles=("parent",),
-                status=command.status or "active",
-                linked_student_count=1,
+            return UpdateAdminUserResult(
+                user=AdminUserDetail(
+                    user_id=user_id,
+                    email="parent@example.com",
+                    display_name=command.display_name or "Parent One",
+                    phone=command.phone,
+                    role="parent",
+                    roles=("parent",),
+                    status=command.status or "active",
+                    linked_student_count=1,
+                ),
+                login_invite=LoginInviteOutcome(status="not_needed"),
             )
         return AdminUserDetail(
             user_id=user_id,

@@ -1122,6 +1122,21 @@ export interface AdminUserDetail extends AdminUserView {
   login_invite_sent_at?: string | null;
 }
 
+/**
+ * Outcome of the automatic login invite that follows an email edit (#436).
+ * Changing the email clears Firebase's `email_verified`, which blocks
+ * password login until the user completes a fresh set-password link.
+ */
+export interface LoginInviteOutcome {
+  status: "not_needed" | "sent" | "failed";
+  sent_at?: string | null;
+  error?: string | null;
+}
+
+export interface AdminUserUpdated extends AdminUserDetail {
+  login_invite?: LoginInviteOutcome | null;
+}
+
 export interface AdminUserList {
   users: AdminUserView[];
 }
@@ -1352,8 +1367,8 @@ export function updateAdminUser(
     status: string;
     reason: string;
   }>,
-): Promise<AdminUserDetail> {
-  return apiFetch<AdminUserDetail>(`/admin/users/${encodeURIComponent(userId)}`, {
+): Promise<AdminUserUpdated> {
+  return apiFetch<AdminUserUpdated>(`/admin/users/${encodeURIComponent(userId)}`, {
     method: "PATCH",
     body: JSON.stringify(payload),
   });
