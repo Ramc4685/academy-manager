@@ -71,6 +71,7 @@ export interface AdminUnpaidOccurrenceView {
     | "rate_gap"
     | "missing_session_price_for_percent_revenue"
     | "attendance_override"
+    | "replaced_by_actual_coach"
     | "unknown_unpaid_reason"
     | PayoutWarningReason;
   detail: string | null;
@@ -79,6 +80,8 @@ export interface AdminUnpaidOccurrenceView {
   message: string | null;
   coach_id: string | null;
   repair_action: string | null;
+  /** For `replaced_by_actual_coach`, the coach paid instead of this one. */
+  attributed_coach_id: string | null;
 }
 
 export interface AdminPayoutPeriodView {
