@@ -601,3 +601,154 @@ async def test_prior_period_is_not_re_attempted_once_recorded() -> None:
 
     assert calls == []
     assert totals["academy_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Post-generation invoice emails (issue #430)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_generated_invoices_are_emailed_per_academy_and_period() -> None:
+    """Generation creating invoices is only half the job — nothing collected
+    money until the send pass ran."""
+    db = _FakeDb()
+    _seed_history(db, "academy-a", "2026-08")
+    _seed_history(db, "academy-b", "2026-08")
+    sent: list[str] = []
+
+    async def _generate(period: str) -> _FakeResult:
+        return _FakeResult(created=2)
+
+    async def _send(period: str) -> dict[str, int]:
+        sent.append(period)
+        return {"emailed": 2, "email_failed": 0, "skipped_autopay": 1}
+
+    totals = await _run_monthly_invoice_generation(
+        db=db,
+        academy_ids=["academy-a", "academy-b"],
+        get_billing_settings=_settings_getter(
+            {"academy-a": _FakeSettings(1), "academy-b": _FakeSettings(1)}
+        ),
+        generate=_generate,
+        now=datetime(2026, 9, 5, 3, 0),
+        send_invoices=_send,
+    )
+
+    assert sent == ["2026-09", "2026-09"]  # once per academy
+    assert totals["invoices_emailed"] == 4
+    assert totals["invoice_emails_skipped_autopay"] == 2
+    assert totals["invoice_emails_failed"] == 0
+
+
+@pytest.mark.asyncio
+async def test_the_send_pass_runs_on_ticks_that_generate_nothing() -> None:
+    """The send pass is its own retry mechanism. `_due_periods` stops yielding
+    a period the moment generation is recorded, so gating the emails on it
+    would give every month exactly one delivery attempt — one Resend blip on
+    billing day and nobody is ever told they owe money."""
+    db = _FakeDb()
+    _seed_history(db, "academy-a", "2026-08", "2026-09")
+    generated: list[str] = []
+    sent: list[str] = []
+
+    async def _generate(period: str) -> _FakeResult:
+        generated.append(period)
+        return _FakeResult(created=1)
+
+    async def _send(period: str) -> dict[str, int]:
+        sent.append(period)
+        return {"emailed": 1}
+
+    totals = await _run_monthly_invoice_generation(
+        db=db,
+        academy_ids=["academy-a"],
+        get_billing_settings=_settings_getter({"academy-a": _FakeSettings(1)}),
+        generate=_generate,
+        now=datetime(2026, 9, 20, 3, 0),
+        send_invoices=_send,
+    )
+
+    assert generated == []  # nothing left to generate this month
+    assert sent == ["2026-09"]  # but yesterday's undelivered invoices are retried
+    assert totals["invoices_emailed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_catch_up_period_is_emailed_on_the_tick_that_generates_it() -> None:
+    db = _FakeDb()
+    _seed_history(db, "academy-a", "2026-07")
+    sent: list[str] = []
+
+    async def _generate(period: str) -> _FakeResult:
+        return _FakeResult(created=1)
+
+    async def _send(period: str) -> dict[str, int]:
+        sent.append(period)
+        return {"emailed": 1}
+
+    await _run_monthly_invoice_generation(
+        db=db,
+        academy_ids=["academy-a"],
+        get_billing_settings=_settings_getter({"academy-a": _FakeSettings(1)}),
+        generate=_generate,
+        now=datetime(2026, 9, 5, 3, 0),
+        send_invoices=_send,
+    )
+
+    # August (catch-up) and September, oldest first.
+    assert sent == ["2026-08", "2026-09"]
+
+
+@pytest.mark.asyncio
+async def test_a_failing_send_pass_does_not_abort_the_remaining_academies() -> None:
+    """An email provider outage must not cost the second academy its invoice
+    generation record — that would re-walk every enrollment tomorrow."""
+    db = _FakeDb()
+    _seed_history(db, "academy-a", "2026-08")
+    _seed_history(db, "academy-b", "2026-08")
+
+    async def _generate(period: str) -> _FakeResult:
+        return _FakeResult(created=1)
+
+    async def _send(period: str) -> dict[str, int]:
+        raise RuntimeError("resend is down")
+
+    totals = await _run_monthly_invoice_generation(
+        db=db,
+        academy_ids=["academy-a", "academy-b"],
+        get_billing_settings=_settings_getter(
+            {"academy-a": _FakeSettings(1), "academy-b": _FakeSettings(1)}
+        ),
+        generate=_generate,
+        now=datetime(2026, 9, 5, 3, 0),
+        send_invoices=_send,
+    )
+
+    assert totals["academy_count"] == 2
+    assert totals["created"] == 2
+    assert totals["invoices_emailed"] == 0
+    # Both academies still recorded generation, so tomorrow's tick will not
+    # regenerate — only the undelivered invoices get retried.
+    assert db.generation_runs.periods_for("academy-a") == ["2026-08", "2026-09"]
+    assert db.generation_runs.periods_for("academy-b") == ["2026-08", "2026-09"]
+
+
+@pytest.mark.asyncio
+async def test_generation_without_a_send_pass_behaves_as_before() -> None:
+    db = _FakeDb()
+    _seed_history(db, "academy-a", "2026-08")
+
+    async def _generate(period: str) -> _FakeResult:
+        return _FakeResult(created=3)
+
+    totals = await _run_monthly_invoice_generation(
+        db=db,
+        academy_ids=["academy-a"],
+        get_billing_settings=_settings_getter({"academy-a": _FakeSettings(1)}),
+        generate=_generate,
+        now=datetime(2026, 9, 5, 3, 0),
+    )
+
+    assert totals["created"] == 3
+    assert totals["invoices_emailed"] == 0

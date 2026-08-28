@@ -300,9 +300,16 @@ async def list_students(
     status: str | None = Query(default=None, max_length=32),
     limit: int = Query(default=50, ge=1, le=100),
     cursor: str | None = Query(default=None, max_length=512),
+    missing: str | None = Query(
+        default=None,
+        max_length=200,
+        description="Comma-separated required fields still missing, e.g. "
+        "date_of_birth,emergency_contact_name (issue #380)",
+    ),
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminStudentList:
+    missing_keys = tuple(k.strip() for k in missing.split(",") if k.strip()) if missing else ()
     try:
         if cursor is not None:
             decode_student_cursor(cursor)
@@ -311,6 +318,7 @@ async def list_students(
             status=status,
             limit=limit,
             cursor=cursor,
+            missing=missing_keys,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

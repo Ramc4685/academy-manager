@@ -31,12 +31,22 @@ class GetAcademyGatewayOutput:
     manual_methods: list[str]
 
 
-def _mask_account_id(account_id: str | None) -> str | None:
+def mask_stripe_account_id(account_id: str | None) -> str | None:
+    """Shorten a Stripe account id for display.
+
+    Public so the admin Billing Health card (issue #432) renders the account
+    the same way ``GET /admin/academy/gateway`` does, instead of growing a
+    second rendering that disagrees with it.
+    """
     if not account_id:
         return None
     if len(account_id) <= 8:
         return account_id
     return f"{account_id[:4]}...{account_id[-4:]}"
+
+
+#: Back-compat alias for existing in-module callers.
+_mask_account_id = mask_stripe_account_id
 
 
 class GetAcademyGatewayUseCase:

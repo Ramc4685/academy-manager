@@ -93,6 +93,20 @@ def test_admin_students_rejects_malformed_cursor(admin_client):
     assert r.status_code == 400
 
 
+def test_admin_students_missing_filter_accepts_known_fields(admin_client):
+    """Issue #380 gap report — the query param round-trips through to the
+    use case without erroring for a real completeness field."""
+    r = admin_client.get("/api/v2/admin/students?missing=date_of_birth,emergency_contact_name")
+
+    assert r.status_code == 200
+
+
+def test_admin_students_missing_filter_rejects_unknown_field(admin_client):
+    r = admin_client.get("/api/v2/admin/students?missing=not_a_real_field")
+
+    assert r.status_code == 400
+
+
 def test_directory_wrong_persona_404(coach_on_admin_client):
     assert coach_on_admin_client.get("/api/v2/admin/users").status_code == 404
     assert coach_on_admin_client.get("/api/v2/admin/students").status_code == 404

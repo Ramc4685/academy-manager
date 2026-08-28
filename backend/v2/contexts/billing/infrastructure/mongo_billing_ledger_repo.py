@@ -204,6 +204,35 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         )
         return self._invoice_from_doc(doc) if doc else None
 
+    async def list_undelivered_invoices_for_period(
+        self, period: str, *, limit: int = 100
+    ) -> list[LedgerInvoice]:
+        """Invoices for ``period`` that still owe money and were never sent.
+
+        Drives the post-generation email pass (issue #430). ``delivery_status``
+        is the idempotency key: ``sent`` invoices drop out, so a re-run never
+        re-emails a parent, while a ``delivery_failed`` one is retried on the
+        next tick. Legacy docs written before delivery tracking existed carry
+        no ``delivery_status`` field, so null is matched explicitly rather than
+        relying on ``$ne: "sent"``.
+
+        Ordered oldest-first so a period holding more invoices than ``limit``
+        drains deterministically across ticks instead of starving the tail.
+        """
+        academy_id = current_academy_id()
+        cursor = self.collection.find(
+            {
+                "academy_id": academy_id,
+                "period": period,
+                "status": {"$in": ["open", "partially_paid"]},
+                "balance_due_cents": {"$gt": 0},
+                "delivery_status": {"$in": ["not_sent", "delivery_failed", None]},
+            },
+            sort=[("created_at", 1), ("invoice_id", 1)],
+            limit=limit,
+        )
+        return [self._invoice_from_doc(doc) async for doc in cursor]
+
     async def get_payment_by_stripe_payment_intent_id(
         self, stripe_payment_intent_id: str
     ) -> LedgerPayment | None:

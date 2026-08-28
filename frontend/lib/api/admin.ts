@@ -1771,6 +1771,35 @@ export function listBillingWebhookEvents(params: {
   return apiFetch<BillingWebhookQueue>(`/admin/billing/webhooks${suffix}`, { method: "GET" });
 }
 
+// --- Connect readiness (#432) ---------------------------------------------- //
+export interface ConnectedAccountReadiness {
+  configured: boolean;
+  status: string | null;
+  charges_enabled: boolean;
+  payouts_enabled: boolean;
+  ready_for_charges: boolean;
+  account_id_masked: string | null;
+}
+
+export interface ConnectReadiness {
+  connected_account: ConnectedAccountReadiness;
+  allow_platform_charge_fallback: boolean;
+  /** Whether a parent payment can succeed at all right now. */
+  payments_possible: boolean;
+  /**
+   * False while `payments_possible` is true means money is landing on the
+   * platform account through the fallback, not the academy's own.
+   */
+  funds_route_to_academy: boolean;
+  webhook_events: { quarantined: number; failed: number };
+}
+
+export function fetchConnectReadiness(): Promise<ConnectReadiness> {
+  return apiFetch<ConnectReadiness>("/admin/billing/connect-readiness", {
+    method: "GET",
+  });
+}
+
 // --- Billing Health (#235) ------------------------------------------------- //
 export interface ReconciliationRun {
   run_id: string;
@@ -2936,4 +2965,109 @@ export function createAdminUser(payload: CreateAdminUserRequest): Promise<AdminU
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export interface AdminSessionTypeView {
+  session_type_id: string;
+  name: string;
+  description: string | null;
+  price_cents: number;
+  billing_period: "monthly" | "per_session";
+  overage_rate_cents: number | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminSessionTypeList {
+  session_types: AdminSessionTypeView[];
+}
+
+export type AdminBillingEnrollmentStatus =
+  | "active"
+  | "paused"
+  | "cancelled"
+  | "transferred_out";
+
+export interface AdminBillingEnrollmentView {
+  enrollment_id: string;
+  student_id: string;
+  parent_id: string;
+  session_type_id: string;
+  stripe_subscription_id: string | null;
+  billing_start_date: string;
+  status: AdminBillingEnrollmentStatus;
+  override_price_cents: number | null;
+  enrolled_at: string;
+  updated_at: string;
+}
+
+export interface AdminBillingEnrollmentList {
+  enrollments: AdminBillingEnrollmentView[];
+}
+
+export interface AdminSessionTypeProrationView {
+  credit_cents: number;
+  charge_cents: number;
+  net_cents: number;
+  remaining_days: number;
+  total_days: number;
+  proration_ratio: string;
+  from_session_type_id: string | null;
+  to_session_type_id: string;
+  policy_version: string;
+}
+
+export interface MoveBillingEnrollmentRequest {
+  to_session_type_id: string;
+  move_date: string;
+  period_start: string;
+  period_end: string;
+  reason?: string | null;
+}
+
+export interface MoveBillingEnrollmentResponse {
+  enrollment: AdminBillingEnrollmentView;
+  proration: AdminSessionTypeProrationView;
+  stripe_invoice_id: string | null;
+}
+
+export function listAdminSessionTypes(): Promise<AdminSessionTypeList> {
+  return apiFetch<AdminSessionTypeList>("/admin/session-types", { method: "GET" });
+}
+
+export function listAdminBillingEnrollments(params: {
+  studentId?: string;
+  parentId?: string;
+}): Promise<AdminBillingEnrollmentList> {
+  const query = new URLSearchParams();
+  if (params.studentId) query.set("student_id", params.studentId);
+  if (params.parentId) query.set("parent_id", params.parentId);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return apiFetch<AdminBillingEnrollmentList>(`/admin/billing-enrollments${suffix}`, {
+    method: "GET",
+  });
+}
+
+export function moveAdminBillingEnrollment(
+  enrollmentId: string,
+  payload: MoveBillingEnrollmentRequest,
+): Promise<MoveBillingEnrollmentResponse> {
+  return apiFetch<MoveBillingEnrollmentResponse>(
+    `/admin/billing-enrollments/${encodeURIComponent(enrollmentId)}/move`,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
+export function overrideAdminBillingEnrollmentPrice(
+  enrollmentId: string,
+  overridePriceCents: number | null,
+): Promise<AdminBillingEnrollmentView> {
+  return apiFetch<AdminBillingEnrollmentView>(
+    `/admin/billing-enrollments/${encodeURIComponent(enrollmentId)}/override`,
+    {
+      method: "POST",
+      body: JSON.stringify({ override_price_cents: overridePriceCents }),
+    },
+  );
 }

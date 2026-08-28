@@ -531,6 +531,40 @@ jobs:
         if: always()
         run: scripts/local_test_stack.sh stop
 
+  # Aggregate gate: the single required status check for branch protection on
+  # main (issue #473). Runs on every PR even when path filters skip individual
+  # jobs, so a skipped job counts as pass and a missing run can never be
+  # mistaken for success.
+  ci-gate:
+    name: CI Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs:
+      [
+        changes,
+        backend,
+        backend-advisory,
+        frontend-static,
+        frontend-e2e-chromium,
+        frontend-e2e-chromium-desktop,
+        frontend-e2e-webkit,
+        frontend-e2e-real-auth,
+      ]
+    if: always()
+    steps:
+      - name: Verify no required job failed
+        env:
+          NEEDS_JSON: ${{ toJson(needs) }}
+        run: |
+          echo "$NEEDS_JSON" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          bad="$(echo "$NEEDS_JSON" | jq -r \
+            'to_entries[] | select(.value.result == "failure" or .value.result == "cancelled") | .key')"
+          if [ -n "$bad" ]; then
+            echo "::error::CI Gate failed — job(s) failed or were cancelled: $bad"
+            exit 1
+          fi
+          echo "CI Gate passed — every job succeeded or was skipped by path filters."
+
   production-approval:
     name: Production Approval
     runs-on: ubuntu-latest

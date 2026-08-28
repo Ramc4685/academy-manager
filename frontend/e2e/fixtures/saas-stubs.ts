@@ -87,6 +87,48 @@ export async function stubMemberships(
   });
 }
 
+/**
+ * Stub `GET /api/v2/parent/profile`.
+ *
+ * The parent layout (`app/(parent)/layout.tsx`) fetches this on EVERY parent
+ * page to decide whether to show the profile-gap banner (issue #380), so any
+ * spec that lands on a `/parent/*` route needs it stubbed — otherwise the
+ * request falls through to the dev server with no backend behind it and the
+ * browser logs a "Failed to load resource" console error, which trips the
+ * `collectConsoleErrors` / `toEqual([])` contract every SaaS spec asserts.
+ *
+ * Defaults to a complete profile so the banner stays hidden and specs that
+ * only care about the page under test are unaffected. Pass `gaps` to render
+ * the banner deliberately.
+ */
+export async function stubParentProfile(
+  page: Page,
+  overrides: Partial<{
+    user_id: string;
+    display_name: string;
+    email: string;
+    email_confirmed: boolean;
+    phone: string | null;
+    children: unknown[];
+    gaps: { parent: string[]; children: Record<string, string[]>; is_complete: boolean };
+  }> = {}
+): Promise<void> {
+  const body = {
+    user_id: PARENT_USER.user_id,
+    display_name: "Parent Example",
+    email: PARENT_USER.email,
+    email_confirmed: true,
+    phone: "+1 555 0100",
+    children: [],
+    gaps: { parent: [], children: {}, is_complete: true },
+    ...overrides,
+  };
+  await page.route("**/api/v2/parent/profile", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, body);
+  });
+}
+
 export async function stubAcademy(page: Page, academyId: string): Promise<void> {
   await page.route(/\/api\/v2\/admin\/academy(?:\?.*)?$/, (route) => {
     if (route.request().method() !== "GET") return route.fallback();

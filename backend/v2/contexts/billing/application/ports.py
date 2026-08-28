@@ -697,6 +697,9 @@ class LedgerRepository(Protocol):
         *,
         statuses: set[str] | None = None,
     ) -> LedgerInvoice | None: ...
+    async def list_undelivered_invoices_for_period(
+        self, period: str, *, limit: int = 100
+    ) -> list[LedgerInvoice]: ...
     async def get_payment_by_stripe_payment_intent_id(
         self, stripe_payment_intent_id: str
     ) -> LedgerPayment | None: ...

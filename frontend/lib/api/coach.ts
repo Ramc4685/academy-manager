@@ -509,3 +509,48 @@ export async function getSessionTeachingPlan(
     { method: "GET" },
   );
 }
+
+export interface CoachBillingEnrollment {
+  enrollment_id: string;
+  student_id: string;
+  session_type_id: string;
+  session_type_name: string;
+  status: string;
+  billing_start_date: string;
+  override_price_cents: number | null;
+}
+
+export interface CoachProrationPreview {
+  credit_cents: number;
+  charge_cents: number;
+  net_cents: number;
+  from_session_type_id: string | null;
+  to_session_type_id: string;
+}
+
+/** Billing enrollments for students on a session the coach is assigned to. */
+export async function listCoachBillingEnrollments(
+  sessionId: string,
+): Promise<CoachBillingEnrollment[]> {
+  return apiFetch<CoachBillingEnrollment[]>(
+    `/coach/billing-enrollments?session_id=${encodeURIComponent(sessionId)}`,
+    { method: "GET" },
+  );
+}
+
+/**
+ * Read-only proration preview. The matching coach POST move route is 403 by
+ * design, so coach UI must never offer an apply affordance.
+ */
+export async function previewCoachBillingMove(
+  enrollmentId: string,
+  toSessionTypeId: string,
+  moveDate?: string,
+): Promise<CoachProrationPreview> {
+  const query = new URLSearchParams({ to_session_type_id: toSessionTypeId });
+  if (moveDate) query.set("move_date", moveDate);
+  return apiFetch<CoachProrationPreview>(
+    `/coach/billing-enrollments/${encodeURIComponent(enrollmentId)}/move/preview?${query.toString()}`,
+    { method: "GET" },
+  );
+}

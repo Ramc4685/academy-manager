@@ -494,13 +494,24 @@ def test_invoice_job_records_a_heartbeat_only_when_nothing_was_generated() -> No
     (`ran_any`), so it is the right "meaningful" bar. If a refactor ever drops
     the gate, ~29 heartbeat ticks a month would overwrite the last real run's
     counts with zeros and the digest would report nothing but zeros forever.
+
+    Issue #430 widened the bar — but only to other real work. The auto-email
+    pass runs on every tick (it is the retry path for a failed delivery), so a
+    tick that emailed or failed to email must also store its counts, or a
+    month-long email outage would be invisible on the 29 days that generated
+    nothing. A tick that did neither still writes a heartbeat only.
     """
     from backend.v2.main import _lifespan
 
     body = inspect.getsource(_lifespan).split("_generate_monthly_invoices_body", 2)[2]
     call = body.split("record_job_run(", 1)[1].split("        )", 1)[0]
 
-    assert 'meaningful=bool(totals["academy_count"])' in call
+    assert 'totals["academy_count"]' in call
+    assert 'totals["invoices_emailed"]' in call
+    assert 'totals["invoice_emails_failed"]' in call
+    # Still gated: an idle tick must not overwrite the last real run's counts.
+    assert "meaningful=bool(" in call
+    assert "meaningful=True" not in call
     # The stored record must use #440's `created_count` naming so the email and
     # the structured log line agree.
     assert 'record["created_count"] = totals["created"]' in body
