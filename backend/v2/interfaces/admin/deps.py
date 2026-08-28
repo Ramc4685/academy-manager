@@ -268,6 +268,9 @@ class AdminUseCases:
     reconcile_stripe_billing: object | None = None  # callable
     get_billing_reconciliation_report: object | None = None  # callable
     list_billing_webhook_events: object | None = None  # callable
+    # Issue #432: async () -> dict — Connect readiness + webhook backlog for
+    # the admin Billing Health card.
+    get_connect_readiness: object | None = None
     get_admin_user: GetAdminUser | None = None
     update_admin_user: UpdateAdminUser | None = None
     create_admin_user: CreateAdminUser | None = None

@@ -5,6 +5,7 @@ from __future__ import annotations
 import collections
 import csv
 import io
+import logging
 import re
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
@@ -407,6 +408,7 @@ from backend.v2.contexts.identity.application.change_user_role_use_case import C
 from backend.v2.contexts.identity.application.get_academy_fees_use_case import GetAcademyFeesUseCase
 from backend.v2.contexts.identity.application.get_academy_gateway_use_case import (
     GetAcademyGatewayUseCase,
+    mask_stripe_account_id,
 )
 from backend.v2.contexts.identity.application.get_academy_notifications_use_case import (
     GetAcademyNotificationsUseCase,
@@ -634,6 +636,9 @@ class _ConnectedAccountGatewayDisabler:
                 charges_enabled=False,
                 payouts_enabled=False,
             )
+
+
+log = logging.getLogger(__name__)
 
 
 def compose_admin(
@@ -3362,6 +3367,63 @@ def compose_admin(
         rows = sorted(latest.values(), key=lambda r: r["last_paid_at"], reverse=True)
         return await _enrich_parent_names(rows)
 
+    async def get_connect_readiness() -> dict[str, Any]:
+        """Can a parent payment physically succeed right now? (issue #432)
+
+        Every parent payment is gated on one condition — an `active` connected
+        account with `charges_enabled` — or on the platform-charge fallback
+        being switched on. Nothing in the admin UI showed either, so an academy
+        could be unable to take a single payment with no visible signal.
+
+        Webhook counts are real counts, not the length of the capped list the
+        page used to count: that list saturates at 50, so "50 quarantined"
+        could mean 50 or 5,000.
+        """
+        from backend.v2.contexts.billing.infrastructure.mongo_stripe_dedup import (
+            MongoStripeEventDedup,
+        )
+        from backend.v2.shared.tenancy import current_academy_id
+
+        request_academy_id = current_academy_id()
+
+        account = await connected_accounts_repo.get_for_academy()
+        try:
+            settings_doc = await billing_settings_repo.get()
+            fallback_allowed = bool(settings_doc.allow_platform_charge_fallback)
+        except Exception:
+            # Match the charge path, which fails closed on a settings read
+            # error. Reporting "fallback is on" when we do not know would
+            # tell the owner payments are fine when they may not be.
+            log.warning("connect_readiness_settings_read_failed", exc_info=True)
+            fallback_allowed = False
+
+        stuck = await MongoStripeEventDedup(db).count_stuck_by_status(academy_id=request_academy_id)
+
+        ready = bool(account and account.is_ready_for_charges())
+        return {
+            "connected_account": {
+                "configured": account is not None,
+                "status": account.status if account else None,
+                "charges_enabled": bool(account and account.charges_enabled),
+                "payouts_enabled": bool(account and account.payouts_enabled),
+                "ready_for_charges": ready,
+                # Same masking as GET /admin/academy/gateway — the account id
+                # is a Stripe identifier, not a secret, but there is no reason
+                # for two admin surfaces to disagree about showing it.
+                "account_id_masked": mask_stripe_account_id(
+                    account.stripe_account_id if account else None
+                ),
+            },
+            "allow_platform_charge_fallback": fallback_allowed,
+            # The headline the card leads with: charges route to the academy's
+            # account when ready, and otherwise only succeed at all if the
+            # platform fallback is on — in which case the money lands on the
+            # platform account instead of theirs.
+            "payments_possible": ready or fallback_allowed,
+            "funds_route_to_academy": ready,
+            "webhook_events": stuck,
+        }
+
     async def list_billing_webhook_events(*, status: str | None = None, limit: int = 50):
         from backend.v2.shared.tenancy import current_academy_id
 
@@ -4457,6 +4519,7 @@ def compose_admin(
         reconcile_stripe_billing=reconcile_stripe_billing,
         get_billing_reconciliation_report=get_billing_reconciliation_report,
         list_billing_webhook_events=list_billing_webhook_events,
+        get_connect_readiness=get_connect_readiness,
         record_expense=record_expense,
         edit_expense=edit_expense,
         delete_expense=delete_expense,

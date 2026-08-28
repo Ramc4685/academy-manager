@@ -64,6 +64,27 @@ const DUNNING_ROW = {
   currency: "usd",
 };
 
+const READY_CONNECT = {
+  connected_account: {
+    configured: true,
+    status: "active",
+    charges_enabled: true,
+    payouts_enabled: true,
+    ready_for_charges: true,
+    account_id_masked: "acct...6f21",
+  },
+  allow_platform_charge_fallback: false,
+  payments_possible: true,
+  funds_route_to_academy: true,
+  webhook_events: { quarantined: 1, failed: 0 },
+};
+
+async function stubConnectReadiness(page: Page, body: unknown): Promise<void> {
+  await page.route("**/api/v2/admin/billing/connect-readiness", (route) =>
+    fulfillJson(route, body),
+  );
+}
+
 async function stubAdmin(page: Page): Promise<void> {
   await stubMe(page, ADMIN_USER_A);
   await stubMemberships(page, [
@@ -75,6 +96,11 @@ async function stubAdmin(page: Page): Promise<void> {
     if (route.request().method() !== "GET") return route.fallback();
     return fulfillJson(route, {});
   });
+  // Healthy Connect readiness by default (#432). Must come after the
+  // catch-all — later routes win — or the card would receive `{}` and the
+  // page would crash on the missing connected_account. A test that needs a
+  // different state registers its own route afterwards.
+  await stubConnectReadiness(page, READY_CONNECT);
 }
 
 async function stubDunning(page: Page, rows: unknown[] = []): Promise<void> {
@@ -259,5 +285,97 @@ test.describe("admin billing health", () => {
 
     await expect(page.getByTestId("attempts-timeline")).toBeVisible();
     await expect(page.getByText("Your card was declined.")).toBeVisible();
+  });
+  test("payment readiness card shows a healthy connected account", async ({ page }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdmin(page);
+    await stubDunning(page);
+
+    await page.goto("/admin/billing-health");
+
+    const card = page.getByTestId("payment-readiness");
+    await expect(card).toBeVisible();
+    await expect(card).toHaveAttribute("data-tone", "green");
+    await expect(card.getByText("Ready to take payments")).toBeVisible();
+    await expect(card.getByText("acct...6f21")).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+
+  test("payment readiness card warns when parents cannot pay at all", async ({ page }) => {
+    await stubAdmin(page);
+    await stubDunning(page);
+    await stubConnectReadiness(page, {
+      connected_account: {
+        configured: false,
+        status: null,
+        charges_enabled: false,
+        payouts_enabled: false,
+        ready_for_charges: false,
+        account_id_masked: null,
+      },
+      allow_platform_charge_fallback: false,
+      payments_possible: false,
+      funds_route_to_academy: false,
+      webhook_events: { quarantined: 0, failed: 0 },
+    });
+
+    await page.goto("/admin/billing-health");
+
+    const card = page.getByTestId("payment-readiness");
+    await expect(card).toHaveAttribute("data-tone", "red");
+    await expect(card.getByText("Parents cannot pay right now")).toBeVisible();
+  });
+
+  test("payment readiness card flags money landing on the platform account", async ({
+    page,
+  }) => {
+    await stubAdmin(page);
+    await stubDunning(page);
+    await stubConnectReadiness(page, {
+      connected_account: {
+        configured: true,
+        status: "restricted",
+        charges_enabled: false,
+        payouts_enabled: false,
+        ready_for_charges: false,
+        account_id_masked: "acct...6f21",
+      },
+      allow_platform_charge_fallback: true,
+      payments_possible: true,
+      funds_route_to_academy: false,
+      webhook_events: { quarantined: 0, failed: 2 },
+    });
+
+    await page.goto("/admin/billing-health");
+
+    const card = page.getByTestId("payment-readiness");
+    // Payments succeed, so this is not red — but the money is not the
+    // academy's, so it must not read as healthy either.
+    await expect(card).toHaveAttribute("data-tone", "amber");
+    await expect(card.getByText(/landing on the platform account/)).toBeVisible();
+  });
+
+  test("stat tiles report real webhook counts, not a capped page length", async ({
+    page,
+  }) => {
+    await stubAdmin(page);
+    await stubDunning(page);
+    await page.route("**/api/v2/admin/billing/webhooks**", (route) =>
+      fulfillJson(route, { events: [QUARANTINED_EVENT] }),
+    );
+    await stubConnectReadiness(page, {
+      ...READY_CONNECT,
+      webhook_events: { quarantined: 137, failed: 4 },
+    });
+
+    await page.goto("/admin/billing-health");
+
+    // The list route returns one event; the count says 137. Before #432 the
+    // tile counted that list and would have shown 1.
+    await expect(page.getByText("137", { exact: true })).toBeVisible();
+    await expect(page.getByText("Failed Events")).toBeVisible();
+    await expect(page.getByTestId("payment-readiness")).toContainText(
+      "137 quarantined · 4 failed",
+    );
   });
 });

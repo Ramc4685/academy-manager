@@ -35,6 +35,36 @@ class MongoStripeEventDedup:
     def __init__(self, db: AsyncIOMotorDatabase) -> None:
         self._coll = db[self.COLLECTION]
 
+    async def count_stuck_by_status(self, *, academy_id: str) -> dict[str, int]:
+        """Real counts of stuck webhook events for one academy (issue #432).
+
+        The admin Billing Health page used to count the length of a list route
+        capped at 50, so "50 quarantined" meant anything from 50 to 5,000.
+
+        ``academy_id`` is a required keyword rather than read from the tenant
+        ContextVar because this class is not a ``TenantScopedRepository`` — its
+        write paths run inside the Stripe webhook, before a tenant is resolved.
+        Making the caller pass the request tenant keeps a missing filter a
+        visible mistake instead of a silent cross-tenant read.
+        """
+        counts = {"quarantined": 0, "failed": 0}
+        cursor = self._coll.aggregate(
+            [
+                {
+                    "$match": {
+                        "academy_id": academy_id,
+                        "status": {"$in": ["quarantined", "failed"]},
+                    }
+                },
+                {"$group": {"_id": "$status", "total": {"$sum": 1}}},
+            ]
+        )
+        async for row in cursor:
+            status = row.get("_id")
+            if status in counts:
+                counts[status] = int(row.get("total") or 0)
+        return counts
+
     async def claim(self, event_id: str, event_type: str) -> bool:
         now = datetime.now(UTC)
         try:
