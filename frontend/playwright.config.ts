@@ -46,13 +46,21 @@ export default defineConfig({
     },
   },
   projects: [
+    // Warms every app route once so no spec pays the dev-server's cold
+    // compile inside its own timeouts (the dominant local flake source).
+    {
+      name: "setup",
+      testMatch: /warmup\.setup\.ts/,
+    },
     {
       name: "chromium-mobile",
       use: { ...devices["Pixel 7"] },
+      dependencies: ["setup"],
     },
     {
       name: "webkit-mobile",
       use: { ...devices["iPhone 14"] },
+      dependencies: ["setup"],
     },
     // Desktop viewport so the admin lg: sidebar branch (the primary admin
     // navigation on real screens) is exercised end-to-end. Scoped via
@@ -65,6 +73,7 @@ export default defineConfig({
         viewport: { width: 1280, height: 800 },
       },
       testMatch: /admin-(shell|students|registrations)\.spec\.ts/,
+      dependencies: ["setup"],
     },
   ],
 });
