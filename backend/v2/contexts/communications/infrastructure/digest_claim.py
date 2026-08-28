@@ -19,7 +19,7 @@ The re-claim is a single conditional ``find_one_and_update``:
   attempt every hour for the rest of the day;
 * being one atomic update, two concurrent scheduler ticks cannot both win it.
 
-Rows written before migration 0153 carry no ``attempt_count``; the migration
+Rows written before migration 0154 carry no ``attempt_count``; the migration
 backfills them, and ``_from_doc`` defaults a missing value to 1 so a partially
 migrated database degrades to "one retry allowed", never to a crash.
 """

@@ -8,7 +8,7 @@ A failed coach or parent daily digest is now retried on the next hourly tick ins
 
 ## Deploy notes
 
-Migration `0153_digest_send_attempt_count` backfills `attempt_count` on existing `coach_digest_sends` and `parent_digest_sends` rows. It runs **automatically on boot** (`run_migrations_on_boot`); no manual step. It is required for the retry to work on rows written before this deploy.
+Migration `0154_digest_send_attempt_count` backfills `attempt_count` on existing `coach_digest_sends` and `parent_digest_sends` rows. It runs **automatically on boot** (`run_migrations_on_boot`); no manual step. It is required for the retry to work on rows written before this deploy.
 
 Boot now makes one outbound Resend request (`Domains.list`) when `email_delivery_enabled` and `resend_api_key` are both set, bounded by a 10s timeout and never fatal. No new env vars. Bounce/complaint webhooks and a suppression list are explicitly out of scope and still open.
 

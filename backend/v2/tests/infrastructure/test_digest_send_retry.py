@@ -49,7 +49,7 @@ DIGEST_DATE = "2026-06-12"
 
 _coach_indexes = importlib.import_module("backend.v2.migrations.0125_coach_digest_send_indexes")
 _parent_indexes = importlib.import_module("backend.v2.migrations.0148_parent_digest_send_indexes")
-_backfill = importlib.import_module("backend.v2.migrations.0153_digest_send_attempt_count")
+_backfill = importlib.import_module("backend.v2.migrations.0154_digest_send_attempt_count")
 
 
 async def _coach_db() -> Any:

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-version = "0153_digest_send_attempt_count"
+version = "0154_digest_send_attempt_count"
 
 COLLECTIONS = ("coach_digest_sends", "parent_digest_sends")
 

@@ -154,7 +154,7 @@ class MongoDigestSendRepository(TenantScopedRepository, DigestSendRepository):
             failed_reason=doc.get("failed_reason"),
             created_at=doc.get("created_at"),
             kind=str(doc.get("kind") or "daily"),
-            # Rows written before migration 0153 have no attempt_count.
+            # Rows written before migration 0154 have no attempt_count.
             attempt_count=int(doc.get("attempt_count") or 1),
             retryable=bool(doc.get("retryable", True)),
         )
