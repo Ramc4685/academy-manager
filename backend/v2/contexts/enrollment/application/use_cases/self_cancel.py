@@ -16,6 +16,17 @@ billing context's existing ``AddInvoiceLine`` use case (the real
 production line-append path). This use case never calls Stripe, never
 closes/settles invoices, and never touches refund/credit machinery.
 
+CAPACITY: cancelling frees the seat. ``reserved_seats`` is a monotonic
+counter — ``SessionWriter.try_reserve_seat`` only ever ``$inc``s it — so a
+cancel that does not ``release_seat`` leaves the session reading full
+forever, blocking every future approval AND hiding seats in the parent
+catalog (which takes ``max(enrolled_count, reserved_seats)``). So, exactly
+like the admin path (``admin_writes.CancelEnrollment``), a successful
+self-cancel releases the seat and emits ``EnrollmentCancelled``
+(``reason="parent_cancel"``) — the event ``PromoteFromWaitlist`` listens
+for. Both happen only when the status CAS actually transitioned the
+enrollment, so a double-submitted cancel can never double-release a seat.
+
 ERROR HANDLING: the enrollment-status CAS write (``mark_cancelled_by_parent``)
 is the source of truth for cancellation and always commits first — the
 parent's enrollment is durably cancelled the moment that write succeeds.
@@ -77,6 +88,10 @@ from typing import Any, Protocol
 from pydantic import BaseModel, Field
 
 from backend.v2.contexts.enrollment.domain.errors import EnrollmentNotFound
+from backend.v2.contexts.enrollment.domain.events import (
+    EnrollmentCancelled,
+    EnrollmentCancelledPayload,
+)
 from backend.v2.contexts.enrollment.domain.models import Enrollment, Student
 from backend.v2.contexts.enrollment.domain.self_service import (
     EnrollmentNotCancellable,
@@ -84,6 +99,7 @@ from backend.v2.contexts.enrollment.domain.self_service import (
     SelfCancelTerms,
     compute_self_cancel_terms,
 )
+from backend.v2.shared.events import Outbox
 
 log = logging.getLogger(__name__)
 
@@ -148,6 +164,15 @@ class SelfCancelOccurrenceQuery(Protocol):
     async def next_upcoming_start_for_session(
         self, session_id: str, *, now: datetime
     ) -> datetime | None: ...
+
+
+class SelfCancelSessionWriter(Protocol):
+    """Minimal slice of ``SessionWriter``: give back the seat this enrollment
+    was holding. Capacity is a monotonic ``reserved_seats`` counter
+    (``try_reserve_seat`` only ever ``$inc``s it), so every path that ends an
+    enrollment must decrement it or the session reads full forever."""
+
+    async def release_seat(self, session_id: str) -> None: ...
 
 
 class SelfCancelBillingPort(Protocol):
@@ -282,6 +307,8 @@ class SelfCancelEnrollment:
         students: SelfCancelStudentQuery,
         policies: SelfCancelPolicyRepository,
         occurrences: SelfCancelOccurrenceQuery,
+        sessions: SelfCancelSessionWriter,
+        outbox: Outbox,
         billing: SelfCancelBillingPort | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
@@ -289,6 +316,8 @@ class SelfCancelEnrollment:
         self._students = students
         self._policies = policies
         self._occurrences = occurrences
+        self._sessions = sessions
+        self._outbox = outbox
         self._billing = billing
         self._now = clock
 
@@ -332,6 +361,28 @@ class SelfCancelEnrollment:
             raise EnrollmentNotCancellable(
                 "enrollment is no longer active", enrollment_id=cmd.enrollment_id
             )
+
+        # Capacity compensation, mirroring the admin cancel path
+        # (``admin_writes.CancelEnrollment``): give the seat back, then emit
+        # ``EnrollmentCancelled`` so ``PromoteFromWaitlist`` runs. Both are
+        # reached only when the CAS above actually transitioned this
+        # enrollment, so a double-submitted cancel (whose loser raises just
+        # above) can never double-release a seat or promote twice. Runs
+        # before the best-effort fee billing below: a fee-billing failure
+        # must never leave the seat stranded.
+        await self._sessions.release_seat(updated.session_id)
+        await self._outbox.append(
+            EnrollmentCancelled(
+                aggregate_id=updated.enrollment_id,
+                academy_id=updated.academy_id,
+                payload=EnrollmentCancelledPayload(
+                    enrollment_id=updated.enrollment_id,
+                    session_id=updated.session_id,
+                    student_id=updated.student_id,
+                    reason="parent_cancel",
+                ),
+            )
+        )
 
         if terms.fee_cents > 0 and self._billing is not None:
             try:
@@ -459,6 +510,7 @@ __all__ = [
     "SelfCancelEnrollmentWriter",
     "SelfCancelOccurrenceQuery",
     "SelfCancelPolicyRepository",
+    "SelfCancelSessionWriter",
     "SelfCancelStudentQuery",
     "SelfCancellationAdminView",
     "SelfCancellationEnrollmentQuery",

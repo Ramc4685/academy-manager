@@ -245,6 +245,35 @@ class _FakeBillingThatFails:
         raise self.error
 
 
+class _FakeSessions:
+    """Fake ``SelfCancelSessionWriter``: records every seat release so tests
+    can assert the reserved-seat counter is decremented exactly once."""
+
+    def __init__(self) -> None:
+        self.released: list[str] = []
+
+    async def release_seat(self, session_id: str) -> None:
+        self.released.append(session_id)
+
+
+class _FakeSessionsThatFail:
+    def __init__(self, error: Exception | None = None) -> None:
+        self.error = error or RuntimeError("mongo write timed out")
+        self.calls = 0
+
+    async def release_seat(self, session_id: str) -> None:
+        self.calls += 1
+        raise self.error
+
+
+class _FakeOutbox:
+    def __init__(self) -> None:
+        self.events: list[Any] = []
+
+    async def append(self, event: Any, *, session: Any = None) -> None:
+        self.events.append(event)
+
+
 def _use_case(
     *,
     enrollments: _FakeEnrollments | None = None,
@@ -252,6 +281,8 @@ def _use_case(
     policies: _FakePolicies | None = None,
     occurrences: _FakeOccurrenceForSession | None = None,
     billing: _FakeBilling | None = None,
+    sessions: _FakeSessions | None = None,
+    outbox: _FakeOutbox | None = None,
     clock=lambda: datetime(2026, 7, 6, 12, 0, tzinfo=UTC),
 ) -> SelfCancelEnrollment:
     return SelfCancelEnrollment(
@@ -259,6 +290,8 @@ def _use_case(
         students=students or _FakeStudents(),
         policies=policies or _FakePolicies(),
         occurrences=occurrences or _FakeOccurrenceForSession(),
+        sessions=sessions or _FakeSessions(),
+        outbox=outbox or _FakeOutbox(),
         billing=billing,
         clock=clock,
     )
@@ -458,6 +491,101 @@ async def test_double_submit_second_call_raises_not_cancellable_no_second_fee_li
 
     # No second fee line appended for the rejected second call.
     assert len(billing.fee_calls) == 1
+
+
+async def test_self_cancel_releases_seat_and_emits_cancelled_event() -> None:
+    """Capacity is a monotonic ``reserved_seats`` counter incremented by
+    ``try_reserve_seat``; if a parent self-cancel never releases it the
+    session reads full forever and no waitlisted student is ever promoted
+    (``EnrollmentCancelled`` is what drives ``PromoteFromWaitlist``)."""
+    enrollments = _FakeEnrollments([_enrollment()])
+    sessions = _FakeSessions()
+    outbox = _FakeOutbox()
+    now = datetime(2026, 7, 6, 12, 0, tzinfo=UTC)
+    uc = _use_case(
+        enrollments=enrollments,
+        policies=_FakePolicies(_policy(minimum_notice_days=7, fee_cents=0, timing="immediate")),
+        occurrences=_FakeOccurrenceForSession({"session-1": now + timedelta(days=30)}),
+        sessions=sessions,
+        outbox=outbox,
+        clock=lambda: now,
+    )
+
+    await uc.execute(
+        SelfCancelEnrollmentCommand(
+            enrollment_id="enr-1", parent_id="parent-1", reason="moving away"
+        )
+    )
+
+    assert sessions.released == ["session-1"]
+
+    [event] = outbox.events
+    assert event.name == "Enrollment.EnrollmentCancelled"
+    assert event.academy_id == "acad"
+    assert event.aggregate_id == "enr-1"
+    assert event.payload.enrollment_id == "enr-1"
+    assert event.payload.session_id == "session-1"
+    assert event.payload.student_id == "student-1"
+    assert event.payload.reason == "parent_cancel"
+
+
+async def test_double_self_cancel_releases_the_seat_only_once() -> None:
+    """The seat must be released only when the CAS actually transitioned the
+    enrollment — otherwise a double-submitted cancel over-releases and the
+    session silently gains a phantom free seat."""
+    enrollments = _FakeEnrollments([_enrollment()])
+    sessions = _FakeSessions()
+    outbox = _FakeOutbox()
+    now = datetime(2026, 7, 6, 12, 0, tzinfo=UTC)
+    uc = _use_case(
+        enrollments=enrollments,
+        policies=_FakePolicies(_policy(minimum_notice_days=7, fee_cents=0, timing="immediate")),
+        occurrences=_FakeOccurrenceForSession({"session-1": now + timedelta(days=30)}),
+        sessions=sessions,
+        outbox=outbox,
+        clock=lambda: now,
+    )
+
+    await uc.execute(
+        SelfCancelEnrollmentCommand(enrollment_id="enr-1", parent_id="parent-1", reason="first")
+    )
+    with pytest.raises(EnrollmentNotCancellable):
+        await uc.execute(
+            SelfCancelEnrollmentCommand(
+                enrollment_id="enr-1", parent_id="parent-1", reason="second"
+            )
+        )
+
+    assert sessions.released == ["session-1"]
+    assert len(outbox.events) == 1
+
+
+async def test_seat_release_runs_before_best_effort_fee_billing() -> None:
+    """Fee billing is explicitly best-effort (see module docstring); the seat
+    release is not allowed to be collateral damage of a billing failure."""
+    enrollments = _FakeEnrollments([_enrollment()])
+    sessions = _FakeSessions()
+    outbox = _FakeOutbox()
+    billing = _FakeBillingThatFails()
+    now = datetime(2026, 7, 6, 12, 0, tzinfo=UTC)
+    uc = _use_case(
+        enrollments=enrollments,
+        policies=_FakePolicies(_policy(minimum_notice_days=7, fee_cents=2500, timing="immediate")),
+        occurrences=_FakeOccurrenceForSession({"session-1": now + timedelta(days=1)}),
+        sessions=sessions,
+        outbox=outbox,
+        billing=billing,  # type: ignore[arg-type]
+        clock=lambda: now,
+    )
+
+    result = await uc.execute(
+        SelfCancelEnrollmentCommand(enrollment_id="enr-1", parent_id="parent-1", reason="bye")
+    )
+
+    assert result.status == "cancelled"
+    assert billing.calls == 1
+    assert sessions.released == ["session-1"]
+    assert len(outbox.events) == 1
 
 
 async def test_preview_agrees_with_cancel_same_helper_same_inputs() -> None:
