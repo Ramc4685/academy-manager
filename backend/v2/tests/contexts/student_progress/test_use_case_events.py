@@ -27,6 +27,9 @@ from backend.v2.contexts.student_progress.application.use_cases.update_skill_sta
     UpdateSkillStatus,
     UpdateSkillStatusCommand,
 )
+from backend.v2.contexts.student_progress.domain.errors import (
+    RecommendationAlreadyReviewed,
+)
 from backend.v2.contexts.student_progress.domain.models import (
     LevelUpRecommendation,
     SkillCertificate,
@@ -142,8 +145,12 @@ class _RecommendationRepo:
         reviewed_by: str | None,
         reviewed_at: object | None,
         rejection_reason: str | None,
-    ) -> None:
+        *,
+        expected_status: str | None = None,
+    ) -> bool:
         rec = self.rows[rec_id]
+        if expected_status is not None and rec.status != expected_status:
+            return False
         self.rows[rec_id] = rec.model_copy(
             update={
                 "status": status,
@@ -152,6 +159,7 @@ class _RecommendationRepo:
                 "rejection_reason": rejection_reason,
             }
         )
+        return True
 
     async def get(self, rec_id: str) -> LevelUpRecommendation | None:
         return self.rows.get(rec_id)
@@ -525,3 +533,62 @@ async def test_review_level_up_approve_emits_leveled_up_and_certificate_events()
     assert certificate_issued.payload.level_id == "level-1"
     assert certificate_issued.payload.program_id == "program-1"
     assert certificate_issued.payload.issued_by == "admin-1"
+
+
+@pytest.mark.asyncio
+async def test_review_level_up_replayed_approve_is_rejected_without_side_effects() -> None:
+    level_progress = _LevelProgressRepo()
+    await level_progress.save(_active_progress())
+    skill_progress = _SkillProgressRepo()
+    recommendations = _RecommendationRepo()
+    await recommendations.save(
+        LevelUpRecommendation(
+            rec_id="rec-1",
+            academy_id="academy-1",
+            student_id="student-1",
+            from_level_id="level-1",
+            to_level_id="level-2",
+            program_id="program-1",
+            status="RECOMMENDED",
+            recommended_by="coach-1",
+            recommended_at=_NOW,
+        )
+    )
+    certs = _CertificateRepo()
+    outbox = _FakeOutbox()
+    use_case = ReviewLevelUpRecommendation(
+        recommendations=recommendations,
+        level_progress=level_progress,
+        skill_progress=skill_progress,
+        certificates=certs,
+        skill_lookup=_SkillLookup(),
+        outbox=outbox,
+    )
+    command = ReviewLevelUpCommand(
+        rec_id="rec-1",
+        action="approve",
+        reviewed_by="admin-1",
+        student_name="Student One",
+        level_name="Level One",
+        program_name="Program One",
+        level_sequence=1,
+    )
+
+    with tenant_scope("academy-1"):
+        await use_case.execute(command)
+        # The student earns real level-2 progress after the first approval.
+        await skill_progress.upsert(
+            _skill_progress("skill-3", "PASSED").model_copy(update={"level_id": "level-2"})
+        )
+
+        with pytest.raises(RecommendationAlreadyReviewed):
+            await use_case.execute(command)
+
+    assert len(certs.rows) == 1
+    assert len(outbox.events) == 2
+    level_2_rows = [row for row in level_progress.rows.values() if row.level_id == "level-2"]
+    assert len(level_2_rows) == 1
+    assert level_2_rows[0].status == "active"
+    seeded = await skill_progress.get("student-1", "skill-3")
+    assert seeded is not None
+    assert seeded.status == "PASSED"

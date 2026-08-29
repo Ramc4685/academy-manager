@@ -14,6 +14,7 @@ from backend.v2.contexts.student_progress.application.ports import (
     StudentSkillProgressRepository,
 )
 from backend.v2.contexts.student_progress.domain.errors import (
+    RecommendationAlreadyReviewed,
     RecommendationNotFound,
 )
 from backend.v2.contexts.student_progress.domain.events import (
@@ -83,6 +84,27 @@ class ReviewLevelUpRecommendation:
         now = datetime.now(UTC)
         cert_id: str | None = None
         new_progress_id: str | None = None
+        decision = "APPROVED" if cmd.action == "approve" else "REJECTED"
+
+        # Claim the review before anything else: the status transition is a
+        # compare-and-set on RECOMMENDED, so a double-clicked or retried review
+        # loses the race and stops here — no duplicate certificate, no second
+        # active level row, no re-seeding of skills earned since the first
+        # approval.
+        claimed = await self._recs.update_status(
+            cmd.rec_id,
+            decision,
+            cmd.reviewed_by,
+            now,
+            cmd.rejection_reason if cmd.action != "approve" else None,
+            expected_status="RECOMMENDED",
+        )
+        if not claimed:
+            raise RecommendationAlreadyReviewed(
+                "recommendation has already been reviewed",
+                rec_id=cmd.rec_id,
+                status=rec.status,
+            )
 
         if cmd.action == "approve":
             # Complete current level progress
@@ -145,8 +167,6 @@ class ReviewLevelUpRecommendation:
             )
             await self._certs.save(cert)
 
-            await self._recs.update_status(cmd.rec_id, "APPROVED", cmd.reviewed_by, now, None)
-
             if self._outbox is not None:
                 academy_id = _resolve_academy_id()
                 await self._outbox.append(
@@ -179,13 +199,8 @@ class ReviewLevelUpRecommendation:
                     )
                 )
 
-        else:  # reject
-            await self._recs.update_status(
-                cmd.rec_id, "REJECTED", cmd.reviewed_by, now, cmd.rejection_reason
-            )
-
         return ReviewLevelUpResult(
             rec_id=cmd.rec_id,
-            status="APPROVED" if cmd.action == "approve" else "REJECTED",
+            status=decision,
             cert_id=cert_id,
         )

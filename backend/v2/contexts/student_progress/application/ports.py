@@ -59,7 +59,18 @@ class LevelUpRecommendationRepository(Protocol):
         reviewed_by: str | None,
         reviewed_at: object | None,
         rejection_reason: str | None,
-    ) -> None: ...
+        *,
+        expected_status: str | None = None,
+    ) -> bool:
+        """Move a recommendation to ``status``.
+
+        When ``expected_status`` is given the write is a compare-and-set: it
+        only applies while the stored status still matches. Returns whether
+        the transition was applied, so callers can make review side effects
+        happen at most once.
+        """
+        ...
+
     async def get(self, rec_id: str) -> LevelUpRecommendation | None: ...
     async def get_active_for_student(
         self, student_id: str, program_id: str

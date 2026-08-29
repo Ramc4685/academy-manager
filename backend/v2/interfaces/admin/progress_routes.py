@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from backend.v2.contexts.student_progress.application.errors import (
     ProgressNextAction,
+    RecommendationAlreadyReviewed,
     RecommendationNotFound,
     StudentNotPlaced,
 )
@@ -451,6 +452,8 @@ async def approve_level_up(
         )
     except RecommendationNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RecommendationAlreadyReviewed as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return result.model_dump()
 
 
@@ -515,6 +518,8 @@ async def reject_level_up(
         )
     except RecommendationNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RecommendationAlreadyReviewed as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return result.model_dump()
 
 
