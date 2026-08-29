@@ -11,6 +11,8 @@ set -euo pipefail
 source "$(cd "$(dirname "$0")" && pwd)/lib/classify-changes.sh"
 # shellcheck source=scripts/dev/lib/select-backend-tests.sh
 source "$(cd "$(dirname "$0")" && pwd)/lib/select-backend-tests.sh"
+# shellcheck source=scripts/dev/lib/e2e-projects.sh
+source "$(cd "$(dirname "$0")" && pwd)/lib/e2e-projects.sh"
 
 FAILURES=0
 CASES=0
@@ -98,6 +100,76 @@ assert_select "non-python change selects nothing" \
 assert_select "empty input selects nothing" \
   '' \
   ''
+
+# ── e2e project sharding ──────────────────────────────────────────────────────
+# The gate runs one Playwright invocation per project (mirroring CI's
+# one-job-per-project matrix), reading the list from playwright.config.ts so a
+# project added there is never silently skipped locally.
+
+# assert_projects <name> <config-contents> <expected-newline-separated>
+assert_projects() {
+  local name="$1" contents="$2" want="$3"
+  CASES=$((CASES + 1))
+  local tmp
+  tmp="$(mktemp)"
+  printf '%s\n' "$contents" > "$tmp"
+  local got
+  got="$(e2e_projects "$tmp" || true)"
+  rm -f "$tmp"
+  if [ "$got" = "$want" ]; then
+    echo "ok   $name"
+  else
+    echo "FAIL $name"
+    echo "     want: $want"
+    echo "     got:  $got"
+    FAILURES=$((FAILURES + 1))
+  fi
+}
+
+assert_projects "reads project names in config order" \
+  '  projects: [
+    {
+      name: "chromium-mobile",
+      use: { ...devices["Pixel 7"] },
+    },
+    {
+      name: "webkit-mobile",
+    },
+  ],' \
+  'chromium-mobile
+webkit-mobile'
+assert_projects "a project added to the config is picked up" \
+  '      name: "chromium-mobile",
+      name: "webkit-mobile",
+      name: "firefox-desktop",' \
+  'chromium-mobile
+webkit-mobile
+firefox-desktop'
+assert_projects "config with no projects yields nothing" \
+  '  use: { baseURL: "http://localhost:3001" },' \
+  ''
+
+CASES=$((CASES + 1))
+if e2e_projects "/nonexistent/playwright.config.ts" >/dev/null 2>&1; then
+  echo "FAIL missing config is an error, not a silent empty shard list"
+  FAILURES=$((FAILURES + 1))
+else
+  echo "ok   missing config is an error, not a silent empty shard list"
+fi
+
+# The real config must expose every project CI runs as its own job, or the
+# local gate would skip a browser CI still enforces.
+CASES=$((CASES + 1))
+REAL_CONFIG="$(cd "$(dirname "$0")/../.." && pwd)/frontend/playwright.config.ts"
+REAL_PROJECTS="$(e2e_projects "$REAL_CONFIG" | sort | tr '\n' ' ')"
+if [ "$REAL_PROJECTS" = "chromium-desktop chromium-mobile webkit-mobile " ]; then
+  echo "ok   real playwright.config.ts exposes the three CI projects"
+else
+  echo "FAIL real playwright.config.ts exposes the three CI projects"
+  echo "     want: chromium-desktop chromium-mobile webkit-mobile "
+  echo "     got:  $REAL_PROJECTS"
+  FAILURES=$((FAILURES + 1))
+fi
 
 echo ""
 if [ "$FAILURES" -eq 0 ]; then
