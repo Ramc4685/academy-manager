@@ -8,6 +8,7 @@ That makes this repository intentionally unscoped for reads; the resulting
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import UTC, datetime
 from typing import Any, cast
@@ -24,17 +25,25 @@ from backend.v2.contexts.identity.application.use_cases.admin_directory import (
 )
 from backend.v2.contexts.identity.domain.errors import (
     CannotRemoveLastRole,
+    RoleRevocationFailed,
     UserCreateFailed,
     UserEmailAlreadyExists,
     UserEmailUpdateFailed,
     UserOutsideAcademy,
 )
-from backend.v2.contexts.identity.domain.identity_aliases import aliases_from_doc
+from backend.v2.contexts.identity.domain.identity_aliases import (
+    aliases_from_doc,
+    identity_aliases,
+    membership_match_rank,
+)
 from backend.v2.contexts.identity.domain.models import Role, User, normalize_email
 from backend.v2.contexts.identity.infrastructure.firebase_admin_adapter import (
     get_firebase_admin_adapter,
 )
 from backend.v2.shared.ids import new_ulid
+from backend.v2.shared.observability.ops_alerts import capture_message
+
+_log = logging.getLogger(__name__)
 
 
 class MongoUserRepository:
@@ -946,30 +955,26 @@ class MongoUserRepository:
         )
         if before is None:
             return None
+
+        # Revoke BEFORE the directory write, deliberately. A replacement is a
+        # *revocation*, and `academy_memberships` — not this `users` doc — is
+        # what `LoadAuthClaims` turns into request claims. Ordered the other
+        # way round (the first pass at this fix), a membership write that
+        # throws leaves the directory showing "parent", no audit row, and an
+        # account still holding live admin claims: the exact failure this
+        # branch exists to remove, just narrower. Revoking first means a
+        # partial failure can only ever leave effective access at what the
+        # actor asked for or less — the stale half is a directory row that
+        # grants nothing — and a revocation that cannot be written aborts the
+        # operation instead of being reported as a completed demotion.
+        await self._replace_membership_roles(before, role=role, academy_id=academy_id, now=now)
+
         doc = await self.collection.find_one_and_update(
             {"academy_id": academy_id, **self._id_filter(user_id)},
             {"$set": {"role": role, "roles": [role], "updated_at": now}},
             return_document=ReturnDocument.AFTER,
         )
         if doc is not None:
-            # Mirror into the SaaS source of truth (claims are built from
-            # this), exactly as the additive `_modify_roles` path does. A
-            # replacement is also a *revocation*: without this the demoted
-            # user keeps their old membership roles and `LoadAuthClaims`
-            # goes on granting them, while the users doc and the audit row
-            # both say the demotion happened.
-            #
-            # Matched across every identity alias — the membership row may be
-            # keyed by `auth_uid`/`firebase_uid` rather than `users.user_id`
-            # — and with `update_many` so a duplicate alias-keyed row in this
-            # academy cannot keep the old grant alive. `academy_id` stays an
-            # explicit term, so other tenants are untouched. No upsert: a user
-            # with no membership here has no claims to revoke.
-            aliases = self._identity_aliases(doc) or [self._to_domain(doc).user_id]
-            await self._db["academy_memberships"].update_many(
-                {"academy_id": academy_id, "user_id": {"$in": aliases}},
-                {"$set": {"roles": [role], "updated_at": now}},
-            )
             await self._write_audit(
                 academy_id=academy_id,
                 actor_id=actor_id,
@@ -981,6 +986,131 @@ class MongoUserRepository:
                 after=doc,
             )
         return self._to_admin_summary(doc) if doc else None
+
+    def _membership_aliases(self, doc: dict[str, Any]) -> tuple[str, ...]:
+        """The alias set `LoadAuthClaims` resolves this account's membership with.
+
+        `aliases_from_doc` reads the three id *fields*; the claims path adds
+        the domain-resolved `user_id`, which falls back to `str(_id)` for a
+        legacy doc carrying neither `user_id` nor `auth_uid`. Revoking with the
+        narrower set would walk straight past an `_id`-keyed membership row
+        that auth can still see, and leave the old grant live.
+        """
+        return identity_aliases(self._to_domain(doc).user_id, *aliases_from_doc(doc))
+
+    async def _membership_is_foreign(self, row: dict[str, Any], doc: dict[str, Any]) -> bool:
+        """True when an alias-matched membership row is really another account's.
+
+        Alias matching widens identity, and one account's `auth_uid` can be
+        another account's primary `users.user_id` (roster ids and Firebase uids
+        are minted by different paths and have collided before). Whoever holds
+        the key as their *primary* `user_id` owns the row; an account that
+        merely aliases it does not, and must not rewrite its roles.
+        """
+        key = str(row.get("user_id") or "")
+        if not key or key == self._to_domain(doc).user_id:
+            return False
+        owner = await self.collection.find_one({"user_id": key, "_id": {"$ne": doc.get("_id")}})
+        return owner is not None
+
+    async def _replace_membership_roles(
+        self,
+        doc: dict[str, Any],
+        *,
+        role: Role,
+        academy_id: str,
+        now: datetime,
+    ) -> None:
+        """Mirror a role *replacement* into this academy's membership row(s).
+
+        Resolution matches the read path exactly — the alias set
+        `LoadAuthClaims` builds and the `membership_match_rank` ordering
+        `get_membership` picks with — and then writes rows **by their own
+        `_id`**, never by the alias filter. An uncapped alias-matched
+        `update_many` would also flatten the roles of any other account whose
+        primary `user_id` collides with one of these aliases.
+
+        Every row this account owns is rewritten, not just the top-ranked one:
+        a stale row left behind by `ensure_parent_login` becomes the row auth
+        reads the moment the live one is removed, so a revocation that skipped
+        it would only be deferred, not applied.
+
+        The write result is checked, three ways:
+
+        1. rows resolved and the update landed on them — done;
+        2. rows resolved and the update did *not* land — raise
+           `RoleRevocationFailed`, as `record_login_invite` does for its own
+           `matched_count`. A lost write here is a demotion that did not
+           happen, and must not be reported as one;
+        3. nothing resolved — no raise. "No membership row at all" (nothing to
+           revoke) and "row keyed outside every alias" are indistinguishable
+           from here, but neither can keep a grant alive: `LoadAuthClaims`
+           resolves through this same alias set, so a row it cannot reach
+           grants nothing. A *narrowing* still logs and alerts, so a mis-keyed
+           row is visible in ops instead of silently no-opping.
+        """
+        memberships = self._db["academy_memberships"]
+        aliases = list(self._membership_aliases(doc))
+        rows = [
+            row
+            async for row in memberships.find(
+                {"academy_id": academy_id, "user_id": {"$in": aliases}}
+            )
+        ]
+
+        resolved_user_id = self._to_domain(doc).user_id
+        owned: list[dict[str, Any]] = []
+        for row in rows:
+            if await self._membership_is_foreign(row, doc):
+                _log.error(
+                    "role change skipped a membership row owned by another account",
+                    extra={
+                        "academy_id": academy_id,
+                        "user_id": resolved_user_id,
+                        "membership_id": row.get("membership_id"),
+                        "membership_user_id": row.get("user_id"),
+                    },
+                )
+                capture_message(
+                    "Identity alias collision on academy_memberships during role change "
+                    f"for {resolved_user_id} in {academy_id}",
+                    level="error",
+                )
+                continue
+            owned.append(row)
+        owned.sort(key=lambda row: membership_match_rank(row, resolved_user_id))
+
+        if not owned:
+            previous = list(doc.get("roles") or ([doc["role"]] if doc.get("role") else []))
+            if set(previous) - {role}:
+                _log.warning(
+                    "role change matched no membership row to revoke",
+                    extra={
+                        "academy_id": academy_id,
+                        "user_id": resolved_user_id,
+                        "aliases": aliases,
+                        "previous_roles": previous,
+                        "new_role": role,
+                    },
+                )
+                capture_message(
+                    f"Role narrowing for {resolved_user_id} in {academy_id} matched no "
+                    "academy_memberships row",
+                    level="warning",
+                )
+            return
+
+        result = await memberships.update_many(
+            {"_id": {"$in": [row["_id"] for row in owned]}},
+            {"$set": {"roles": [role], "updated_at": now}},
+        )
+        if getattr(result, "matched_count", 0) != len(owned):
+            # `owned` is ranked, so the row named here is the one auth reads.
+            raise RoleRevocationFailed(
+                f"role revocation for {resolved_user_id} in {academy_id} matched "
+                f"{getattr(result, 'matched_count', 0)} of {len(owned)} membership rows "
+                f"(primary {owned[0].get('membership_id')})"
+            )
 
     async def _write_audit(
         self,

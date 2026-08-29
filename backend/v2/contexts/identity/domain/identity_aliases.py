@@ -35,3 +35,23 @@ def identity_aliases(*values: object) -> tuple[str, ...]:
 def aliases_from_doc(doc: Mapping[str, Any]) -> tuple[str, ...]:
     """Every identifier a raw `users` document might be keyed by."""
     return identity_aliases(doc.get("user_id"), doc.get("auth_uid"), doc.get("firebase_uid"))
+
+
+def membership_match_rank(doc: Mapping[str, Any], user_id: str) -> tuple[int, int, str]:
+    """Deterministic ordering over `academy_memberships` rows matched by alias.
+
+    Lives beside the alias helpers for the same reason they do: the read path
+    (`get_membership`, and through it `load_auth_claims`) and the write paths
+    that have to revoke what that read grants must agree on *which* row is the
+    live one, or a revocation rewrites a row auth never looks at. Ranking:
+
+    1. active status wins — a live membership beats a stale row whatever it is
+       keyed by (this is the row auth must see);
+    2. then an exact `user_id` hit beats an alias hit;
+    3. then `membership_id`, so the result is stable even for rows that tie,
+       rather than depending on Mongo's natural order.
+    """
+    status_rank = 0 if str(doc.get("status", "active")) == "active" else 1
+    exact_rank = 0 if str(doc.get("user_id", "")) == user_id else 1
+    tiebreak = str(doc.get("membership_id") or doc.get("_id") or "")
+    return (status_rank, exact_rank, tiebreak)

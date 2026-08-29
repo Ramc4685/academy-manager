@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import logging
+from types import SimpleNamespace
+
 import pytest
 
+from backend.v2.contexts.identity.domain.errors import RoleRevocationFailed
 from backend.v2.contexts.identity.infrastructure import mongo_user_repo as user_repo_module
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
 
@@ -575,8 +579,57 @@ async def test_role_change_mirrors_membership_keyed_by_an_identity_alias(db) -> 
 
 
 @pytest.mark.asyncio
-async def test_role_change_leaves_other_academies_untouched(db) -> None:
-    """Mirror only the academy the change applies to."""
+async def test_role_change_mirrors_membership_keyed_by_the_document_id(db) -> None:
+    """A legacy doc with no `user_id`/`auth_uid` is keyed by `str(_id)`.
+
+    That is what `_to_domain` resolves as the user id and what the claims
+    path aliases on, but it is not one of the three id *fields*
+    `aliases_from_doc` reads — so revoking with that narrower set walks past
+    the very row `LoadAuthClaims` is granting from.
+    """
+    result = await db["users"].insert_one(
+        {
+            "firebase_uid": "fb-legacy",
+            "email": "legacy-staff@example.com",
+            "display_name": "Legacy Staff",
+            "role": "admin",
+            "roles": ["admin"],
+            "status": "active",
+            "is_active": True,
+            "academy_id": "academy-a",
+        }
+    )
+    await db["academy_memberships"].insert_one(
+        {
+            "membership_id": "m-legacy",
+            "academy_id": "academy-a",
+            "user_id": str(result.inserted_id),
+            "roles": ["admin"],
+            "status": "active",
+        }
+    )
+    repo = MongoUserRepository(db, default_academy_id="academy-a")
+
+    await repo.change_role(
+        str(result.inserted_id),
+        "parent",
+        academy_id="academy-a",
+        actor_id="admin-1",
+        reason="offboarded",
+    )
+
+    claims = await _claims_for(db, repo, "legacy-staff@example.com", academy_id="academy-a")
+    assert claims.roles == ("parent",)
+
+
+@pytest.mark.asyncio
+async def test_role_change_mirrors_this_academy_only(db) -> None:
+    """The mirror lands in the academy the change applies to, and only there.
+
+    Both halves are asserted on purpose: the tenant-isolation half alone
+    passes just as well with no mirror at all, so it proves nothing about
+    scope on its own.
+    """
     await _seed_admin_with_membership(db, user_id="u-staff", membership_user_id="u-staff")
     await db["academy_memberships"].insert_one(
         {
@@ -597,5 +650,144 @@ async def test_role_change_leaves_other_academies_untouched(db) -> None:
         reason="offboarded",
     )
 
+    here = await db["academy_memberships"].find_one({"membership_id": "m-staff"})
+    assert here["roles"] == ["parent"]
     other = await db["academy_memberships"].find_one({"membership_id": "m-other"})
     assert other["roles"] == ["admin"]
+
+
+@pytest.mark.asyncio
+async def test_role_change_does_not_rewrite_a_colliding_accounts_membership(db) -> None:
+    """An alias of one account can be another account's primary `user_id`.
+
+    Roster ids and Firebase uids are minted by different paths, so the
+    demoted admin's `auth_uid` can equal a second account's `users.user_id`.
+    Matching memberships by alias with an uncapped `update_many` flattens
+    that second account's roles to the demoted role as well.
+    """
+    await _seed_admin_with_membership(db, user_id="u-staff", membership_user_id="shared-uid")
+    await db["users"].insert_one(
+        {
+            "user_id": "shared-uid",
+            "email": "other-admin@example.com",
+            "display_name": "Other Admin",
+            "role": "admin",
+            "roles": ["admin"],
+            "status": "active",
+            "is_active": True,
+            "academy_id": "academy-a",
+        }
+    )
+    # `m-staff` is keyed by the demoted account's `auth_uid`; this row is the
+    # other account's own membership, keyed by its primary `user_id` — the
+    # same string.
+    await db["academy_memberships"].insert_one(
+        {
+            "membership_id": "m-other-admin",
+            "academy_id": "academy-a",
+            "user_id": "shared-uid",
+            "roles": ["admin"],
+            "status": "active",
+        }
+    )
+    repo = MongoUserRepository(db, default_academy_id="academy-a")
+
+    await repo.change_role(
+        "u-staff",
+        "parent",
+        academy_id="academy-a",
+        actor_id="admin-1",
+        reason="offboarded",
+    )
+
+    bystander = await db["academy_memberships"].find_one({"membership_id": "m-other-admin"})
+    assert bystander["roles"] == ["admin"]
+    claims = await _claims_for(db, repo, "other-admin@example.com", academy_id="academy-a")
+    assert claims.roles == ("admin",)
+
+
+@pytest.mark.asyncio
+async def test_role_change_reports_when_no_membership_row_matched(db, caplog) -> None:
+    """A narrowing that reaches no membership row must be detectable.
+
+    A row keyed outside every identity alias cannot be found from here — and
+    cannot grant anything either, since `LoadAuthClaims` resolves through the
+    same alias set. What is unacceptable is doing it silently: the operator
+    is told the demotion happened, so the miss has to leave a trace.
+    """
+    await _seed_admin_with_membership(db, user_id="u-staff", membership_user_id="u-staff")
+    await db["academy_memberships"].delete_one({"membership_id": "m-staff"})
+    await db["academy_memberships"].insert_one(
+        {
+            "membership_id": "m-mis-keyed",
+            "academy_id": "academy-a",
+            "user_id": "roster-legacy-9",  # on neither the users doc nor the claims path
+            "roles": ["admin"],
+            "status": "active",
+        }
+    )
+    repo = MongoUserRepository(db, default_academy_id="academy-a")
+
+    with caplog.at_level(logging.WARNING, logger=user_repo_module.__name__):
+        await repo.change_role(
+            "u-staff",
+            "parent",
+            academy_id="academy-a",
+            actor_id="admin-1",
+            reason="offboarded",
+        )
+
+    assert [record.message for record in caplog.records] == [
+        "role change matched no membership row to revoke"
+    ]
+
+
+class _LostMembershipWriteCollection:
+    """Reports a membership write that matched nothing, without applying it."""
+
+    def __init__(self, inner) -> None:
+        self._inner = inner
+
+    def __getattr__(self, name: str):
+        return getattr(self._inner, name)
+
+    async def update_many(self, *args, **kwargs):
+        return SimpleNamespace(matched_count=0, modified_count=0)
+
+
+class _LostMembershipWriteDb:
+    def __init__(self, inner) -> None:
+        self._inner = inner
+
+    def __getitem__(self, name: str):
+        collection = self._inner[name]
+        if name == "academy_memberships":
+            return _LostMembershipWriteCollection(collection)
+        return collection
+
+
+@pytest.mark.asyncio
+async def test_role_change_aborts_when_the_revocation_write_is_lost(db) -> None:
+    """A revocation that does not land fails the whole operation.
+
+    The membership write is checked (`matched_count`) and runs *before* the
+    directory write, so a lost revocation cannot leave the account listed as
+    a parent, unaudited, and still holding live admin claims.
+    """
+    await _seed_admin_with_membership(db, user_id="u-staff", membership_user_id="u-staff")
+    repo = MongoUserRepository(_LostMembershipWriteDb(db), default_academy_id="academy-a")
+
+    with pytest.raises(RoleRevocationFailed):
+        await repo.change_role(
+            "u-staff",
+            "parent",
+            academy_id="academy-a",
+            actor_id="admin-1",
+            reason="offboarded",
+        )
+
+    directory = await db["users"].find_one({"user_id": "u-staff"})
+    assert directory["roles"] == ["admin"]
+    assert await db["audit_logs"].count_documents({}) == 0
+    claims = await _claims_for(db, repo, "terminated-staff@example.com", academy_id="academy-a")
+    assert claims.roles == ("admin",)
