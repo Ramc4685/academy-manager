@@ -14,6 +14,19 @@ class ApplicationRepository(Protocol):
     async def latest_for_parent(self, parent_user_id: str) -> Application | None: ...
     async def get_by_payment_id(self, payment_id: str) -> Application | None: ...
     async def list_by_status(self, statuses: list[str]) -> list[Application]: ...
+    async def reopen_for_edit(
+        self, application_id: str, *, expected_status: str, updated_at: datetime
+    ) -> Application | None: ...
+    async def restamp_checkout(
+        self,
+        application_id: str,
+        *,
+        expected_status: str,
+        expected_payment_id: str | None,
+        stripe_checkout_session_id: str | None,
+        payment_id: str | None,
+        updated_at: datetime,
+    ) -> Application | None: ...
     async def claim_for_review(
         self,
         application_id: str,

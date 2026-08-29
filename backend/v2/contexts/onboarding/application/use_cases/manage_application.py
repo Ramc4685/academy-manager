@@ -1,6 +1,7 @@
 """Use cases for the parent onboarding stepper.
 
-- StartApplication — idempotently returns an existing DRAFT or creates one.
+- StartApplication — returns an existing DRAFT, RESUMES an abandoned checkout,
+  or creates a new application.
 - PatchApplication — merges parent/child profile, waiver acceptance, selected session.
 - GetApplicationStatus — polling endpoint for the checkout-return page.
 """
@@ -32,6 +33,26 @@ from backend.v2.shared.ids import new_ulid
 
 _EDITABLE = {"DRAFT"}
 APPLICATION_TTL_DAYS = 7
+# The status a resumed checkout returns to. Kept as a name (rather than a bare
+# "DRAFT" literal at each site) because the legality of the move lives in
+# _TRANSITIONS, not in the resume code — see StartApplication._resume.
+_RESUME_TO = "DRAFT"
+
+
+class SupersededCheckoutRetirement(Protocol):
+    """Cross-context port (Billing): kill a checkout attempt this application
+    no longer owns.
+
+    Expiring the Stripe Checkout Session and parking its pending Payment are
+    Billing concerns, so Onboarding only states the need; composition wires
+    the adapter. The implementation must be forgiving — Stripe errors when a
+    session is already complete or expired, and that is precisely the race
+    (parent paid on the old tab) where the surrounding state must still stand.
+    """
+
+    async def retire_checkout_attempt(
+        self, *, checkout_session_id: str | None, payment_id: str | None
+    ) -> None: ...
 
 
 class StartApplicationCommand(BaseModel):
@@ -47,15 +68,32 @@ class StartApplication:
         apps: ApplicationRepository,
         academy_id: Callable[[], str],
         clock=lambda: datetime.now(UTC),
+        checkout_retirement: SupersededCheckoutRetirement | None = None,
     ) -> None:
         self._apps = apps
         self._academy_id = academy_id
         self._now = clock
+        self._checkout_retirement = checkout_retirement
 
     async def execute(self, cmd: StartApplicationCommand) -> Application:
         existing = await self._apps.latest_for_parent(cmd.parent_user_id)
         if existing and existing.status in _EDITABLE:
             return existing
+        if existing is not None and _RESUME_TO in _TRANSITIONS.get(existing.status, set()):
+            # The parent hit Cancel on Stripe and landed back on the wizard,
+            # which calls this on mount. Minting a SECOND application here
+            # (the old behaviour) leaves the first one holding a still-payable
+            # Checkout Session: one enrollment, two ways to be charged.
+            resumed = await self._resume(existing)
+            if resumed is not None:
+                return resumed
+            # The compare-and-set missed, so the application moved under us —
+            # almost always because the parent paid in the other tab and the
+            # webhook won. NEVER resurrect that; re-read and fall through to a
+            # brand new application.
+            existing = await self._apps.get(existing.application_id) or existing
+            if existing.status in _EDITABLE:
+                return existing
         now = self._now()
         app = Application(
             application_id=str(new_ulid()),
@@ -75,6 +113,36 @@ class StartApplication:
             app = app.model_copy(update={"parent_profile": existing.parent_profile})
         await self._apps.save(app)
         return app
+
+    async def _resume(self, app: Application) -> Application | None:
+        """Hand an abandoned checkout attempt back to the wizard.
+
+        PatchApplication only accepts DRAFT, so resuming has to move the
+        application back there — an authorised product change, declared in
+        _TRANSITIONS rather than smuggled past the state machine.
+
+        The write is a compare-and-set on the status we read. Returns None if
+        the application already moved on (paid in another tab), in which case
+        the caller must not resurrect it.
+        """
+        resumed = await self._apps.reopen_for_edit(
+            app.application_id,
+            expected_status=app.status,
+            updated_at=self._now(),
+        )
+        if resumed is None:
+            return None
+        if self._checkout_retirement is not None:
+            # The superseded Stripe session stays payable until we expire it.
+            # payment_id is deliberately LEFT on the application: if that
+            # payment succeeded in the last instants before we won the CAS,
+            # `get_by_payment_id` is the only handle the webhook has back to
+            # this application (DRAFT -> PENDING_APPROVAL covers that case).
+            await self._checkout_retirement.retire_checkout_attempt(
+                checkout_session_id=app.stripe_checkout_session_id,
+                payment_id=app.payment_id,
+            )
+        return resumed
 
 
 class PatchApplicationCommand(BaseModel):
@@ -233,11 +301,22 @@ class GetApplicationStatus:
 
 
 _TRANSITIONS: dict[str, set[str]] = {
-    "DRAFT": {"CHECKOUT_PENDING", "ABANDONED"},
+    # DRAFT -> PENDING_APPROVAL only ever fires for a RESUMED application whose
+    # superseded Stripe session was paid anyway. TransitionApplication reaches
+    # it exclusively through execute_for_payment, which resolves the
+    # application by a payment_id the application still carries — a draft that
+    # never checked out has no payment_id and can never be found that way. Without
+    # this edge the webhook for that race would raise forever and the parent
+    # would be charged with no registration.
+    "DRAFT": {"CHECKOUT_PENDING", "ABANDONED", "PENDING_APPROVAL"},
+    # CHECKOUT_PENDING -> DRAFT is the resume transition: returning from
+    # Stripe's cancel URL re-opens THIS application for editing instead of
+    # minting a second one that could be paid separately (product decision).
     "CHECKOUT_PENDING": {
         "CHECKOUT_EXPIRED",
         "PENDING_APPROVAL",
         "CAPACITY_FAILED_REFUNDING",
+        "DRAFT",
     },
     "CAPACITY_FAILED_REFUNDING": {"REFUNDED", "CAPACITY_FAILED_REFUND_FAILED"},
 }
@@ -246,8 +325,10 @@ _TRANSITIONS: dict[str, set[str]] = {
 class TransitionApplication:
     """Internal helper used by Billing event handlers + admin paths.
 
-    Enforces the legal-transition table. Idempotent: re-applying the same
-    target returns the existing app unchanged.
+    Enforces the legal-transition table. Re-applying the same target is
+    idempotent when there is nothing new to stamp; when a newer checkout id /
+    payment id IS supplied it re-points the application at that attempt under
+    a compare-and-set and retires the one it replaced.
     """
 
     def __init__(
@@ -255,10 +336,12 @@ class TransitionApplication:
         apps: ApplicationRepository,
         student_registrations: StudentRegistrationQuery | None = None,
         clock=lambda: datetime.now(UTC),
+        checkout_retirement: SupersededCheckoutRetirement | None = None,
     ) -> None:
         self._apps = apps
         self._student_registrations = student_registrations
         self._now = clock
+        self._checkout_retirement = checkout_retirement
 
     async def execute_for_payment(
         self,
@@ -296,23 +379,15 @@ class TransitionApplication:
         if app is None:
             raise ApplicationNotFound("application missing", application_id=application_id)
         if app.status == to:
-            # Idempotent re-apply. The status does not move, but a re-started
-            # checkout still has to re-point the application at the LIVE
-            # payment: `checkout.session.completed` resolves back to the
-            # application through get_by_payment_id alone, so keeping the
-            # payment_id of a cancelled first session orphans the second,
-            # actually-paid one (parent charged, registration lost).
-            restamp: dict[str, object] = {}
-            if stripe_checkout_session_id is not None:
-                restamp["stripe_checkout_session_id"] = stripe_checkout_session_id
-            if payment_id is not None:
-                restamp["payment_id"] = payment_id
-            if not restamp:
+            if stripe_checkout_session_id is None and payment_id is None:
+                # Plain idempotent re-apply with nothing to stamp — the $0
+                # checkout path calls CHECKOUT_PENDING with no ids at all.
                 return app
-            restamp["updated_at"] = self._now()
-            restamped = app.model_copy(update=restamp)
-            await self._apps.save(restamped)
-            return restamped
+            return await self._restamp_checkout(
+                app,
+                stripe_checkout_session_id=stripe_checkout_session_id,
+                payment_id=payment_id,
+            )
         legal = _TRANSITIONS.get(app.status, set())
         if to not in legal:
             raise ApplicationNotEditable(
@@ -330,6 +405,67 @@ class TransitionApplication:
         updated = app.model_copy(update=updates)
         await self._apps.save(updated)
         return updated
+
+    async def _restamp_checkout(
+        self,
+        app: Application,
+        *,
+        stripe_checkout_session_id: str | None,
+        payment_id: str | None,
+    ) -> Application:
+        """Re-point an already-CHECKOUT_PENDING application at a newer checkout.
+
+        Reachable when the same application starts checkout twice — two tabs,
+        or a retried POST. The status does not move, but the ids MUST:
+        `checkout.session.completed` resolves back to the application through
+        `get_by_payment_id` alone, so keeping the superseded payment_id orphans
+        the one the parent actually paid.
+        """
+        # The real ->CHECKOUT_PENDING transition runs this guard, and this
+        # branch writes just as that one does. Skipping it here would let a
+        # second start re-point an application at a live payment for a child
+        # who is already enrolled.
+        await self._assert_child_not_enrolled(app)
+        updated = await self._apps.restamp_checkout(
+            app.application_id,
+            expected_status=app.status,
+            expected_payment_id=app.payment_id,
+            stripe_checkout_session_id=stripe_checkout_session_id,
+            payment_id=payment_id,
+            updated_at=self._now(),
+        )
+        if updated is None:
+            # A concurrent start already took ownership. OURS is the losing
+            # attempt: retire the session we just minted rather than leave a
+            # second payable session behind, and never overwrite the winner's
+            # ids — that would point the application at a payment nobody is
+            # going to complete.
+            await self._retire_checkout_attempt(
+                checkout_session_id=stripe_checkout_session_id,
+                payment_id=payment_id,
+            )
+            raise ApplicationNotEditable(
+                "checkout was superseded by a concurrent start",
+                from_status=app.status,
+                to_status="CHECKOUT_PENDING",
+            )
+        await self._retire_checkout_attempt(
+            checkout_session_id=app.stripe_checkout_session_id,
+            payment_id=app.payment_id,
+        )
+        return updated
+
+    async def _retire_checkout_attempt(
+        self, *, checkout_session_id: str | None, payment_id: str | None
+    ) -> None:
+        if self._checkout_retirement is None:
+            return
+        if checkout_session_id is None and payment_id is None:
+            return
+        await self._checkout_retirement.retire_checkout_attempt(
+            checkout_session_id=checkout_session_id,
+            payment_id=payment_id,
+        )
 
     async def _assert_child_not_enrolled(self, app: Application) -> None:
         if self._student_registrations is None:

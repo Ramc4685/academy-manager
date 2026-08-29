@@ -39,6 +39,12 @@ class FakeStripeGateway(StripeGateway):
         # stripe_account -> extra PaymentIntents only visible when a
         # reconciliation search is scoped to that connected account (Slice I).
         self.connected_payment_intents: dict[str, list[dict[str, Any]]] = {}
+        # Checkout sessions retired by a supersede.
+        self.expired_checkouts: list[str] = []
+        # Ids that refuse to expire, mirroring Stripe's behaviour for a session
+        # that is already complete or expired. Tests add to this to exercise
+        # the "parent paid on the old tab" race.
+        self.unexpirable_checkouts: set[str] = set()
 
     async def create_checkout_session(
         self,
@@ -182,6 +188,11 @@ class FakeStripeGateway(StripeGateway):
                     "metadata": metadata,
                 }
         return {"id": checkout_session_id, "object": "checkout.session"}
+
+    async def expire_checkout_session(self, checkout_session_id: str) -> None:
+        if checkout_session_id in self.unexpirable_checkouts:
+            raise ValueError(f"checkout session is not expirable: {checkout_session_id}")
+        self.expired_checkouts.append(checkout_session_id)
 
     async def retrieve_invoice(self, stripe_invoice_id: str) -> dict[str, Any]:
         return {

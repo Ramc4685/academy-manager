@@ -328,12 +328,75 @@ class _MongoTransactionRunner:
         )
 
 
-# Statuses a parent may start (or re-start) checkout from. DRAFT is the first
-# attempt. CHECKOUT_PENDING is a re-start after the parent cancelled or simply
-# abandoned the Stripe page — the status does not move, but the application
-# gets re-pointed at the new payment. Every other status either has no legal
-# outbound CHECKOUT_PENDING transition (see _TRANSITIONS in the onboarding
-# manage_application use case) or is already past payment.
+class _StripeCheckoutAttemptRetirement:
+    """Kills a checkout attempt an application no longer owns.
+
+    Onboarding declares the need (``SupersededCheckoutRetirement``); the wiring
+    lives here because expiring a Stripe Checkout Session and parking its
+    pending Payment are both Billing concerns. Without this, a superseded
+    session stays payable and one enrollment has two ways to be charged.
+
+    Failures are deliberately swallowed: Stripe REJECTS expiring a session that
+    is already complete or expired, which is exactly the "parent paid on the
+    old tab" race. Raising there would unpick the resume/re-stamp we just
+    committed and leave the application in a worse state than the one this
+    call exists to prevent.
+    """
+
+    def __init__(
+        self,
+        *,
+        stripe: StripeGateway,
+        payments: Any,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        self._stripe = stripe
+        self._payments = payments
+        self._now = clock
+
+    async def retire_checkout_attempt(
+        self, *, checkout_session_id: str | None, payment_id: str | None
+    ) -> None:
+        if checkout_session_id:
+            await self._expire_session(checkout_session_id)
+        if not payment_id:
+            return
+        payment = await self._payments.get(payment_id)
+        if payment is None or payment.status != "pending":
+            # Already succeeded / failed / expired. Leave it exactly as it is —
+            # parking a succeeded payment here would erase a real charge.
+            return
+        # Reuses the status the `checkout.session.expired` webhook writes, so
+        # that webhook's own `status == "pending"` guard makes it a no-op when
+        # the superseded session's expiry event lands later.
+        await self._payments.save(
+            payment.model_copy(update={"status": "expired", "updated_at": self._now()})
+        )
+
+    async def _expire_session(self, checkout_session_id: str) -> None:
+        # Resolved OUTSIDE the try on purpose: a gateway that does not
+        # implement the port is a wiring bug and must blow up, not be filed
+        # away as another benign "already paid" expiry failure.
+        expire = self._stripe.expire_checkout_session
+        try:
+            await expire(checkout_session_id)
+        except Exception as exc:
+            log.info(
+                "checkout retirement: could not expire session %s "
+                "(already complete or expired?) err=%s",
+                checkout_session_id,
+                exc,
+            )
+
+
+# Statuses a parent may start (or re-start) checkout from. DRAFT is the normal
+# case, including after a cancel — the wizard's start call RESUMES an abandoned
+# attempt back to DRAFT rather than minting a second application. CHECKOUT_PENDING
+# survives here for the concurrent/retried POST: two tabs, or a client retry, on
+# the SAME application. That path does not move the status, it re-points the
+# application at the newer payment and retires the one it replaced. Every other
+# status either has no legal outbound CHECKOUT_PENDING transition (see
+# _TRANSITIONS in the onboarding manage_application use case) or is past payment.
 _CHECKOUT_STARTABLE_STATUSES = frozenset({"DRAFT", "CHECKOUT_PENDING"})
 
 
@@ -437,7 +500,15 @@ def compose_parent(
     stripe: StripeGateway,
     *,
     academy_id: str | None = None,
+    clock: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> ParentComposition:
+    """`clock` is the seam the checkout-start path prices against.
+
+    Every quote is "what is left of THIS month", so a test that leans on the
+    wall clock silently changes shape as the month runs out (a session quoted
+    at $0 skips Stripe entirely). Injecting it keeps those tests pinned instead
+    of flaky in the last minutes of a month.
+    """
     settings = get_settings()
     academy_id = _require_academy_id(academy_id)
 
@@ -576,6 +647,7 @@ def compose_parent(
         sessions=payments_repo,
         snapshots=payments_repo,
         occurrences=payments_repo,
+        clock=clock,
     )
 
     # Enrollment
@@ -751,7 +823,17 @@ def compose_parent(
     parent_waivers_repo = MongoParentWaiverRepository(db)
     get_waiver_req = GetParentWaiverRequirement(waivers=parent_waivers_repo)
     accept_waiver = AcceptParentWaiver(waivers=parent_waivers_repo, academy_id=request_academy_id)
-    start_app = StartApplication(apps=apps_repo, academy_id=request_academy_id)
+    checkout_retirement = _StripeCheckoutAttemptRetirement(
+        stripe=stripe,
+        payments=payments_repo,
+        clock=clock,
+    )
+    start_app = StartApplication(
+        apps=apps_repo,
+        academy_id=request_academy_id,
+        clock=clock,
+        checkout_retirement=checkout_retirement,
+    )
     patch_app = PatchApplication(
         apps=apps_repo,
         waivers=waivers_repo,
@@ -761,6 +843,8 @@ def compose_parent(
     transition = TransitionApplication(
         apps=apps_repo,
         student_registrations=students_query,
+        clock=clock,
+        checkout_retirement=checkout_retirement,
     )
     list_available_sessions = ListParentAvailableSessions(sessions=sessions_query)
     request_pause = RequestEnrollmentPause(pause_requests=pause_requests)
@@ -1622,7 +1706,7 @@ def compose_parent(
         quote = await quote_enrollment_uc.execute(
             QuoteEnrollmentCommand(
                 session_id=selected.session_id,
-                billing_start_at=datetime.now(UTC),
+                billing_start_at=clock(),
                 calculated_by=parent_id,
                 parent_id=parent_id,
             )
@@ -1638,7 +1722,7 @@ def compose_parent(
             # generator has no proration signal at all (enrollment docs never
             # carry billing_start_at/created_at) and would charge full tuition
             # for this period once the enrollment exists.
-            zero_quote_period = datetime.now(UTC).strftime("%Y-%m")
+            zero_quote_period = clock().strftime("%Y-%m")
             await apps_repo.save(app.model_copy(update={"zero_quote_period": zero_quote_period}))
             if quote.snapshot_id:
                 await payments_repo.consume_quote_snapshot(quote.snapshot_id)

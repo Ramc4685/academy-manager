@@ -1343,32 +1343,68 @@ def _checkout_ready_application(now: datetime, *, status: str, **extra: Any) -> 
     return doc
 
 
-def _billable_session(now: datetime) -> dict[str, Any]:
-    """A recurring session that meets every day of the month.
+def _pinned_quote_clock() -> datetime:
+    """The instant the checkout tests price against.
 
-    A one-off session's billable count depends on where in the month the test
-    happens to run (see the $0-quote tests above); meeting daily until the end
-    of next month keeps `final_amount_cents` positive so checkout actually
-    reaches Stripe.
+    Every quote is "what is LEFT of this month", so a test that prices against
+    the wall clock changes shape as the month runs out: run it in the last
+    half hour of a month and the last class has already elapsed, the quote
+    falls to $0, and checkout takes the zero-amount branch that never calls
+    Stripe at all. Pinning to the first instant of the month makes the whole
+    month billable no matter when the suite runs.
+
+    It is deliberately tied to the REAL current month rather than a fixed
+    calendar date: the parent session CATALOG still uses the wall clock (it
+    only lists sessions meeting in the next 30 days), so the session has to be
+    live now as well as billable then.
+    """
+    now = datetime.now(UTC)
+    return datetime(now.year, now.month, 1, tzinfo=UTC)
+
+
+def _billable_session(quote_now: datetime) -> dict[str, Any]:
+    """A recurring session that meets every day of `quote_now`'s month.
+
+    Priced against `_pinned_quote_clock`, every occurrence in the month is
+    still ahead of the quote, so `final_amount_cents` is positive and checkout
+    actually reaches Stripe. Running into next month keeps the session inside
+    the catalog's rolling 30-day wall-clock window too.
     """
     from datetime import timedelta
 
-    month_start = now.date().replace(day=1)
+    month_start = quote_now.date().replace(day=1)
     end_of_next_month = (month_start + timedelta(days=62)).replace(day=1) - timedelta(days=1)
     return {
         "session_id": "sess-1",
         "academy_id": "acad",
         "status": "scheduled",
         "title": "Beginner",
-        "start_at": now + timedelta(hours=3),
-        "end_at": now + timedelta(hours=4),
+        "start_at": datetime.now(UTC) + timedelta(hours=3),
+        "end_at": datetime.now(UTC) + timedelta(hours=4),
         "start_date": month_start.isoformat(),
         "end_date": end_of_next_month.isoformat(),
         "days_of_week": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-        "start_time": "23:30",
-        "end_time": "23:59",
+        "start_time": "17:00",
+        "end_time": "18:00",
         "capacity": 8,
         "amount_cents": 6_000,
+    }
+
+
+def _pending_ledger_payment(payment_id: str, checkout_session_id: str) -> dict[str, Any]:
+    """The pending Payment a live Checkout Session leaves behind."""
+    now = datetime.now(UTC)
+    return {
+        "academy_id": "acad",
+        "payment_id": payment_id,
+        "parent_id": "parent-1",
+        "session_id": "sess-1",
+        "stripe_checkout_session_id": checkout_session_id,
+        "amount_cents": 6_000,
+        "currency": "usd",
+        "status": "pending",
+        "created_at": now,
+        "updated_at": now,
     }
 
 
@@ -1387,25 +1423,30 @@ async def test_restarting_checkout_repoints_the_application_at_the_new_payment(
     mongomock_motor = pytest.importorskip("mongomock_motor")
     db = mongomock_motor.AsyncMongoMockClient()["restart-checkout"]
 
-    now = datetime.now(UTC)
+    quote_now = _pinned_quote_clock()
     await db["onboarding_applications"].insert_one(
         _checkout_ready_application(
-            now,
+            datetime.now(UTC),
             status="CHECKOUT_PENDING",
             stripe_checkout_session_id="cs_first",
             payment_id="pay-first",
         )
     )
-    await db["sessions"].insert_one(_billable_session(now))
+    await db["sessions"].insert_one(_billable_session(quote_now))
     await db["academy_connected_accounts"].insert_one(_connected_account_doc())
+    await db["ledger_payments"].insert_one(_pending_ledger_payment("pay-first", "cs_first"))
 
     class _Stripe:
         def __init__(self) -> None:
             self.calls: list[dict[str, Any]] = []
+            self.expired: list[str] = []
 
         async def create_checkout_session(self, **kwargs: Any) -> tuple[str, str]:
             self.calls.append(kwargs)
             return "cs_second", "https://checkout.stripe.test/second"
+
+        async def expire_checkout_session(self, checkout_session_id: str) -> None:
+            self.expired.append(checkout_session_id)
 
     stripe = _Stripe()
     parent = compose_parent(
@@ -1414,6 +1455,7 @@ async def test_restarting_checkout_repoints_the_application_at_the_new_payment(
         idempotency_store=object(),  # type: ignore[arg-type]
         stripe=stripe,  # type: ignore[arg-type]
         academy_id="acad",
+        clock=lambda: quote_now,
     )
 
     with tenant_scope("acad"):
@@ -1430,6 +1472,12 @@ async def test_restarting_checkout_repoints_the_application_at_the_new_payment(
     assert app_doc["payment_id"] == result.payment_id
     assert app_doc["payment_id"] != "pay-first"
     assert app_doc["stripe_checkout_session_id"] == "cs_second"
+    # Only ONE payable session may survive: the first is expired at Stripe and
+    # its pending Payment parked, so the parent cannot be charged twice for the
+    # same enrollment by going back to the old tab.
+    assert stripe.expired == ["cs_first"]
+    first_payment = await db["ledger_payments"].find_one({"payment_id": "pay-first"})
+    assert first_payment["status"] == "expired"
 
 
 async def test_checkout_from_a_terminal_status_fails_before_any_side_effect(
@@ -1443,11 +1491,11 @@ async def test_checkout_from_a_terminal_status_fails_before_any_side_effect(
     mongomock_motor = pytest.importorskip("mongomock_motor")
     db = mongomock_motor.AsyncMongoMockClient()["expired-checkout-retry"]
 
-    now = datetime.now(UTC)
+    quote_now = _pinned_quote_clock()
     await db["onboarding_applications"].insert_one(
-        _checkout_ready_application(now, status="CHECKOUT_EXPIRED")
+        _checkout_ready_application(datetime.now(UTC), status="CHECKOUT_EXPIRED")
     )
-    await db["sessions"].insert_one(_billable_session(now))
+    await db["sessions"].insert_one(_billable_session(quote_now))
     await db["academy_connected_accounts"].insert_one(_connected_account_doc())
 
     class _RefusingStripe:
@@ -1460,6 +1508,7 @@ async def test_checkout_from_a_terminal_status_fails_before_any_side_effect(
         idempotency_store=object(),  # type: ignore[arg-type]
         stripe=_RefusingStripe(),  # type: ignore[arg-type]
         academy_id="acad",
+        clock=lambda: quote_now,
     )
 
     with tenant_scope("acad"), pytest.raises(ApplicationNotEditable) as excinfo:
@@ -1479,3 +1528,68 @@ async def test_checkout_from_a_terminal_status_fails_before_any_side_effect(
     assert await db["billing_calculation_snapshots"].count_documents({}) == 0
     app_doc = await db["onboarding_applications"].find_one({"application_id": "app-1"})
     assert app_doc["status"] == "CHECKOUT_EXPIRED"
+
+
+async def test_retiring_an_already_paid_checkout_does_not_corrupt_state(
+    allow_app_origin,
+) -> None:
+    """Stripe REJECTS expiring a session that is already complete.
+
+    That is exactly the race a supersede has to survive, so the failure must be
+    swallowed — and the succeeded Payment behind it must be left alone. Parking
+    it as `expired` here would erase a real charge from the parent's history.
+    """
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["retire-paid-checkout"]
+
+    quote_now = _pinned_quote_clock()
+    await db["onboarding_applications"].insert_one(
+        _checkout_ready_application(
+            datetime.now(UTC),
+            status="CHECKOUT_PENDING",
+            stripe_checkout_session_id="cs_first",
+            payment_id="pay-first",
+        )
+    )
+    await db["sessions"].insert_one(_billable_session(quote_now))
+    await db["academy_connected_accounts"].insert_one(_connected_account_doc())
+    paid = _pending_ledger_payment("pay-first", "cs_first")
+    paid["status"] = "succeeded"
+    await db["ledger_payments"].insert_one(paid)
+
+    class _StripeThatRefusesExpiry:
+        def __init__(self) -> None:
+            self.expire_attempts: list[str] = []
+
+        async def create_checkout_session(self, **_: Any) -> tuple[str, str]:
+            return "cs_second", "https://checkout.stripe.test/second"
+
+        async def expire_checkout_session(self, checkout_session_id: str) -> None:
+            self.expire_attempts.append(checkout_session_id)
+            raise ValueError("You may only expire an open Checkout Session.")
+
+    stripe = _StripeThatRefusesExpiry()
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=stripe,  # type: ignore[arg-type]
+        academy_id="acad",
+        clock=lambda: quote_now,
+    )
+
+    with tenant_scope("acad"):
+        result = await parent.start_checkout_for_application(
+            parent_id="parent-1",
+            application_id="app-1",
+            success_url="https://app.example.com/parent/checkout/return?application_id=app-1",
+            cancel_url="https://app.example.com/parent/onboarding",
+        )
+
+    assert stripe.expire_attempts == ["cs_first"]
+    # The restart still committed — the expiry failure must not unpick it.
+    app_doc = await db["onboarding_applications"].find_one({"application_id": "app-1"})
+    assert app_doc["payment_id"] == result.payment_id
+    # The already-succeeded payment is untouched.
+    first_payment = await db["ledger_payments"].find_one({"payment_id": "pay-first"})
+    assert first_payment["status"] == "succeeded"
