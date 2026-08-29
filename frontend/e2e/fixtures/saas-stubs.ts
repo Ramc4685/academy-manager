@@ -147,6 +147,16 @@ export async function stubParentMessages(
   });
 }
 
+export async function stubCoachMessages(
+  page: Page,
+  messages: unknown[] = []
+): Promise<void> {
+  await page.route("**/api/v2/coach/messages", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, { messages });
+  });
+}
+
 export async function stubAcademy(page: Page, academyId: string): Promise<void> {
   await page.route(/\/api\/v2\/admin\/academy(?:\?.*)?$/, (route) => {
     if (route.request().method() !== "GET") return route.fallback();
