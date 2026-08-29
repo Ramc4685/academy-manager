@@ -294,3 +294,60 @@ async def test_start_application_prefills_parent_profile_from_prior_application(
     assert fresh.parent_profile.phone == "5551234"
     # Child details must start blank for the new application.
     assert fresh.child_profile.first_name == ""
+
+
+@pytest.mark.asyncio
+async def test_restarting_checkout_repoints_application_at_the_live_payment() -> None:
+    """A parent who cancels the first Stripe session and pays on a second one
+    must not have their registration orphaned.
+
+    The application is already CHECKOUT_PENDING when the re-start happens, so
+    the status does not change — but the ids must: `checkout.session.completed`
+    for the SECOND payment resolves back to the application through
+    `get_by_payment_id`, and that lookup only works if the application carries
+    the live payment_id. Keeping the first payment_id leaves the parent charged
+    and the application stuck (P0)."""
+    repo = FakeAppRepo(
+        _app().model_copy(
+            update={
+                "status": "CHECKOUT_PENDING",
+                "stripe_checkout_session_id": "cs_first",
+                "payment_id": "pay-first",
+            }
+        )
+    )
+    uc = TransitionApplication(apps=repo)
+
+    updated = await uc.execute(
+        "app-1",
+        "CHECKOUT_PENDING",
+        stripe_checkout_session_id="cs_second",
+        payment_id="pay-second",
+    )
+
+    assert updated.status == "CHECKOUT_PENDING"
+    assert updated.payment_id == "pay-second"
+    assert updated.stripe_checkout_session_id == "cs_second"
+    assert repo._app is not None
+    assert repo._app.payment_id == "pay-second"
+    assert repo._app.stripe_checkout_session_id == "cs_second"
+
+
+@pytest.mark.asyncio
+async def test_same_status_transition_without_ids_leaves_the_application_untouched() -> None:
+    """The plain idempotent re-apply (no ids supplied) must stay a no-op — the
+    $0 checkout path calls CHECKOUT_PENDING with no ids at all."""
+    original = _app().model_copy(
+        update={
+            "status": "CHECKOUT_PENDING",
+            "stripe_checkout_session_id": "cs_first",
+            "payment_id": "pay-first",
+        }
+    )
+    repo = FakeAppRepo(original)
+    uc = TransitionApplication(apps=repo)
+
+    updated = await uc.execute("app-1", "CHECKOUT_PENDING")
+
+    assert updated is original
+    assert repo._app is original

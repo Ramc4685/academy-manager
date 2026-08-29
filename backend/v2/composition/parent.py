@@ -195,6 +195,7 @@ from backend.v2.contexts.onboarding.application.use_cases.parent_student_waivers
     GetParentWaiverRequirement,
 )
 from backend.v2.contexts.onboarding.domain.errors import (
+    ApplicationNotEditable,
     IncompleteApplication,
     MissingSelectedSession,
 )
@@ -325,6 +326,15 @@ class _MongoTransactionRunner:
             or "mongos" in message
             or "transaction numbers are only allowed" in message
         )
+
+
+# Statuses a parent may start (or re-start) checkout from. DRAFT is the first
+# attempt. CHECKOUT_PENDING is a re-start after the parent cancelled or simply
+# abandoned the Stripe page — the status does not move, but the application
+# gets re-pointed at the new payment. Every other status either has no legal
+# outbound CHECKOUT_PENDING transition (see _TRANSITIONS in the onboarding
+# manage_application use case) or is already past payment.
+_CHECKOUT_STARTABLE_STATUSES = frozenset({"DRAFT", "CHECKOUT_PENDING"})
 
 
 def compose_parent_webhook_handler(
@@ -1558,6 +1568,19 @@ def compose_parent(
     ):
         _validate_checkout_redirect_urls(success_url, cancel_url)
         app = await get_status.execute(application_id, caller_user_id=parent_id)
+        # Refuse a checkout this application can never legally complete, and
+        # refuse it BEFORE any side effect. Everything below mints a quote
+        # snapshot, a Stripe Checkout Session and a pending Payment before the
+        # CHECKOUT_PENDING transition at the end gets to reject the status —
+        # so without this guard a retry from, say, terminal CHECKOUT_EXPIRED
+        # leaves a burnt quote and a dangling pending Payment row behind every
+        # single time, on top of the 409 the parent already sees.
+        if app.status not in _CHECKOUT_STARTABLE_STATUSES:
+            raise ApplicationNotEditable(
+                "illegal application transition",
+                from_status=app.status,
+                to_status="CHECKOUT_PENDING",
+            )
         # Stop new registrations from landing incomplete (issue #380). This
         # runs BEFORE the paid/zero-amount branch below — the $0 path skips
         # Stripe entirely and jumps straight to PENDING_APPROVAL, so a guard

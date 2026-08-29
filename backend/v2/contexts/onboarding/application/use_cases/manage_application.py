@@ -296,7 +296,23 @@ class TransitionApplication:
         if app is None:
             raise ApplicationNotFound("application missing", application_id=application_id)
         if app.status == to:
-            return app
+            # Idempotent re-apply. The status does not move, but a re-started
+            # checkout still has to re-point the application at the LIVE
+            # payment: `checkout.session.completed` resolves back to the
+            # application through get_by_payment_id alone, so keeping the
+            # payment_id of a cancelled first session orphans the second,
+            # actually-paid one (parent charged, registration lost).
+            restamp: dict[str, object] = {}
+            if stripe_checkout_session_id is not None:
+                restamp["stripe_checkout_session_id"] = stripe_checkout_session_id
+            if payment_id is not None:
+                restamp["payment_id"] = payment_id
+            if not restamp:
+                return app
+            restamp["updated_at"] = self._now()
+            restamped = app.model_copy(update=restamp)
+            await self._apps.save(restamped)
+            return restamped
         legal = _TRANSITIONS.get(app.status, set())
         if to not in legal:
             raise ApplicationNotEditable(
