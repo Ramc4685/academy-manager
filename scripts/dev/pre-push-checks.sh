@@ -72,6 +72,8 @@ fi
 # scripts/dev/pre-push-checks.test.sh (run in CI as Hook Classifier Tests).
 # shellcheck source=scripts/dev/lib/classify-changes.sh
 source "$ROOT/scripts/dev/lib/classify-changes.sh"
+# shellcheck source=scripts/dev/lib/e2e-projects.sh
+source "$ROOT/scripts/dev/lib/e2e-projects.sh"
 classify_changes "${CHANGED}" "${FULL}"
 
 if [ "$FULL" = "--full" ]; then
@@ -200,7 +202,20 @@ if [ "$FRONTEND_CHANGED" = true ] || [ "$BROAD" = true ]; then
   fi
 
   if [ "$RUN_E2E" = true ]; then
-    run_check "pnpm e2e" env CI=true pnpm e2e
+    # Shard by Playwright project, one run each, mirroring CI's
+    # one-job-per-project matrix in .github/workflows/production.yml. CI=true
+    # means reuseExistingServer is false, so every shard starts and tears down
+    # its own dev server.
+    #
+    # A single run served all ~500 tests from one long-lived `next dev`
+    # server, and specs late in that run timed out against a server the
+    # earlier ones had degraded — the logout spec failed at test #514 even on
+    # retry, while passing in 15s on its own. CI=true also sets
+    # failOnFlakyTests, so each of those retries blocked the push. Sharding
+    # keeps every server fresh and each shard about a third the length.
+    for project in $(e2e_projects); do
+      run_check "pnpm e2e ($project)" env CI=true pnpm exec playwright test --project="$project"
+    done
   else
     info "E2E skipped (no e2e/ files changed) — use --full to force"
   fi
