@@ -717,11 +717,13 @@ _REAL_EMAIL_ENVS = frozenset({"staging", "prod"})
 def _build_email_sender(settings: Any) -> Any:
     """Resend/Stub gating for every digest send path.
 
-    The single construction site for the real adapter (enforced by
+    The single construction site for any adapter that *sends* (enforced by
     ``v2/tests/structural/test_email_sender_construction.py``): parent digest,
     ops digest, coach daily digest and the admin-triggered coach digest test all
     come through here, so the gate cannot be right in one copy and missing in
-    another.
+    another. ``compose_email_credential_probe`` below is the only other place
+    that builds the adapter — deliberately ungated, because it validates the
+    API key and never sends.
 
     Beyond ``email_delivery_enabled`` + ``resend_api_key``, the real adapter is
     only wired in an approved environment (staging/prod) — see
