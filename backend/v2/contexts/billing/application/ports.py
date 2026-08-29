@@ -377,6 +377,17 @@ class StripeGateway(Protocol):
         destination charge to the academy's connected account.
         """
 
+    async def expire_checkout_session(self, checkout_session_id: str) -> None:
+        """Expire an open Checkout Session so it can never be paid.
+
+        Called when a newer session supersedes it: two live sessions for the
+        same enrollment is how one registration gets charged twice. Stripe
+        REJECTS expiring a session that is already complete or expired, so
+        callers must treat a failure here as benign — it means the parent
+        already paid on that session, and the state written around this call
+        must stand regardless.
+        """
+
     async def create_subscription_checkout_session(
         self,
         *,
