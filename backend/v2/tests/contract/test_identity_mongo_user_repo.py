@@ -467,3 +467,135 @@ async def test_changing_the_email_updates_firebase(db, monkeypatch) -> None:
 
     assert updated is not None and updated.email == "corrected@example.com"
     assert firebase.email_updates == [("fb-uid-9", "corrected@example.com")]
+
+
+# ---------------------------------------------------------------------------
+# Role replacement must reach the SaaS source of truth
+# ---------------------------------------------------------------------------
+
+
+class _StubVerifier:
+    def __init__(self, email: str) -> None:
+        self._email = email
+
+    async def verify(self, id_token: str) -> dict[str, object]:
+        return {"email": self._email, "email_verified": True}
+
+
+class _NoPlatformRoles:
+    async def list_active_for_user(self, user_id: str) -> list:
+        return []
+
+
+async def _claims_for(db, repo: MongoUserRepository, email: str, *, academy_id: str):
+    """Build the claims the auth middleware would hand a request."""
+    from backend.v2.contexts.identity.application.use_cases.load_auth_claims import (
+        LoadAuthClaims,
+    )
+    from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
+        MongoMembershipRepository,
+    )
+
+    use_case = LoadAuthClaims(
+        _StubVerifier(email),
+        repo,
+        MongoMembershipRepository(db),
+        _NoPlatformRoles(),
+    )
+    return await use_case.execute("id-token", resolved_academy_id=academy_id)
+
+
+async def _seed_admin_with_membership(db, *, user_id: str, membership_user_id: str) -> None:
+    await db["users"].insert_one(
+        {
+            "user_id": user_id,
+            "auth_uid": membership_user_id,
+            "email": "terminated-staff@example.com",
+            "display_name": "Terminated Staff",
+            "role": "admin",
+            "roles": ["admin"],
+            "status": "active",
+            "is_active": True,
+            "academy_id": "academy-a",
+        }
+    )
+    await db["academy_memberships"].insert_one(
+        {
+            "membership_id": "m-staff",
+            "academy_id": "academy-a",
+            "user_id": membership_user_id,
+            "roles": ["admin"],
+            "status": "active",
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_role_change_revokes_the_old_role_in_saas_claims(db) -> None:
+    """Demoting admin -> parent must stop the claims granting `admin`.
+
+    SaaS claims are built from `academy_memberships` (LoadAuthClaims), not
+    from the legacy users doc, so a replacement that only rewrites `users`
+    leaves the demoted staff member with full admin access.
+    """
+    await _seed_admin_with_membership(db, user_id="u-staff", membership_user_id="u-staff")
+    repo = MongoUserRepository(db, default_academy_id="academy-a")
+
+    summary = await repo.change_role(
+        "u-staff",
+        "parent",
+        academy_id="academy-a",
+        actor_id="admin-1",
+        reason="offboarded",
+    )
+    assert summary is not None
+
+    claims = await _claims_for(db, repo, "terminated-staff@example.com", academy_id="academy-a")
+    assert claims.roles == ("parent",)
+
+
+@pytest.mark.asyncio
+async def test_role_change_mirrors_membership_keyed_by_an_identity_alias(db) -> None:
+    """The membership row may be keyed by `auth_uid`/`firebase_uid` rather
+    than `users.user_id` (see `identity_aliases`); the revocation has to
+    match the same alias set the login path does."""
+    await _seed_admin_with_membership(db, user_id="roster-staff", membership_user_id="fb-staff")
+    repo = MongoUserRepository(db, default_academy_id="academy-a")
+
+    await repo.change_role(
+        "roster-staff",
+        "parent",
+        academy_id="academy-a",
+        actor_id="admin-1",
+        reason="offboarded",
+    )
+
+    membership = await db["academy_memberships"].find_one({"membership_id": "m-staff"})
+    assert membership["roles"] == ["parent"]
+
+
+@pytest.mark.asyncio
+async def test_role_change_leaves_other_academies_untouched(db) -> None:
+    """Mirror only the academy the change applies to."""
+    await _seed_admin_with_membership(db, user_id="u-staff", membership_user_id="u-staff")
+    await db["academy_memberships"].insert_one(
+        {
+            "membership_id": "m-other",
+            "academy_id": "academy-b",
+            "user_id": "u-staff",
+            "roles": ["admin"],
+            "status": "active",
+        }
+    )
+    repo = MongoUserRepository(db, default_academy_id="academy-a")
+
+    await repo.change_role(
+        "u-staff",
+        "parent",
+        academy_id="academy-a",
+        actor_id="admin-1",
+        reason="offboarded",
+    )
+
+    other = await db["academy_memberships"].find_one({"membership_id": "m-other"})
+    assert other["roles"] == ["admin"]

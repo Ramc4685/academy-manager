@@ -952,6 +952,24 @@ class MongoUserRepository:
             return_document=ReturnDocument.AFTER,
         )
         if doc is not None:
+            # Mirror into the SaaS source of truth (claims are built from
+            # this), exactly as the additive `_modify_roles` path does. A
+            # replacement is also a *revocation*: without this the demoted
+            # user keeps their old membership roles and `LoadAuthClaims`
+            # goes on granting them, while the users doc and the audit row
+            # both say the demotion happened.
+            #
+            # Matched across every identity alias — the membership row may be
+            # keyed by `auth_uid`/`firebase_uid` rather than `users.user_id`
+            # — and with `update_many` so a duplicate alias-keyed row in this
+            # academy cannot keep the old grant alive. `academy_id` stays an
+            # explicit term, so other tenants are untouched. No upsert: a user
+            # with no membership here has no claims to revoke.
+            aliases = self._identity_aliases(doc) or [self._to_domain(doc).user_id]
+            await self._db["academy_memberships"].update_many(
+                {"academy_id": academy_id, "user_id": {"$in": aliases}},
+                {"$set": {"roles": [role], "updated_at": now}},
+            )
             await self._write_audit(
                 academy_id=academy_id,
                 actor_id=actor_id,
