@@ -692,13 +692,19 @@ async def test_role_change_does_not_rewrite_a_colliding_accounts_membership(db) 
     )
     repo = MongoUserRepository(db, default_academy_id="academy-a")
 
-    await repo.change_role(
-        "u-staff",
-        "parent",
-        academy_id="academy-a",
-        actor_id="admin-1",
-        reason="offboarded",
-    )
+    # Both alias-matched rows are keyed by the shared id, which is the OTHER
+    # account's primary `user_id`, so neither can be claimed. Previously the
+    # demotion skipped both and reported success — leaving `u-staff`'s own row
+    # at `admin`, which `LoadAuthClaims` still resolves through the same alias.
+    # It now fails closed instead of reporting a demotion that never happened.
+    with pytest.raises(RoleRevocationFailed):
+        await repo.change_role(
+            "u-staff",
+            "parent",
+            academy_id="academy-a",
+            actor_id="admin-1",
+            reason="offboarded",
+        )
 
     bystander = await db["academy_memberships"].find_one({"membership_id": "m-other-admin"})
     assert bystander["roles"] == ["admin"]
@@ -790,4 +796,118 @@ async def test_role_change_aborts_when_the_revocation_write_is_lost(db) -> None:
     assert directory["roles"] == ["admin"]
     assert await db["audit_logs"].count_documents({}) == 0
     claims = await _claims_for(db, repo, "terminated-staff@example.com", academy_id="academy-a")
+    assert claims.roles == ("admin",)
+
+
+@pytest.mark.asyncio
+async def test_role_change_fails_closed_when_the_only_row_is_alias_owned(db) -> None:
+    """A demotion that cannot claim an alias-visible row must not report success.
+
+    The staff account's membership row is keyed by its `auth_uid`, and that
+    value is another account's primary `users.user_id`. The row is therefore
+    skipped as foreign — rewriting it could flatten the other account's roles.
+
+    But `LoadAuthClaims` resolves through the same alias set, so it still reads
+    that row and keeps serving `admin`. Reporting the demotion as done would
+    leave live admin claims behind an audit trail saying "parent", so the whole
+    operation fails instead and asks a human to untangle the collision.
+    """
+    await _seed_admin_with_membership(db, user_id="u-staff", membership_user_id="shared-id")
+    # Another account legitimately owns "shared-id" as its primary user_id.
+    await db["users"].insert_one(
+        {
+            "user_id": "shared-id",
+            "email": "other-account@example.com",
+            "display_name": "Other Account",
+            "role": "coach",
+            "roles": ["coach"],
+            "status": "active",
+            "is_active": True,
+            "academy_id": "academy-a",
+        }
+    )
+    repo = MongoUserRepository(db, default_academy_id="academy-a")
+
+    with pytest.raises(RoleRevocationFailed):
+        await repo.change_role(
+            "u-staff",
+            "parent",
+            academy_id="academy-a",
+            actor_id="admin-1",
+            reason="offboarded",
+        )
+
+    # Nothing was reported as done, and nothing was half-written.
+    directory = await db["users"].find_one({"user_id": "u-staff"})
+    assert directory["roles"] == ["admin"]
+    assert await db["audit_logs"].count_documents({}) == 0
+    # The other account's row is untouched — the skip did its job.
+    row = await db["academy_memberships"].find_one({"membership_id": "m-staff"})
+    assert row["roles"] == ["admin"]
+
+
+@pytest.mark.asyncio
+async def test_promotion_writes_the_directory_before_granting_the_membership(db) -> None:
+    """A widening must never leave claims wider than the directory shows.
+
+    Demotions revoke the membership first so a partial failure can only ever
+    narrow access. A promotion has to run the other way round: granting the
+    membership first and then failing the directory write would hand out live
+    admin claims that the admin UI still renders as `parent` — fail-open, and
+    invisible to whoever reads the directory.
+    """
+    await db["users"].insert_one(
+        {
+            "user_id": "u-parent",
+            "auth_uid": "u-parent",
+            "email": "promoted@example.com",
+            "display_name": "Promoted Parent",
+            "role": "parent",
+            "roles": ["parent"],
+            "status": "active",
+            "is_active": True,
+            "academy_id": "academy-a",
+        }
+    )
+    await db["academy_memberships"].insert_one(
+        {
+            "membership_id": "m-parent",
+            "academy_id": "academy-a",
+            "user_id": "u-parent",
+            "roles": ["parent"],
+            "status": "active",
+        }
+    )
+    repo = MongoUserRepository(db, default_academy_id="academy-a")
+
+    order: list[str] = []
+    real_replace = repo._replace_membership_roles
+    real_update = repo.collection.find_one_and_update
+
+    async def _tracked_replace(*args, **kwargs):
+        order.append("membership")
+        return await real_replace(*args, **kwargs)
+
+    async def _tracked_update(*args, **kwargs):
+        order.append("directory")
+        return await real_update(*args, **kwargs)
+
+    repo._replace_membership_roles = _tracked_replace  # type: ignore[method-assign]
+    repo.collection.find_one_and_update = _tracked_update  # type: ignore[method-assign]
+    try:
+        await repo.change_role(
+            "u-parent",
+            "admin",
+            academy_id="academy-a",
+            actor_id="admin-1",
+            reason="promoted to staff",
+        )
+    finally:
+        repo.collection.find_one_and_update = real_update  # type: ignore[method-assign]
+
+    assert order == ["directory", "membership"], (
+        "a promotion must write the directory before granting the membership, "
+        "so a partial failure cannot leave claims wider than the directory"
+    )
+    claims = await _claims_for(db, repo, "promoted@example.com", academy_id="academy-a")
     assert claims.roles == ("admin",)

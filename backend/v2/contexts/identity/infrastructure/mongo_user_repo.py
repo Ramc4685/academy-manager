@@ -46,6 +46,25 @@ from backend.v2.shared.observability.ops_alerts import capture_message
 _log = logging.getLogger(__name__)
 
 
+# Relative privilege of the roles a replacement can set. Only the ORDER matters:
+# it decides which of the two writes in `change_role` must land first, so that a
+# partial failure can never leave effective access wider than the directory
+# shows. `parent` and `student` are peers — neither grants staff access.
+_ROLE_PRIVILEGE: dict[str, int] = {
+    "student": 0,
+    "parent": 0,
+    "coach": 1,
+    "admin": 2,
+    "owner": 3,
+}
+
+
+def _lowers_privilege(previous: list[str], role: str) -> bool:
+    """True when the replacement lowers the account's privilege ceiling."""
+    ceiling = max((_ROLE_PRIVILEGE.get(r, 0) for r in previous), default=0)
+    return _ROLE_PRIVILEGE.get(role, 0) < ceiling
+
+
 class MongoUserRepository:
     collection_name = "users"
 
@@ -956,24 +975,40 @@ class MongoUserRepository:
         if before is None:
             return None
 
-        # Revoke BEFORE the directory write, deliberately. A replacement is a
-        # *revocation*, and `academy_memberships` — not this `users` doc — is
-        # what `LoadAuthClaims` turns into request claims. Ordered the other
-        # way round (the first pass at this fix), a membership write that
-        # throws leaves the directory showing "parent", no audit row, and an
-        # account still holding live admin claims: the exact failure this
-        # branch exists to remove, just narrower. Revoking first means a
-        # partial failure can only ever leave effective access at what the
-        # actor asked for or less — the stale half is a directory row that
-        # grants nothing — and a revocation that cannot be written aborts the
-        # operation instead of being reported as a completed demotion.
-        await self._replace_membership_roles(before, role=role, academy_id=academy_id, now=now)
+        # Write order follows the DIRECTION of the change, so that a partial
+        # failure can never leave effective access wider than the directory
+        # claims. `academy_memberships` — not this `users` doc — is what
+        # `LoadAuthClaims` turns into request claims.
+        #
+        # Narrowing (a demotion): revoke the membership FIRST. Ordered the other
+        # way round, a membership write that throws leaves the directory showing
+        # "parent" and the account still holding live admin claims — the exact
+        # failure this branch exists to remove. Revoking first means a partial
+        # failure leaves access at what the actor asked for or less, and a
+        # revocation that cannot be written aborts instead of being reported as
+        # a completed demotion.
+        #
+        # Widening (a promotion): write the directory FIRST, for the mirror
+        # reason. Granting the membership first and then failing the users
+        # update would hand out live admin claims the directory does not show —
+        # fail-open, and invisible to anyone reading the admin UI.
+        previous_roles = list(
+            before.get("roles") or ([before["role"]] if before.get("role") else [])
+        )
+        # A *replacement* always drops the old role, so "lost a role" cannot tell
+        # a demotion from a promotion — only the privilege ceiling can.
+        narrowing = _lowers_privilege(previous_roles, role)
+
+        if narrowing:
+            await self._replace_membership_roles(before, role=role, academy_id=academy_id, now=now)
 
         doc = await self.collection.find_one_and_update(
             {"academy_id": academy_id, **self._id_filter(user_id)},
             {"$set": {"role": role, "roles": [role], "updated_at": now}},
             return_document=ReturnDocument.AFTER,
         )
+        if not narrowing:
+            await self._replace_membership_roles(before, role=role, academy_id=academy_id, now=now)
         if doc is not None:
             await self._write_audit(
                 academy_id=academy_id,
@@ -1060,8 +1095,10 @@ class MongoUserRepository:
 
         resolved_user_id = self._to_domain(doc).user_id
         owned: list[dict[str, Any]] = []
+        skipped_foreign: list[dict[str, Any]] = []
         for row in rows:
             if await self._membership_is_foreign(row, doc):
+                skipped_foreign.append(row)
                 _log.error(
                     "role change skipped a membership row owned by another account",
                     extra={
@@ -1080,9 +1117,30 @@ class MongoUserRepository:
             owned.append(row)
         owned.sort(key=lambda row: membership_match_rank(row, resolved_user_id))
 
+        previous = list(doc.get("roles") or ([doc["role"]] if doc.get("role") else []))
+        # Any replacement drops the previous role, so an unwritten row can keep
+        # serving it — that is what makes an unreachable row dangerous here,
+        # independently of whether the change raises or lowers privilege.
+        drops_a_role = bool(set(previous) - {role})
+
+        if skipped_foreign and drops_a_role:
+            # A skipped row is NOT the harmless case described above. It matched
+            # the alias query, so `LoadAuthClaims` — which resolves through this
+            # same alias set — can still read it and keep serving the old role.
+            # Rewriting it is not an option either: under a collision it may
+            # genuinely belong to the other account. So a narrowing that cannot
+            # reach every alias-visible row fails closed and asks a human to
+            # untangle the collision, rather than reporting a demotion that
+            # leaves live admin claims behind it.
+            raise RoleRevocationFailed(
+                f"role revocation for {resolved_user_id} in {academy_id} could not claim "
+                f"{len(skipped_foreign)} alias-matched membership row(s) owned by another "
+                f"account (first {skipped_foreign[0].get('membership_id')}); "
+                "auth can still resolve them, so the old grant would stay live"
+            )
+
         if not owned:
-            previous = list(doc.get("roles") or ([doc["role"]] if doc.get("role") else []))
-            if set(previous) - {role}:
+            if drops_a_role:
                 _log.warning(
                     "role change matched no membership row to revoke",
                     extra={
