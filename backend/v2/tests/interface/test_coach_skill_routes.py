@@ -160,12 +160,10 @@ class _FakeLevelUpRepo:
         reviewed_at: object | None,
         rejection_reason: str | None,
         *,
-        expected_status: str | None = None,
+        expected_status: str,
     ) -> bool:
         r = self._store.get(rec_id)
-        if r is None:
-            return False
-        if expected_status is not None and r.status != expected_status:
+        if r is None or r.status != expected_status:
             return False
         self._store[rec_id] = r.model_copy(
             update={

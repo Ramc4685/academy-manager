@@ -488,15 +488,15 @@ backend/v2/composition/pathway.py:0: note: def count_updates_by_coach(self, *, s
 backend/v2/composition/pathway.py:0: error: Argument "recommendations" to "RecommendLevelUp" has incompatible type "MongoLevelUpRecommendationRepository"; expected "LevelUpRecommendationRepository"  [arg-type]
 backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoLevelUpRecommendationRepository" have conflicts:
 backend/v2/composition/pathway.py:0: note: Expected:
-backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: object | None, rejection_reason: str | None, *, expected_status: str | None = ...) -> Coroutine[Any, Any, bool]
+backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: object | None, rejection_reason: str | None, *, expected_status: str) -> Coroutine[Any, Any, bool]
 backend/v2/composition/pathway.py:0: note: Got:
-backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: datetime | None, rejection_reason: str | None, *, expected_status: str | None = ...) -> Coroutine[Any, Any, bool]
+backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: datetime | None, rejection_reason: str | None, *, expected_status: str) -> Coroutine[Any, Any, bool]
 backend/v2/composition/pathway.py:0: error: Argument "recommendations" to "ReviewLevelUpRecommendation" has incompatible type "MongoLevelUpRecommendationRepository"; expected "LevelUpRecommendationRepository"  [arg-type]
 backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoLevelUpRecommendationRepository" have conflicts:
 backend/v2/composition/pathway.py:0: note: Expected:
-backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: object | None, rejection_reason: str | None, *, expected_status: str | None = ...) -> Coroutine[Any, Any, bool]
+backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: object | None, rejection_reason: str | None, *, expected_status: str) -> Coroutine[Any, Any, bool]
 backend/v2/composition/pathway.py:0: note: Got:
-backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: datetime | None, rejection_reason: str | None, *, expected_status: str | None = ...) -> Coroutine[Any, Any, bool]
+backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: datetime | None, rejection_reason: str | None, *, expected_status: str) -> Coroutine[Any, Any, bool]
 backend/v2/composition/pathway.py:0: error: Argument "level_progress" to "ReviewLevelUpRecommendation" has incompatible type "MongoStudentLevelProgressRepository"; expected "StudentLevelProgressRepository"  [arg-type]
 backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoStudentLevelProgressRepository" have conflicts:
 backend/v2/composition/pathway.py:0: note: Expected:
@@ -536,9 +536,9 @@ backend/v2/composition/pathway.py:0: note: def count_updates_by_coach(self, *, s
 backend/v2/composition/pathway.py:0: error: Argument "recommendations" to "GetStudentProgress" has incompatible type "MongoLevelUpRecommendationRepository"; expected "LevelUpRecommendationRepository"  [arg-type]
 backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoLevelUpRecommendationRepository" have conflicts:
 backend/v2/composition/pathway.py:0: note: Expected:
-backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: object | None, rejection_reason: str | None, *, expected_status: str | None = ...) -> Coroutine[Any, Any, bool]
+backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: object | None, rejection_reason: str | None, *, expected_status: str) -> Coroutine[Any, Any, bool]
 backend/v2/composition/pathway.py:0: note: Got:
-backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: datetime | None, rejection_reason: str | None, *, expected_status: str | None = ...) -> Coroutine[Any, Any, bool]
+backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: datetime | None, rejection_reason: str | None, *, expected_status: str) -> Coroutine[Any, Any, bool]
 backend/v2/composition/pathway.py:0: error: Argument "level_progress" to "GetProgressSummary" has incompatible type "MongoStudentLevelProgressRepository"; expected "StudentLevelProgressRepository"  [arg-type]
 backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoStudentLevelProgressRepository" have conflicts:
 backend/v2/composition/pathway.py:0: note: Expected:
@@ -554,9 +554,9 @@ backend/v2/composition/pathway.py:0: note: def count_updates_by_coach(self, *, s
 backend/v2/composition/pathway.py:0: error: Argument "recommendations" to "GetProgressSummary" has incompatible type "MongoLevelUpRecommendationRepository"; expected "LevelUpRecommendationRepository"  [arg-type]
 backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoLevelUpRecommendationRepository" have conflicts:
 backend/v2/composition/pathway.py:0: note: Expected:
-backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: object | None, rejection_reason: str | None, *, expected_status: str | None = ...) -> Coroutine[Any, Any, bool]
+backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: object | None, rejection_reason: str | None, *, expected_status: str) -> Coroutine[Any, Any, bool]
 backend/v2/composition/pathway.py:0: note: Got:
-backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: datetime | None, rejection_reason: str | None, *, expected_status: str | None = ...) -> Coroutine[Any, Any, bool]
+backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: datetime | None, rejection_reason: str | None, *, expected_status: str) -> Coroutine[Any, Any, bool]
 backend/v2/composition/pathway.py:0: error: Argument "level_progress" to "GetStudentPassport" has incompatible type "MongoStudentLevelProgressRepository"; expected "StudentLevelProgressRepository"  [arg-type]
 backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoStudentLevelProgressRepository" have conflicts:
 backend/v2/composition/pathway.py:0: note: Expected:
@@ -584,9 +584,9 @@ backend/v2/composition/pathway.py:0: note: def count_updates_by_coach(self, *, s
 backend/v2/composition/pathway.py:0: error: Argument "recommendations" to "GetLevelUpQueue" has incompatible type "MongoLevelUpRecommendationRepository"; expected "LevelUpRecommendationRepository"  [arg-type]
 backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoLevelUpRecommendationRepository" have conflicts:
 backend/v2/composition/pathway.py:0: note: Expected:
-backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: object | None, rejection_reason: str | None, *, expected_status: str | None = ...) -> Coroutine[Any, Any, bool]
+backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: object | None, rejection_reason: str | None, *, expected_status: str) -> Coroutine[Any, Any, bool]
 backend/v2/composition/pathway.py:0: note: Got:
-backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: datetime | None, rejection_reason: str | None, *, expected_status: str | None = ...) -> Coroutine[Any, Any, bool]
+backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: datetime | None, rejection_reason: str | None, *, expected_status: str) -> Coroutine[Any, Any, bool]
 backend/v2/composition/pathway.py:0: error: Argument "level_progress" to "GetSkillBoard" has incompatible type "MongoStudentLevelProgressRepository"; expected "StudentLevelProgressRepository"  [arg-type]
 backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoStudentLevelProgressRepository" have conflicts:
 backend/v2/composition/pathway.py:0: note: Expected:
@@ -602,9 +602,9 @@ backend/v2/composition/pathway.py:0: note: def count_updates_by_coach(self, *, s
 backend/v2/composition/pathway.py:0: error: Argument "recommendations" to "GetSkillBoard" has incompatible type "MongoLevelUpRecommendationRepository"; expected "LevelUpRecommendationRepository"  [arg-type]
 backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoLevelUpRecommendationRepository" have conflicts:
 backend/v2/composition/pathway.py:0: note: Expected:
-backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: object | None, rejection_reason: str | None, *, expected_status: str | None = ...) -> Coroutine[Any, Any, bool]
+backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: object | None, rejection_reason: str | None, *, expected_status: str) -> Coroutine[Any, Any, bool]
 backend/v2/composition/pathway.py:0: note: Got:
-backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: datetime | None, rejection_reason: str | None, *, expected_status: str | None = ...) -> Coroutine[Any, Any, bool]
+backend/v2/composition/pathway.py:0: note: def update_status(self, rec_id: str, status: str, reviewed_by: str | None, reviewed_at: datetime | None, rejection_reason: str | None, *, expected_status: str) -> Coroutine[Any, Any, bool]
 backend/v2/composition/pathway.py:0: error: Argument "level_progress" to "GetTeachingFocus" has incompatible type "MongoStudentLevelProgressRepository"; expected "StudentLevelProgressRepository"  [arg-type]
 backend/v2/composition/pathway.py:0: note: Following member(s) of "MongoStudentLevelProgressRepository" have conflicts:
 backend/v2/composition/pathway.py:0: note: Expected:

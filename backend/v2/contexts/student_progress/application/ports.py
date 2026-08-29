@@ -60,14 +60,16 @@ class LevelUpRecommendationRepository(Protocol):
         reviewed_at: object | None,
         rejection_reason: str | None,
         *,
-        expected_status: str | None = None,
+        expected_status: str,
     ) -> bool:
-        """Move a recommendation to ``status``.
+        """Move a recommendation from ``expected_status`` to ``status``.
 
-        When ``expected_status`` is given the write is a compare-and-set: it
-        only applies while the stored status still matches. Returns whether
-        the transition was applied, so callers can make review side effects
-        happen at most once.
+        Always a compare-and-set: the write applies only while the stored
+        status still matches ``expected_status``. There is deliberately no
+        unconditional variant — an unguarded status write is what let a
+        replayed review be recorded twice. Returns whether the transition was
+        applied, so callers can make the decision (and its side effects)
+        land at most once.
         """
         ...
 

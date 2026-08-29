@@ -268,10 +268,10 @@ class _FakeRecommendationRepo:
         reviewed_at,
         rejection_reason,
         *,
-        expected_status: str | None = None,
+        expected_status: str,
     ) -> bool:
-        rec = self.rows[rec_id]
-        if expected_status is not None and rec.status != expected_status:
+        rec = self.rows.get(rec_id)
+        if rec is None or rec.status != expected_status:
             return False
         self.rows[rec_id] = rec.model_copy(
             update={
@@ -710,6 +710,10 @@ def test_replayed_approve_is_conflict_and_performs_no_writes(env):
     second = env.client.post(f"/api/v2/admin/level-up/{rec.rec_id}/approve")
 
     assert second.status_code == 409, second.text
+    # Surfaced through the registered DomainError handler, so the UI gets the
+    # structured envelope rather than a free-text detail string.
+    assert second.json()["error"]["code"] == "StudentProgress.RecommendationAlreadyReviewed"
+    assert second.json()["error"]["details"]["status"] == "APPROVED"
     # No second certificate.
     certs = env.client.get(f"/api/v2/admin/students/{student_id}/certificates").json()[
         "certificates"
@@ -746,6 +750,8 @@ def test_replayed_reject_is_conflict(env):
     )
 
     assert second.status_code == 409, second.text
+    assert second.json()["error"]["code"] == "StudentProgress.RecommendationAlreadyReviewed"
+    assert second.json()["error"]["details"]["status"] == "REJECTED"
     saved = _run(env.rec_repo.get(rec.rec_id))
     assert saved.status == "REJECTED"
     assert saved.rejection_reason == "not yet"

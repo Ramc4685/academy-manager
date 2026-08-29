@@ -53,15 +53,16 @@ class MongoLevelUpRecommendationRepository(TenantScopedRepository):
         reviewed_at: datetime | None,
         rejection_reason: str | None,
         *,
-        expected_status: str | None = None,
+        expected_status: str,
     ) -> bool:
-        filter_: dict[str, object] = {"rec_id": rec_id}
-        if expected_status is not None:
-            # Compare-and-set: a replayed review finds nothing to match and
-            # reports False, so the caller can skip its side effects.
-            filter_["status"] = expected_status
+        """Compare-and-set the review decision.
+
+        The status is part of the filter, so a replayed review matches
+        nothing and reports ``False``; only the racer that finds the
+        recommendation still in ``expected_status`` records the decision.
+        """
         result = await self._update_one(
-            filter_,
+            {"rec_id": rec_id, "status": expected_status},
             {
                 "$set": {
                     "status": status,
