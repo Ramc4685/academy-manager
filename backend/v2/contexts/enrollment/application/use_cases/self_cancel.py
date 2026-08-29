@@ -22,15 +22,33 @@ cancel that does not ``release_seat`` leaves the session reading full
 forever, blocking every future approval AND hiding seats in the parent
 catalog (which takes ``max(enrolled_count, reserved_seats)``). So, exactly
 like the admin path (``admin_writes.CancelEnrollment``), a successful
-self-cancel releases the seat and emits ``EnrollmentCancelled``
+self-cancel releases the seat, records a ``"cancelled"``
+``EnrollmentLifecycleEvent`` (so the admin timeline shows a cancellation row
+next to the ``"promoted"`` row the freed seat causes, instead of a promotion
+out of nowhere) and emits ``EnrollmentCancelled``
 (``reason="parent_cancel"``) — the event ``PromoteFromWaitlist`` listens
-for. Both happen only when the status CAS actually transitioned the
+for. All three happen only when the status CAS actually transitioned the
 enrollment, so a double-submitted cancel can never double-release a seat.
 
 ERROR HANDLING: the enrollment-status CAS write (``mark_cancelled_by_parent``)
 is the source of truth for cancellation and always commits first — the
 parent's enrollment is durably cancelled the moment that write succeeds.
-The subsequent fee-billing call is treated as best-effort, NOT
+NOT every post-CAS step is best-effort, and the two groups differ
+deliberately. The capacity compensation — ``release_seat``, the lifecycle
+event and ``outbox.append`` — PROPAGATES: if any of them raises, ``execute``
+raises and the caller gets a 500 even though the enrollment is already
+durably cancelled. That is the intended trade-off. A swallowed
+``release_seat`` failure is invisible and permanent (``reserved_seats`` only
+ever ``$inc``s, so nothing later re-derives the true count), whereas a 500
+on a committed cancel is loud, and the operation is safe to retry: the
+retry loses the status CAS, raises ``EnrollmentNotCancellable``, and the
+seat is then reconciled by an admin rather than silently leaked. The
+compensation is additionally wrapped in ``asyncio.shield`` so that a
+``CancelledError`` delivered mid-flight (client disconnect tearing down the
+request task — a ``BaseException`` no ``except Exception`` would catch)
+cannot abandon the seat of an enrollment that is already cancelled on disk.
+The fee-billing call BELOW the compensation is the opposite: it is
+best-effort, NOT
 transactional with the CAS: if ``record_cancellation_fee`` raises (transient
 Mongo error, ``AddInvoiceLine`` ``ValueError``, etc.), ``execute`` does NOT
 re-raise and does NOT roll back the cancellation (there is no compensating
@@ -79,6 +97,7 @@ sets ``cancelled_at`` to now.
 
 from __future__ import annotations
 
+import asyncio
 import calendar
 import logging
 from collections.abc import Callable
@@ -91,6 +110,7 @@ from backend.v2.contexts.enrollment.domain.errors import EnrollmentNotFound
 from backend.v2.contexts.enrollment.domain.events import (
     EnrollmentCancelled,
     EnrollmentCancelledPayload,
+    EnrollmentLifecycleEvent,
 )
 from backend.v2.contexts.enrollment.domain.models import Enrollment, Student
 from backend.v2.contexts.enrollment.domain.self_service import (
@@ -100,6 +120,7 @@ from backend.v2.contexts.enrollment.domain.self_service import (
     compute_self_cancel_terms,
 )
 from backend.v2.shared.events import Outbox
+from backend.v2.shared.ids import new_ulid
 
 log = logging.getLogger(__name__)
 
@@ -173,6 +194,16 @@ class SelfCancelSessionWriter(Protocol):
     enrollment must decrement it or the session reads full forever."""
 
     async def release_seat(self, session_id: str) -> None: ...
+
+
+class SelfCancelLifecycleEventRecorder(Protocol):
+    """Minimal slice of ``EnrollmentEventRepository``: append one row to the
+    enrollment lifecycle timeline the admin UI reads. Without it a parent
+    self-cancel is invisible there — the timeline would show only the
+    ``"promoted"`` row for whoever took the freed seat, with no cancellation
+    that explains it."""
+
+    async def record(self, event: EnrollmentLifecycleEvent) -> None: ...
 
 
 class SelfCancelBillingPort(Protocol):
@@ -310,6 +341,7 @@ class SelfCancelEnrollment:
         sessions: SelfCancelSessionWriter,
         outbox: Outbox,
         billing: SelfCancelBillingPort | None = None,
+        enrollment_events: SelfCancelLifecycleEventRecorder | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._enrollments = enrollments
@@ -319,6 +351,7 @@ class SelfCancelEnrollment:
         self._sessions = sessions
         self._outbox = outbox
         self._billing = billing
+        self._enrollment_events = enrollment_events
         self._now = clock
 
     async def execute(self, cmd: SelfCancelEnrollmentCommand) -> SelfCancelEnrollmentResult:
@@ -363,24 +396,24 @@ class SelfCancelEnrollment:
             )
 
         # Capacity compensation, mirroring the admin cancel path
-        # (``admin_writes.CancelEnrollment``): give the seat back, then emit
-        # ``EnrollmentCancelled`` so ``PromoteFromWaitlist`` runs. Both are
-        # reached only when the CAS above actually transitioned this
-        # enrollment, so a double-submitted cancel (whose loser raises just
-        # above) can never double-release a seat or promote twice. Runs
-        # before the best-effort fee billing below: a fee-billing failure
-        # must never leave the seat stranded.
-        await self._sessions.release_seat(updated.session_id)
-        await self._outbox.append(
-            EnrollmentCancelled(
-                aggregate_id=updated.enrollment_id,
-                academy_id=updated.academy_id,
-                payload=EnrollmentCancelledPayload(
-                    enrollment_id=updated.enrollment_id,
-                    session_id=updated.session_id,
-                    student_id=updated.student_id,
-                    reason="parent_cancel",
-                ),
+        # (``admin_writes.CancelEnrollment``). Reached only when the CAS above
+        # actually transitioned this enrollment, so a double-submitted cancel
+        # (whose loser raises just above) can never double-release a seat or
+        # promote twice. It runs BEFORE the best-effort fee billing below, and
+        # under ``asyncio.shield``, for the same reason: once the cancel is
+        # committed the seat must come back. Ordering alone is not enough —
+        # a client disconnect cancels the request task, and the resulting
+        # ``CancelledError`` is a ``BaseException`` that the billing block's
+        # ``except Exception`` would not contain either. The shield lets the
+        # compensation run to completion even as the request is torn down;
+        # failures inside it still propagate (see module ERROR HANDLING).
+        await asyncio.shield(
+            self._compensate_capacity(
+                updated,
+                actor_id=cmd.parent_id,
+                reason=cmd.reason,
+                effective_at=cancelled_at,
+                now=now,
             )
         )
 
@@ -425,6 +458,54 @@ class SelfCancelEnrollment:
             notice_met=terms.notice_met,
             effective_timing=policy.cancellation_effective_timing,
             cancelled_at=cancelled_at,
+        )
+
+    async def _compensate_capacity(
+        self,
+        enrollment: Enrollment,
+        *,
+        actor_id: str,
+        reason: str,
+        effective_at: datetime,
+        now: datetime,
+    ) -> None:
+        """Everything that must follow a committed cancel: free the seat,
+        write the admin-timeline row, publish ``EnrollmentCancelled``.
+
+        Kept in one coroutine so ``execute`` can ``asyncio.shield`` the whole
+        group. The seat goes first — unlike ``admin_writes.CancelEnrollment``,
+        which records the lifecycle row before releasing — because the seat is
+        the only one of the three that nothing later re-derives: a missed
+        timeline row is cosmetic, a missed release is a permanently
+        unsellable seat.
+        """
+        await self._sessions.release_seat(enrollment.session_id)
+        if self._enrollment_events is not None:
+            await self._enrollment_events.record(
+                EnrollmentLifecycleEvent(
+                    event_id=str(new_ulid()),
+                    academy_id=enrollment.academy_id,
+                    event_type="cancelled",
+                    enrollment_id=enrollment.enrollment_id,
+                    session_id=enrollment.session_id,
+                    student_id=enrollment.student_id,
+                    actor_id=actor_id,
+                    reason=reason,
+                    effective_at=effective_at,
+                    occurred_at=now,
+                )
+            )
+        await self._outbox.append(
+            EnrollmentCancelled(
+                aggregate_id=enrollment.enrollment_id,
+                academy_id=enrollment.academy_id,
+                payload=EnrollmentCancelledPayload(
+                    enrollment_id=enrollment.enrollment_id,
+                    session_id=enrollment.session_id,
+                    student_id=enrollment.student_id,
+                    reason="parent_cancel",
+                ),
+            )
         )
 
 
@@ -508,6 +589,7 @@ __all__ = [
     "SelfCancelEnrollmentQuery",
     "SelfCancelEnrollmentResult",
     "SelfCancelEnrollmentWriter",
+    "SelfCancelLifecycleEventRecorder",
     "SelfCancelOccurrenceQuery",
     "SelfCancelPolicyRepository",
     "SelfCancelSessionWriter",
