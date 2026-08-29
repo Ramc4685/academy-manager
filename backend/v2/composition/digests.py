@@ -5,10 +5,10 @@ wrapped in a duck-typed ``plan_provider`` that first resolves the academy's
 default program — mirroring the coach BFF route's graceful resolution — so a
 missing pathway degrades to an all-unplaced plan instead of raising.
 
-Email safety: the same Resend/Stub gating as ``compose_admin`` — the real
+Email safety: every digest sender comes from ``_build_email_sender`` — the real
 Resend adapter is only wired when ``email_delivery_enabled`` and a
-``resend_api_key`` are both set; otherwise a stub records sends without
-contacting a provider.
+``resend_api_key`` are both set *and* the environment is staging/prod;
+otherwise a stub records sends without contacting a provider.
 """
 
 from __future__ import annotations
@@ -235,22 +235,13 @@ def _build_digest_parts(db: AsyncIOMotorDatabase[Any]) -> _DigestParts:
     )
     plan_provider = _CoachDigestPlanProvider(generate=generate, curriculum=curriculum)
 
-    from_address = settings.sender_email or (
-        f"noreply@{settings.frontend_url.replace('https://', '').replace('http://', '').split('/')[0]}"
-        if settings.frontend_url
-        else "noreply@academy.app"
-    )
-    if settings.email_delivery_enabled and settings.resend_api_key:
-        sender: Any = ResendEmailSendPort(
-            api_key=settings.resend_api_key, from_address=from_address
-        )
-    else:
-        sender = StubEmailSendPort()
-
     return _DigestParts(
         digests=MongoDigestSendRepository(db),
         resolver=MongoAudienceResolver(db=db),
-        sender=sender,
+        # Shared env-gated factory (defined below): the coach daily digest and
+        # the admin-triggered digest test must not be the paths that mail real
+        # coaches from a dev stack that inherited delivery flags and a key.
+        sender=_build_email_sender(settings),
         plan_provider=plan_provider,
     )
 
@@ -724,7 +715,13 @@ _REAL_EMAIL_ENVS = frozenset({"staging", "prod"})
 
 
 def _build_email_sender(settings: Any) -> Any:
-    """Resend/Stub gating for the parent digest.
+    """Resend/Stub gating for every digest send path.
+
+    The single construction site for the real adapter (enforced by
+    ``v2/tests/structural/test_email_sender_construction.py``): parent digest,
+    ops digest, coach daily digest and the admin-triggered coach digest test all
+    come through here, so the gate cannot be right in one copy and missing in
+    another.
 
     Beyond ``email_delivery_enabled`` + ``resend_api_key``, the real adapter is
     only wired in an approved environment (staging/prod) — see
@@ -749,12 +746,9 @@ def compose_email_credential_probe() -> Any | None:
     credential to check (issue #435).
 
     Deliberately *not* ``compose_ops_digest_sender()``: that one is env-gated to
-    staging/prod, while ``_build_digest_parts`` wires the real Resend adapter
-    whenever delivery is enabled and a key is present. Probing the ops-digest
-    port would therefore validate a stub on exactly the deployments that are
-    sending live mail through an unvalidated key. The question this answers is
-    "is the configured Resend key alive", so it follows the credential, not the
-    environment.
+    staging/prod, and a stub carries no key to validate. The question this
+    answers is "is the configured Resend key alive", so it follows the
+    credential, not the environment.
 
     The probe only ever issues a read (``Domains.list``); ``from_address`` is
     never used, so no send path is reachable from it.
