@@ -19,6 +19,7 @@ from backend.v2.composition.admin_registration_review import (
     AdminRegistrationReview,
 )
 from backend.v2.composition.digests import (
+    _build_email_sender,
     compose_get_digest_delivery_log,
     compose_send_coach_digest_test,
 )
@@ -226,9 +227,6 @@ from backend.v2.contexts.communications.infrastructure.mongo_campaign_repo impor
 )
 from backend.v2.contexts.communications.infrastructure.mongo_delivery_repo import (
     MongoDeliveryRepository,
-)
-from backend.v2.contexts.communications.infrastructure.resend_send_port import (
-    ResendEmailSendPort,
 )
 from backend.v2.contexts.communications.infrastructure.stub_send_port import (
     StubEmailSendPort,
@@ -997,25 +995,14 @@ def compose_admin(
     comms = CommsService(messages=messages_repo, academy_id=academy_id)
 
     _s = settings
-    _from_addr = _s.sender_email or (
-        f"noreply@{_s.frontend_url.replace('https://', '').replace('http://', '').split('/')[0]}"
-        if _s.frontend_url
-        else "noreply@academy.app"
-    )
-    # Beyond email_delivery_enabled + resend_api_key, real delivery is only
-    # wired in an approved environment (staging/prod) -- mirrors
-    # digests.py::_build_email_sender / _REAL_EMAIL_ENVS. A dev or test stack
-    # that has inherited delivery flags and Resend credentials must still
-    # fall back to the stub (AGENTS.md: "Do not send real email from
-    # local/test environments").
-    _email_env = str(getattr(_s, "env", "") or "").lower()
-    _email_sender_is_real = bool(
-        _s.email_delivery_enabled and _s.resend_api_key and _email_env in {"staging", "prod"}
-    )
-    if _email_sender_is_real and _s.resend_api_key:
-        _email_sender = ResendEmailSendPort(api_key=_s.resend_api_key, from_address=_from_addr)
-    else:
-        _email_sender = StubEmailSendPort()
+    # Real delivery needs email_delivery_enabled + resend_api_key AND an
+    # approved environment (staging/prod). The gate lives in exactly one place,
+    # digests.py::_build_email_sender, so a dev or test stack that has inherited
+    # delivery flags and Resend credentials cannot mail real families through
+    # any composition (AGENTS.md: "Do not send real email from local/test
+    # environments").
+    _email_sender = _build_email_sender(_s)
+    _email_sender_is_real = not isinstance(_email_sender, StubEmailSendPort)
 
     product_repo = MongoProductRepository(db)
 
