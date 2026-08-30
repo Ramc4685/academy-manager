@@ -14,7 +14,10 @@ Eligibility (per occurrence):
 4. Attributed coach == requested ``coach_id``, where the attribution rule is:
    ``actual_coach_id ?? scheduled_coach_id``. A replacement coach is paid
    by being set as ``actual_coach_id``; the originally scheduled coach then
-   no longer matches and is not paid for that occurrence.
+   no longer matches and is not paid for that occurrence. The displaced
+   scheduled coach still gets a ``replaced_by_actual_coach`` row in
+   ``unpaid_occurrences`` naming the coach who was paid instead, so the
+   exclusion is auditable rather than silent.
 5. The attributed coach is not marked **absent** in coach attendance for
    the occurrence. Absent occurrences are reported in
    ``absent_occurrence_ids`` (policy: a coach is paid unless explicitly
@@ -231,6 +234,25 @@ class ComputeCoachPayout:
 
             paying_coach, basis = _paying_coach(occ)
             if paying_coach != coach_id:
+                if coach_id == occ.scheduled_coach_id:
+                    # The scheduled coach was displaced by an ``actual_coach_id``.
+                    # Paying the substitute is correct, but the displaced coach
+                    # must keep a trace: without one, a mistaken attribution
+                    # silently removes pay with nothing for payroll review to
+                    # catch (#228). Not ``unresolved`` — a substitution is a
+                    # legitimate outcome, not a repair item that blocks approval.
+                    unpaid_occurrences.append(
+                        PayoutUnpaidOccurrence(
+                            occurrence_id=occ.occurrence_id,
+                            reason="replaced_by_actual_coach",
+                            detail=(
+                                "Scheduled coach was replaced; this occurrence was "
+                                f"attributed to coach {paying_coach}."
+                            ),
+                            unresolved=False,
+                            attributed_coach_id=paying_coach,
+                        )
+                    )
                 continue
 
             attendance = _attendance_for(occ, coach_id)

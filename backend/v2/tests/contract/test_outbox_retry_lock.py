@@ -209,3 +209,18 @@ def _event_doc(
         "created_at": created_at,
         "updated_at": created_at,
     }
+
+
+@pytest.mark.asyncio
+async def test_is_running_tracks_the_poll_loop_lifecycle(db) -> None:
+    """/healthz reads this to catch a dispatcher whose task died while the
+    process kept serving traffic (issue #429)."""
+    dispatcher = EventDispatcher(db, worker_id="worker-health")
+
+    assert dispatcher.is_running() is False  # never started
+
+    await dispatcher.start()
+    assert dispatcher.is_running() is True
+
+    await dispatcher.stop()
+    assert dispatcher.is_running() is False

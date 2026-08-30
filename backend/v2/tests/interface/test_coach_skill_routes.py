@@ -159,17 +159,21 @@ class _FakeLevelUpRepo:
         reviewed_by: str | None,
         reviewed_at: object | None,
         rejection_reason: str | None,
-    ) -> None:
+        *,
+        expected_status: str,
+    ) -> bool:
         r = self._store.get(rec_id)
-        if r:
-            self._store[rec_id] = r.model_copy(
-                update={
-                    "status": status,
-                    "reviewed_by": reviewed_by,
-                    "reviewed_at": reviewed_at,
-                    "rejection_reason": rejection_reason,
-                }
-            )
+        if r is None or r.status != expected_status:
+            return False
+        self._store[rec_id] = r.model_copy(
+            update={
+                "status": status,
+                "reviewed_by": reviewed_by,
+                "reviewed_at": reviewed_at,
+                "rejection_reason": rejection_reason,
+            }
+        )
+        return True
 
     async def get(self, rec_id: str) -> LevelUpRecommendation | None:
         return self._store.get(rec_id)

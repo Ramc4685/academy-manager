@@ -75,11 +75,21 @@ class User(BaseModel):
 
     user_id: str
     firebase_uid: str | None = None
+    # Older records carry the auth identifier under `auth_uid`, and a doc may
+    # hold a stale `auth_uid` alongside a newer `firebase_uid`. Kept as a
+    # distinct field so membership lookups can match every alias this account
+    # may be keyed by (see `domain/identity_aliases.py`).
+    auth_uid: str | None = None
     email: EmailStr
     normalized_email: str | None = None
     display_name: str
     phone: str | None = None
     global_status: GlobalUserStatus = "active"
+    # Stamped when the user confirms their login email is correct via the
+    # parent self-service profile (email itself is never editable there — it
+    # is the Firebase login identifier). Optional/defaulted so existing
+    # documents deserialize unchanged; no migration required.
+    email_confirmed_at: datetime | None = None
 
     # ---- Legacy single-tenant compatibility ---------------------------------
     # These are NOT the SaaS source of truth. They are kept so existing code

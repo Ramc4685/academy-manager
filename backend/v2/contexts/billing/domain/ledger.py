@@ -59,6 +59,12 @@ class LedgerInvoice(BaseModel):
     # in the Resend dashboard). Only overwritten on a successful send; a later
     # delivery_failed leaves the last good id in place so the link still works.
     email_provider_message_id: str | None = None
+    # In-flight Stripe Checkout Session for this invoice. Set while a parent is paying
+    # manually, cleared by the session's terminal webhook. Autopay refuses to charge a
+    # held invoice so a manual payment and a dunning tick cannot both collect the same
+    # balance — see contexts.billing.domain.checkout_hold.
+    checkout_hold_session_id: str | None = None
+    checkout_hold_started_at: datetime | None = None
     # audit
     finalized_at: datetime | None = None
     # optimistic-concurrency token; bumped by the repository on each persisted write

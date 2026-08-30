@@ -86,3 +86,13 @@ describe("payroll warning presentation", () => {
     expect(rateTimelineIssueLabel("overlap")).toBe("Overlapping rate windows");
   });
 });
+
+describe("replaced-by-substitute reason (#228)", () => {
+  it("labels a displaced scheduled coach's occurrence as replaced", () => {
+    expect(unpaidReasonLabel("replaced_by_actual_coach")).toBe("Replaced");
+  });
+
+  it("guides the admin to check the attribution rather than a rate repair", () => {
+    expect(unpaidReasonGuidance("replaced_by_actual_coach")).toContain("replacement coach");
+  });
+});

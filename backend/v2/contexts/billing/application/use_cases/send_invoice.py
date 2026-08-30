@@ -10,10 +10,43 @@ Calling flow
 3. If balance_due_cents > 0: create a Stripe Checkout Session for the balance.
 4. Send email to parent with the pay link via EmailSendPort when configured.
 5. Record delivery only after email succeeds; record delivery_failed after email errors.
-6. Return SendInvoiceResult(invoice=updated, checkout_url=str|None).
+6. Return SendInvoiceResult(invoice=updated, checkout_url=str|None,
+   checkout_failure_code=str|None).
 
 Re-send: if email succeeds and delivery_status == "sent" already, last_sent_at
 updates and sent_at stays the same (domain rule enforced by record_delivery).
+
+Checkout failures are loud (issue #426)
+---------------------------------------
+A checkout session that we *tried and failed* to create is a broken payment
+setup, not a quiet degradation. When it happens this use case:
+
+* records one ``payment_attempts`` row per invoice behind the link, with the
+  ``checkout_mint_failed`` status and a distinct ``failure_code``. That status
+  is deliberately NOT a charge outcome — see
+  ``domain.payment_attempt_kinds`` for the readers that must filter it out;
+* logs at ERROR, not WARNING;
+* **does not send the parent-facing invoice email**, and marks the invoice
+  ``delivery_failed`` *only if it was not already successfully delivered* — a
+  parent must never receive an invoice that says "contact the academy to
+  arrange payment" because our Stripe call blew up, but neither may a re-send
+  erase the record that an earlier email did arrive;
+* returns the reason in ``checkout_failure_code`` so callers (admin send,
+  parent "Pay now") can surface a real error.
+
+What is NOT a failure
+---------------------
+* **An academy with no Stripe Connect account at all** — it has never
+  onboarded online payments and collects fees off platform. The platform
+  Stripe client is always wired in production, so ``self._stripe is None``
+  cannot be used to detect this; the signal is ``get_for_academy() is None``.
+  These academies still get the normal email with its "contact the academy to
+  arrange payment" copy, and no failure is recorded.
+* **An invoice that is not payable** (zero balance / paid / void) — nothing to
+  mint, normal email.
+
+The distinction that matters is *"has this academy asked for online payments
+and is it broken?"*, not *"is there a pay link?"*.
 """
 
 from __future__ import annotations
@@ -30,6 +63,13 @@ from backend.v2.contexts.billing.application.ports import (
     ConnectedAccountRepository,
     LedgerRepository,
 )
+from backend.v2.contexts.billing.application.use_cases.record_checkout_mint_failure import (
+    CHECKOUT_FAILURE_ACCOUNT_NOT_READY,
+    CHECKOUT_FAILURE_ACCOUNTS_NOT_CONFIGURED,
+    CHECKOUT_FAILURE_STRIPE_ERROR,
+    record_checkout_mint_failure,
+)
+from backend.v2.contexts.billing.domain.checkout_hold import place_checkout_hold
 from backend.v2.contexts.billing.domain.ledger import (
     LedgerInvoice,
     finalize,
@@ -37,6 +77,17 @@ from backend.v2.contexts.billing.domain.ledger import (
 )
 
 log = logging.getLogger(__name__)
+
+# Re-exported for callers that branch on the reason (admin UI, tests).
+__all__ = [
+    "CHECKOUT_FAILURE_ACCOUNTS_NOT_CONFIGURED",
+    "CHECKOUT_FAILURE_ACCOUNT_NOT_READY",
+    "CHECKOUT_FAILURE_STRIPE_ERROR",
+    "InvoiceEmailPort",
+    "InvoiceStripeGateway",
+    "SendInvoice",
+    "SendInvoiceResult",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -94,6 +145,10 @@ class SendInvoiceResult(BaseModel):
 
     invoice: LedgerInvoice
     checkout_url: str | None = None
+    #: Set only when a pay link was *attempted and failed* (Stripe raised, or
+    #: funds could not be routed to the academy's connected account). ``None``
+    #: for "no Stripe configured" and for invoices that are simply not payable.
+    checkout_failure_code: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -124,6 +179,50 @@ class SendInvoice:
         self._success_url = success_url
         self._cancel_url = cancel_url
         self._now = clock
+
+    async def _hold_invoices_for_checkout(
+        self,
+        *,
+        primary: LedgerInvoice,
+        payable_invoices: list[LedgerInvoice],
+        checkout_session_id: str,
+        now: datetime,
+    ) -> LedgerInvoice:
+        """Stamp the open session on every invoice this pay link collects.
+
+        A bundled link settles one balance across several invoices, so autopay has to
+        stand off all of them — holding only the invoice that was sent would leave the
+        others double-chargeable. Returns the (re-saved) primary so the caller's later
+        delivery write does not clobber the hold with its stale copy.
+
+        Best-effort per invoice: a hold that fails to persist costs us the guard on that
+        one invoice, which is strictly better than withholding the pay link the parent
+        asked for. The failure is logged loudly because it re-opens the double-charge
+        window for that invoice.
+        """
+        held_primary = primary
+        for candidate in payable_invoices:
+            try:
+                stamped = await self._ledger.save_invoice(
+                    place_checkout_hold(
+                        candidate,
+                        checkout_session_id=checkout_session_id,
+                        now=now,
+                    )
+                )
+            except Exception as exc:
+                log.error(
+                    "send_invoice: FAILED to hold invoice=%s for checkout session=%s — "
+                    "autopay may double-charge this invoice err=%s",
+                    candidate.invoice_id,
+                    checkout_session_id,
+                    exc,
+                    exc_info=True,
+                )
+                continue
+            if stamped.invoice_id == primary.invoice_id:
+                held_primary = stamped
+        return held_primary
 
     async def execute(
         self,
@@ -178,13 +277,20 @@ class SendInvoice:
         # refuse to mint a platform-charge pay link if it is not charge-ready.
         connected_account_id: str | None = None
         connected_account_blocked = False
+        # (failure_code, failure_message) kept together so they can never drift.
+        checkout_failure: tuple[str, str] | None = None
         if can_create_checkout and self._stripe is not None:
             if self._connected_accounts is None:
-                log.warning(
+                log.error(
                     "send_invoice: refusing pay link for invoice=%s — connected accounts not configured",
                     invoice_id,
                 )
                 connected_account_blocked = True
+                checkout_failure = (
+                    CHECKOUT_FAILURE_ACCOUNTS_NOT_CONFIGURED,
+                    "Connected accounts repository is not configured; refusing to mint a "
+                    "platform-charge pay link.",
+                )
             else:
                 account = await self._connected_accounts.get_for_academy()
                 if account is None or not account.is_ready_for_charges():
@@ -208,12 +314,35 @@ class SendInvoice:
                             invoice_id,
                         )
                         connected_account_id = None
+                    elif account is None:
+                        # No Connect account row at all: this academy has never
+                        # onboarded online payments and collects fees off
+                        # platform. That is a CONFIGURATION STATE, not a
+                        # failure — the platform Stripe client is always wired
+                        # in prod, so treating it as one would silently stop
+                        # every invoice email for such an academy. Send the
+                        # normal email; its "contact the academy to arrange
+                        # payment" copy is exactly right here.
+                        log.info(
+                            "send_invoice: no connected account for this academy — sending "
+                            "invoice=%s without a pay link",
+                            invoice_id,
+                        )
+                        connected_account_blocked = True
                     else:
-                        log.warning(
+                        # An account EXISTS but cannot take charges (onboarding
+                        # abandoned, capability revoked, requirements past due).
+                        # This academy expects online payments and is broken.
+                        log.error(
                             "send_invoice: refusing pay link for invoice=%s — connected account not ready",
                             invoice_id,
                         )
                         connected_account_blocked = True
+                        checkout_failure = (
+                            CHECKOUT_FAILURE_ACCOUNT_NOT_READY,
+                            "Academy Stripe connected account exists but is not ready for "
+                            "charges, and platform-charge fallback is off.",
+                        )
                 else:
                     connected_account_id = account.stripe_account_id
         if can_create_checkout and self._stripe is not None and not connected_account_blocked:
@@ -282,13 +411,31 @@ class SendInvoice:
                     session_id,
                     is_bundled,
                 )
+                # From here the parent may pay at any moment, and the invoice will keep
+                # reading "open" until the success webhook drains. Hold it so the dunning
+                # tick stands off instead of charging the same balance again (issue #434).
+                invoice = await self._hold_invoices_for_checkout(
+                    primary=invoice,
+                    payable_invoices=payable_invoices,
+                    checkout_session_id=session_id,
+                    now=now,
+                )
             except Exception as exc:
-                log.warning(
-                    "send_invoice: stripe checkout creation failed invoice=%s err=%s",
+                # Loud, not swallowed (issue #426). The idempotency key above is
+                # part of the failure mode here (a key minted before routing
+                # params were added deterministically re-fails), so keep the
+                # key in the log line.
+                log.error(
+                    "send_invoice: stripe checkout creation FAILED invoice=%s "
+                    "idempotency_key=%s bundled=%s err=%s",
                     invoice_id,
+                    idempotency_key,
+                    is_bundled,
                     exc,
+                    exc_info=True,
                 )
                 checkout_url = None
+                checkout_failure = (CHECKOUT_FAILURE_STRIPE_ERROR, str(exc))
         elif invoice.balance_due_cents == 0 or invoice.status not in payable_statuses:
             log.info(
                 "send_invoice: invoice=%s not payable (status=%s balance=%d) — skipping Stripe",
@@ -313,7 +460,36 @@ class SendInvoice:
             if is_bundled
             else invoice.balance_due_cents
         )
-        if self._email is not None:
+        if checkout_failure is not None:
+            failure_code, failure_message = checkout_failure
+            # One row per invoice behind the link, each carrying its OWN
+            # balance — a bundled link over three $100 invoices is $300 of
+            # exposure, not $900.
+            await record_checkout_mint_failure(
+                self._ledger,
+                invoices=payable_invoices,
+                failure_code=failure_code,
+                failure_message=failure_message,
+            )
+            # Never tell a parent "contact the academy to arrange payment"
+            # because OUR Stripe call failed: suppress the email.
+            if self._email is not None:
+                # Only downgrade delivery for an invoice that was never
+                # successfully delivered. Flipping a previously-"sent" invoice
+                # to delivery_failed would destroy the record that the parent
+                # DID receive an earlier email, and stamping last_sent_at for
+                # a send we never attempted is simply false.
+                if invoice.delivery_status != "sent":
+                    invoice = record_delivery(invoice, outcome="delivery_failed", now=now)
+                    invoice = await self._ledger.save_invoice(invoice)
+                log.error(
+                    "send_invoice: SUPPRESSED parent invoice email for invoice=%s — "
+                    "checkout unavailable (%s); delivery_status=%s",
+                    invoice_id,
+                    failure_code,
+                    invoice.delivery_status,
+                )
+        elif self._email is not None:
             try:
                 provider_message_id = await self._email.send_invoice_email(
                     parent_id=invoice.parent_id,
@@ -346,4 +522,8 @@ class SendInvoice:
                 invoice_id,
             )
 
-        return SendInvoiceResult(invoice=invoice, checkout_url=checkout_url)
+        return SendInvoiceResult(
+            invoice=invoice,
+            checkout_url=checkout_url,
+            checkout_failure_code=checkout_failure[0] if checkout_failure else None,
+        )

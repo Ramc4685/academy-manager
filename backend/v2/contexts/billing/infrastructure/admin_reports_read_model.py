@@ -595,6 +595,38 @@ class AdminEffectiveRevenueQuery:
         return months
 
 
+def _pluralize(count: int, singular: str, plural: str) -> str:
+    return singular if count == 1 else plural
+
+
+def _as_utc_or_none(value: Any) -> datetime | None:
+    """Motor hands back naive UTC datetimes by default, while ``month_bounds``
+    is timezone-aware. Normalise before comparing window boundaries."""
+    if not isinstance(value, datetime):
+        return None
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+def _period_has_unresolved_pay_issues(payout_period: dict[str, Any]) -> bool:
+    """True when a payout period was generated with known gaps.
+
+    Mirrors what ``finance.payout_period.approve`` refuses to approve over:
+    legacy unpaid ids, structured unpaid rows still flagged ``unresolved``,
+    and payout warnings. Non-blocking rows (an attendance override, or a
+    scheduled coach replaced by a substitute) are deliberately excluded — they
+    explain a zero, they are not missing payroll.
+    """
+    if payout_period.get("unpaid_occurrence_ids"):
+        return True
+    if payout_period.get("payout_warnings"):
+        return True
+    return any(
+        bool(row.get("unresolved", True))
+        for row in payout_period.get("unpaid_occurrences") or []
+        if isinstance(row, dict)
+    )
+
+
 def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
     """Returns an async callable for the owner finance/operations dashboard."""
     from backend.v2.shared.tenancy import current_academy_id
@@ -928,10 +960,37 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
         rent_cents = int(expense_categories.get("rent", {}).get("amount_cents", 0))
         misc_expenses_cents = expenses_total_cents - rent_cents
 
+        # Which coaches owe payroll this month? Same paying-coach rule payroll
+        # generation uses: actual_coach_id when set, else scheduled_coach_id.
+        # Completion is clock-derived, matching MonthlyCoachOccurrenceReader —
+        # nothing in the app writes status="completed".
+        now = datetime.now(UTC)
+        expected_coach_ids: set[str] = set()
+        expected_cursor = db["session_occurrences"].find(
+            {
+                "academy_id": academy_id,
+                "start_at": {"$gte": start, "$lt": end},
+                "is_payable": {"$ne": False},
+                "status": {"$ne": "cancelled"},
+                "$or": [{"status": "completed"}, {"end_at": {"$lt": now}}],
+            },
+            {"scheduled_coach_id": 1, "actual_coach_id": 1},
+        )
+        async for occurrence in expected_cursor:
+            paying_coach = str(
+                occurrence.get("actual_coach_id") or occurrence.get("scheduled_coach_id") or ""
+            )
+            if paying_coach:
+                expected_coach_ids.add(paying_coach)
+
         estimated_payroll_cents = 0
         approved_payroll_cents = 0
         paid_payroll_cents = 0
         payout_period_rows = 0
+        covered_coach_ids: set[str] = set()
+        draft_period_count = 0
+        unresolved_period_count = 0
+        partial_window_count = 0
         payout_cursor = db["payout_periods"].find(
             {
                 "academy_id": academy_id,
@@ -947,15 +1006,54 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
                 approved_payroll_cents += total
             if status == "paid":
                 paid_payroll_cents += int(payout_period.get("paid_amount_minor") or total)
+
+            # Only a period spanning exactly [month_start, next_month_start)
+            # can stand in for the month's payroll. A row that starts inside
+            # the month but ends early covers part of it and nothing else does.
+            if (
+                _as_utc_or_none(payout_period.get("period_start")) != start
+                or _as_utc_or_none(payout_period.get("period_end")) != end
+            ):
+                partial_window_count += 1
+                continue
+            covered_coach_ids.add(str(payout_period.get("coach_id") or ""))
+            if status == "draft":
+                draft_period_count += 1
+            if _period_has_unresolved_pay_issues(payout_period):
+                unresolved_period_count += 1
         unpaid_payroll_cents = max(approved_payroll_cents - paid_payroll_cents, 0)
 
-        payroll_for_pnl = (
-            approved_payroll_cents
-            if approved_payroll_cents > 0
-            else estimated_payroll_cents
-            if estimated_payroll_cents > 0
-            else None
-        )
+        # P&L is either accurate or explicitly blocked — never a confident
+        # profit number sitting on top of incomplete payroll (#225).
+        missing_coach_count = len(expected_coach_ids - covered_coach_ids)
+        blocked_reasons: list[str] = []
+        if expected_coach_ids and payout_period_rows == 0:
+            blocked_reasons.append("No generated payout periods for this month.")
+        elif missing_coach_count:
+            blocked_reasons.append(
+                f"Payroll has not been generated for {missing_coach_count} "
+                f"{_pluralize(missing_coach_count, 'coach', 'coaches')} this month."
+            )
+        if draft_period_count:
+            blocked_reasons.append(
+                f"{draft_period_count} payout "
+                f"{_pluralize(draft_period_count, 'period is', 'periods are')} still in draft."
+            )
+        if unresolved_period_count:
+            blocked_reasons.append(
+                f"{unresolved_period_count} payout "
+                f"{_pluralize(unresolved_period_count, 'period has', 'periods have')} "
+                "unresolved pay issues."
+            )
+        if partial_window_count:
+            blocked_reasons.append(
+                f"{partial_window_count} payout "
+                f"{_pluralize(partial_window_count, 'period does', 'periods do')} "
+                "not cover the full month."
+            )
+        payroll_blocked_by = " ".join(blocked_reasons) if blocked_reasons else None
+
+        payroll_for_pnl = None if payroll_blocked_by else approved_payroll_cents
         net_profit_cents = (
             cash_collected_cents - expenses_total_cents - payroll_for_pnl
             if payroll_for_pnl is not None
@@ -1093,9 +1191,7 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
                 "approved_cents": approved_payroll_cents if payout_period_rows else None,
                 "paid_cents": paid_payroll_cents if payout_period_rows else None,
                 "unpaid_cents": unpaid_payroll_cents if payout_period_rows else None,
-                "blocked_by": None
-                if payout_period_rows
-                else "No generated payout periods for this month.",
+                "blocked_by": payroll_blocked_by,
             },
             "empty_states": empty_states,
         }

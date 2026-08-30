@@ -27,6 +27,9 @@ from backend.v2.contexts.student_progress.application.use_cases.update_skill_sta
     UpdateSkillStatus,
     UpdateSkillStatusCommand,
 )
+from backend.v2.contexts.student_progress.domain.errors import (
+    RecommendationAlreadyReviewed,
+)
 from backend.v2.contexts.student_progress.domain.models import (
     LevelUpRecommendation,
     SkillCertificate,
@@ -142,8 +145,12 @@ class _RecommendationRepo:
         reviewed_by: str | None,
         reviewed_at: object | None,
         rejection_reason: str | None,
-    ) -> None:
-        rec = self.rows[rec_id]
+        *,
+        expected_status: str,
+    ) -> bool:
+        rec = self.rows.get(rec_id)
+        if rec is None or rec.status != expected_status:
+            return False
         self.rows[rec_id] = rec.model_copy(
             update={
                 "status": status,
@@ -152,6 +159,7 @@ class _RecommendationRepo:
                 "rejection_reason": rejection_reason,
             }
         )
+        return True
 
     async def get(self, rec_id: str) -> LevelUpRecommendation | None:
         return self.rows.get(rec_id)
@@ -160,10 +168,12 @@ class _RecommendationRepo:
         self, student_id: str, program_id: str
     ) -> LevelUpRecommendation | None:
         for row in self.rows.values():
+            # Mirrors MongoLevelUpRecommendationRepository: an APPROVED
+            # recommendation also blocks a fresh one.
             if (
                 row.student_id == student_id
                 and row.program_id == program_id
-                and row.status == "RECOMMENDED"
+                and row.status in {"RECOMMENDED", "APPROVED"}
             ):
                 return row
         return None
@@ -175,8 +185,12 @@ class _RecommendationRepo:
 class _CertificateRepo:
     def __init__(self) -> None:
         self.rows: list[SkillCertificate] = []
+        self.fail_next_save = False
 
     async def save(self, cert: SkillCertificate) -> None:
+        if self.fail_next_save:
+            self.fail_next_save = False
+            raise RuntimeError("certificate store unavailable")
         self.rows.append(cert)
 
     async def list_for_student(self, student_id: str) -> list[SkillCertificate]:
@@ -525,3 +539,304 @@ async def test_review_level_up_approve_emits_leveled_up_and_certificate_events()
     assert certificate_issued.payload.level_id == "level-1"
     assert certificate_issued.payload.program_id == "program-1"
     assert certificate_issued.payload.issued_by == "admin-1"
+
+
+@pytest.mark.asyncio
+async def test_review_level_up_replayed_approve_is_rejected_without_side_effects() -> None:
+    level_progress = _LevelProgressRepo()
+    await level_progress.save(_active_progress())
+    skill_progress = _SkillProgressRepo()
+    recommendations = _RecommendationRepo()
+    await recommendations.save(
+        LevelUpRecommendation(
+            rec_id="rec-1",
+            academy_id="academy-1",
+            student_id="student-1",
+            from_level_id="level-1",
+            to_level_id="level-2",
+            program_id="program-1",
+            status="RECOMMENDED",
+            recommended_by="coach-1",
+            recommended_at=_NOW,
+        )
+    )
+    certs = _CertificateRepo()
+    outbox = _FakeOutbox()
+    use_case = ReviewLevelUpRecommendation(
+        recommendations=recommendations,
+        level_progress=level_progress,
+        skill_progress=skill_progress,
+        certificates=certs,
+        skill_lookup=_SkillLookup(),
+        outbox=outbox,
+    )
+    command = ReviewLevelUpCommand(
+        rec_id="rec-1",
+        action="approve",
+        reviewed_by="admin-1",
+        student_name="Student One",
+        level_name="Level One",
+        program_name="Program One",
+        level_sequence=1,
+    )
+
+    with tenant_scope("academy-1"):
+        await use_case.execute(command)
+        # The student earns real level-2 progress after the first approval.
+        await skill_progress.upsert(
+            _skill_progress("skill-3", "PASSED").model_copy(update={"level_id": "level-2"})
+        )
+
+        with pytest.raises(RecommendationAlreadyReviewed):
+            await use_case.execute(command)
+
+    assert len(certs.rows) == 1
+    assert len(outbox.events) == 2
+    level_2_rows = [row for row in level_progress.rows.values() if row.level_id == "level-2"]
+    assert len(level_2_rows) == 1
+    assert level_2_rows[0].status == "active"
+    seeded = await skill_progress.get("student-1", "skill-3")
+    assert seeded is not None
+    assert seeded.status == "PASSED"
+
+
+def _pending_recommendation(rec_id: str = "rec-1") -> LevelUpRecommendation:
+    return LevelUpRecommendation(
+        rec_id=rec_id,
+        academy_id="academy-1",
+        student_id="student-1",
+        from_level_id="level-1",
+        to_level_id="level-2",
+        program_id="program-1",
+        status="RECOMMENDED",
+        recommended_by="coach-1",
+        recommended_at=_NOW,
+    )
+
+
+def _approve_command(rec_id: str = "rec-1") -> ReviewLevelUpCommand:
+    return ReviewLevelUpCommand(
+        rec_id=rec_id,
+        action="approve",
+        reviewed_by="admin-1",
+        student_name="Student One",
+        level_name="Level One",
+        program_name="Program One",
+        level_sequence=1,
+    )
+
+
+def _review_use_case(
+    *,
+    recommendations: _RecommendationRepo,
+    level_progress: _LevelProgressRepo,
+    skill_progress: _SkillProgressRepo,
+    certs: _CertificateRepo,
+    outbox: _FakeOutbox | None = None,
+) -> ReviewLevelUpRecommendation:
+    return ReviewLevelUpRecommendation(
+        recommendations=recommendations,
+        level_progress=level_progress,
+        skill_progress=skill_progress,
+        certificates=certs,
+        skill_lookup=_SkillLookup(),
+        outbox=outbox,
+    )
+
+
+@pytest.mark.asyncio
+async def test_approval_that_fails_before_the_certificate_can_be_retried() -> None:
+    """A crash mid-approval must stay recoverable.
+
+    If the decision were stamped before the certificate write, the failure
+    would leave an APPROVED recommendation with no certificate: the retry
+    would lose the compare-and-set forever and the recommendation would be
+    permanently stuck.
+    """
+    level_progress = _LevelProgressRepo()
+    await level_progress.save(_active_progress())
+    skill_progress = _SkillProgressRepo()
+    recommendations = _RecommendationRepo()
+    await recommendations.save(_pending_recommendation())
+    certs = _CertificateRepo()
+    outbox = _FakeOutbox()
+    use_case = _review_use_case(
+        recommendations=recommendations,
+        level_progress=level_progress,
+        skill_progress=skill_progress,
+        certs=certs,
+        outbox=outbox,
+    )
+
+    with tenant_scope("academy-1"):
+        certs.fail_next_save = True
+        with pytest.raises(RuntimeError):
+            await use_case.execute(_approve_command())
+
+        stalled = await recommendations.get("rec-1")
+        assert stalled is not None
+        assert stalled.status == "RECOMMENDED"
+        assert certs.rows == []
+        assert outbox.events == []
+
+        # The coach keeps working while the approval is stuck: skill-3 was
+        # seeded by the half-applied run and is now passed.
+        seeded = await skill_progress.get("student-1", "skill-3")
+        assert seeded is not None
+        await skill_progress.upsert(seeded.model_copy(update={"status": "PASSED"}))
+
+        result = await use_case.execute(_approve_command())
+
+    assert result.status == "APPROVED"
+    reviewed = await recommendations.get("rec-1")
+    assert reviewed is not None
+    assert reviewed.status == "APPROVED"
+    assert reviewed.reviewed_by == "admin-1"
+    # The retry converges instead of duplicating: one certificate, one active
+    # level-2 row, and the skill passed in between is not reset.
+    assert len(certs.rows) == 1
+    assert result.cert_id == certs.rows[0].cert_id
+    level_2_rows = [row for row in level_progress.rows.values() if row.level_id == "level-2"]
+    assert len(level_2_rows) == 1
+    assert level_2_rows[0].status == "active"
+    assert level_progress.rows["progress-1"].status == "completed"
+    survivor = await skill_progress.get("student-1", "skill-3")
+    assert survivor is not None
+    assert survivor.status == "PASSED"
+    assert [event.name for event in outbox.events] == [
+        "StudentProgress.StudentLeveledUp",
+        "StudentProgress.CertificateIssued",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_approval_that_fails_leaves_the_recommendation_re_decidable() -> None:
+    """The stalled recommendation must not wedge the student's pathway.
+
+    ``get_active_for_student`` counts APPROVED as active, so a recommendation
+    stamped APPROVED without a certificate would block every future
+    recommendation *and* refuse to be rejected — an unrecoverable state with no
+    route through the admin UI.
+    """
+    level_progress = _LevelProgressRepo()
+    await level_progress.save(_active_progress())
+    skill_progress = _SkillProgressRepo()
+    recommendations = _RecommendationRepo()
+    await recommendations.save(_pending_recommendation())
+    certs = _CertificateRepo()
+    use_case = _review_use_case(
+        recommendations=recommendations,
+        level_progress=level_progress,
+        skill_progress=skill_progress,
+        certs=certs,
+    )
+
+    with tenant_scope("academy-1"):
+        certs.fail_next_save = True
+        with pytest.raises(RuntimeError):
+            await use_case.execute(_approve_command())
+
+        # Still the admin's to decide.
+        assert (await recommendations.get_active_for_student("student-1", "program-1")) is not None
+
+        rejected = await use_case.execute(
+            ReviewLevelUpCommand(
+                rec_id="rec-1",
+                action="reject",
+                reviewed_by="admin-1",
+                rejection_reason="certificate service was down",
+            )
+        )
+
+    assert rejected.status == "REJECTED"
+    stored = await recommendations.get("rec-1")
+    assert stored is not None
+    assert stored.rejection_reason == "certificate service was down"
+    # Nothing is left holding the student's recommendation slot.
+    assert (await recommendations.get_active_for_student("student-1", "program-1")) is None
+
+
+@pytest.mark.asyncio
+async def test_lost_review_race_reports_the_post_cas_status() -> None:
+    """The 409 must describe the decision that actually won, not the stale read."""
+    level_progress = _LevelProgressRepo()
+    await level_progress.save(_active_progress())
+    skill_progress = _SkillProgressRepo()
+    recommendations = _RecommendationRepo()
+    await recommendations.save(_pending_recommendation())
+    certs = _CertificateRepo()
+    use_case = _review_use_case(
+        recommendations=recommendations,
+        level_progress=level_progress,
+        skill_progress=skill_progress,
+        certs=certs,
+    )
+
+    original_get_active = level_progress.get_active
+
+    async def _reject_midway(student_id: str, program_id: str):
+        # Stands in for the racing reviewer that commits while this approval
+        # is still doing its side effects.
+        await recommendations.update_status(
+            "rec-1",
+            "REJECTED",
+            "admin-2",
+            _NOW,
+            "not ready",
+            expected_status="RECOMMENDED",
+        )
+        level_progress.get_active = original_get_active  # type: ignore[method-assign]
+        return await original_get_active(student_id, program_id)
+
+    level_progress.get_active = _reject_midway  # type: ignore[method-assign]
+
+    with tenant_scope("academy-1"):
+        with pytest.raises(RecommendationAlreadyReviewed) as excinfo:
+            await use_case.execute(_approve_command())
+
+    assert excinfo.value.details["status"] == "REJECTED"
+
+
+@pytest.mark.asyncio
+async def test_lost_approve_race_leaves_no_duplicate_certificate_or_level_row() -> None:
+    """The loser of a double-click re-applies the same writes, it does not add.
+
+    Both reviewers read the recommendation while it is still RECOMMENDED, so
+    both run the approval side effects; only the compare-and-set separates
+    them. Every side effect has to be idempotent for that to be safe.
+    """
+    level_progress = _LevelProgressRepo()
+    await level_progress.save(_active_progress())
+    skill_progress = _SkillProgressRepo()
+    recommendations = _RecommendationRepo()
+    await recommendations.save(_pending_recommendation())
+    certs = _CertificateRepo()
+    repos = {
+        "recommendations": recommendations,
+        "level_progress": level_progress,
+        "skill_progress": skill_progress,
+        "certs": certs,
+    }
+    winner = _review_use_case(**repos)  # type: ignore[arg-type]
+    loser = _review_use_case(**repos)  # type: ignore[arg-type]
+
+    original_get_active = level_progress.get_active
+
+    async def _let_the_winner_finish(student_id: str, program_id: str):
+        # The loser is descheduled at the top of its side effects; the winning
+        # request completes the whole approval in the meantime.
+        level_progress.get_active = original_get_active  # type: ignore[method-assign]
+        await winner.execute(_approve_command())
+        return await original_get_active(student_id, program_id)
+
+    level_progress.get_active = _let_the_winner_finish  # type: ignore[method-assign]
+
+    with tenant_scope("academy-1"):
+        with pytest.raises(RecommendationAlreadyReviewed):
+            await loser.execute(_approve_command())
+
+    assert len(certs.rows) == 1
+    level_2_rows = [row for row in level_progress.rows.values() if row.level_id == "level-2"]
+    assert len(level_2_rows) == 1
+    assert level_2_rows[0].status == "active"
+    assert level_progress.rows["progress-1"].status == "completed"

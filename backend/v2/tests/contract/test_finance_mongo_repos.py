@@ -448,6 +448,37 @@ async def test_payout_warnings_round_trip_and_legacy_docs_hydrate(db, acad) -> N
 
 
 @pytest.mark.asyncio
+async def test_replaced_occurrence_row_round_trips(db, acad) -> None:
+    """The displaced-coach trace and who was paid instead must persist (#228)."""
+    from backend.v2.contexts.finance.domain.payout_period import PersistedUnpaidOccurrence
+
+    repo = MongoPayoutPeriodRepository(db)
+    saved = await repo.save(
+        _make_period(line_count=0, total=0).model_copy(
+            update={
+                "unpaid_occurrences": [
+                    PersistedUnpaidOccurrence(
+                        occurrence_id="occ-replaced",
+                        reason="replaced_by_actual_coach",
+                        detail="Scheduled coach was replaced.",
+                        unresolved=False,
+                        attributed_coach_id="coach-B",
+                    )
+                ]
+            }
+        )
+    )
+
+    fetched = await repo.find_by_id(saved.period_id)
+    assert fetched is not None
+    row = fetched.unpaid_occurrences[0]
+    assert row.reason == "replaced_by_actual_coach"
+    assert row.attributed_coach_id == "coach-B"
+    assert row.unresolved is False
+    assert fetched.unpaid_occurrence_ids == []
+
+
+@pytest.mark.asyncio
 async def test_save_is_idempotent_on_natural_key(db, acad) -> None:
     repo = MongoPayoutPeriodRepository(db)
     first = await repo.save(_make_period(period_id="pp-1"))

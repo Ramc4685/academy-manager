@@ -29,9 +29,36 @@ function getErrorMessage(error: unknown) {
   return message;
 }
 
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+// Real instants (e.g. "last attended at") render in the viewer's local timezone.
 function formatDate(value: string | null | undefined) {
   if (!value) return "—";
   return new Date(value).toLocaleDateString();
+}
+
+// Calendar-date values render in UTC. Date-only strings ("2026-06-01") and
+// invoice dates stored at UTC midnight otherwise parse to the previous evening
+// in US timezones and display a day early. Use this only where the value means
+// a day, not a moment.
+function formatDateUtc(value: string | null | undefined) {
+  if (!value) return "—";
+  return new Date(value).toLocaleDateString(undefined, { timeZone: "UTC" });
+}
+
+// Invoice created_at is a real datetime on the wire, but the values are mixed:
+// invoices corrected in the ledger sit at exactly UTC midnight and mean a
+// calendar day, while generated and manually recorded ones carry a real
+// time-of-day. Render midnight-UTC values as the day they encode, and anything
+// with a time component in the viewer's own timezone, so a payment recorded at
+// 8pm local does not display as tomorrow.
+function formatInvoiceDate(value: string | null | undefined) {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "—";
+  return parsed.getTime() % MS_PER_DAY === 0
+    ? formatDateUtc(value)
+    : parsed.toLocaleDateString();
 }
 
 function formatDateTime(value: string | null | undefined) {
@@ -80,6 +107,8 @@ export {
   dollarsToCents,
   getErrorMessage,
   formatDate,
+  formatDateUtc,
+  formatInvoiceDate,
   formatDateTime,
   formatDateTimeRange,
   previewNetCents,

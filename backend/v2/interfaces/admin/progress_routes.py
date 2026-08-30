@@ -451,6 +451,10 @@ async def approve_level_up(
         )
     except RecommendationNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    # RecommendationAlreadyReviewed is deliberately not caught: the registered
+    # DomainError handler renders it as a 409 with the standard
+    # {"error": {"code", "message", "details"}} envelope, so the UI can key off
+    # the code instead of parsing a free-text detail string.
     return result.model_dump()
 
 
@@ -515,6 +519,10 @@ async def reject_level_up(
         )
     except RecommendationNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    # RecommendationAlreadyReviewed is deliberately not caught: the registered
+    # DomainError handler renders it as a 409 with the standard
+    # {"error": {"code", "message", "details"}} envelope, so the UI can key off
+    # the code instead of parsing a free-text detail string.
     return result.model_dump()
 
 

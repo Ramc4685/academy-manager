@@ -133,22 +133,54 @@ class _FakeCertificateRepo:
 
 
 class _FakeLevelUpRepo:
-    async def save(self, rec: LevelUpRecommendation) -> None:
-        pass
+    def __init__(self) -> None:
+        self._store: dict[str, LevelUpRecommendation] = {}
 
-    async def update_status(self, *args: object, **kwargs: object) -> None:
-        pass
+    async def save(self, rec: LevelUpRecommendation) -> None:
+        self._store[rec.rec_id] = rec
+
+    async def update_status(
+        self,
+        rec_id: str,
+        status: str,
+        reviewed_by: str | None,
+        reviewed_at: object | None,
+        rejection_reason: str | None,
+        *,
+        expected_status: str,
+    ) -> bool:
+        rec = self._store.get(rec_id)
+        if rec is None or rec.status != expected_status:
+            return False
+        self._store[rec_id] = rec.model_copy(
+            update={
+                "status": status,
+                "reviewed_by": reviewed_by,
+                "reviewed_at": reviewed_at,
+                "rejection_reason": rejection_reason,
+            }
+        )
+        return True
 
     async def get(self, rec_id: str) -> LevelUpRecommendation | None:
-        return None
+        return self._store.get(rec_id)
 
     async def get_active_for_student(
         self, student_id: str, program_id: str
     ) -> LevelUpRecommendation | None:
-        return None
+        return next(
+            (
+                rec
+                for rec in self._store.values()
+                if rec.student_id == student_id
+                and rec.program_id == program_id
+                and rec.status in {"RECOMMENDED", "APPROVED"}
+            ),
+            None,
+        )
 
     async def list_pending(self) -> list[LevelUpRecommendation]:
-        return []
+        return [rec for rec in self._store.values() if rec.status == "RECOMMENDED"]
 
 
 class _FakeSkillLookup:

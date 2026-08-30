@@ -5,6 +5,7 @@ from __future__ import annotations
 import collections
 import csv
 import io
+import logging
 import re
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
@@ -18,6 +19,7 @@ from backend.v2.composition.admin_registration_review import (
     AdminRegistrationReview,
 )
 from backend.v2.composition.digests import (
+    _build_email_sender,
     compose_get_digest_delivery_log,
     compose_send_coach_digest_test,
 )
@@ -27,6 +29,7 @@ from backend.v2.composition.email_adapters import (
     InvoiceEmailAdapter,
     LoginInviteEmailAdapter,
 )
+from backend.v2.composition.event_handlers import install_dunning_notifier
 from backend.v2.composition.pathway import (
     compose_curriculum,
     compose_student_progress,
@@ -107,6 +110,10 @@ from backend.v2.contexts.billing.application.use_cases.remove_invoice_line impor
 )
 from backend.v2.contexts.billing.application.use_cases.send_add_card_reminder import (
     SendAddCardReminder,
+)
+from backend.v2.contexts.billing.application.use_cases.send_generated_invoices import (
+    DEFAULT_SEND_LIMIT,
+    SendGeneratedInvoices,
 )
 from backend.v2.contexts.billing.application.use_cases.send_invoice import SendInvoice
 from backend.v2.contexts.billing.application.use_cases.session_type_ops import (
@@ -220,9 +227,6 @@ from backend.v2.contexts.communications.infrastructure.mongo_campaign_repo impor
 )
 from backend.v2.contexts.communications.infrastructure.mongo_delivery_repo import (
     MongoDeliveryRepository,
-)
-from backend.v2.contexts.communications.infrastructure.resend_send_port import (
-    ResendEmailSendPort,
 )
 from backend.v2.contexts.communications.infrastructure.stub_send_port import (
     StubEmailSendPort,
@@ -403,6 +407,7 @@ from backend.v2.contexts.identity.application.change_user_role_use_case import C
 from backend.v2.contexts.identity.application.get_academy_fees_use_case import GetAcademyFeesUseCase
 from backend.v2.contexts.identity.application.get_academy_gateway_use_case import (
     GetAcademyGatewayUseCase,
+    mask_stripe_account_id,
 )
 from backend.v2.contexts.identity.application.get_academy_notifications_use_case import (
     GetAcademyNotificationsUseCase,
@@ -630,6 +635,9 @@ class _ConnectedAccountGatewayDisabler:
                 charges_enabled=False,
                 payouts_enabled=False,
             )
+
+
+log = logging.getLogger(__name__)
 
 
 def compose_admin(
@@ -987,25 +995,14 @@ def compose_admin(
     comms = CommsService(messages=messages_repo, academy_id=academy_id)
 
     _s = settings
-    _from_addr = _s.sender_email or (
-        f"noreply@{_s.frontend_url.replace('https://', '').replace('http://', '').split('/')[0]}"
-        if _s.frontend_url
-        else "noreply@academy.app"
-    )
-    # Beyond email_delivery_enabled + resend_api_key, real delivery is only
-    # wired in an approved environment (staging/prod) -- mirrors
-    # digests.py::_build_email_sender / _REAL_EMAIL_ENVS. A dev or test stack
-    # that has inherited delivery flags and Resend credentials must still
-    # fall back to the stub (AGENTS.md: "Do not send real email from
-    # local/test environments").
-    _email_env = str(getattr(_s, "env", "") or "").lower()
-    _email_sender_is_real = bool(
-        _s.email_delivery_enabled and _s.resend_api_key and _email_env in {"staging", "prod"}
-    )
-    if _email_sender_is_real and _s.resend_api_key:
-        _email_sender = ResendEmailSendPort(api_key=_s.resend_api_key, from_address=_from_addr)
-    else:
-        _email_sender = StubEmailSendPort()
+    # Real delivery needs email_delivery_enabled + resend_api_key AND an
+    # approved environment (staging/prod). The gate lives in exactly one place,
+    # digests.py::_build_email_sender, so a dev or test stack that has inherited
+    # delivery flags and Resend credentials cannot mail real families through
+    # any composition (AGENTS.md: "Do not send real email from local/test
+    # environments").
+    _email_sender = _build_email_sender(_s)
+    _email_sender_is_real = not isinstance(_email_sender, StubEmailSendPort)
 
     product_repo = MongoProductRepository(db)
 
@@ -1075,7 +1072,24 @@ def compose_admin(
             "sent_at": result.invoice.sent_at,
             "last_sent_at": result.invoice.last_sent_at,
             "checkout_url": result.checkout_url,
+            "checkout_failure_code": result.checkout_failure_code,
         }
+
+    async def send_generated_invoices(
+        period: str, *, limit: int = DEFAULT_SEND_LIMIT
+    ) -> dict[str, Any]:
+        """Email every invoice the monthly generation run left undelivered.
+
+        Reuses ``send_billing_invoice`` so an auto-sent invoice is identical to
+        one an admin sends by hand — same pay link, same bundling, same
+        delivery tracking.
+        """
+        result = await SendGeneratedInvoices(
+            ledger=billing_ledger_repo,
+            autopay=student_billing_enrollment_repo,
+            send=send_billing_invoice,
+        ).execute(period, limit=limit)
+        return result.model_dump()
 
     async def charge_invoice_via_autopay(
         invoice_id: str,
@@ -1307,6 +1321,10 @@ def compose_admin(
             ),
             notifier=_invoice_email_port(),
             enrollment_autopay=student_billing_enrollment_repo,
+            # Issue #435: the failure notice goes through the outbox, so a
+            # transient Resend error is retried by the dispatcher instead of
+            # being logged once and losing the parent's only warning.
+            outbox=outbox,
         )
 
     # ---- Billing Health (#235): observability + recovery actions ----------- #
@@ -1754,7 +1772,6 @@ def compose_admin(
 
     list_admin_users = ListAdminUsers(users_r)
     get_admin_user = GetAdminUser(users_r)
-    update_admin_user = UpdateAdminUser(users_r)
     create_admin_user = CreateAdminUser(users_r)
 
     class _MembershipAwareLoginInviteRecorder:
@@ -1766,11 +1783,38 @@ def compose_admin(
         ) -> None:
             await users_r.record_login_invite(user_id, academy_id=academy_id, sent_at=sent_at)
 
+    class _AcademyPortalUrlAdapter:
+        """Resolves the academy's own portal origin for invite links.
+
+        ADR-0007 resolves the tenant from the request host's first label, so
+        an invite must point at `<slug>.<apex>` rather than the deployment's
+        generic `frontend_url` — otherwise the parent lands on the wrong
+        tenant (or a host that resolves to no tenant at all). Same rewrite
+        the invoice and digest emails already use.
+        """
+
+        async def get_academy_portal_url(self, academy_id: str) -> str | None:
+            doc = await academy_repo.find_by_id(academy_id)
+            slug = str(doc.get("slug") or "") if doc else ""
+            return (
+                academy_frontend_url(frontend_url=settings.frontend_url, academy_slug=slug) or None
+            )
+
     send_login_invite = SendLoginInvite(
         users=_MembershipAwareLoginInviteRecorder(),
         links=get_firebase_admin_adapter(),
         sender=LoginInviteEmailAdapter(sender=_email_sender),
         academies=academy_repo,
+        portals=_AcademyPortalUrlAdapter(),
+    )
+    # #436: an admin email edit clears Firebase's `email_verified`, so the
+    # edit must carry a fresh set-password invite or the user is locked out
+    # of password login with nobody told. Wired after `send_login_invite`
+    # exists so the edit path reuses that one invite implementation.
+    update_admin_user = UpdateAdminUser(
+        users_r,
+        reader=users_r,
+        invites=send_login_invite,
     )
     provision_parent_login = ProvisionParentLogin(users_r)
 
@@ -3323,6 +3367,63 @@ def compose_admin(
         rows = sorted(latest.values(), key=lambda r: r["last_paid_at"], reverse=True)
         return await _enrich_parent_names(rows)
 
+    async def get_connect_readiness() -> dict[str, Any]:
+        """Can a parent payment physically succeed right now? (issue #432)
+
+        Every parent payment is gated on one condition — an `active` connected
+        account with `charges_enabled` — or on the platform-charge fallback
+        being switched on. Nothing in the admin UI showed either, so an academy
+        could be unable to take a single payment with no visible signal.
+
+        Webhook counts are real counts, not the length of the capped list the
+        page used to count: that list saturates at 50, so "50 quarantined"
+        could mean 50 or 5,000.
+        """
+        from backend.v2.contexts.billing.infrastructure.mongo_stripe_dedup import (
+            MongoStripeEventDedup,
+        )
+        from backend.v2.shared.tenancy import current_academy_id
+
+        request_academy_id = current_academy_id()
+
+        account = await connected_accounts_repo.get_for_academy()
+        try:
+            settings_doc = await billing_settings_repo.get()
+            fallback_allowed = bool(settings_doc.allow_platform_charge_fallback)
+        except Exception:
+            # Match the charge path, which fails closed on a settings read
+            # error. Reporting "fallback is on" when we do not know would
+            # tell the owner payments are fine when they may not be.
+            log.warning("connect_readiness_settings_read_failed", exc_info=True)
+            fallback_allowed = False
+
+        stuck = await MongoStripeEventDedup(db).count_stuck_by_status(academy_id=request_academy_id)
+
+        ready = bool(account and account.is_ready_for_charges())
+        return {
+            "connected_account": {
+                "configured": account is not None,
+                "status": account.status if account else None,
+                "charges_enabled": bool(account and account.charges_enabled),
+                "payouts_enabled": bool(account and account.payouts_enabled),
+                "ready_for_charges": ready,
+                # Same masking as GET /admin/academy/gateway — the account id
+                # is a Stripe identifier, not a secret, but there is no reason
+                # for two admin surfaces to disagree about showing it.
+                "account_id_masked": mask_stripe_account_id(
+                    account.stripe_account_id if account else None
+                ),
+            },
+            "allow_platform_charge_fallback": fallback_allowed,
+            # The headline the card leads with: charges route to the academy's
+            # account when ready, and otherwise only succeed at all if the
+            # platform fallback is on — in which case the money lands on the
+            # platform account instead of theirs.
+            "payments_possible": ready or fallback_allowed,
+            "funds_route_to_academy": ready,
+            "webhook_events": stuck,
+        }
+
     async def list_billing_webhook_events(*, status: str | None = None, limit: int = 50):
         from backend.v2.shared.tenancy import current_academy_id
 
@@ -4365,6 +4466,7 @@ def compose_admin(
         get_billing_invoice_detail=get_billing_invoice_detail,
         generate_billing_invoice_artifact=generate_billing_invoice_artifact,
         send_billing_invoice=send_billing_invoice,
+        send_generated_invoices=send_generated_invoices,
         charge_invoice_via_autopay=charge_invoice_via_autopay,
         list_reconciliation_runs=list_reconciliation_runs,
         run_reconciliation=run_reconciliation,
@@ -4417,6 +4519,7 @@ def compose_admin(
         reconcile_stripe_billing=reconcile_stripe_billing,
         get_billing_reconciliation_report=get_billing_reconciliation_report,
         list_billing_webhook_events=list_billing_webhook_events,
+        get_connect_readiness=get_connect_readiness,
         record_expense=record_expense,
         edit_expense=edit_expense,
         delete_expense=delete_expense,
@@ -4551,6 +4654,14 @@ def compose_admin(
 
     admin.curriculum = curriculum
     admin.student_progress = student_progress
+
+    # The dunning-notice handler runs on the dispatcher, outside any request, so
+    # it cannot reach this closure's adapter by itself (issue #435). Installing
+    # it here keeps the billing e-mail wiring in one place; `None` when delivery
+    # is unconfigured, in which case the worker enqueues no notices at all.
+    # Must come after every repo above is bound — `_invoice_email_port` closes
+    # over `academy_repo`.
+    install_dunning_notifier(_invoice_email_port())
 
     return admin
 

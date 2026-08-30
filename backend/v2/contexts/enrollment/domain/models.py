@@ -75,6 +75,12 @@ class Student(BaseModel):
     parent_id: str
     full_name: str
     date_of_birth: str | None = None
+    # Issue #380: carried through from registration (onboarding.ChildProfile)
+    # on approval, and editable by the parent afterwards via the self-service
+    # profile. None means "not yet supplied", same convention as date_of_birth.
+    emergency_contact_name: str | None = None
+    emergency_contact_phone: str | None = None
+    medical_notes: str | None = None
     # UIM12: the identity-context user_id linked to this student's own login,
     # set once by `ProvisionStudentLogin`. `None` means no student login has
     # been provisioned (the default, and the common case pre-UIM12). One

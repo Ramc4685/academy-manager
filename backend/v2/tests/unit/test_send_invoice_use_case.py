@@ -11,6 +11,7 @@ import pytest
 
 from backend.v2.contexts.billing.application.use_cases.send_invoice import SendInvoice
 from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
+from backend.v2.contexts.billing.domain.checkout_hold import active_checkout_hold
 from backend.v2.contexts.billing.domain.ledger import InvoiceLine, LedgerInvoice
 
 # ---------------------------------------------------------------------------
@@ -68,6 +69,7 @@ class FakeLedgerRepository:
         )
         self._lines: dict[str, InvoiceLine] = {}
         self.save_calls: list[LedgerInvoice] = []
+        self.payment_attempts: list[dict] = []
 
     async def get_invoice(self, invoice_id: str) -> LedgerInvoice | None:
         return self._invoices.get(invoice_id)
@@ -103,6 +105,14 @@ class FakeLedgerRepository:
     ) -> LedgerInvoice:
         self._invoices[invoice.invoice_id] = invoice
         return invoice
+
+    async def record_payment_attempt(self, **kwargs) -> dict:
+        # Mirrors the Mongo repo's idempotency: same key → same row, no dupes.
+        for existing in self.payment_attempts:
+            if existing["idempotency_key"] == kwargs["idempotency_key"]:
+                return existing
+        self.payment_attempts.append(kwargs)
+        return kwargs
 
 
 class FakeInvoiceEmail:
@@ -675,3 +685,399 @@ async def test_bundle_student_balance_ignored_when_not_requested() -> None:
     call = stripe.calls[0]
     assert call["amount_cents"] == 7_000
     assert call["metadata"]["invoice_id"] == "inv-1"
+
+
+# ---------------------------------------------------------------------------
+# issue #426 — checkout-creation failures must be loud, not swallowed
+#
+# The bug: any Stripe exception (and the connected-account-blocked path) set
+# checkout_url=None, logged WARNING, and STILL emailed the parent an invoice
+# saying "contact the academy to arrange payment", recorded delivery_status
+# "sent". A broken payment setup looked like a successful send.
+# ---------------------------------------------------------------------------
+
+
+class _RaisingInvoiceStripe:
+    """Gateway whose checkout creation always fails (e.g. the idempotency-key
+    parameter-mismatch failure mode that deterministically re-fails on retry)."""
+
+    def __init__(self, message: str = "idempotency key reused with different params") -> None:
+        self.message = message
+        self.calls: list[dict] = []
+
+    async def create_invoice_checkout_session(self, **kwargs) -> tuple[str, str]:
+        self.calls.append(kwargs)
+        raise RuntimeError(self.message)
+
+
+def _blocked_uc(
+    repo: FakeLedgerRepository,
+    *,
+    email: FakeInvoiceEmail | None,
+) -> SendInvoice:
+    """Connected account present but not charge-ready, fallback flag off."""
+    return SendInvoice(
+        ledger=repo,
+        stripe=FakeInvoiceStripe(),
+        email=email,  # type: ignore[arg-type]
+        connected_accounts=_FakeConnectedAccounts(_StubConnectedAccount(ready=False)),  # type: ignore[arg-type]
+        settings=_FakeBillingSettings(
+            BillingSettings(academy_id="acad-1", allow_platform_charge_fallback=False)
+        ),  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    )
+
+
+async def test_stripe_exception_does_not_send_parent_email() -> None:
+    """Stripe raised → the parent gets NO email and delivery is not 'sent'."""
+    email = FakeInvoiceEmail()
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open", balance_due_cents=10_000)])
+    uc = SendInvoice(
+        ledger=repo,
+        stripe=_RaisingInvoiceStripe(),  # type: ignore[arg-type]
+        email=email,  # type: ignore[arg-type]
+        connected_accounts=_FakeConnectedAccounts(_StubConnectedAccount(ready=True)),  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    )
+    result = await uc.execute("inv-1")
+
+    assert email.calls == [], "no dead-end invoice email may be sent"
+    assert result.checkout_url is None
+    assert result.invoice.delivery_status == "delivery_failed"
+    assert result.invoice.sent_at is None
+
+
+async def test_stripe_exception_returns_distinct_failure_code() -> None:
+    email = FakeInvoiceEmail()
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open", balance_due_cents=10_000)])
+    uc = SendInvoice(
+        ledger=repo,
+        stripe=_RaisingInvoiceStripe(),  # type: ignore[arg-type]
+        email=email,  # type: ignore[arg-type]
+        connected_accounts=_FakeConnectedAccounts(_StubConnectedAccount(ready=True)),  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    )
+    result = await uc.execute("inv-1")
+
+    assert result.checkout_failure_code == "checkout_creation_failed"
+
+
+async def test_stripe_exception_records_failed_payment_attempt() -> None:
+    """The failure lands on the same telemetry axis autopay declines use."""
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open", balance_due_cents=10_000)])
+    uc = SendInvoice(
+        ledger=repo,
+        stripe=_RaisingInvoiceStripe("card gateway exploded"),  # type: ignore[arg-type]
+        email=None,
+        connected_accounts=_FakeConnectedAccounts(_StubConnectedAccount(ready=True)),  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    )
+    await uc.execute("inv-1")
+
+    assert len(repo.payment_attempts) == 1
+    attempt = repo.payment_attempts[0]
+    # NOT "failed": that status means a charge outcome and would contaminate
+    # the dunning sweep and the billing-health failed-payments list.
+    assert attempt["status"] == "checkout_mint_failed"
+    assert attempt["failure_code"] == "checkout_creation_failed"
+    assert attempt["failure_message"] == "card gateway exploded"
+    assert attempt["invoice_id"] == "inv-1"
+    assert attempt["parent_id"] == "parent-1"
+    assert attempt["amount_cents"] == 10_000
+    assert attempt["currency"] == "usd"
+    assert attempt["stripe_payment_intent_id"] is None
+    assert attempt["stripe_checkout_session_id"] is None
+
+
+async def test_repeated_identical_checkout_failure_is_idempotent() -> None:
+    """Re-sending the same failing invoice must not spam payment_attempts."""
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open", balance_due_cents=10_000)])
+    uc = SendInvoice(
+        ledger=repo,
+        stripe=_RaisingInvoiceStripe(),  # type: ignore[arg-type]
+        email=None,
+        connected_accounts=_FakeConnectedAccounts(_StubConnectedAccount(ready=True)),  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    )
+    await uc.execute("inv-1")
+    await uc.execute("inv-1")
+
+    assert len(repo.payment_attempts) == 1
+
+
+async def test_connected_account_blocked_with_fallback_off_suppresses_email() -> None:
+    """The blocked path produced the identical dead-end email — it must not."""
+    email = FakeInvoiceEmail()
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open", balance_due_cents=10_000)])
+    result = await _blocked_uc(repo, email=email).execute("inv-1")
+
+    assert email.calls == []
+    assert result.checkout_url is None
+    assert result.checkout_failure_code == "connected_account_not_ready"
+    assert result.invoice.delivery_status == "delivery_failed"
+    assert result.invoice.sent_at is None
+
+
+async def test_connected_account_blocked_records_failed_payment_attempt() -> None:
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open", balance_due_cents=10_000)])
+    await _blocked_uc(repo, email=None).execute("inv-1")
+
+    assert len(repo.payment_attempts) == 1
+    assert repo.payment_attempts[0]["status"] == "checkout_mint_failed"
+    assert repo.payment_attempts[0]["failure_code"] == "connected_account_not_ready"
+
+
+async def test_connected_accounts_not_configured_records_distinct_code() -> None:
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open", balance_due_cents=10_000)])
+    uc = SendInvoice(ledger=repo, stripe=FakeInvoiceStripe(), email=None, clock=lambda: NOW)
+    result = await uc.execute("inv-1")
+
+    assert result.checkout_failure_code == "connected_accounts_not_configured"
+    assert repo.payment_attempts[0]["failure_code"] == "connected_accounts_not_configured"
+
+
+async def test_settings_lookup_failure_still_fails_closed_and_loudly() -> None:
+    """Fail-closed invariant preserved: blocked AND recorded, not silently sent."""
+    email = FakeInvoiceEmail()
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open", balance_due_cents=10_000)])
+    stripe = FakeInvoiceStripe()
+    uc = SendInvoice(
+        ledger=repo,
+        stripe=stripe,
+        email=email,  # type: ignore[arg-type]
+        connected_accounts=_FakeConnectedAccounts(_StubConnectedAccount(ready=False)),  # type: ignore[arg-type]
+        settings=_RaisingBillingSettings(),  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    )
+    result = await uc.execute("inv-1")
+
+    assert stripe.calls == []
+    assert email.calls == []
+    assert result.checkout_failure_code == "connected_account_not_ready"
+
+
+async def test_no_stripe_configured_still_sends_contact_the_academy_email() -> None:
+    """A genuinely Stripe-less academy is NOT a failure — that email still goes
+    out with checkout_url=None, which renders the 'contact the academy to
+    arrange payment' copy. Only errors/blocks are suppressed."""
+    email = FakeInvoiceEmail()
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open", balance_due_cents=10_000)])
+    result = await _uc(repo, email=email).execute("inv-1")
+
+    assert len(email.calls) == 1
+    assert email.calls[0]["checkout_url"] is None
+    assert result.invoice.delivery_status == "sent"
+    assert result.checkout_failure_code is None
+    assert repo.payment_attempts == []
+
+
+async def test_zero_balance_invoice_still_sends_email_without_failure_code() -> None:
+    """Nothing to pay → no pay link needed → normal email, no failure recorded."""
+    email = FakeInvoiceEmail()
+    repo = FakeLedgerRepository(invoices=[_invoice(status="paid", balance_due_cents=0)])
+    uc = SendInvoice(
+        ledger=repo,
+        stripe=FakeInvoiceStripe(),
+        email=email,  # type: ignore[arg-type]
+        connected_accounts=_FakeConnectedAccounts(_StubConnectedAccount(ready=True)),  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    )
+    result = await uc.execute("inv-1")
+
+    assert len(email.calls) == 1
+    assert result.checkout_failure_code is None
+    assert result.invoice.delivery_status == "sent"
+    assert repo.payment_attempts == []
+
+
+async def test_checkout_failure_without_email_port_leaves_delivery_untouched() -> None:
+    """Parent-initiated 'Pay now' (email=None) must not corrupt the delivery
+    axis of an invoice that was already emailed successfully."""
+    repo = FakeLedgerRepository(
+        invoices=[
+            _invoice(
+                status="open",
+                balance_due_cents=10_000,
+                delivery_status="sent",
+                sent_at=FIRST_SEND,
+                last_sent_at=FIRST_SEND,
+            )
+        ]
+    )
+    uc = SendInvoice(
+        ledger=repo,
+        stripe=_RaisingInvoiceStripe(),  # type: ignore[arg-type]
+        email=None,
+        connected_accounts=_FakeConnectedAccounts(_StubConnectedAccount(ready=True)),  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    )
+    result = await uc.execute("inv-1")
+
+    assert result.invoice.delivery_status == "sent"
+    assert result.invoice.sent_at == FIRST_SEND
+    assert result.checkout_failure_code == "checkout_creation_failed"
+
+
+async def test_financial_status_unchanged_by_checkout_failure() -> None:
+    """Key invariant holds on the new path too."""
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open", balance_due_cents=10_000)])
+    result = await _blocked_uc(repo, email=FakeInvoiceEmail()).execute("inv-1")
+
+    assert result.invoice.status == "open"
+    assert result.invoice.balance_due_cents == 10_000
+
+
+# ---------------------------------------------------------------------------
+# #426 review follow-ups — the production shapes the first pass got wrong
+# ---------------------------------------------------------------------------
+
+
+async def test_academy_without_connect_account_still_emails_parent() -> None:
+    """THE production case the first fix broke.
+
+    compose_admin always passes the PLATFORM Stripe client, so `stripe=None`
+    never happens in multi-tenant prod. An academy that simply never onboarded
+    Connect has a live Stripe client but no connected-account row — it must
+    still get its normal invoice email (with the contact-the-academy copy),
+    and must NOT be recorded as a failure.
+    """
+    email = FakeInvoiceEmail()
+    stripe = FakeInvoiceStripe()
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open", balance_due_cents=10_000)])
+    uc = SendInvoice(
+        ledger=repo,
+        stripe=stripe,  # platform client present, as in prod
+        email=email,  # type: ignore[arg-type]
+        connected_accounts=_FakeConnectedAccounts(None),  # never onboarded
+        settings=_FakeBillingSettings(
+            BillingSettings(academy_id="acad-1", allow_platform_charge_fallback=False)
+        ),  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    )
+    result = await uc.execute("inv-1")
+
+    assert stripe.calls == [], "must not mint a platform-charge link"
+    assert len(email.calls) == 1, "parent must still receive the invoice"
+    assert email.calls[0]["checkout_url"] is None
+    assert result.invoice.delivery_status == "sent"
+    assert result.checkout_failure_code is None
+    assert repo.payment_attempts == [], "not onboarding Connect is not a failure"
+
+
+async def test_connect_account_present_but_not_ready_is_still_a_failure() -> None:
+    """Counterpart to the test above: an account that EXISTS but cannot charge
+    means the academy wants online payments and is broken."""
+    email = FakeInvoiceEmail()
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open", balance_due_cents=10_000)])
+    result = await _blocked_uc(repo, email=email).execute("inv-1")
+
+    assert email.calls == []
+    assert result.checkout_failure_code == "connected_account_not_ready"
+    assert len(repo.payment_attempts) == 1
+
+
+async def test_previously_sent_invoice_is_not_downgraded_on_resend_failure() -> None:
+    """Admin re-send with a broken pay link must not erase the record that the
+    parent already received an earlier email, nor stamp a fake last_sent_at."""
+    email = FakeInvoiceEmail()
+    repo = FakeLedgerRepository(
+        invoices=[
+            _invoice(
+                status="open",
+                balance_due_cents=10_000,
+                delivery_status="sent",
+                sent_at=FIRST_SEND,
+                last_sent_at=FIRST_SEND,
+            )
+        ]
+    )
+    result = await _blocked_uc(repo, email=email).execute("inv-1")
+
+    assert email.calls == [], "still suppressed — no dead-end email"
+    assert result.invoice.delivery_status == "sent", "March's delivery still happened"
+    assert result.invoice.sent_at == FIRST_SEND
+    assert result.invoice.last_sent_at == FIRST_SEND, "no send was attempted now"
+    assert len(repo.payment_attempts) == 1, "but the failure is still recorded"
+
+
+async def test_never_sent_invoice_is_marked_delivery_failed() -> None:
+    email = FakeInvoiceEmail()
+    repo = FakeLedgerRepository(
+        invoices=[_invoice(status="open", balance_due_cents=10_000, delivery_status="not_sent")]
+    )
+    result = await _blocked_uc(repo, email=email).execute("inv-1")
+
+    assert result.invoice.delivery_status == "delivery_failed"
+    assert result.invoice.sent_at is None
+
+
+async def test_bundled_failure_records_each_invoices_own_balance() -> None:
+    """A bundled link over 3 x $100 is $300 of exposure, not 3 x $300."""
+    invoices = [
+        _invoice(invoice_id="inv-1", status="open", balance_due_cents=10_000),
+        _invoice(invoice_id="inv-2", status="open", balance_due_cents=10_000),
+        _invoice(invoice_id="inv-3", status="open", balance_due_cents=10_000),
+    ]
+    repo = FakeLedgerRepository(invoices=invoices)
+    uc = SendInvoice(
+        ledger=repo,
+        stripe=_RaisingInvoiceStripe(),  # type: ignore[arg-type]
+        email=None,
+        connected_accounts=_FakeConnectedAccounts(_StubConnectedAccount(ready=True)),  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    )
+    await uc.execute("inv-1", bundle_student_balance=True)
+
+    assert len(repo.payment_attempts) == 3, "one row per invoice behind the link"
+    assert {a["invoice_id"] for a in repo.payment_attempts} == {"inv-1", "inv-2", "inv-3"}
+    assert [a["amount_cents"] for a in repo.payment_attempts] == [10_000, 10_000, 10_000]
+    assert sum(a["amount_cents"] for a in repo.payment_attempts) == 30_000
+
+
+# ---------------------------------------------------------------------------
+# Checkout hold placement (issue #434)
+# ---------------------------------------------------------------------------
+
+
+async def test_minting_a_pay_link_holds_the_invoice_against_autopay() -> None:
+    """The pay link is live from here, so autopay must stand off this invoice."""
+    stripe = FakeInvoiceStripe()
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open", balance_due_cents=10_000)])
+
+    result = await _uc_with_stripe(repo, stripe).execute("inv-1")
+
+    assert result.checkout_url == "https://checkout.stripe.com/pay/test"
+    held = await repo.get_invoice("inv-1")
+    assert held is not None
+    assert held.checkout_hold_session_id == "cs_test_123"
+    assert active_checkout_hold(held, now=NOW) == "cs_test_123"
+
+
+async def test_bundled_pay_link_holds_every_invoice_behind_it() -> None:
+    """One link settles all three balances, so holding only inv-1 leaves two exposed."""
+    stripe = FakeInvoiceStripe()
+    repo = FakeLedgerRepository(
+        invoices=[
+            _invoice(invoice_id="inv-1", status="open", balance_due_cents=7_000),
+            _invoice(invoice_id="inv-2", status="open", balance_due_cents=7_000),
+            _invoice(invoice_id="inv-3", status="open", balance_due_cents=7_000),
+        ]
+    )
+
+    await _uc_with_stripe(repo, stripe).execute("inv-1", bundle_student_balance=True)
+
+    for invoice_id in ("inv-1", "inv-2", "inv-3"):
+        invoice = await repo.get_invoice(invoice_id)
+        assert invoice is not None
+        assert invoice.checkout_hold_session_id == "cs_test_123", invoice_id
+
+
+async def test_no_pay_link_means_no_hold() -> None:
+    """A paid invoice mints nothing, so nothing may block a future charge."""
+    repo = FakeLedgerRepository(invoices=[_invoice(status="paid", balance_due_cents=0)])
+
+    await _uc_with_stripe(repo, FakeInvoiceStripe()).execute("inv-1")
+
+    invoice = await repo.get_invoice("inv-1")
+    assert invoice is not None
+    assert invoice.checkout_hold_session_id is None

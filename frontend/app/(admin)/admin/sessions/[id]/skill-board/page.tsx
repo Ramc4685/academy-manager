@@ -12,6 +12,10 @@ import {
   type SkillStatus,
 } from "@/lib/api/curriculum";
 import { SkillBoardView, type SkillBoardActions } from "@/components/pathway/skill-board";
+import {
+  buildSessionSkillBoardHref,
+  buildStudentProgressHref,
+} from "@/lib/navigation/admin-student-progress-return";
 
 export default function AdminSessionSkillBoardPage() {
   const { id: sessionId } = useParams<{ id: string }>();
@@ -74,6 +78,15 @@ export default function AdminSessionSkillBoardPage() {
     recordTest: (args) => testMutation.mutateAsync(args),
   };
 
+  // Carry the program the board actually rendered (not just the URL param, which
+  // is empty when the board resolved a default) into both the placement screen
+  // and the link back, so placing a student resolves them on this same board.
+  const boardProgramId = board?.program_id || programId;
+  const boardHref = buildSessionSkillBoardHref({
+    sessionId,
+    programId: boardProgramId,
+  });
+
   return (
     <section data-testid="admin-session-skill-board" className="space-y-4">
       <Link
@@ -102,9 +115,12 @@ export default function AdminSessionSkillBoardPage() {
           renderUnplacedAction={(student) => (
             <Link
               href={
-                `/admin/students/${student.student_id}/progress?return_to=${encodeURIComponent(
-                  `/admin/sessions/${sessionId}/skill-board`,
-                )}` as Parameters<typeof Link>[0]["href"]
+                buildStudentProgressHref({
+                  studentId: student.student_id,
+                  programId: boardProgramId,
+                  returnTo: boardHref,
+                  returnLabel: "Back to skill board",
+                }) as Parameters<typeof Link>[0]["href"]
               }
               className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-neutral-50"
             >

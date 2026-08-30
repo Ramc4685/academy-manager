@@ -38,10 +38,34 @@ def app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
 
 
 def test_healthz_returns_ok(app: FastAPI) -> None:
+    """An app assembled without Mongo/scheduler/dispatcher is still healthy —
+    a restart cannot wire components that were never assembled (issue #429)."""
     with TestClient(app) as client:
         r = client.get("/api/v2/healthz")
         assert r.status_code == 200
-        assert r.json() == {"status": "ok"}
+        body = r.json()
+        assert body["status"] == "ok"
+        assert set(body["checks"]) == {"mongo", "scheduler", "dispatcher"}
+
+
+def test_healthz_returns_503_when_a_wired_component_is_broken(app: FastAPI) -> None:
+    """Fly restarts the machine on a failed check, so a stopped scheduler must
+    actually fail it instead of reporting OK forever."""
+
+    class _StoppedScheduler:
+        running = False
+
+        def get_jobs(self) -> list[object]:
+            return []
+
+    app.state.scheduler = _StoppedScheduler()
+    with TestClient(app) as client:
+        r = client.get("/api/v2/healthz")
+
+    assert r.status_code == 503
+    body = r.json()
+    assert body["status"] == "degraded"
+    assert body["checks"]["scheduler"]["ok"] is False
 
 
 def test_openapi_title_is_public_product_name(app: FastAPI) -> None:

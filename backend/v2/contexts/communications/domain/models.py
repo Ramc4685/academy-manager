@@ -287,6 +287,14 @@ class DigestSendStatus(StrEnum):
     SKIPPED_EMPTY = "skipped_empty"
 
 
+#: How many times a single (academy, recipient, date) digest may be attempted.
+#: The first attempt is the ``try_claim`` insert; a FAILED row may be re-claimed
+#: until its ``attempt_count`` reaches this ceiling, after which the day's
+#: digest stays failed and is surfaced by the ops digest instead of retrying
+#: forever on the hourly tick.
+MAX_DIGEST_SEND_ATTEMPTS = 3
+
+
 @dataclass(frozen=True, slots=True)
 class DigestSend:
     """One coach's daily digest send for a given date.
@@ -294,6 +302,12 @@ class DigestSend:
     The ``(academy_id, coach_id, digest_date)`` triple is unique — a successful
     ``try_claim`` insert is the idempotency guard, so a coach is e-mailed at
     most once per day even if the scheduler fires twice.
+
+    ``attempt_count`` is what makes a *failure* recoverable without weakening
+    that guard: only a row in ``FAILED`` may be re-claimed (never ``SENT``,
+    never ``QUEUED``), so a transient Resend outage costs a retry rather than
+    the whole day's digest, and a send that already left the building is never
+    repeated.
     """
 
     digest_id: str
@@ -309,6 +323,20 @@ class DigestSend:
     # "daily" for the scheduled run, "test" for an admin-triggered test send.
     # Test sends bypass the unique (academy, coach, date) idempotency claim.
     kind: str = "daily"
+    # 1 on the claiming insert; incremented by each re-claim of a FAILED row.
+    attempt_count: int = 1
+    # False for a failure no retry can fix — a recipient with no e-mail address.
+    # Such a row is never re-claimed (retrying is pure waste: three more plan
+    # generations for a message that cannot be addressed) and is not counted as
+    # a lost digest by the ops digest, or one un-onboarded coach would pin
+    # "attention needed" on every daily report forever. It still appears in the
+    # admin delivery log with its reason, which is where that problem belongs.
+    retryable: bool = True
+
+    @property
+    def attempts_exhausted(self) -> bool:
+        """True when no further retry of this day's digest will be attempted."""
+        return self.attempt_count >= MAX_DIGEST_SEND_ATTEMPTS
 
     @classmethod
     def queued(
@@ -321,6 +349,7 @@ class DigestSend:
         digest_date: str,
         created_at: datetime,
         kind: str = "daily",
+        attempt_count: int = 1,
     ) -> DigestSend:
         return cls(
             digest_id=digest_id,
@@ -334,6 +363,7 @@ class DigestSend:
             failed_reason=None,
             created_at=created_at,
             kind=kind,
+            attempt_count=attempt_count,
         )
 
     def mark_sent(self, *, provider_message_id: str | None, sent_at: str) -> DigestSend:
@@ -345,9 +375,10 @@ class DigestSend:
             failed_reason=None,
         )
 
-    def mark_failed(self, *, reason: str) -> DigestSend:
+    def mark_failed(self, *, reason: str, retryable: bool = True) -> DigestSend:
         return replace(
             self,
+            retryable=retryable,
             status=DigestSendStatus.FAILED,
             failed_reason=reason,
             provider_message_id=None,

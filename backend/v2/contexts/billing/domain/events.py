@@ -133,3 +133,35 @@ class InvoiceFailed(DomainEvent):
     name: Literal["Billing.InvoiceFailed"] = "Billing.InvoiceFailed"
     schema_version: Literal[1] = 1
     payload: InvoiceLifecyclePayload
+
+
+class DunningNoticeRequestedPayload(BaseModel):
+    """The "your autopay attempt failed" e-mail, as a durable request.
+
+    Everything the notice renders from is captured here rather than re-read at
+    delivery time: the dunning state moves on (another attempt, a terminal
+    disable) while the event waits in the outbox, and the parent should receive
+    the notice for the attempt that actually failed.
+    """
+
+    model_config = {"frozen": True}
+
+    invoice_id: str
+    parent_id: str
+    period: str
+    balance_due_cents: int
+    currency: str
+    attempt_no: int
+    terminal: bool
+
+
+class DunningNoticeRequested(DomainEvent):
+    """Issue #435: the notice used to be one best-effort send inside the dunning
+    worker — a failed send was logged and the parent was never told their
+    payment failed. Through the outbox it inherits the dispatcher's retry ladder
+    and dead-letters if it truly cannot be delivered.
+    """
+
+    name: Literal["Billing.DunningNoticeRequested"] = "Billing.DunningNoticeRequested"
+    schema_version: Literal[1] = 1
+    payload: DunningNoticeRequestedPayload

@@ -12,6 +12,8 @@ import {
   stubAcademy,
   stubMe,
   stubMemberships,
+  stubParentMessages,
+  stubParentProfile,
 } from "../fixtures/saas-stubs";
 
 test.describe("billing trust and recovery surfaces", () => {
@@ -26,6 +28,9 @@ test.describe("billing trust and recovery surfaces", () => {
     await stubMemberships(page, [
       { academy_id: ACADEMY_A, academy_name: "Aces Academy", role: "parent" },
     ]);
+    // The parent layout fetches this on every /parent/* page (issue #380).
+    await stubParentProfile(page);
+    await stubParentMessages(page);
 
     await page.route("**/api/v2/parent/payments", (route) => {
       if (route.request().method() !== "GET") return route.fallback();
