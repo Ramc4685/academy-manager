@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import collections
 import csv
-import hashlib
 import io
 import logging
 import re
@@ -45,6 +44,11 @@ from backend.v2.contexts.billing.application.admin_money import (
 )
 from backend.v2.contexts.billing.application.checkout_paid_period import (
     CheckoutPaidPeriodResolver,
+)
+from backend.v2.contexts.billing.application.manual_payment_idempotency import (
+    check_manual_payment_idempotency,
+    manual_payment_keys,
+    store_manual_payment_idempotency,
 )
 from backend.v2.contexts.billing.application.ports import (
     BillingSetupStudent,
@@ -1511,42 +1515,26 @@ def compose_admin(
         actor_id: str | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        # Idempotency boundary. RecordManualPayment mints a fresh payment_id per call and
-        # is NOT internally idempotent, so a client retry (e.g. after the audit append
-        # below failed) would record a SECOND payment and over-credit the invoice.
-        # Prefer a client-supplied Idempotency-Key (scoped to the invoice): retries of
-        # the same submission replay, while legitimate repeat payments mint a new key.
-        # Without a client key, fall back to the payload-derived key — but a hit there
-        # is only a *possible* duplicate (two identical cash payments in the 7-day TTL
-        # are legal), so surface a 409 for the caller to confirm instead of silently
-        # replaying the first result (issue #511).
-        payload_key = (
-            f"manual_payment:{invoice_id}:{amount_cents}:{payment_method}:"
-            f"{reference_number}:{notes}"
+        # Idempotency boundary (issue #511) — policy lives in the billing context
+        # (manual_payment_idempotency): keyed retries replay, key reuse with a
+        # different payload rejects (422), keyless payload-identical repeats
+        # conflict (409) instead of silently replaying.
+        manual_idem_key, payload_key, payload_fingerprint = manual_payment_keys(
+            invoice_id=invoice_id,
+            amount_cents=amount_cents,
+            payment_method=payment_method,
+            reference_number=reference_number,
+            notes=notes,
+            idempotency_key=idempotency_key,
         )
-        # Standard idempotency semantics: a key must always be paired with the SAME
-        # payload. The fingerprint lets a keyed cache hit distinguish a genuine retry
-        # (replay it) from key reuse with different fields (reject it) instead of
-        # silently returning the first submission's result.
-        payload_fingerprint = hashlib.sha256(payload_key.encode("utf-8")).hexdigest()
-        if idempotency_key:
-            manual_idem_key = f"manual_payment:{invoice_id}:key:{idempotency_key}"
-            cached = await idempotency_store.get(manual_idem_key)
-            if cached is not None:
-                cached_fingerprint = cached.get("fingerprint")
-                if cached_fingerprint is not None and cached_fingerprint != payload_fingerprint:
-                    raise ValueError(
-                        "idempotency key reused with a different payload; use a new "
-                        "Idempotency-Key for a distinct manual payment"
-                    )
-                return cached["payload"]
-        else:
-            manual_idem_key = payload_key
-            if await idempotency_store.get(payload_key) is not None:
-                raise ValueError(
-                    "possible duplicate: an identical manual payment was recorded "
-                    "recently; resend with an Idempotency-Key header to confirm"
-                )
+        cached_payload = await check_manual_payment_idempotency(
+            idempotency_store,
+            storage_key=manual_idem_key,
+            payload_fingerprint=payload_fingerprint,
+            keyed=bool(idempotency_key),
+        )
+        if cached_payload is not None:
+            return cached_payload
         result = await RecordManualPayment(ledger=billing_ledger_repo).execute(
             RecordManualPaymentCommand(
                 invoice_id=invoice_id,
@@ -1559,21 +1547,14 @@ def compose_admin(
         payload = result.model_dump(mode="python")
         # Record the idempotency result right after the durable money movement and BEFORE
         # the audit append, so an audit failure cannot drive a retry into a second payment.
-        await idempotency_store.put(
-            manual_idem_key, {"payload": payload, "fingerprint": payload_fingerprint}
+        await store_manual_payment_idempotency(
+            idempotency_store,
+            storage_key=manual_idem_key,
+            payload_key=payload_key,
+            payload_fingerprint=payload_fingerprint,
+            payload=payload,
+            keyed=bool(idempotency_key),
         )
-        if idempotency_key:
-            # Also stamp the payload-derived key so a later KEYLESS identical repeat
-            # still surfaces the 409 confirmation above. Best-effort advisory marker:
-            # a concurrent writer or an entry left by an earlier identical payment
-            # must not fail the recording that already happened.
-            try:
-                if await idempotency_store.get(payload_key) is None:
-                    await idempotency_store.put(
-                        payload_key, {"payload": payload, "fingerprint": payload_fingerprint}
-                    )
-            except DuplicateKeyError:
-                pass
         # P0-4: append-only audit of who recorded the manual payment (money movement),
         # mirroring the refund audit. Overpayment that became an account credit is captured
         # in `after` so the trail explains where the excess went.
