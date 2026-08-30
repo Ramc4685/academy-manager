@@ -27,44 +27,76 @@ NOW = datetime(2026, 6, 5, tzinfo=UTC)
 class _LevelProgressRepo:
     def __init__(self, active: StudentLevelProgress | None = None) -> None:
         self._active = active
+        self._rows = [active] if active else []
+        self.batch_calls = 0
 
     async def get_active(self, student_id: str, program_id: str):
         return self._active
+
+    async def list_active_for_students(self, student_ids: list[str], program_id: str):
+        self.batch_calls += 1
+        return [
+            row
+            for row in self._rows
+            if row.student_id in student_ids and row.program_id == program_id
+        ]
 
 
 class _SkillProgressRepo:
     def __init__(self, progress: list[StudentSkillProgress] | None = None) -> None:
         self._progress = progress or []
+        self.batch_calls = 0
 
     async def list_for_student_level(self, student_id: str, level_id: str):
         return self._progress
+
+    async def list_for_students(self, student_ids: list[str], level_id: str):
+        self.batch_calls += 1
+        return [
+            row
+            for row in self._progress
+            if row.student_id in student_ids and row.level_id == level_id
+        ]
 
 
 class _RecommendationRepo:
     def __init__(self, active: LevelUpRecommendation | None = None) -> None:
         self._active = active
+        self.batch_calls = 0
 
     async def get_active_for_student(self, student_id: str, program_id: str):
         return self._active
+
+    async def list_active_for_students(self, student_ids: list[str], program_id: str):
+        self.batch_calls += 1
+        return [self._active] if self._active and self._active.student_id in student_ids else []
 
 
 class _CertificateRepo:
     def __init__(self, certificates: list[SkillCertificate] | None = None) -> None:
         self._certificates = certificates or []
+        self.batch_calls = 0
 
     async def list_for_student(self, student_id: str):
         return self._certificates
+
+    async def list_for_students(self, student_ids: list[str]):
+        self.batch_calls += 1
+        return [cert for cert in self._certificates if cert.student_id in student_ids]
 
 
 class _SkillLookup:
     def __init__(self, *, level: object | None = None, skills: list[object] | None = None) -> None:
         self._level = level
         self._skills = skills or []
+        self.calls = 0
 
     async def get_level(self, level_id: str):
+        self.calls += 1
         return self._level
 
     async def list_skills_for_level(self, level_id: str):
+        self.calls += 1
         return self._skills
 
 
@@ -236,6 +268,67 @@ async def test_active_recommendation_waits_for_admin_approval():
     assert result.level_up_status == "RECOMMENDED"
     assert result.level_completion_status == "complete"
     assert result.next_action == "awaiting_admin_approval"
+
+
+async def test_execute_many_matches_execute_and_batches_queries():
+    """execute_many issues a constant number of repo queries, not ~6 per student."""
+    level_progress = _LevelProgressRepo(_active_level())
+    skill_progress = _SkillProgressRepo(
+        [
+            _skill_progress("skill-1", "PASSED"),
+            _skill_progress("skill-2", "TEST_READY"),
+        ]
+    )
+    recommendations = _RecommendationRepo(_recommendation())
+    certificates = _CertificateRepo([_certificate()])
+    skill_lookup = _SkillLookup(
+        level=SimpleNamespace(level_id="level-1", name="Level 1", sequence=1),
+        skills=[_skill("skill-1"), _skill("skill-2")],
+    )
+    use_case = GetProgressSummary(
+        level_progress=level_progress,
+        skill_progress=skill_progress,
+        recommendations=recommendations,
+        certificates=certificates,
+        skill_lookup=skill_lookup,
+    )
+
+    placed = _request()
+    unplaced = ProgressSummaryRequest(
+        student_id="student-2",
+        student_name="Arjun Rao",
+        program_id="program-1",
+        program_name="Junior Badminton",
+    )
+
+    rows = await use_case.execute_many([placed, unplaced])
+
+    assert [row.student_id for row in rows] == ["student-1", "student-2"]
+    assert rows[0] == await use_case.execute(placed)
+    assert rows[1].next_action == "place_in_level"
+    assert rows[1].certificate_count == 0
+    assert rows[1].level_up_status is None
+
+    # One batch query per repo (regardless of roster size), plus per-level
+    # skill metadata + progress lookups for the single distinct level.
+    assert level_progress.batch_calls == 1
+    assert certificates.batch_calls == 1
+    assert recommendations.batch_calls == 1
+    assert skill_progress.batch_calls == 1
+
+
+async def test_execute_many_with_no_requests_returns_empty_without_queries():
+    level_progress = _LevelProgressRepo()
+    use_case = GetProgressSummary(
+        level_progress=level_progress,
+        skill_progress=_SkillProgressRepo(),
+        recommendations=_RecommendationRepo(),
+        certificates=_CertificateRepo(),
+        skill_lookup=_SkillLookup(),
+    )
+
+    assert await use_case.execute_many([]) == []
+    assert level_progress.batch_calls == 0
 
 
 async def test_certificate_for_current_level_takes_next_action_priority():

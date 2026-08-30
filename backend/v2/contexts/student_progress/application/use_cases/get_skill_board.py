@@ -46,8 +46,19 @@ class GetSkillBoard:
         by_level: dict[str, list[SkillBoardStudentRef]] = {}
         unplaced: list[SkillBoardStudentRef] = []
 
+        active_rows = await self._level_progress.list_active_for_students(
+            [ref.student_id for ref in request.students], request.program_id
+        )
+        active_by_student = {row.student_id: row for row in active_rows}
+        rec_by_student = {
+            rec.student_id: rec
+            for rec in await self._recommendations.list_active_for_students(
+                [ref.student_id for ref in request.students], request.program_id
+            )
+        }
+
         for ref in request.students:
-            active = await self._level_progress.get_active(ref.student_id, request.program_id)
+            active = active_by_student.get(ref.student_id)
             if active is None:
                 unplaced.append(ref)
             else:
@@ -87,9 +98,7 @@ class GetSkillBoard:
                 statuses = {
                     col.skill_id: cells.get(col.skill_id, SkillBoardCell()) for col in skill_cols
                 }
-                rec = await self._recommendations.get_active_for_student(
-                    ref.student_id, request.program_id
-                )
+                rec = rec_by_student.get(ref.student_id)
                 student_rows.append(
                     SkillBoardStudentRow(
                         student_id=ref.student_id,

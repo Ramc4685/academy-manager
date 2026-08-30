@@ -555,17 +555,17 @@ async def get_session_students_progress(
     program_id = await _resolve_program_id(use_cases, program_id)
     program_name = await _program_name(use_cases, program_id)
     roster = await use_cases.get_roster.execute(session_id)
-    rows = [
-        await use_cases.student_progress.get_progress_summary.execute(
+    rows = await use_cases.student_progress.get_progress_summary.execute_many(
+        [
             ProgressSummaryRequest(
                 student_id=entry.student_id,
                 student_name=entry.full_name,
                 program_id=program_id,
                 program_name=program_name,
             )
-        )
-        for entry in roster
-    ]
+            for entry in roster
+        ]
+    )
     return {"rows": [row.model_dump(mode="json") for row in rows]}
 
 

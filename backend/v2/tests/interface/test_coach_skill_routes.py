@@ -529,6 +529,11 @@ class _SpyUseCase:
         self.kwargs = kwargs
         return self.result
 
+    async def execute_many(self, requests: list[object]) -> list[object]:
+        self.calls += 1
+        self.args = tuple(requests)
+        return [self.result for _ in requests]
+
 
 class _PassportByStudentUseCase:
     def __init__(self, results: dict[str, object]) -> None:
@@ -958,7 +963,7 @@ def test_real_skill_router_session_students_progress_unassigned_returns_404_befo
 
 
 class _FakeLevelProgressRepoBoard:
-    """Minimal fake for GetSkillBoard — supports get_active only."""
+    """Minimal fake for GetSkillBoard — supports active-level lookups only."""
 
     def __init__(self, rows: list[StudentLevelProgress]) -> None:
         self._rows = rows
@@ -968,6 +973,15 @@ class _FakeLevelProgressRepoBoard:
             if row.student_id == student_id and row.program_id == program_id:
                 return row
         return None
+
+    async def list_active_for_students(
+        self, student_ids: list[str], program_id: str
+    ) -> list[StudentLevelProgress]:
+        return [
+            row
+            for row in self._rows
+            if row.student_id in student_ids and row.program_id == program_id
+        ]
 
 
 class _FakeSkillProgressRepoBoard:
@@ -980,6 +994,11 @@ class _FakeSkillProgressRepoBoard:
 class _FakeRecommendationRepoBoard:
     async def get_active_for_student(self, student_id: str, program_id: str) -> object | None:
         return None
+
+    async def list_active_for_students(
+        self, student_ids: list[str], program_id: str
+    ) -> list[object]:
+        return []
 
 
 class _FakeSkillLookupBoard:
