@@ -87,7 +87,12 @@ class BulkMarkAttendance:
         self._now = clock
 
     @idempotent(
-        key_from=lambda self, cmd, coach_id: f"bulk_mark_attendance:{cmd.mutation_id}",
+        # Server-derived scope prefix (tenant + coach): a client-supplied
+        # mutation_id can never collide with — or pre-claim / read back — a key
+        # cached for another academy or another coach (#544).
+        key_from=lambda self, cmd, coach_id: (
+            f"bulk_mark_attendance:{self._academy_id()}:{coach_id}:{cmd.mutation_id}"
+        ),
         result_type=BulkMarkAttendanceResult,
     )
     async def execute(
