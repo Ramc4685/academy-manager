@@ -33,6 +33,7 @@ from backend.v2.composition.digests import (
     compose_ops_digest_sender,
     compose_send_coach_daily_digest,
     compose_send_parent_daily_digest,
+    digest_window_open,
     resolve_digest_schedule,
 )
 from backend.v2.composition.owner import compose_owner
@@ -746,7 +747,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             # duplicate-key insert and one indexed no-op re-claim, and a `sent`
             # row can never be re-claimed. The window closes on its own at
             # midnight, when `digest_date` rolls over.
-            if not (schedule.enabled and current_hour >= schedule.hour):
+            if not digest_window_open(schedule, current_hour):
                 continue
             with tenant_scope(academy_id):
                 result = await app.state.coach_digest.execute(
@@ -817,7 +818,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             # duplicate-key insert and one indexed no-op re-claim, and a `sent`
             # row can never be re-claimed. The window closes on its own at
             # midnight, when `digest_date` rolls over.
-            if not (schedule.enabled and current_hour >= schedule.hour):
+            if not digest_window_open(schedule, current_hour):
                 continue
             with tenant_scope(academy_id):
                 result = await app.state.parent_digest.execute(

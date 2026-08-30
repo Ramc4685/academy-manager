@@ -7,7 +7,11 @@ and validation rules are unit-tested in isolation here.
 
 from __future__ import annotations
 
-from backend.v2.composition.digests import ResolvedDigestSchedule, resolve_digest_schedule
+from backend.v2.composition.digests import (
+    ResolvedDigestSchedule,
+    digest_window_open,
+    resolve_digest_schedule,
+)
 
 
 def test_env_fallback_when_no_academy_override() -> None:
@@ -69,3 +73,32 @@ def test_boundary_hours_are_kept() -> None:
         ).hour
         == 23
     )
+
+
+def test_window_opens_at_the_digest_hour_and_stays_open() -> None:
+    """The bug this replaced: `schedule.hour == current_hour` gave each academy
+    exactly one tick a day, so the retry re-claim could never fire on a later
+    tick and a failure at the digest hour lost the whole day (#542).
+    """
+    schedule = ResolvedDigestSchedule(enabled=True, hour=7)
+
+    assert digest_window_open(schedule, 7) is True
+    # The point of the change: later ticks the same day still run, so a
+    # transient failure at 07:00 can self-heal at 08:00.
+    assert digest_window_open(schedule, 8) is True
+    assert digest_window_open(schedule, 23) is True
+
+
+def test_window_is_shut_before_the_digest_hour() -> None:
+    schedule = ResolvedDigestSchedule(enabled=True, hour=7)
+    assert digest_window_open(schedule, 6) is False
+    assert digest_window_open(schedule, 0) is False
+
+
+def test_disabled_schedule_never_opens_the_window() -> None:
+    """`enabled` must dominate the hour comparison — a widened window must not
+    start sending for academies that have the digest switched off.
+    """
+    schedule = ResolvedDigestSchedule(enabled=False, hour=7)
+    for hour in (0, 7, 8, 23):
+        assert digest_window_open(schedule, hour) is False

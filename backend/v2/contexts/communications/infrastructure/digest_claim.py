@@ -52,7 +52,6 @@ from backend.v2.contexts.communications.domain.models import (
     DigestSendStatus,
 )
 
-
 #: How long a ``queued`` row must sit untouched before a later tick may treat
 #: it as abandoned rather than in flight. Must stay comfortably above the
 #: digest jobs' 10-minute ``job_lease`` so a run holding its lease can never
