@@ -50,7 +50,7 @@ class MongoPayableOccurrenceQuery:
         )
         docs = [doc async for doc in cursor]
         occurrence_ids = [str(doc["occurrence_id"]) for doc in docs]
-        revenue_by_session = await self._expected_revenue_by_session(academy_id, docs)
+        revenue_by_occurrence = await self._expected_revenue_by_occurrence(academy_id, docs)
         attendance_by_occurrence: dict[str, list[CoachAttendanceForPayout]] = {
             occurrence_id: [] for occurrence_id in occurrence_ids
         }
@@ -89,19 +89,34 @@ class MongoPayableOccurrenceQuery:
                 substitute_coach_id=optional_str(doc.get("substitute_coach_id")),
                 is_payable=bool(doc.get("is_payable", True)),
                 coach_attendance=attendance_by_occurrence.get(str(doc["occurrence_id"]), []),
-                expected_revenue_minor=revenue_by_session.get(occurrence_session_id(doc)),
+                expected_revenue_minor=revenue_by_occurrence.get(str(doc["occurrence_id"])),
             )
             for doc in docs
         ]
 
-    async def _expected_revenue_by_session(
+    @staticmethod
+    def _billing_month_bounds(start_at: datetime) -> tuple[datetime, datetime]:
+        month_start = start_at.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        if month_start.month == 12:
+            month_end = month_start.replace(year=month_start.year + 1, month=1)
+        else:
+            month_end = month_start.replace(month=month_start.month + 1)
+        return month_start, month_end
+
+    async def _expected_revenue_by_occurrence(
         self,
         academy_id: str,
         occurrence_docs: list[dict[str, Any]],
     ) -> dict[str, int]:
         """Expected revenue per occurrence = monthly session price prorated
         across the session's non-cancelled payable occurrences in the
-        requested period, then multiplied by active enrollments.
+        occurrence's own billing (calendar) month, then multiplied by
+        active enrollments.
+
+        The proration divisor is deliberately independent of the requested
+        query window (#504): a short custom payout window must not inflate
+        the per-occurrence basis by dividing the full monthly price across
+        only the occurrences that happen to fall inside the window.
 
         Used as the basis for ``percent_of_revenue`` coach rates. Sessions
         without a configured ``amount_cents`` are omitted, which surfaces
@@ -126,16 +141,27 @@ class MongoPayableOccurrenceQuery:
         if not price_by_session:
             return {}
 
-        occurrences_by_session: dict[str, int] = dict.fromkeys(price_by_session, 0)
+        # Count the session's payable, non-cancelled occurrences in each
+        # occurrence's billing month — from the collection, NOT from the
+        # window-scoped ``occurrence_docs`` (#504).
+        month_counts: dict[tuple[str, datetime], int] = {}
         for doc in occurrence_docs:
             session_id = occurrence_session_id(doc)
-            if session_id not in occurrences_by_session:
+            if session_id not in price_by_session:
                 continue
-            if doc.get("is_payable") is False:
+            month_start, month_end = self._billing_month_bounds(doc["start_at"])
+            key = (session_id, month_start)
+            if key in month_counts:
                 continue
-            if str(doc.get("status", "scheduled")) == "cancelled":
-                continue
-            occurrences_by_session[session_id] += 1
+            month_counts[key] = await self._db["session_occurrences"].count_documents(
+                {
+                    "academy_id": academy_id,
+                    "session_id": session_id,
+                    "start_at": {"$gte": month_start, "$lt": month_end},
+                    "is_payable": {"$ne": False},
+                    "status": {"$ne": "cancelled"},
+                }
+            )
 
         enrolled_by_session: dict[str, int] = dict.fromkeys(price_by_session, 0)
         enrollment_cursor = self._db["enrollments"].find(
@@ -151,15 +177,21 @@ class MongoPayableOccurrenceQuery:
             session_id = str(row["session_id"])
             enrolled_by_session[session_id] = enrolled_by_session.get(session_id, 0) + 1
 
-        return {
-            session_id: round_money_minor(
+        revenue_by_occurrence: dict[str, int] = {}
+        for doc in occurrence_docs:
+            session_id = occurrence_session_id(doc)
+            if session_id not in price_by_session:
+                continue
+            month_start, _ = self._billing_month_bounds(doc["start_at"])
+            month_count = month_counts.get((session_id, month_start), 0)
+            if month_count <= 0:
+                continue
+            revenue_by_occurrence[str(doc["occurrence_id"])] = round_money_minor(
                 Decimal(price_by_session[session_id])
                 * Decimal(enrolled_by_session.get(session_id, 0))
-                / Decimal(occurrences_by_session[session_id])
+                / Decimal(month_count)
             )
-            for session_id in price_by_session
-            if occurrences_by_session.get(session_id, 0) > 0
-        }
+        return revenue_by_occurrence
 
 
 class MongoCoachRateLookup:

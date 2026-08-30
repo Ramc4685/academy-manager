@@ -11,6 +11,7 @@ from backend.v2.contexts.finance.application.ports import (
 )
 from backend.v2.contexts.finance.application.use_cases.generate_payout_period import (
     GeneratePayoutPeriod,
+    OverlappingPayoutPeriodError,
 )
 from backend.v2.contexts.finance.application.use_cases.manage_payout_period import (
     RecomputePayoutPeriod,
@@ -55,12 +56,18 @@ class BulkGeneratePayroll:
             if existing is not None:
                 skipped += 1
                 continue
-            await self._generate.execute(
-                coach_id=c.coach_id,
-                academy_id=academy_id,
-                period_start=period_start,
-                period_end=period_end,
-            )
+            try:
+                await self._generate.execute(
+                    coach_id=c.coach_id,
+                    academy_id=academy_id,
+                    period_start=period_start,
+                    period_end=period_end,
+                )
+            except OverlappingPayoutPeriodError:
+                # A pre-existing custom-window period intersects this
+                # month for the coach; skip rather than double-pay (#504).
+                skipped += 1
+                continue
             generated += 1
         return BulkGenerateResult(generated=generated, skipped=skipped)
 

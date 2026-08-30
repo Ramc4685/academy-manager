@@ -28,6 +28,7 @@ from backend.v2.contexts.finance.application.use_cases.approve_payout_period imp
 )
 from backend.v2.contexts.finance.application.use_cases.generate_payout_period import (
     GeneratePayoutPeriod,
+    OverlappingPayoutPeriodError,
 )
 from backend.v2.contexts.finance.domain.payout_period import (
     PayoutPeriod,
@@ -129,6 +130,22 @@ class FakeRepo:
                 p.coach_id == coach_id
                 and p.period_start == period_start
                 and p.period_end == period_end
+            ):
+                return p
+        return None
+
+    async def find_overlapping(
+        self,
+        *,
+        coach_id: str,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> PayoutPeriod | None:
+        for p in self._by_id.values():
+            if (
+                p.coach_id == coach_id
+                and p.period_start < period_end
+                and p.period_end > period_start
             ):
                 return p
         return None
@@ -400,6 +417,78 @@ async def test_generate_is_idempotent_on_natural_key() -> None:
     assert repo.save_calls == 1
     # Calculator is not called twice; the second call short-circuits.
     assert calculator.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_generate_rejects_window_overlapping_existing_period() -> None:
+    """#504: a custom window intersecting an existing period for the same
+    coach must be rejected — otherwise both periods carry lines for the
+    shared occurrences and can independently be approved and paid."""
+    calc = _Calculation(
+        coach_id="coach-A",
+        academy_id="acad-1",
+        period_start=_dt("2026-07-01T00:00:00"),
+        period_end=_dt("2026-08-01T00:00:00"),
+        total_minor=0,
+    )
+    calculator = FakeCalculator(calc)
+    repo = FakeRepo()
+    use_case = GeneratePayoutPeriod(
+        calculator=calculator,
+        repository=repo,
+        clock=lambda: _dt("2026-08-01T00:00:00"),
+        id_factory=lambda: "pp-month",
+    )
+    await use_case.execute(
+        coach_id="coach-A",
+        academy_id="acad-1",
+        period_start=_dt("2026-07-01T00:00:00"),
+        period_end=_dt("2026-08-01T00:00:00"),
+    )
+
+    with pytest.raises(OverlappingPayoutPeriodError, match="overlaps existing payout period"):
+        await use_case.execute(
+            coach_id="coach-A",
+            academy_id="acad-1",
+            period_start=_dt("2026-07-06T00:00:00"),
+            period_end=_dt("2026-07-13T00:00:00"),
+        )
+    # Nothing extra was persisted and the calculator did not run again.
+    assert repo.save_calls == 1
+    assert calculator.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_generate_allows_adjacent_non_overlapping_window() -> None:
+    calc = _Calculation(
+        coach_id="coach-A",
+        academy_id="acad-1",
+        period_start=_dt("2026-07-01T00:00:00"),
+        period_end=_dt("2026-08-01T00:00:00"),
+        total_minor=0,
+    )
+    ids = iter(["pp-july", "pp-august"])
+    repo = FakeRepo()
+    use_case = GeneratePayoutPeriod(
+        calculator=FakeCalculator(calc),
+        repository=repo,
+        clock=lambda: _dt("2026-09-01T00:00:00"),
+        id_factory=lambda: next(ids),
+    )
+    await use_case.execute(
+        coach_id="coach-A",
+        academy_id="acad-1",
+        period_start=_dt("2026-07-01T00:00:00"),
+        period_end=_dt("2026-08-01T00:00:00"),
+    )
+    period = await use_case.execute(
+        coach_id="coach-A",
+        academy_id="acad-1",
+        period_start=_dt("2026-08-01T00:00:00"),
+        period_end=_dt("2026-09-01T00:00:00"),
+    )
+    assert period.period_id == "pp-august"
+    assert repo.save_calls == 2
 
 
 @pytest.mark.asyncio
