@@ -26,6 +26,15 @@ Two changes close the window:
   `checkout.session.expired` webhook handling and CHECKOUT_EXPIRED re-quote
   path.
 
+## Risk / rollback
+Low risk. The TTL predicate only affects `consume()`, whose sole callers
+quote and consume within the same request today, and legacy docs without
+`expires_at` are explicitly still consumable. The 31-minute Stripe expiry
+uses the platform's supported `expires_at` parameter and reuses the
+existing expired-session handling. Rollback: revert the PR — no data
+migration to undo; any snapshots stamped `EXPIRED` in the interim stay
+terminal, which is correct (they were past TTL).
+
 ## Deploy notes
 No migration and no new indexes — `EXPIRED`/`expired_at` are written into
 the existing `billing_calculation_snapshots` collection. Behaviour change:
