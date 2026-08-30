@@ -197,6 +197,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_tuition_discount_repo impo
 from backend.v2.contexts.coaching.application.use_cases.compute_payout import (
     ComputeCoachPayout,
 )
+from backend.v2.contexts.coaching.application.use_cases.correct_attendance import (
+    CorrectAttendance,
+)
 from backend.v2.contexts.coaching.application.use_cases.generate_daily_teaching_plan import (
     GenerateDailyTeachingPlan,
 )
@@ -209,6 +212,7 @@ from backend.v2.contexts.coaching.application.use_cases.mark_coach_attendance im
     MarkCoachAttendance,
 )
 from backend.v2.contexts.coaching.infrastructure.mongo_attendance_repo import (
+    MongoAttendanceRepository,
     MongoCoachAttendanceRepository,
 )
 from backend.v2.contexts.coaching.infrastructure.mongo_coach_rate_repo import (
@@ -2994,6 +2998,13 @@ def compose_admin(
         academy_id=academy_id,
     )
 
+    correct_attendance = CorrectAttendance(
+        attendance_repo=MongoAttendanceRepository(db),
+        occurrence_lookup=_AdminOccurrenceLookup(),
+        outbox=outbox,
+        academy_id=request_academy_id,
+    )
+
     async def list_waitlist_for_session(session_id: str):
         cursor = waitlist._find_many(
             {"session_id": session_id},
@@ -4572,6 +4583,7 @@ def compose_admin(
         add_session_replacement=add_session_replacement,
         update_session_occurrence_replacement=update_session_occurrence_replacement,
         mark_coach_attendance=mark_coach_attendance,
+        correct_attendance=correct_attendance,
         list_admin_enrollments_for_session=list_admin_enrollments_for_session,
         list_waitlist_for_session=list_waitlist_for_session,
         list_audit_logs=list_audit_logs,

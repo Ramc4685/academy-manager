@@ -23,6 +23,9 @@ from backend.v2.contexts.billing.application.use_cases.session_type_ops import (
 from backend.v2.contexts.coaching.application.use_cases.bulk_mark_attendance import (
     BulkMarkAttendance,
 )
+from backend.v2.contexts.coaching.application.use_cases.correct_attendance import (
+    CorrectAttendance,
+)
 from backend.v2.contexts.coaching.application.use_cases.mark_attendance import MarkAttendance
 from backend.v2.contexts.coaching.application.use_cases.session_feedback import (
     CreateSessionFeedback,
@@ -106,6 +109,9 @@ class CoachUseCases:
     # to the academy-local calendar date instead of UTC (#510). Optional for
     # fixtures that predate it; real composition always sets it.
     get_academy_timezone: Callable[[str], Awaitable[str | None]] | None = None
+    # Attendance correction (#517). Optional for fixtures that predate it;
+    # real coach composition always sets it.
+    correct_attendance: CorrectAttendance | None = None
 
 
 def get_coach_use_cases(request: Request) -> CoachUseCases:

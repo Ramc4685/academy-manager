@@ -31,6 +31,13 @@ class Attendance(BaseModel):
     marked_at_client: datetime | None = None
     status: AttendanceStatus
     client_app_version: str = Field(default="unknown")
+    # Correction audit trail (#517) — set only when a coach/admin corrects a
+    # previously recorded mark. `previous_status` is the status the last
+    # correction replaced.
+    corrected_by: str | None = None
+    corrected_at: datetime | None = None
+    previous_status: AttendanceStatus | None = None
+    correction_reason: str | None = None
 
 
 class CoachAttendance(BaseModel):

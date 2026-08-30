@@ -407,6 +407,22 @@ class UpdateOccurrenceCoachAttendanceRequest(BaseModel):
     note: str = ""
 
 
+class CorrectStudentAttendanceRequest(BaseModel):
+    status: Literal["present", "absent", "late"]
+    reason: str | None = None
+
+
+class AdminStudentAttendanceView(BaseModel):
+    attendance_id: str
+    occurrence_id: str
+    session_id: str
+    student_id: str
+    status: Literal["present", "absent", "late"]
+    previous_status: Literal["present", "absent", "late"] | None = None
+    corrected_by: str | None = None
+    corrected_at: datetime | None = None
+
+
 class CreateSessionRequest(BaseModel):
     coach_id: str
     title: str

@@ -25,6 +25,9 @@ from backend.v2.contexts.coaching.application.ports import OccurrenceDetails
 from backend.v2.contexts.coaching.application.use_cases.bulk_mark_attendance import (
     BulkMarkAttendance,
 )
+from backend.v2.contexts.coaching.application.use_cases.correct_attendance import (
+    CorrectAttendance,
+)
 from backend.v2.contexts.coaching.application.use_cases.mark_attendance import MarkAttendance
 from backend.v2.contexts.coaching.application.use_cases.mark_coach_attendance import (
     MarkCoachAttendance,
@@ -39,7 +42,7 @@ from backend.v2.contexts.coaching.application.use_cases.session_notes import (
     ListLessonPlans,
     ListProgressNotes,
 )
-from backend.v2.contexts.coaching.domain.models import CoachAttendance
+from backend.v2.contexts.coaching.domain.models import Attendance, CoachAttendance
 from backend.v2.contexts.enrollment.application.use_cases.coach_roster_writes import (
     CoachAddStudentToRoster,
     CoachRemoveStudentFromRoster,
@@ -174,6 +177,11 @@ class FakeAttendanceRepo:
             if a.attendance_id == attendance_id:
                 return a
         return None
+
+    async def update_status(self, attendance) -> None:
+        self.saved = [
+            attendance if a.attendance_id == attendance.attendance_id else a for a in self.saved
+        ]
 
     async def list_for_occurrence(self, occurrence_id):
         return [a for a in self.saved if a.occurrence_id == occurrence_id]
@@ -653,6 +661,13 @@ def _build_use_cases(seed_data) -> CoachUseCases:
             enrollment_lookup=_enrollment_lookup,
             outbox=_outbox,
             idempotency_store=_idempotency_store,
+            academy_id=lambda: "test-academy",
+            clock=_now,
+        ),
+        correct_attendance=CorrectAttendance(
+            attendance_repo=_attendance_repo,
+            occurrence_lookup=_occurrence_lookup,
+            outbox=_outbox,
             academy_id=lambda: "test-academy",
             clock=_now,
         ),
@@ -1848,6 +1863,27 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         clock=lambda: datetime(2026, 5, 16, 10, 35, tzinfo=UTC),
     )
 
+    _student_attendance = FakeAttendanceRepo()
+    _student_attendance.saved.append(
+        Attendance(
+            attendance_id="att-admin-1",
+            academy_id="acad",
+            occurrence_id="occ-admin-1",
+            session_id="sess-1",
+            student_id="st-1",
+            marked_by="coach-1",
+            marked_at=datetime(2026, 5, 16, 9, 5, tzinfo=UTC),
+            status="present",
+        )
+    )
+    correct_attendance = CorrectAttendance(
+        attendance_repo=_student_attendance,
+        occurrence_lookup=_AdminOccurrenceLookup(),
+        outbox=outbox,
+        academy_id=lambda: "acad",
+        clock=lambda: datetime(2026, 6, 20, 10, 35, tzinfo=UTC),
+    )
+
     async def list_waitlist_for_session(session_id):
         return [e for e in waitlist.entries.values() if e.session_id == session_id]
 
@@ -2135,6 +2171,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         list_session_occurrences=list_session_occurrences,
         update_session_occurrence_coach=update_session_occurrence_coach,
         mark_coach_attendance=mark_coach_attendance,
+        correct_attendance=correct_attendance,
         list_admin_enrollments_for_session=list_admin_enrollments_for_session,
         list_waitlist_for_session=list_waitlist_for_session,
         list_audit_logs=list_audit_logs,

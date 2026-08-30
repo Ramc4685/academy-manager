@@ -6,6 +6,9 @@ from datetime import UTC, date, datetime, time
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from backend.v2.contexts.coaching.application.use_cases.correct_attendance import (
+    CorrectAttendanceCommand,
+)
 from backend.v2.contexts.coaching.application.use_cases.mark_coach_attendance import (
     MarkCoachAttendanceCommand,
 )
@@ -31,6 +34,8 @@ from backend.v2.interfaces.admin.views import (
     AdminSessionOccurrenceList,
     AdminSessionOccurrenceView,
     AdminSessionView,
+    AdminStudentAttendanceView,
+    CorrectStudentAttendanceRequest,
     CreateSessionRequest,
     EditRosterAddRequest,
     EditSessionRequest,
@@ -317,6 +322,33 @@ async def update_occurrence_coach_attendance(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return AdminCoachAttendanceView(**row.model_dump(exclude={"academy_id"}))
+
+
+@router.patch(
+    "/session-occurrences/{occurrence_id}/attendance/{student_id}",
+    response_model=AdminStudentAttendanceView,
+    summary="Correct a student's recorded attendance for a dated occurrence (#517)",
+)
+async def correct_occurrence_student_attendance(
+    occurrence_id: str,
+    student_id: str,
+    body: CorrectStudentAttendanceRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminStudentAttendanceView:
+    if use_cases.correct_attendance is None:
+        raise HTTPException(status_code=503, detail="Attendance correction is not configured")
+    result = await use_cases.correct_attendance.execute(  # type: ignore[attr-defined]
+        CorrectAttendanceCommand(
+            occurrence_id=occurrence_id,
+            student_id=student_id,
+            status=body.status,
+            reason=body.reason,
+        ),
+        actor_id=claims.user_id,
+        actor_role="admin",
+    )
+    return AdminStudentAttendanceView(**result.model_dump())
 
 
 @router.get(

@@ -31,6 +31,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_student_billing_enrollment
 from backend.v2.contexts.coaching.application.use_cases.bulk_mark_attendance import (
     BulkMarkAttendance,
 )
+from backend.v2.contexts.coaching.application.use_cases.correct_attendance import (
+    CorrectAttendance,
+)
 from backend.v2.contexts.coaching.application.use_cases.generate_daily_teaching_plan import (
     GenerateDailyTeachingPlan,
 )
@@ -175,6 +178,8 @@ class CoachComposition:
     # calendar date instead of UTC (#510). Optional for hand-built test
     # compositions; real composition always sets it.
     get_academy_timezone: object = None
+    # Attendance correction (#517)
+    correct_attendance: CorrectAttendance | None = None
 
 
 class CoachAssignedSessionLookup:
@@ -362,6 +367,12 @@ def compose_coach(
             enrollment_lookup=EnrollmentLookupAdapter(enrollments_repo),
             outbox=outbox,
             idempotency_store=idempotency_store,
+            academy_id=request_academy_id,
+        ),
+        correct_attendance=CorrectAttendance(
+            attendance_repo=attendance_repo,
+            occurrence_lookup=EnrollmentOccurrenceLookup(occurrences_repo),
+            outbox=outbox,
             academy_id=request_academy_id,
         ),
         bulk_mark_attendance=BulkMarkAttendance(
