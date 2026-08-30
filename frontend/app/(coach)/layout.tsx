@@ -13,6 +13,7 @@ import { CoachInstallCard } from "@/components/coach/install-card";
 import { ToastProvider } from "@/components/ds/toast";
 import { PersonaSwitcher } from "@/components/persona/persona-switcher";
 import { AccessDeniedNotice } from "@/components/persona/access-denied-notice";
+import { AuthUnavailableScreen } from "@/components/persona/auth-unavailable";
 import { PersonaLogoutButton } from "@/components/persona/logout-button";
 import { listCoachMessages } from "@/lib/api/v2/messages";
 import { queryKeys } from "@/lib/query/keys";
@@ -35,6 +36,10 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
 
   if (!auth.checked) {
     return <div className="min-h-screen flex items-center justify-center" style={{ background: "var(--rally-paper)" }}>Loading…</div>;
+  }
+
+  if (auth.unavailable) {
+    return <AuthUnavailableScreen onRetry={auth.retry} />;
   }
 
   if (!auth.authorized) {
