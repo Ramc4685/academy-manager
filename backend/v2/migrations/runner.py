@@ -16,6 +16,7 @@ import pkgutil
 import uuid
 from datetime import UTC, datetime, timedelta, timezone
 from types import ModuleType
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -51,7 +52,7 @@ def _discover_migrations() -> list[ModuleType]:
     return [importlib.import_module(modname) for _, modname in discovered]
 
 
-async def _record_applied(db: AsyncIOMotorDatabase, version: str) -> None:
+async def _record_applied(db: AsyncIOMotorDatabase[Any], version: str) -> None:
     """Record ``version`` as applied.
 
     Upsert keyed on ``version`` (matching ``run_all_migrations``) so a lost
@@ -65,7 +66,7 @@ async def _record_applied(db: AsyncIOMotorDatabase, version: str) -> None:
     )
 
 
-async def _run_pending_locked(db: AsyncIOMotorDatabase) -> list[str]:
+async def _run_pending_locked(db: AsyncIOMotorDatabase[Any]) -> list[str]:
     applied: set[str] = {doc["version"] async for doc in db[REGISTRY_COLLECTION].find({})}
 
     just_applied: list[str] = []
@@ -81,7 +82,7 @@ async def _run_pending_locked(db: AsyncIOMotorDatabase) -> list[str]:
 
 
 async def run_pending_migrations(
-    db: AsyncIOMotorDatabase,
+    db: AsyncIOMotorDatabase[Any],
     *,
     worker_id: str | None = None,
     poll_interval: float = 2.0,
@@ -103,7 +104,7 @@ async def run_pending_migrations(
         await asyncio.sleep(poll_interval)
 
 
-async def run_all_migrations(db: AsyncIOMotorDatabase) -> list[str]:
+async def run_all_migrations(db: AsyncIOMotorDatabase[Any]) -> list[str]:
     """Replay every migration.
 
     This is for local/dev reset flows that drop collections after boot-time
