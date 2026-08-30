@@ -3,7 +3,10 @@
 Interface layer imports from here (allowed) rather than domain (forbidden).
 """
 
-from backend.v2.contexts.communications.domain.errors import EmptyAudienceError
+from backend.v2.contexts.communications.domain.errors import (
+    DuplicateCampaignError,
+    EmptyAudienceError,
+)
 from backend.v2.contexts.communications.domain.models import (
     AcademyAudience,
     SessionAudience,
@@ -11,6 +14,7 @@ from backend.v2.contexts.communications.domain.models import (
 
 __all__ = [
     "AcademyAudience",
+    "DuplicateCampaignError",
     "EmptyAudienceError",
     "SessionAudience",
 ]

@@ -149,12 +149,33 @@ class InMemoryCampaignRepository(CampaignRepository):
                 return c
         return None
 
+    async def try_claim(self, campaign: Campaign) -> bool:
+        # mimic the unique (academy_id, idempotency_key) index
+        assert campaign.idempotency_key, "try_claim requires an idempotency_key"
+        for c in self.saved:
+            if (
+                c.idempotency_key == campaign.idempotency_key
+                and c.academy_id == campaign.academy_id
+            ):
+                return False
+        self.saved.append(campaign)
+        return True
+
+    async def get_by_idempotency_key(self, idempotency_key: str) -> Campaign | None:
+        for c in self.saved:
+            if c.idempotency_key == idempotency_key:
+                return c
+        return None
+
 
 @dataclass
 class InMemoryDeliveryRepository(DeliveryRepository):
     saved: list[Delivery] = field(default_factory=list)
 
     async def save_many(self, deliveries: list[Delivery]) -> None:
+        # mimic upsert keyed by delivery_id
+        incoming = {d.delivery_id for d in deliveries}
+        self.saved = [d for d in self.saved if d.delivery_id not in incoming]
         self.saved.extend(deliveries)
 
     async def list_for_campaign(self, campaign_id: str) -> list[Delivery]:
@@ -527,6 +548,140 @@ class TestDeliveryRecording:
         )
 
         assert all(d.academy_id == "aca-42" for d in deliveries.saved)
+
+
+# ---------------------------------------------------------------------------
+# Idempotency (#512): a retried POST must not re-email the audience
+# ---------------------------------------------------------------------------
+
+
+def _parent_command(**overrides: Any) -> SendCampaignCommand:
+    base: dict[str, Any] = {
+        "academy_id": "aca-1",
+        "sender_id": "u-admin",
+        "audience": AcademyAudience(role="parent"),
+        "subject": "Hi",
+        "body": "Hello",
+    }
+    base.update(overrides)
+    return SendCampaignCommand(**base)
+
+
+class TestCampaignIdempotency:
+    @pytest.mark.asyncio
+    async def test_identical_retry_sends_nothing_and_returns_same_campaign(self) -> None:
+        use_case, resolver, sender, _campaigns, deliveries = _build_use_case()
+        resolver.by_academy = [_recipient("p-1"), _recipient("p-2")]
+
+        first = await use_case.execute(_parent_command())
+        assert first.deduplicated is False
+        assert len(sender.sent) == 2
+
+        retry = await use_case.execute(_parent_command())
+
+        assert retry.deduplicated is True
+        assert retry.campaign_id == first.campaign_id
+        assert retry.total_recipients == 2
+        assert retry.sent_count == 2
+        assert retry.failed_count == 0
+        # No additional email left the system on the retry.
+        assert len(sender.sent) == 2
+        assert len(deliveries.saved) == 2
+
+    @pytest.mark.asyncio
+    async def test_different_content_is_a_new_campaign(self) -> None:
+        use_case, resolver, sender, _campaigns, _deliveries = _build_use_case()
+        resolver.by_academy = [_recipient("p-1")]
+
+        first = await use_case.execute(_parent_command())
+        second = await use_case.execute(_parent_command(body="A different body"))
+
+        assert second.campaign_id != first.campaign_id
+        assert second.deduplicated is False
+        assert len(sender.sent) == 2
+
+    @pytest.mark.asyncio
+    async def test_client_supplied_key_dedupes_even_when_content_differs(self) -> None:
+        use_case, resolver, sender, _campaigns, _deliveries = _build_use_case()
+        resolver.by_academy = [_recipient("p-1")]
+
+        first = await use_case.execute(_parent_command(idempotency_key="client-key-1"))
+        retry = await use_case.execute(
+            _parent_command(body="Edited before retry", idempotency_key="client-key-1")
+        )
+
+        assert retry.deduplicated is True
+        assert retry.campaign_id == first.campaign_id
+        assert len(sender.sent) == 1
+
+    @pytest.mark.asyncio
+    async def test_campaign_row_carries_idempotency_key(self) -> None:
+        use_case, resolver, _sender, campaigns, _deliveries = _build_use_case()
+        resolver.by_academy = [_recipient("p-1")]
+
+        result = await use_case.execute(_parent_command(idempotency_key="client-key-9"))
+
+        stored = await campaigns.get(result.campaign_id)
+        assert stored is not None
+        assert stored.idempotency_key == "client-key-9"
+
+
+# ---------------------------------------------------------------------------
+# Crash visibility (#512): QUEUED rows are persisted before the send loop
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class CrashingSendPort(EmailSendPort):
+    """Sends successfully until `crash_on_email`, then raises mid-loop."""
+
+    crash_on_email: str
+    sent: list[str] = field(default_factory=list)
+
+    async def send(
+        self,
+        *,
+        recipient: ResolvedRecipient,
+        subject: str,
+        body: str,
+    ) -> SendOutcome:
+        if recipient.email == self.crash_on_email:
+            raise RuntimeError("process died mid-loop")
+        self.sent.append(recipient.email or "")
+        return SendOutcome(
+            ok=True, provider_message_id=f"prov-{len(self.sent)}", failed_reason=None
+        )
+
+
+class TestCrashVisibility:
+    @pytest.mark.asyncio
+    async def test_queued_batch_is_persisted_before_any_send(self) -> None:
+        resolver = FakeAudienceResolver()
+        resolver.by_academy = [
+            _recipient("p-1", "p-1@example.test"),
+            _recipient("p-2", "p-2@example.test"),
+            _recipient("p-3", "p-3@example.test"),
+        ]
+        crasher = CrashingSendPort(crash_on_email="p-2@example.test")
+        campaigns = InMemoryCampaignRepository()
+        deliveries = InMemoryDeliveryRepository()
+        use_case = SendCampaign(
+            campaigns=campaigns,
+            deliveries=deliveries,
+            resolver=resolver,
+            sender=crasher,
+            now=lambda: datetime(2026, 5, 21, 12, 0, tzinfo=UTC),
+            new_id=_counter_ids(),
+        )
+
+        with pytest.raises(RuntimeError):
+            await use_case.execute(_parent_command())
+
+        # The whole roster is visible as QUEUED rows even though the loop died,
+        # and the campaign is inspectable in SENDING — not invisibly half-sent.
+        assert len(deliveries.saved) == 3
+        assert all(d.status == DeliveryStatus.QUEUED for d in deliveries.saved)
+        assert campaigns.saved[0].status == CampaignStatus.SENDING
 
 
 # ---------------------------------------------------------------------------
