@@ -59,7 +59,20 @@ class LevelUpRecommendationRepository(Protocol):
         reviewed_by: str | None,
         reviewed_at: object | None,
         rejection_reason: str | None,
-    ) -> None: ...
+        *,
+        expected_status: str,
+    ) -> bool:
+        """Move a recommendation from ``expected_status`` to ``status``.
+
+        Always a compare-and-set: the write applies only while the stored
+        status still matches ``expected_status``. There is deliberately no
+        unconditional variant — an unguarded status write is what let a
+        replayed review be recorded twice. Returns whether the transition was
+        applied, so callers can make the decision (and its side effects)
+        land at most once.
+        """
+        ...
+
     async def get(self, rec_id: str) -> LevelUpRecommendation | None: ...
     async def get_active_for_student(
         self, student_id: str, program_id: str
