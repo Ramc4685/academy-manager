@@ -478,23 +478,40 @@ class SelfCancelEnrollment:
         the only one of the three that nothing later re-derives: a missed
         timeline row is cosmetic, a missed release is a permanently
         unsellable seat.
+
+        The timeline row sits between two writes that MUST propagate, so it is
+        the one write here that is caught: it is cosmetic by the reasoning
+        above, but it is ordered ahead of the ``EnrollmentCancelled`` append
+        that drives waitlist promotion. Letting it propagate would mean a
+        transient failure writing an audit row permanently suppresses the
+        promotion — and the retry cannot recover, because it loses the CAS in
+        ``execute``. Cosmetic writes must not gate load-bearing ones.
         """
         await self._sessions.release_seat(enrollment.session_id)
         if self._enrollment_events is not None:
-            await self._enrollment_events.record(
-                EnrollmentLifecycleEvent(
-                    event_id=str(new_ulid()),
-                    academy_id=enrollment.academy_id,
-                    event_type="cancelled",
-                    enrollment_id=enrollment.enrollment_id,
-                    session_id=enrollment.session_id,
-                    student_id=enrollment.student_id,
-                    actor_id=actor_id,
-                    reason=reason,
-                    effective_at=effective_at,
-                    occurred_at=now,
+            try:
+                await self._enrollment_events.record(
+                    EnrollmentLifecycleEvent(
+                        event_id=str(new_ulid()),
+                        academy_id=enrollment.academy_id,
+                        event_type="cancelled",
+                        enrollment_id=enrollment.enrollment_id,
+                        session_id=enrollment.session_id,
+                        student_id=enrollment.student_id,
+                        actor_id=actor_id,
+                        reason=reason,
+                        effective_at=effective_at,
+                        occurred_at=now,
+                    )
                 )
-            )
+            except Exception:
+                log.warning(
+                    "self_cancel_lifecycle_row_failed",
+                    extra={
+                        "enrollment_id": enrollment.enrollment_id,
+                        "session_id": enrollment.session_id,
+                    },
+                )
         await self._outbox.append(
             EnrollmentCancelled(
                 aggregate_id=enrollment.enrollment_id,

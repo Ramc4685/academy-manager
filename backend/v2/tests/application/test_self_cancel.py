@@ -594,6 +594,100 @@ async def test_double_self_cancel_releases_the_seat_only_once() -> None:
     assert len(outbox.events) == 1
 
 
+class _StaleReadEnrollments(_FakeEnrollments):
+    """``get`` keeps reporting 'active' after the CAS has already won once.
+
+    Models the genuine two-tab race rather than a sequential replay. In
+    ``execute`` the cheap pre-CAS read at :364 and the CAS at :388 are two
+    separate round trips, so the loser of a real race reads a still-active
+    row and sails past the pre-CAS check — only the CAS-loser guard stops it.
+    A sequential test can never reach that branch, because by then the read
+    itself returns 'cancelled'.
+    """
+
+    async def get(self, enrollment_id: str) -> Enrollment | None:
+        current = self._by_id.get(enrollment_id)
+        if current is None:
+            return None
+        return current.model_copy(update={"status": "active"})
+
+
+async def test_cas_loser_of_a_true_race_does_not_release_the_seat_again() -> None:
+    """Pins the CAS-loser guard specifically.
+
+    The sequential double-cancel test above cannot fail if that guard is
+    deleted — the pre-CAS read check absorbs the second call first. This one
+    holds the read at 'active' for both callers, so removing the guard lets
+    the loser fall through and release a second seat / append a second event.
+    """
+    enrollments = _StaleReadEnrollments([_enrollment()])
+    sessions = _FakeSessions()
+    outbox = _FakeOutbox()
+    now = datetime(2026, 7, 6, 12, 0, tzinfo=UTC)
+    uc = _use_case(
+        enrollments=enrollments,
+        policies=_FakePolicies(_policy(minimum_notice_days=7, fee_cents=0, timing="immediate")),
+        occurrences=_FakeOccurrenceForSession({"session-1": now + timedelta(days=30)}),
+        sessions=sessions,
+        outbox=outbox,
+        clock=lambda: now,
+    )
+
+    await uc.execute(
+        SelfCancelEnrollmentCommand(enrollment_id="enr-1", parent_id="parent-1", reason="first")
+    )
+    # The loser: its read still says 'active', so only the CAS can stop it.
+    with pytest.raises(EnrollmentNotCancellable):
+        await uc.execute(
+            SelfCancelEnrollmentCommand(
+                enrollment_id="enr-1", parent_id="parent-1", reason="second"
+            )
+        )
+
+    assert sessions.released == ["session-1"]
+    assert len(outbox.events) == 1
+    assert len(enrollments.cancelled_calls) == 1
+
+
+async def test_lifecycle_row_failure_does_not_suppress_waitlist_promotion() -> None:
+    """The timeline row is cosmetic; the ``EnrollmentCancelled`` append that
+    drives waitlist promotion is not. Because the row is written between the
+    seat release and that append, letting it propagate would mean a transient
+    audit-write failure permanently swallows the promotion — and the retry
+    cannot recover it, since the retry loses the CAS.
+    """
+
+    class _BrokenEvents:
+        def __init__(self) -> None:
+            self.attempts = 0
+
+        async def record(self, event: Any) -> None:
+            self.attempts += 1
+            raise RuntimeError("mongo blipped writing the timeline row")
+
+    events = _BrokenEvents()
+    sessions = _FakeSessions()
+    outbox = _FakeOutbox()
+    now = datetime(2026, 7, 6, 12, 0, tzinfo=UTC)
+    uc = _use_case(
+        enrollments=_FakeEnrollments([_enrollment()]),
+        policies=_FakePolicies(_policy(minimum_notice_days=7, fee_cents=0, timing="immediate")),
+        occurrences=_FakeOccurrenceForSession({"session-1": now + timedelta(days=30)}),
+        sessions=sessions,
+        outbox=outbox,
+        enrollment_events=events,  # type: ignore[arg-type]
+        clock=lambda: now,
+    )
+
+    await uc.execute(
+        SelfCancelEnrollmentCommand(enrollment_id="enr-1", parent_id="parent-1", reason="bye")
+    )
+
+    assert events.attempts == 1
+    assert sessions.released == ["session-1"]
+    assert len(outbox.events) == 1, "promotion event must survive a timeline-row failure"
+
+
 async def test_capacity_compensation_runs_before_fee_billing_in_exact_order() -> None:
     """Fee billing is explicitly best-effort (see module docstring); the seat
     release is not allowed to be collateral damage of a billing failure.
@@ -703,7 +797,12 @@ async def test_capacity_compensation_completes_when_the_request_task_is_cancelle
             SelfCancelEnrollmentCommand(enrollment_id="enr-1", parent_id="parent-1", reason="bye")
         )
     )
-    await release_started.wait()
+    # Bounded on purpose. A regression that stops calling ``release_seat``
+    # never sets this event, and an unbounded wait would HANG the suite
+    # instead of failing it — there is no pytest-timeout in backend/.venv and
+    # no timeout in pyproject.toml, so the only backstop is the CI job's
+    # 15-minute kill, which reports no test name at all.
+    await asyncio.wait_for(release_started.wait(), timeout=5)
     task.cancel()  # the parent closed the tab mid-request
     release_may_finish.set()
     with pytest.raises(asyncio.CancelledError):
