@@ -64,9 +64,7 @@ async def get_today(
     claims: AuthClaims = Depends(require_persona("coach")),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> CoachTodayResponse:
-    target_date = await _resolve_date(
-        on_date, academy_id=claims.academy_id, use_cases=use_cases
-    )
+    target_date = await _resolve_date(on_date, academy_id=claims.academy_id, use_cases=use_cases)
     sessions = await use_cases.list_today.execute(claims.user_id, target_date)
 
     # Fan-out roster fetches concurrently. Prefer the occurrence-scoped
