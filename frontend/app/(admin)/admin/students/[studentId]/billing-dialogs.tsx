@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
 
@@ -8,6 +8,7 @@ import {
   type AddInvoiceLineRequest,
   type AdminBillingProductView,
   type RecordManualPaymentRequest,
+  mintPaymentIdempotencyKey,
 } from "@/lib/api/admin";
 import { type AdminStudentDetail } from "@/lib/api/v2/students";
 import { Button } from "@/components/ds/button";
@@ -221,21 +222,36 @@ function RecordPaymentDialog({
 }: {
   balanceDueCents: number;
   onCancel: () => void;
-  onSaved: (payload: RecordManualPaymentRequest) => Promise<{ payment_id: string }>;
+  onSaved: (
+    payload: RecordManualPaymentRequest,
+    options: { idempotencyKey: string },
+  ) => Promise<{ payment_id: string }>;
   onDone: (paymentId: string) => void;
 }) {
   const [amount, setAmount] = useState(() => centsToDollarInput(balanceDueCents));
   const [method, setMethod] = useState("cash");
   const [referenceNumber, setReferenceNumber] = useState("");
   const [notes, setNotes] = useState("");
+  // Issue #511: one idempotency key per payment INTENT (this dialog open), held
+  // across retries so a resubmit after a 5xx (payment recorded, response lost)
+  // replays instead of double-recording. Rotates when the form fields change —
+  // a new payload is a new intent (the backend 422s key reuse with a different
+  // payload). The dialog unmounts on success, so a re-open mints a fresh key.
+  const idempotencyKeyRef = useRef(mintPaymentIdempotencyKey());
+  useEffect(() => {
+    idempotencyKeyRef.current = mintPaymentIdempotencyKey();
+  }, [amount, method, referenceNumber, notes]);
   const mutation = useMutation({
     mutationFn: () =>
-      onSaved({
-        amount_cents: dollarsToCents(amount),
-        payment_method: method,
-        reference_number: referenceNumber.trim() || null,
-        notes: notes.trim(),
-      }),
+      onSaved(
+        {
+          amount_cents: dollarsToCents(amount),
+          payment_method: method,
+          reference_number: referenceNumber.trim() || null,
+          notes: notes.trim(),
+        },
+        { idempotencyKey: idempotencyKeyRef.current },
+      ),
     onSuccess: (result) => onDone(result.payment_id),
   });
   const amountCents = dollarsToCents(amount);
