@@ -57,6 +57,18 @@ class PayoutPeriodRepository(Protocol):
         period_end: datetime,
     ) -> PayoutPeriod | None: ...
 
+    async def find_overlapping(
+        self,
+        *,
+        coach_id: str,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> PayoutPeriod | None:
+        """First period for this coach whose window intersects
+        [period_start, period_end) — including an exact match. Used by
+        generation to reject overlapping windows (#504)."""
+        ...
+
     async def find_by_id(self, period_id: str) -> PayoutPeriod | None: ...
 
     async def save(self, period: PayoutPeriod) -> PayoutPeriod:

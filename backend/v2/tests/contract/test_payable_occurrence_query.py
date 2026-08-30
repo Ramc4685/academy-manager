@@ -167,3 +167,53 @@ async def test_expected_revenue_prorates_monthly_session_fee_across_occurrences(
     )
 
     assert {row.expected_revenue_minor for row in rows} == {15000}
+
+
+@pytest.mark.asyncio
+async def test_expected_revenue_prorates_by_billing_month_not_query_window(db, acad) -> None:
+    """#504: a short custom window must not inflate the per-occurrence
+    basis. The divisor is the session's occurrence count in its billing
+    month, independent of the requested window."""
+    await db["sessions"].insert_one(
+        {
+            "academy_id": acad,
+            "session_id": "sess-1",
+            "amount_cents": 20000,
+        }
+    )
+    await db["enrollments"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "enrollment_id": f"enr-{i}",
+                "session_id": "sess-1",
+                "student_id": f"student-{i}",
+                "status": "active",
+            }
+            for i in range(1, 11)
+        ]
+    )
+    for index, day in enumerate((1, 8, 15, 22), start=1):
+        await db["session_occurrences"].insert_one(
+            {
+                "academy_id": acad,
+                "occurrence_id": f"occ-{index}",
+                "session_id": "sess-1",
+                "start_at": _dt(f"2026-07-{day:02d}T18:00:00"),
+                "end_at": _dt(f"2026-07-{day:02d}T19:00:00"),
+                "status": "completed",
+                "scheduled_coach_id": "coach-1",
+                "is_payable": True,
+            }
+        )
+
+    # One-week window containing exactly one of July's four occurrences.
+    rows = await MongoPayableOccurrenceQuery(db).list_in_period(
+        academy_id=acad,
+        period_start=_dt("2026-07-06T00:00:00"),
+        period_end=_dt("2026-07-13T00:00:00"),
+    )
+
+    assert len(rows) == 1
+    # $200/mo x 10 enrollments / 4 July occurrences = $500, NOT $2000.
+    assert rows[0].expected_revenue_minor == 50000

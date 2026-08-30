@@ -170,6 +170,22 @@ class MongoPayoutPeriodRepository(TenantScopedRepository):
         )
         return await self._hydrate(doc) if doc else None
 
+    async def find_overlapping(
+        self,
+        *,
+        coach_id: str,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> PayoutPeriod | None:
+        doc = await self._find_one(
+            {
+                "coach_id": coach_id,
+                "period_start": {"$lt": period_end},
+                "period_end": {"$gt": period_start},
+            }
+        )
+        return await self._hydrate(doc) if doc else None
+
     async def find_by_id(self, period_id: str) -> PayoutPeriod | None:
         doc = await self._find_one({"period_id": period_id})
         return await self._hydrate(doc) if doc else None

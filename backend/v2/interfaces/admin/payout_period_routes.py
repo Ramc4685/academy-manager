@@ -14,6 +14,7 @@ from backend.v2.contexts.finance.application.use_cases.approve_payout_period imp
 )
 from backend.v2.contexts.finance.application.use_cases.generate_payout_period import (
     GeneratePayoutPeriod,
+    OverlappingPayoutPeriodError,
 )
 from backend.v2.contexts.finance.application.use_cases.manage_payout_period import (
     ListPayoutAuditEntries,
@@ -50,6 +51,11 @@ class PayoutPeriodNotFound(DomainError):
 class PayoutPeriodInvalidTransition(DomainError):
     code = "Finance.PayoutPeriodInvalidTransition"
     status_code = 400
+
+
+class PayoutPeriodOverlap(DomainError):
+    code = "Finance.PayoutPeriodOverlap"
+    status_code = 409
 
 
 def _line_view(line: Any) -> AdminPayoutPeriodLineView:
@@ -293,12 +299,15 @@ async def generate_payout_period(
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminPayoutPeriodView:
-    period = await _generate_payout_period(use_cases).execute(
-        coach_id=body.coach_id,
-        academy_id=claims.academy_id,
-        period_start=body.period_start,
-        period_end=body.period_end,
-    )
+    try:
+        period = await _generate_payout_period(use_cases).execute(
+            coach_id=body.coach_id,
+            academy_id=claims.academy_id,
+            period_start=body.period_start,
+            period_end=body.period_end,
+        )
+    except OverlappingPayoutPeriodError as exc:
+        raise PayoutPeriodOverlap(str(exc)) from exc
     return await _enriched_period_view(use_cases, period)
 
 
