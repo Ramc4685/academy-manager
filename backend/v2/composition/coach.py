@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -169,6 +170,11 @@ class CoachComposition:
     # Messages inbox (UIM13)
     list_messages: object = None  # Callable[[str], Awaitable[list[Message]]]
     mark_message_read: object = None  # Callable[[str, str], Awaitable[None]]
+    # Callable[[str], Awaitable[str | None]] — IANA timezone name for an
+    # academy, so /coach/today can default "today" to the academy-local
+    # calendar date instead of UTC (#510). Optional for hand-built test
+    # compositions; real composition always sets it.
+    get_academy_timezone: object = None
 
 
 class CoachAssignedSessionLookup:
@@ -423,4 +429,21 @@ def compose_coach(
         generate_daily_teaching_plan=generate_daily_teaching_plan,
         list_messages=messages_repo.for_recipient,
         mark_message_read=messages_repo.mark_read,
+        get_academy_timezone=_academy_timezone_lookup(db),
     )
+
+
+def _academy_timezone_lookup(
+    db: AsyncIOMotorDatabase[Any],
+) -> Callable[[str], Awaitable[str | None]]:
+    """Timezone name for an academy, or None when unset (#510)."""
+    academies = db["academies"]
+
+    async def get_academy_timezone(academy_id: str) -> str | None:
+        doc = await academies.find_one({"academy_id": academy_id}, {"timezone": 1})
+        if not doc:
+            return None
+        timezone_name = doc.get("timezone")
+        return str(timezone_name) if timezone_name else None
+
+    return get_academy_timezone

@@ -84,10 +84,21 @@ async def test_occurrence_repo_lists_occurrences_assigned_to_coach_on_date(db) -
                 _occurrence("occ-other", "academy-a", "sess-4").model_copy(
                     update={"scheduled_coach_id": "coach-2"}
                 ),
-                _occurrence("occ-other-day", "academy-a", "sess-5").model_copy(
+                # Adjacent UTC day: stays a *candidate* (the widened window
+                # exists so evening local-time classes whose UTC instant rolls
+                # past midnight are not lost; the application layer narrows by
+                # session-local date — #510).
+                _occurrence("occ-adjacent-day", "academy-a", "sess-5").model_copy(
                     update={
                         "start_at": datetime(2026, 6, 2, 18, 0, tzinfo=UTC),
                         "end_at": datetime(2026, 6, 2, 19, 0, tzinfo=UTC),
+                    }
+                ),
+                # More than a day away in any timezone: never a candidate.
+                _occurrence("occ-far-day", "academy-a", "sess-6").model_copy(
+                    update={
+                        "start_at": datetime(2026, 6, 5, 18, 0, tzinfo=UTC),
+                        "end_at": datetime(2026, 6, 5, 19, 0, tzinfo=UTC),
                     }
                 ),
             ]
@@ -98,4 +109,9 @@ async def test_occurrence_repo_lists_occurrences_assigned_to_coach_on_date(db) -
             on_date=datetime(2026, 6, 1, tzinfo=UTC).date(),
         )
 
-    assert [row.occurrence_id for row in rows] == ["occ-scheduled", "occ-actual", "occ-sub"]
+    assert [row.occurrence_id for row in rows] == [
+        "occ-scheduled",
+        "occ-actual",
+        "occ-sub",
+        "occ-adjacent-day",
+    ]
