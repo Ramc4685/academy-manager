@@ -96,6 +96,31 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+def _dedupe_recipients(recipients: list[ResolvedRecipient]) -> list[ResolvedRecipient]:
+    """Drop duplicate recipients before any email leaves (belt-and-suspenders).
+
+    Resolvers are expected to return each person once, but a residual
+    duplicate path exists when the same person is matched through two user
+    docs (e.g. one keyed by ``user_id`` and another matched via ``auth_uid``
+    with a different ``user_id``). Dedupe by user_id and, when present, by
+    normalized email so one person never receives the same campaign twice.
+    First occurrence wins, order preserved.
+    """
+
+    seen_user_ids: set[str] = set()
+    seen_emails: set[str] = set()
+    unique: list[ResolvedRecipient] = []
+    for recipient in recipients:
+        email_key = recipient.email.strip().lower() if recipient.email else None
+        if recipient.user_id in seen_user_ids or (email_key and email_key in seen_emails):
+            continue
+        seen_user_ids.add(recipient.user_id)
+        if email_key:
+            seen_emails.add(email_key)
+        unique.append(recipient)
+    return unique
+
+
 @dataclass
 class SendCampaign:
     campaigns: CampaignRepository
@@ -106,7 +131,7 @@ class SendCampaign:
     new_id: Callable[[], str] = field(default=new_ulid)
 
     async def execute(self, command: SendCampaignCommand) -> SendCampaignResult:
-        recipients = await self._resolve(command.audience)
+        recipients = _dedupe_recipients(await self._resolve(command.audience))
         if not recipients:
             raise EmptyAudienceError(
                 "audience resolved to zero recipients; refusing to record a send"

@@ -177,20 +177,15 @@ class MongoAudienceResolver(AudienceResolver):
             user_ids = list({str(doc["user_id"]) async for doc in cursor if doc.get("user_id")})
         if not user_ids:
             return []
-        membership_cursor = self.db["academy_memberships"].find(
-            {
-                "academy_id": academy_id,
-                "status": "active",
-                "roles": "parent",
-                "user_id": {"$in": user_ids},
-            },
-            {"user_id": 1},
-        )
-        member_user_ids = [
-            str(doc["user_id"]) async for doc in membership_cursor if doc.get("user_id")
-        ]
-        recipient_user_ids = member_user_ids or user_ids
-        return await self._resolve_users_for_ids(recipient_user_ids)
+        # Every id here came from this academy's overdue invoices/payments, so
+        # the set is already tenant-scoped. Resolve them all: narrowing to
+        # active parent memberships would silently drop delinquent parents who
+        # have a tenant-scoped (or legacy global) user doc but no active
+        # academy_memberships doc — the issue asked for de-duplication and
+        # academy scoping, not for excluding membership-less tenant users.
+        # _resolve_users_for_ids keeps the cross-tenant fix: it only matches
+        # the current academy's doc or a global doc, never another tenant's.
+        return await self._resolve_users_for_ids(user_ids)
 
     @staticmethod
     def _user_to_recipient(doc: dict[str, Any]) -> ResolvedRecipient:
