@@ -182,6 +182,26 @@ def _ensure_statement_currency(current: str | None, incoming: str, *, coach_id: 
     return current
 
 
+def _rate_effective_at(timeline: list[CoachRate], at_time: datetime) -> CoachRate | None:
+    """In-memory equivalent of ``CoachRateRepository.find_for_coach_at``.
+
+    A rate applies when ``effective_from <= at_time`` and ``effective_until``
+    is unset or ``> at_time``; the most recently effective match wins. The
+    timeline is loaded once per coach so payout computation does not issue
+    one rate lookup per occurrence (#529).
+    """
+    at = _as_utc(at_time)
+    best: CoachRate | None = None
+    for rate in timeline:
+        if _as_utc(rate.effective_from) > at:
+            continue
+        if rate.effective_until is not None and _as_utc(rate.effective_until) <= at:
+            continue
+        if best is None or _as_utc(rate.effective_from) > _as_utc(best.effective_from):
+            best = rate
+    return best
+
+
 def _missing_rate_reason(rates: list[CoachRate], at_time: datetime) -> UnpaidOccurrenceReason:
     if not rates:
         return "no_rate_configured"
@@ -216,7 +236,54 @@ class ComputeCoachPayout:
             raise ValueError("period_end must be after period_start")
 
         occs = await self._occurrences.list_in_period(academy_id, period_start, period_end)
+        return await self._statement_from_occurrences(
+            coach_id=coach_id,
+            academy_id=academy_id,
+            period_start=period_start,
+            period_end=period_end,
+            occs=occs,
+        )
 
+    async def execute_many(
+        self,
+        *,
+        coach_ids: list[str],
+        academy_id: str,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> dict[str, PayoutStatement]:
+        """Compute statements for many coaches from ONE occurrence fetch.
+
+        The academy-month occurrence scan is the expensive part of payout
+        computation; running it once per coach makes a page-load path scale
+        as O(coaches x occurrences) (#529). Attribution to the paying coach
+        is already an in-Python domain rule, so the same occurrence set is
+        shared across all requested coaches.
+        """
+        if period_end <= period_start:
+            raise ValueError("period_end must be after period_start")
+
+        occs = await self._occurrences.list_in_period(academy_id, period_start, period_end)
+        return {
+            coach_id: await self._statement_from_occurrences(
+                coach_id=coach_id,
+                academy_id=academy_id,
+                period_start=period_start,
+                period_end=period_end,
+                occs=occs,
+            )
+            for coach_id in coach_ids
+        }
+
+    async def _statement_from_occurrences(
+        self,
+        *,
+        coach_id: str,
+        academy_id: str,
+        period_start: datetime,
+        period_end: datetime,
+        occs: list[PayableOccurrence],
+    ) -> PayoutStatement:
         lines: list[PayoutLine] = []
         unpaid: list[str] = []
         warnings: list[PayoutWarning] = []
@@ -269,11 +336,13 @@ class ComputeCoachPayout:
                 continue
 
             occurrence_start = _as_utc(occ.start_at)
-            rate = await self._rates.find_for_coach_at(coach_id, occurrence_start)
+            # One timeline load per coach, resolved in memory — never one
+            # ``find_for_coach_at`` round-trip per occurrence (#529).
+            if rate_timeline is None:
+                rate_timeline = await self._rates.list_for_coach(coach_id)
+            rate = _rate_effective_at(rate_timeline, occurrence_start)
             override_minor = attendance.rate_override_minor if attendance else None
             if rate is None and override_minor is None:
-                if rate_timeline is None:
-                    rate_timeline = await self._rates.list_for_coach(coach_id)
                 reason = _missing_rate_reason(rate_timeline, occurrence_start)
                 unpaid.append(occ.occurrence_id)
                 warnings.append(_warning_for_unpaid(occ, coach_id=coach_id, reason="missing_rate"))
