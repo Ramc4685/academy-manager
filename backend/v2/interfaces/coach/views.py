@@ -7,15 +7,21 @@ payout, admin-only, or other-persona fields. Per docs/security-matrix.md.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from backend.v2.contexts.coaching.application.use_cases.generate_daily_teaching_plan import (
     DailyTeachingPlan,
     LevelTeachingGroup,
     UnplacedStudent,
 )
+
+# Client-generated ULID (Crockford base32, 26 chars). Constrained because it is
+# used as an idempotency-key component and becomes the attendance primary key —
+# an unconstrained string would let clients submit arbitrary/oversized keys
+# (#544).
+MutationId = Annotated[str, Field(pattern=r"^[0-9A-HJKMNP-TV-Z]{26}$")]
 
 # Today's teaching plan across all of the coach's sessions for a date
 # (GET /api/v2/coach/today/plan). Shape is plan section 4.
@@ -73,7 +79,7 @@ class CoachDashboardResponse(BaseModel):
 
 
 class MarkAttendanceRequest(BaseModel):
-    mutation_id: str
+    mutation_id: MutationId
     occurrence_id: str
     session_id: str
     student_id: str
@@ -157,7 +163,7 @@ class BulkAttendanceEntryRequest(BaseModel):
 
 
 class BulkMarkAttendanceRequest(BaseModel):
-    mutation_id: str
+    mutation_id: MutationId
     session_id: str
     entries: list[BulkAttendanceEntryRequest]
 

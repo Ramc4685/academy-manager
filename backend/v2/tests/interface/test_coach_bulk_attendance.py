@@ -5,7 +5,7 @@ from __future__ import annotations
 
 def _payload(**overrides):
     base = {
-        "mutation_id": "01HXBULK001",
+        "mutation_id": "01HXBKATTENDANCE0000000001",
         "session_id": "s-today-1",
         "entries": [
             {"student_id": "st1", "status": "present"},
