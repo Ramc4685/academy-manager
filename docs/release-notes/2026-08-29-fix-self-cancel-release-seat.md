@@ -9,7 +9,11 @@ cancellation path, so waitlist promotion actually fires and the monotonic
 `reserved_seats` counter stops drifting upward. The seat is released only when
 the CAS genuinely transitioned the enrollment, so a double self-cancel cannot
 double-release. A lifecycle event is written too, so the admin timeline no
-longer shows a promotion with no matching cancellation row. Compensation runs
+longer shows a promotion with no matching cancellation row — that row is
+written best-effort (caught and logged), because it is ordered ahead of the
+`EnrollmentCancelled` append and a cosmetic audit write must not be able to
+suppress waitlist promotion on a cancel that has already committed.
+Compensation runs
 before the best-effort fee billing and is shielded, so a client disconnect
 (`asyncio.CancelledError`, which bypasses `except Exception`) cannot skip it.
 
