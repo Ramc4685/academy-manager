@@ -62,8 +62,23 @@ class Settings(BaseSettings):
         default=None,
         description=(
             "Header name accepted as an internal tenant source. Only honoured when "
-            "saas_mode=True and the value is non-None. Used for internal jobs and "
-            "platform admin tooling only."
+            "saas_mode=True, the value is non-None, AND the request also presents "
+            "the proxy shared secret via x-cm-proxy-auth (proxy_shared_secret must "
+            "be configured — no secret means the header is ignored). The header "
+            "value must name a registered academy. Used for internal jobs and "
+            "platform admin tooling only; never sent by browsers (not in CORS "
+            "allow_headers) and must be stripped from external traffic at the edge."
+        ),
+    )
+    platform_base_domain: str | None = Field(
+        default=None,
+        description=(
+            "Platform base domain for subdomain tenant resolution (e.g. "
+            "'app.example.com'). When set, only hosts of the form "
+            "<slug>.<platform_base_domain> resolve via slug lookup, preventing "
+            "attacker-controlled Hosts like <victim-slug>.attacker.example from "
+            "resolving the victim tenant. Unset preserves legacy first-label "
+            "behaviour for existing deployments."
         ),
     )
 

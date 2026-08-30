@@ -133,6 +133,22 @@ def test_allowed_internal_tenant_header_set_via_env(monkeypatch) -> None:
     assert settings.allowed_internal_tenant_header == "X-Internal-Academy-Id"
 
 
+def test_platform_base_domain_defaults_to_none(monkeypatch) -> None:
+    monkeypatch.delenv("V2_PLATFORM_BASE_DOMAIN", raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.platform_base_domain is None
+
+
+def test_platform_base_domain_set_via_env(monkeypatch) -> None:
+    monkeypatch.setenv("V2_PLATFORM_BASE_DOMAIN", "app.example.com")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.platform_base_domain == "app.example.com"
+
+
 def test_launch_mode_reads_root_env_names(monkeypatch) -> None:
     monkeypatch.setenv("APP_TENANCY_MODE", "single_academy")
     monkeypatch.setenv("PRIMARY_ACADEMY_ID", "acad_launch")

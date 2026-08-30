@@ -45,18 +45,28 @@ class _FakeLookup:
     async def find_by_domain(self, domain: str) -> str | None:
         return self.DOMAINS.get(domain)
 
+    async def exists(self, academy_id: str) -> bool:
+        registered = set(self.SLUGS.values()) | set(self.DOMAINS.values())
+        registered.add("academy-internal-job")
+        return academy_id in registered
+
 
 # ---------------------------------------------------------------------------
 # App factory
 # ---------------------------------------------------------------------------
 
 
-def _make_app(*, allowed_internal_header: str | None = None) -> FastAPI:
+def _make_app(
+    *,
+    allowed_internal_header: str | None = None,
+    internal_header_secret: str | None = None,
+) -> FastAPI:
     """Build a minimal FastAPI app with one test route that runs the resolver."""
     app = FastAPI()
     resolver = TenantResolver(
         lookup=_FakeLookup(),
         allowed_internal_header=allowed_internal_header,
+        internal_header_secret=internal_header_secret,
     )
 
     @app.get("/resolve")
@@ -120,17 +130,58 @@ def test_custom_domain_resolution_through_http() -> None:
 
 def test_internal_header_resolves_when_configured_through_http() -> None:
     client = TestClient(
-        _make_app(allowed_internal_header="X-Internal-Academy-Id"),
+        _make_app(
+            allowed_internal_header="X-Internal-Academy-Id",
+            internal_header_secret="proxy-secret",
+        ),
+        base_url="http://unknown.internal.example.com",
+    )
+    r = client.get(
+        "/resolve",
+        headers={
+            "X-Internal-Academy-Id": "academy-internal-job",
+            "x-cm-proxy-auth": "proxy-secret",
+        },
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["academy_id"] == "academy-internal-job"
+    assert body["source"] == TenantSource.INTERNAL_HEADER.value
+
+
+def test_internal_header_rejected_without_proxy_secret_through_http() -> None:
+    """SECURITY (#519): the bare header (no x-cm-proxy-auth) must not resolve."""
+    client = TestClient(
+        _make_app(
+            allowed_internal_header="X-Internal-Academy-Id",
+            internal_header_secret="proxy-secret",
+        ),
         base_url="http://unknown.internal.example.com",
     )
     r = client.get(
         "/resolve",
         headers={"X-Internal-Academy-Id": "academy-internal-job"},
     )
-    assert r.status_code == 200
-    body = r.json()
-    assert body["academy_id"] == "academy-internal-job"
-    assert body["source"] == TenantSource.INTERNAL_HEADER.value
+    assert r.status_code == 422
+
+
+def test_internal_header_rejected_for_unregistered_academy_through_http() -> None:
+    """SECURITY (#519): a fabricated academy_id must not resolve."""
+    client = TestClient(
+        _make_app(
+            allowed_internal_header="X-Internal-Academy-Id",
+            internal_header_secret="proxy-secret",
+        ),
+        base_url="http://unknown.internal.example.com",
+    )
+    r = client.get(
+        "/resolve",
+        headers={
+            "X-Internal-Academy-Id": "academy-fabricated",
+            "x-cm-proxy-auth": "proxy-secret",
+        },
+    )
+    assert r.status_code == 422
 
 
 def test_internal_header_not_accepted_when_header_not_configured() -> None:
@@ -238,7 +289,10 @@ class _RecordingLoader:
         )
 
 
-def _make_resolver_callable(allowed_internal_header: str | None = None):
+def _make_resolver_callable(
+    allowed_internal_header: str | None = None,
+    internal_header_secret: str | None = None,
+):
     """Return an async callable that resolves tenant from a Starlette request.
 
     Mirrors what TenancyMiddleware will use in production.
@@ -246,6 +300,7 @@ def _make_resolver_callable(allowed_internal_header: str | None = None):
     resolver = TenantResolver(
         lookup=_FakeLookup(),
         allowed_internal_header=allowed_internal_header,
+        internal_header_secret=internal_header_secret,
     )
 
     async def _resolve(request) -> str | None:
@@ -264,6 +319,7 @@ def _make_middleware_app(
     *,
     loader: _RecordingLoader,
     allowed_internal_header: str | None = None,
+    internal_header_secret: str | None = None,
     status_checker=None,
 ) -> FastAPI:
     """Build a tiny app with TenancyMiddleware + one auth-required route."""
@@ -272,7 +328,7 @@ def _make_middleware_app(
     app.add_middleware(
         TenancyMiddleware,
         load_auth_claims=loader,
-        resolve_tenant=_make_resolver_callable(allowed_internal_header),
+        resolve_tenant=_make_resolver_callable(allowed_internal_header, internal_header_secret),
         check_tenant_servable=status_checker,
     )
 
@@ -528,13 +584,18 @@ def test_middleware_uses_internal_header_when_configured() -> None:
             }
         },
     )
-    app = _make_middleware_app(loader=loader, allowed_internal_header="X-Internal-Academy-Id")
+    app = _make_middleware_app(
+        loader=loader,
+        allowed_internal_header="X-Internal-Academy-Id",
+        internal_header_secret="proxy-secret",
+    )
     client = TestClient(app, base_url="http://unknown.internal.example.com")
     r = client.get(
         "/whoami",
         headers={
             "Authorization": "Bearer u-coach",
             "X-Internal-Academy-Id": "academy-internal-job",
+            "x-cm-proxy-auth": "proxy-secret",
         },
     )
     assert r.status_code == 200
