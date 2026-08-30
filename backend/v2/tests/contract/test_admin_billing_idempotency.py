@@ -255,6 +255,78 @@ async def test_record_manual_payment_keyless_identical_repeat_raises_conflict(ad
 
 
 @pytest.mark.asyncio
+async def test_record_manual_payment_key_reuse_with_different_payload_rejected(admin_db) -> None:
+    """Reusing an Idempotency-Key with DIFFERENT fields must be rejected, not
+
+    silently replay the first submission's cached result (standard idempotency
+    semantics: a key is bound to one payload via its fingerprint)."""
+    await _seed_open_invoice(admin_db)
+    admin = _use_cases(admin_db)
+
+    with tenant_scope(ACAD):
+        await admin.record_manual_payment(
+            invoice_id="inv-m",
+            amount_cents=2_500,
+            payment_method="cash",
+            reference_number=None,
+            notes="",
+            actor_id="admin-1",
+            idempotency_key="idem-reuse",
+        )
+        with pytest.raises(ValueError, match="different payload"):
+            await admin.record_manual_payment(
+                invoice_id="inv-m",
+                amount_cents=3_000,  # different amount, same key
+                payment_method="cash",
+                reference_number=None,
+                notes="",
+                actor_id="admin-1",
+                idempotency_key="idem-reuse",
+            )
+        payment_count = await admin_db["ledger_payments"].count_documents({"academy_id": ACAD})
+        invoice = await admin_db["invoices"].find_one({"academy_id": ACAD, "invoice_id": "inv-m"})
+
+    # Neither replayed nor recorded: the mismatched submission moved no money.
+    assert payment_count == 1
+    assert invoice is not None and invoice["balance_due_cents"] == 4_500
+
+
+@pytest.mark.asyncio
+async def test_record_manual_payment_keyed_then_keyless_identical_repeat_conflicts(
+    admin_db,
+) -> None:
+    """A keyed submission also stamps the payload-derived fallback key, so a later
+
+    KEYLESS identical repeat gets the 409 confirmation instead of double-recording
+    silently past the duplicate guard."""
+    await _seed_open_invoice(admin_db)
+    admin = _use_cases(admin_db)
+
+    with tenant_scope(ACAD):
+        await admin.record_manual_payment(
+            invoice_id="inv-m",
+            amount_cents=2_500,
+            payment_method="cash",
+            reference_number=None,
+            notes="",
+            actor_id="admin-1",
+            idempotency_key="idem-first",
+        )
+        with pytest.raises(ValueError, match="possible duplicate"):
+            await admin.record_manual_payment(
+                invoice_id="inv-m",
+                amount_cents=2_500,
+                payment_method="cash",
+                reference_number=None,
+                notes="",
+                actor_id="admin-1",
+            )
+        payment_count = await admin_db["ledger_payments"].count_documents({"academy_id": ACAD})
+
+    assert payment_count == 1
+
+
+@pytest.mark.asyncio
 async def test_billing_setup_autopay_retry_converges_state_and_audit(admin_db) -> None:
     await admin_db["billing_audit_log"].create_index(
         [("academy_id", 1), ("audit_id", 1)], unique=True

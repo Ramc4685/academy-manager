@@ -1090,6 +1090,7 @@ async def record_manual_payment(
     retries of the same submission replay safely while legitimate repeat
     payments are still recorded. Without the header, a payload-identical
     repeat within the idempotency TTL is rejected with 409 for confirmation.
+    Reusing a key with a different payload is rejected with 422.
     """
     record_payment = _required_callable(use_cases.record_manual_payment, "Manual payment recording")
     try:
@@ -1106,6 +1107,10 @@ async def record_manual_payment(
         msg = str(exc)
         if "not found" in msg:
             raise HTTPException(status_code=404, detail=msg) from exc
+        if "different payload" in msg:
+            # Idempotency-Key reused with different fields: unprocessable, not a
+            # duplicate-confirmation conflict — the client must mint a new key.
+            raise HTTPException(status_code=422, detail=msg) from exc
         raise HTTPException(status_code=409, detail=msg) from exc
     return RecordManualPaymentResponse(
         invoice_id=str(result["invoice_id"]),

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import collections
 import csv
+import hashlib
 import io
 import logging
 import re
@@ -1519,17 +1520,29 @@ def compose_admin(
         # is only a *possible* duplicate (two identical cash payments in the 7-day TTL
         # are legal), so surface a 409 for the caller to confirm instead of silently
         # replaying the first result (issue #511).
+        payload_key = (
+            f"manual_payment:{invoice_id}:{amount_cents}:{payment_method}:"
+            f"{reference_number}:{notes}"
+        )
+        # Standard idempotency semantics: a key must always be paired with the SAME
+        # payload. The fingerprint lets a keyed cache hit distinguish a genuine retry
+        # (replay it) from key reuse with different fields (reject it) instead of
+        # silently returning the first submission's result.
+        payload_fingerprint = hashlib.sha256(payload_key.encode("utf-8")).hexdigest()
         if idempotency_key:
             manual_idem_key = f"manual_payment:{invoice_id}:key:{idempotency_key}"
             cached = await idempotency_store.get(manual_idem_key)
             if cached is not None:
+                cached_fingerprint = cached.get("fingerprint")
+                if cached_fingerprint is not None and cached_fingerprint != payload_fingerprint:
+                    raise ValueError(
+                        "idempotency key reused with a different payload; use a new "
+                        "Idempotency-Key for a distinct manual payment"
+                    )
                 return cached["payload"]
         else:
-            manual_idem_key = (
-                f"manual_payment:{invoice_id}:{amount_cents}:{payment_method}:"
-                f"{reference_number}:{notes}"
-            )
-            if await idempotency_store.get(manual_idem_key) is not None:
+            manual_idem_key = payload_key
+            if await idempotency_store.get(payload_key) is not None:
                 raise ValueError(
                     "possible duplicate: an identical manual payment was recorded "
                     "recently; resend with an Idempotency-Key header to confirm"
@@ -1546,7 +1559,21 @@ def compose_admin(
         payload = result.model_dump(mode="python")
         # Record the idempotency result right after the durable money movement and BEFORE
         # the audit append, so an audit failure cannot drive a retry into a second payment.
-        await idempotency_store.put(manual_idem_key, {"payload": payload})
+        await idempotency_store.put(
+            manual_idem_key, {"payload": payload, "fingerprint": payload_fingerprint}
+        )
+        if idempotency_key:
+            # Also stamp the payload-derived key so a later KEYLESS identical repeat
+            # still surfaces the 409 confirmation above. Best-effort advisory marker:
+            # a concurrent writer or an entry left by an earlier identical payment
+            # must not fail the recording that already happened.
+            try:
+                if await idempotency_store.get(payload_key) is None:
+                    await idempotency_store.put(
+                        payload_key, {"payload": payload, "fingerprint": payload_fingerprint}
+                    )
+            except DuplicateKeyError:
+                pass
         # P0-4: append-only audit of who recorded the manual payment (money movement),
         # mirroring the refund audit. Overpayment that became an account credit is captured
         # in `after` so the trail explains where the excess went.

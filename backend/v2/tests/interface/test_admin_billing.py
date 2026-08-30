@@ -1209,6 +1209,30 @@ def test_record_invoice_manual_payment_route(admin_client):
     }
 
 
+def test_record_invoice_manual_payment_key_payload_mismatch_maps_to_422(admin_client):
+    async def record_manual_payment(**kwargs):
+        raise ValueError(
+            "idempotency key reused with a different payload; use a new "
+            "Idempotency-Key for a distinct manual payment"
+        )
+
+    admin_client.use_cases.record_manual_payment = record_manual_payment
+
+    response = admin_client.post(
+        "/api/v2/admin/billing/invoices/inv-1/record-payment",
+        json={
+            "amount_cents": 2_500,
+            "payment_method": "check",
+            "reference_number": "1001",
+            "notes": "Front desk payment",
+        },
+        headers={"Idempotency-Key": "idem-route-1"},
+    )
+
+    assert response.status_code == 422, response.text
+    assert "different payload" in response.json()["detail"]
+
+
 def test_refund_invoice_route_uses_invoice_native_use_case(admin_client):
     async def issue_invoice_refund(**kwargs):
         # P0-4: the route must thread the admin actor for the audit trail.
