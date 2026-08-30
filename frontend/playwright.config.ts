@@ -1,6 +1,20 @@
+import { realpathSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { defineConfig, devices } from "@playwright/test";
 
-const PORT = process.env.PLAYWRIGHT_PORT ?? "3001";
+import { resolvePort } from "./lib/worktree-port";
+
+// Per-worktree default port (#522): a fixed 3001 default made concurrent
+// worktrees contend — CI=true runs failed to bind (mass fake regressions) and
+// plain local runs silently reused ANOTHER worktree's dev server. The default
+// now hashes the repo root into 3001-3999 so each worktree gets a stable,
+// distinct port (also under CI=true — the pre-push gate sets it locally).
+// PLAYWRIGHT_PORT still overrides.
+const PORT = resolvePort({
+  override: process.env.PLAYWRIGHT_PORT,
+  repoRoot: realpathSync(resolve(__dirname, "..")),
+});
 
 export default defineConfig({
   testDir: "./e2e/specs",

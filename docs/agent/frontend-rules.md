@@ -71,5 +71,6 @@ Useful URLs:
 
 ```txt
 Legacy API health: http://127.0.0.1:8001/api/health
-Frontend: http://localhost:3001
+Frontend: http://localhost:<port> — per-worktree, printed by scripts/local_test_stack.sh status
+  (derived from the repo root into 3001-3999; override with FRONTEND_PORT/PLAYWRIGHT_PORT)
 ```
