@@ -1381,3 +1381,26 @@ def test_real_skill_router_bulk_status_rejects_student_outside_session() -> None
 
     assert response.status_code == 404, response.text
     assert spies.update_skill_status.calls == 0
+
+
+def test_real_skill_router_rejects_success_count_above_attempts_count() -> None:
+    """Issue #524: success_count > attempts_count must 422 before the use case runs."""
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids={SESSION_ID},
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        f"/api/v2/coach/students/{STUDENT_ID}/skills/{SKILL_ID}/test",
+        json={
+            "level_id": LEVEL_ID,
+            "program_id": PROGRAM_ID,
+            "session_id": SESSION_ID,
+            "attempts_count": 1,
+            "success_count": 5,
+        },
+    )
+
+    assert response.status_code == 422, response.text
+    assert spies.record_test_attempt.calls == 0
