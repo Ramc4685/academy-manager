@@ -81,6 +81,17 @@ class AutopayActivationFailed(DomainError):
     status_code = 409
 
 
+class QuoteExpired(DomainError):
+    """The quote snapshot backing a checkout could not be consumed — it was
+    past its 15-minute TTL (or already consumed by a concurrent request) at
+    the moment of consumption. 409 so the registration wizard re-quotes and
+    shows the parent a fresh amount instead of charging a stale one
+    (issue #530)."""
+
+    code = "Billing.QuoteExpired"
+    status_code = 409
+
+
 class SessionTypeInactive(DomainError):
     code = "Billing.SessionTypeInactive"
     status_code = 400

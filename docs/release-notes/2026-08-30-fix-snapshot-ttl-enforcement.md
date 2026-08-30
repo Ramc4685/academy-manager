@@ -17,9 +17,15 @@ Two changes close the window:
 
 - `consume()` now enforces the TTL in its atomic OPEN→CONSUMED predicate.
   An OPEN snapshot past `expires_at` is stamped `EXPIRED` (with
-  `expired_at`) and the call returns `None`, so the caller re-quotes and the
-  audit trail records why. Legacy snapshots without `expires_at` remain
-  consumable so in-flight quotes are not bricked by the deploy.
+  `expired_at`) and the call returns `None`. The registration checkout
+  callers now honor that refusal: consume runs BEFORE the Stripe Checkout
+  Session is minted, and a `None` raises the new typed
+  `Billing.QuoteExpired` error (409) so the parent re-quotes instead of a
+  session being created against a snapshot the audit trail says is
+  EXPIRED. Legacy snapshots without `expires_at` remain consumable so
+  in-flight quotes are not bricked by the deploy. `compose_parent` also
+  passes its clock through to the payment repo so quoting and TTL
+  enforcement judge time identically.
 - Registration `create_checkout_session()` sets Stripe `expires_at` to
   31 minutes (Stripe's 30-minute floor plus clock-skew margin), so a stale
   quote can no longer be paid up to ~24h later. Expiry rides the existing
@@ -28,7 +34,9 @@ Two changes close the window:
 
 ## Risk / rollback
 Low risk. The TTL predicate only affects `consume()`, whose sole callers
-quote and consume within the same request today, and legacy docs without
+quote and consume within the same request today — so `Billing.QuoteExpired`
+(409) can only surface on a genuine race or stall longer than the 15-minute
+TTL, and a retry simply mints a fresh quote. Legacy docs without
 `expires_at` are explicitly still consumable. The 31-minute Stripe expiry
 uses the platform's supported `expires_at` parameter and reuses the
 existing expired-session handling. Rollback: revert the PR — no data
