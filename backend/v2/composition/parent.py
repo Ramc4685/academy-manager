@@ -45,12 +45,18 @@ from backend.v2.contexts.billing.application.use_cases.quote_enrollment import (
     QuoteEnrollment,
     QuoteEnrollmentCommand,
 )
+from backend.v2.contexts.billing.application.use_cases.record_checkout_mint_failure import (
+    CHECKOUT_FAILURE_ACCOUNT_NOT_READY,
+    CHECKOUT_FAILURE_STRIPE_ERROR,
+    record_checkout_mint_failure,
+)
 from backend.v2.contexts.billing.application.use_cases.send_invoice import SendInvoice
 from backend.v2.contexts.billing.application.use_cases.start_checkout import (
     StartCheckout,
     StartCheckoutCommand,
     StartCheckoutResult,
 )
+from backend.v2.contexts.billing.domain.errors import InvoicePayLinkUnavailable
 from backend.v2.contexts.billing.domain.ledger import InvoiceLine
 from backend.v2.contexts.billing.infrastructure.mongo_autopay_consent_repo import (
     MongoAutopayConsentRepository,
@@ -94,6 +100,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_subscription_repo import (
 from backend.v2.contexts.enrollment.application.use_cases.absence_notices import (
     ListParentAbsences,
     SubmitAbsenceNotice,
+)
+from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
+    UpdateAdminStudentCommand,
 )
 from backend.v2.contexts.enrollment.application.use_cases.confirm_enrollment import (
     ConfirmEnrollment,
@@ -171,6 +180,10 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_trial_request_repo impo
 from backend.v2.contexts.enrollment.infrastructure.mongo_waitlist_repo import (
     MongoWaitlistRepository,
 )
+from backend.v2.contexts.identity.application.use_cases.admin_directory import (
+    UpdateAdminUserCommand,
+)
+from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
 from backend.v2.contexts.onboarding.application.use_cases.manage_application import (
     GetApplicationStatus,
     PatchApplication,
@@ -181,7 +194,11 @@ from backend.v2.contexts.onboarding.application.use_cases.parent_student_waivers
     AcceptParentWaiver,
     GetParentWaiverRequirement,
 )
-from backend.v2.contexts.onboarding.domain.errors import MissingSelectedSession
+from backend.v2.contexts.onboarding.domain.errors import (
+    ApplicationNotEditable,
+    IncompleteApplication,
+    MissingSelectedSession,
+)
 from backend.v2.contexts.onboarding.infrastructure.mongo_application_repo import (
     MongoApplicationRepository,
 )
@@ -191,9 +208,16 @@ from backend.v2.contexts.onboarding.infrastructure.mongo_parent_waiver_repo impo
 from backend.v2.contexts.onboarding.infrastructure.mongo_registration_waiver_repo import (
     MongoRegistrationWaiverRepository,
 )
+from backend.v2.shared.comms import MongoMessageRepository
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore
+from backend.v2.shared.profile.completeness import (
+    MEDICAL_NONE_SENTINEL,
+    ChildFacts,
+    ParentFacts,
+    evaluate,
+)
 from backend.v2.shared.security.redirect import validate_redirect_url
 from backend.v2.shared.tenancy import TenantContextUnset, current_academy_id, tenant_scope
 
@@ -247,6 +271,15 @@ class ParentComposition:
     get_registration_waiver: object  # callable -> Waiver | None
     student_progress: StudentProgressComposition
     curriculum: CurriculumComposition
+    # Self-service profile (issue #380)
+    get_parent_profile: object  # callable
+    update_parent_profile: object  # callable
+    confirm_parent_email: object  # callable
+    update_parent_child: object  # callable
+    # Messages inbox (UIM13). Defaulted, so these must stay last: a dataclass
+    # cannot place a non-default field after a defaulted one.
+    list_messages: object = None  # Callable[[str], Awaitable[list[Message]]]
+    mark_message_read: object = None  # Callable[[str, str], Awaitable[None]]
 
 
 class _MongoTransactionRunner:
@@ -293,6 +326,78 @@ class _MongoTransactionRunner:
             or "mongos" in message
             or "transaction numbers are only allowed" in message
         )
+
+
+class _StripeCheckoutAttemptRetirement:
+    """Kills a checkout attempt an application no longer owns.
+
+    Onboarding declares the need (``SupersededCheckoutRetirement``); the wiring
+    lives here because expiring a Stripe Checkout Session and parking its
+    pending Payment are both Billing concerns. Without this, a superseded
+    session stays payable and one enrollment has two ways to be charged.
+
+    Failures are deliberately swallowed: Stripe REJECTS expiring a session that
+    is already complete or expired, which is exactly the "parent paid on the
+    old tab" race. Raising there would unpick the resume/re-stamp we just
+    committed and leave the application in a worse state than the one this
+    call exists to prevent.
+    """
+
+    def __init__(
+        self,
+        *,
+        stripe: StripeGateway,
+        payments: Any,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        self._stripe = stripe
+        self._payments = payments
+        self._now = clock
+
+    async def retire_checkout_attempt(
+        self, *, checkout_session_id: str | None, payment_id: str | None
+    ) -> None:
+        if checkout_session_id:
+            await self._expire_session(checkout_session_id)
+        if not payment_id:
+            return
+        payment = await self._payments.get(payment_id)
+        if payment is None or payment.status != "pending":
+            # Already succeeded / failed / expired. Leave it exactly as it is —
+            # parking a succeeded payment here would erase a real charge.
+            return
+        # Reuses the status the `checkout.session.expired` webhook writes, so
+        # that webhook's own `status == "pending"` guard makes it a no-op when
+        # the superseded session's expiry event lands later.
+        await self._payments.save(
+            payment.model_copy(update={"status": "expired", "updated_at": self._now()})
+        )
+
+    async def _expire_session(self, checkout_session_id: str) -> None:
+        # Resolved OUTSIDE the try on purpose: a gateway that does not
+        # implement the port is a wiring bug and must blow up, not be filed
+        # away as another benign "already paid" expiry failure.
+        expire = self._stripe.expire_checkout_session
+        try:
+            await expire(checkout_session_id)
+        except Exception as exc:
+            log.info(
+                "checkout retirement: could not expire session %s "
+                "(already complete or expired?) err=%s",
+                checkout_session_id,
+                exc,
+            )
+
+
+# Statuses a parent may start (or re-start) checkout from. DRAFT is the normal
+# case, including after a cancel — the wizard's start call RESUMES an abandoned
+# attempt back to DRAFT rather than minting a second application. CHECKOUT_PENDING
+# survives here for the concurrent/retried POST: two tabs, or a client retry, on
+# the SAME application. That path does not move the status, it re-points the
+# application at the newer payment and retires the one it replaced. Every other
+# status either has no legal outbound CHECKOUT_PENDING transition (see
+# _TRANSITIONS in the onboarding manage_application use case) or is past payment.
+_CHECKOUT_STARTABLE_STATUSES = frozenset({"DRAFT", "CHECKOUT_PENDING"})
 
 
 def compose_parent_webhook_handler(
@@ -395,7 +500,15 @@ def compose_parent(
     stripe: StripeGateway,
     *,
     academy_id: str | None = None,
+    clock: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> ParentComposition:
+    """`clock` is the seam the checkout-start path prices against.
+
+    Every quote is "what is left of THIS month", so a test that leans on the
+    wall clock silently changes shape as the month runs out (a session quoted
+    at $0 skips Stripe entirely). Injecting it keeps those tests pinned instead
+    of flaky in the last minutes of a month.
+    """
     settings = get_settings()
     academy_id = _require_academy_id(academy_id)
 
@@ -534,6 +647,7 @@ def compose_parent(
         sessions=payments_repo,
         snapshots=payments_repo,
         occurrences=payments_repo,
+        clock=clock,
     )
 
     # Enrollment
@@ -544,6 +658,11 @@ def compose_parent(
     enrollment_events = MongoEnrollmentEventRepository(db)
     students_writer = MongoStudentWriter(db)
     students_query = MongoStudentRepository(db)
+    # No boot-time academy fallback passed here — compose_parent must stay free
+    # of that setting (see test_no_raw_tenant_mongo_access.py); every read/write
+    # below is either unscoped by user_id or takes academy_id explicitly at
+    # call time via current_academy_id().
+    users_query = MongoUserRepository(db)
     occurrences_query = MongoSessionOccurrenceRepository(db)
     waitlist = MongoWaitlistRepository(db)
     pause_requests = MongoPauseRequestRepository(db)
@@ -676,7 +795,10 @@ def compose_parent(
         students=students_query,
         policies=self_service_policies_repo,
         occurrences=occurrences_query,
+        sessions=sessions_writer,
+        outbox=outbox,
         billing=_SelfCancelFeeBillingPort(),
+        enrollment_events=enrollment_events,
     )
 
     confirm_enrollment = ConfirmEnrollment(
@@ -704,7 +826,17 @@ def compose_parent(
     parent_waivers_repo = MongoParentWaiverRepository(db)
     get_waiver_req = GetParentWaiverRequirement(waivers=parent_waivers_repo)
     accept_waiver = AcceptParentWaiver(waivers=parent_waivers_repo, academy_id=request_academy_id)
-    start_app = StartApplication(apps=apps_repo, academy_id=request_academy_id)
+    checkout_retirement = _StripeCheckoutAttemptRetirement(
+        stripe=stripe,
+        payments=payments_repo,
+        clock=clock,
+    )
+    start_app = StartApplication(
+        apps=apps_repo,
+        academy_id=request_academy_id,
+        clock=clock,
+        checkout_retirement=checkout_retirement,
+    )
     patch_app = PatchApplication(
         apps=apps_repo,
         waivers=waivers_repo,
@@ -714,6 +846,8 @@ def compose_parent(
     transition = TransitionApplication(
         apps=apps_repo,
         student_registrations=students_query,
+        clock=clock,
+        checkout_retirement=checkout_retirement,
     )
     list_available_sessions = ListParentAvailableSessions(sessions=sessions_query)
     request_pause = RequestEnrollmentPause(pause_requests=pause_requests)
@@ -887,6 +1021,112 @@ def compose_parent(
                 }
             )
         return rows
+
+    def _child_facts(student: dict[str, Any]) -> ChildFacts:
+        raw_medical = student.get("medical_notes")
+        return ChildFacts(
+            student_id=str(student.get("student_id") or student["_id"]),
+            full_name=student.get("full_name"),
+            date_of_birth=(str(student["date_of_birth"]) if student.get("date_of_birth") else None),
+            emergency_contact_name=student.get("emergency_contact_name"),
+            emergency_contact_phone=student.get("emergency_contact_phone"),
+            medical_notes=str(raw_medical) if raw_medical else None,
+        )
+
+    def _child_view(student: dict[str, Any]) -> dict[str, Any]:
+        facts = _child_facts(student)
+        no_medical_conditions = facts.medical_notes == MEDICAL_NONE_SENTINEL
+        return {
+            "student_id": facts.student_id,
+            "full_name": facts.full_name or "Unnamed student",
+            "date_of_birth": facts.date_of_birth,
+            "emergency_contact_name": facts.emergency_contact_name,
+            "emergency_contact_phone": facts.emergency_contact_phone,
+            "medical_notes": None if no_medical_conditions else facts.medical_notes,
+            "no_medical_conditions": no_medical_conditions,
+        }
+
+    async def get_parent_profile(parent_id: str) -> dict[str, Any] | None:
+        """Parent's own editable fields, their children's, and the computed
+        completeness gaps — backs GET /api/v2/parent/profile (issue #380)."""
+        user = await users_query.get_by_id(parent_id)
+        if user is None:
+            return None
+        students = await _parent_students(parent_id)
+        parent_facts = ParentFacts(
+            display_name=user.display_name,
+            phone=user.phone,
+            email_confirmed_at=user.email_confirmed_at,
+        )
+        child_facts = [_child_facts(s) for s in students]
+        gaps = evaluate(parent_facts, child_facts)
+        return {
+            "user_id": user.user_id,
+            "display_name": user.display_name,
+            "email": str(user.email),
+            "email_confirmed": user.email_confirmed_at is not None,
+            "phone": user.phone,
+            "children": [_child_view(s) for s in students],
+            "gaps": {
+                "parent": gaps.parent,
+                "children": gaps.children,
+                "is_complete": gaps.is_complete,
+            },
+        }
+
+    async def update_parent_profile(parent_id: str, request: Any) -> dict[str, Any] | None:
+        """Parent editing their own display name / phone. Reuses the audited
+        admin-user write with the parent as both actor and target — matching
+        how the coach self-service profile already updates identity.User."""
+        academy_id = current_academy_id()
+        command = UpdateAdminUserCommand(
+            display_name=request.display_name,
+            phone=request.phone,
+            actor_id=parent_id,
+            reason="parent self-service profile update",
+        )
+        result = await users_query.update_admin_user(parent_id, command, academy_id=academy_id)
+        if result is None:
+            return None
+        return await get_parent_profile(parent_id)
+
+    async def confirm_parent_email(parent_id: str) -> dict[str, Any] | None:
+        user = await users_query.confirm_email(parent_id)
+        if user is None:
+            return None
+        return await get_parent_profile(parent_id)
+
+    async def update_parent_child(
+        parent_id: str, student_id: str, request: Any
+    ) -> dict[str, Any] | None:
+        """Parent editing their own child's safety details. Ownership is
+        verified against the tenant-scoped student list before any write —
+        this is the first parent write path in the codebase, so a student
+        belonging to another parent (or another academy) must never be
+        reachable, and both cases return None (404) rather than distinguishing
+        them, matching the existing _verify_child_ownership convention used
+        elsewhere in the parent BFF (progress_skill_routes.py)."""
+        students = await _parent_students(parent_id)
+        owned_ids = {str(s.get("student_id") or s["_id"]) for s in students}
+        if student_id not in owned_ids:
+            return None
+
+        medical_notes = request.medical_notes
+        if request.no_medical_conditions:
+            medical_notes = MEDICAL_NONE_SENTINEL
+
+        command = UpdateAdminStudentCommand(
+            date_of_birth=request.date_of_birth,
+            emergency_contact_name=request.emergency_contact_name,
+            emergency_contact_phone=request.emergency_contact_phone,
+            medical_notes=medical_notes,
+            actor_id=parent_id,
+            reason="parent self-service profile update",
+        )
+        updated = await students_query.update_student_profile(student_id, command)
+        if updated is None:
+            return None
+        return await get_parent_profile(parent_id)
 
     async def list_enrollments_for_parent(parent_id: str) -> list[dict[str, Any]]:
         academy_id = current_academy_id()  # request-time tenant (C4)
@@ -1212,7 +1452,12 @@ def compose_parent(
             cancel_url=cancel_url,
         ).execute(invoice_id, enroll_autopay=enroll_autopay)
         if not result.checkout_url:
-            raise ValueError("invoice payment link unavailable")
+            # Still 409, but now with a machine-readable code and the concrete
+            # reason SendInvoice recorded (issue #426) instead of a bare string.
+            raise InvoicePayLinkUnavailable(
+                "invoice payment link unavailable",
+                reason=result.checkout_failure_code,
+            )
         return {
             "invoice_id": result.invoice.invoice_id,
             "checkout_url": result.checkout_url,
@@ -1248,7 +1493,9 @@ def compose_parent(
             return {"redirect_url": result["checkout_url"]}
         invoice_stripe = stripe if hasattr(stripe, "create_invoice_checkout_session") else None
         if invoice_stripe is None:
-            raise ValueError("balance payment unavailable")
+            # No Stripe wiring at all — nothing is broken, this academy just
+            # does not collect online. Same 409, no failure recorded.
+            raise InvoicePayLinkUnavailable("balance payment unavailable")
         # Destination-charge routing (Slice I posture): funds must settle to the
         # academy's connected account; refuse a platform charge if not ready
         # unless the temporary allow_platform_charge_fallback escape hatch is on.
@@ -1270,7 +1517,31 @@ def compose_parent(
                     exc,
                 )
             if not fallback_enabled:
-                raise ValueError("balance payment unavailable")
+                # Same split as SendInvoice (issue #426): an academy with no
+                # Connect account at all has simply never onboarded online
+                # payments — nothing is broken, so record nothing. An account
+                # that EXISTS but cannot charge is a real, operator-visible
+                # failure.
+                if account is not None:
+                    log.error(
+                        "start_balance_payment: refusing pay link parent=%s invoice_count=%d "
+                        "— connected account not ready",
+                        parent_id,
+                        len(payable),
+                    )
+                    await record_checkout_mint_failure(
+                        billing_ledger_repo,
+                        invoices=payable,
+                        failure_code=CHECKOUT_FAILURE_ACCOUNT_NOT_READY,
+                        failure_message=(
+                            "Academy Stripe connected account exists but is not ready for "
+                            "charges, and platform-charge fallback is off."
+                        ),
+                    )
+                raise InvoicePayLinkUnavailable(
+                    "balance payment unavailable",
+                    reason=(CHECKOUT_FAILURE_ACCOUNT_NOT_READY if account is not None else None),
+                )
             log.warning(
                 "start_balance_payment: connected account not ready — falling back to "
                 "PLATFORM charge (allow_platform_charge_fallback=on) parent=%s",
@@ -1328,13 +1599,28 @@ def compose_parent(
                 **autopay_kwargs,
             )
         except Exception as exc:
-            log.warning(
-                "start_balance_payment: checkout creation failed parent=%s invoice_count=%d err=%s",
+            # Loud, and recorded per invoice (issue #426) — this is the parent
+            # portal's primary payment CTA, so a broken gateway here is exactly
+            # the outage signal an operator needs the same day.
+            log.error(
+                "start_balance_payment: checkout creation FAILED parent=%s invoice_count=%d "
+                "idempotency_key=%s err=%s",
                 parent_id,
                 len(payable),
+                idempotency_key,
                 exc,
+                exc_info=True,
             )
-            raise ValueError("balance payment unavailable") from exc
+            await record_checkout_mint_failure(
+                billing_ledger_repo,
+                invoices=payable,
+                failure_code=CHECKOUT_FAILURE_STRIPE_ERROR,
+                failure_message=str(exc),
+            )
+            raise InvoicePayLinkUnavailable(
+                "balance payment unavailable",
+                reason=CHECKOUT_FAILURE_STRIPE_ERROR,
+            ) from exc
         return {"redirect_url": url}
 
     async def quote_enrollment(
@@ -1369,6 +1655,42 @@ def compose_parent(
     ):
         _validate_checkout_redirect_urls(success_url, cancel_url)
         app = await get_status.execute(application_id, caller_user_id=parent_id)
+        # Refuse a checkout this application can never legally complete, and
+        # refuse it BEFORE any side effect. Everything below mints a quote
+        # snapshot, a Stripe Checkout Session and a pending Payment before the
+        # CHECKOUT_PENDING transition at the end gets to reject the status —
+        # so without this guard a retry from, say, terminal CHECKOUT_EXPIRED
+        # leaves a burnt quote and a dangling pending Payment row behind every
+        # single time, on top of the 409 the parent already sees.
+        if app.status not in _CHECKOUT_STARTABLE_STATUSES:
+            raise ApplicationNotEditable(
+                "illegal application transition",
+                from_status=app.status,
+                to_status="CHECKOUT_PENDING",
+            )
+        # Stop new registrations from landing incomplete (issue #380). This
+        # runs BEFORE the paid/zero-amount branch below — the $0 path skips
+        # Stripe entirely and jumps straight to PENDING_APPROVAL, so a guard
+        # placed after that branch would let free registrations through with
+        # missing safety details.
+        missing_fields = [
+            field
+            for field, value in (
+                ("date_of_birth", app.child_profile.date_of_birth),
+                ("emergency_contact_name", app.child_profile.emergency_contact_name),
+                ("emergency_contact_phone", app.child_profile.emergency_contact_phone),
+                ("parent_phone", app.parent_profile.phone),
+            )
+            if not value.strip()
+        ]
+        if missing_fields:
+            # `missing` rides along in DomainError.details so the wizard can
+            # send the parent back to the step that owns the field instead of
+            # stranding them on the review screen with a raw field name.
+            raise IncompleteApplication(
+                f"Application is missing required details: {', '.join(missing_fields)}",
+                missing=missing_fields,
+            )
         if not app.selected_session_id:
             raise MissingSelectedSession(
                 "application must have a selected session",
@@ -1387,7 +1709,7 @@ def compose_parent(
         quote = await quote_enrollment_uc.execute(
             QuoteEnrollmentCommand(
                 session_id=selected.session_id,
-                billing_start_at=datetime.now(UTC),
+                billing_start_at=clock(),
                 calculated_by=parent_id,
                 parent_id=parent_id,
             )
@@ -1403,7 +1725,7 @@ def compose_parent(
             # generator has no proration signal at all (enrollment docs never
             # carry billing_start_at/created_at) and would charge full tuition
             # for this period once the enrollment exists.
-            zero_quote_period = datetime.now(UTC).strftime("%Y-%m")
+            zero_quote_period = clock().strftime("%Y-%m")
             await apps_repo.save(app.model_copy(update={"zero_quote_period": zero_quote_period}))
             if quote.snapshot_id:
                 await payments_repo.consume_quote_snapshot(quote.snapshot_id)
@@ -1600,6 +1922,8 @@ def compose_parent(
 
     sp_composition = compose_student_progress(db, outbox)
     curriculum_composition = compose_curriculum(db)
+    # Messages inbox (UIM13) — shared comms store, per-recipient read routes.
+    messages_repo = MongoMessageRepository(db)
 
     return ParentComposition(
         start_application=start_app,
@@ -1644,6 +1968,12 @@ def compose_parent(
         get_registration_waiver=get_registration_waiver,
         student_progress=sp_composition,
         curriculum=curriculum_composition,
+        list_messages=messages_repo.for_recipient,
+        mark_message_read=messages_repo.mark_read,
+        get_parent_profile=get_parent_profile,
+        update_parent_profile=update_parent_profile,
+        confirm_parent_email=confirm_parent_email,
+        update_parent_child=update_parent_child,
     )
 
 

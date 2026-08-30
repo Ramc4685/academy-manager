@@ -6,6 +6,7 @@ export type UnpaidOccurrenceReason =
   | "rate_gap"
   | "missing_session_price_for_percent_revenue"
   | "attendance_override"
+  | "replaced_by_actual_coach"
   | "unknown_unpaid_reason"
   | "missing_rate"
   | "missing_percent";
@@ -76,6 +77,8 @@ export function unpaidReasonLabel(reason: UnpaidOccurrenceReason | string): stri
       return "Missing percent";
     case "attendance_override":
       return "Attendance override";
+    case "replaced_by_actual_coach":
+      return "Replaced";
     default:
       return "Needs review";
   }
@@ -95,6 +98,8 @@ export function unpaidReasonGuidance(reason: UnpaidOccurrenceReason | string): s
       return "Set the percent on the coach pay rate, then recompute this draft payout period.";
     case "attendance_override":
       return "Review the attendance entry that explains why this occurrence was not paid.";
+    case "replaced_by_actual_coach":
+      return "A replacement coach was paid for this session. Check the attribution if that is wrong.";
     default:
       return "Review the occurrence details before approving payroll.";
   }

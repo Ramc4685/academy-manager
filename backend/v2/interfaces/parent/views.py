@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # --- Onboarding ---
 
@@ -26,6 +26,11 @@ class ChildProfileView(BaseModel):
     last_name: str = ""
     date_of_birth: str = ""
     skill_level: Literal["beginner", "intermediate", "advanced", ""] = ""
+    # Optional on the DTO — the wizard autosaves partial drafts per step.
+    # Completeness is enforced at checkout, not here. Issue #380.
+    emergency_contact_name: str = ""
+    emergency_contact_phone: str = ""
+    medical_notes: str = ""
 
     @field_validator("date_of_birth")
     @classmethod
@@ -438,3 +443,98 @@ class ParentAcademyView(BaseModel):
     hours_text: str | None = None
     address: str | None = None
     logo_url: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Messages inbox (UIM13)
+# ---------------------------------------------------------------------------
+
+
+class ParentMessageView(BaseModel):
+    message_id: str
+    kind: Literal["dm", "announcement"]
+    sender_persona: Literal["admin", "coach", "parent"]
+    body: str
+    created_at: datetime
+    read: bool
+
+
+class ParentMessagesResponse(BaseModel):
+    messages: list[ParentMessageView]
+
+
+class ParentMarkMessageReadResponse(BaseModel):
+    status: Literal["ok"] = "ok"
+
+
+# --- Self-service profile (issue #380) ---
+
+
+class ParentProfileGapsView(BaseModel):
+    """Required fields still missing, keyed the same way the frontend labels them."""
+
+    parent: list[str] = []
+    children: dict[str, list[str]] = {}
+    is_complete: bool
+
+
+class ParentSelfChildView(BaseModel):
+    student_id: str
+    full_name: str
+    date_of_birth: str | None = None
+    emergency_contact_name: str | None = None
+    emergency_contact_phone: str | None = None
+    medical_notes: str | None = None
+    # True when the parent has ticked "no known conditions or allergies" —
+    # distinct from medical_notes being None, which means "never answered".
+    no_medical_conditions: bool = False
+
+
+class ParentSelfProfileResponse(BaseModel):
+    user_id: str
+    display_name: str
+    email: str
+    email_confirmed: bool
+    phone: str | None = None
+    children: list[ParentSelfChildView]
+    gaps: ParentProfileGapsView
+
+
+class UpdateParentProfileRequest(BaseModel):
+    """Parent editing their own name/phone. Email is deliberately absent — it
+    is the Firebase login identifier and is confirmed, not edited, here."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: str | None = Field(default=None, min_length=1, max_length=120)
+    phone: str | None = Field(default=None, max_length=40)
+
+
+_MIN_BIRTH_YEAR_SPAN = 100
+
+
+class UpdateParentChildRequest(BaseModel):
+    """Parent editing their own child. Field allow-list is enforced by
+    ``extra="forbid"`` — status, parent_id, level, etc. are never accepted
+    from a parent, no matter what the payload contains."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    date_of_birth: date | None = None
+    emergency_contact_name: str | None = Field(default=None, max_length=120)
+    emergency_contact_phone: str | None = Field(default=None, max_length=40)
+    medical_notes: str | None = Field(default=None, max_length=1000)
+    no_medical_conditions: bool = False
+
+    @field_validator("date_of_birth")
+    @classmethod
+    def validate_date_of_birth(cls, value: date | None) -> date | None:
+        if value is None:
+            return value
+        today = date.today()
+        if value > today:
+            raise ValueError("date_of_birth cannot be in the future")
+        earliest = today.replace(year=today.year - _MIN_BIRTH_YEAR_SPAN)
+        if value < earliest:
+            raise ValueError("date_of_birth is implausibly far in the past")
+        return value

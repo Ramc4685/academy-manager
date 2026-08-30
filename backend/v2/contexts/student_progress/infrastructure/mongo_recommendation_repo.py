@@ -52,9 +52,17 @@ class MongoLevelUpRecommendationRepository(TenantScopedRepository):
         reviewed_by: str | None,
         reviewed_at: datetime | None,
         rejection_reason: str | None,
-    ) -> None:
-        await self._update_one(
-            {"rec_id": rec_id},
+        *,
+        expected_status: str,
+    ) -> bool:
+        """Compare-and-set the review decision.
+
+        The status is part of the filter, so a replayed review matches
+        nothing and reports ``False``; only the racer that finds the
+        recommendation still in ``expected_status`` records the decision.
+        """
+        result = await self._update_one(
+            {"rec_id": rec_id, "status": expected_status},
             {
                 "$set": {
                     "status": status,
@@ -64,6 +72,7 @@ class MongoLevelUpRecommendationRepository(TenantScopedRepository):
                 }
             },
         )
+        return bool(result.matched_count)
 
     async def get(self, rec_id: str) -> LevelUpRecommendation | None:
         doc = await self._find_one({"rec_id": rec_id})

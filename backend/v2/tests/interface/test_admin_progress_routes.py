@@ -261,9 +261,18 @@ class _FakeRecommendationRepo:
         self.rows[rec.rec_id] = rec
 
     async def update_status(
-        self, rec_id, status, reviewed_by, reviewed_at, rejection_reason
-    ) -> None:
-        rec = self.rows[rec_id]
+        self,
+        rec_id,
+        status,
+        reviewed_by,
+        reviewed_at,
+        rejection_reason,
+        *,
+        expected_status: str,
+    ) -> bool:
+        rec = self.rows.get(rec_id)
+        if rec is None or rec.status != expected_status:
+            return False
         self.rows[rec_id] = rec.model_copy(
             update={
                 "status": status,
@@ -272,6 +281,7 @@ class _FakeRecommendationRepo:
                 "rejection_reason": rejection_reason,
             }
         )
+        return True
 
     async def get(self, rec_id: str):
         return self.rows.get(rec_id)
@@ -416,6 +426,7 @@ def env():
     level1 = next(lv for lv in levels.saved if lv.sequence == 1)
     level2 = next(lv for lv in levels.saved if lv.sequence == 2)
     level1_skills = _run(skills.list_for_level(level1.level_id))
+    level2_skills = _run(skills.list_for_level(level2.level_id))
 
     skill_lookup = CurriculumSkillLookupAdapter(skill_repo=skills, level_repo=levels)
 
@@ -531,6 +542,7 @@ def env():
         level1=level1,
         level2=level2,
         level1_skills=level1_skills,
+        level2_skills=level2_skills,
     )
 
 
@@ -658,6 +670,91 @@ def test_full_levelup_and_certificate_flow(env):
 
     # Queue is empty once the recommendation has been decided.
     assert env.client.get("/api/v2/admin/level-up-queue").json()["queue"] == []
+
+
+def test_replayed_approve_is_conflict_and_performs_no_writes(env):
+    """A second approve on the same recommendation must be a no-op 409.
+
+    Without a compare-and-set on the recommendation status a retried /
+    double-clicked approve issues a second certificate, opens a duplicate
+    active level row and re-seeds every next-level skill to NOT_STARTED,
+    destroying progress earned since the first approval.
+    """
+    student_id = "st-double-approve"
+
+    _place(env, student_id)
+    _pass_all_level1_skills(env, student_id)
+    rec = _recommend(env, student_id)
+
+    first = env.client.post(f"/api/v2/admin/level-up/{rec.rec_id}/approve")
+    assert first.status_code == 200, first.text
+
+    # The coach records real Level 2 progress after the approval.
+    level2_skill = env.level2_skills[0]
+    with tenant_scope(ACADEMY_ID):
+        _run(
+            env.ns.record_test_attempt.execute(
+                RecordTestAttemptCommand(
+                    student_id=student_id,
+                    skill_id=level2_skill.skill_id,
+                    level_id=env.level2.level_id,
+                    program_id=env.program_id,
+                    coach_id="coach-1",
+                    attempts_count=10,
+                    success_count=10,
+                )
+            )
+        )
+    assert _get_progress(env, student_id).json()["passed_skills"] == 1
+
+    second = env.client.post(f"/api/v2/admin/level-up/{rec.rec_id}/approve")
+
+    assert second.status_code == 409, second.text
+    # Surfaced through the registered DomainError handler, so the UI gets the
+    # structured envelope rather than a free-text detail string.
+    assert second.json()["error"]["code"] == "StudentProgress.RecommendationAlreadyReviewed"
+    assert second.json()["error"]["details"]["status"] == "APPROVED"
+    # No second certificate.
+    certs = env.client.get(f"/api/v2/admin/students/{student_id}/certificates").json()[
+        "certificates"
+    ]
+    assert len(certs) == 1
+    # Exactly one active Level 2 row, still active.
+    level2_rows = [
+        row
+        for row in _run(env.level_repo.list_for_student(student_id))
+        if row.level_id == env.level2.level_id
+    ]
+    assert len(level2_rows) == 1
+    assert level2_rows[0].status == "active"
+    # Skill progress earned since the first approval survives.
+    assert _get_progress(env, student_id).json()["passed_skills"] == 1
+
+
+def test_replayed_reject_is_conflict(env):
+    student_id = "st-double-reject"
+
+    _place(env, student_id)
+    _pass_all_level1_skills(env, student_id)
+    rec = _recommend(env, student_id)
+
+    first = env.client.post(
+        f"/api/v2/admin/level-up/{rec.rec_id}/reject",
+        json={"rejection_reason": "not yet"},
+    )
+    assert first.status_code == 200, first.text
+
+    second = env.client.post(
+        f"/api/v2/admin/level-up/{rec.rec_id}/reject",
+        json={"rejection_reason": "changed my mind"},
+    )
+
+    assert second.status_code == 409, second.text
+    assert second.json()["error"]["code"] == "StudentProgress.RecommendationAlreadyReviewed"
+    assert second.json()["error"]["details"]["status"] == "REJECTED"
+    saved = _run(env.rec_repo.get(rec.rec_id))
+    assert saved.status == "REJECTED"
+    assert saved.rejection_reason == "not yet"
 
 
 def test_place_student_resolves_default_program_when_only_one_active_program(env):

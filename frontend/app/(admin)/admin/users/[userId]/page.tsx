@@ -22,6 +22,7 @@ import {
   type AdminUserDetail,
   type AdminUserRole,
   type CoachPayBillingUnit,
+  type LoginInviteOutcome,
 } from "@/lib/api/admin";
 import { rateTimelineIssueLabel } from "@/lib/payroll-warnings";
 import { queryKeys } from "@/lib/query/keys";
@@ -463,6 +464,9 @@ function UserEditForm({
   const [reason, setReason] = useState("Admin user update");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitOk, setSubmitOk] = useState(false);
+  const [inviteOutcome, setInviteOutcome] = useState<LoginInviteOutcome | null>(
+    null,
+  );
 
   useEffect(() => {
     setEmail(user.email);
@@ -481,18 +485,26 @@ function UserEditForm({
         status: status !== user.status ? status : undefined,
         reason,
       }),
-    onSuccess: () => {
+    onSuccess: (updated) => {
       setSubmitError(null);
       setSubmitOk(true);
+      setInviteOutcome(updated.login_invite ?? null);
       onSaved();
     },
     onError: (err: unknown) => {
       setSubmitOk(false);
+      setInviteOutcome(null);
       setSubmitError(
         err instanceof Error ? err.message : "Could not save user.",
       );
     },
   });
+
+  // Changing the email clears Firebase's `email_verified`, which blocks
+  // password login until a new set-password link is completed (#436). The
+  // backend sends that invite automatically; warn before and report after.
+  const emailChanged =
+    email.trim().toLowerCase() !== user.email.trim().toLowerCase();
 
   const dirty =
     email !== user.email ||
@@ -571,7 +583,41 @@ function UserEditForm({
         />
       </Field>
 
+      {emailChanged && !submitOk && !mutation.isPending && (
+        <p
+          className="rounded-md border border-amber-200 bg-amber-50 p-2 text-sm text-amber-900"
+          data-testid="email-change-warning"
+        >
+          Changing the email address signs this user out of password login
+          until they set their password again. Saving emails them a fresh
+          &ldquo;set your password&rdquo; invite.
+        </p>
+      )}
+
       <MutationMessages error={submitError} ok={submitOk} />
+
+      {submitOk && inviteOutcome?.status === "sent" && (
+        <p
+          role="status"
+          className="rounded-md border border-emerald-200 bg-emerald-50 p-2 text-sm text-emerald-800"
+          data-testid="reinvite-sent"
+        >
+          A new &ldquo;set your password&rdquo; invite was emailed to {email}.
+        </p>
+      )}
+
+      {submitOk && inviteOutcome?.status === "failed" && (
+        <p
+          role="alert"
+          className="rounded-md border border-red-200 bg-red-50 p-2 text-sm text-red-700"
+          data-testid="reinvite-failed"
+        >
+          The email was updated, but the new login invite could not be sent
+          {inviteOutcome.error ? ` (${inviteOutcome.error})` : ""}. This user
+          cannot log in with a password until an invite reaches them — use
+          &ldquo;Re-send invite&rdquo; below.
+        </p>
+      )}
 
       <div className="flex items-center gap-2">
         <Button
@@ -599,6 +645,7 @@ function UserEditForm({
               setStatus(user.status);
               setSubmitError(null);
               setSubmitOk(false);
+              setInviteOutcome(null);
             }}
           >
             Reset

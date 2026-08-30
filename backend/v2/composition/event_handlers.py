@@ -20,8 +20,12 @@ from backend.v2.contexts.billing.application.use_cases.issue_refund import (
     IssueRefund,
     IssueRefundCommand,
 )
+from backend.v2.contexts.billing.application.use_cases.process_dunning_retries import (
+    DunningNotificationPort,
+)
 from backend.v2.contexts.billing.domain.events import (
     CheckoutExpired,
+    DunningNoticeRequested,
     PaymentSucceeded,
 )
 from backend.v2.contexts.enrollment.application.use_cases.confirm_enrollment import (
@@ -67,6 +71,22 @@ def install_handlers(deps: HandlerDeps) -> None:
     """Called once by the composition root."""
     global _deps
     _deps = deps
+
+
+# The dunning notice adapter is installed separately from `HandlerDeps`
+# (issue #435): it is built by `compose_admin`, which owns the billing e-mail
+# wiring, while `install_handlers` is called by `compose_parent`. Keeping it in
+# its own holder avoids making one composition root reach into the other's
+# dependencies just to satisfy a single handler.
+_dunning_notifier: DunningNotificationPort | None = None
+
+
+def install_dunning_notifier(notifier: DunningNotificationPort | None) -> None:
+    """Called once by the admin composition root. ``None`` when e-mail delivery
+    is not configured — the dunning worker then never enqueues a notice, so the
+    handler is unreachable rather than permanently failing."""
+    global _dunning_notifier
+    _dunning_notifier = notifier
 
 
 def _require_deps() -> HandlerDeps:
@@ -152,3 +172,34 @@ async def on_welcome_email_requested(event: WelcomeEmailRequested) -> None:
             "academy_id": event.academy_id,
         },
     )
+
+
+# The decorator is typed against the DomainEvent base while every handler here
+# narrows to its own event — same as the handlers above, which predate the
+# mypy baseline. Ignored locally rather than widening the baseline.
+@handler(event=DunningNoticeRequested, schema_version=1)  # type: ignore[arg-type]
+async def on_dunning_notice_requested(event: DunningNoticeRequested) -> None:
+    """Deliver the "autopay attempt failed" notice (issue #435).
+
+    This handler deliberately lets failures propagate: raising is what hands the
+    notice to the dispatcher's retry ladder, and eventually to the dead-letter
+    collection the ops digest reports. Swallowing the error here would restore
+    exactly the bug this event was introduced to fix — a parent never told that
+    their payment failed.
+    """
+    if _dunning_notifier is None:
+        raise RuntimeError(
+            "dunning notifier not installed — composition root did not call "
+            "install_dunning_notifier()"
+        )
+    payload = event.payload
+    with tenant_scope(event.academy_id):
+        await _dunning_notifier.send_dunning_notice(
+            parent_id=payload.parent_id,
+            invoice_id=payload.invoice_id,
+            period=payload.period,
+            balance_due_cents=payload.balance_due_cents,
+            currency=payload.currency,
+            attempt_no=payload.attempt_no,
+            terminal=payload.terminal,
+        )

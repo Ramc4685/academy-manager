@@ -11,7 +11,7 @@
  */
 
 import dynamic from "next/dynamic";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
 
@@ -658,12 +658,26 @@ function CreateSessionDialog({
     staleTime: 10 * 60 * 1000,
   });
 
+  const academyTimezone = academyQuery.data?.timezone;
+  const wasOpen = useRef(false);
+
+  // Issue #148: this used to replace the whole form object whenever the academy
+  // timezone resolved, so a slow query wiped whatever the admin had already
+  // typed into an open dialog. Seed defaults on open; afterwards patch only the
+  // timezone field, and only while it still holds the untouched default.
   useEffect(() => {
-    if (open) {
-      setForm({ ...EMPTY_FORM, timezone: academyQuery.data?.timezone ?? "UTC" });
+    if (open && !wasOpen.current) {
+      setForm({ ...EMPTY_FORM, timezone: academyTimezone ?? DEFAULT_TIMEZONE });
       setError(null);
+    } else if (open && academyTimezone) {
+      setForm((current) =>
+        current.timezone === DEFAULT_TIMEZONE
+          ? { ...current, timezone: academyTimezone }
+          : current,
+      );
     }
-  }, [open, academyQuery.data?.timezone]);
+    wasOpen.current = open;
+  }, [open, academyTimezone]);
 
   const coachesQuery = useQuery({
     queryKey: queryKeys.admin.users("coach"),

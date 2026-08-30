@@ -2,9 +2,11 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { LogOut } from "lucide-react";
 
 import { signOutCurrent } from "@/lib/auth/firebase";
+import { clearPersistedQueryCache } from "@/lib/query/persistence";
 
 export function PersonaLogoutButton({
   className = "",
@@ -16,6 +18,7 @@ export function PersonaLogoutButton({
   labelClassName?: string;
 }) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [busy, setBusy] = useState(false);
 
   async function handleLogOut() {
@@ -23,6 +26,12 @@ export function PersonaLogoutButton({
     setBusy(true);
     try {
       await signOutCurrent();
+      // Drop every cached read before the next user can reach the shell.
+      // Persona caches (and the localStorage-persisted coach cache) would
+      // otherwise survive the session and be served to whoever logs in
+      // next on a shared device.
+      queryClient.clear();
+      clearPersistedQueryCache();
       router.replace("/login");
     } finally {
       setBusy(false);

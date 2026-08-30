@@ -8,11 +8,17 @@ rather than extending TenantScopedRepository.  The query ALWAYS includes
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
 from pymongo import ReturnDocument
 
+from backend.v2.contexts.identity.domain.identity_aliases import (
+    aliases_from_doc,
+    identity_aliases,
+    membership_match_rank,
+)
 from backend.v2.contexts.identity.domain.models import (
     AcademyMembership,
     PlatformRole,
@@ -75,25 +81,93 @@ class MongoMembershipRepository:
     # Membership operations
     # ------------------------------------------------------------------
 
-    async def get_membership(self, academy_id: str, user_id: str) -> AcademyMembership | None:
+    @staticmethod
+    def _user_id_filter(user_id: str, aliases: Sequence[str] | None) -> dict[str, object]:
+        """Match `academy_memberships.user_id` against every known alias.
+
+        The alias set is built by the shared `domain.identity_aliases` helper,
+        which the users repository and `load_auth_claims` also use — see that
+        module for why `users.user_id` and `academy_memberships.user_id`
+        legitimately diverge.
+
+        This widens only the identity side of the query — `academy_id` stays
+        an explicit, mandatory term, so tenant isolation is unchanged.
+        """
+        candidates = identity_aliases(user_id, *(aliases or ()))
+        if len(candidates) <= 1:
+            return {"user_id": candidates[0] if candidates else user_id}
+        return {"user_id": {"$in": list(candidates)}}
+
+    @staticmethod
+    def _match_rank(doc: dict[str, Any], user_id: str) -> tuple[int, int, str]:
+        """Deterministic ordering over rows matched by alias.
+
+        The accounts alias matching unblocks are precisely the ones likely to
+        have TWO rows in one academy: `ensure_parent_login` upserts a
+        firebase-keyed row without removing the roster-keyed one, so a stale
+        `removed`/`invited` row can sit beside the live one.
+
+        The ordering itself lives with the alias helpers, because the role
+        *write* paths have to revoke exactly the row this read grants.
+        """
+        return membership_match_rank(doc, user_id)
+
+    async def get_membership(
+        self, academy_id: str, user_id: str, *, aliases: Sequence[str] | None = None
+    ) -> AcademyMembership | None:
         """Return the membership row for (academy_id, user_id), any status.
 
         The caller is responsible for checking `.is_active()` — this method
         returns invited/suspended/removed memberships so the auth layer can
         produce a specific rejection reason rather than a generic 403.
+
+        `aliases` carries the other identifiers the same account may be keyed
+        by (`auth_uid` / `firebase_uid`); see `_user_id_filter`. When several
+        rows match, `_match_rank` picks one deterministically.
         """
-        doc = await self._memberships.find_one({"academy_id": academy_id, "user_id": user_id})
-        return self._to_membership(doc) if doc else None
+        cursor = self._memberships.find(
+            {"academy_id": academy_id, **self._user_id_filter(user_id, aliases)}
+        )
+        docs = [doc async for doc in cursor]
+        if not docs:
+            return None
+        return self._to_membership(min(docs, key=lambda doc: self._match_rank(doc, user_id)))
 
     async def get_for_user_in_academy(
-        self, *, user_id: str, academy_id: str
+        self, *, user_id: str, academy_id: str, aliases: Sequence[str] | None = None
     ) -> AcademyMembership | None:
         """Auth-port alias for `(academy_id, user_id)` membership lookup."""
-        return await self.get_membership(academy_id, user_id)
+        return await self.get_membership(academy_id, user_id, aliases=aliases)
 
-    async def list_memberships_for_user(self, user_id: str) -> list[AcademyMembership]:
-        """Return all membership rows across all academies for a user."""
-        cursor = self._memberships.find({"user_id": user_id})
+    async def _resolve_aliases(self, user_id: str) -> tuple[str, ...]:
+        """Look up the caller's own `users` row to learn its other aliases.
+
+        `list_memberships_for_user` is reached from `/me/memberships` with
+        nothing but `AuthClaims.user_id`, so unlike `get_membership` it has no
+        caller able to supply the alias set. This reads exactly one row — the
+        caller's own, matched on the id it already presented — and derives the
+        aliases from it, the mirror of `MongoUserRepository` reading
+        `academy_memberships` for the invite path.
+        """
+        doc = await self._db["users"].find_one(
+            {"$or": [{"user_id": user_id}, {"auth_uid": user_id}, {"firebase_uid": user_id}]},
+            {"user_id": 1, "auth_uid": 1, "firebase_uid": 1},
+        )
+        return aliases_from_doc(doc) if doc else ()
+
+    async def list_memberships_for_user(
+        self, user_id: str, *, aliases: Sequence[str] | None = None
+    ) -> list[AcademyMembership]:
+        """Return all membership rows across all academies for a user.
+
+        Alias-matched for the same reason as `get_membership`: without it
+        `/api/v2/me/memberships` returns an empty list for exactly the
+        accounts whose login this alias matching unblocks — they sign in and
+        are then told they belong to no academies. When the caller does not
+        supply `aliases`, they are resolved from the caller's own users row.
+        """
+        resolved = aliases if aliases is not None else await self._resolve_aliases(user_id)
+        cursor = self._memberships.find(self._user_id_filter(user_id, resolved))
         return [self._to_membership(doc) async for doc in cursor]
 
     async def upsert_membership(self, membership: AcademyMembership) -> AcademyMembership:

@@ -49,6 +49,13 @@ class ChildProfile(BaseModel):
     last_name: str = ""
     date_of_birth: str = ""  # YYYY-MM-DD
     skill_level: Literal["beginner", "intermediate", "advanced", ""] = ""
+    # Optional here — the wizard autosaves partial drafts per step via PATCH,
+    # so these can't be required on the model itself. Completeness is
+    # enforced at checkout instead (see ParentComposition.
+    # start_checkout_for_application), not on this DTO. Issue #380.
+    emergency_contact_name: str = ""
+    emergency_contact_phone: str = ""
+    medical_notes: str = ""
 
 
 class WaiverAcceptance(BaseModel):

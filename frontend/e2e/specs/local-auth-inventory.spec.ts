@@ -19,7 +19,21 @@ const BENIGN_CONSOLE_PATTERNS: RegExp[] = [
   /webpack-internal/i,
 ];
 
-type ManifestRole = "admin" | "authenticated" | "coach" | "parent" | "proxy" | "public";
+type ManifestRole =
+  | "admin"
+  | "authenticated"
+  | "coach"
+  | "parent"
+  | "platform"
+  | "proxy"
+  | "public";
+
+/**
+ * Roles this sweep cannot sign in as. `proxy` routes are BFF handlers with no
+ * UI; `platform` needs a cross-tenant operator, and the local-auth dataset
+ * seeds only admin/coach/parent. Revisit once the seed grows a platform_admin.
+ */
+const UNSEEDED_ROLES = new Set<ManifestRole>(["proxy", "platform"]);
 
 type ManifestRoute = {
   route: string;
@@ -59,12 +73,12 @@ const DIRECT_ROUTE_EXCLUSIONS = new Set(["/post-login"]);
 const staticManifestRoutes = inventoryManifest.routes.filter(
   (entry) =>
     !entry.route.includes("[") &&
-    entry.role !== "proxy" &&
+    !UNSEEDED_ROLES.has(entry.role) &&
     !DIRECT_ROUTE_EXCLUSIONS.has(entry.route),
 );
 
 const dynamicManifestRoutes = inventoryManifest.routes.filter(
-  (entry) => entry.route.includes("[") && entry.role !== "proxy",
+  (entry) => entry.route.includes("[") && !UNSEEDED_ROLES.has(entry.role),
 );
 
 const PUBLIC_ROUTES = routesForRole("public");

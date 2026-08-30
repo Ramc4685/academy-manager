@@ -48,6 +48,7 @@ PersistedUnpaidReason = Literal[
     "rate_gap",
     "missing_session_price_for_percent_revenue",
     "attendance_override",
+    "replaced_by_actual_coach",
     "unknown_unpaid_reason",
 ]
 
@@ -103,6 +104,8 @@ class PersistedUnpaidOccurrence(BaseModel):
     reason: PersistedUnpaidReason
     detail: str | None = None
     unresolved: bool = True
+    attributed_coach_id: str | None = None
+    """Coach paid instead of this one, for ``replaced_by_actual_coach``."""
 
 
 class PayoutPeriod(BaseModel):

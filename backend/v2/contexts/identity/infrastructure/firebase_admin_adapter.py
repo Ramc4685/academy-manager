@@ -8,12 +8,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 from typing import Any
 
 import cachecontrol
 import requests
 from fastapi import HTTPException
+
+from backend.v2.shared.tenancy.firebase_action_link import tenant_auth_action_link
+
+_logger = logging.getLogger(__name__)
 
 try:
     import firebase_admin
@@ -117,6 +122,39 @@ def _is_firebase_auth_error(exc: Exception, name: str) -> bool:
     return isinstance(error_type, type) and isinstance(exc, error_type)
 
 
+#: Firebase/Identity Toolkit error codes for a continue URL whose domain is
+#: absent from the project's Authorized Domains list. The Admin SDK surfaces
+#: these as message text rather than typed exceptions, so match on the string.
+_UNAUTHORIZED_CONTINUE_DOMAIN_CODES = (
+    "UNAUTHORIZED_DOMAIN",
+    "INVALID_CONTINUE_URI",
+    "INVALID_DYNAMIC_LINK_DOMAIN",
+    "MISSING_CONTINUE_URI",
+)
+
+
+def _is_unauthorized_continue_domain(exc: Exception) -> bool:
+    message = str(exc).upper()
+    return any(code in message for code in _UNAUTHORIZED_CONTINUE_DOMAIN_CODES)
+
+
+def _password_reset_action_settings(portal_url: str | None) -> Any | None:
+    """Build `ActionCodeSettings` pointing back at one academy's own portal.
+
+    Returns None when no tenant portal is known, which preserves the historic
+    behaviour of generating a link with no continue URL at all.
+    """
+    base = (portal_url or "").strip().rstrip("/")
+    if not base:
+        return None
+    action_code_settings = getattr(firebase_admin_auth, "ActionCodeSettings", None)
+    if action_code_settings is None:  # pragma: no cover - firebase-admin absent
+        return None
+    # handle_code_in_app=False: this is a plain web redirect, not a mobile
+    # deep link, so Firebase must not require Dynamic Links configuration.
+    return action_code_settings(url=f"{base}/login", handle_code_in_app=False)
+
+
 def _verify_firebase_token_with_public_certs(token: str) -> dict[str, object]:
     if google_id_token is None:
         raise HTTPException(
@@ -218,7 +256,12 @@ class FirebaseAdminAdapter:
         return str(user.uid), False
 
     async def generate_password_reset_link(
-        self, email: str, *, uid: str | None = None, display_name: str | None = None
+        self,
+        email: str,
+        *,
+        uid: str | None = None,
+        display_name: str | None = None,
+        portal_url: str | None = None,
     ) -> str:
         """Generate a Firebase password-reset link for `email`.
 
@@ -238,6 +281,34 @@ class FirebaseAdminAdapter:
         `EmailNotFoundError`. `get_user_by_email` is an admin lookup
         unaffected by enumeration protection and reliably raises
         `UserNotFoundError`.
+
+        `portal_url` is the recipient's own academy portal origin (ADR-0007;
+        resolved by the caller, never a single hardcoded FRONTEND_URL). When
+        supplied it does two tenant-aware things:
+
+        1. Passes ``ActionCodeSettings(url=<portal>/login)`` so Firebase
+           stamps a ``continueUrl`` on the link, returning the parent to
+           *their* academy after the reset rather than to the deployment
+           default host.
+        2. Re-hosts the whole link on that portal at ``/auth/action`` so the
+           in-app, academy-branded handler processes the ``oobCode`` instead
+           of the generic ``<project>.firebaseapp.com`` page.
+
+        Both degrade safely. ``ActionCodeSettings`` requires the continue
+        domain to be in Firebase Authorized Domains, so an unauthorized
+        domain is caught and retried *without* settings rather than failing
+        the invite. Step 2 does not depend on Authorized Domains at all (the
+        ``oobCode`` is redeemed against the Identity Toolkit API, not against
+        the page hosting it), so branded landing still works while a new
+        academy's subdomain is pending authorization.
+
+        Redeeming the returned link still sets ``emailVerified=true``: the
+        in-app handler calls ``confirmPasswordReset``, which hits the same
+        ``accounts:resetPassword`` endpoint the hosted page uses, and that
+        endpoint verifies the email as a side effect of proving mailbox
+        possession. ``load_auth_claims._require_verified_password_provider_email``
+        depends on this — see the test named for it before changing any of
+        this.
         """
         if firebase_admin_auth is None:
             raise RuntimeError("firebase-admin is required for Firebase auth")
@@ -254,7 +325,33 @@ class FirebaseAdminAdapter:
                     email_verified=False,
                     disabled=False,
                 )
-        link = await asyncio.to_thread(firebase_admin_auth.generate_password_reset_link, email)
+        link = await self._generate_reset_link(email, portal_url=portal_url)
+        return tenant_auth_action_link(firebase_link=link, portal_url=portal_url)
+
+    async def _generate_reset_link(self, email: str, *, portal_url: str | None) -> str:
+        """Ask Firebase for the raw reset link — with ActionCodeSettings when
+        a tenant portal is known, falling back to a plain link when Firebase
+        rejects the continue URL's domain."""
+        settings = _password_reset_action_settings(portal_url)
+        if settings is None:
+            link = await asyncio.to_thread(firebase_admin_auth.generate_password_reset_link, email)
+            return str(link)
+        try:
+            link = await asyncio.to_thread(
+                firebase_admin_auth.generate_password_reset_link, email, settings
+            )
+        except Exception as exc:
+            if not _is_unauthorized_continue_domain(exc):
+                raise
+            # This academy's domain is not in Firebase Authorized Domains yet.
+            # Losing `continueUrl` only costs the post-reset redirect; losing
+            # the invite would lock the parent out entirely, so degrade.
+            _logger.warning(
+                "Firebase rejected continue URL for portal %s; retrying without "
+                "ActionCodeSettings. Add the domain to Firebase Authorized Domains.",
+                portal_url,
+            )
+            link = await asyncio.to_thread(firebase_admin_auth.generate_password_reset_link, email)
         return str(link)
 
     async def update_user_email(self, uid: str, email: str) -> None:

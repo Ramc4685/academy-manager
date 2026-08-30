@@ -90,6 +90,7 @@ def _period_view(period: Any) -> AdminPayoutPeriodView:
             reason=row.reason,
             detail=row.detail,
             unresolved=row.unresolved,
+            attributed_coach_id=getattr(row, "attributed_coach_id", None),
         )
         for row in getattr(period, "unpaid_occurrences", [])
     ]
@@ -153,7 +154,11 @@ async def _enriched_period_view(use_cases: AdminUseCases, period: Any) -> AdminP
     describe = use_cases.describe_payout_occurrences
     if describe is None:
         return view
-    occurrence_ids = [line.occurrence_id for line in view.lines] + view.unpaid_occurrence_ids
+    occurrence_ids = (
+        [line.occurrence_id for line in view.lines]
+        + view.unpaid_occurrence_ids
+        + [occ.occurrence_id for occ in view.unpaid_occurrences]
+    )
     descriptions: dict[str, dict[str, Any]] = await describe(occurrence_ids)  # type: ignore[operator]
     lines = [
         line.model_copy(
@@ -509,7 +514,12 @@ async def export_payout_period_xlsx(
                 0,
                 "",
                 unpaid.reason or "",
-                unpaid.repair_action or "",
+                unpaid.repair_action
+                or (
+                    f"attributed to coach {unpaid.attributed_coach_id}"
+                    if unpaid.attributed_coach_id
+                    else ""
+                ),
             ]
         )
 

@@ -93,6 +93,20 @@ def test_admin_students_rejects_malformed_cursor(admin_client):
     assert r.status_code == 400
 
 
+def test_admin_students_missing_filter_accepts_known_fields(admin_client):
+    """Issue #380 gap report — the query param round-trips through to the
+    use case without erroring for a real completeness field."""
+    r = admin_client.get("/api/v2/admin/students?missing=date_of_birth,emergency_contact_name")
+
+    assert r.status_code == 200
+
+
+def test_admin_students_missing_filter_rejects_unknown_field(admin_client):
+    r = admin_client.get("/api/v2/admin/students?missing=not_a_real_field")
+
+    assert r.status_code == 400
+
+
 def test_directory_wrong_persona_404(coach_on_admin_client):
     assert coach_on_admin_client.get("/api/v2/admin/users").status_code == 404
     assert coach_on_admin_client.get("/api/v2/admin/students").status_code == 404
@@ -153,3 +167,52 @@ def test_role_endpoints_wrong_persona_404(coach_on_admin_client):
         ).status_code
         == 404
     )
+
+
+def test_email_edit_auto_sends_one_login_invite(admin_client):
+    """#436: the Firebase email change clears `email_verified`, so the edit
+    must carry a fresh set-password link or the parent silently loses
+    password login."""
+    sender = admin_client.use_cases.send_login_invite
+    before = list(sender.sent)
+
+    r = admin_client.patch(
+        "/api/v2/admin/users/p-1",
+        json={"email": "corrected@example.com", "reason": "typo in email"},
+    )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["email"] == "corrected@example.com"
+    assert body["login_invite"]["status"] == "sent"
+    assert body["login_invite"]["sent_at"] is not None
+    assert [u for u in sender.sent if u not in before] == ["p-1"]
+
+
+def test_non_email_edit_does_not_re_invite(admin_client):
+    sender = admin_client.use_cases.send_login_invite
+    before = list(sender.sent)
+
+    r = admin_client.patch(
+        "/api/v2/admin/users/p-1",
+        json={"display_name": "Parent Renamed", "reason": "name change"},
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["login_invite"]["status"] == "not_needed"
+    assert sender.sent == before
+
+
+def test_failed_re_invite_is_reported_to_the_admin(admin_client):
+    """The edit itself committed, so this stays a 200 — but the admin must
+    see that the parent never got a working link, not a silent success."""
+    r = admin_client.patch(
+        "/api/v2/admin/users/p-2",
+        json={"email": "corrected2@example.com", "reason": "typo in email"},
+    )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["email"] == "corrected2@example.com"
+    assert body["login_invite"]["status"] == "failed"
+    assert body["login_invite"]["error"]

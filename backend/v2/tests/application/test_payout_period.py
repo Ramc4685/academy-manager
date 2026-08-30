@@ -574,3 +574,60 @@ async def test_approve_use_case_raises_when_period_missing() -> None:
     uc = ApprovePayoutPeriod(repository=repo)
     with pytest.raises(LookupError):
         await uc.execute(period_id="missing")
+
+
+def _replaced(occurrence_id: str = "occ-replaced") -> PersistedUnpaidOccurrence:
+    return PersistedUnpaidOccurrence(
+        occurrence_id=occurrence_id,
+        reason="replaced_by_actual_coach",
+        detail="Scheduled coach was replaced; this occurrence was attributed to coach coach-B.",
+        unresolved=False,
+        attributed_coach_id="coach-B",
+    )
+
+
+@pytest.mark.asyncio
+async def test_generated_period_persists_replaced_occurrence_rows() -> None:
+    """The displaced scheduled coach's trace survives generation (#228)."""
+    calc = _Calculation(
+        coach_id="coach-A",
+        academy_id="acad-1",
+        period_start=_dt("2026-05-01T00:00:00"),
+        period_end=_dt("2026-06-01T00:00:00"),
+        currency="USD",
+        total_minor=0,
+        lines=[],
+        unpaid_occurrences=[_replaced()],
+    )
+    repo = FakeRepo()
+    period = await GeneratePayoutPeriod(
+        calculator=FakeCalculator(calc),
+        repository=repo,
+        clock=lambda: _dt("2026-06-01T00:00:00"),
+        id_factory=lambda: "pp-generated",
+    ).execute(
+        coach_id="coach-A",
+        academy_id="acad-1",
+        period_start=_dt("2026-05-01T00:00:00"),
+        period_end=_dt("2026-06-01T00:00:00"),
+    )
+
+    assert period.total_minor == 0
+    assert period.unpaid_occurrence_ids == []
+    row = period.unpaid_occurrences[0]
+    assert row.reason == "replaced_by_actual_coach"
+    assert row.attributed_coach_id == "coach-B"
+    assert row.unresolved is False
+
+
+@pytest.mark.asyncio
+async def test_replaced_occurrence_does_not_block_approval() -> None:
+    """A substitution is a legitimate outcome, not a repair item."""
+    repo = FakeRepo()
+    await repo.save(_draft_period().model_copy(update={"unpaid_occurrences": [_replaced()]}))
+    uc = ApprovePayoutPeriod(repository=repo, clock=lambda: _dt("2026-06-02T12:00:00"))
+
+    approved = await uc.execute(period_id="pp-1")
+
+    assert approved.status == "approved"
+    assert approved.unpaid_occurrences[0].reason == "replaced_by_actual_coach"

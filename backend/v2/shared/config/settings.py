@@ -106,6 +106,13 @@ class Settings(BaseSettings):
         default=False,
         description="When True and resend_api_key is set, emails are sent via Resend. Stub adapter used otherwise.",
     )
+    ops_alert_email: str | None = Field(
+        default=None,
+        description=(
+            "Owner address for the daily ops digest (issue #428). Unset ⇒ the digest "
+            "job logs and skips; nothing is sent."
+        ),
+    )
     coach_digest_enabled: bool = Field(
         default=False,
         description="When True, the daily coach teaching-plan digest cron job is registered.",
@@ -206,6 +213,8 @@ class Settings(BaseSettings):
             self.scheduler_tz = os.environ.get("SCHEDULER_TZ", self.scheduler_tz)
         if "V2_SENDER_EMAIL" not in os.environ:
             self.sender_email = os.environ.get("SENDER_EMAIL", self.sender_email)
+        if "V2_OPS_ALERT_EMAIL" not in os.environ:
+            self.ops_alert_email = os.environ.get("OPS_ALERT_EMAIL", self.ops_alert_email)
         if "V2_EMAIL_DELIVERY_ENABLED" not in os.environ:
             self.email_delivery_enabled = _env_bool(
                 "EMAIL_DELIVERY_ENABLED",

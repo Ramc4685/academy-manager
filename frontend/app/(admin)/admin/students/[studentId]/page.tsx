@@ -31,9 +31,10 @@ import { Avatar } from "@/components/ds/avatar";
 import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
 
+import { BillingEnrollmentsPanel } from "./BillingEnrollmentsPanel";
 import { BillingWorkflowPanel } from "./BillingWorkflowPanel";
 import { DetailList } from "./DetailList";
-import { formatCurrencyCents, formatDate, formatDateTime } from "./format";
+import { formatCurrencyCents, formatDate, formatDateTime, formatDateUtc } from "./format";
 import { SessionsPanel } from "./SessionsPanel";
 import { OPEN_BILLING_STATUSES, StatusChip } from "./StatusChip";
 import { ChangeParentPanel, StudentEditForm } from "./StudentEditForm";
@@ -198,15 +199,18 @@ export default function AdminStudentDetailPage() {
 
       {activeTab === "billing" && (
         <TabPanel id="billing">
-          <BillingWorkflowPanel
-            student={student}
-            active={activeTab === "billing"}
-            onChanged={() => {
-              void queryClient.invalidateQueries({
-                queryKey: queryKeys.admin.studentDetail(studentId),
-              });
-            }}
-          />
+          <div className="space-y-6">
+            <BillingWorkflowPanel
+              student={student}
+              active={activeTab === "billing"}
+              onChanged={() => {
+                void queryClient.invalidateQueries({
+                  queryKey: queryKeys.admin.studentDetail(studentId),
+                });
+              }}
+            />
+            <BillingEnrollmentsPanel studentId={studentId} active={activeTab === "billing"} />
+          </div>
         </TabPanel>
       )}
 
@@ -533,7 +537,7 @@ function RecentAttendancePanel({ student }: { student: AdminStudentDetail }) {
               {recent.map((entry) => (
                 <tr key={`${entry.session_id}-${entry.date}-${entry.status}`}>
                   <td className="py-3 pr-4 align-top text-rally-ink">
-                    {formatDate(entry.date)}
+                    {formatDateUtc(entry.date)}
                   </td>
                   <td className="py-3 pr-4 align-top">
                     <StatusChip status={entry.status} />

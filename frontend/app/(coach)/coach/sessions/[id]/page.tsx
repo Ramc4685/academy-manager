@@ -13,6 +13,7 @@ import {
   type AttendanceStatus,
   type CoachRosterEntry,
 } from "@/lib/api/coach";
+import { BillingPreviewDrawer } from "@/components/coach/billing-preview-drawer";
 import { SessionDetailTabs } from "@/components/coach/SessionDetailTabs";
 import { Chip } from "@/components/ds/chip";
 import { queryKeys } from "@/lib/query/keys";
@@ -78,6 +79,7 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   // noteOpen tracks which student has the inline note box open
   const [noteOpen, setNoteOpen] = useState<string | null>(null);
   const [noteTexts, setNoteTexts] = useState<Record<string, string>>({});
+  const [billingOpen, setBillingOpen] = useState<string | null>(null);
 
   const noteMutation = useMutation({
     mutationFn: ({ studentId, body }: { studentId: string; body: string }) =>
@@ -329,6 +331,12 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
                   noteMutation.mutate({ studentId: student.student_id, body })
                 }
                 noteSaving={noteMutation.isPending}
+                billingOpen={billingOpen === student.student_id}
+                onToggleBilling={() =>
+                  setBillingOpen((prev) =>
+                    prev === student.student_id ? null : student.student_id,
+                  )
+                }
               />
             ))}
           </ul>
@@ -350,6 +358,8 @@ function RosterRow({
   onNoteChange,
   onNoteSave,
   noteSaving,
+  billingOpen,
+  onToggleBilling,
 }: {
   student: CoachRosterEntry;
   sessionId: string;
@@ -362,6 +372,8 @@ function RosterRow({
   onNoteChange: (text: string) => void;
   onNoteSave: (body: string) => void;
   noteSaving: boolean;
+  billingOpen: boolean;
+  onToggleBilling: () => void;
 }) {
   // Optimistic local state wins; otherwise fall back to the server-recorded
   // mark so a reload doesn't render a marked class as unmarked.
@@ -476,6 +488,19 @@ function RosterRow({
           >
             Note
           </button>
+          {/* Billing preview toggle */}
+          <button
+            data-testid={`billing-toggle-${student.student_id}`}
+            onClick={onToggleBilling}
+            aria-expanded={billingOpen}
+            className="min-h-[36px] rounded-md border px-2.5 py-1 text-xs font-medium transition-colors"
+            style={{
+              borderColor: "var(--rally-line)",
+              color: "var(--rally-muted)",
+            }}
+          >
+            Billing
+          </button>
         </div>
       </div>
 
@@ -511,6 +536,15 @@ function RosterRow({
             {noteSaving ? "Saving…" : "Save note — parent will see this"}
           </button>
         </div>
+      )}
+
+      {billingOpen && (
+        <BillingPreviewDrawer
+          sessionId={sessionId}
+          studentId={student.student_id}
+          studentName={student.full_name}
+          onClose={onToggleBilling}
+        />
       )}
     </li>
   );

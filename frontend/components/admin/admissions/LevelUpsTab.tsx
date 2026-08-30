@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -12,6 +12,7 @@ import {
 import { Card } from "@/components/ds/card";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { Button } from "@/components/ds/button";
+import type { ApiError } from "@/lib/api/client";
 
 function levelUpChipVariant(status: LevelUpRecommendation["status"]): ChipVariant {
   switch (status) {
@@ -24,23 +25,60 @@ function levelUpChipVariant(status: LevelUpRecommendation["status"]): ChipVarian
   }
 }
 
+const QUEUE_KEY = ["admin", "level-up-queue"];
+
+function reviewErrorMessage(err: unknown): string {
+  const status = (err as ApiError | undefined)?.status;
+  if (status === 409) {
+    return "This recommendation was already reviewed by someone else. The queue has been refreshed.";
+  }
+  if (status === 404) {
+    return "This recommendation no longer exists. The queue has been refreshed.";
+  }
+  return err instanceof Error && err.message ? err.message : "Could not update this recommendation.";
+}
+
 export function LevelUpsTab() {
   const queryClient = useQueryClient();
+  const [reviewError, setReviewError] = useState<string | null>(null);
 
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["admin", "level-up-queue"],
+    queryKey: QUEUE_KEY,
     queryFn: () => getLevelUpQueue(),
   });
 
+  // Always re-read the queue after a decision, win or lose: a 409 means
+  // another admin (or our own double-click) already reviewed this row, so the
+  // RECOMMENDED row on screen is stale and its Approve button would just
+  // produce another 409.
+  const refreshQueue = useCallback(
+    () => void queryClient.invalidateQueries({ queryKey: QUEUE_KEY }),
+    [queryClient],
+  );
+
   const approveMutation = useMutation({
     mutationFn: (recId: string) => approveLevelUp(recId),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["admin", "level-up-queue"] }),
+    onSuccess: () => {
+      setReviewError(null);
+      refreshQueue();
+    },
+    onError: (err: unknown) => {
+      setReviewError(reviewErrorMessage(err));
+      refreshQueue();
+    },
   });
 
   const rejectMutation = useMutation({
     mutationFn: ({ recId, reason }: { recId: string; reason: string }) =>
       rejectLevelUp(recId, reason),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["admin", "level-up-queue"] }),
+    onSuccess: () => {
+      setReviewError(null);
+      refreshQueue();
+    },
+    onError: (err: unknown) => {
+      setReviewError(reviewErrorMessage(err));
+      refreshQueue();
+    },
   });
 
   const pending = (data ?? []).filter((r) => r.status === "RECOMMENDED");
@@ -64,6 +102,16 @@ export function LevelUpsTab() {
       {isError && (
         <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
           Could not load level-up queue.
+        </p>
+      )}
+
+      {reviewError && (
+        <p
+          role="alert"
+          data-testid="level-up-review-error"
+          className="rounded-md bg-red-50 p-3 text-sm text-red-700"
+        >
+          {reviewError}
         </p>
       )}
 

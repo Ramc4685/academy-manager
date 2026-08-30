@@ -15,6 +15,7 @@ import {
   type ParentAvailableSession,
   type RegistrationWaiver,
 } from "@/lib/api/parent";
+import type { ApiError } from "@/lib/api/client";
 
 /**
  * Parent onboarding stepper.
@@ -27,6 +28,21 @@ import {
 
 type Step = "parent" | "child" | "waiver" | "session" | "review";
 const ORDER: Step[] = ["parent", "child", "waiver", "session", "review"];
+
+/**
+ * Server-side completeness guard (issue #380): checkout refuses an
+ * application missing any of these. The wizard marks all of them `required`,
+ * so the guard should only ever fire for an application drafted before those
+ * fields existed. When it does, send the parent back to the step that owns
+ * the field instead of stranding them on the review screen with a raw
+ * machine-readable field name.
+ */
+const MISSING_FIELD_HELP: Record<string, { step: Step; label: string }> = {
+  parent_phone: { step: "parent", label: "your phone number" },
+  date_of_birth: { step: "child", label: "your child's date of birth" },
+  emergency_contact_name: { step: "child", label: "an emergency contact name" },
+  emergency_contact_phone: { step: "child", label: "an emergency contact phone number" },
+};
 
 export default function OnboardingStepperPage() {
   const [app, setApp] = useState<OnboardingApplication | null>(null);
@@ -119,7 +135,19 @@ export default function OnboardingStepperPage() {
       });
       window.location.assign(redirect_url);
     } catch (e) {
-      setError((e as Error).message);
+      const err = e as ApiError;
+      const missing =
+        err.code === "Onboarding.IncompleteApplication" && Array.isArray(err.details?.missing)
+          ? (err.details.missing as string[]).filter((f) => f in MISSING_FIELD_HELP)
+          : [];
+      if (missing.length > 0) {
+        const help = missing.map((f) => MISSING_FIELD_HELP[f]);
+        const target = ORDER.find((s) => help.some((h) => h.step === s));
+        setError(`Before paying, we still need ${listPhrase(help.map((h) => h.label))}.`);
+        if (target) setStep(target);
+      } else {
+        setError(err.message);
+      }
       setSaving(false);
     }
   }
@@ -204,6 +232,12 @@ export default function OnboardingStepperPage() {
   );
 }
 
+/** "a", "a and b", "a, b and c" */
+function listPhrase(items: string[]): string {
+  if (items.length <= 1) return items[0] ?? "";
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
 function Progress({ step, onStepClick }: { step: Step; onStepClick: (s: Step) => void }) {
   const i = ORDER.indexOf(step);
   return (
@@ -274,8 +308,19 @@ function ParentStep({
       <Field label="Last name">
         <input value={v.last_name} onChange={(e) => setV({ ...v, last_name: e.target.value })} required />
       </Field>
+      {/*
+        Required (issue #380): checkout rejects an application with no parent
+        phone, so leaving this optional here would let a parent reach the
+        payment step and be bounced with nothing to click. The form and the
+        server-side completeness guard must agree.
+      */}
       <Field label="Phone">
-        <input value={v.phone} onChange={(e) => setV({ ...v, phone: e.target.value })} />
+        <input
+          type="tel"
+          value={v.phone}
+          onChange={(e) => setV({ ...v, phone: e.target.value })}
+          required
+        />
       </Field>
       <button type="submit" disabled={saving} className="primary">
         Next
@@ -294,6 +339,9 @@ function ChildStep({
   saving: boolean;
 }) {
   const [v, setV] = useState(app.child_profile);
+  const [noMedicalConditions, setNoMedicalConditions] = useState(
+    app.child_profile.medical_notes === "__none_declared__",
+  );
   return (
     <form
       onSubmit={(e) => {
@@ -352,6 +400,42 @@ function ChildStep({
           })}
         </div>
       </fieldset>
+      <Field label="Emergency contact name">
+        <input
+          value={v.emergency_contact_name ?? ""}
+          onChange={(e) => setV({ ...v, emergency_contact_name: e.target.value })}
+          required
+        />
+      </Field>
+      <Field label="Emergency contact phone">
+        <input
+          type="tel"
+          value={v.emergency_contact_phone ?? ""}
+          onChange={(e) => setV({ ...v, emergency_contact_phone: e.target.value })}
+          required
+        />
+      </Field>
+      <Field label="Medical notes">
+        <textarea
+          rows={2}
+          placeholder="Allergies, conditions, or anything a coach should know"
+          disabled={noMedicalConditions}
+          value={noMedicalConditions ? "" : (v.medical_notes ?? "")}
+          onChange={(e) => setV({ ...v, medical_notes: e.target.value })}
+        />
+      </Field>
+      <label className="flex items-center gap-2 text-sm" style={{ color: "var(--rally-ink)" }}>
+        <input
+          type="checkbox"
+          checked={noMedicalConditions}
+          onChange={(e) => {
+            setNoMedicalConditions(e.target.checked);
+            if (e.target.checked) setV({ ...v, medical_notes: "__none_declared__" });
+            else if (v.medical_notes === "__none_declared__") setV({ ...v, medical_notes: "" });
+          }}
+        />
+        No known conditions or allergies
+      </label>
       <button type="submit" disabled={saving} className="primary">
         Next
       </button>

@@ -174,6 +174,45 @@ def test_tenant_health_exposes_status_check_for_request_gating(
     assert active.json()["reason"] is None
 
 
+def test_platform_admin_can_list_tenants(platform_client: TestClient) -> None:
+    empty = platform_client.get("/api/v2/platform/tenants")
+    assert empty.status_code == 200, empty.text
+    assert empty.json() == []
+
+    _create(platform_client)
+    listed = platform_client.get("/api/v2/platform/tenants")
+
+    assert listed.status_code == 200, listed.text
+    body = listed.json()
+    assert len(body) == 1
+    assert body[0]["academy_id"] == "tenant_test"
+    assert body[0]["slug"] == "north-shore"
+    assert body[0]["status"] == "provisioning"
+    assert body[0]["servable"] is False
+    assert body[0]["limits"] == {"max_students": 100, "max_coaches": 8, "max_locations": None}
+
+
+def test_platform_support_can_list_tenants(repo: FakeTenantRepository) -> None:
+    with TestClient(_app(_platform_admin_claims(), repo)) as admin_client:
+        _create(admin_client)
+
+    with TestClient(_app(_platform_support_claims(), repo)) as support_client:
+        listed = support_client.get("/api/v2/platform/tenants")
+
+    assert listed.status_code == 200, listed.text
+    assert [t["academy_id"] for t in listed.json()] == ["tenant_test"]
+
+
+def test_academy_roles_cannot_list_tenants(repo: FakeTenantRepository) -> None:
+    with TestClient(_app(_platform_admin_claims(), repo)) as admin_client:
+        _create(admin_client)
+
+    with TestClient(_app(_academy_admin_claims(), repo)) as client:
+        listed = client.get("/api/v2/platform/tenants")
+
+    assert listed.status_code == 404
+
+
 def test_platform_support_can_read_status_but_cannot_mutate(repo: FakeTenantRepository) -> None:
     with TestClient(_app(_platform_admin_claims(), repo)) as admin_client:
         _create(admin_client)
@@ -185,6 +224,42 @@ def test_platform_support_can_read_status_but_cannot_mutate(repo: FakeTenantRepo
     assert status_response.status_code == 200, status_response.text
     assert status_response.json()["status"] == "provisioning"
     assert mutate_response.status_code == 404
+
+
+def test_platform_support_is_blocked_from_every_lifecycle_mutation(
+    repo: FakeTenantRepository,
+) -> None:
+    """Hiding the buttons in the UI is cosmetic — the server must refuse.
+
+    Every mutating platform route is asserted here, not just one, so a new
+    mutation added without `require_platform_admin` fails this test.
+    """
+    with TestClient(_app(_platform_admin_claims(), repo)) as admin_client:
+        _create(admin_client)
+
+    mutations = [
+        ("post", "/api/v2/platform/tenants", _payload()),
+        ("post", "/api/v2/platform/academies/bootstrap", None),
+        ("post", "/api/v2/platform/tenants/tenant_test/activate", None),
+        ("post", "/api/v2/platform/tenants/tenant_test/suspend", {"reason": "nope"}),
+        ("post", "/api/v2/platform/tenants/tenant_test/cancel", {"reason": "nope"}),
+        ("post", "/api/v2/platform/tenants/tenant_test/reactivate", None),
+        (
+            "patch",
+            "/api/v2/platform/tenants/tenant_test/plan",
+            {"plan_code": "pro", "limits": {}},
+        ),
+    ]
+
+    with TestClient(_app(_platform_support_claims(), repo)) as support_client:
+        results = {
+            path: getattr(support_client, method)(path, json=body).status_code
+            for method, path, body in mutations
+        }
+
+    assert results == {path: 404 for _, path, _ in mutations}
+    # And nothing was actually mutated.
+    assert repo.tenants["tenant_test"].status == "provisioning"
 
 
 def test_academy_roles_cannot_access_platform_lifecycle(repo: FakeTenantRepository) -> None:

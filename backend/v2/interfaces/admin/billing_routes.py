@@ -878,6 +878,7 @@ async def send_billing_invoice(
         sent_at=result["sent_at"],
         last_sent_at=result["last_sent_at"],
         checkout_url=result["checkout_url"],
+        checkout_failure_code=result["checkout_failure_code"],
     )
 
 
@@ -1300,6 +1301,55 @@ class InvoiceAttemptsResponse(BaseModel):
 class ReplayWebhookResponse(BaseModel):
     replayed: bool
     event_id: str
+
+
+class ConnectedAccountReadinessDto(BaseModel):
+    model_config = {"extra": "ignore"}
+
+    configured: bool = False
+    status: str | None = None
+    charges_enabled: bool = False
+    payouts_enabled: bool = False
+    ready_for_charges: bool = False
+    account_id_masked: str | None = None
+
+
+class WebhookBacklogDto(BaseModel):
+    model_config = {"extra": "ignore"}
+
+    quarantined: int = 0
+    failed: int = 0
+
+
+class ConnectReadinessResponse(BaseModel):
+    model_config = {"extra": "ignore"}
+
+    connected_account: ConnectedAccountReadinessDto
+    allow_platform_charge_fallback: bool = False
+    #: Can a parent payment succeed at all right now.
+    payments_possible: bool = False
+    #: Whether a succeeding payment reaches the academy's own Stripe account
+    #: rather than the platform's. `funds_route_to_academy` False while
+    #: `payments_possible` is True means money is landing on the platform
+    #: account through the fallback.
+    funds_route_to_academy: bool = False
+    webhook_events: WebhookBacklogDto
+
+
+@router.get("/billing/connect-readiness", response_model=ConnectReadinessResponse)
+async def get_connect_readiness(
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> ConnectReadinessResponse:
+    """Whether parent payments can physically succeed, and where money lands.
+
+    Issue #432: no admin surface showed the single condition that gates every
+    parent payment, so an academy could be unable to take money with nothing
+    on screen saying so.
+    """
+    read = _required_callable(use_cases.get_connect_readiness, "Connect readiness")
+    data = await read()  # type: ignore[operator]
+    return ConnectReadinessResponse(**data)
 
 
 @router.get("/billing/reconciliation-runs", response_model=ReconciliationRunsResponse)

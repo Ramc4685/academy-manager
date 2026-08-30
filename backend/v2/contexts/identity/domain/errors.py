@@ -54,6 +54,19 @@ class MembershipNotFound(DomainError):
     status_code = 403
 
 
+class RoleRevocationFailed(DomainError):
+    """A role replacement could not be written to the membership row it resolved.
+
+    SaaS claims come from `academy_memberships`, so a replacement that does not
+    land there leaves the old grant live. The write is therefore checked, and a
+    resolved row that the update did not touch fails the whole operation rather
+    than reporting a demotion that never took effect.
+    """
+
+    code = "Identity.RoleRevocationFailed"
+    status_code = 502
+
+
 class CannotRemoveLastRole(DomainError):
     """Raised when removing a role would leave the user with no roles."""
 

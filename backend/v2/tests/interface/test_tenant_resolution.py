@@ -394,6 +394,59 @@ def test_middleware_rejects_when_membership_missing_on_protected_route() -> None
     assert r.status_code == 401
 
 
+def test_401_carries_the_swallowed_auth_failure_reason() -> None:
+    """The middleware's swallowed DomainError code reaches the 401 body (#425).
+
+    Without this the login surface cannot tell a missing membership from a
+    bad token, and the parent just bounces to a blank form.
+    """
+    loader = _RecordingLoader(memberships={})  # every user hits MembershipNotFound
+    app = _make_middleware_app(loader=loader)
+    client = TestClient(app, base_url="http://courtmastr.app.example.com")
+    r = client.get("/whoami", headers={"Authorization": "Bearer u-coach"})
+
+    assert r.status_code == 401
+    error = r.json()["error"]
+    assert error["code"] == "Auth.NotAuthenticated"
+    assert error["details"] == {"reason": "Identity.MembershipNotFound"}
+
+
+def test_401_reason_marks_an_unresolvable_tenant() -> None:
+    """A token with no resolvable tenant is distinguishable from a bad token."""
+    loader = _RecordingLoader(memberships={})
+    app = _make_middleware_app(loader=loader)
+    client = TestClient(app, base_url="http://ghost.example.com")
+    r = client.get("/whoami", headers={"Authorization": "Bearer u-coach"})
+
+    assert r.status_code == 401
+    assert r.json()["error"]["details"] == {"reason": "Auth.TenantUnresolved"}
+    assert loader.calls == []
+
+
+def test_401_has_no_reason_when_no_token_was_sent() -> None:
+    """A plain unauthenticated request carries no diagnostic reason."""
+    loader = _RecordingLoader(memberships={})
+    app = _make_middleware_app(loader=loader)
+    client = TestClient(app, base_url="http://courtmastr.app.example.com")
+    r = client.get("/whoami")
+
+    assert r.status_code == 401
+    error = r.json()["error"]
+    assert error["code"] == "Auth.NotAuthenticated"
+    assert error["details"] == {}
+
+
+def test_401_reason_never_leaks_the_underlying_message() -> None:
+    """Only the machine-readable code crosses the boundary — the raised
+    message embeds a user id and must not reach the client."""
+    loader = _RecordingLoader(memberships={})
+    app = _make_middleware_app(loader=loader)
+    client = TestClient(app, base_url="http://courtmastr.app.example.com")
+    r = client.get("/whoami", headers={"Authorization": "Bearer u-coach"})
+
+    assert "u-coach" not in r.text
+
+
 def test_middleware_does_not_set_claims_when_tenant_unresolved() -> None:
     """Unknown host → no tenant → no claims attached and no fallback used."""
     loader = _RecordingLoader(

@@ -48,6 +48,7 @@ UnpaidOccurrenceReason = Literal[
     "rate_gap",
     "missing_session_price_for_percent_revenue",
     "attendance_override",
+    "replaced_by_actual_coach",
     "unknown_unpaid_reason",
 ]
 
@@ -154,6 +155,10 @@ class PayoutUnpaidOccurrence(BaseModel):
     reason: UnpaidOccurrenceReason
     detail: str | None = None
     unresolved: bool = True
+    attributed_coach_id: str | None = None
+    """The coach this occurrence was paid to instead, when the reason is
+    ``replaced_by_actual_coach``. Lets payroll review spot a mistaken
+    ``actual_coach_id`` before the period is approved."""
 
 
 class PayoutLine(BaseModel):

@@ -40,12 +40,14 @@ from backend.v2.interfaces.admin.views import (
     AdminStudentView,
     AdminUserDetailView,
     AdminUserList,
+    AdminUserUpdatedView,
     AdminUserView,
     BulkInviteRequest,
     BulkInviteResponse,
     BulkInviteResultItem,
     ChangeAdminStudentParentRequest,
     CreateAdminUserRequest,
+    LoginInviteOutcomeView,
     LoginInviteResponse,
     ModifyUserRoleRequest,
     StudentLoginInviteRequest,
@@ -223,17 +225,25 @@ async def remove_user_role(
     return AdminUserDetailView(**user.model_dump())
 
 
-@router.patch("/users/{user_id}", response_model=AdminUserDetailView)
+@router.patch("/users/{user_id}", response_model=AdminUserUpdatedView)
 async def update_user(
     user_id: str,
     payload: UpdateAdminUserRequest,
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
-) -> AdminUserDetailView:
+) -> AdminUserUpdatedView:
+    """Edit a directory user; a changed email also re-sends the login invite.
+
+    Firebase clears `email_verified` on an email change and the password
+    login path rejects unverified tokens, so the edit alone would silently
+    lock the user out. The use case sends one fresh invite and reports the
+    outcome in `login_invite` so the admin sees a failed send instead of
+    assuming it worked (issue #436).
+    """
     use_case = use_cases.update_admin_user
     if use_case is None:
         raise HTTPException(status_code=503, detail="Admin user edit is not configured")
-    user = await use_case.execute(
+    result = await use_case.execute(
         user_id,
         UpdateAdminUserCommand(
             email=payload.email,
@@ -245,7 +255,10 @@ async def update_user(
         ),
         academy_id=claims.academy_id,
     )
-    return AdminUserDetailView(**user.model_dump())
+    return AdminUserUpdatedView(
+        **result.user.model_dump(),
+        login_invite=LoginInviteOutcomeView(**result.login_invite.model_dump()),
+    )
 
 
 @router.patch("/users/{user_id}/role", response_model=AdminUserView)
@@ -300,9 +313,16 @@ async def list_students(
     status: str | None = Query(default=None, max_length=32),
     limit: int = Query(default=50, ge=1, le=100),
     cursor: str | None = Query(default=None, max_length=512),
+    missing: str | None = Query(
+        default=None,
+        max_length=200,
+        description="Comma-separated required fields still missing, e.g. "
+        "date_of_birth,emergency_contact_name (issue #380)",
+    ),
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminStudentList:
+    missing_keys = tuple(k.strip() for k in missing.split(",") if k.strip()) if missing else ()
     try:
         if cursor is not None:
             decode_student_cursor(cursor)
@@ -311,6 +331,7 @@ async def list_students(
             status=status,
             limit=limit,
             cursor=cursor,
+            missing=missing_keys,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

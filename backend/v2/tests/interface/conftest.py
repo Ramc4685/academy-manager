@@ -507,6 +507,7 @@ def _build_use_cases(seed_data) -> CoachUseCases:
     occurrences = FakeOccurrenceQuery(seed_data["occurrences"])
     absence_notices = FakeAbsenceNoticeQuery(seed_data.get("absence_notices"))
     occurrence_roster = FakeOccurrenceRosterQuery(seed_data.get("occurrence_roster_entries"))
+    _coach_messages_repo = FakeMessageRepo()
 
     # Adapters wiring coach lookups to enrollment queries.
     class _SL:
@@ -628,7 +629,7 @@ def _build_use_cases(seed_data) -> CoachUseCases:
 
     _get_roster = GetSessionRoster(enrollments=enrollments, students=students)
 
-    return CoachUseCases(
+    use_cases = CoachUseCases(
         list_today=ListCoachOccurrencesForDate(occurrences=occurrences, sessions=sessions),
         get_roster=_get_roster,
         get_occurrence_roster=GetOccurrenceRoster(
@@ -695,7 +696,11 @@ def _build_use_cases(seed_data) -> CoachUseCases:
         ).execute,
         get_profile=_async_none,
         update_profile=_async_none,
+        list_messages=_coach_messages_repo.for_recipient,
+        mark_message_read=_coach_messages_repo.mark_read,
     )
+    use_cases._messages_repo = _coach_messages_repo  # type: ignore[attr-defined]
+    return use_cases
 
 
 def _make_app(claims: AuthClaims, use_cases: CoachUseCases) -> FastAPI:
@@ -720,6 +725,7 @@ def coach_client(seed) -> Iterator[TestClient]:
     app = _make_app(_coach_claims(), use_cases)
     with TestClient(app) as client:
         client.coach_use_cases = use_cases  # type: ignore[attr-defined]
+        client.messages_repo = use_cases._messages_repo  # type: ignore[attr-defined]
         yield client
 
 
@@ -834,6 +840,7 @@ from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     AdminUserDetail,
     AdminUserSummary,
+    UpdateAdminUser,
 )
 from backend.v2.contexts.identity.application.use_cases.manage_user_roles import (
     AddUserRole,
@@ -1496,6 +1503,17 @@ class FakeMessageRepo:
     async def list_announcements(self):
         return [m for m in self.rows.values() if m.kind == "announcement"]
 
+    async def mark_read(self, message_id, user_id):
+        # Mirrors MongoMessageRepository.mark_read: only messages the caller
+        # can actually read (own DM or an announcement) are markable.
+        m = self.rows.get(message_id)
+        if m is None:
+            return
+        if m.recipient_id != user_id and m.kind != "announcement":
+            return
+        if user_id not in m.read_by:
+            m.read_by.append(user_id)
+
 
 @dataclass
 class FakeAdminWaivers:
@@ -1917,7 +1935,12 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
             return [u for u in users if role is None or u.role == role]
 
     class _ListAdminStudents:
-        async def execute(self, search=None, status=None, limit=50, cursor=None):
+        async def execute(self, search=None, status=None, limit=50, cursor=None, missing=()):
+            from backend.v2.shared.profile.completeness import CHILD_REQUIRED
+
+            unknown = set(missing) - set(CHILD_REQUIRED)
+            if unknown:
+                raise ValueError(f"Unknown missing field(s): {', '.join(sorted(unknown))}")
             rows = []
             search_key = full_name_key(search or "") if search else None
             for s in students.students.values():
@@ -2014,10 +2037,64 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
             return self._detail(user_id)
 
     _role_modifier = _FakeRoleModifier()
+    _login_invite_sender = _FakeLoginInviteSender()
+
+    class _FakeAdminUserEditor:
+        """Backs PATCH /admin/users/{id} so the #436 re-invite path is testable.
+
+        `p-2` is deliberately absent from `_FakeLoginInviteSender.known`, so
+        editing its email exercises a failing invite send.
+        """
+
+        def __init__(self) -> None:
+            self.users: dict[str, AdminUserDetail] = {
+                "p-1": AdminUserDetail(
+                    user_id="p-1",
+                    email="parent@example.com",
+                    display_name="Parent One",
+                    role="parent",
+                    status="active",
+                    roles=("parent",),
+                ),
+                "p-2": AdminUserDetail(
+                    user_id="p-2",
+                    email="parent2@example.com",
+                    display_name="Parent Two",
+                    role="parent",
+                    status="active",
+                    roles=("parent",),
+                ),
+            }
+
+        async def get_admin_user(self, user_id, *, academy_id):
+            _ = academy_id
+            return self.users.get(user_id)
+
+        async def update_admin_user(self, user_id, command, *, academy_id):
+            _ = academy_id
+            user = self.users.get(user_id)
+            if user is None:
+                return None
+            update: dict[str, object] = {}
+            if command.email is not None:
+                update["email"] = str(command.email)
+            if command.display_name is not None:
+                update["display_name"] = command.display_name
+            if command.status is not None:
+                update["status"] = command.status
+            self.users[user_id] = user.model_copy(update=update)
+            return self.users[user_id]
+
+    _admin_user_editor = _FakeAdminUserEditor()
 
     return AdminUseCases(
         list_admin_users=_ListAdminUsers(),  # type: ignore[arg-type]
-        send_login_invite=_FakeLoginInviteSender(),  # type: ignore[arg-type]
+        send_login_invite=_login_invite_sender,  # type: ignore[arg-type]
+        update_admin_user=UpdateAdminUser(
+            _admin_user_editor,  # type: ignore[arg-type]
+            reader=_admin_user_editor,  # type: ignore[arg-type]
+            invites=_login_invite_sender,
+        ),
         list_admin_students=_ListAdminStudents(),  # type: ignore[arg-type]
         create_session=create_session,
         edit_session=edit_session,

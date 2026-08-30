@@ -412,3 +412,57 @@ async def test_worker_with_real_mongo_repos_terminally_disables_enrollment(db, a
     assert enrollment["autopay_enrollment_status"] == "disabled"
     assert state["autopay_disable_status"] == "succeeded"
     assert state["autopay_disabled_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_checkout_mint_failure_does_not_reopen_a_paid_invoice(db, acad) -> None:
+    """Issue #426 regression.
+
+    Pay-link mint failures share `payment_attempts` with charge outcomes. A
+    mint failure written AFTER a genuine `succeeded` charge must not become the
+    invoice's "latest status" — otherwise the sweep skips resolve and keeps
+    escalating an invoice that just paid, ending at the terminal rung that
+    disables the parent's autopay.
+    """
+    repo = MongoDunningStateRepository(db)
+    await _seed_invoice(db, academy_id=acad, invoice_id="inv-succeeded", enrollment_id="enr-s")
+    await _seed_invoice(db, academy_id=acad, invoice_id="inv-valid", enrollment_id="enr-v")
+    await repo.prepare_due_states(now=NOW, limit=10)
+    await db["payment_attempts"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "attempt_id": "attempt-succeeded",
+                "invoice_id": "inv-succeeded",
+                "parent_id": "parent-inv-succeeded",
+                "amount_cents": 10_000,
+                "currency": "usd",
+                "status": "succeeded",
+                "idempotency_key": "attempt-succeeded",
+                "created_at": NOW - timedelta(hours=1),
+                "updated_at": NOW - timedelta(hours=1),
+            },
+            {
+                # Newer, but not a charge outcome — an admin re-sent the
+                # invoice while Connect was broken.
+                "academy_id": acad,
+                "attempt_id": "attempt-mint",
+                "invoice_id": "inv-succeeded",
+                "parent_id": "parent-inv-succeeded",
+                "amount_cents": 10_000,
+                "currency": "usd",
+                "status": "checkout_mint_failed",
+                "failure_code": "connected_account_not_ready",
+                "idempotency_key": "attempt-mint",
+                "created_at": NOW,
+                "updated_at": NOW,
+            },
+        ]
+    )
+
+    claimed = await repo.claim_next_due(now=NOW, worker_id="worker-1")
+
+    assert claimed is not None
+    assert claimed[0].invoice_id == "inv-valid", "the paid invoice must not be re-claimed"
+    succeeded_state = await db["dunning_states"].find_one({"invoice_id": "inv-succeeded"})
+    assert succeeded_state["status"] == "resolved"
