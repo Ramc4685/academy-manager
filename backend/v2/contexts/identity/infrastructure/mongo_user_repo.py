@@ -1384,9 +1384,7 @@ class MongoUserRepository:
             # write, because this is the only revocation the admin UI can
             # perform and an exact-`user_id` `$pull` silently no-ops on an
             # alias-keyed row while reporting success everywhere else.
-            await self._pull_membership_role(
-                doc, role=role, academy_id=academy_id, now=now
-            )
+            await self._pull_membership_role(doc, role=role, academy_id=academy_id, now=now)
         else:
             # The additive path keeps the exact-id upsert: granting through a
             # row auth cannot reach is inert, not dangerous, and the upsert is

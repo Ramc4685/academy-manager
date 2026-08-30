@@ -958,9 +958,7 @@ async def test_role_removal_fails_closed_when_the_only_row_is_alias_owned(db) ->
     saying otherwise.
     """
     await _seed_admin_with_membership(db, user_id="u-staff", membership_user_id="shared-id")
-    await db["users"].update_one(
-        {"user_id": "u-staff"}, {"$set": {"roles": ["admin", "parent"]}}
-    )
+    await db["users"].update_one({"user_id": "u-staff"}, {"$set": {"roles": ["admin", "parent"]}})
     await db["users"].insert_one(
         {
             "user_id": "shared-id",
