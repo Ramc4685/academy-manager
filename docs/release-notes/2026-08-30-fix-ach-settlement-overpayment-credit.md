@@ -21,6 +21,17 @@ the remainder once more under a dedicated `:overpayment` idempotency key so the
 same credit path fires. The autopay webhook handler logs a warning whenever a
 settlement converts to credit so admins can see it happened.
 
+Three hardening follow-ups from review are included: (1) reversing an
+allocation (ACH return R01/R10) now also voids the OVERPAYMENT credit minted
+from it — without this, a returned debit would leave the parent a spendable
+credit for clawed-back money; any portion already spent before the return is
+logged for manual recovery. (2) The Checkout overflow arm is best-effort: if
+the payment's unapplied balance was already consumed under a different
+idempotency-key prefix it logs and leaves the remainder unapplied (pre-fix
+behaviour) instead of quarantining the webhook event. (3) `RecordManualPayment`
+still rejects an invoice with no balance due up front, so the new domain
+leniency cannot silently convert an admin's cash entry into account credit.
+
 ## Deploy notes
 No migration and no new collections — credits are written to the existing
 `account_credit_ledger` with `source_type=OVERPAYMENT`, exactly like the

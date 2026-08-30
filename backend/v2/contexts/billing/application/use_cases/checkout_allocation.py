@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from typing import Any
 
 from backend.v2.contexts.billing.application.ports import LedgerRepository
 from backend.v2.contexts.billing.domain.ledger import LedgerInvoice, LedgerPayment
+
+log = logging.getLogger(__name__)
 
 
 async def allocate_checkout_payment_across_invoices(
@@ -57,13 +60,32 @@ async def allocate_checkout_payment_across_invoices(
         overflow_key = f"{allocation_key_prefix}:overpayment"
         existing_overflow = await ledger.get_payment_allocation_by_idempotency_key(overflow_key)
         if existing_overflow is None:
-            await ledger.allocate_payment(
-                payment_id=payment.payment_id,
-                invoice_id=sorted_invoices[0].invoice_id,
-                amount_cents=remaining,
-                idempotency_key=overflow_key,
-            )
-            new_allocations += 1
+            try:
+                await ledger.allocate_payment(
+                    payment_id=payment.payment_id,
+                    invoice_id=sorted_invoices[0].invoice_id,
+                    amount_cents=remaining,
+                    idempotency_key=overflow_key,
+                )
+            except ValueError:
+                # Best-effort arm: the payment's unapplied balance may already have
+                # been consumed under a different key prefix (e.g. a legacy or
+                # reconciler allocation), in which case the domain raises "no
+                # payable invoice balance or payment amount". Before #533 this
+                # remainder was silently dropped; failing here would send an
+                # otherwise-handled webhook event into retry/quarantine, so log
+                # and keep the old tolerant behavior instead.
+                log.warning(
+                    "checkout_allocation: could not convert %d-cent remainder of "
+                    "payment %s into an overpayment credit (prefix=%s); leaving it "
+                    "unapplied as before #533",
+                    remaining,
+                    payment.payment_id,
+                    allocation_key_prefix,
+                    exc_info=True,
+                )
+            else:
+                new_allocations += 1
     return new_allocations
 
 

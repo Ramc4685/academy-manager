@@ -539,6 +539,118 @@ async def test_checkout_settlement_after_manual_payment_credits_remainder(db, ac
 
 
 @pytest.mark.asyncio
+async def test_ach_return_voids_overpayment_credit_minted_from_reversed_allocation(
+    db, acad
+) -> None:
+    """#533 follow-up: when the ACH debit that minted a full-amount overpayment
+    credit is later returned (R01/R10), reversing the allocation must also void
+    the credit — otherwise the parent keeps a spendable credit for money the
+    bank clawed back."""
+    from backend.v2.contexts.billing.application.use_cases.record_manual_payment import (
+        RecordManualPayment,
+        RecordManualPaymentCommand,
+    )
+
+    repo = MongoBillingLedgerRepository(db)
+    now = datetime(2026, 6, 14, 12, 0, tzinfo=UTC)
+    await repo.create_invoice(
+        _make_invoice("inv-533-ret", acad, now), lines=[], idempotency_key="533ret:inv"
+    )
+    uc = RecordManualPayment(ledger=repo)
+    await uc.execute(
+        RecordManualPaymentCommand(
+            invoice_id="inv-533-ret", amount_cents=10_000, payment_method="cash"
+        )
+    )
+
+    ach_payment = await repo.record_payment(
+        _make_payment("ledger-pay-autopay:pi_533ret", acad, now),
+        idempotency_key="autopay-pi:pi_533ret",
+    )
+    result = await repo.allocate_payment(
+        payment_id=ach_payment.payment_id,
+        invoice_id="inv-533-ret",
+        amount_cents=10_000,
+        idempotency_key="autopay-alloc:pi_533ret",
+    )
+    assert result.overpayment_credit is not None
+    credit_id = result.overpayment_credit.credit_id
+
+    # The ACH return arrives: same reversal call the webhook handler makes.
+    reversal = await repo.reverse_payment_allocation(
+        allocation_idempotency_key="autopay-alloc:pi_533ret",
+        reversal_idempotency_key="ach-return:pi_533ret:10000:R01",
+        reason="ach_return",
+        return_code="R01",
+        reversed_at=now,
+    )
+    assert reversal is not None
+
+    credit_doc = await db["account_credit_ledger"].find_one(
+        {"academy_id": acad, "credit_id": credit_id}
+    )
+    assert credit_doc is not None
+    assert credit_doc["status"] == "VOIDED"
+    assert credit_doc["remaining_amount_cents"] == 0
+
+    # Redelivery of the same return event stays idempotent and keeps the void.
+    again = await repo.reverse_payment_allocation(
+        allocation_idempotency_key="autopay-alloc:pi_533ret",
+        reversal_idempotency_key="ach-return:pi_533ret:10000:R01",
+        reason="ach_return",
+        return_code="R01",
+        reversed_at=now,
+    )
+    assert again is not None
+    credit_doc = await db["account_credit_ledger"].find_one(
+        {"academy_id": acad, "credit_id": credit_id}
+    )
+    assert credit_doc is not None
+    assert credit_doc["status"] == "VOIDED"
+    assert credit_doc["remaining_amount_cents"] == 0
+
+    # The invoice keeps its manual payment; the parent's spendable balance is 0.
+    invoice = await repo.get_invoice("inv-533-ret")
+    assert invoice is not None
+    assert invoice.status == "paid"
+    assert invoice.balance_due_cents == 0
+
+
+@pytest.mark.asyncio
+async def test_record_manual_payment_rejects_zero_balance_invoice_in_repo(db, acad) -> None:
+    """A manual payment on an invoice that already has no balance due is rejected
+    up front (pre-#533 behavior preserved for the synchronous admin path) and no
+    LedgerPayment is created."""
+    from backend.v2.contexts.billing.application.use_cases.record_manual_payment import (
+        RecordManualPayment,
+        RecordManualPaymentCommand,
+    )
+
+    repo = MongoBillingLedgerRepository(db)
+    now = datetime(2026, 6, 14, 12, 0, tzinfo=UTC)
+    await repo.create_invoice(
+        _make_invoice("inv-533-zero", acad, now), lines=[], idempotency_key="533zero:inv"
+    )
+    uc = RecordManualPayment(ledger=repo)
+    await uc.execute(
+        RecordManualPaymentCommand(
+            invoice_id="inv-533-zero", amount_cents=10_000, payment_method="cash"
+        )
+    )
+    # NOTE: the repo's repair path flips a zero-balance invoice to "paid", which the
+    # status gate already rejects; the balance gate below covers zero-balance
+    # invoices that remain "open" (e.g. zero-total invoices).
+    payments_before = await db["ledger_payments"].count_documents({"academy_id": acad})
+    with pytest.raises(ValueError):
+        await uc.execute(
+            RecordManualPaymentCommand(
+                invoice_id="inv-533-zero", amount_cents=5_000, payment_method="cash"
+            )
+        )
+    assert await db["ledger_payments"].count_documents({"academy_id": acad}) == payments_before
+
+
+@pytest.mark.asyncio
 async def test_apply_invoice_refund_is_single_writer(db, acad) -> None:
     """P0-3: refunded_cents is written by exactly one repo method and is the single source
     of truth (model value == persisted doc value), replacing the raw composition $inc."""

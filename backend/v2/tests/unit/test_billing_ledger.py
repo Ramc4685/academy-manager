@@ -295,6 +295,21 @@ async def test_record_manual_payment_raises_if_invoice_already_paid() -> None:
 
 
 @pytest.mark.asyncio
+async def test_record_manual_payment_rejects_open_invoice_with_zero_balance() -> None:
+    # #533 follow-up: the domain now converts money on a zero-balance invoice into
+    # an account credit for async settlement paths (late ACH webhooks). A manual
+    # payment is a synchronous admin action, so it must keep rejecting a
+    # zero-balance invoice up front — before any LedgerPayment is created —
+    # instead of silently turning cash into account credit.
+    ledger = _FakeLedger(_make_invoice(status="open", balance_due_cents=0))
+    uc = RecordManualPayment(ledger=ledger)
+    with pytest.raises(ValueError, match="no balance due"):
+        await uc.execute(RecordManualPaymentCommand(invoice_id="inv-1", amount_cents=100))
+    assert ledger.recorded_payment is None
+    assert ledger.allocated is None
+
+
+@pytest.mark.asyncio
 async def test_record_manual_payment_overpayment_creates_credit() -> None:
     # P0-3: overpayment is no longer rejected; it pays the invoice in full and the
     # remainder becomes an account credit (parity with the Stripe allocation path).
