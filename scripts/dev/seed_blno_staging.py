@@ -1938,6 +1938,10 @@ def main() -> None:
         "  export INTERNAL_TENANT_HEADER_NAME='x-internal-tenant-id'", file=sys.stderr
     )
     print(f"  export INTERNAL_TENANT_HEADER_VALUE='{ACADEMY_ID}'", file=sys.stderr)
+    print(
+        "  export PROXY_AUTH_VALUE='<V2_PROXY_SHARED_SECRET from .local/saas-staging.env>'",
+        file=sys.stderr,
+    )
     print(f"  export AUTH_TOKEN='{admin_token}'", file=sys.stderr)
 
 

@@ -293,6 +293,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         TenantResolver(
             lookup=_AcademyLookupAdapter(MongoAcademyRepository(db)),
             allowed_internal_header=settings.allowed_internal_tenant_header,
+            internal_header_secret=settings.proxy_shared_secret,
+            platform_base_domain=settings.platform_base_domain,
         )
         if settings.saas_mode
         else None
@@ -1473,9 +1475,10 @@ def _add_cors_middleware(app: FastAPI, settings: Settings) -> None:
         return
     if "*" in origins:
         raise RuntimeError("Wildcard CORS origins are not allowed")
+    # SECURITY (issue #519): the internal tenant header is deliberately NOT
+    # CORS-whitelisted — it is for internal jobs and platform tooling only,
+    # never for browsers.
     allow_headers = ["Authorization", "Content-Type", "Idempotency-Key", "Stripe-Signature"]
-    if settings.allowed_internal_tenant_header:
-        allow_headers.append(settings.allowed_internal_tenant_header)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
@@ -1658,6 +1661,10 @@ class _AcademyLookupAdapter:
             return doc.get("academy_id")
         doc = await self._domains.find_one({"domain": domain, "status": "verified"})
         return doc.get("academy_id") if doc else None
+
+    async def exists(self, academy_id: str) -> bool:
+        doc = await self._collection.find_one({"academy_id": academy_id})
+        return doc is not None
 
 
 app = create_app()
