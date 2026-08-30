@@ -2,9 +2,14 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from backend.v2.interfaces.registration_routes import router as registration_router
-from backend.v2.shared.http.rate_limit import InMemoryRateLimitMiddleware
+from backend.v2.shared.auth.claims import AuthClaims
+from backend.v2.shared.http.rate_limit import (
+    InMemoryRateLimitMiddleware,
+    StripeSessionRateLimitMiddleware,
+)
 
 
 def _app(proxy_shared_secret: str | None = None) -> FastAPI:
@@ -16,6 +21,12 @@ def _app(proxy_shared_secret: str | None = None) -> FastAPI:
         proxy_shared_secret=proxy_shared_secret,
     )
     app.include_router(registration_router, prefix="/api/v2")
+
+    # Same path as the real route: magic-link router (prefix /magic-link)
+    # mounted under /api/v2 in main.py.
+    @app.post("/api/v2/magic-link/consume")
+    async def _consume_magic_link() -> dict[str, str]:
+        return {"status": "ok"}
 
     @app.post("/api/v2/parent/onboarding/start")
     async def _start_onboarding() -> dict[str, str]:
@@ -197,6 +208,130 @@ def test_stripe_webhook_has_high_ceiling_and_parent_paths_keep_low_limit() -> No
     assert over_limit.status_code == 429
     assert over_limit.headers.get("Retry-After") is not None
     assert parent_statuses == [200, 200, 429]
+
+
+def test_magic_link_consume_is_rate_limited() -> None:
+    app = _app()
+
+    with TestClient(app) as client:
+        responses = [client.post("/api/v2/magic-link/consume") for _ in range(3)]
+
+    assert [response.status_code for response in responses] == [200, 200, 429]
+    assert responses[-1].json()["error"]["code"] == "rate_limit_exceeded"
+
+
+class _StampClaimsMiddleware(BaseHTTPMiddleware):
+    """Test stand-in for TenancyMiddleware: attach claims from a header."""
+
+    async def dispatch(self, request, call_next):
+        user_id = request.headers.get("x-test-user")
+        if user_id:
+            request.state.auth_claims = AuthClaims(
+                user_id=user_id,
+                email=f"{user_id}@example.com",
+                academy_id="academy-1",
+                roles=("parent",),
+            )
+        return await call_next(request)
+
+
+def _stripe_app(limit: int = 2) -> FastAPI:
+    app = FastAPI()
+    # Same ordering as main.py: the per-user limiter is added first, so it is
+    # innermost and runs after claims are attached to request.state.
+    app.add_middleware(StripeSessionRateLimitMiddleware, limit=limit, window_seconds=60)
+    app.add_middleware(_StampClaimsMiddleware)
+
+    for path in (
+        "/api/v2/parent/checkout/start",
+        "/api/v2/parent/autopay/start",
+        "/api/v2/parent/billing/portal",
+        "/api/v2/parent/invoices/pay-balance",
+        "/api/v2/parent/invoices/{invoice_id}/pay",
+    ):
+
+        async def _handler() -> dict[str, str]:
+            return {"status": "ok"}
+
+        app.post(path)(_handler)
+
+    @app.post("/api/v2/parent/enrollments/quote")
+    async def _quote() -> dict[str, str]:
+        return {"status": "ok"}
+
+    return app
+
+
+def test_stripe_session_paths_are_limited_per_user() -> None:
+    app = _stripe_app(limit=2)
+
+    with TestClient(app) as client:
+        user_a = [
+            client.post("/api/v2/parent/checkout/start", headers={"x-test-user": "user-a"})
+            for _ in range(3)
+        ]
+        user_b = [
+            client.post("/api/v2/parent/checkout/start", headers={"x-test-user": "user-b"})
+            for _ in range(3)
+        ]
+
+    # Independent per-user buckets: user B is unaffected by user A's burst.
+    assert [response.status_code for response in user_a] == [200, 200, 429]
+    assert [response.status_code for response in user_b] == [200, 200, 429]
+    assert user_a[-1].json()["error"]["code"] == "rate_limit_exceeded"
+    assert user_a[-1].headers.get("Retry-After") is not None
+
+
+def test_all_stripe_session_creating_paths_are_covered() -> None:
+    app = _stripe_app(limit=1)
+
+    paths = [
+        "/api/v2/parent/checkout/start",
+        "/api/v2/parent/autopay/start",
+        "/api/v2/parent/billing/portal",
+        "/api/v2/parent/invoices/pay-balance",
+        "/api/v2/parent/invoices/inv-123/pay",
+    ]
+    with TestClient(app) as client:
+        for path in paths:
+            first = client.post(path, headers={"x-test-user": "user-a"})
+            second = client.post(path, headers={"x-test-user": "user-a"})
+            assert first.status_code == 200, path
+            assert second.status_code == 429, path
+
+
+def test_stripe_session_paths_are_bucketed_per_path_not_shared() -> None:
+    app = _stripe_app(limit=1)
+
+    with TestClient(app) as client:
+        checkout = client.post("/api/v2/parent/checkout/start", headers={"x-test-user": "user-a"})
+        autopay = client.post("/api/v2/parent/autopay/start", headers={"x-test-user": "user-a"})
+
+    assert checkout.status_code == 200
+    assert autopay.status_code == 200
+
+
+def test_unauthenticated_requests_pass_through_stripe_limiter() -> None:
+    # Without claims the route's own auth answers (here: 200 stub); the
+    # limiter must not 429 or key anonymous traffic.
+    app = _stripe_app(limit=1)
+
+    with TestClient(app) as client:
+        responses = [client.post("/api/v2/parent/checkout/start") for _ in range(3)]
+
+    assert [response.status_code for response in responses] == [200, 200, 200]
+
+
+def test_non_stripe_parent_paths_are_not_limited() -> None:
+    app = _stripe_app(limit=1)
+
+    with TestClient(app) as client:
+        responses = [
+            client.post("/api/v2/parent/enrollments/quote", headers={"x-test-user": "user-a"})
+            for _ in range(3)
+        ]
+
+    assert [response.status_code for response in responses] == [200, 200, 200]
 
 
 def test_rate_limit_ignores_spoofed_x_forwarded_for_header() -> None:

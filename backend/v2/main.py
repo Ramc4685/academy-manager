@@ -145,7 +145,11 @@ from backend.v2.migrations import run_pending_migrations
 from backend.v2.shared.auth.middleware import TenancyMiddleware
 from backend.v2.shared.config import Settings, get_settings
 from backend.v2.shared.events import EventDispatcher, MongoOutbox
-from backend.v2.shared.http import InMemoryRateLimitMiddleware, register_exception_handlers
+from backend.v2.shared.http import (
+    InMemoryRateLimitMiddleware,
+    StripeSessionRateLimitMiddleware,
+    register_exception_handlers,
+)
 from backend.v2.shared.idempotency.mongo_store import MongoIdempotencyStore
 from backend.v2.shared.observability import (
     RequestContextMiddleware,
@@ -1379,6 +1383,9 @@ def create_app() -> FastAPI:
     # The middleware needs access to the LoadAuthClaims use case wired in the
     # lifespan. We expose it via app.state and the middleware reads it
     # lazily on the first request.
+    # Added FIRST ⇒ innermost: runs after _LazyTenancyMiddleware has attached
+    # request.state.auth_claims, which this per-user limiter keys on (#546).
+    app.add_middleware(StripeSessionRateLimitMiddleware)
     app.add_middleware(_LazyTenancyMiddleware)
     app.add_middleware(
         InMemoryRateLimitMiddleware,
