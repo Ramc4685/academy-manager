@@ -464,7 +464,7 @@ function BillingWorkflowPanel({
         <RecordPaymentDialog
           balanceDueCents={balanceDueCents}
           onCancel={() => setModal(null)}
-          onSaved={(payload) => recordAdminInvoicePayment(invoiceId, payload)}
+          onSaved={(payload, options) => recordAdminInvoicePayment(invoiceId, payload, options)}
           onDone={(paymentId) => {
             setModal(null);
             setActionMessage(`Payment recorded: ${paymentId}`);

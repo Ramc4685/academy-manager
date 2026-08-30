@@ -468,3 +468,34 @@ async def test_autopay_setup_checkout_has_connect_params_and_no_pmt_types(
     assert "payment_method_types" not in call
     # Customer created on the platform.
     assert "stripe_account" not in call
+
+
+async def test_session_checkout_expires_shortly_after_creation(
+    fake_stripe: _Recorder,
+) -> None:
+    """Registration checkout must carry a short ``expires_at`` (issue #530):
+    the amount is frozen from a quote snapshot with a 15-minute TTL, and
+    without an explicit expiry Stripe keeps the session payable for ~24h —
+    letting a parent pay a long-stale quote. Stripe's floor is 30 minutes."""
+    from datetime import UTC as _UTC
+    from datetime import datetime as _dt
+
+    gw = _gateway()
+
+    before = int(_dt.now(_UTC).timestamp())
+    await gw.create_checkout_session(
+        parent_id="parent-1",
+        session_id="sess-1",
+        amount_cents=15_000,
+        success_url="https://app.test/ok",
+        cancel_url="https://app.test/cancel",
+        metadata={"academy_id": "acad-1", "payment_id": "pay-1"},
+        connected_account_id=None,
+    )
+    after = int(_dt.now(_UTC).timestamp())
+
+    call = fake_stripe.calls["checkout.Session.create"]
+    expires_at = call["expires_at"]
+    # At least Stripe's 30-minute minimum, and nowhere near the 24h default.
+    assert expires_at >= before + 30 * 60
+    assert expires_at <= after + 45 * 60

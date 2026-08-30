@@ -29,6 +29,7 @@ import {
 import { TenantSwitcher } from "@/components/admin/tenant-switcher";
 import { PersonaSwitcher } from "@/components/persona/persona-switcher";
 import { AccessDeniedNotice } from "@/components/persona/access-denied-notice";
+import { AuthUnavailableScreen } from "@/components/persona/auth-unavailable";
 import { PersonaLogoutButton } from "@/components/persona/logout-button";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
@@ -49,6 +50,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         Loading…
       </div>
     );
+  }
+
+  if (auth.unavailable) {
+    return <AuthUnavailableScreen onRetry={auth.retry} />;
   }
 
   if (!auth.authorized) {

@@ -143,9 +143,14 @@ from backend.v2.interfaces.registration_routes import router as registration_rou
 from backend.v2.interfaces.student.router import router as student_router
 from backend.v2.migrations import run_pending_migrations
 from backend.v2.shared.auth.middleware import TenancyMiddleware
+from backend.v2.shared.caching import TTLCache
 from backend.v2.shared.config import Settings, get_settings
 from backend.v2.shared.events import EventDispatcher, MongoOutbox
-from backend.v2.shared.http import InMemoryRateLimitMiddleware, register_exception_handlers
+from backend.v2.shared.http import (
+    InMemoryRateLimitMiddleware,
+    StripeSessionRateLimitMiddleware,
+    register_exception_handlers,
+)
 from backend.v2.shared.idempotency.mongo_store import MongoIdempotencyStore
 from backend.v2.shared.observability import (
     RequestContextMiddleware,
@@ -166,6 +171,7 @@ from backend.v2.shared.observability.ops_digest import (
 )
 from backend.v2.shared.scheduling import job_lease
 from backend.v2.shared.tenancy.context import tenant_scope
+from backend.v2.shared.tenancy.lookup_cache import CachingAcademyLookup
 from backend.v2.shared.tenancy.resolver import (
     TenantResolutionError,
     TenantResolver,
@@ -287,8 +293,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # single-tenant flows keep working.
     app.state.tenant_resolver = (
         TenantResolver(
-            lookup=_AcademyLookupAdapter(MongoAcademyRepository(db)),
+            # Issue #527: slug/domain routing is read on every request but
+            # changes only on onboarding/domain edits — cache positive hits.
+            lookup=CachingAcademyLookup(_AcademyLookupAdapter(MongoAcademyRepository(db))),
             allowed_internal_header=settings.allowed_internal_tenant_header,
+            internal_header_secret=settings.proxy_shared_secret,
+            platform_base_domain=settings.platform_base_domain,
         )
         if settings.saas_mode
         else None
@@ -1379,6 +1389,9 @@ def create_app() -> FastAPI:
     # The middleware needs access to the LoadAuthClaims use case wired in the
     # lifespan. We expose it via app.state and the middleware reads it
     # lazily on the first request.
+    # Added FIRST ⇒ innermost: runs after _LazyTenancyMiddleware has attached
+    # request.state.auth_claims, which this per-user limiter keys on (#546).
+    app.add_middleware(StripeSessionRateLimitMiddleware)
     app.add_middleware(_LazyTenancyMiddleware)
     app.add_middleware(
         InMemoryRateLimitMiddleware,
@@ -1466,9 +1479,10 @@ def _add_cors_middleware(app: FastAPI, settings: Settings) -> None:
         return
     if "*" in origins:
         raise RuntimeError("Wildcard CORS origins are not allowed")
+    # SECURITY (issue #519): the internal tenant header is deliberately NOT
+    # CORS-whitelisted — it is for internal jobs and platform tooling only,
+    # never for browsers.
     allow_headers = ["Authorization", "Content-Type", "Idempotency-Key", "Stripe-Signature"]
-    if settings.allowed_internal_tenant_header:
-        allow_headers.append(settings.allowed_internal_tenant_header)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
@@ -1542,12 +1556,21 @@ def _build_tenant_servability_checker(app: FastAPI):
 
     saas_mode = getattr(app.state, "saas_mode", False)
     lifecycle = getattr(app.state, "tenant_lifecycle", None)
+    # Issue #527: tenant health was a Mongo read per request. Cache it briefly;
+    # a suspension takes effect within the TTL, which is acceptable because
+    # per-request auth (user active + membership status) still gates access.
+    health_cache: TTLCache[tuple[bool, str | None]] = TTLCache(ttl_seconds=30.0)
 
     async def _check(academy_id: str) -> tuple[bool, str | None]:
         if not saas_mode or lifecycle is None:
             return True, None
+        cached = health_cache.get(academy_id)
+        if cached is not None:
+            return cached
         health = await lifecycle.get_tenant_health(academy_id)
-        return health.servable, health.reason
+        result = (health.servable, health.reason)
+        health_cache.set(academy_id, result)
+        return result
 
     return _check
 
@@ -1651,6 +1674,10 @@ class _AcademyLookupAdapter:
             return doc.get("academy_id")
         doc = await self._domains.find_one({"domain": domain, "status": "verified"})
         return doc.get("academy_id") if doc else None
+
+    async def exists(self, academy_id: str) -> bool:
+        doc = await self._collection.find_one({"academy_id": academy_id})
+        return doc is not None
 
 
 app = create_app()

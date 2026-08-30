@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import urllib.parse
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from backend.v2.contexts.billing.application.ports import (
@@ -21,6 +21,14 @@ log = logging.getLogger(__name__)
 
 # Stripe caps each metadata value at 500 characters.
 _STRIPE_METADATA_VALUE_LIMIT = 500
+
+# Registration-checkout sessions expire shortly after creation so a parent
+# cannot pay a stale quote (issue #530): the amount is frozen from a
+# BillingCalculationSnapshot with a 15-minute TTL, but a Checkout Session
+# otherwise stays payable for ~24h. Stripe's minimum ``expires_at`` is
+# 30 minutes from creation; 31 keeps a margin for clock skew so Stripe
+# never rejects the create call.
+_CHECKOUT_SESSION_TTL_SECONDS = 31 * 60
 
 
 def _autopay_enrollment_ids_value(enrollment_ids: list[str] | None) -> str:
@@ -108,6 +116,9 @@ class RealStripeGateway(StripeGateway):
                 "success_url": success_url,
                 "cancel_url": cancel_url,
                 "metadata": metadata,
+                # Cap how long the frozen quote amount stays payable — see
+                # _CHECKOUT_SESSION_TTL_SECONDS (issue #530).
+                "expires_at": int(datetime.now(UTC).timestamp()) + _CHECKOUT_SESSION_TTL_SECONDS,
             }
             if connected_account_id:
                 request["payment_intent_data"] = {

@@ -61,3 +61,17 @@ class MongoStudentLevelProgressRepository(TenantScopedRepository):
             sort=[("started_at", 1)],
         )
         return [self._to_domain(doc) async for doc in cursor]
+
+    async def list_active_for_students(
+        self, student_ids: list[str], program_id: str
+    ) -> list[StudentLevelProgress]:
+        if not student_ids:
+            return []
+        cursor = self._find_many(
+            {
+                "student_id": {"$in": student_ids},
+                "program_id": program_id,
+                "status": "active",
+            }
+        )
+        return [self._to_domain(doc) async for doc in cursor]

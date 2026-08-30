@@ -10,6 +10,7 @@ import { useOnline } from "@/lib/pwa/online";
 import { useServiceWorkerUpdate } from "@/lib/pwa/update-flow";
 import { PersonaSwitcher } from "@/components/persona/persona-switcher";
 import { AccessDeniedNotice } from "@/components/persona/access-denied-notice";
+import { AuthUnavailableScreen } from "@/components/persona/auth-unavailable";
 import { PersonaLogoutButton } from "@/components/persona/logout-button";
 import { ToastProvider } from "@/components/ds/toast";
 import { listParentMessages } from "@/lib/api/v2/messages";
@@ -44,6 +45,10 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
         </div>
       </div>
     );
+  }
+
+  if (auth.unavailable) {
+    return <AuthUnavailableScreen onRetry={auth.retry} />;
   }
 
   if (!auth.authorized) {

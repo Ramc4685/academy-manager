@@ -2196,15 +2196,31 @@ export function chargeAdminInvoiceAutopay(
   );
 }
 
+// Issue #511: one key per payment INTENT, minted when the admin starts filling
+// the form and rotated when the payload changes or a payment succeeds. Callers
+// must hold the key across retries so a resubmit after a 5xx replays instead of
+// double-recording; the backend rejects key reuse with a different payload.
+export function mintPaymentIdempotencyKey(): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `manual-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 export function recordAdminInvoicePayment(
   invoiceId: string,
   payload: RecordManualPaymentRequest,
+  options?: { idempotencyKey?: string },
 ): Promise<RecordManualPaymentResponse> {
+  // The backend keys idempotency on this header. Callers should mint one key per
+  // payment intent (see mintPaymentIdempotencyKey) and reuse it across retries;
+  // the per-call fallback below only protects direct callers that pass nothing.
+  const idempotencyKey = options?.idempotencyKey ?? mintPaymentIdempotencyKey();
   return apiFetch<RecordManualPaymentResponse>(
     `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/record-payment`,
     {
       method: "POST",
       body: JSON.stringify(payload),
+      headers: { "Idempotency-Key": idempotencyKey },
     },
   );
 }

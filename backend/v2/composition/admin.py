@@ -45,6 +45,11 @@ from backend.v2.contexts.billing.application.admin_money import (
 from backend.v2.contexts.billing.application.checkout_paid_period import (
     CheckoutPaidPeriodResolver,
 )
+from backend.v2.contexts.billing.application.manual_payment_idempotency import (
+    check_manual_payment_idempotency,
+    manual_payment_keys,
+    store_manual_payment_idempotency,
+)
 from backend.v2.contexts.billing.application.ports import (
     BillingSetupStudent,
     EnrollmentAutopaySnapshot,
@@ -707,7 +712,7 @@ def compose_admin(
 
     enrollment_autopay_status_gateway = _EnrollmentAutopayStatusGateway()
     curriculum = compose_curriculum(db)
-    student_progress = compose_student_progress(db, outbox)
+    student_progress = compose_student_progress(db, outbox, idempotency_store=idempotency_store)
     generate_daily_teaching_plan = GenerateDailyTeachingPlan(
         occurrences=ListCoachOccurrencesForDate(
             occurrences=occurrences_r,
@@ -1512,19 +1517,28 @@ def compose_admin(
         reference_number: str | None,
         notes: str,
         actor_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        # Idempotency boundary. RecordManualPayment mints a fresh payment_id per call and
-        # is NOT internally idempotent, so a client retry (e.g. after the audit append
-        # below failed) would record a SECOND payment and over-credit the invoice. Key on
-        # the logical request; reference_number/notes disambiguate genuinely-distinct
-        # manual entries that share an amount + method.
-        manual_idem_key = (
-            f"manual_payment:{invoice_id}:{amount_cents}:{payment_method}:"
-            f"{reference_number}:{notes}"
+        # Idempotency boundary (issue #511) — policy lives in the billing context
+        # (manual_payment_idempotency): keyed retries replay, key reuse with a
+        # different payload rejects (422), keyless payload-identical repeats
+        # conflict (409) instead of silently replaying.
+        manual_idem_key, payload_key, payload_fingerprint = manual_payment_keys(
+            invoice_id=invoice_id,
+            amount_cents=amount_cents,
+            payment_method=payment_method,
+            reference_number=reference_number,
+            notes=notes,
+            idempotency_key=idempotency_key,
         )
-        cached = await idempotency_store.get(manual_idem_key)
-        if cached is not None:
-            return cached["payload"]
+        cached_payload = await check_manual_payment_idempotency(
+            idempotency_store,
+            storage_key=manual_idem_key,
+            payload_fingerprint=payload_fingerprint,
+            keyed=bool(idempotency_key),
+        )
+        if cached_payload is not None:
+            return cached_payload
         result = await RecordManualPayment(ledger=billing_ledger_repo).execute(
             RecordManualPaymentCommand(
                 invoice_id=invoice_id,
@@ -1537,7 +1551,14 @@ def compose_admin(
         payload = result.model_dump(mode="python")
         # Record the idempotency result right after the durable money movement and BEFORE
         # the audit append, so an audit failure cannot drive a retry into a second payment.
-        await idempotency_store.put(manual_idem_key, {"payload": payload})
+        await store_manual_payment_idempotency(
+            idempotency_store,
+            storage_key=manual_idem_key,
+            payload_key=payload_key,
+            payload_fingerprint=payload_fingerprint,
+            payload=payload,
+            keyed=bool(idempotency_key),
+        )
         # P0-4: append-only audit of who recorded the manual payment (money movement),
         # mirroring the refund audit. Overpayment that became an account credit is captured
         # in `after` so the trail explains where the excess went.

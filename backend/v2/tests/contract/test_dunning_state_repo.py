@@ -466,3 +466,107 @@ async def test_checkout_mint_failure_does_not_reopen_a_paid_invoice(db, acad) ->
     assert claimed[0].invoice_id == "inv-valid", "the paid invoice must not be re-claimed"
     succeeded_state = await db["dunning_states"].find_one({"invoice_id": "inv-succeeded"})
     assert succeeded_state["status"] == "resolved"
+
+
+class _CountingCollection:
+    """Delegating wrapper that counts queries against one collection."""
+
+    def __init__(self, coll, counters: dict[str, int]) -> None:
+        self._coll = coll
+        self._counters = counters
+
+    def find_one(self, *args, **kwargs):
+        self._counters["find_one"] += 1
+        return self._coll.find_one(*args, **kwargs)
+
+    def find(self, *args, **kwargs):
+        self._counters["find"] += 1
+        return self._coll.find(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._coll, name)
+
+
+class _CountingDb:
+    def __init__(self, db, collection_name: str, counters: dict[str, int]) -> None:
+        self._db = db
+        self._collection_name = collection_name
+        self._counters = counters
+
+    def __getitem__(self, name):
+        coll = self._db[name]
+        if name == self._collection_name:
+            return _CountingCollection(coll, self._counters)
+        return coll
+
+    def __getattr__(self, name):
+        return getattr(self._db, name)
+
+
+@pytest.mark.asyncio
+async def test_prepare_due_states_batches_enrollment_lookups(db, acad) -> None:
+    """Issue #513: the hourly scan must not pay one enrollment query per open
+
+    invoice. A page of due invoices resolves autopay eligibility with a single
+    batched query, and a steady-state tick (every invoice already holding a
+    dunning state) issues no enrollment queries at all.
+    """
+    for idx in range(1, 6):
+        await _seed_invoice(
+            db,
+            academy_id=acad,
+            invoice_id=f"inv-{idx}",
+            enrollment_id=f"enr-{idx}",
+            autopay_status="active" if idx % 2 else "paused",
+        )
+    counters = {"find_one": 0, "find": 0}
+    repo = MongoDunningStateRepository(_CountingDb(db, "student_billing_enrollments", counters))
+
+    assert await repo.prepare_due_states(now=NOW, limit=100) == 3
+
+    assert counters["find_one"] == 0, "per-invoice enrollment find_one is the N+1 (#513)"
+    assert counters["find"] == 1, "one page of invoices must need one enrollment query"
+
+    # Steady-state tick: nothing new to create, and eligibility for the
+    # paused stragglers is still resolved in one batched query.
+    assert await repo.prepare_due_states(now=NOW, limit=100) == 0
+    assert counters["find_one"] == 0
+    assert counters["find"] == 2
+
+
+@pytest.mark.asyncio
+async def test_prepare_due_states_pages_and_stops_at_limit(db, acad, monkeypatch) -> None:
+    for idx in range(1, 8):
+        await _seed_invoice(
+            db,
+            academy_id=acad,
+            invoice_id=f"inv-{idx:02d}",
+            enrollment_id=f"enr-{idx:02d}",
+        )
+    # Force multiple pages to exercise the mid-stream limit exit.
+    monkeypatch.setattr(MongoDunningStateRepository, "prepare_batch_size", 3)
+    repo = MongoDunningStateRepository(db)
+
+    assert await repo.prepare_due_states(now=NOW, limit=4) == 4
+
+    created_ids = sorted(
+        [
+            row["invoice_id"]
+            async for row in db["dunning_states"].find({"academy_id": acad}, {"invoice_id": 1})
+        ]
+    )
+    assert created_ids == ["inv-01", "inv-02", "inv-03", "inv-04"]
+
+    # The remaining invoices are picked up by the next tick.
+    assert await repo.prepare_due_states(now=NOW, limit=10) == 3
+
+
+@pytest.mark.asyncio
+async def test_migration_0156_indexes_the_dunning_invoice_scan(db) -> None:
+    import importlib
+
+    module = importlib.import_module("backend.v2.migrations.0156_dunning_scan_invoice_index")
+    await module.up(db)
+
+    info = await db["invoices"].index_information()
+    assert "academy_invoice_status_due_date" in info

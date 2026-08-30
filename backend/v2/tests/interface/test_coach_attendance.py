@@ -8,7 +8,7 @@ from __future__ import annotations
 
 def _payload(**overrides):
     base = {
-        "mutation_id": "01HXMUT123",
+        "mutation_id": "01HXMVTATTENDANCE000000001",
         "occurrence_id": "occ-today-1",
         "session_id": "s-today-1",
         "student_id": "st1",
@@ -23,7 +23,7 @@ def test_mark_attendance_happy_path(coach_client):
     r = coach_client.post("/api/v2/coach/attendance", json=_payload())
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["attendance_id"] == "01HXMUT123"
+    assert body["attendance_id"] == "01HXMVTATTENDANCE000000001"
     assert body["status"] == "present"
 
 
@@ -36,8 +36,14 @@ def test_mark_attendance_idempotent_replay(coach_client):
 
 
 def test_mark_attendance_conflict_for_different_mutation(coach_client):
-    coach_client.post("/api/v2/coach/attendance", json=_payload(mutation_id="m1"))
-    r = coach_client.post("/api/v2/coach/attendance", json=_payload(mutation_id="m2"))
+    coach_client.post(
+        "/api/v2/coach/attendance",
+        json=_payload(mutation_id="01HXMVTATTENDANCE000000002"),
+    )
+    r = coach_client.post(
+        "/api/v2/coach/attendance",
+        json=_payload(mutation_id="01HXMVTATTENDANCE000000003"),
+    )
     assert r.status_code == 409
     assert r.json()["error"]["code"] == "Coaching.ConflictAttendanceExists"
 
@@ -103,3 +109,11 @@ def test_correct_attendance_parent_persona_returns_404(parent_client):
         json={"status": "absent"},
     )
     assert r.status_code == 404
+
+
+def test_mark_attendance_non_ulid_mutation_id_rejected(coach_client):
+    # mutation_id must be a 26-char Crockford-base32 ULID (#544): it seeds the
+    # idempotency key and becomes the attendance primary key.
+    for bad in ("m1", "x" * 300, "01HXMVTATTENDANCE00000000!", "01hxmvtattendance000000001"):
+        r = coach_client.post("/api/v2/coach/attendance", json=_payload(mutation_id=bad))
+        assert r.status_code == 422, (bad, r.text)

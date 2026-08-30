@@ -2194,3 +2194,105 @@ async def test_generate_monthly_recovery_honours_tuition_discount_and_credit(db,
     assert invoice["balance_due_cents"] == 0
     # ...and only the 8_000 they owed was taken, not the 10_000 gross.
     assert await credits.balance_for_parent("parent-disc") == 1_000
+
+
+# ---------------------------------------------------------------------------
+# BillingCalculationSnapshot TTL enforcement (issue #530)
+# ---------------------------------------------------------------------------
+
+
+def _quote_snapshot(calculated_at: datetime):
+    from backend.v2.contexts.billing.domain.proration import BillingCalculationSnapshot
+
+    return BillingCalculationSnapshot(
+        monthly_price_cents=10_000,
+        billing_period_start=datetime(2026, 6, 1, tzinfo=UTC),
+        billing_period_end=datetime(2026, 7, 1, tzinfo=UTC),
+        billing_period_label="2026-06",
+        timezone="UTC",
+        total_eligible_classes=8,
+        billable_remaining_classes=4,
+        proration_ratio="4/8",
+        final_amount_cents=5_000,
+        included_occurrence_ids=["sess-1:2026-06-15:18:00"],
+        excluded_occurrences={},
+        calculated_at=calculated_at,
+        calculated_by="parent-1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_consume_within_ttl_transitions_open_to_consumed(db, acad) -> None:
+    quoted_at = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+    from datetime import timedelta
+
+    repo = MongoPaymentRepository(db, clock=lambda: quoted_at + timedelta(minutes=5))
+    stored = await repo.persist_open(
+        snapshot=_quote_snapshot(quoted_at),
+        session_id="sess-1",
+        parent_id="parent-1",
+        student_id=None,
+        enrollment_id=None,
+        ttl_minutes=15,
+        now=quoted_at,
+    )
+
+    consumed = await repo.consume(str(stored.snapshot_id))
+
+    assert consumed is not None
+    assert consumed.status == "CONSUMED"
+    doc = await db["billing_calculation_snapshots"].find_one(
+        {"academy_id": acad, "snapshot_id": stored.snapshot_id}
+    )
+    assert doc["status"] == "CONSUMED"
+
+
+@pytest.mark.asyncio
+async def test_consume_refuses_expired_snapshot_and_stamps_expired(db, acad) -> None:
+    """An OPEN quote past its 15-minute TTL must never be consumed — the TTL
+    was previously decorative (issue #530). The doc is stamped EXPIRED so the
+    audit trail explains the refusal instead of leaving the quote OPEN forever."""
+    quoted_at = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+    from datetime import timedelta
+
+    repo = MongoPaymentRepository(db, clock=lambda: quoted_at + timedelta(minutes=16))
+    stored = await repo.persist_open(
+        snapshot=_quote_snapshot(quoted_at),
+        session_id="sess-1",
+        parent_id="parent-1",
+        student_id=None,
+        enrollment_id=None,
+        ttl_minutes=15,
+        now=quoted_at,
+    )
+
+    consumed = await repo.consume(str(stored.snapshot_id))
+
+    assert consumed is None
+    doc = await db["billing_calculation_snapshots"].find_one(
+        {"academy_id": acad, "snapshot_id": stored.snapshot_id}
+    )
+    assert doc["status"] == "EXPIRED"
+    # mongomock returns naive UTC datetimes; normalise before comparing.
+    assert doc["expired_at"].replace(tzinfo=UTC) == quoted_at + timedelta(minutes=16)
+    # A second consume attempt stays refused (no OPEN doc left).
+    assert await repo.consume(str(stored.snapshot_id)) is None
+
+
+@pytest.mark.asyncio
+async def test_consume_legacy_snapshot_without_expires_at_still_works(db, acad) -> None:
+    """Pre-#530 snapshots have no expires_at; they must stay consumable so
+    in-flight quotes are not bricked by the deploy."""
+    now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+    repo = MongoPaymentRepository(db, clock=lambda: now)
+    snapshot = _quote_snapshot(now).model_copy(
+        update={"snapshot_id": "legacy-snap-1", "status": "OPEN", "expires_at": None}
+    )
+    await db["billing_calculation_snapshots"].insert_one(
+        {**snapshot.model_dump(mode="python"), "academy_id": acad, "session_id": "sess-1"}
+    )
+
+    consumed = await repo.consume("legacy-snap-1")
+
+    assert consumed is not None
+    assert consumed.status == "CONSUMED"

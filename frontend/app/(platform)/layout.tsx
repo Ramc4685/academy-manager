@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { ToastProvider } from "@/components/ds/toast";
+import { AuthUnavailableScreen } from "@/components/persona/auth-unavailable";
 import { PersonaLogoutButton } from "@/components/persona/logout-button";
 import { usePlatformAuth } from "@/lib/auth/use-persona-auth";
 
@@ -31,6 +32,10 @@ export default function PlatformLayout({ children }: { children: React.ReactNode
         </div>
       </div>
     );
+  }
+
+  if (auth.unavailable) {
+    return <AuthUnavailableScreen onRetry={auth.retry} />;
   }
 
   if (!auth.authorized) {

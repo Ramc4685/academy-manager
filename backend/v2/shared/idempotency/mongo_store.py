@@ -13,9 +13,11 @@ class MongoIdempotencyStore:
 
     Index + TTL are created by migration `0001_idempotency_keys.py`.
 
-    Note: this is intentionally *not* tenant-scoped. Idempotency keys must be
-    globally unique (callers prefix them with the tenant if cross-tenant
-    collisions are possible — they are not, for `mutation_id` ULIDs).
+    Note: this store is intentionally *not* tenant-scoped itself. Idempotency
+    keys must be globally unique, so callers MUST embed server-derived scope
+    (tenant, actor) in the key whenever any key component is client-supplied —
+    a raw client value like ``mutation_id`` is attacker-controlled and can be
+    replayed across tenants (#544).
     """
 
     COLLECTION = "idempotency_keys"

@@ -67,6 +67,12 @@ class MongoDunningStateRepository(TenantScopedRepository):
             **{k: v for k, v in doc.items() if k not in ("_id", "idempotency_key")}
         )
 
+    # Invoices are streamed and cross-referenced (existing dunning states,
+    # autopay enrollment) in pages of this size, so the steady-state hourly
+    # tick pays O(open-invoices / page) queries instead of one enrollment
+    # find_one per open invoice (issue #513).
+    prepare_batch_size: ClassVar[int] = 200
+
     async def prepare_due_states(self, *, now: datetime, limit: int) -> int:
         academy_id = current_academy_id()
         created = 0
@@ -79,25 +85,78 @@ class MongoDunningStateRepository(TenantScopedRepository):
                     "balance_due_cents": {"$gt": 0},
                     "due_date": {"$lte": now},
                     "enrollment_id": {"$exists": True, "$ne": None},
-                }
+                },
+                {"invoice_id": 1, "parent_id": 1, "enrollment_id": 1, "due_date": 1},
             )
             .sort([("due_date", ASCENDING), ("invoice_id", ASCENDING)])
         )
+        batch: list[dict[str, Any]] = []
         async for invoice_doc in cursor:
-            if created >= limit:
-                break
-            enrollment_id = str(invoice_doc.get("enrollment_id") or "")
-            if not enrollment_id:
-                continue
-            enrollment = await self._db["student_billing_enrollments"].find_one(
+            batch.append(invoice_doc)
+            if len(batch) >= self.prepare_batch_size:
+                created += await self._prepare_batch(
+                    batch, academy_id=academy_id, now=now, remaining=limit - created
+                )
+                batch = []
+                if created >= limit:
+                    return created
+        if batch:
+            created += await self._prepare_batch(
+                batch, academy_id=academy_id, now=now, remaining=limit - created
+            )
+        return created
+
+    async def _prepare_batch(
+        self,
+        batch: list[dict[str, Any]],
+        *,
+        academy_id: str,
+        now: datetime,
+        remaining: int,
+    ) -> int:
+        """Create dunning states for one page of due invoices.
+
+        Invoices that already hold a dunning state are dropped with a single
+        ``$in`` query (they never count toward the limit, preserving the
+        overfetch-past-existing-rows semantics), and autopay eligibility for
+        the rest is resolved with one batched enrollment query rather than a
+        per-invoice ``find_one``.
+        """
+        if remaining <= 0:
+            return 0
+        invoice_ids = [str(doc["invoice_id"]) for doc in batch]
+        existing = {
+            str(doc["invoice_id"])
+            async for doc in self.collection.find(
+                {"academy_id": academy_id, "invoice_id": {"$in": invoice_ids}},
+                {"invoice_id": 1},
+            )
+        }
+        candidates = [
+            doc
+            for doc in batch
+            if str(doc["invoice_id"]) not in existing and str(doc.get("enrollment_id") or "")
+        ]
+        if not candidates:
+            return 0
+        enrollment_ids = sorted({str(doc["enrollment_id"]) for doc in candidates})
+        autopay_active = {
+            str(doc["enrollment_id"])
+            async for doc in self._db["student_billing_enrollments"].find(
                 {
                     "academy_id": academy_id,
-                    "enrollment_id": enrollment_id,
+                    "enrollment_id": {"$in": enrollment_ids},
                     "autopay_enrollment_status": "active",
                 },
-                {"_id": 1},
+                {"enrollment_id": 1},
             )
-            if enrollment is None:
+        }
+        created = 0
+        for invoice_doc in candidates:
+            if created >= remaining:
+                break
+            enrollment_id = str(invoice_doc["enrollment_id"])
+            if enrollment_id not in autopay_active:
                 continue
             invoice_id = str(invoice_doc["invoice_id"])
             due_at = _as_datetime(invoice_doc.get("due_date"), now=now)

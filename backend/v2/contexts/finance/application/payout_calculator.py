@@ -28,6 +28,37 @@ class CoachPayoutComputer(Protocol):
         period_end: datetime,
     ) -> Any: ...
 
+    async def execute_many(
+        self,
+        *,
+        coach_ids: list[str],
+        academy_id: str,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> dict[str, Any]: ...
+
+
+def _to_calculation(statement: Any) -> PayoutCalculation:
+    updated = statement.model_copy(
+        update={
+            "lines": [
+                PersistedPayoutLine(
+                    occurrence_id=line.occurrence_id,
+                    coach_id=line.coach_id,
+                    basis=line.basis,
+                    minutes=line.minutes,
+                    amount_minor=line.amount_minor,
+                    currency=line.currency,
+                    rate_id=line.rate_id,
+                    percent_bps=line.percent_bps,
+                    expected_revenue_minor=line.expected_revenue_minor,
+                )
+                for line in statement.lines
+            ]
+        }
+    )
+    return cast(PayoutCalculation, updated)
+
 
 class FinancePayoutCalculator:
     def __init__(self, compute: CoachPayoutComputer) -> None:
@@ -47,22 +78,21 @@ class FinancePayoutCalculator:
             period_start=period_start,
             period_end=period_end,
         )
-        updated = statement.model_copy(
-            update={
-                "lines": [
-                    PersistedPayoutLine(
-                        occurrence_id=line.occurrence_id,
-                        coach_id=line.coach_id,
-                        basis=line.basis,
-                        minutes=line.minutes,
-                        amount_minor=line.amount_minor,
-                        currency=line.currency,
-                        rate_id=line.rate_id,
-                        percent_bps=line.percent_bps,
-                        expected_revenue_minor=line.expected_revenue_minor,
-                    )
-                    for line in statement.lines
-                ]
-            }
+        return _to_calculation(statement)
+
+    async def calculate_many(
+        self,
+        *,
+        coach_ids: list[str],
+        academy_id: str,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> dict[str, PayoutCalculation]:
+        """Batch variant sharing one occurrence fetch across coaches (#529)."""
+        statements = await self._compute.execute_many(
+            coach_ids=coach_ids,
+            academy_id=academy_id,
+            period_start=period_start,
+            period_end=period_end,
         )
-        return cast(PayoutCalculation, updated)
+        return {coach_id: _to_calculation(statement) for coach_id, statement in statements.items()}

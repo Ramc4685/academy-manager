@@ -49,3 +49,12 @@ class MongoSkillCertificateRepository(TenantScopedRepository):
             sort=[("issued_at", 1)],
         )
         return [self._to_domain(doc) async for doc in cursor]
+
+    async def list_for_students(self, student_ids: list[str]) -> list[SkillCertificate]:
+        if not student_ids:
+            return []
+        cursor = self._find_many(
+            {"student_id": {"$in": student_ids}},
+            sort=[("issued_at", 1)],
+        )
+        return [self._to_domain(doc) async for doc in cursor]

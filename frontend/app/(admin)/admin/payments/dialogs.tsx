@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -10,6 +10,7 @@ import {
   generateMonthlyPayments,
   getAdminInvoiceDetail,
   markPaymentPaid,
+  mintPaymentIdempotencyKey,
   reconcileStripeBilling,
   recordAdminInvoicePayment,
   refundAdminInvoice,
@@ -420,14 +421,27 @@ export function InvoiceDialog({
       generateAdminInvoiceArtifact(invoiceId, artifactType),
     onSuccess: () => void refetch(),
   });
+  // Issue #511: one idempotency key per payment INTENT, held across retries so
+  // a resubmit after a 5xx (payment recorded, response lost) replays instead of
+  // double-recording. Rotates whenever the form fields change — a new payload is
+  // a new intent (the backend 422s key reuse with a different payload) — and on
+  // success, because clearing the fields changes them.
+  const manualPaymentKeyRef = useRef(mintPaymentIdempotencyKey());
+  useEffect(() => {
+    manualPaymentKeyRef.current = mintPaymentIdempotencyKey();
+  }, [invoiceId, manualAmountInput, manualMethod, manualReference, manualNotes]);
   const manualPaymentMutation = useMutation({
     mutationFn: () =>
-      recordAdminInvoicePayment(invoiceId, {
-        amount_cents: Math.round(Number(manualAmountInput) * 100),
-        payment_method: manualMethod,
-        reference_number: manualReference || null,
-        notes: manualNotes,
-      }),
+      recordAdminInvoicePayment(
+        invoiceId,
+        {
+          amount_cents: Math.round(Number(manualAmountInput) * 100),
+          payment_method: manualMethod,
+          reference_number: manualReference || null,
+          notes: manualNotes,
+        },
+        { idempotencyKey: manualPaymentKeyRef.current },
+      ),
     onSuccess: () => {
       setManualAmountInput("");
       setManualReference("");

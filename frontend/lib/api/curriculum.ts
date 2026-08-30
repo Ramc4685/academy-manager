@@ -385,6 +385,7 @@ export function recordAdminTestAttempt(
     success_count: number;
     notes?: string;
     session_id?: string;
+    mutation_id?: string;
   },
 ): Promise<RecordTestAttemptResult> {
   return apiFetch<RecordTestAttemptResult>(
@@ -496,6 +497,7 @@ export function recordTestAttempt(
     success_count: number;
     notes?: string;
     session_id?: string;
+    mutation_id?: string;
   },
 ): Promise<{ recorded: boolean }> {
   return apiFetch<{ recorded: boolean }>(

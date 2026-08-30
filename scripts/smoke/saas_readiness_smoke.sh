@@ -8,6 +8,9 @@ TENANT_HOST="${TENANT_HOST:-tenant-smoke.localhost}"
 INTERNAL_TENANT_HEADER_NAME="${INTERNAL_TENANT_HEADER_NAME:-}"
 INTERNAL_TENANT_HEADER_VALUE="${INTERNAL_TENANT_HEADER_VALUE:-}"
 UNAPPROVED_INTERNAL_TENANT_HEADER_NAME="${UNAPPROVED_INTERNAL_TENANT_HEADER_NAME:-x-internal-tenant-id}"
+# Proxy shared secret presented via x-cm-proxy-auth alongside the internal
+# tenant header (issue #519). Without it the header source is disabled.
+PROXY_AUTH_VALUE="${PROXY_AUTH_VALUE:-}"
 AUTH_TOKEN="${AUTH_TOKEN:-}"
 STATIC_ONLY=0
 
@@ -116,6 +119,9 @@ fi
 if [[ -n "${INTERNAL_TENANT_HEADER_NAME}" && -n "${INTERNAL_TENANT_HEADER_VALUE}" ]]; then
   echo "Checking approved internal tenant header path..."
   header_args=(-H "${INTERNAL_TENANT_HEADER_NAME}: ${INTERNAL_TENANT_HEADER_VALUE}")
+  if [[ -n "${PROXY_AUTH_VALUE}" ]]; then
+    header_args+=(-H "x-cm-proxy-auth: ${PROXY_AUTH_VALUE}")
+  fi
   if [[ -n "${AUTH_TOKEN}" ]]; then
     header_args+=(-H "Authorization: Bearer ${AUTH_TOKEN}")
   fi

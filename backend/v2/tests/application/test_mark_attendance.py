@@ -126,13 +126,14 @@ def _build(**overrides) -> MarkAttendance:
     enrollments = overrides.pop("enrollment_lookup", FakeEnrollmentLookup())
     outbox = overrides.pop("outbox", FakeOutbox())
     idem = overrides.pop("idempotency_store", InMemoryIdempotency())
+    academy_id = overrides.pop("academy_id", lambda: "test-academy")
     return MarkAttendance(
         attendance_repo=repo,
         occurrence_lookup=occurrences,
         enrollment_lookup=enrollments,
         outbox=outbox,
         idempotency_store=idem,
-        academy_id=lambda: "test-academy",
+        academy_id=academy_id,
         clock=lambda: FIXED_NOW,
     )
 
@@ -164,6 +165,73 @@ async def test_idempotent_replay_returns_same_result_one_save() -> None:
     assert first == second
     assert len(repo.saved) == 1
     assert len(outbox.appended) == 1
+
+
+@pytest.mark.asyncio
+async def test_idempotency_key_is_scoped_by_tenant_and_coach() -> None:
+    # #544: client-supplied mutation_id must never be the whole key — the
+    # server derives tenant + coach scope so a replayed mutation_id cannot
+    # collide across academies or coaches.
+    idem = InMemoryIdempotency()
+    uc = _build(idempotency_store=idem)
+    await uc.execute(_cmd(), coach_id="coach-1")
+    assert list(idem.data) == ["mark_attendance:test-academy:coach-1:mut-1"]
+
+
+@pytest.mark.asyncio
+async def test_same_mutation_id_in_other_tenant_is_not_served_from_cache() -> None:
+    # #544 failure scenario: coach in academy B replays a mutation_id already
+    # cached for academy A. B must get its own write, not A's cached result.
+    shared_idem = InMemoryIdempotency()
+    repo_a = FakeAttendanceRepo()
+    repo_b = FakeAttendanceRepo()
+    uc_a = _build(
+        attendance_repo=repo_a,
+        idempotency_store=shared_idem,
+        academy_id=lambda: "academy-a",
+    )
+    uc_b = _build(
+        attendance_repo=repo_b,
+        idempotency_store=shared_idem,
+        academy_id=lambda: "academy-b",
+    )
+
+    await uc_a.execute(_cmd(student_id="st-a"), coach_id="coach-1")
+    result_b = await uc_b.execute(_cmd(student_id="st-b"), coach_id="coach-1")
+
+    # B's write actually persisted (not silently suppressed)...
+    assert len(repo_b.saved) == 1
+    # ...and B's result is B's own data, not academy A's cached result.
+    assert result_b.student_id == "st-b"
+    assert len(shared_idem.data) == 2
+
+
+@pytest.mark.asyncio
+async def test_same_mutation_id_for_other_coach_is_not_served_from_cache() -> None:
+    # A coach cannot pre-claim (or read back) another coach's cached mutation.
+    shared_idem = InMemoryIdempotency()
+    repo = FakeAttendanceRepo()
+    occurrences = FakeOccurrenceLookup()
+
+    async def get_two_coaches(occurrence_id: str):
+        details = await occurrences.get(occurrence_id)
+        return details.model_copy(update={"actual_coach_id": "coach-2"})
+
+    lookup = FakeOccurrenceLookup()
+    lookup.get = get_two_coaches  # type: ignore[method-assign]
+    uc = _build(
+        attendance_repo=repo,
+        idempotency_store=shared_idem,
+        occurrence_lookup=lookup,
+    )
+
+    await uc.execute(_cmd(), coach_id="coach-1")
+    await uc.execute(_cmd(), coach_id="coach-2")
+
+    assert sorted(shared_idem.data) == [
+        "mark_attendance:test-academy:coach-1:mut-1",
+        "mark_attendance:test-academy:coach-2:mut-1",
+    ]
 
 
 @pytest.mark.asyncio

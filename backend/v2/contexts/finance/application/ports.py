@@ -178,6 +178,21 @@ class PayoutCalculator(Protocol):
         period_end: datetime,
     ) -> PayoutCalculation: ...
 
+    async def calculate_many(
+        self,
+        *,
+        coach_ids: list[str],
+        academy_id: str,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> dict[str, PayoutCalculation]:
+        """Calculate previews for many coaches sharing ONE occurrence fetch.
+
+        Used by month-list previews (#529): running ``calculate`` per coach
+        repeats the full academy-month occurrence scan once per coach.
+        """
+        ...
+
 
 class BillingLedgerReader(Protocol):
     """Aggregated billing facts for a reporting period.
