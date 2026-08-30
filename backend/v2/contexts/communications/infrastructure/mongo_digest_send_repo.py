@@ -8,7 +8,7 @@ That single guard makes the daily digest idempotent across scheduler retries.
 A row already in ``failed`` is the one case where refusing is wrong: before #435
 a transient Resend outage cost that coach the whole day's digest, because the
 claim stayed held by a row nothing would ever retry. The duplicate-key branch
-now attempts a conditional re-claim (``digest_claim.reclaim_failed_send``) that
+now attempts a conditional re-claim (``digest_claim.reclaim_retryable_send``) that
 can only ever match a failed row with attempts left.
 """
 
@@ -21,7 +21,7 @@ from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.communications.application.ports import DigestSendRepository
 from backend.v2.contexts.communications.domain.models import DigestSend, DigestSendStatus
-from backend.v2.contexts.communications.infrastructure.digest_claim import reclaim_failed_send
+from backend.v2.contexts.communications.infrastructure.digest_claim import reclaim_retryable_send
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import TenantScopedRepository
 
@@ -43,7 +43,7 @@ class MongoDigestSendRepository(TenantScopedRepository, DigestSendRepository):
         try:
             await self.collection.insert_one(self._to_doc(digest))
         except DuplicateKeyError:
-            doc = await reclaim_failed_send(
+            doc = await reclaim_retryable_send(
                 self.collection,
                 academy_id=academy_id,
                 recipient_field="coach_id",

@@ -148,6 +148,31 @@ def resolve_digest_schedule(
     return ResolvedDigestSchedule(enabled=bool(enabled), hour=int(hour))
 
 
+def digest_window_open(schedule: ResolvedDigestSchedule, current_hour: int) -> bool:
+    """Whether this academy's digest may run on a tick at ``current_hour``.
+
+    The digest hour OPENS a window that runs to midnight, rather than being the
+    single hour in which a send may happen. With the original exact match each
+    academy got exactly one tick per day, and since the retry re-claim only ever
+    runs from ``try_claim`` — reached once per recipient per tick — a transient
+    failure had no later tick to recover on: the whole retry ladder added by
+    #435 was unreachable, and a Resend outage or deploy spanning that one hour
+    silently cost the day's digest (issue #542).
+
+    Extracted here, pure, because the predicate lives inside a scheduler
+    closure in ``main.py`` that no test can reach — the exact-hour bug shipped
+    precisely because nothing pinned this rule.
+
+    Re-running later in the day is safe and cheap by construction: idempotency
+    is the per-(academy, recipient, date) claim, a ``sent`` row can never be
+    re-claimed, and ``try_claim`` runs before plan generation so a
+    nothing-to-do pass costs one duplicate-key insert per recipient. The window
+    needs no upper bound: ``digest_date`` rolls over at midnight, which closes
+    it.
+    """
+    return schedule.enabled and current_hour >= schedule.hour
+
+
 def _id_of(program: Any) -> str:
     if hasattr(program, "model_dump"):
         return str(program.model_dump().get("program_id", ""))

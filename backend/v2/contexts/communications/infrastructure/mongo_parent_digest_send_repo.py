@@ -23,7 +23,7 @@ from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.communications.application.ports import DigestSendRepository
 from backend.v2.contexts.communications.domain.models import DigestSend, DigestSendStatus
-from backend.v2.contexts.communications.infrastructure.digest_claim import reclaim_failed_send
+from backend.v2.contexts.communications.infrastructure.digest_claim import reclaim_retryable_send
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import TenantScopedRepository
 
@@ -46,7 +46,7 @@ class MongoParentDigestSendRepository(TenantScopedRepository, DigestSendReposito
         try:
             await self.collection.insert_one(self._to_doc(digest))
         except DuplicateKeyError:
-            doc = await reclaim_failed_send(
+            doc = await reclaim_retryable_send(
                 self.collection,
                 academy_id=academy_id,
                 recipient_field="parent_id",
