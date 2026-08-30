@@ -42,6 +42,33 @@ class MongoAudienceResolver(AudienceResolver):
             "$or": [{"role": role}, {"roles": role}],
         }
 
+    async def _resolve_users_for_ids(self, user_ids: list[str]) -> list[ResolvedRecipient]:
+        """Fetch user docs for ids, scoped to the current academy.
+
+        The users collection holds one doc per (user, academy) for
+        multi-academy users, plus legacy global docs without academy_id.
+        Match the current tenant's doc or a global doc — never another
+        academy's — and dedupe by user_id, preferring the tenant-scoped
+        doc so its email/display name wins over a global fallback.
+        """
+        academy_id = current_academy_id()
+        cursor = self.db["users"].find(
+            {
+                "academy_id": {"$in": [academy_id, None]},
+                "$or": [{"user_id": {"$in": user_ids}}, {"auth_uid": {"$in": user_ids}}],
+            },
+            {"user_id": 1, "academy_id": 1, "email": 1, "display_name": 1, "name": 1},
+        )
+        best: dict[str, dict[str, Any]] = {}
+        async for doc in cursor:
+            key = str(doc.get("user_id") or doc.get("_id"))
+            existing = best.get(key)
+            if existing is None or (
+                existing.get("academy_id") != academy_id and doc.get("academy_id") == academy_id
+            ):
+                best[key] = doc
+        return [self._user_to_recipient(doc) for doc in best.values()]
+
     async def resolve_academy_audience(self, audience: AcademyAudience) -> list[ResolvedRecipient]:
         membership_cursor = self.db["academy_memberships"].find(
             self._membership_role_filter(audience.role),
@@ -49,11 +76,7 @@ class MongoAudienceResolver(AudienceResolver):
         )
         user_ids = [str(doc["user_id"]) async for doc in membership_cursor if doc.get("user_id")]
         if user_ids:
-            cursor = self.db["users"].find(
-                {"$or": [{"user_id": {"$in": user_ids}}, {"auth_uid": {"$in": user_ids}}]},
-                {"user_id": 1, "email": 1, "display_name": 1, "name": 1},
-            )
-            return [self._user_to_recipient(doc) async for doc in cursor]
+            return await self._resolve_users_for_ids(user_ids)
 
         legacy_cursor = self.db["users"].find(
             self._role_filter(audience.role),
@@ -167,20 +190,7 @@ class MongoAudienceResolver(AudienceResolver):
             str(doc["user_id"]) async for doc in membership_cursor if doc.get("user_id")
         ]
         recipient_user_ids = member_user_ids or user_ids
-        user_cursor = self.db["users"].find(
-            {
-                "$or": [
-                    {"user_id": {"$in": recipient_user_ids}},
-                    {"auth_uid": {"$in": recipient_user_ids}},
-                    {
-                        "academy_id": academy_id,
-                        "user_id": {"$in": user_ids},
-                    },
-                ]
-            },
-            {"user_id": 1, "email": 1, "display_name": 1, "name": 1},
-        )
-        return [self._user_to_recipient(doc) async for doc in user_cursor]
+        return await self._resolve_users_for_ids(recipient_user_ids)
 
     @staticmethod
     def _user_to_recipient(doc: dict[str, Any]) -> ResolvedRecipient:
