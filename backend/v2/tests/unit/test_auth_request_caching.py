@@ -154,11 +154,18 @@ async def test_verifier_cache_never_outlives_token_exp(monkeypatch) -> None:
 
 
 class _CountingLookup:
-    def __init__(self, slugs: dict[str, str], domains: dict[str, str]):
+    def __init__(
+        self,
+        slugs: dict[str, str],
+        domains: dict[str, str],
+        existing: set[str] | None = None,
+    ):
         self.slug_calls = 0
         self.domain_calls = 0
+        self.exists_calls = 0
         self._slugs = slugs
         self._domains = domains
+        self._existing = existing or set()
 
     async def find_by_slug(self, slug: str) -> str | None:
         self.slug_calls += 1
@@ -167,6 +174,10 @@ class _CountingLookup:
     async def find_by_domain(self, domain: str) -> str | None:
         self.domain_calls += 1
         return self._domains.get(domain)
+
+    async def exists(self, academy_id: str) -> bool:
+        self.exists_calls += 1
+        return academy_id in self._existing
 
 
 @pytest.mark.asyncio
@@ -233,3 +244,21 @@ async def test_servability_checker_bypasses_cache_outside_saas_mode() -> None:
     check = _build_tenant_servability_checker(app)
     assert await check("AC-1") == (True, None)
     assert lifecycle.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_lookup_implements_exists_and_caches_only_positives() -> None:
+    """The internal-tenant-header gate (#519) calls exists() through this
+    wrapper; before the passthrough existed it raised AttributeError and the
+    header source was unusable."""
+    inner = _CountingLookup({}, {}, existing={"AC-1"})
+    lookup = CachingAcademyLookup(inner)
+
+    assert await lookup.exists("AC-1") is True
+    assert await lookup.exists("AC-1") is True
+    assert inner.exists_calls == 1
+
+    # Misses are never cached: a just-onboarded academy must resolve at once.
+    assert await lookup.exists("AC-new") is False
+    assert await lookup.exists("AC-new") is False
+    assert inner.exists_calls == 3
