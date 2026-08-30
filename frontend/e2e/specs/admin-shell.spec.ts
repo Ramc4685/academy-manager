@@ -672,6 +672,10 @@ test.describe("Rally admin shell", () => {
 
   for (const route of ADMIN_ROUTES) {
     test(`route ${route.href} mounts`, async ({ page }) => {
+      // Even with a 15s budget these mounts intermittently blow their deadline
+      // on webkit-mobile during full-suite runs; they pass in isolation in ~3s.
+      // Same webkit-under-load pattern as "session detail page mounts" below.
+      test.slow();
       const errors = collectConsoleErrors(page);
       await stubAdminBff(page);
       await page.goto(route.href);
