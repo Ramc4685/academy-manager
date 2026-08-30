@@ -136,3 +136,71 @@ async def test_payment_risk_audience_uses_overdue_ledger_invoices() -> None:
 
     assert [recipient.user_id for recipient in recipients] == ["parent-overdue"]
     assert recipients[0].email == "overdue@example.com"
+
+
+async def test_payment_risk_audience_excludes_draft_invoices() -> None:
+    """Draft invoices are not payable, so their parents must not be dunned."""
+    db = AsyncMongoMockClient()["audience-resolver-payment-risk-draft"]
+    now = datetime.now(UTC)
+    await db["users"].insert_many(
+        [
+            {
+                "user_id": "parent-draft",
+                "email": "draft@example.com",
+                "display_name": "Draft Parent",
+            },
+            {
+                "user_id": "parent-open",
+                "email": "open@example.com",
+                "display_name": "Open Parent",
+            },
+        ]
+    )
+    await db["academy_memberships"].insert_many(
+        [
+            {
+                "academy_id": "acad-1",
+                "user_id": "parent-draft",
+                "roles": ["parent"],
+                "status": "active",
+            },
+            {
+                "academy_id": "acad-1",
+                "user_id": "parent-open",
+                "roles": ["parent"],
+                "status": "active",
+            },
+        ]
+    )
+    await db["invoices"].insert_many(
+        [
+            {
+                "academy_id": "acad-1",
+                "invoice_id": "inv-draft-overdue",
+                "parent_id": "parent-draft",
+                "status": "draft",
+                "total_cents": 1000,
+                "balance_due_cents": 1000,
+                "due_date": now - timedelta(days=30),
+                "created_at": now - timedelta(days=40),
+            },
+            {
+                "academy_id": "acad-1",
+                "invoice_id": "inv-open-overdue",
+                "parent_id": "parent-open",
+                "status": "open",
+                "total_cents": 1000,
+                "balance_due_cents": 1000,
+                "due_date": now - timedelta(days=30),
+                "created_at": now - timedelta(days=40),
+            },
+        ]
+    )
+
+    with tenant_scope("acad-1"):
+        recipients = await MongoAudienceResolver(db).resolve_payment_risk_audience(
+            PaymentRiskAudience(min_days_overdue=7)
+        )
+
+    assert [recipient.user_id for recipient in recipients] == ["parent-open"]
+    assert recipients[0].email == "open@example.com"
