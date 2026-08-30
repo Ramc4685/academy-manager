@@ -37,6 +37,7 @@ from backend.v2.contexts.coaching.domain.events import (
     AttendanceCorrected,
     AttendanceCorrectedPayload,
 )
+from backend.v2.contexts.coaching.domain.models import Attendance
 from backend.v2.shared.events import Outbox
 
 COACH_CORRECTION_WINDOW = timedelta(hours=48)
@@ -74,7 +75,7 @@ class CorrectAttendance:
         occurrence_lookup: OccurrenceLookup,
         outbox: Outbox,
         academy_id: Callable[[], str],
-        clock=lambda: datetime.now(UTC),
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         coach_window: timedelta = COACH_CORRECTION_WINDOW,
     ) -> None:
         self._attendance = attendance_repo
@@ -159,7 +160,7 @@ class CorrectAttendance:
         return self._result(corrected)
 
     @staticmethod
-    def _result(attendance) -> CorrectAttendanceResult:
+    def _result(attendance: Attendance) -> CorrectAttendanceResult:
         return CorrectAttendanceResult(
             attendance_id=attendance.attendance_id,
             occurrence_id=attendance.occurrence_id,
