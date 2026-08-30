@@ -132,7 +132,10 @@ class MongoAudienceResolver(AudienceResolver):
         invoice_cursor = self.db["invoices"].find(
             {
                 "academy_id": academy_id,
-                "status": {"$in": ["open", "partially_paid", "draft"]},
+                # Only payable statuses: draft invoices are excluded because the
+                # parent checkout/digest paths treat only open/partially_paid as
+                # payable — emailing about a draft balance would 404 the pay flow.
+                "status": {"$in": ["open", "partially_paid"]},
                 "balance_due_cents": {"$gt": 0},
                 "due_date": {"$lt": cutoff},
                 "is_deleted": {"$ne": True},
