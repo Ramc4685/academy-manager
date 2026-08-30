@@ -10,11 +10,14 @@ StudentNotEnrolled / ConflictAttendanceExists).
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from backend.v2.contexts.coaching.application.use_cases.bulk_mark_attendance import (
     BulkAttendanceEntry,
     BulkMarkAttendanceCommand,
+)
+from backend.v2.contexts.coaching.application.use_cases.correct_attendance import (
+    CorrectAttendanceCommand,
 )
 from backend.v2.contexts.coaching.application.use_cases.mark_attendance import (
     MarkAttendanceCommand,
@@ -24,6 +27,8 @@ from backend.v2.interfaces.coach.views import (
     BulkAttendanceEntryResponse,
     BulkMarkAttendanceRequest,
     BulkMarkAttendanceResponse,
+    CorrectAttendanceRequest,
+    CorrectAttendanceResponse,
     MarkAttendanceRequest,
     MarkAttendanceResponse,
 )
@@ -62,6 +67,34 @@ async def mark_attendance(
         status=result.status,
         marked_at=result.marked_at,
     )
+
+
+@router.patch(
+    "/occurrences/{occurrence_id}/attendance/{student_id}",
+    response_model=CorrectAttendanceResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Correct a previously recorded attendance mark (48h grace window)",
+)
+async def correct_attendance(
+    occurrence_id: str,
+    student_id: str,
+    body: CorrectAttendanceRequest,
+    claims: AuthClaims = Depends(require_persona("coach")),
+    use_cases: CoachUseCases = Depends(get_coach_use_cases),
+) -> CorrectAttendanceResponse:
+    if use_cases.correct_attendance is None:
+        raise HTTPException(status_code=503, detail="Attendance correction is not configured")
+    result = await use_cases.correct_attendance.execute(
+        CorrectAttendanceCommand(
+            occurrence_id=occurrence_id,
+            student_id=student_id,
+            status=body.status,
+            reason=body.reason,
+        ),
+        actor_id=claims.user_id,
+        actor_role="coach",
+    )
+    return CorrectAttendanceResponse(**result.model_dump())
 
 
 @router.post(

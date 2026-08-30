@@ -25,6 +25,10 @@ class MongoAttendanceRepository(TenantScopedRepository):
             marked_at_client=doc.get("marked_at_client"),
             status=doc["status"],
             client_app_version=str(doc.get("client_app_version", "unknown")),
+            corrected_by=doc.get("corrected_by"),
+            corrected_at=doc.get("corrected_at"),
+            previous_status=doc.get("previous_status"),
+            correction_reason=doc.get("correction_reason"),
         )
 
     async def save(self, attendance: Attendance) -> None:
@@ -58,6 +62,22 @@ class MongoAttendanceRepository(TenantScopedRepository):
                 student_id=attendance.student_id,
                 existing_attendance_id=existing.attendance_id if existing else None,
             ) from None
+
+    async def update_status(self, attendance: Attendance) -> None:
+        """Apply a correction to an existing row (#517): new status plus the
+        audit-trail fields. Scoped by attendance_id inside the tenant."""
+        await self._update_one(
+            {"attendance_id": attendance.attendance_id},
+            {
+                "$set": {
+                    "status": attendance.status,
+                    "corrected_by": attendance.corrected_by,
+                    "corrected_at": attendance.corrected_at,
+                    "previous_status": attendance.previous_status,
+                    "correction_reason": attendance.correction_reason,
+                }
+            },
+        )
 
     async def find_existing(self, occurrence_id: str, student_id: str) -> Attendance | None:
         doc = await self._find_one({"occurrence_id": occurrence_id, "student_id": student_id})

@@ -28,6 +28,27 @@ class AttendanceMarked(DomainEvent):
     payload: AttendanceMarkedPayload
 
 
+class AttendanceCorrectedPayload(BaseModel):
+    model_config = {"frozen": True}
+
+    attendance_id: str
+    occurrence_id: str
+    session_id: str
+    student_id: str
+    previous_status: Literal["present", "absent", "late"]
+    status: Literal["present", "absent", "late"]
+    corrected_by: str
+    corrected_at: datetime
+    actor_role: Literal["coach", "admin"]
+    reason: str | None = None
+
+
+class AttendanceCorrected(DomainEvent):
+    name: Literal["Coaching.AttendanceCorrected"] = "Coaching.AttendanceCorrected"
+    schema_version: Literal[1] = 1
+    payload: AttendanceCorrectedPayload
+
+
 class SessionFeedbackPosted(DomainEvent):
     """Coach posted feedback for a student in a session.
 

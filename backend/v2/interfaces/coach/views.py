@@ -97,6 +97,22 @@ class MarkAttendanceResponse(BaseModel):
     marked_at: datetime
 
 
+class CorrectAttendanceRequest(BaseModel):
+    status: Literal["present", "absent", "late"]
+    reason: str | None = None
+
+
+class CorrectAttendanceResponse(BaseModel):
+    attendance_id: str
+    occurrence_id: str
+    session_id: str
+    student_id: str
+    status: Literal["present", "absent", "late"]
+    previous_status: Literal["present", "absent", "late"] | None = None
+    corrected_by: str | None = None
+    corrected_at: datetime | None = None
+
+
 class LessonPlanView(BaseModel):
     lesson_plan_id: str
     session_id: str

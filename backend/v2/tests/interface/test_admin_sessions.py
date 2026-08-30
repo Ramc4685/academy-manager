@@ -2033,3 +2033,27 @@ def test_cancel_enrollment_emits_event(admin_client):
     # EnrollmentCancelled event was appended.
     new_events = admin_client.seed["outbox"].events[outbox_len_before:]
     assert any(e.name == "Enrollment.EnrollmentCancelled" for e in new_events)
+
+
+def test_admin_can_correct_student_attendance_any_time(admin_client):
+    # Fixture clock is >48h after the seeded mark — the coach window is
+    # irrelevant for admins (#517).
+    r = admin_client.patch(
+        "/api/v2/admin/session-occurrences/occ-admin-1/attendance/st-1",
+        json={"status": "absent", "reason": "parent reported no-show"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "absent"
+    assert body["previous_status"] == "present"
+    assert body["corrected_by"] == "u-admin"
+    assert body["corrected_at"]
+
+
+def test_admin_correct_student_attendance_missing_mark_404(admin_client):
+    r = admin_client.patch(
+        "/api/v2/admin/session-occurrences/occ-admin-1/attendance/ghost",
+        json={"status": "absent"},
+    )
+    assert r.status_code == 404
+    assert r.json()["error"]["code"] == "Coaching.AttendanceNotFound"

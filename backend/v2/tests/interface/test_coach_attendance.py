@@ -80,6 +80,37 @@ def test_mark_attendance_invalid_status_rejected(coach_client):
     assert r.status_code == 422  # FastAPI/Pydantic body validation
 
 
+def test_correct_attendance_within_window(coach_client):
+    coach_client.post("/api/v2/coach/attendance", json=_payload())
+    r = coach_client.patch(
+        "/api/v2/coach/occurrences/occ-today-1/attendance/st1",
+        json={"status": "absent", "reason": "mis-tap"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "absent"
+    assert body["previous_status"] == "present"
+    assert body["corrected_by"]
+    assert body["corrected_at"]
+
+
+def test_correct_attendance_without_existing_mark_404(coach_client):
+    r = coach_client.patch(
+        "/api/v2/coach/occurrences/occ-today-1/attendance/ghost",
+        json={"status": "absent"},
+    )
+    assert r.status_code == 404
+    assert r.json()["error"]["code"] == "Coaching.AttendanceNotFound"
+
+
+def test_correct_attendance_parent_persona_returns_404(parent_client):
+    r = parent_client.patch(
+        "/api/v2/coach/occurrences/occ-today-1/attendance/st1",
+        json={"status": "absent"},
+    )
+    assert r.status_code == 404
+
+
 def test_mark_attendance_non_ulid_mutation_id_rejected(coach_client):
     # mutation_id must be a 26-char Crockford-base32 ULID (#544): it seeds the
     # idempotency key and becomes the attendance primary key.

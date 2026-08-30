@@ -34,6 +34,20 @@ class ConflictAttendanceExists(DomainError):
     status_code = 409
 
 
+class AttendanceNotFound(DomainError):
+    """Correction rejected because no attendance mark exists for this (occurrence, student)."""
+
+    code = "Coaching.AttendanceNotFound"
+    status_code = 404
+
+
+class CorrectionWindowExpired(DomainError):
+    """Coach correction rejected because the grace window has passed (admin can still correct)."""
+
+    code = "Coaching.CorrectionWindowExpired"
+    status_code = 403
+
+
 class BulkSessionNotAssigned(DomainError):
     """Bulk attendance rejected because the coach is not assigned to this occurrence."""
 
