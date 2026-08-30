@@ -135,7 +135,9 @@ from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import 
 )
 from backend.v2.contexts.billing.domain.billing_audit import BillingAuditEntry
 from backend.v2.contexts.billing.domain.ledger import LedgerInvoice, void_invoice
+from backend.v2.contexts.billing.domain.models import Payment
 from backend.v2.contexts.billing.domain.product import Product
+from backend.v2.contexts.billing.domain.proration import BillingCalculationSnapshot
 from backend.v2.contexts.billing.infrastructure.admin_reports_read_model import (
     AdminEffectiveRevenueQuery,
     make_deposit_slip_report,
@@ -642,9 +644,9 @@ class _PaymentSnapshotReader(Protocol):
     ``_CheckoutPaidPeriodResolver`` (keeps the resolver unit-testable with a
     fake instead of the full Mongo repository)."""
 
-    async def get(self, payment_id: str): ...
+    async def get(self, payment_id: str) -> Payment | None: ...
 
-    async def get_snapshot(self, snapshot_id: str): ...
+    async def get_snapshot(self, snapshot_id: str) -> BillingCalculationSnapshot | None: ...
 
 
 class _CheckoutPaidPeriodResolver:
