@@ -213,9 +213,17 @@ if [ "$FRONTEND_CHANGED" = true ] || [ "$BROAD" = true ]; then
     # retry, while passing in 15s on its own. CI=true also sets
     # failOnFlakyTests, so each of those retries blocked the push. Sharding
     # keeps every server fresh and each shard about a third the length.
-    for project in $(e2e_projects); do
+    #
+    # Capture the shard list up front and fail loudly if it is unavailable or
+    # empty — `for project in $(e2e_projects)` ignored the exit code, so a
+    # broken config path silently ran zero shards and passed the gate.
+    E2E_PROJECTS="$(e2e_shard_list)" || {
+      fail "e2e shard list unavailable — refusing to skip the e2e gate"
+      exit 1
+    }
+    while IFS= read -r project; do
       run_check "pnpm e2e ($project)" env CI=true pnpm exec playwright test --project="$project"
-    done
+    done <<< "$E2E_PROJECTS"
   else
     info "E2E skipped (no e2e/ files changed) — use --full to force"
   fi
