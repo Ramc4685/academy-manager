@@ -64,8 +64,12 @@ You will still need real staging (or Phase B tunnels) to satisfy:
   backend/.venv/bin/pip install -r backend/requirements.txt
   ```
 
-- Ports 3000, 4000, 8001, 9099, 27017 are free, or you accept that the
-  default dev compose stack is down.
+- Ports 3000, 4000, 8001 and 9099 are free, or you accept that the default dev
+  compose stack is down. Mongo's 27017 is handled for you: if something else
+  already holds it — a Homebrew `mongod` is the usual culprit — `up` writes
+  `.local/mongo-port-override.yml` and binds staging Mongo to **27018**
+  instead. Nothing to do by hand; `saas-status` always prints the port that is
+  actually bound. Delete that file to go back to 27017.
 - A real public Firebase Web API key is available locally. Put it in
   `frontend/.env.local` or export it before starting the stack:
 
@@ -162,6 +166,79 @@ SaaS readiness smoke checks passed
   (interactive confirm).
 - **Firebase Emulator UI**: http://localhost:4000 — inspect users, mint
   tokens manually.
+
+## Reproducing a bug against the API
+
+The fastest way to confirm a backend defect against realistic data: seed BLno,
+mint a token for that tenant, and drive the admin API with `curl`.
+
+```bash
+scripts/dev/saas_staging.sh blno-seed
+scripts/dev/saas_staging.sh seed --slug blno --domain blno.localhost
+```
+
+The second command prints a block of `export` lines — eval them into your
+shell. Then every request needs **three** headers:
+
+```bash
+curl -s "$API_URL/api/v2/admin/sessions?window=upcoming" \
+  -H "Host: blno.localhost" \
+  -H "Authorization: Bearer $AUTH_TOKEN" \
+  -H "x-cm-proxy-auth: $PROXY_AUTH_VALUE"
+```
+
+The `Host` header is the part that trips people up. Since #571 the tenant is
+resolved from the request host, and the `x-internal-tenant-id` header alone is
+**not** enough — without a tenant `Host` you get a 401 whose body reads
+`Auth.TenantUnresolved`, which looks like a broken token but is not.
+`x-cm-proxy-auth` carries `V2_PROXY_SHARED_SECRET` (#519); the seed generates
+it into `.local/saas-staging.env` and prints it as `PROXY_AUTH_VALUE`.
+
+ID tokens expire after an hour — re-run the `seed` line to mint a fresh one.
+
+To read the database directly (occurrences, statuses, payment rows):
+
+```bash
+docker exec saas-staging-mongo-1 mongosh academy_manager_saas_staging \
+  --quiet --eval 'db.sessions.find({}, {session_id: 1, status: 1, _id: 0})'
+```
+
+### Running uncommitted code in the stack
+
+`up-dev` bind-mounts `./backend` and reloads on save, so backend edits in
+*this* checkout are live immediately. To point the stack at a **different**
+worktree — verifying a fix branch without disturbing your main checkout —
+layer an extra compose file:
+
+```yaml
+# /tmp/fix-stack.yml
+services:
+  backend:
+    volumes:
+      - /abs/path/to/worktree/backend:/app/backend
+  frontend:
+    volumes:
+      - /abs/path/to/worktree/frontend:/app
+      - frontend_saas_dev_node_modules:/app/node_modules
+      - frontend_saas_dev_next:/app/.next
+    environment:
+      CI: "true"            # pnpm won't prompt to purge node_modules
+      NODE_ENV: development
+    command: ["pnpm", "dev", "--port", "3001"]
+```
+
+```bash
+docker compose -p saas-staging \
+  -f docker-compose.yml -f docker-compose.saas.yml \
+  -f .local/mongo-port-override.yml -f docker-compose.saas-dev.yml \
+  -f /tmp/fix-stack.yml up -d
+```
+
+Two things that will otherwise cost you twenty minutes: the frontend `command`
+override is required because the base compose pins `next start`, and a
+bind-mounted source tree shadows the image's baked `.next` production build;
+and `CI=true` is required because pnpm aborts non-interactively when the
+mounted lockfile disagrees with the shared `node_modules` volume.
 
 ## Manual /etc/hosts setup (optional)
 
