@@ -1,4 +1,4 @@
-"""Unit tests for the composition-root _CheckoutPaidPeriodResolver (#506).
+"""Unit tests for the composition-root CheckoutPaidPeriodResolver (#506).
 
 The first-month proration paid at registration checkout leaves a Payment with
 ``enrollment_id=None`` plus a CONSUMED snapshot with no enrollment_id, so the
@@ -13,7 +13,9 @@ from datetime import UTC, datetime
 
 import pytest
 
-from backend.v2.composition.admin import _CheckoutPaidPeriodResolver
+from backend.v2.contexts.billing.application.checkout_paid_period import (
+    CheckoutPaidPeriodResolver,
+)
 from backend.v2.contexts.billing.domain.models import Payment
 from backend.v2.contexts.billing.domain.proration import BillingCalculationSnapshot
 
@@ -79,25 +81,25 @@ class _FakePayments:
 
 @pytest.mark.asyncio
 async def test_resolves_period_for_succeeded_first_month_payment() -> None:
-    resolver = _CheckoutPaidPeriodResolver(_FakePayments(_payment(), _snapshot()))
+    resolver = CheckoutPaidPeriodResolver(_FakePayments(_payment(), _snapshot()))
     assert await resolver.paid_period_for_payment("pay-1") == "2026-08"
 
 
 @pytest.mark.asyncio
 async def test_returns_none_for_missing_payment() -> None:
-    resolver = _CheckoutPaidPeriodResolver(_FakePayments(None, _snapshot()))
+    resolver = CheckoutPaidPeriodResolver(_FakePayments(None, _snapshot()))
     assert await resolver.paid_period_for_payment("pay-1") is None
 
 
 @pytest.mark.asyncio
 async def test_returns_none_for_unpaid_payment() -> None:
-    resolver = _CheckoutPaidPeriodResolver(_FakePayments(_payment(status="pending"), _snapshot()))
+    resolver = CheckoutPaidPeriodResolver(_FakePayments(_payment(status="pending"), _snapshot()))
     assert await resolver.paid_period_for_payment("pay-1") is None
 
 
 @pytest.mark.asyncio
 async def test_returns_none_when_payment_has_no_snapshot_id() -> None:
-    resolver = _CheckoutPaidPeriodResolver(
+    resolver = CheckoutPaidPeriodResolver(
         _FakePayments(_payment(calculation_snapshot_id=None), _snapshot())
     )
     assert await resolver.paid_period_for_payment("pay-1") is None
@@ -105,13 +107,13 @@ async def test_returns_none_when_payment_has_no_snapshot_id() -> None:
 
 @pytest.mark.asyncio
 async def test_returns_none_when_snapshot_is_missing() -> None:
-    resolver = _CheckoutPaidPeriodResolver(_FakePayments(_payment(), None))
+    resolver = CheckoutPaidPeriodResolver(_FakePayments(_payment(), None))
     assert await resolver.paid_period_for_payment("pay-1") is None
 
 
 @pytest.mark.asyncio
 async def test_returns_none_for_non_first_month_snapshot() -> None:
-    resolver = _CheckoutPaidPeriodResolver(
+    resolver = CheckoutPaidPeriodResolver(
         _FakePayments(_payment(), _snapshot(calculation_type="WITHDRAWAL_CREDIT"))
     )
     assert await resolver.paid_period_for_payment("pay-1") is None
@@ -119,7 +121,7 @@ async def test_returns_none_for_non_first_month_snapshot() -> None:
 
 @pytest.mark.asyncio
 async def test_partially_refunded_payment_still_counts_as_paid() -> None:
-    resolver = _CheckoutPaidPeriodResolver(
+    resolver = CheckoutPaidPeriodResolver(
         _FakePayments(_payment(status="partially_refunded"), _snapshot())
     )
     assert await resolver.paid_period_for_payment("pay-1") == "2026-08"

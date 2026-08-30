@@ -48,7 +48,13 @@ class PaymentRefundedPayload(BaseModel):
     payment_id: str
     refunded_cents: int
     total_refunded_cents: int
-    reason: Literal["admin_initiated", "capacity_failed", "duplicate", "other"]
+    reason: Literal[
+        "admin_initiated",
+        "capacity_failed",
+        "registration_declined",
+        "duplicate",
+        "other",
+    ]
 
 
 class PaymentRefunded(DomainEvent):

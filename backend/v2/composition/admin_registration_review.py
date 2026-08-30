@@ -87,6 +87,15 @@ class StudentRegistrationQuery(Protocol):
     ) -> None: ...
 
 
+class RegistrationRefundIssuer(Protocol):
+    """Port for refunding a registration payment when the application is
+    declined (issue #514). Implementations must be safe to call for payments
+    that are not refundable (missing, never captured, already refunded) —
+    those calls are a no-op, so declining an unpaid application still works."""
+
+    async def refund_registration_payment(self, *, payment_id: str, reason: str) -> None: ...
+
+
 class TrialConversionLinker(Protocol):
     """Port for the enrollment context's ``LinkTrialConversion`` use case
     (R3, Task 7). Declared here (rather than imported directly) so this
@@ -190,6 +199,7 @@ class AdminRegistrationReview:
         enrollment_events: EnrollmentEventRepository | None = None,
         trial_conversion: TrialConversionLinker | None = None,
         student_registrations: StudentRegistrationQuery | None = None,
+        refunds: RegistrationRefundIssuer | None = None,
         paid_period_resolver: PaidPeriodResolver | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
@@ -204,6 +214,7 @@ class AdminRegistrationReview:
         self._enrollment_events = enrollment_events
         self._trial_conversion = trial_conversion
         self._student_registrations = student_registrations
+        self._refunds = refunds
         self._paid_period_resolver = paid_period_resolver
         self._now = clock
 
@@ -479,7 +490,6 @@ class AdminRegistrationReview:
         self._assert_reviewable(app, "DECLINING")
         now = self._now()
         app = await self._claim_review(app, "DECLINING", now)
-        await self._renew_review_claim(app)
         decided = app.model_copy(
             update={
                 "status": "DECLINED",
@@ -491,6 +501,19 @@ class AdminRegistrationReview:
             }
         )
         try:
+            await self._renew_review_claim(app)
+            # Issue #514: a parent who paid at checkout and is then declined
+            # must get their money back. Refund BEFORE recording the decision —
+            # if the refund fails the decline is aborted and released back to
+            # PENDING_APPROVAL, so the admin sees the error instead of the
+            # payment being silently retained. The refund itself is idempotent
+            # (and a no-op for unpaid / already-refunded payments), so retrying
+            # the decline after a transient failure is safe.
+            if self._refunds is not None and app.payment_id:
+                await self._refunds.refund_registration_payment(
+                    payment_id=app.payment_id,
+                    reason="registration_declined",
+                )
             await self._complete_review(decided, app)
         except Exception:
             await self._apps.release_review(
@@ -828,3 +851,66 @@ class AdminRegistrationReview:
                 occurred_at=self._now(),
             )
         )
+
+
+class RefundExecutor(Protocol):
+    """Narrow view of Billing's ``IssueRefund`` use case: refund the remaining
+    captured amount of ``payment_id`` (``amount_cents=None`` semantics)."""
+
+    async def refund_remaining(self, *, payment_id: str, reason: str) -> None: ...
+
+
+class RegistrationPaymentQuery(Protocol):
+    """Narrow view of Billing's payment repository for refundability checks."""
+
+    async def get(self, payment_id: str) -> _RefundablePayment | None: ...
+
+
+class _RefundablePayment(Protocol):
+    @property
+    def status(self) -> str: ...
+
+    @property
+    def amount_cents(self) -> int: ...
+
+    @property
+    def refunded_cents(self) -> int: ...
+
+
+_REFUNDABLE_PAYMENT_STATUSES = frozenset({"succeeded", "partially_paid", "partially_refunded"})
+
+
+class RegistrationDeclineRefunds:
+    """`RegistrationRefundIssuer` adapter (issue #514).
+
+    Decides whether the application's payment actually holds captured money
+    before delegating to Billing's refund use case:
+
+    - no payment record, never captured (pending/failed/expired/waived), or
+      already fully refunded → no-op, the decline proceeds;
+    - captured with a refundable remainder → refund it; any failure propagates
+      so the decline is aborted and surfaced to the admin.
+    """
+
+    def __init__(
+        self,
+        *,
+        payments: RegistrationPaymentQuery,
+        refunds: RefundExecutor,
+    ) -> None:
+        self._payments = payments
+        self._refunds = refunds
+
+    async def refund_registration_payment(self, *, payment_id: str, reason: str) -> None:
+        payment = await self._payments.get(payment_id)
+        if payment is None:
+            logger.info(
+                "Declining registration with payment_id=%s but no payment record; skipping refund",
+                payment_id,
+            )
+            return
+        if payment.status not in _REFUNDABLE_PAYMENT_STATUSES:
+            return
+        if payment.amount_cents <= 0 or payment.refunded_cents >= payment.amount_cents:
+            return
+        await self._refunds.refund_remaining(payment_id=payment_id, reason=reason)
