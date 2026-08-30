@@ -540,17 +540,20 @@ def compose_parent(
     invoice_processing = MongoStripeInvoiceProcessingRepository(db)
     transaction_runner = _MongoTransactionRunner(db)
 
+    # Request-time tenant (issue #532): checkout-path use cases stamp the
+    # academy at execute time via request_academy_id, so a second academy's
+    # parent can never mint payments stamped with the boot academy.
     start_checkout = StartCheckout(
         payment_repo=payments_repo,
         stripe=stripe,
-        academy_id=academy_id,
+        academy_id=request_academy_id,
         connected_accounts=connected_accounts_repo,
         settings=billing_settings_repo,
     )
     start_subscription_checkout = StartSubscriptionCheckout(
         subscriptions=subscriptions_repo,
         stripe=stripe,
-        academy_id=academy_id,
+        academy_id=request_academy_id,
         connected_accounts=connected_accounts_repo,
         settings=billing_settings_repo,
     )
@@ -616,7 +619,7 @@ def compose_parent(
         consent_repo=autopay_consents_repo,
         outbox=outbox,
         transaction_runner=transaction_runner,
-        academy_id=academy_id,
+        academy_id=request_academy_id,
     )
 
     handle_webhook = HandleWebhookEvent(

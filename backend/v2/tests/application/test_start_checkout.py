@@ -228,3 +228,65 @@ async def test_platform_fallback_settings_lookup_failure_fails_closed() -> None:
         )
     assert stripe.checkouts == []
     assert repo.saved == []
+
+
+# --- issue #532: request-time academy resolution ---------------------------
+
+
+def _boot_fallback_provider(boot: str = "academy-boot"):
+    """Mirror of compose_parent's request_academy_id helper."""
+    from backend.v2.shared.tenancy import TenantContextUnset, current_academy_id
+
+    def _provider() -> str:
+        try:
+            return current_academy_id()
+        except TenantContextUnset:
+            return boot
+
+    return _provider
+
+
+def _cmd() -> StartCheckoutCommand:
+    return StartCheckoutCommand(
+        parent_id="p1",
+        session_id="s1",
+        amount_cents=15000,
+        success_url="https://app/success",
+        cancel_url="https://app/cancel",
+    )
+
+
+@pytest.mark.asyncio
+async def test_start_checkout_stamps_request_time_academy_from_callable() -> None:
+    """A callable academy_id is resolved at execute time, so the payment and
+    the Stripe metadata carry the REQUEST academy, not a boot-time one
+    (issue #532)."""
+    from backend.v2.shared.tenancy import tenant_scope
+
+    stripe = FakeStripeGateway()
+    repo = FakePaymentRepo()
+    uc = StartCheckout(
+        payment_repo=repo,
+        stripe=stripe,
+        academy_id=_boot_fallback_provider(),
+    )
+    with tenant_scope("academy-b"):
+        await uc.execute(_cmd())
+    assert repo.saved[0].academy_id == "academy-b"
+    assert stripe.checkouts[0]["metadata"]["academy_id"] == "academy-b"
+
+
+@pytest.mark.asyncio
+async def test_start_checkout_callable_academy_falls_back_to_boot_without_context() -> None:
+    """Without a tenant scope the provider's boot fallback keeps
+    single-academy non-HTTP callers unchanged."""
+    stripe = FakeStripeGateway()
+    repo = FakePaymentRepo()
+    uc = StartCheckout(
+        payment_repo=repo,
+        stripe=stripe,
+        academy_id=_boot_fallback_provider(),
+    )
+    await uc.execute(_cmd())
+    assert repo.saved[0].academy_id == "academy-boot"
+    assert stripe.checkouts[0]["metadata"]["academy_id"] == "academy-boot"

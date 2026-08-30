@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -538,7 +539,7 @@ class StartSubscriptionCheckout:
         *,
         subscriptions: SubscriptionRepository,
         stripe: StripeGateway,
-        academy_id: str,
+        academy_id: str | Callable[[], str],
         connected_accounts: ConnectedAccountRepository | None = None,
         settings: BillingSettingsRepository | None = None,
         clock=lambda: datetime.now(UTC),
@@ -553,6 +554,9 @@ class StartSubscriptionCheckout:
     async def execute(
         self, cmd: StartSubscriptionCheckoutCommand
     ) -> StartSubscriptionCheckoutResult:
+        # Resolved at execute time so a request-time tenant provider (issue
+        # #532) stamps the CURRENT academy, never a boot-time one.
+        academy_id = self._academy_id() if callable(self._academy_id) else self._academy_id
         connected_account_id = await self._ready_connected_account_id()
         existing = await self._subscriptions.latest_for_enrollment(cmd.enrollment_id)
         if (
@@ -593,7 +597,7 @@ class StartSubscriptionCheckout:
                 success_url=success_url,
                 cancel_url=cmd.cancel_url,
                 metadata={
-                    "academy_id": self._academy_id,
+                    "academy_id": academy_id,
                     "app_subscription_id": subscription_id,
                     # Legacy key retained so older deployed code and any
                     # already-created Checkout Sessions keep reconciling.
@@ -690,7 +694,7 @@ class GetCheckoutStatus:
         consent_repo: AutopayConsentRepository | None = None,
         outbox: Outbox | None = None,
         transaction_runner: TransactionRunner | None = None,
-        academy_id: str | None = None,
+        academy_id: str | Callable[[], str] | None = None,
         clock=lambda: datetime.now(UTC),
     ) -> None:
         self._payments = payments
@@ -703,6 +707,14 @@ class GetCheckoutStatus:
         self._transaction_runner = transaction_runner
         self._academy_id = academy_id
         self._now = clock
+
+    def _resolved_academy_id(self) -> str | None:
+        # Resolved at call time so a request-time tenant provider (issue #532)
+        # scopes autopay completion to the CURRENT academy, never a boot-time
+        # one.
+        if callable(self._academy_id):
+            return self._academy_id()
+        return self._academy_id
 
     async def execute(
         self,
@@ -786,11 +798,12 @@ class GetCheckoutStatus:
                 status=status or "pending",
                 parent_id=expected_parent_id,
             )
+        academy_id = self._resolved_academy_id()
         if (
             self._stripe is None
             or self._parent_customers is None
             or self._enrollment_autopay is None
-            or self._academy_id is None
+            or academy_id is None
         ):
             raise ValueError("autopay setup completion dependencies are not configured")
         result = await CompleteAutopaySetup(
@@ -800,7 +813,7 @@ class GetCheckoutStatus:
             consent_repo=self._consent_repo,
             outbox=self._outbox,
             transaction_runner=self._transaction_runner,
-            academy_id=self._academy_id,
+            academy_id=academy_id,
             clock=self._now,
         ).execute_from_checkout(
             checkout,
@@ -841,11 +854,12 @@ class GetCheckoutStatus:
                 parent_id=expected_parent_id,
             )
         try:
+            academy_id = self._resolved_academy_id()
             if (
                 self._stripe is None
                 or self._parent_customers is None
                 or self._enrollment_autopay is None
-                or self._academy_id is None
+                or academy_id is None
             ):
                 raise ValueError("autopay opt-in completion dependencies are not configured")
             await CompleteAutopaySetup(
@@ -855,7 +869,7 @@ class GetCheckoutStatus:
                 consent_repo=self._consent_repo,
                 outbox=self._outbox,
                 transaction_runner=self._transaction_runner,
-                academy_id=self._academy_id,
+                academy_id=academy_id,
                 clock=self._now,
             ).execute_from_payment_checkout(
                 checkout,

@@ -1663,3 +1663,55 @@ async def test_checkout_status_plain_payment_checkout_still_raises_payment_not_f
 
     with pytest.raises(PaymentNotFound):
         await uc.execute("cs_pay_optin", parent_id="p1")
+
+
+# ---------------------------------------------------------------------------
+# Issue #532 — request-time academy resolution (callable academy_id)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_start_autopay_setup_stamps_request_time_academy_from_callable() -> None:
+    """A callable academy_id resolves at execute time so the Stripe metadata
+    carries the CURRENT request academy, never a boot-time one (issue #532)."""
+    from backend.v2.shared.tenancy import current_academy_id, tenant_scope
+
+    gateway = _CheckoutGateway()
+    uc = StartSubscriptionCheckout(
+        subscriptions=_SubscriptionRepo(),
+        stripe=gateway,
+        academy_id=current_academy_id,
+    )
+    with tenant_scope("academy-b"):
+        result = await uc.execute(_checkout_command())
+    assert result.checkout_session_id == "cs_setup_1"
+    metadata = dict(gateway.setup_created[0]["metadata"])
+    assert metadata["academy_id"] == "academy-b"
+
+
+@pytest.mark.asyncio
+async def test_checkout_status_resolves_callable_academy_id_at_execute_time() -> None:
+    """GetCheckoutStatus composed with a request-time academy provider still
+    completes autopay setup: the callable resolves at execute time to the
+    academy stamped in the checkout metadata (issue #532)."""
+    from backend.v2.shared.tenancy import current_academy_id, tenant_scope
+
+    now = datetime(2026, 6, 11, tzinfo=UTC)
+    customers = _CustomerRepo()
+    enrollment_autopay = _EnrollmentAutopay()
+    gateway = _setup_checkout_gateway()
+    uc = GetCheckoutStatus(
+        payments=_NoPaymentRepo(),
+        subscriptions=_SubscriptionRepo(),
+        stripe=gateway,
+        parent_customers=customers,
+        enrollment_autopay=enrollment_autopay,
+        academy_id=current_academy_id,
+        clock=lambda: now,
+    )
+
+    with tenant_scope("acad"):
+        result = await uc.execute("cs_setup_complete", parent_id="p1")
+
+    assert result.status == "active"
+    assert enrollment_autopay.setup_completed == ["enr-1"]
