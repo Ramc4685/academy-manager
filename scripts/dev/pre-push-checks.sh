@@ -167,6 +167,7 @@ if [ "$FRONTEND_CHANGED" = true ] || [ "$BROAD" = true ]; then
   run_check "node unit tests" "$NODE_BIN" --no-warnings --test \
     lib/canonical-host.node-test.mjs \
     lib/brand.node-test.mjs \
+    lib/worktree-port.node-test.mjs \
     lib/parent-home.node-test.mjs \
     lib/api/auth-bridge-cookie.node-test.mjs \
     lib/api/auth-token.node-test.mjs \
@@ -221,6 +222,24 @@ if [ "$FRONTEND_CHANGED" = true ] || [ "$BROAD" = true ]; then
       fail "e2e shard list unavailable — refusing to skip the e2e gate"
       exit 1
     }
+    # Pre-flight the e2e port (#522). CI=true forces reuseExistingServer=false,
+    # so an existing listener makes every shard fail as a wall of Playwright
+    # errors. The port is now derived per-worktree, so a collision usually
+    # means a stale dev server from THIS worktree (or an explicit
+    # PLAYWRIGHT_PORT clash) — name the cause up front instead.
+    E2E_PORT="${PLAYWRIGHT_PORT:-$(
+      # shellcheck source=scripts/dev/lib/worktree-port.sh
+      . "$ROOT/scripts/dev/lib/worktree-port.sh"
+      derive_worktree_port "$(cd "$ROOT" && pwd -P)"
+    )}"
+    if lsof -nP -iTCP:"$E2E_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+      fail "port $E2E_PORT is already in use — the e2e webServer cannot bind (CI=true disables server reuse)."
+      echo "Another process owns the e2e port for this worktree (likely a stale 'next dev'," >&2
+      echo "or another worktree if you exported PLAYWRIGHT_PORT). Offenders:" >&2
+      lsof -nP -iTCP:"$E2E_PORT" -sTCP:LISTEN >&2 || true
+      echo "Stop that server (or set PLAYWRIGHT_PORT to a free port) and re-run." >&2
+      exit 1
+    fi
     while IFS= read -r project; do
       run_check "pnpm e2e ($project)" env CI=true pnpm exec playwright test --project="$project"
     done <<< "$E2E_PROJECTS"
