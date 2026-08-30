@@ -511,6 +511,7 @@ def compose_parent(
     """
     settings = get_settings()
     academy_id = _require_academy_id(academy_id)
+    ensure_multi_academy_composable(settings)
 
     def request_academy_id() -> str:
         # Request-time tenant for use cases that stamp academy_id at execute
@@ -1897,12 +1898,15 @@ def compose_parent(
             offset=offset,
         )
 
-    # Session-type billing enrollment
+    # Session-type billing enrollment. Ownership check and enrollment stamping
+    # both resolve the tenant at request time (issue #532): a parent of academy
+    # B must never enroll against — or leak Stripe checkout metadata for — the
+    # boot academy.
     class _StudentOwnerLookup:
         async def is_owned(self, parent_id: str, student_id: str) -> bool:
             doc = await db["students"].find_one(
                 {
-                    "academy_id": academy_id,
+                    "academy_id": request_academy_id(),
                     "student_id": student_id,
                     "$or": [{"parent_id": parent_id}, {"parent_user_id": parent_id}],
                 }
@@ -1914,7 +1918,7 @@ def compose_parent(
         session_types=session_types_repo,
         stripe=stripe,
         student_owner_lookup=_StudentOwnerLookup(),
-        academy_id=academy_id,
+        academy_id=request_academy_id,
         connected_accounts=connected_accounts_repo,
         settings=billing_settings_repo,
     )
@@ -2017,6 +2021,49 @@ class _ConnectAccountResolver:
                 payouts_enabled=payouts_enabled,
                 capabilities=capabilities,
             )
+
+
+# Boot-frozen tenant wiring that intentionally survives in compose_parent
+# (issue #532). Everything on this list is either per-academy composed by the
+# scheduler, request-guarded upstream, or a read path still pending conversion
+# to the request_academy_id() pattern:
+#
+# - HandleWebhookEvent / _EnrollmentBillingIdentity: per-academy BY DESIGN —
+#   the scheduler composes one processor per academy, ingest resolves the
+#   tenant from the event payload, and the handler's cross-academy guards
+#   quarantine mismatches.
+# - Parent read-path closures (payments/credits/children/enrollments/
+#   attendance/invoices/schedule listings): still close over the boot
+#   academy_id. Safe while only one academy is actually served; NOT safe once
+#   saas_mode serves multiple tenants — which is exactly what
+#   ensure_multi_academy_composable refuses.
+_STATIC_TENANT_WIRING_NOTE = (
+    "compose_parent still contains boot-frozen academy_id read paths "
+    "(see _STATIC_TENANT_WIRING_NOTE in backend/v2/composition/parent.py). "
+    "Serving multiple academies (saas_mode=True with tenancy_mode=multi_academy) "
+    "would silently stamp/read the boot academy for other tenants (issue #532). "
+    "Either set APP_TENANCY_MODE=single_academy, finish converting the read "
+    "paths to request_academy_id(), or explicitly acknowledge the risk with "
+    "V2_ALLOW_STATIC_TENANT_PARENT_WIRING=true."
+)
+
+
+def ensure_multi_academy_composable(settings: Any) -> None:
+    """Fail-closed startup guard (issue #532).
+
+    ``tenancy_mode`` defaults to ``multi_academy`` but without ``saas_mode``
+    the tenant middleware resolves every request to ``default_academy_id``, so
+    the boot-frozen wiring is harmless. The dangerous config is the flip that
+    actually serves multiple tenants: ``saas_mode=True`` + ``multi_academy``.
+    Refuse to compose the parent BFF in that mode unless the operator has
+    explicitly acknowledged the remaining static-tenant wiring.
+    """
+    if (
+        getattr(settings, "saas_mode", False)
+        and getattr(settings, "tenancy_mode", "multi_academy") == "multi_academy"
+        and not getattr(settings, "allow_static_tenant_parent_wiring", False)
+    ):
+        raise RuntimeError(_STATIC_TENANT_WIRING_NOTE)
 
 
 def _require_academy_id(academy_id: str | None) -> str:

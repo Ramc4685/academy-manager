@@ -54,6 +54,17 @@ class Settings(BaseSettings):
         ),
     )
     primary_academy_id: str | None = Field(default=None)
+    allow_static_tenant_parent_wiring: bool = Field(
+        default=False,
+        description=(
+            "Explicit acknowledgment that compose_parent still contains "
+            "boot-frozen academy_id wiring (issue #532). Without it, composing "
+            "the parent BFF with saas_mode=True and tenancy_mode=multi_academy "
+            "fails closed at startup. Set only for environments (e.g. the local "
+            "SaaS staging sandbox) that knowingly accept the remaining "
+            "static-tenant read paths."
+        ),
+    )
     enable_platform_routes: bool = Field(default=True)
     enable_owner_role: bool = Field(default=False)
     enable_student_login: bool = Field(default=False)

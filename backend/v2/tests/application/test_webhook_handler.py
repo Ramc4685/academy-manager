@@ -1409,7 +1409,17 @@ async def test_process_next_quarantines_mismatched_metadata_events() -> None:
         }
     ).encode()
 
+    # Ingest now routes on metadata (issue #532): the event is stored under
+    # its own academy, so THIS academy's drain never claims it.
     await uc.accept(body, "test_signature")
+    assert dedup.events["evt_other_academy_pending"]["academy_id"] == "other-academy"
+    res = await uc.process_next(processor_id="test-worker")
+    assert res == {"processed": False, "empty": True}
+
+    # The processing-side guard remains the authority for events that DO get
+    # stored under the wrong tenant (e.g. rows stamped before ingest routing):
+    # claimed here, the metadata mismatch quarantines instead of projecting.
+    dedup.events["evt_other_academy_pending"]["academy_id"] = "acad"
     res = await uc.process_next(processor_id="test-worker")
 
     assert res["status"] == "quarantined"
@@ -1630,7 +1640,12 @@ async def test_autopay_ach_processing_cross_tenant_invoice_is_quarantined() -> N
         }
     ).encode()
 
+    # Ingest routes on metadata (issue #532): stored under other-acad, never
+    # claimed by this academy's drain. Restamp the row to simulate a
+    # wrongly-attributed event and assert the processing guard still holds.
     await uc.accept(body, "test_signature")
+    assert dedup.events["evt_autopay_pi_processing_tenant"]["academy_id"] == "other-acad"
+    dedup.events["evt_autopay_pi_processing_tenant"]["academy_id"] = "acad"
     res = await uc.process_next(processor_id="test-worker")
 
     assert res["status"] == "quarantined"
@@ -4936,3 +4951,113 @@ async def test_a_transient_failure_still_retries_and_recovers(monkeypatch) -> No
     assert first["status"] == "failed"
     assert second["processed"] is True
     assert dedup.events["evt_blip"]["status"] == "processed"
+
+
+# ---------------------------------------------------------------------------
+# Issue #532: ingest-side tenant attribution
+# ---------------------------------------------------------------------------
+
+
+class _FakeAccountResolver:
+    def __init__(self, mapping: dict[str, str]) -> None:
+        self.mapping = mapping
+
+    async def academy_id_for_account(self, stripe_account_id: str) -> str | None:
+        return self.mapping.get(stripe_account_id)
+
+
+@pytest.mark.asyncio
+async def test_accept_stamps_academy_from_event_metadata_not_boot_handler() -> None:
+    """The single /webhooks/stripe endpoint is served by the boot-academy
+    handler, but stored events are drained per academy. Ingest must stamp the
+    academy the event actually belongs to (from our own checkout metadata,
+    signature-verified), or another academy's events would be claimed — and
+    quarantined — by the boot academy's processor (issue #532)."""
+    dedup = FakeDedup()
+    uc = _build(FakePaymentRepo(), dedup=dedup)  # handler academy = "acad"
+    body = json.dumps(
+        {
+            "id": "evt_other_academy",
+            "type": "checkout.session.completed",
+            "data": {
+                "object": {
+                    "id": "cs_b1",
+                    "metadata": {"academy_id": "academy-b"},
+                }
+            },
+        }
+    ).encode()
+
+    res = await uc.accept(body, "test_signature")
+
+    assert res["stored"] is True
+    assert dedup.events["evt_other_academy"]["academy_id"] == "academy-b"
+    # And the boot academy's drain does NOT claim it.
+    assert await dedup.claim_next(academy_id="acad", processor_id="w") is None
+    claimed = await dedup.claim_next(academy_id="academy-b", processor_id="w")
+    assert claimed is not None and claimed["event_id"] == "evt_other_academy"
+
+
+@pytest.mark.asyncio
+async def test_accept_resolves_connect_events_via_account_resolver() -> None:
+    dedup = FakeDedup()
+    uc = HandleWebhookEvent(
+        stripe=FakeStripeGateway(),
+        dedup=dedup,
+        payments=FakePaymentRepo(),
+        subscriptions=FakeSubscriptionRepo(),
+        outbox=FakeOutbox(),
+        academy_id="acad",
+        connected_accounts=_FakeAccountResolver({"acct_b": "academy-b"}),
+    )
+    body = json.dumps(
+        {
+            "id": "evt_connect_b",
+            "type": "account.updated",
+            "account": "acct_b",
+            "data": {"object": {"id": "acct_b", "object": "account"}},
+        }
+    ).encode()
+
+    await uc.accept(body, "test_signature")
+
+    assert dedup.events["evt_connect_b"]["academy_id"] == "academy-b"
+
+
+@pytest.mark.asyncio
+async def test_accept_falls_back_to_handler_academy_without_tenant_markers() -> None:
+    """Platform events with neither metadata.academy_id nor a Connect account
+    keep today's behavior: stored under the handler's academy. Unknown
+    accounts also fall back — the processing-side guards stay the authority
+    and quarantine (with alerting) anything genuinely misattributed."""
+    dedup = FakeDedup()
+    uc = HandleWebhookEvent(
+        stripe=FakeStripeGateway(),
+        dedup=dedup,
+        payments=FakePaymentRepo(),
+        subscriptions=FakeSubscriptionRepo(),
+        outbox=FakeOutbox(),
+        academy_id="acad",
+        connected_accounts=_FakeAccountResolver({}),
+    )
+    plain = json.dumps(
+        {
+            "id": "evt_plain",
+            "type": "checkout.session.completed",
+            "data": {"object": {"id": "cs_x"}},
+        }
+    ).encode()
+    unknown_account = json.dumps(
+        {
+            "id": "evt_unknown_acct",
+            "type": "account.updated",
+            "account": "acct_unknown",
+            "data": {"object": {"id": "acct_unknown", "object": "account"}},
+        }
+    ).encode()
+
+    await uc.accept(plain, "test_signature")
+    await uc.accept(unknown_account, "test_signature")
+
+    assert dedup.events["evt_plain"]["academy_id"] == "acad"
+    assert dedup.events["evt_unknown_acct"]["academy_id"] == "acad"

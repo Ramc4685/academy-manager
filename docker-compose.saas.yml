@@ -73,6 +73,10 @@ services:
       # --- Wave 7 SaaS contract (non-secret config) ---
       V2_SAAS_MODE: "true"
       V2_ENV: "staging"
+      # Issue #532: compose_parent fails closed under saas_mode+multi_academy
+      # because some parent read paths still freeze the boot academy_id. The
+      # local staging sandbox knowingly accepts that until conversion finishes.
+      V2_ALLOW_STATIC_TENANT_PARENT_WIRING: "true"
       V2_MONGO_URL: "mongodb://mongo:27017"
       V2_MONGO_DB: "academy_manager_saas_staging"
       V2_RUN_MIGRATIONS_ON_BOOT: "true"

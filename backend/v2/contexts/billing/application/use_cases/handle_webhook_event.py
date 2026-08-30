@@ -224,15 +224,54 @@ class HandleWebhookEvent:
         event = self._verify(payload, signature)
         event_id, event_type = self._event_identity(event)
 
-        with tenant_scope(self._academy_id):
+        academy_id = await self._ingest_academy_id(event)
+        with tenant_scope(academy_id):
             stored = await self._dedup.store_received(
                 event,
                 raw_payload=payload,
-                academy_id=self._academy_id,
+                academy_id=academy_id,
             )
         if not stored:
             log.info("stripe_webhook_already_stored event_id=%s", event_id)
         return {"received": True, "stored": stored, "type": event_type}
+
+    async def _ingest_academy_id(self, event: dict[str, Any]) -> str:
+        """Best-effort tenant attribution at INGEST time (issue #532).
+
+        The /webhooks/stripe endpoint is served by the boot-academy handler,
+        but the drain claims stored events per academy — an event stamped with
+        the wrong academy would be claimed by the wrong per-academy processor
+        and quarantined by its cross-academy guard instead of reaching its own.
+
+        Resolution order:
+        1. ``metadata.academy_id`` — stamped by our own checkout/subscription
+           creation, delivered back inside the signature-verified payload.
+        2. Top-level ``account`` (Connect events) resolved via the
+           connected-account repo.
+        3. This handler's academy — platform events with neither marker.
+
+        Never raises past signature verification: a resolution failure falls
+        back to this handler's academy, and the processing-side guards
+        (``_validate_event_guards_async``) remain the authority — they
+        quarantine, with alerting, anything stored under the wrong tenant.
+        """
+        metadata_academy = self._event_metadata(event).get("academy_id")
+        if metadata_academy:
+            return metadata_academy
+        account_id = str(event.get("account") or "")
+        if account_id and self._connected_accounts is not None:
+            try:
+                resolved = await self._connected_accounts.academy_id_for_account(account_id)
+            except Exception as exc:
+                log.warning(
+                    "stripe_webhook_ingest_account_resolution_failed account=%s err=%s",
+                    account_id,
+                    exc,
+                )
+                resolved = None
+            if resolved:
+                return resolved
+        return self._academy_id
 
     async def process_next(
         self,
