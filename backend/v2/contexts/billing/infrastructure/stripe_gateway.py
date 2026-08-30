@@ -320,6 +320,18 @@ class RealStripeGateway(StripeGateway):
         )
         return _stripe_object_to_dict(result)
 
+    async def expire_checkout_session(self, checkout_session_id: str) -> None:
+        def _expire() -> None:
+            self._stripe.checkout.Session.expire(checkout_session_id)
+
+        try:
+            await asyncio.to_thread(_expire)
+        except self._stripe.StripeError as exc:
+            # Stripe refuses to expire a session that is already complete or
+            # expired. That is the exact race a supersede has to survive, so we
+            # only make the failure typed — the caller decides it is benign.
+            raise ValueError(f"Stripe Checkout Session expiry failed: {exc}") from exc
+
     async def retrieve_invoice(self, stripe_invoice_id: str) -> dict[str, Any]:
         def _retrieve() -> Any:
             return self._stripe.Invoice.retrieve(stripe_invoice_id)

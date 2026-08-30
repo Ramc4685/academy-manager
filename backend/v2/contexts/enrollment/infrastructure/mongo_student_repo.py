@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -10,6 +11,7 @@ from bson import ObjectId as BsonObjectId
 from pymongo import ReturnDocument
 
 from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
+    MAX_ACTIVE_SESSION_NAMES,
     AdminStudentCurrentPaymentSummary,
     AdminStudentDetail,
     AdminStudentPage,
@@ -31,9 +33,23 @@ from backend.v2.contexts.enrollment.domain.errors import (
     StudentParentNotFound,
 )
 from backend.v2.contexts.enrollment.domain.models import Student
+from backend.v2.shared.profile.completeness import CHILD_REQUIRED, ChildFacts, child_gaps
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _ActiveSessions:
+    """A student's active-session facts for one directory row (issue #104).
+
+    A dataclass rather than a NamedTuple: ``count`` would shadow
+    ``tuple.count`` and mypy rejects the override.
+    """
+
+    count: int = 0  # active enrollment documents
+    total: int = 0  # distinct active sessions
+    names: tuple[str, ...] = ()  # distinct session names, capped at the max
 
 
 class MongoStudentRepository(TenantScopedRepository):
@@ -47,6 +63,13 @@ class MongoStudentRepository(TenantScopedRepository):
             parent_id=str(doc["parent_id"]),
             full_name=str(doc["full_name"]),
             date_of_birth=(str(doc["date_of_birth"]) if doc.get("date_of_birth") else None),
+            emergency_contact_name=(
+                str(doc["emergency_contact_name"]) if doc.get("emergency_contact_name") else None
+            ),
+            emergency_contact_phone=(
+                str(doc["emergency_contact_phone"]) if doc.get("emergency_contact_phone") else None
+            ),
+            medical_notes=(str(doc["medical_notes"]) if doc.get("medical_notes") else None),
             student_user_id=(str(doc["student_user_id"]) if doc.get("student_user_id") else None),
         )
 
@@ -316,6 +339,8 @@ class MongoStudentRepository(TenantScopedRepository):
         dues_status: str,
         parent_name: str | None = None,
         parent_email: str | None = None,
+        active_session_total: int | None = None,
+        active_session_names: list[str] | None = None,
     ) -> AdminStudentSummary:
         first = str(doc.get("first_name") or "").strip()
         last = str(doc.get("last_name") or "").strip()
@@ -328,6 +353,10 @@ class MongoStudentRepository(TenantScopedRepository):
             parent_email=parent_email,
             status=str(doc.get("status") or "active"),
             active_session_count=active_session_count,
+            active_session_total=(
+                active_session_count if active_session_total is None else active_session_total
+            ),
+            active_session_names=list(active_session_names or []),
             last_seen_at=last_seen_at,
             attendance_rate=attendance_rate,
             dues_status=dues_status,
@@ -354,9 +383,20 @@ class MongoStudentRepository(TenantScopedRepository):
         waiver_version: str | None = None,
         recent_attendance: list[AdminStudentRecentAttendance] | None = None,
     ) -> AdminStudentDetail:
+        sessions = enrolled_sessions or []
+        # The detail response already carries enrolled_sessions in full; this
+        # keeps the inherited list-shaped fields truthful rather than empty.
+        active_session_ids = {
+            row.session_id for row in sessions if row.status == "active" and row.session_id
+        }
+        active_session_titles = sorted(
+            {row.session_title for row in sessions if row.status == "active"}
+        )
         summary = cls._to_admin_summary(
             doc,
             active_session_count=active_session_count,
+            active_session_total=len(active_session_ids),
+            active_session_names=active_session_titles[:MAX_ACTIVE_SESSION_NAMES],
             last_seen_at=last_seen_at,
             attendance_rate=attendance_rate,
             dues_status=dues_status,
@@ -388,7 +428,7 @@ class MongoStudentRepository(TenantScopedRepository):
             waiver_signed_at=waiver_signed_at,
             waiver_version=waiver_version,
             recent_attendance=recent_attendance or [],
-            enrolled_sessions=enrolled_sessions or [],
+            enrolled_sessions=sessions,
             payment_history=payment_history or [],
             current_payment=current_payment,
             outstanding_balance_cents=outstanding_balance_cents,
@@ -452,6 +492,16 @@ class MongoStudentRepository(TenantScopedRepository):
         )
 
     async def update_admin_student(
+        self,
+        student_id: str,
+        command: UpdateAdminStudentCommand,
+    ) -> AdminStudentDetail | None:
+        """Admin-facing entry point. Delegates to the persona-neutral write below
+        so parent self-service (which must not import an admin-named symbol)
+        shares the same diff/audit behaviour instead of duplicating it."""
+        return await self.update_student_profile(student_id, command)
+
+    async def update_student_profile(
         self,
         student_id: str,
         command: UpdateAdminStudentCommand,
@@ -582,8 +632,12 @@ class MongoStudentRepository(TenantScopedRepository):
         status: str | None,
         limit: int,
         cursor: str | None,
+        missing: tuple[str, ...] = (),
     ) -> AdminStudentPage:
         academy_id = current_academy_id()
+        unknown_missing_keys = set(missing) - set(CHILD_REQUIRED)
+        if unknown_missing_keys:
+            raise ValueError(f"Unknown missing field(s): {', '.join(sorted(unknown_missing_keys))}")
         docs = [
             doc
             async for doc in self._find_many(
@@ -652,6 +706,22 @@ class MongoStudentRepository(TenantScopedRepository):
                 continue
             if search_key and search_key not in haystack:
                 continue
+            if missing:
+                raw_medical = doc.get("medical_notes")
+                gaps = child_gaps(
+                    ChildFacts(
+                        student_id=student_id,
+                        full_name=student_name,
+                        date_of_birth=(
+                            str(doc["date_of_birth"]) if doc.get("date_of_birth") else None
+                        ),
+                        emergency_contact_name=doc.get("emergency_contact_name"),
+                        emergency_contact_phone=doc.get("emergency_contact_phone"),
+                        medical_notes=str(raw_medical) if raw_medical else None,
+                    )
+                )
+                if not (set(missing) & set(gaps)):
+                    continue
             rows.append(
                 {
                     "doc": doc,
@@ -682,7 +752,7 @@ class MongoStudentRepository(TenantScopedRepository):
         page_rows = page_rows[:limit]
         student_ids = [str(row["student_id"]) for row in page_rows]
 
-        active_counts = await self._active_session_counts(academy_id, student_ids)
+        active_sessions = await self._active_session_summaries(academy_id, student_ids)
         attendance = await self._attendance_summaries(academy_id, student_ids)
         dues = await self._dues_statuses(academy_id, student_ids)
 
@@ -691,10 +761,13 @@ class MongoStudentRepository(TenantScopedRepository):
             doc = row["doc"]
             student_id = str(row["student_id"])
             att = attendance.get(student_id, {})
+            active = active_sessions.get(student_id) or _ActiveSessions()
             students.append(
                 self._to_admin_summary(
                     doc,  # type: ignore[arg-type]
-                    active_session_count=active_counts.get(student_id, 0),
+                    active_session_count=active.count,
+                    active_session_total=active.total,
+                    active_session_names=list(active.names),
                     last_seen_at=att.get("last_seen_at"),
                     attendance_rate=att.get("attendance_rate"),  # type: ignore[arg-type]
                     dues_status=dues.get(student_id, "current"),
@@ -1424,6 +1497,12 @@ class MongoStudentRepository(TenantScopedRepository):
         academy_id: str,
         student_ids: list[str],
     ) -> dict[str, int]:
+        """Active enrollment counts only — no session lookup.
+
+        Kept separate from :meth:`_active_session_summaries` so the student
+        detail path, which resolves its own session titles from
+        ``enrolled_sessions``, does not pay for a ``sessions`` query it discards.
+        """
         if not student_ids:
             return {}
         cursor = self._db["enrollments"].aggregate(
@@ -1439,6 +1518,81 @@ class MongoStudentRepository(TenantScopedRepository):
             ]
         )
         return {str(row["_id"]): int(row["count"]) async for row in cursor}
+
+    async def _active_session_summaries(
+        self,
+        academy_id: str,
+        student_ids: list[str],
+    ) -> dict[str, _ActiveSessions]:
+        """Everything a directory row needs about a student's active sessions.
+
+        ``count`` keeps its older meaning (active enrollment documents), while
+        ``total`` counts *distinct sessions* so it always agrees with ``names``:
+        a student holding two active enrollments for one session is in one
+        session, and rendering "+1 more" next to that single name would invent
+        one.
+
+        Names are capped at ``MAX_ACTIVE_SESSION_NAMES`` so a student in many
+        sessions cannot blow up a directory row; ``total`` carries the remainder.
+        One enrollment aggregation plus one batched session lookup, however many
+        students are on the page.
+        """
+        if not student_ids:
+            return {}
+        cursor = self._db["enrollments"].aggregate(
+            [
+                {
+                    "$match": {
+                        "academy_id": academy_id,
+                        "student_id": {"$in": student_ids},
+                        "status": "active",
+                    }
+                },
+                {
+                    "$group": {
+                        "_id": "$student_id",
+                        "count": {"$sum": 1},
+                        "session_ids": {"$addToSet": "$session_id"},
+                    }
+                },
+            ]
+        )
+        counts: dict[str, int] = {}
+        session_ids_by_student: dict[str, list[str]] = {}
+        async for row in cursor:
+            student_id = str(row["_id"])
+            counts[student_id] = int(row["count"])
+            session_ids_by_student[student_id] = [
+                str(session_id) for session_id in row.get("session_ids") or [] if session_id
+            ]
+
+        all_session_ids = sorted(
+            {
+                session_id
+                for session_ids in session_ids_by_student.values()
+                for session_id in session_ids
+            }
+        )
+        sessions_by_id = await self._sessions_by_id(academy_id, all_session_ids)
+
+        summaries: dict[str, _ActiveSessions] = {}
+        for student_id, session_ids in session_ids_by_student.items():
+            names = sorted(
+                {
+                    self._session_display_name(sessions_by_id.get(session_id) or {})
+                    for session_id in session_ids
+                }
+            )
+            summaries[student_id] = _ActiveSessions(
+                count=counts[student_id],
+                total=len(session_ids),
+                names=tuple(names[:MAX_ACTIVE_SESSION_NAMES]),
+            )
+        return summaries
+
+    @staticmethod
+    def _session_display_name(session: dict[str, object]) -> str:
+        return str(session.get("title") or session.get("name") or "Academy session")
 
     async def _attendance_summaries(
         self,

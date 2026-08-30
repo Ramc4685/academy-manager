@@ -28,6 +28,9 @@ class FakeTenantRepository:
     async def get_by_id(self, academy_id: str) -> Tenant | None:
         return self.tenants.get(academy_id)
 
+    async def list_tenants(self) -> list[Tenant]:
+        return list(self.tenants.values())
+
     async def get_by_slug(self, slug: str) -> Tenant | None:
         academy_id = self.slug_index.get(slug)
         return self.tenants.get(academy_id) if academy_id else None

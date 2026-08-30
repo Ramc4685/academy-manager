@@ -11,12 +11,18 @@
  */
 
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type UseQueryResult,
+} from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
 
 import {
   chargeAdminInvoiceAutopay,
   confirmLegacyMatch,
+  fetchConnectReadiness,
   fetchDunningFailures,
   fetchFailedPaymentAttempts,
   fetchInvoiceAttempts,
@@ -26,6 +32,7 @@ import {
   replayWebhookEvent,
   triggerReconciliation,
   type BillingPaymentAttempt,
+  type ConnectReadiness,
   type DunningRow,
   type FailedPaymentRow,
   type LegacyMatchCandidate,
@@ -137,7 +144,13 @@ export default function BillingHealthPage() {
     queryKey: queryKeys.admin.legacyMatchQueue(),
     queryFn: () => fetchLegacyMatchQueue(),
   });
+  const readinessQuery = useQuery({
+    queryKey: queryKeys.admin.connectReadiness(),
+    queryFn: () => fetchConnectReadiness(),
+    refetchInterval: 30_000,
+  });
 
+  const webhookCounts = readinessQuery.data?.webhook_events;
   const runs = runsQuery.data?.runs ?? [];
   const failedRows = failedQuery.data?.rows ?? [];
   const quarantined = quarantinedQuery.data?.events ?? [];
@@ -156,6 +169,8 @@ export default function BillingHealthPage() {
     void queryClient.invalidateQueries({ queryKey: queryKeys.admin.failedAttempts() });
     void queryClient.invalidateQueries({ queryKey: queryKeys.admin.dunningFailures() });
     void queryClient.invalidateQueries({ queryKey: queryKeys.admin.quarantinedEvents() });
+    // Replaying a webhook changes its status, so the backlog counts move too.
+    void queryClient.invalidateQueries({ queryKey: queryKeys.admin.connectReadiness() });
   };
 
   const reconcileMutation = useMutation({
@@ -260,13 +275,28 @@ export default function BillingHealthPage() {
         </Alert>
       )}
 
+      {/* Can we take money at all? (#432) — first thing on the page, because
+          every other number here is moot if the answer is no. */}
+      <PaymentReadinessCard query={readinessQuery} />
+
       {/* Stat cards */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">
         <Metric label="Last Run Scanned" value={String(latestRun?.scanned ?? 0)} />
         <Metric label="Repaired" value={String(latestRun?.repaired ?? 0)} accent="#16a34a" />
         <Metric label="Open Failed Payments" value={String(failedRows.length)} accent="#dc2626" />
         <Metric label="Dunning Cases" value={String(activeDunningRows.length)} accent="#dc2626" />
-        <Metric label="Quarantined Events" value={String(quarantined.length)} accent="#d97706" />
+        {/* Real counts, not the length of a 50-capped list: "50 quarantined"
+            used to mean anything from 50 to 5,000. */}
+        <Metric
+          label="Quarantined Events"
+          value={String(webhookCounts?.quarantined ?? quarantined.length)}
+          accent="#d97706"
+        />
+        <Metric
+          label="Failed Events"
+          value={String(webhookCounts?.failed ?? 0)}
+          accent="#dc2626"
+        />
       </div>
 
       {/* Section 1: Reconciliation runs */}
@@ -836,6 +866,95 @@ function ConfirmMatchDialog({
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  );
+}
+
+/**
+ * Can this academy physically take a payment, and where does the money land?
+ * (issue #432)
+ *
+ * Every parent payment is gated on one condition — an `active` Stripe Connect
+ * account with charges enabled — or on the platform-charge fallback being on.
+ * Nothing in the admin UI showed either, so an academy could be unable to
+ * collect a cent with no signal anywhere.
+ */
+function PaymentReadinessCard({
+  query,
+}: {
+  query: UseQueryResult<ConnectReadiness>;
+}) {
+  if (query.isLoading) {
+    return (
+      <Card p={20}>
+        <div className="h-5 w-48 animate-pulse rounded bg-rally-line" />
+      </Card>
+    );
+  }
+  if (query.isError || !query.data) {
+    return (
+      <Alert tone="red">
+        {(query.error as Error)?.message ?? "Could not load payment readiness."}
+      </Alert>
+    );
+  }
+
+  const data = query.data;
+  const account = data.connected_account;
+
+  // Three states, in the order the owner cares about them.
+  const tone: "green" | "amber" | "red" = !data.payments_possible
+    ? "red"
+    : data.funds_route_to_academy
+      ? "green"
+      : "amber";
+  // "Ready to take payments", not "payments are working": this card checks the
+  // Connect gate, it does not observe a successful charge.
+  const headline = !data.payments_possible
+    ? "Parents cannot pay right now"
+    : data.funds_route_to_academy
+      ? "Ready to take payments"
+      : "Payments can be taken, but money is landing on the platform account";
+  const detail = !data.payments_possible
+    ? account.configured
+      ? "The academy's Stripe account is connected but not ready to take charges, and the platform fallback is off."
+      : "No Stripe account is connected, and the platform fallback is off."
+    : data.funds_route_to_academy
+      ? "Charges route to the academy's own Stripe account."
+      : "The platform charge fallback is on, so charges succeed on the platform account instead of the academy's. Finish Connect onboarding to route funds to the academy.";
+
+  const toneClasses = {
+    green: "bg-green-50 text-green-800",
+    amber: "bg-amber-50 text-amber-800",
+    red: "bg-red-50 text-red-700",
+  }[tone];
+
+  return (
+    <Card p={20}>
+      <div data-testid="payment-readiness" data-tone={tone} className="space-y-3">
+        <div className={`rounded-md p-3 text-sm font-medium ${toneClasses}`} role="status">
+          <div>{headline}</div>
+          <p className="mt-1 font-normal">{detail}</p>
+        </div>
+        <dl className="grid gap-2 text-sm sm:grid-cols-2">
+          <Row
+            label="Connected account"
+            value={account.account_id_masked ?? "Not connected"}
+            mono={Boolean(account.account_id_masked)}
+          />
+          <Row label="Account status" value={account.status ?? "—"} />
+          <Row label="Charges enabled" value={account.charges_enabled ? "Yes" : "No"} />
+          <Row label="Payouts enabled" value={account.payouts_enabled ? "Yes" : "No"} />
+          <Row
+            label="Platform charge fallback"
+            value={data.allow_platform_charge_fallback ? "On" : "Off"}
+          />
+          <Row
+            label="Stuck webhook events"
+            value={`${data.webhook_events.quarantined} quarantined · ${data.webhook_events.failed} failed`}
+          />
+        </dl>
+      </div>
+    </Card>
   );
 }
 

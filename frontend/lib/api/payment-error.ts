@@ -23,6 +23,11 @@ const CODE_MESSAGES: Record<string, string> = {
   // "Stripe connected account is not ready for autopay setup."
   "Billing.CheckoutCreationFailed":
     "Online payments aren't fully set up for your academy yet. Please try again later or contact the academy.",
+  // A pay link for this specific invoice could not be created — the gateway
+  // errored, or the academy's Stripe account cannot receive charges. Distinct
+  // from the generic 409 because retrying immediately will not help.
+  "Billing.InvoicePayLinkUnavailable":
+    "We couldn't start this payment right now. Please try again later, or contact the academy.",
 };
 
 /**

@@ -38,6 +38,23 @@ export function buildStudentProgressHref({
   return query ? `${base}?${query}` : base;
 }
 
+type SessionSkillBoardHrefOptions = {
+  sessionId: string;
+  programId?: string | null;
+};
+
+// The skill board resolves a default program when the URL carries none, so the
+// program has to be pinned explicitly on links that leave and return to the
+// board — otherwise a multi-program academy comes back to the default board and
+// the student still looks unplaced (issue #169).
+export function buildSessionSkillBoardHref({
+  sessionId,
+  programId,
+}: SessionSkillBoardHrefOptions): string {
+  const base = `/admin/sessions/${encodeURIComponent(sessionId)}/skill-board`;
+  return programId ? `${base}?program_id=${encodeURIComponent(programId)}` : base;
+}
+
 export function resolveStudentProgressReturn({
   returnTo,
   returnLabel,

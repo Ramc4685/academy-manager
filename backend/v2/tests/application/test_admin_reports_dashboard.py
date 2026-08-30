@@ -257,20 +257,23 @@ async def test_reports_dashboard_composes_monthly_finance_attendance_and_capacit
             },
         ],
     }
+    # One of the three payout periods is still draft, so P&L must not present a
+    # profit number off payroll that is not finalised (#225).
     assert dashboard["profit_and_loss"] == {
         "revenue_cents": 13_000,
-        "coach_payroll_cents": 9_000,
+        "coach_payroll_cents": None,
         "rent_cents": 5_000,
         "misc_expenses_cents": 1_200,
-        "net_profit_cents": -2_200,
-        "profit_margin": -0.1692,
+        "net_profit_cents": None,
+        "profit_margin": None,
     }
+    # Estimated/approved/paid stay visible so the month is still previewable.
     assert dashboard["payroll"] == {
         "estimated_cents": 13_000,
         "approved_cents": 9_000,
         "paid_cents": 3_000,
         "unpaid_cents": 6_000,
-        "blocked_by": None,
+        "blocked_by": "1 payout period is still in draft.",
     }
     assert dashboard["empty_states"] == []
 
@@ -701,12 +704,14 @@ async def test_reports_dashboard_returns_meaningful_empty_states() -> None:
                 {"label": "60+", "amount_cents": 0, "family_count": 0, "families": []},
             ],
         },
+        # No coach occurrences means no payroll is owed, so P&L is accurate at
+        # zero rather than blocked on missing payout periods (#225).
         "profit_and_loss": {
             "revenue_cents": 0,
-            "coach_payroll_cents": None,
+            "coach_payroll_cents": 0,
             "rent_cents": 0,
             "misc_expenses_cents": 0,
-            "net_profit_cents": None,
+            "net_profit_cents": 0,
             "profit_margin": None,
         },
         "payroll": {
@@ -714,7 +719,7 @@ async def test_reports_dashboard_returns_meaningful_empty_states() -> None:
             "approved_cents": None,
             "paid_cents": None,
             "unpaid_cents": None,
-            "blocked_by": "No generated payout periods for this month.",
+            "blocked_by": None,
         },
         "empty_states": [
             "No collected payment rows found for this month.",
@@ -1070,3 +1075,276 @@ async def test_projected_income_empty_when_no_active_enrollments() -> None:
     assert projection["total_cents"] == 0
     assert projection["by_session"] == []
     assert projection["empty"] is True
+
+
+# ---------------------------------------------------------------------------
+# P&L payroll completeness (#225)
+#
+# The dashboard must never present a confident net profit off payroll that is
+# missing, still draft, or generated with gaps. Blocked P&L is signalled the
+# way the zero-payroll case already is: null payroll/profit/margin plus a
+# ``payroll.blocked_by`` reason.
+# ---------------------------------------------------------------------------
+
+_MAY = datetime(2026, 5, 1, tzinfo=UTC)
+_JUNE = datetime(2026, 6, 1, tzinfo=UTC)
+
+
+def _payroll_db():
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    return mongomock_motor.AsyncMongoMockClient()["test_db"]
+
+
+async def _seed_cash(db, *, academy_id: str = "acad", amount_cents: int = 20_000) -> None:
+    await db["ledger_payments"].insert_one(
+        {
+            "payment_id": f"lp-{academy_id}",
+            "academy_id": academy_id,
+            "parent_id": "parent-1",
+            "amount_cents": amount_cents,
+            "currency": "usd",
+            "status": "succeeded",
+            "paid_at": datetime(2026, 5, 10, tzinfo=UTC),
+        }
+    )
+
+
+async def _seed_past_occurrence(
+    db,
+    occurrence_id: str,
+    *,
+    academy_id: str = "acad",
+    scheduled_coach_id: str = "coach-1",
+    actual_coach_id: str | None = None,
+    status: str = "completed",
+    is_payable: bool = True,
+) -> None:
+    await db["session_occurrences"].insert_one(
+        {
+            "academy_id": academy_id,
+            "occurrence_id": occurrence_id,
+            "session_id": "sess-1",
+            "start_at": datetime(2026, 5, 10, 18, tzinfo=UTC),
+            "end_at": datetime(2026, 5, 10, 19, tzinfo=UTC),
+            "status": status,
+            "scheduled_coach_id": scheduled_coach_id,
+            "actual_coach_id": actual_coach_id,
+            "is_payable": is_payable,
+        }
+    )
+
+
+async def _seed_period(
+    db,
+    period_id: str,
+    *,
+    coach_id: str,
+    status: str,
+    total_minor: int,
+    academy_id: str = "acad",
+    period_start: datetime | None = None,
+    period_end: datetime | None = None,
+    **extra,
+) -> None:
+    doc = {
+        "period_id": period_id,
+        "academy_id": academy_id,
+        "coach_id": coach_id,
+        "period_start": period_start or _MAY,
+        "period_end": period_end or _JUNE,
+        "status": status,
+        "total_minor": total_minor,
+    }
+    if status == "paid":
+        doc.setdefault("paid_amount_minor", total_minor)
+    doc.update(extra)
+    await db["payout_periods"].insert_one(doc)
+
+
+async def _dashboard(db, academy_id: str = "acad") -> dict:
+    with tenant_scope(academy_id):
+        return await reports_read_model.make_reports_dashboard(db)("2026-05")
+
+
+@pytest.mark.asyncio
+async def test_pnl_blocked_when_a_coach_has_no_payout_period() -> None:
+    db = _payroll_db()
+    await _seed_cash(db)
+    await _seed_past_occurrence(db, "occ-1", scheduled_coach_id="coach-1")
+    await _seed_past_occurrence(db, "occ-2", scheduled_coach_id="coach-2")
+    await _seed_period(db, "pp-1", coach_id="coach-1", status="approved", total_minor=5_000)
+
+    dashboard = await _dashboard(db)
+
+    assert dashboard["profit_and_loss"]["coach_payroll_cents"] is None
+    assert dashboard["profit_and_loss"]["net_profit_cents"] is None
+    assert dashboard["profit_and_loss"]["profit_margin"] is None
+    assert dashboard["payroll"]["blocked_by"] is not None
+    assert "1 coach" in dashboard["payroll"]["blocked_by"]
+    # The estimate stays visible so owners can still preview the month.
+    assert dashboard["payroll"]["estimated_cents"] == 5_000
+
+
+@pytest.mark.asyncio
+async def test_pnl_blocked_while_any_payout_period_is_still_draft() -> None:
+    db = _payroll_db()
+    await _seed_cash(db)
+    await _seed_past_occurrence(db, "occ-1", scheduled_coach_id="coach-1")
+    await _seed_past_occurrence(db, "occ-2", scheduled_coach_id="coach-2")
+    await _seed_period(db, "pp-1", coach_id="coach-1", status="approved", total_minor=5_000)
+    await _seed_period(db, "pp-2", coach_id="coach-2", status="draft", total_minor=4_000)
+
+    dashboard = await _dashboard(db)
+
+    assert dashboard["profit_and_loss"]["net_profit_cents"] is None
+    assert "draft" in dashboard["payroll"]["blocked_by"]
+    assert dashboard["payroll"]["estimated_cents"] == 9_000
+    assert dashboard["payroll"]["approved_cents"] == 5_000
+
+
+@pytest.mark.asyncio
+async def test_pnl_blocked_when_a_payout_period_has_unresolved_unpaid_occurrences() -> None:
+    db = _payroll_db()
+    await _seed_cash(db)
+    await _seed_past_occurrence(db, "occ-1", scheduled_coach_id="coach-1")
+    await _seed_period(
+        db,
+        "pp-1",
+        coach_id="coach-1",
+        status="approved",
+        total_minor=5_000,
+        unpaid_occurrence_ids=["occ-no-rate"],
+    )
+
+    dashboard = await _dashboard(db)
+
+    assert dashboard["profit_and_loss"]["net_profit_cents"] is None
+    assert "unresolved" in dashboard["payroll"]["blocked_by"]
+
+
+@pytest.mark.asyncio
+async def test_pnl_blocked_when_a_payout_period_does_not_cover_the_whole_month() -> None:
+    db = _payroll_db()
+    await _seed_cash(db)
+    await _seed_past_occurrence(db, "occ-1", scheduled_coach_id="coach-1")
+    await _seed_period(
+        db,
+        "pp-1",
+        coach_id="coach-1",
+        status="approved",
+        total_minor=5_000,
+        period_end=datetime(2026, 5, 16, tzinfo=UTC),
+    )
+
+    dashboard = await _dashboard(db)
+
+    assert dashboard["profit_and_loss"]["net_profit_cents"] is None
+    assert "full month" in dashboard["payroll"]["blocked_by"]
+
+
+@pytest.mark.asyncio
+async def test_pnl_uses_finalised_payroll_when_the_month_is_complete() -> None:
+    db = _payroll_db()
+    await _seed_cash(db)
+    await _seed_past_occurrence(db, "occ-1", scheduled_coach_id="coach-1")
+    await _seed_past_occurrence(
+        db, "occ-2", scheduled_coach_id="coach-2", actual_coach_id="coach-3"
+    )
+    await _seed_period(db, "pp-1", coach_id="coach-1", status="approved", total_minor=5_000)
+    await _seed_period(db, "pp-3", coach_id="coach-3", status="paid", total_minor=4_000)
+
+    dashboard = await _dashboard(db)
+
+    assert dashboard["payroll"]["blocked_by"] is None
+    # Obligation (total_minor), not cash paid.
+    assert dashboard["profit_and_loss"]["coach_payroll_cents"] == 9_000
+    assert dashboard["profit_and_loss"]["net_profit_cents"] == 11_000
+    assert dashboard["payroll"]["paid_cents"] == 4_000
+    assert dashboard["payroll"]["unpaid_cents"] == 5_000
+
+
+@pytest.mark.asyncio
+async def test_pnl_not_blocked_when_the_month_has_no_payable_coach_occurrences() -> None:
+    """A month with no coach work owes no payroll, so P&L is accurate at zero."""
+    db = _payroll_db()
+    await _seed_cash(db)
+    await _seed_past_occurrence(db, "occ-cancelled", status="cancelled")
+    await _seed_past_occurrence(db, "occ-unpayable", is_payable=False)
+
+    dashboard = await _dashboard(db)
+
+    assert dashboard["payroll"]["blocked_by"] is None
+    assert dashboard["profit_and_loss"]["coach_payroll_cents"] == 0
+    assert dashboard["profit_and_loss"]["net_profit_cents"] == 20_000
+
+
+@pytest.mark.asyncio
+async def test_payroll_completeness_is_scoped_to_the_requesting_tenant() -> None:
+    db = _payroll_db()
+    await _seed_cash(db)
+    await _seed_past_occurrence(db, "occ-1", scheduled_coach_id="coach-1")
+    await _seed_period(db, "pp-1", coach_id="coach-1", status="approved", total_minor=5_000)
+    # Another academy's ungenerated payroll must not block this one.
+    await _seed_past_occurrence(
+        db, "occ-other", academy_id="other-acad", scheduled_coach_id="coach-x"
+    )
+
+    dashboard = await _dashboard(db)
+
+    assert dashboard["payroll"]["blocked_by"] is None
+    assert dashboard["profit_and_loss"]["coach_payroll_cents"] == 5_000
+
+
+@pytest.mark.asyncio
+async def test_payroll_window_match_tolerates_naive_datetimes_from_mongo() -> None:
+    """The app's Motor client is not ``tz_aware``, so it returns naive UTC.
+
+    ``month_bounds`` is timezone-aware. Comparing the two directly would mark
+    every real payout period as not covering the month and block P&L forever.
+    """
+    db = _payroll_db()
+    await _seed_cash(db)
+    await _seed_past_occurrence(db, "occ-1", scheduled_coach_id="coach-1")
+    await _seed_period(
+        db,
+        "pp-1",
+        coach_id="coach-1",
+        status="approved",
+        total_minor=5_000,
+        period_start=datetime(2026, 5, 1),
+        period_end=datetime(2026, 6, 1),
+    )
+
+    dashboard = await _dashboard(db)
+
+    assert dashboard["payroll"]["blocked_by"] is None
+    assert dashboard["profit_and_loss"]["coach_payroll_cents"] == 5_000
+
+
+@pytest.mark.asyncio
+async def test_payroll_completeness_ignores_non_blocking_unpaid_rows() -> None:
+    """A replaced or absent coach explains a zero; it is not missing payroll."""
+    db = _payroll_db()
+    await _seed_cash(db)
+    await _seed_past_occurrence(db, "occ-1", scheduled_coach_id="coach-1")
+    await _seed_period(
+        db,
+        "pp-1",
+        coach_id="coach-1",
+        status="approved",
+        total_minor=5_000,
+        unpaid_occurrences=[
+            {
+                "occurrence_id": "occ-replaced",
+                "reason": "replaced_by_actual_coach",
+                "detail": "Scheduled coach was replaced.",
+                "unresolved": False,
+                "attributed_coach_id": "coach-2",
+            }
+        ],
+    )
+
+    dashboard = await _dashboard(db)
+
+    assert dashboard["payroll"]["blocked_by"] is None
+    assert dashboard["profit_and_loss"]["coach_payroll_cents"] == 5_000

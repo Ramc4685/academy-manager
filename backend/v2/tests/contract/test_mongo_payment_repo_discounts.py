@@ -242,3 +242,222 @@ async def test_idempotent_rerun_does_not_double_apply(db, acad) -> None:
     # 25% off 10_000 -> net 7_500
     assert invoice["total_cents"] == 7_500
     assert invoice["balance_due_cents"] == 7_500
+
+
+async def _unique_invoice_key_index(db) -> None:
+    """The DuplicateKeyError that drives orphan recovery needs the prod unique index."""
+    await db["billing_invoice_keys"].create_index(
+        [("academy_id", 1), ("enrollment_id", 1), ("period", 1)],
+        unique=True,
+        name="uniq_monthly_invoice_key",
+    )
+
+
+async def _monthly_lines(db, acad, invoice_id: str) -> list[tuple[str, int]]:
+    return [
+        (doc["line_type"], doc["amount_cents"])
+        async for doc in db["invoice_lines"].find(
+            {"academy_id": acad, "invoice_id": invoice_id},
+            sort=[("line_type", -1)],
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_orphan_key_recovery_writes_same_shape_as_normal_generation(db, acad) -> None:
+    """A recovered invoice is indistinguishable from a normally generated one.
+
+    Recovery used to record the tuition line and subtotal net of the discount, with
+    discount_cents 0 and no discount line, so line-level reporting disagreed with the
+    normal path for the same enrollment/period.
+    """
+    await _unique_invoice_key_index(db)
+    clock = _fixed_clock(datetime(2026, 6, 1, 12, 0, tzinfo=UTC))
+    await _seed_session_student_enrollment(
+        db, acad, billing_start=datetime(2026, 5, 1, 12, 0, tzinfo=UTC)
+    )
+    await _set_discount(db, clock=clock, category="sibling", kind="percent", percent_bps=1000)
+    await db["billing_invoice_keys"].insert_one(
+        {
+            "academy_id": acad,
+            "invoice_key_id": "key-orphan-discount",
+            "payment_id": "pay-orphan-discount",
+            "enrollment_id": "enroll-1",
+            "period": "2026-06",
+            "status": "claimed",
+            "created_at": datetime(2026, 5, 20, tzinfo=UTC),
+            "updated_at": datetime(2026, 5, 20, tzinfo=UTC),
+        }
+    )
+
+    result = await _payment_repo(db, clock).generate_monthly_payments("2026-06")
+
+    assert result.repaired_orphan_keys == 1
+    assert result.failed_repair == 0
+    invoice = await _monthly_invoice(db, acad, "2026-06")
+    assert invoice is not None
+    assert invoice["subtotal_cents"] == 10_000
+    assert invoice["discount_cents"] == 1_000
+    assert invoice["total_cents"] == 9_000
+    assert invoice["balance_due_cents"] == 9_000
+    assert await _monthly_lines(db, acad, invoice["invoice_id"]) == [
+        ("tuition", 10_000),
+        ("discount", -1_000),
+    ]
+    key = await db["billing_invoice_keys"].find_one(
+        {"academy_id": acad, "enrollment_id": "enroll-1", "period": "2026-06"}
+    )
+    assert key is not None
+    assert key["status"] == "complete"
+
+
+@pytest.mark.asyncio
+async def test_partial_invoice_repair_restates_header_for_discounted_charge(db, acad) -> None:
+    """Back-filling the missing lines must not leave the header disagreeing with them.
+
+    ``create_invoice`` recomputes an existing header from its lines, which subtracts a
+    discount line and ``discount_cents`` twice; recovery restates the header itself.
+    """
+    await _unique_invoice_key_index(db)
+    clock = _fixed_clock(datetime(2026, 6, 1, 12, 0, tzinfo=UTC))
+    await _seed_session_student_enrollment(
+        db, acad, billing_start=datetime(2026, 5, 1, 12, 0, tzinfo=UTC)
+    )
+    await _set_discount(db, clock=clock, category="sibling", kind="percent", percent_bps=1000)
+    now = datetime(2026, 5, 20, tzinfo=UTC)
+    await db["billing_invoice_keys"].insert_one(
+        {
+            "academy_id": acad,
+            "invoice_key_id": "key-partial-discount",
+            "payment_id": "pay-partial-discount",
+            "enrollment_id": "enroll-1",
+            "period": "2026-06",
+            "status": "claimed",
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+    await db["invoices"].insert_one(
+        {
+            "academy_id": acad,
+            "invoice_id": "inv-monthly-enroll-1-2026-06",
+            "parent_id": "parent-1",
+            "student_id": "student-1",
+            "enrollment_id": "enroll-1",
+            "period": "2026-06",
+            "status": "open",
+            "subtotal_cents": 10_000,
+            "discount_cents": 0,
+            "total_cents": 10_000,
+            "balance_due_cents": 10_000,
+            "currency": "usd",
+            "due_date": datetime(2026, 6, 30, tzinfo=UTC),
+            "delivery_status": "not_sent",
+            "sent_at": None,
+            "last_sent_at": None,
+            "finalized_at": None,
+            "created_at": now,
+            "updated_at": now,
+            "idempotency_key": "monthly-ledger-enroll-1-2026-06",
+        }
+    )
+
+    result = await _payment_repo(db, clock).generate_monthly_payments("2026-06")
+
+    assert result.repaired_partial_invoices == 1
+    assert result.failed_repair == 0
+    invoice = await _monthly_invoice(db, acad, "2026-06")
+    assert invoice is not None
+    assert invoice["subtotal_cents"] == 10_000
+    assert invoice["discount_cents"] == 1_000
+    assert invoice["total_cents"] == 9_000
+    assert invoice["balance_due_cents"] == 9_000
+    assert await _monthly_lines(db, acad, invoice["invoice_id"]) == [
+        ("tuition", 10_000),
+        ("discount", -1_000),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stale_net_shaped_invoice_is_left_untouched_for_review(db, acad) -> None:
+    """An invoice recovered under the old net-of-credit shape is not silently rewritten.
+
+    Its tuition line cannot be corrected ($setOnInsert), so back-filling a discount line
+    around it would drag the recomputed header away from both the old and the new shape.
+    Recovery bails before writing and reports the key for an operator instead.
+    """
+    await _unique_invoice_key_index(db)
+    clock = _fixed_clock(datetime(2026, 6, 1, 12, 0, tzinfo=UTC))
+    await _seed_session_student_enrollment(
+        db, acad, billing_start=datetime(2026, 5, 1, 12, 0, tzinfo=UTC)
+    )
+    await _set_discount(db, clock=clock, category="sibling", kind="percent", percent_bps=1000)
+    now = datetime(2026, 5, 20, tzinfo=UTC)
+    await db["billing_invoice_keys"].insert_one(
+        {
+            "academy_id": acad,
+            "invoice_key_id": "key-legacy-net",
+            "payment_id": "pay-legacy-net",
+            "enrollment_id": "enroll-1",
+            "period": "2026-06",
+            "status": "claimed",
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+    await db["invoices"].insert_one(
+        {
+            "academy_id": acad,
+            "invoice_id": "inv-monthly-enroll-1-2026-06",
+            "parent_id": "parent-1",
+            "student_id": "student-1",
+            "enrollment_id": "enroll-1",
+            "period": "2026-06",
+            "status": "open",
+            "subtotal_cents": 9_000,
+            "discount_cents": 0,
+            "total_cents": 9_000,
+            "balance_due_cents": 9_000,
+            "currency": "usd",
+            "due_date": datetime(2026, 6, 30, tzinfo=UTC),
+            "delivery_status": "not_sent",
+            "sent_at": None,
+            "last_sent_at": None,
+            "finalized_at": None,
+            "created_at": now,
+            "updated_at": now,
+            "idempotency_key": "monthly-ledger-enroll-1-2026-06",
+        }
+    )
+    await db["invoice_lines"].insert_one(
+        {
+            "academy_id": acad,
+            "invoice_id": "inv-monthly-enroll-1-2026-06",
+            "line_id": "line-monthly-enroll-1-2026-06",
+            "line_type": "tuition",
+            "description": "Monthly tuition 2026-06",
+            "quantity": 1,
+            "unit_amount_cents": 9_000,
+            "amount_cents": 9_000,
+            "source_type": "payment",
+            "source_id": "pay-legacy-net",
+            "created_at": now,
+            "idempotency_key": "monthly-ledger-enroll-1-2026-06",
+        }
+    )
+
+    result = await _payment_repo(db, clock).generate_monthly_payments("2026-06")
+
+    assert result.failed_repair == 1
+    assert result.created == 0
+    invoice = await _monthly_invoice(db, acad, "2026-06")
+    assert invoice is not None
+    assert invoice["subtotal_cents"] == 9_000
+    assert invoice["total_cents"] == 9_000
+    assert invoice["balance_due_cents"] == 9_000
+    assert await _monthly_lines(db, acad, invoice["invoice_id"]) == [("tuition", 9_000)]
+    key = await db["billing_invoice_keys"].find_one(
+        {"academy_id": acad, "enrollment_id": "enroll-1", "period": "2026-06"}
+    )
+    assert key is not None
+    assert key["status"] == "repair_failed"

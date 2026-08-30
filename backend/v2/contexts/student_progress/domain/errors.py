@@ -30,6 +30,11 @@ class RecommendationNotFound(DomainError):
     status_code = 404
 
 
+class RecommendationAlreadyReviewed(DomainError):
+    code = "StudentProgress.RecommendationAlreadyReviewed"
+    status_code = 409
+
+
 class OverrideNotPermitted(DomainError):
     code = "StudentProgress.OverrideNotPermitted"
     status_code = 403

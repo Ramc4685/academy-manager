@@ -298,6 +298,7 @@ def _override_ledger(admin_client, ledger: _FakeLedger) -> None:
             "sent_at": result.invoice.sent_at,
             "last_sent_at": result.invoice.last_sent_at,
             "checkout_url": result.checkout_url,
+            "checkout_failure_code": result.checkout_failure_code,
         }
 
     async def add_invoice_line(**kwargs) -> dict:
@@ -1794,3 +1795,105 @@ def test_admin_invoice_list_falls_back_to_invoice_id_when_no_number_minted(admin
 
     assert response.status_code == 200, response.text
     assert response.json()["invoices"][0]["invoice_number"] == "inv-legacy-1"
+
+
+# ---------------------------------------------------------------------------
+# Connect readiness (issue #432)
+# ---------------------------------------------------------------------------
+
+
+def _readiness_payload(**overrides):
+    payload = {
+        "connected_account": {
+            "configured": True,
+            "status": "active",
+            "charges_enabled": True,
+            "payouts_enabled": True,
+            "ready_for_charges": True,
+            "account_id_masked": "acct...6f21",
+        },
+        "allow_platform_charge_fallback": False,
+        "payments_possible": True,
+        "funds_route_to_academy": True,
+        "webhook_events": {"quarantined": 0, "failed": 0},
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_connect_readiness_reports_a_ready_account(admin_client):
+    async def get_connect_readiness():
+        return _readiness_payload()
+
+    admin_client.use_cases.get_connect_readiness = get_connect_readiness
+    r = admin_client.get("/api/v2/admin/billing/connect-readiness")
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["payments_possible"] is True
+    assert body["funds_route_to_academy"] is True
+    assert body["connected_account"]["account_id_masked"] == "acct...6f21"
+
+
+def test_connect_readiness_reports_that_parents_cannot_pay(admin_client):
+    """The state the card exists for: no working account and no fallback, so
+    every parent payment fails and nothing else on the page matters."""
+
+    async def get_connect_readiness():
+        return _readiness_payload(
+            connected_account={
+                "configured": False,
+                "status": None,
+                "charges_enabled": False,
+                "payouts_enabled": False,
+                "ready_for_charges": False,
+                "account_id_masked": None,
+            },
+            payments_possible=False,
+            funds_route_to_academy=False,
+        )
+
+    admin_client.use_cases.get_connect_readiness = get_connect_readiness
+    body = admin_client.get("/api/v2/admin/billing/connect-readiness").json()
+
+    assert body["payments_possible"] is False
+    assert body["connected_account"]["configured"] is False
+
+
+def test_connect_readiness_distinguishes_fallback_from_a_ready_account(admin_client):
+    """Payments succeed, but the money lands on the platform account rather
+    than the academy's — visually distinct from healthy."""
+
+    async def get_connect_readiness():
+        return _readiness_payload(
+            connected_account={
+                "configured": True,
+                "status": "restricted",
+                "charges_enabled": False,
+                "payouts_enabled": False,
+                "ready_for_charges": False,
+                "account_id_masked": "acct...6f21",
+            },
+            allow_platform_charge_fallback=True,
+            payments_possible=True,
+            funds_route_to_academy=False,
+        )
+
+    admin_client.use_cases.get_connect_readiness = get_connect_readiness
+    body = admin_client.get("/api/v2/admin/billing/connect-readiness").json()
+
+    assert body["payments_possible"] is True
+    assert body["funds_route_to_academy"] is False
+    assert body["allow_platform_charge_fallback"] is True
+
+
+def test_connect_readiness_returns_503_when_not_composed(admin_client):
+    admin_client.use_cases.get_connect_readiness = None
+    r = admin_client.get("/api/v2/admin/billing/connect-readiness")
+    assert r.status_code == 503
+
+
+def test_connect_readiness_is_not_reachable_by_a_coach(coach_on_admin_client):
+    """Wrong persona returns 404, not 403 — route existence is not leaked."""
+    r = coach_on_admin_client.get("/api/v2/admin/billing/connect-readiness")
+    assert r.status_code == 404

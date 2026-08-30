@@ -574,7 +574,9 @@ test.describe("Rally admin shell", () => {
     await expect(entry).toBeVisible();
     await entry.click();
 
-    await expect(page).toHaveURL(/\/owner$/);
+    // First navigation to /owner triggers a cold dev-server compile that can
+    // exceed the default 5s; nothing else visits this route to warm it.
+    await expect(page).toHaveURL(/\/owner$/, { timeout: 20_000 });
     await expect(page.getByTestId("owner-rollup-totals")).toContainText("$2,000.00");
     await expect(
       page.getByTestId("owner-rollup-row-academy-e2e-2"),
@@ -1049,6 +1051,9 @@ test.describe("Rally admin shell", () => {
   });
 
   test("session detail page mounts", async ({ page }) => {
+    // Mount regularly exceeds the default expect budget on webkit-mobile under
+    // full-suite load (observed across unrelated branches and in CI).
+    test.slow();
     const errors = collectConsoleErrors(page);
     await stubAdminBff(page);
     await page.goto("/admin/sessions/some-session-id");

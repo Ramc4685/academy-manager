@@ -22,6 +22,7 @@ from backend.v2.contexts.billing.domain.ledger import (
     PaymentAllocation,
 )
 from backend.v2.contexts.billing.domain.models import (
+    AppliedCreditState,
     AutopayConsent,
     CreditLedgerEntry,
     Payment,
@@ -297,6 +298,8 @@ class CreditLedgerRepository(Protocol):
     async def apply_available_credits(
         self, *, parent_id: str, invoice_id: str, amount_due_cents: int
     ) -> int: ...
+    async def applied_credit_state(self, invoice_id: str) -> AppliedCreditState: ...
+    async def repair_credit_projections(self, invoice_id: str) -> int: ...
     async def find_active_for_enrollment(
         self, *, enrollment_id: str, type: str
     ) -> CreditLedgerEntry | None: ...
@@ -324,8 +327,13 @@ class StripeEventDedup(Protocol):
         lock_seconds: int = 300,
     ) -> dict[str, Any] | None: ...
     async def mark_processed(self, event_id: str) -> None: ...
-    async def mark_failed(self, event_id: str, error: str) -> None: ...
-    async def mark_quarantined(self, event_id: str, error: str) -> None: ...
+    # Returns the resulting status, "failed" or "quarantined": retries are
+    # bounded, so recording a failure may be the moment the event gives up and
+    # the caller needs to alert (issue #437).
+    async def mark_failed(self, event_id: str, error: str) -> str: ...
+    async def mark_quarantined(
+        self, event_id: str, error: str, *, reason_code: str = ...
+    ) -> None: ...
 
 
 class StripeInvoiceProcessingRepository(Protocol):
@@ -367,6 +375,17 @@ class StripeGateway(Protocol):
 
         When ``connected_account_id`` is set, the checkout's PaymentIntent is a
         destination charge to the academy's connected account.
+        """
+
+    async def expire_checkout_session(self, checkout_session_id: str) -> None:
+        """Expire an open Checkout Session so it can never be paid.
+
+        Called when a newer session supersedes it: two live sessions for the
+        same enrollment is how one registration gets charged twice. Stripe
+        REJECTS expiring a session that is already complete or expired, so
+        callers must treat a failure here as benign — it means the parent
+        already paid on that session, and the state written around this call
+        must stand regardless.
         """
 
     async def create_subscription_checkout_session(
@@ -697,6 +716,9 @@ class LedgerRepository(Protocol):
         *,
         statuses: set[str] | None = None,
     ) -> LedgerInvoice | None: ...
+    async def list_undelivered_invoices_for_period(
+        self, period: str, *, limit: int = 100
+    ) -> list[LedgerInvoice]: ...
     async def get_payment_by_stripe_payment_intent_id(
         self, stripe_payment_intent_id: str
     ) -> LedgerPayment | None: ...

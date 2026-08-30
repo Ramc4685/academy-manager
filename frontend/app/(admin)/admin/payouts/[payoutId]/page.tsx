@@ -601,7 +601,13 @@ function PayLog({
                   onCorrect={() => setCorrectingOccurrenceId(line.occurrence_id)}
                 />
               ))}
-              {period.unpaid_occurrences.map((occ) => (
+              {period.unpaid_occurrences.map((occ) => {
+                const replaced = occ.reason === "replaced_by_actual_coach";
+                const attributedCoach = occ.attributed_coach_id
+                  ? (coaches.find((c) => c.id === occ.attributed_coach_id)?.name ??
+                    occ.attributed_coach_id)
+                  : null;
+                return (
                 <tr key={occ.occurrence_id} className="border-b border-rally-line last:border-0 bg-neutral-50/50">
                   <td className="px-3 py-3 pl-5 font-mono text-xs text-rally-muted">
                     {occ.occurred_at ? new Date(occ.occurred_at).toLocaleDateString() : "—"}
@@ -611,18 +617,30 @@ function PayLog({
                   </td>
                   <td className="px-3 py-3 text-xs text-rally-muted">—</td>
                   <td className="px-3 py-3">
-                    <span className="rounded bg-amber-100 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase text-amber-800">
+                    <span
+                      className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase ${
+                        replaced ? "bg-neutral-200 text-rally-muted" : "bg-amber-100 text-amber-800"
+                      }`}
+                    >
                       {occ.reason ? unpaidReasonLabel(occ.reason) : "Not paid"}
                     </span>
                     <div className="mt-1 max-w-[260px] text-xs text-rally-muted">
-                      {occ.reason
-                        ? occ.message || occ.detail || unpaidReasonGuidance(occ.reason)
-                        : "No pay line was created."}
+                      {replaced
+                        ? attributedCoach
+                          ? `Attributed to ${attributedCoach} instead.`
+                          : "A replacement coach was attributed to this session."
+                        : occ.reason
+                          ? occ.message || occ.detail || unpaidReasonGuidance(occ.reason)
+                          : "No pay line was created."}
                     </div>
-                    <div className="mt-0.5 text-xs text-amber-800">
-                      {occ.repair_action
-                        ? payoutWarningRepairAction({ repair_action: occ.repair_action })
-                        : occ.detail || unpaidReasonGuidance(occ.reason)}
+                    <div
+                      className={`mt-0.5 text-xs ${replaced ? "text-rally-muted" : "text-amber-800"}`}
+                    >
+                      {replaced
+                        ? unpaidReasonGuidance(occ.reason)
+                        : occ.repair_action
+                          ? payoutWarningRepairAction({ repair_action: occ.repair_action })
+                          : occ.detail || unpaidReasonGuidance(occ.reason)}
                     </div>
                   </td>
                   <td className="px-3 py-3 text-right font-mono text-rally-muted">—</td>
@@ -631,7 +649,8 @@ function PayLog({
                   </td>
                   <td />
                 </tr>
-              ))}
+                );
+              })}
               {period.lines.length === 0 && period.unpaid_occurrences.length === 0 && (
                 <tr>
                   <td colSpan={7} className="px-5 py-6 text-center text-sm text-rally-muted">

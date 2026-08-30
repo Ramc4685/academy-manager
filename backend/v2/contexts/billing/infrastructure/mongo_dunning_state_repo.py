@@ -13,17 +13,28 @@ from backend.v2.contexts.billing.domain.dunning import (
     record_dunning_attempt_result,
 )
 from backend.v2.contexts.billing.domain.ledger import LedgerInvoice
+from backend.v2.contexts.billing.domain.payment_attempt_kinds import (
+    exclude_non_charge_attempts,
+)
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 
 
 class MongoDunningStateRepository(TenantScopedRepository):
     collection_name = "dunning_states"
+    # Park reasons a later tick re-claims. A parked state has next_attempt_at=None, so
+    # anything missing from this set is parked forever and that invoice is never
+    # collected again — every reason ProcessDunningRetries can park with must appear
+    # here. checkout_session_open in particular is the release valve for the manual-pay
+    # hold: the tick after the session settles or lapses picks the invoice back up on
+    # the same rung (issue #434).
     retryable_parked_reasons: ClassVar[set[str]] = {
         "payment_processing",
         "charge_technical_failure",
         "attempt_indeterminate",
         "autopay_not_active",
         "connected_account_not_ready",
+        "checkout_session_open",
+        "stripe_not_configured",
     }
 
     @staticmethod
@@ -367,8 +378,17 @@ class MongoDunningStateRepository(TenantScopedRepository):
         return state
 
     async def _latest_payment_attempt_status(self, invoice_id: str) -> str | None:
+        """Latest CHARGE outcome for this invoice, or None.
+
+        Pay-link mint failures (issue #426) share this collection but are not
+        charge outcomes: a mint failure landing after a genuine ``succeeded``
+        row would stop the sweep resolving an invoice that just paid, and keep
+        escalating it toward the terminal autopay-disabled rung. Exclude them.
+        """
         doc = await self._db["payment_attempts"].find_one(
-            {"academy_id": current_academy_id(), "invoice_id": invoice_id},
+            exclude_non_charge_attempts(
+                {"academy_id": current_academy_id(), "invoice_id": invoice_id}
+            ),
             sort=[("created_at", -1), ("attempt_id", -1)],
         )
         return str(doc.get("status")) if doc else None
