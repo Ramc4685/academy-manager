@@ -11,6 +11,14 @@ Idempotency:
   unchanged — the caller is expected to re-generate explicitly via a
   separate flow (out of scope for this slice) if rates changed and the
   period is still in ``draft``.
+
+Overlap guard (#504):
+
+- A requested window that intersects (but does not exactly match) an
+  existing period for the same coach is rejected with
+  ``OverlappingPayoutPeriodError`` — otherwise two periods could both
+  contain lines for the same occurrence and independently be approved
+  and paid, paying that occurrence twice.
 """
 
 from __future__ import annotations
@@ -24,6 +32,19 @@ from backend.v2.contexts.finance.application.ports import (
 )
 from backend.v2.contexts.finance.domain.payout_period import PayoutPeriod, PayoutWarning
 from backend.v2.shared.ids import new_ulid
+
+
+class OverlappingPayoutPeriodError(ValueError):
+    """Requested window intersects an existing payout period for the coach."""
+
+    def __init__(self, existing: PayoutPeriod) -> None:
+        super().__init__(
+            "Requested window overlaps existing payout period "
+            f"{existing.period_id!r} ({existing.period_start.isoformat()} — "
+            f"{existing.period_end.isoformat()}, status {existing.status!r}) "
+            "for this coach; the same occurrence must not be paid twice."
+        )
+        self.existing = existing
 
 
 class GeneratePayoutPeriod:
@@ -58,6 +79,14 @@ class GeneratePayoutPeriod:
         )
         if existing is not None:
             return existing
+
+        overlapping = await self._repo.find_overlapping(
+            coach_id=coach_id,
+            period_start=period_start,
+            period_end=period_end,
+        )
+        if overlapping is not None:
+            raise OverlappingPayoutPeriodError(overlapping)
 
         calc = await self._calc.calculate(
             coach_id=coach_id,

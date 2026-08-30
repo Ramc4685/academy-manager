@@ -1233,3 +1233,87 @@ async def test_registration_decline_refunds_only_refundable_payments(
     await adapter.refund_registration_payment(payment_id="pay-1", reason="registration_declined")
 
     assert executor.calls == ([("pay-1", "registration_declined")] if expect_refund else [])
+
+
+class _FakePaidPeriodResolver:
+    """Fake for the PaidPeriodResolver port (#506)."""
+
+    def __init__(self, period: str | None) -> None:
+        self._period = period
+        self.calls: list[str] = []
+
+    async def paid_period_for_payment(self, payment_id: str) -> str | None:
+        self.calls.append(payment_id)
+        return self._period
+
+
+@pytest.mark.asyncio
+async def test_approve_stamps_paid_period_for_checkout_paid_application() -> None:
+    """#506: an enrollment whose first month was paid at checkout must get the
+    paid period stamped as a skip period, or an intra-month generation run
+    invoices the same period again (double charge)."""
+    app = _application(student_id="student-1").model_copy(update={"payment_id": "pay-1"})
+    apps = InMemoryApplications(app)
+    enrollments = InMemoryEnrollments()
+    resolver = _FakePaidPeriodResolver("2026-05")
+
+    review = AdminRegistrationReview(
+        apps=apps,
+        sessions=InMemorySessions([_session()]),
+        students=InMemoryStudents(),
+        enrollments=enrollments,
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        paid_period_resolver=resolver,
+        clock=lambda: NOW,
+    )
+
+    detail = await review.approve(
+        ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1")
+    )
+
+    assert resolver.calls == ["pay-1"]
+    assert enrollments.skip_periods[detail.enrollment_id] == ["2026-05"]
+
+
+@pytest.mark.asyncio
+async def test_approve_does_not_stamp_when_paid_period_unresolvable() -> None:
+    app = _application(student_id="student-1").model_copy(update={"payment_id": "pay-1"})
+    enrollments = InMemoryEnrollments()
+
+    review = AdminRegistrationReview(
+        apps=InMemoryApplications(app),
+        sessions=InMemorySessions([_session()]),
+        students=InMemoryStudents(),
+        enrollments=enrollments,
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        paid_period_resolver=_FakePaidPeriodResolver(None),
+        clock=lambda: NOW,
+    )
+
+    await review.approve(ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1"))
+
+    assert enrollments.skip_periods == {}
+
+
+@pytest.mark.asyncio
+async def test_approve_without_payment_id_never_calls_paid_period_resolver() -> None:
+    resolver = _FakePaidPeriodResolver("2026-05")
+    enrollments = InMemoryEnrollments()
+
+    review = AdminRegistrationReview(
+        apps=InMemoryApplications(_application(student_id="student-1")),
+        sessions=InMemorySessions([_session()]),
+        students=InMemoryStudents(),
+        enrollments=enrollments,
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        paid_period_resolver=resolver,
+        clock=lambda: NOW,
+    )
+
+    await review.approve(ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1"))
+
+    assert resolver.calls == []
+    assert enrollments.skip_periods == {}

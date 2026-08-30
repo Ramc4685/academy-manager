@@ -108,6 +108,25 @@ class TrialConversionLinker(Protocol):
     async def execute(self, *, parent_user_id: str, application_id: str) -> None: ...
 
 
+class PaidPeriodResolver(Protocol):
+    """Port for resolving which billing period a registration checkout
+    payment already covered (#506).
+
+    The first-month proration paid at registration checkout is persisted
+    with ``enrollment_id=None`` (the enrollment does not exist yet), so
+    neither of the monthly generator's dedupe layers can see it. At
+    approval time — the first moment the enrollment exists — this port
+    resolves the paid period label (e.g. ``"2026-08"``) from the payment's
+    consumed calculation snapshot so it can be stamped as a skip period,
+    exactly like the zero-quote path stamps ``zero_quote_period``.
+
+    Returns ``None`` when the payment cannot be tied to a successfully
+    paid first-month proration period.
+    """
+
+    async def paid_period_for_payment(self, payment_id: str) -> str | None: ...
+
+
 class AdminRegistrationRow(BaseModel):
     model_config = {"frozen": True}
 
@@ -181,6 +200,7 @@ class AdminRegistrationReview:
         trial_conversion: TrialConversionLinker | None = None,
         student_registrations: StudentRegistrationQuery | None = None,
         refunds: RegistrationRefundIssuer | None = None,
+        paid_period_resolver: PaidPeriodResolver | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._apps = apps
@@ -195,6 +215,7 @@ class AdminRegistrationReview:
         self._trial_conversion = trial_conversion
         self._student_registrations = student_registrations
         self._refunds = refunds
+        self._paid_period_resolver = paid_period_resolver
         self._now = clock
 
     async def list_pending(self) -> list[AdminRegistrationRow]:
@@ -317,6 +338,21 @@ class AdminRegistrationReview:
                 await self._enrollments.add_skip_period(
                     enrollment.enrollment_id, app.zero_quote_period
                 )
+            # #506: the first-month proration paid at checkout is stored with
+            # enrollment_id=None, so the monthly generator's dedupe layers
+            # (existing-payment check and CONSUMED-snapshot check) cannot see
+            # it and an intra-month generation run would invoice the same
+            # period again. Stamp the paid period as a skip period the moment
+            # the enrollment exists, mirroring the zero-quote path above.
+            # Deliberately NOT wrapped in try/except: failing open here would
+            # silently reintroduce the double charge, and approval is safely
+            # retryable after a transient failure.
+            if app.payment_id and self._paid_period_resolver is not None:
+                paid_period = await self._paid_period_resolver.paid_period_for_payment(
+                    app.payment_id
+                )
+                if paid_period:
+                    await self._enrollments.add_skip_period(enrollment.enrollment_id, paid_period)
             effective_at = command.effective_at or now
             await self._record_event(
                 event_id=stable_ulid("registration-approved-event", app.application_id),

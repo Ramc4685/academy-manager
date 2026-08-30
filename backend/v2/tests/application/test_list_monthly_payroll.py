@@ -67,6 +67,20 @@ class FakePayoutPeriodRepository:
                 return p
         return None
 
+    async def find_overlapping(
+        self, *, coach_id: str, period_start: datetime, period_end: datetime
+    ) -> PayoutPeriod | None:
+        return next(
+            (
+                p
+                for p in self._periods
+                if p.coach_id == coach_id
+                and p.period_start < period_end
+                and p.period_end > period_start
+            ),
+            None,
+        )
+
     async def find_by_id(self, period_id: str) -> PayoutPeriod | None:
         return next((p for p in self._periods if p.period_id == period_id), None)
 

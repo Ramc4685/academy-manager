@@ -806,7 +806,8 @@ async def test_fixture_subscription_invoice_paid_api_2026_converges_ledger() -> 
     assert invoice.stripe_invoice_id == "in_subscription_api_2026"
     assert len(ledger.payments) == 1
     assert len(ledger.allocations) == 1
-    assert len(repo.by_id) == 1
+    # Issue #505: no legacy projection when the ledger recorded the payment.
+    assert len(repo.by_id) == 0
     payment = ledger.payments["ledger-pay-in_subscription_api_2026"]
     assert payment.stripe_payment_intent_id == "in_subscription_api_2026"
     assert payment.stripe_invoice_id == "in_subscription_api_2026"

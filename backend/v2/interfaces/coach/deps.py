@@ -102,6 +102,10 @@ class CoachUseCases:
     # predate it; real coach composition always sets both.
     list_messages: Callable[[str], Awaitable[list[Message]]] | None = None
     mark_message_read: Callable[[str, str], Awaitable[None]] | None = None
+    # IANA timezone name for an academy so /coach/today can default "today"
+    # to the academy-local calendar date instead of UTC (#510). Optional for
+    # fixtures that predate it; real composition always sets it.
+    get_academy_timezone: Callable[[str], Awaitable[str | None]] | None = None
 
 
 def get_coach_use_cases(request: Request) -> CoachUseCases:

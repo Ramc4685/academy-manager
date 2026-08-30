@@ -1901,6 +1901,10 @@ class SendCampaignRequest(BaseModel):
     subject: str = Field(min_length=1, max_length=200)
     body: str = Field(min_length=1, max_length=50000)
     audience: SendCampaignAudience
+    # Optional client-generated idempotency key. When omitted the backend
+    # derives one from the campaign content, so an identical retried POST
+    # never re-emails the audience (#512).
+    idempotency_key: str | None = Field(default=None, min_length=8, max_length=128)
 
 
 class SendCampaignResponse(BaseModel):
@@ -1908,3 +1912,6 @@ class SendCampaignResponse(BaseModel):
     total_recipients: int
     sent_count: int
     failed_count: int
+    # True when this request matched an already-sent campaign via its
+    # idempotency key and no new email was sent.
+    deduplicated: bool = False

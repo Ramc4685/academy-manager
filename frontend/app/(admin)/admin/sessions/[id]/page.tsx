@@ -107,6 +107,32 @@ export default function AdminSessionDetailPage() {
     },
   });
 
+  // #509: these were raw `.then()` calls with no `.catch()` — failures became
+  // unhandled promise rejections with zero user feedback. As mutations they
+  // fall under the global MutationCache onError default (error toast).
+  const resumeMutation = useMutation({
+    mutationFn: (enrollmentId: string) => resumeEnrollment(enrollmentId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.waitlist(sessionId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
+    },
+  });
+
+  const skipWaitlistMutation = useMutation({
+    mutationFn: (entryId: string) => skipWaitlistEntry(entryId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.waitlist(sessionId) });
+    },
+  });
+
+  const removeWaitlistMutation = useMutation({
+    mutationFn: (entryId: string) => deleteWaitlistEntry(entryId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.waitlist(sessionId) });
+    },
+  });
+
   const session = sessionsQuery.data ?? null;
   const enrollments = useMemo(
     () => enrollmentsQuery.data?.enrollments ?? [],
@@ -303,15 +329,7 @@ export default function AdminSessionDetailPage() {
               }
               onDelete={(enrollment) => setRemoveTarget(enrollment)}
               onPause={(enrollment) => setPauseTarget(enrollment)}
-              onResume={(id) =>
-                resumeEnrollment(id).then(() => {
-                  void queryClient.invalidateQueries({
-                    queryKey: queryKeys.admin.enrollments(sessionId),
-                  });
-                  void queryClient.invalidateQueries({ queryKey: queryKeys.admin.waitlist(sessionId) });
-                  void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
-                })
-              }
+              onResume={(id) => resumeMutation.mutate(id)}
               onTransfer={(enrollment) => setTransferTarget(enrollment)}
               onWithdraw={(enrollment) => setWithdrawalTarget(enrollment)}
             />
@@ -342,16 +360,10 @@ export default function AdminSessionDetailPage() {
           ) : (
             <WaitlistTable
               entries={waitlist}
-              onSkip={(id) =>
-                skipWaitlistEntry(id).then(() =>
-                  queryClient.invalidateQueries({ queryKey: queryKeys.admin.waitlist(sessionId) })
-                )
-              }
+              onSkip={(id) => skipWaitlistMutation.mutate(id)}
               onRemove={(id) => {
                 if (confirm("Remove from waitlist?")) {
-                  deleteWaitlistEntry(id).then(() =>
-                    queryClient.invalidateQueries({ queryKey: queryKeys.admin.waitlist(sessionId) })
-                  );
+                  removeWaitlistMutation.mutate(id);
                 }
               }}
             />

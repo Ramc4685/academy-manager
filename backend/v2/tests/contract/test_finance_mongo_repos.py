@@ -411,6 +411,41 @@ async def test_save_and_find_by_window_round_trips(db, acad) -> None:
 
 
 @pytest.mark.asyncio
+async def test_find_overlapping_detects_intersecting_window(db, acad) -> None:
+    repo = MongoPayoutPeriodRepository(db)
+    saved = await repo.save(_make_period())  # May 2026
+
+    # A one-week window inside May intersects the saved period.
+    overlap = await repo.find_overlapping(
+        coach_id="coach-A",
+        period_start=_dt("2026-05-04T00:00:00"),
+        period_end=_dt("2026-05-11T00:00:00"),
+    )
+    assert overlap is not None
+    assert overlap.period_id == saved.period_id
+
+    # An adjacent June window does not ([start, end) semantics).
+    assert (
+        await repo.find_overlapping(
+            coach_id="coach-A",
+            period_start=_dt("2026-06-01T00:00:00"),
+            period_end=_dt("2026-07-01T00:00:00"),
+        )
+        is None
+    )
+
+    # Another coach is unaffected.
+    assert (
+        await repo.find_overlapping(
+            coach_id="coach-B",
+            period_start=_dt("2026-05-04T00:00:00"),
+            period_end=_dt("2026-05-11T00:00:00"),
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
 async def test_payout_warnings_round_trip_and_legacy_docs_hydrate(db, acad) -> None:
     repo = MongoPayoutPeriodRepository(db)
     saved = await repo.save(

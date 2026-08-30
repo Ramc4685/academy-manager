@@ -4,11 +4,14 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
   type ReactNode,
 } from "react";
+
+import { registerMutationErrorSink } from "@/lib/query/mutation-errors";
 
 export type ToastKind = "success" | "error" | "info";
 
@@ -73,6 +76,15 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo(() => ({ toast, dismiss }), [toast, dismiss]);
+
+  // Surface globally-unhandled mutation failures (#509) as error toasts.
+  useEffect(
+    () =>
+      registerMutationErrorSink(({ title, description }) => {
+        toast({ kind: "error", title, description });
+      }),
+    [toast],
+  );
 
   return (
     <ToastContext.Provider value={value}>

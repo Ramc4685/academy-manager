@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import date, datetime
+from datetime import UTC, date, datetime
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel
 
@@ -43,7 +44,11 @@ class ListCoachOccurrencesForDate:
             on_date=on_date,
         )
 
-        return await _hydrate_occurrences(occurrences, sessions=self._sessions)
+        rows = await _hydrate_occurrences(occurrences, sessions=self._sessions)
+        # The repository returns a widened UTC candidate window (#510); keep
+        # only occurrences that fall on ``on_date`` in the session's own
+        # timezone so evening classes stay on their local calendar day.
+        return [row for row in rows if _local_date(row.start_at, row.timezone) == on_date]
 
 
 class ListCoachUpcomingOccurrences:
@@ -69,6 +74,23 @@ class ListCoachUpcomingOccurrences:
             limit=limit,
         )
         return await _hydrate_occurrences(occurrences, sessions=self._sessions)
+
+
+def _local_date(start_at: datetime, timezone_name: str | None) -> date:
+    """Calendar date of ``start_at`` in the session's timezone.
+
+    Naive datetimes (Mongo round-trips drop tzinfo) are treated as UTC
+    instants. Sessions without a timezone fall back to UTC, preserving the
+    pre-#510 behavior for fixtures that never set one.
+    """
+    instant = start_at if start_at.tzinfo is not None else start_at.replace(tzinfo=UTC)
+    if not timezone_name:
+        return instant.astimezone(UTC).date()
+    try:
+        tz = ZoneInfo(timezone_name)
+    except (KeyError, ValueError):
+        return instant.astimezone(UTC).date()
+    return instant.astimezone(tz).date()
 
 
 async def _hydrate_occurrences(

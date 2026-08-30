@@ -69,6 +69,20 @@ class _FakePeriodRepo:
     async def find_by_window(self, *, coach_id: str, period_start: datetime, period_end: datetime):
         return next((p for p in self._periods if p.coach_id == coach_id), None)
 
+    async def find_overlapping(
+        self, *, coach_id: str, period_start: datetime, period_end: datetime
+    ):
+        return next(
+            (
+                p
+                for p in self._periods
+                if p.coach_id == coach_id
+                and p.period_start < period_end
+                and p.period_end > period_start
+            ),
+            None,
+        )
+
     async def list_for_window(
         self, *, academy_id: str, period_start: datetime, period_end: datetime
     ):

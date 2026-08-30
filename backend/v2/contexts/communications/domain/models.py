@@ -167,6 +167,7 @@ class Campaign:
     status: CampaignStatus
     created_at: datetime
     sent_at: datetime | None
+    idempotency_key: str | None = None
 
     @classmethod
     def new(
@@ -180,6 +181,7 @@ class Campaign:
         body: str,
         created_at: datetime,
         channel: Channel = "email",
+        idempotency_key: str | None = None,
     ) -> Campaign:
         return cls(
             campaign_id=campaign_id,
@@ -192,6 +194,7 @@ class Campaign:
             status=CampaignStatus.DRAFT,
             created_at=created_at,
             sent_at=None,
+            idempotency_key=idempotency_key,
         )
 
     def mark_sending(self) -> Campaign:

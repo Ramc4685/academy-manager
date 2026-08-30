@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, date, datetime
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query
 
@@ -26,10 +27,27 @@ log = logging.getLogger(__name__)
 router = APIRouter(tags=["coach"])
 
 
-def _parse_date(value: str | None) -> date:
-    if value is None:
-        return datetime.now(UTC).date()
-    return date.fromisoformat(value)
+async def _resolve_date(
+    value: str | None,
+    *,
+    academy_id: str,
+    use_cases: CoachUseCases,
+) -> date:
+    if value is not None:
+        return date.fromisoformat(value)
+    # Default "today" to the academy-local calendar date, not UTC, so a
+    # coach checking in during an evening class (past UTC midnight) still
+    # sees today's sessions (#510). Falls back to UTC when the academy has
+    # no timezone configured or the lookup isn't composed.
+    lookup = getattr(use_cases, "get_academy_timezone", None)
+    if lookup is not None:
+        try:
+            timezone_name = await lookup(academy_id)
+            if timezone_name:
+                return datetime.now(UTC).astimezone(ZoneInfo(timezone_name)).date()
+        except (KeyError, ValueError):
+            log.warning("Invalid academy timezone for %s; defaulting to UTC", academy_id)
+    return datetime.now(UTC).date()
 
 
 @router.get(
@@ -39,12 +57,14 @@ def _parse_date(value: str | None) -> date:
 )
 async def get_today(
     on_date: str | None = Query(
-        default=None, alias="date", description="YYYY-MM-DD; default = today UTC"
+        default=None,
+        alias="date",
+        description="YYYY-MM-DD; default = today in the academy timezone",
     ),
     claims: AuthClaims = Depends(require_persona("coach")),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> CoachTodayResponse:
-    target_date = _parse_date(on_date)
+    target_date = await _resolve_date(on_date, academy_id=claims.academy_id, use_cases=use_cases)
     sessions = await use_cases.list_today.execute(claims.user_id, target_date)
 
     # Fan-out roster fetches concurrently. Prefer the occurrence-scoped
