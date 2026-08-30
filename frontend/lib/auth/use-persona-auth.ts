@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import {
@@ -13,19 +13,35 @@ import {
 } from "@/lib/api/me";
 import { onAuthChange } from "@/lib/auth/firebase";
 import { loginPathForError } from "@/lib/auth/login-error";
+import { isAuthRejection, withTransientRetry } from "@/lib/auth/me-failure";
 
 export type PersonaAuthState =
-  | { checked: false; authorized: false; user: null }
-  | { checked: true; authorized: false; user: null }
-  | { checked: true; authorized: true; user: CurrentUser };
+  | { checked: false; authorized: false; user: null; unavailable?: false }
+  | { checked: true; authorized: false; user: null; unavailable?: false }
+  /**
+   * The /me check failed for a non-auth reason (backend 5xx, network blip,
+   * client-side abort) even after retries. The Firebase session is still
+   * valid, so the shell must NOT bounce to /login — it shows a "can't reach
+   * the server" state and offers `retry` instead (issue #515).
+   */
+  | { checked: true; authorized: false; user: null; unavailable: true }
+  | { checked: true; authorized: true; user: CurrentUser; unavailable?: false };
 
-export function usePersonaAuth(requiredRole: UserRole): PersonaAuthState {
+export function usePersonaAuth(requiredRole: UserRole): PersonaAuthState & {
+  retry: () => void;
+} {
   const router = useRouter();
+  const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<PersonaAuthState>({
     checked: false,
     authorized: false,
     user: null,
   });
+
+  const retry = useCallback(() => {
+    setState({ checked: false, authorized: false, user: null });
+    setAttempt((n) => n + 1);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -39,7 +55,7 @@ export function usePersonaAuth(requiredRole: UserRole): PersonaAuthState {
         return;
       }
 
-      void getCurrentUser()
+      void withTransientRetry(getCurrentUser)
         .then((currentUser) => {
           if (cancelled) return;
           if (currentUser.roles.includes(requiredRole)) {
@@ -55,25 +71,63 @@ export function usePersonaAuth(requiredRole: UserRole): PersonaAuthState {
           replaceLocation(router, `${target.pathname}${target.search}`);
         })
         .catch((err: unknown) => {
-          if (!cancelled) {
+          if (cancelled) return;
+          if (isAuthRejection(err)) {
+            // 401/403: the session really is dead — bounce to /login with
+            // the backend's reason code.
             setState({ checked: true, authorized: false, user: null });
             replaceLocation(router, loginPathForError(err));
+            return;
           }
+          // Transient outage: keep the user where they are and let the
+          // shell offer a retry instead of logging them out.
+          setState({
+            checked: true,
+            authorized: false,
+            user: null,
+            unavailable: true,
+          });
         });
     });
     return () => {
       cancelled = true;
       unsubscribe();
     };
-  }, [requiredRole, router]);
+  }, [requiredRole, router, attempt]);
 
-  return state;
+  return { ...state, retry };
 }
 
 export type PlatformAuthState =
-  | { checked: false; authorized: false; user: null; isAdmin: false }
-  | { checked: true; authorized: false; user: null; isAdmin: false }
-  | { checked: true; authorized: true; user: CurrentUser; isAdmin: boolean };
+  | {
+      checked: false;
+      authorized: false;
+      user: null;
+      isAdmin: false;
+      unavailable?: false;
+    }
+  | {
+      checked: true;
+      authorized: false;
+      user: null;
+      isAdmin: false;
+      unavailable?: false;
+    }
+  /** Same transient-outage state as `PersonaAuthState` (issue #515). */
+  | {
+      checked: true;
+      authorized: false;
+      user: null;
+      isAdmin: false;
+      unavailable: true;
+    }
+  | {
+      checked: true;
+      authorized: true;
+      user: CurrentUser;
+      isAdmin: boolean;
+      unavailable?: false;
+    };
 
 /**
  * Guard for the `(platform)` surface.
@@ -83,14 +137,20 @@ export type PlatformAuthState =
  * `platform_admin` (may mutate) from `platform_support` (read-only) so the UI
  * can hide mutation controls — the server independently 404s support writes.
  */
-export function usePlatformAuth(): PlatformAuthState {
+export function usePlatformAuth(): PlatformAuthState & { retry: () => void } {
   const router = useRouter();
+  const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<PlatformAuthState>({
     checked: false,
     authorized: false,
     user: null,
     isAdmin: false,
   });
+
+  const retry = useCallback(() => {
+    setState({ checked: false, authorized: false, user: null, isAdmin: false });
+    setAttempt((n) => n + 1);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -104,7 +164,7 @@ export function usePlatformAuth(): PlatformAuthState {
         return;
       }
 
-      void getCurrentUser()
+      void withTransientRetry(getCurrentUser)
         .then((currentUser) => {
           if (cancelled) return;
           if (hasPlatformAccess(currentUser)) {
@@ -124,20 +184,34 @@ export function usePlatformAuth(): PlatformAuthState {
           target.searchParams.set("access_denied", "platform");
           replaceLocation(router, `${target.pathname}${target.search}`);
         })
-        .catch(() => {
-          if (!cancelled) {
-            setState({ checked: true, authorized: false, user: null, isAdmin: false });
-            replaceLocation(router, "/login");
+        .catch((err: unknown) => {
+          if (cancelled) return;
+          if (isAuthRejection(err)) {
+            setState({
+              checked: true,
+              authorized: false,
+              user: null,
+              isAdmin: false,
+            });
+            replaceLocation(router, loginPathForError(err));
+            return;
           }
+          setState({
+            checked: true,
+            authorized: false,
+            user: null,
+            isAdmin: false,
+            unavailable: true,
+          });
         });
     });
     return () => {
       cancelled = true;
       unsubscribe();
     };
-  }, [router]);
+  }, [router, attempt]);
 
-  return state;
+  return { ...state, retry };
 }
 
 function replaceLocation(

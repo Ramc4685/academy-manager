@@ -6,6 +6,7 @@ import Link from "next/link";
 import { usePersonaAuth } from "@/lib/auth/use-persona-auth";
 import { PersonaSwitcher } from "@/components/persona/persona-switcher";
 import { AccessDeniedNotice } from "@/components/persona/access-denied-notice";
+import { AuthUnavailableScreen } from "@/components/persona/auth-unavailable";
 import { PersonaLogoutButton } from "@/components/persona/logout-button";
 import { ToastProvider } from "@/components/ds/toast";
 
@@ -22,6 +23,10 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
         </div>
       </div>
     );
+  }
+
+  if (auth.unavailable) {
+    return <AuthUnavailableScreen onRetry={auth.retry} />;
   }
 
   if (!auth.authorized) {
