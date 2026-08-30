@@ -17,6 +17,7 @@ from pymongo.errors import DuplicateKeyError
 
 from backend.v2.composition.admin_registration_review import (
     AdminRegistrationReview,
+    RegistrationDeclineRefunds,
 )
 from backend.v2.composition.digests import (
     _build_email_sender,
@@ -1721,6 +1722,10 @@ def compose_admin(
         enrollment_events=enrollment_events,
         trial_conversion=link_trial_conversion,
         student_registrations=students_r,
+        refunds=RegistrationDeclineRefunds(
+            payments=payments_repo,
+            refunds=_RegistrationRefundExecutor(issue_refund),
+        ),
         academy_id=None,
     )
     # Identity / Settings
@@ -4701,6 +4706,19 @@ class _EnrollmentLifecycleEventSink:
                 billing_result=billing_result,
                 credit_id=credit_id,
             )
+        )
+
+
+class _RegistrationRefundExecutor:
+    """`RefundExecutor` adapter over Billing's ``IssueRefund`` use case
+    (issue #514): refund the full remaining captured amount."""
+
+    def __init__(self, issue_refund: IssueRefund) -> None:
+        self._issue_refund = issue_refund
+
+    async def refund_remaining(self, *, payment_id: str, reason: str) -> None:
+        await self._issue_refund.execute(
+            IssueRefundCommand(payment_id=payment_id, amount_cents=None, reason=reason)
         )
 
 

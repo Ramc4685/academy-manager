@@ -10,6 +10,7 @@ import pytest
 from backend.v2.composition.admin_registration_review import (
     AdminRegistrationReview,
     ApproveRegistrationCommand,
+    RegistrationDeclineRefunds,
     RejectRegistrationCommand,
     WaitlistRegistrationCommand,
 )
@@ -1096,3 +1097,139 @@ async def test_approve_idempotent_replay_does_not_call_trial_conversion_again() 
     await review.approve(ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1"))
 
     assert trial_conversion.calls == [("parent-1", "app-1")]
+
+
+class RecordingRefunds:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.calls: list[tuple[str, str]] = []
+        self.fail = fail
+
+    async def refund_registration_payment(self, *, payment_id: str, reason: str) -> None:
+        if self.fail:
+            raise RuntimeError("stripe unavailable")
+        self.calls.append((payment_id, reason))
+
+
+def _review_with_refunds(
+    apps: InMemoryApplications, refunds: RecordingRefunds | None
+) -> AdminRegistrationReview:
+    return AdminRegistrationReview(
+        apps=apps,
+        sessions=InMemorySessions([_session()]),
+        students=InMemoryStudents(),
+        enrollments=InMemoryEnrollments(),
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        refunds=refunds,
+        clock=lambda: NOW,
+    )
+
+
+@pytest.mark.asyncio
+async def test_reject_refunds_paid_application() -> None:
+    app = _application().model_copy(update={"payment_id": "pay-1"})
+    apps = InMemoryApplications(app)
+    refunds = RecordingRefunds()
+    review = _review_with_refunds(apps, refunds)
+
+    detail = await review.reject(
+        RejectRegistrationCommand(application_id="app-1", actor_id="admin-1", reason="full")
+    )
+
+    assert detail.status == "DECLINED"
+    assert refunds.calls == [("pay-1", "registration_declined")]
+    assert apps.apps["app-1"].status == "DECLINED"
+
+
+@pytest.mark.asyncio
+async def test_reject_without_payment_does_not_call_refunds() -> None:
+    apps = InMemoryApplications(_application())
+    refunds = RecordingRefunds()
+    review = _review_with_refunds(apps, refunds)
+
+    detail = await review.reject(
+        RejectRegistrationCommand(application_id="app-1", actor_id="admin-1", reason="dup")
+    )
+
+    assert detail.status == "DECLINED"
+    assert refunds.calls == []
+
+
+@pytest.mark.asyncio
+async def test_reject_refund_failure_aborts_decline_and_releases_review() -> None:
+    app = _application().model_copy(update={"payment_id": "pay-1"})
+    apps = InMemoryApplications(app)
+    review = _review_with_refunds(apps, RecordingRefunds(fail=True))
+
+    with pytest.raises(RuntimeError):
+        await review.reject(
+            RejectRegistrationCommand(application_id="app-1", actor_id="admin-1", reason="full")
+        )
+
+    # Not silently declined: the application returns to the review queue so
+    # the admin can retry once the refund path is healthy.
+    assert apps.apps["app-1"].status == "PENDING_APPROVAL"
+    assert apps.apps["app-1"].review_claim_token is None
+
+
+@pytest.mark.asyncio
+async def test_reject_without_refund_port_still_declines() -> None:
+    app = _application().model_copy(update={"payment_id": "pay-1"})
+    apps = InMemoryApplications(app)
+    review = _review_with_refunds(apps, None)
+
+    detail = await review.reject(
+        RejectRegistrationCommand(application_id="app-1", actor_id="admin-1", reason="full")
+    )
+
+    assert detail.status == "DECLINED"
+
+
+class _StubPayment:
+    def __init__(self, *, status: str, amount_cents: int, refunded_cents: int = 0) -> None:
+        self.status = status
+        self.amount_cents = amount_cents
+        self.refunded_cents = refunded_cents
+
+
+class _StubPayments:
+    def __init__(self, payment: _StubPayment | None) -> None:
+        self.payment = payment
+
+    async def get(self, payment_id: str) -> _StubPayment | None:
+        return self.payment
+
+
+class _RecordingExecutor:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    async def refund_remaining(self, *, payment_id: str, reason: str) -> None:
+        self.calls.append((payment_id, reason))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("payment", "expect_refund"),
+    [
+        (None, False),
+        (_StubPayment(status="pending", amount_cents=5000), False),
+        (_StubPayment(status="failed", amount_cents=5000), False),
+        (_StubPayment(status="expired", amount_cents=5000), False),
+        (_StubPayment(status="waived", amount_cents=0), False),
+        (_StubPayment(status="refunded", amount_cents=5000, refunded_cents=5000), False),
+        (_StubPayment(status="succeeded", amount_cents=0), False),
+        (_StubPayment(status="succeeded", amount_cents=5000), True),
+        (_StubPayment(status="partially_refunded", amount_cents=5000, refunded_cents=1000), True),
+        (_StubPayment(status="partially_paid", amount_cents=5000), True),
+    ],
+)
+async def test_registration_decline_refunds_only_refundable_payments(
+    payment: _StubPayment | None, expect_refund: bool
+) -> None:
+    executor = _RecordingExecutor()
+    adapter = RegistrationDeclineRefunds(payments=_StubPayments(payment), refunds=executor)
+
+    await adapter.refund_registration_payment(payment_id="pay-1", reason="registration_declined")
+
+    assert executor.calls == ([("pay-1", "registration_declined")] if expect_refund else [])

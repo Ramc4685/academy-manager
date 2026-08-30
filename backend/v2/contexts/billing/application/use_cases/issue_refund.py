@@ -121,5 +121,11 @@ class IssueRefund:
 
 
 def _normalize_reason(reason: str) -> str:
-    valid = {"admin_initiated", "capacity_failed", "duplicate", "other"}
+    valid = {
+        "admin_initiated",
+        "capacity_failed",
+        "registration_declined",
+        "duplicate",
+        "other",
+    }
     return reason if reason in valid else "other"
