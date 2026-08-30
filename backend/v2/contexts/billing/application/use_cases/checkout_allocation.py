@@ -18,10 +18,18 @@ async def allocate_checkout_payment_across_invoices(
     allocation_key_prefix: str,
     conflict_error: type[Exception] = ValueError,
 ) -> int:
-    """Allocate one Checkout payment across invoices with per-invoice idempotency."""
+    """Allocate one Checkout payment across invoices with per-invoice idempotency.
+
+    Any remainder that no invoice can absorb (e.g. every invoice was zeroed by a
+    manual payment while an ACH debit was settling — #533) is allocated once more
+    against the first invoice under a dedicated idempotency key: the domain caps
+    the applied amount at the invoice balance and mints an overpayment credit for
+    the rest, so settled money is never left stranded as an unapplied payment.
+    """
     remaining = amount_cents
     new_allocations = 0
-    for invoice in sorted(invoices, key=lambda item: item.invoice_id):
+    sorted_invoices = sorted(invoices, key=lambda item: item.invoice_id)
+    for invoice in sorted_invoices:
         allocation_key = f"{allocation_key_prefix}:{invoice.invoice_id}"
         existing_allocation = await ledger.get_payment_allocation_by_idempotency_key(allocation_key)
         if existing_allocation is not None:
@@ -45,6 +53,17 @@ async def allocate_checkout_payment_across_invoices(
         )
         remaining -= allocation_amount
         new_allocations += 1
+    if remaining > 0 and sorted_invoices:
+        overflow_key = f"{allocation_key_prefix}:overpayment"
+        existing_overflow = await ledger.get_payment_allocation_by_idempotency_key(overflow_key)
+        if existing_overflow is None:
+            await ledger.allocate_payment(
+                payment_id=payment.payment_id,
+                invoice_id=sorted_invoices[0].invoice_id,
+                amount_cents=remaining,
+                idempotency_key=overflow_key,
+            )
+            new_allocations += 1
     return new_allocations
 
 

@@ -411,6 +411,134 @@ async def test_manual_payment_overpayment_creates_account_credit(db, acad) -> No
 
 
 @pytest.mark.asyncio
+async def test_ach_settlement_after_manual_payment_mints_full_overpayment_credit(db, acad) -> None:
+    """#533: an ACH autopay debit settles days after an admin manual payment
+    zeroed the same invoice. Allocating the settled payment must not raise —
+    the full amount becomes an APPROVED OVERPAYMENT credit and the invoice is
+    left untouched, instead of the money stranding as an unapplied payment in
+    webhook quarantine."""
+    from backend.v2.contexts.billing.application.use_cases.record_manual_payment import (
+        RecordManualPayment,
+        RecordManualPaymentCommand,
+    )
+
+    repo = MongoBillingLedgerRepository(db)
+    now = datetime(2026, 6, 14, 12, 0, tzinfo=UTC)
+    await repo.create_invoice(
+        _make_invoice("inv-533", acad, now), lines=[], idempotency_key="533:inv"
+    )
+
+    # Admin records cash during the multi-day ACH settlement window.
+    uc = RecordManualPayment(ledger=repo)
+    manual = await uc.execute(
+        RecordManualPaymentCommand(invoice_id="inv-533", amount_cents=10_000, payment_method="cash")
+    )
+    assert manual.invoice_status == "paid"
+
+    # The late payment_intent.succeeded records the settled ACH ledger payment
+    # and allocates it — exactly what _handle_autopay_pi_succeeded does.
+    ach_payment = await repo.record_payment(
+        _make_payment("ledger-pay-autopay:pi_533", acad, now),
+        idempotency_key="autopay-pi:pi_533",
+    )
+    result = await repo.allocate_payment(
+        payment_id=ach_payment.payment_id,
+        invoice_id="inv-533",
+        amount_cents=10_000,
+        idempotency_key="autopay-alloc:pi_533",
+    )
+
+    assert result.allocation.amount_cents == 0
+    assert result.invoice.status == "paid"
+    assert result.invoice.balance_due_cents == 0
+    credit_doc = await db["account_credit_ledger"].find_one(
+        {
+            "academy_id": acad,
+            "source_type": "OVERPAYMENT",
+            "source_id": result.allocation.allocation_id,
+        }
+    )
+    assert credit_doc is not None
+    assert credit_doc["amount_cents"] == 10_000
+    assert credit_doc["status"] == "APPROVED"
+    payment_doc = await db["ledger_payments"].find_one(
+        {"academy_id": acad, "payment_id": ach_payment.payment_id}
+    )
+    assert payment_doc is not None
+    assert payment_doc["unapplied_amount_cents"] == 0
+
+
+@pytest.mark.asyncio
+async def test_checkout_settlement_after_manual_payment_credits_remainder(db, acad) -> None:
+    """#533 (checkout arm): a delayed ACH Checkout settlement whose invoices were
+    all paid by other means must credit the remainder instead of silently leaving
+    the payment unapplied."""
+    from backend.v2.contexts.billing.application.use_cases.checkout_allocation import (
+        allocate_checkout_payment_across_invoices,
+    )
+    from backend.v2.contexts.billing.application.use_cases.record_manual_payment import (
+        RecordManualPayment,
+        RecordManualPaymentCommand,
+    )
+
+    repo = MongoBillingLedgerRepository(db)
+    now = datetime(2026, 6, 14, 12, 0, tzinfo=UTC)
+    invoice = _make_invoice("inv-533-cs", acad, now)
+    await repo.create_invoice(invoice, lines=[], idempotency_key="533:cs:inv")
+    uc = RecordManualPayment(ledger=repo)
+    await uc.execute(
+        RecordManualPaymentCommand(
+            invoice_id="inv-533-cs", amount_cents=10_000, payment_method="cash"
+        )
+    )
+
+    payment = await repo.record_payment(
+        _make_payment("ledger-pay-cs:cs_533", acad, now),
+        idempotency_key="invoice-checkout:cs_533",
+    )
+    # The webhook handler loads invoices fresh, so the snapshot shows balance 0.
+    settled_invoice = await repo.get_invoice("inv-533-cs")
+    assert settled_invoice is not None
+    assert settled_invoice.balance_due_cents == 0
+    allocated = await allocate_checkout_payment_across_invoices(
+        ledger=repo,
+        payment=payment,
+        invoices=[settled_invoice],
+        amount_cents=10_000,
+        allocation_key_prefix="invoice-checkout-alloc:cs_533",
+    )
+
+    assert allocated == 1
+    credit_doc = await db["account_credit_ledger"].find_one(
+        {"academy_id": acad, "source_type": "OVERPAYMENT", "parent_id": "parent-1"}
+    )
+    assert credit_doc is not None
+    assert credit_doc["amount_cents"] == 10_000
+    payment_doc = await db["ledger_payments"].find_one(
+        {"academy_id": acad, "payment_id": payment.payment_id}
+    )
+    assert payment_doc is not None
+    assert payment_doc["unapplied_amount_cents"] == 0
+
+    # Redelivery of the same event must be a no-op (no double credit).
+    allocated_again = await allocate_checkout_payment_across_invoices(
+        ledger=repo,
+        payment=await repo.record_payment(
+            _make_payment("ledger-pay-cs:cs_533", acad, now),
+            idempotency_key="invoice-checkout:cs_533",
+        ),
+        invoices=[settled_invoice],
+        amount_cents=10_000,
+        allocation_key_prefix="invoice-checkout-alloc:cs_533",
+    )
+    assert allocated_again == 0
+    credits = await db["account_credit_ledger"].count_documents(
+        {"academy_id": acad, "source_type": "OVERPAYMENT"}
+    )
+    assert credits == 1
+
+
+@pytest.mark.asyncio
 async def test_apply_invoice_refund_is_single_writer(db, acad) -> None:
     """P0-3: refunded_cents is written by exactly one repo method and is the single source
     of truth (model value == persisted doc value), replacing the raw composition $inc."""
