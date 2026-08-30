@@ -51,6 +51,15 @@ class _FakeLevelProgressRepo:
                 return row
         return None
 
+    async def list_active_for_students(
+        self, student_ids: list[str], program_id: str
+    ) -> list[StudentLevelProgress]:
+        return [
+            row
+            for row in self._rows
+            if row.student_id in student_ids and row.program_id == program_id
+        ]
+
 
 class _FakeSkillProgressRepo:
     async def list_for_students(self, student_ids: list[str], level_id: str) -> list[object]:
@@ -60,6 +69,11 @@ class _FakeSkillProgressRepo:
 class _FakeRecommendationRepo:
     async def get_active_for_student(self, student_id: str, program_id: str) -> object | None:
         return None
+
+    async def list_active_for_students(
+        self, student_ids: list[str], program_id: str
+    ) -> list[object]:
+        return []
 
 
 class _FakeSkillLookup:
