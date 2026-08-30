@@ -46,3 +46,14 @@ class CachingAcademyLookup:
         if academy_id is not None:
             self._cache.set(f"domain:{domain}", academy_id)
         return academy_id
+
+    async def exists(self, academy_id: str) -> bool:
+        # Same positive-only policy as the finders: a newly-registered academy
+        # must pass the internal-header gate immediately, so a False is never
+        # cached.
+        if self._cache.get(f"exists:{academy_id}") is not None:
+            return True
+        found = await self._inner.exists(academy_id)
+        if found:
+            self._cache.set(f"exists:{academy_id}", academy_id)
+        return found
