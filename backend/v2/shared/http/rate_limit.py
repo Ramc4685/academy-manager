@@ -16,6 +16,7 @@ from math import ceil
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
+from starlette.types import ASGIApp
 
 Clock = Callable[[], float]
 
@@ -206,7 +207,7 @@ class StripeSessionRateLimitMiddleware(BaseHTTPMiddleware):
 
     def __init__(
         self,
-        app,
+        app: ASGIApp,
         *,
         limit: int = 10,
         window_seconds: int = 60,
