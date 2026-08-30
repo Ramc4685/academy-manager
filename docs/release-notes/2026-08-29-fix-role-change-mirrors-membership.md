@@ -15,6 +15,18 @@ instead of reporting a demotion that never took effect, and the two writes are
 ordered by privilege: demotions revoke the membership first, promotions write
 the directory first.
 
+`remove_role` gets the same treatment, and it is the half that matters in
+production: `change_role` has no frontend caller, so every demotion the admin
+UI can actually perform goes through `DELETE /admin/users/{id}/roles/{role}`.
+That path mirrored membership with a single `update_one` keyed on the exact
+resolved `user_id` — for an alias-keyed row it `$pull`ed nothing while the
+directory, the audit row and the UI all reported the role removed. Removal now
+resolves through the same alias set, skips rows owned by another account
+(failing closed, since a removal always drops a role), writes by row `_id`,
+and checks `matched_count`. The additive path keeps its exact-id upsert:
+granting through a row auth cannot reach is inert, and the upsert is what
+creates the row for legacy accounts that have none.
+
 ## Deploy notes
 No migration. Accounts demoted BEFORE this ships may still hold a stale
 `academy_memberships.roles` granting the old role — those rows are not
