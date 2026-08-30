@@ -1375,12 +1375,25 @@ class HandleWebhookEvent:
         )
 
         if amount_cents > 0:
-            await self._billing_ledger.allocate_payment(
+            allocation = await self._billing_ledger.allocate_payment(
                 payment_id=payment.payment_id,
                 invoice_id=invoice_id,
                 amount_cents=amount_cents,
                 idempotency_key=f"autopay-alloc:{pi_id}",
             )
+            credit = getattr(allocation, "overpayment_credit", None)
+            if credit is not None:
+                # ACH settled after another path (e.g. an admin manual payment)
+                # already covered the invoice: the surplus became an account
+                # credit instead of stranding as an unapplied payment (#533).
+                log.warning(
+                    "autopay_pi_succeeded: invoice=%s already (partially) paid — "
+                    "minted overpayment credit=%s cents=%d pi=%s",
+                    invoice_id,
+                    credit.credit_id,
+                    credit.amount_cents,
+                    pi_id,
+                )
             log.info(
                 "autopay_pi_succeeded: allocated payment=%s to invoice=%s pi=%s amount=%d",
                 payment.payment_id,

@@ -616,6 +616,12 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         )
         if allocation_doc is None:
             if existing is not None:
+                await self._void_overpayment_credit_for_allocation(
+                    academy_id=academy_id,
+                    allocation_id=str(existing["allocation_id"]),
+                    reason=reason,
+                    now=reversed_at,
+                )
                 await self._repair_invoice_after_allocation_change(
                     academy_id=academy_id,
                     invoice_id=str(existing["invoice_id"]),
@@ -655,6 +661,12 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         else:
             reversal_doc = {k: v for k, v in existing.items() if k != "_id"}
 
+        await self._void_overpayment_credit_for_allocation(
+            academy_id=academy_id,
+            allocation_id=str(allocation_doc["allocation_id"]),
+            reason=reason,
+            now=reversed_at,
+        )
         await self._db["payment_allocations"].delete_one(
             {
                 "academy_id": academy_id,
@@ -1035,6 +1047,71 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             {"academy_id": academy_id, "payment_id": payment_id},
             {"$set": {"unapplied_amount_cents": unapplied, "updated_at": now}},
         )
+
+    async def _void_overpayment_credit_for_allocation(
+        self,
+        *,
+        academy_id: str,
+        allocation_id: str,
+        reason: str,
+        now: datetime,
+    ) -> None:
+        """Void the OVERPAYMENT credit minted from a reversed allocation (#533).
+
+        When an ACH debit is returned (R01/R10/...) the money is clawed back, so
+        any account credit minted from that settlement must stop being spendable.
+        Idempotent: an already-VOIDED credit is left untouched. If part of the
+        credit was already applied to another invoice before the return arrived,
+        that spent portion cannot be silently recovered here — it is logged for
+        manual follow-up.
+        """
+        credits = self._db["account_credit_ledger"]
+        credit_doc = await credits.find_one(
+            {
+                "academy_id": academy_id,
+                "source_type": "OVERPAYMENT",
+                "source_id": allocation_id,
+            }
+        )
+        if credit_doc is None or str(credit_doc.get("status") or "") == "VOIDED":
+            return
+        amount = int(credit_doc.get("amount_cents") or 0)
+        remaining = int(credit_doc.get("remaining_amount_cents") or 0)
+        await credits.update_one(
+            {
+                "academy_id": academy_id,
+                "credit_id": credit_doc["credit_id"],
+                "status": {"$ne": "VOIDED"},
+            },
+            {
+                "$set": {
+                    "status": "VOIDED",
+                    "remaining_amount_cents": 0,
+                    "void_reason": f"allocation_reversed:{reason}",
+                    "updated_at": now,
+                }
+            },
+        )
+        spent = amount - remaining
+        if spent > 0:
+            log.warning(
+                "reverse_payment_allocation: voided overpayment credit %s but %d cents "
+                "were already applied before the reversal (reason=%s allocation=%s); "
+                "manual recovery required",
+                credit_doc.get("credit_id"),
+                spent,
+                reason,
+                allocation_id,
+            )
+        else:
+            log.info(
+                "reverse_payment_allocation: voided unspent overpayment credit %s "
+                "(%d cents, reason=%s allocation=%s)",
+                credit_doc.get("credit_id"),
+                amount,
+                reason,
+                allocation_id,
+            )
 
     async def _sum_allocations(
         self,

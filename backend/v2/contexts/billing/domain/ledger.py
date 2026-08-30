@@ -175,14 +175,21 @@ def allocate_payment_to_invoice(
         raise ValueError("void invoices cannot receive payments")
 
     usable_from_payment = min(requested_amount_cents, payment.unapplied_amount_cents)
-    allocated_cents = min(usable_from_payment, invoice.balance_due_cents)
-    if allocated_cents <= 0:
+    if usable_from_payment <= 0:
         raise ValueError("no payable invoice balance or payment amount")
+    allocated_cents = max(0, min(usable_from_payment, invoice.balance_due_cents))
 
+    # Zero-balance invoice with real money in hand (e.g. an ACH autopay debit that
+    # settles days after an admin recorded a manual payment on the same invoice):
+    # instead of raising — which stranded the settled funds as a permanently
+    # unapplied ledger payment in webhook quarantine (#533) — the full usable
+    # amount becomes an overpayment credit and the invoice is left untouched.
     overpayment_cents = usable_from_payment - allocated_cents
     new_balance = invoice.balance_due_cents - allocated_cents
-    if new_balance == 0:
-        new_status: InvoiceStatus = "paid"
+    if allocated_cents == 0:
+        new_status: InvoiceStatus = invoice.status
+    elif new_balance == 0:
+        new_status = "paid"
     elif new_balance < invoice.total_cents:
         new_status = "partially_paid"
     else:
