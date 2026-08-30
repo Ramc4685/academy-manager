@@ -795,7 +795,10 @@ def compose_parent(
         students=students_query,
         policies=self_service_policies_repo,
         occurrences=occurrences_query,
+        sessions=sessions_writer,
+        outbox=outbox,
         billing=_SelfCancelFeeBillingPort(),
+        enrollment_events=enrollment_events,
     )
 
     confirm_enrollment = ConfirmEnrollment(
