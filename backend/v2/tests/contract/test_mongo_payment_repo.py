@@ -151,6 +151,73 @@ async def test_get_and_save_ledger_payment_without_recreating_legacy_payment(db,
 
 
 @pytest.mark.asyncio
+async def test_save_refuses_second_ledger_row_for_same_stripe_payment_intent(db, acad) -> None:
+    """Issue #505: a brand-new Payment whose stripe_payment_intent_id already
+    exists in ledger_payments (e.g. the ledger-native row written by the
+    subscription-invoice sync) must NOT insert a second row — that row would
+    double-count the charge in every ledger-based revenue report."""
+    now = datetime.now(UTC)
+    await db["ledger_payments"].insert_one(
+        {
+            "academy_id": acad,
+            "payment_id": "ledger-pay-in_dup",
+            "parent_id": "parent-1",
+            "amount_cents": 7_000,
+            "unapplied_amount_cents": 0,
+            "currency": "usd",
+            "status": "succeeded",
+            "stripe_payment_intent_id": "pi_dup",
+            "stripe_invoice_id": "in_dup",
+            "refunded_cents": 0,
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+    repo = MongoPaymentRepository(db)
+
+    await repo.save(
+        Payment(
+            payment_id="legacy-projection-dup",
+            academy_id=acad,
+            parent_id="parent-1",
+            stripe_payment_intent_id="pi_dup",
+            amount_cents=7_000,
+            currency="usd",
+            status="succeeded",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+    assert (
+        await db["ledger_payments"].count_documents(
+            {"academy_id": acad, "stripe_payment_intent_id": "pi_dup"}
+        )
+        == 1
+    )
+    assert await db["payments"].count_documents({"academy_id": acad}) == 0
+    # A payment WITHOUT a stripe PI is unaffected by the guard.
+    await repo.save(
+        Payment(
+            payment_id="manual-no-pi",
+            academy_id=acad,
+            parent_id="parent-1",
+            amount_cents=1_000,
+            currency="usd",
+            status="succeeded",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    assert (
+        await db["ledger_payments"].count_documents(
+            {"academy_id": acad, "payment_id": "manual-no-pi"}
+        )
+        == 1
+    )
+
+
+@pytest.mark.asyncio
 async def test_generate_monthly_prorates_first_period_and_stores_snapshot(db, acad) -> None:
     ledger_repo = MongoBillingLedgerRepository(db)
     repo = MongoPaymentRepository(

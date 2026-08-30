@@ -2611,6 +2611,24 @@ class HandleWebhookEvent:
                 )
             return None
 
+        # Issue #505: the subscription-ledger sync that runs before this
+        # projection already records a ledger-native LedgerPayment for the same
+        # charge (payment_id "ledger-pay-{stripe_invoice_id}"). The legacy
+        # lookup above only sees the `payments` collection and ledger rows
+        # tagged payment_origin="legacy_payment", so without this check the
+        # projection save inserts a SECOND `succeeded` row into
+        # `ledger_payments` for one charge and every ledger-based revenue
+        # report double-counts it. Skipping the projection also means
+        # charge.refunded for these PIs falls through to the ledger refund
+        # path (_on_charge_refunded_ledger) instead of only touching the
+        # projection row.
+        if self._billing_ledger is not None and stripe_pi:
+            ledger_payment = await self._billing_ledger.get_payment_by_stripe_payment_intent_id(
+                stripe_pi
+            )
+            if ledger_payment is not None:
+                return None
+
         now = self._now()
         amount_key = "amount_paid" if status == "succeeded" else "amount_due"
         return Payment(
