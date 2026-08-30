@@ -62,9 +62,19 @@ class RecordManualPayment:
             raise ValueError(
                 f"invoice {cmd.invoice_id!r} is not payable (status={invoice.status!r})"
             )
-        # Overpayment is allowed: the allocation caps to the invoice balance and the
-        # remainder becomes an APPROVED account credit (same as the Stripe path), so the
-        # manual and automated payment paths behave identically.
+        if invoice.balance_due_cents <= 0:
+            # The #533 domain change lets async settlement paths (late ACH webhooks)
+            # convert money on a zero-balance invoice into an account credit instead
+            # of stranding it. A manual payment is a synchronous admin action, so
+            # keep the pre-#533 behavior here: reject it up front (before creating a
+            # LedgerPayment) rather than silently turning cash into account credit.
+            raise ValueError(
+                f"invoice {cmd.invoice_id!r} has no balance due; "
+                "record an account credit instead of a manual payment"
+            )
+        # Partial overpayment is allowed: the allocation caps to the invoice balance
+        # and the remainder becomes an APPROVED account credit (same as the Stripe
+        # path), so the manual and automated payment paths behave identically.
 
         now = self._now()
         payment_id = f"manual-{new_ulid()}"

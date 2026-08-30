@@ -637,6 +637,11 @@ def main() -> int:
     print(f"  export TENANT_HOST='{result['unknown_host_for_smoke']}'")
     print(f"  export INTERNAL_TENANT_HEADER_NAME='{result['internal_tenant_header_name']}'")
     print(f"  export INTERNAL_TENANT_HEADER_VALUE='{result['academy_id']}'")
+    print(
+        "  # Internal tenant header is secret-gated (issue #519):"
+        " read V2_PROXY_SHARED_SECRET from .local/saas-staging.env"
+    )
+    print("  export PROXY_AUTH_VALUE='<V2_PROXY_SHARED_SECRET from .local/saas-staging.env>'")
     print(f"  export AUTH_TOKEN='{result['id_token']}'")
     print()
     print("Then run:  scripts/smoke/saas_readiness_smoke.sh")

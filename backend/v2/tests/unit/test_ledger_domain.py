@@ -320,3 +320,60 @@ def test_allocate_overpayment_creates_credit() -> None:
     assert result.invoice.status == "paid"
     assert result.overpayment_credit is not None
     assert result.overpayment_credit.amount_cents == 2_000
+
+
+def test_allocate_zero_balance_invoice_mints_full_credit() -> None:
+    """#533: ACH settles after a manual payment zeroed the invoice.
+
+    The full settled amount must become an overpayment credit instead of the
+    allocation raising and stranding the money as an unapplied payment.
+    """
+    inv = _invoice(status="paid", total_cents=10_000, balance_due_cents=0)
+    pay = _payment(10_000)
+    result = allocate_payment_to_invoice(
+        invoice=inv,
+        payment=pay,
+        lines=[],
+        requested_amount_cents=10_000,
+        allocation_id="alloc-3",
+        now=NOW,
+    )
+    assert result.allocation.amount_cents == 0
+    assert result.invoice.status == "paid"
+    assert result.invoice.balance_due_cents == 0
+    assert result.payment.unapplied_amount_cents == 0
+    assert result.overpayment_credit is not None
+    assert result.overpayment_credit.amount_cents == 10_000
+    assert result.overpayment_credit.source_type == "OVERPAYMENT"
+
+
+def test_allocate_zero_balance_preserves_invoice_status() -> None:
+    """A zero-allocation never rewrites the invoice status (e.g. a zero-total
+    open invoice must not flip to paid just because a credit was minted)."""
+    inv = _invoice(status="open", subtotal_cents=0, total_cents=0, balance_due_cents=0)
+    pay = _payment(2_500)
+    result = allocate_payment_to_invoice(
+        invoice=inv,
+        payment=pay,
+        lines=[],
+        requested_amount_cents=2_500,
+        allocation_id="alloc-4",
+        now=NOW,
+    )
+    assert result.invoice.status == "open"
+    assert result.overpayment_credit is not None
+    assert result.overpayment_credit.amount_cents == 2_500
+
+
+def test_allocate_raises_when_payment_has_no_unapplied_money() -> None:
+    inv = _invoice(status="paid", total_cents=10_000, balance_due_cents=0)
+    pay = _payment(10_000).model_copy(update={"unapplied_amount_cents": 0})
+    with pytest.raises(ValueError, match="no payable"):
+        allocate_payment_to_invoice(
+            invoice=inv,
+            payment=pay,
+            lines=[],
+            requested_amount_cents=10_000,
+            allocation_id="alloc-5",
+            now=NOW,
+        )

@@ -90,6 +90,20 @@ class MongoLevelUpRecommendationRepository(TenantScopedRepository):
         )
         return self._to_domain(doc) if doc else None
 
+    async def list_active_for_students(
+        self, student_ids: list[str], program_id: str
+    ) -> list[LevelUpRecommendation]:
+        if not student_ids:
+            return []
+        cursor = self._find_many(
+            {
+                "student_id": {"$in": student_ids},
+                "program_id": program_id,
+                "status": {"$in": ["RECOMMENDED", "APPROVED"]},
+            }
+        )
+        return [self._to_domain(doc) async for doc in cursor]
+
     async def list_pending(self) -> list[LevelUpRecommendation]:
         cursor = self._find_many(
             {"status": "RECOMMENDED"},

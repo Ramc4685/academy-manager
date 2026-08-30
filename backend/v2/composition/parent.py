@@ -56,7 +56,7 @@ from backend.v2.contexts.billing.application.use_cases.start_checkout import (
     StartCheckoutCommand,
     StartCheckoutResult,
 )
-from backend.v2.contexts.billing.domain.errors import InvoicePayLinkUnavailable
+from backend.v2.contexts.billing.domain.errors import InvoicePayLinkUnavailable, QuoteExpired
 from backend.v2.contexts.billing.domain.ledger import InvoiceLine
 from backend.v2.contexts.billing.infrastructure.mongo_autopay_consent_repo import (
     MongoAutopayConsentRepository,
@@ -530,7 +530,11 @@ def compose_parent(
     billing_ledger_repo = MongoBillingLedgerRepository(db)
     billing_counters_repo = MongoBillingCounterRepository(db)
     billing_settings_repo = MongoBillingSettingsRepository(db)
-    payments_repo = MongoPaymentRepository(db, credit_ledger=credits_repo)
+    # The composed clock must reach the payment repo: quotes are minted with
+    # `clock` and consume() judges the snapshot TTL with the repo's clock, so
+    # letting the repo default to the wall clock would make the two disagree
+    # (a pinned test clock, for instance, would see every quote as expired).
+    payments_repo = MongoPaymentRepository(db, credit_ledger=credits_repo, clock=clock)
     subscriptions_repo = MongoSubscriptionRepository(db)
     parent_customers_repo = MongoParentBillingCustomerRepository(db)
     autopay_consents_repo = MongoAutopayConsentRepository(db)
@@ -1732,7 +1736,17 @@ def compose_parent(
             zero_quote_period = clock().strftime("%Y-%m")
             await apps_repo.save(app.model_copy(update={"zero_quote_period": zero_quote_period}))
             if quote.snapshot_id:
-                await payments_repo.consume_quote_snapshot(quote.snapshot_id)
+                consumed = await payments_repo.consume_quote_snapshot(quote.snapshot_id)
+                if consumed is None:
+                    # The snapshot expired (or a concurrent request burnt it)
+                    # between quoting and consuming. Refuse the transition so
+                    # the parent re-quotes rather than enrolling against an
+                    # audit snapshot stamped EXPIRED (issue #530).
+                    raise QuoteExpired(
+                        "quote expired before checkout could start; please retry",
+                        snapshot_id=quote.snapshot_id,
+                        application_id=application_id,
+                    )
             await transition.execute(app.application_id, "CHECKOUT_PENDING")
             await transition.execute(app.application_id, "PENDING_APPROVAL")
             return StartCheckoutResult(
@@ -1740,6 +1754,21 @@ def compose_parent(
                 checkout_session_id="",
                 redirect_url=success_url,
             )
+        # Consume the snapshot BEFORE minting the Stripe Checkout Session:
+        # consume() is the TTL gate, so running it first guarantees no
+        # session (with the quote's amount frozen into it) can exist for a
+        # snapshot that was already expired or burnt. If consume refuses,
+        # nothing has been created yet and the parent simply re-quotes.
+        # (If the Stripe call below then fails, the snapshot stays CONSUMED
+        # and a retry mints a fresh quote — the pre-existing behaviour.)
+        if quote.snapshot_id:
+            consumed = await payments_repo.consume_quote_snapshot(quote.snapshot_id)
+            if consumed is None:
+                raise QuoteExpired(
+                    "quote expired before checkout could start; please retry",
+                    snapshot_id=quote.snapshot_id,
+                    application_id=application_id,
+                )
         result = await start_checkout.execute(
             StartCheckoutCommand(
                 parent_id=parent_id,
@@ -1750,8 +1779,6 @@ def compose_parent(
                 cancel_url=cancel_url,
             )
         )
-        if quote.snapshot_id:
-            await payments_repo.consume_quote_snapshot(quote.snapshot_id)
         await transition.execute(
             app.application_id,
             "CHECKOUT_PENDING",

@@ -80,7 +80,14 @@ services:
       V2_MONGO_URL: "mongodb://mongo:27017"
       V2_MONGO_DB: "academy_manager_saas_staging"
       V2_RUN_MIGRATIONS_ON_BOOT: "true"
+      # The internal tenant header only works alongside V2_PROXY_SHARED_SECRET
+      # (issue #519). The secret is generated into .local/saas-staging.env by
+      # scripts/dev/saas_staging.sh — callers must also send x-cm-proxy-auth.
       V2_ALLOWED_INTERNAL_TENANT_HEADER: "x-internal-tenant-id"
+      # Tenant subdomains in this stack are <slug>.localhost (e.g.
+      # acme.localhost); pin subdomain resolution to that base so arbitrary
+      # first-label Hosts cannot resolve a tenant (issue #519).
+      V2_PLATFORM_BASE_DOMAIN: "localhost"
       # --- Legacy backend env (non-secret) ---
       APP_ENV: "staging"
       MONGO_URL: "mongodb://mongo:27017"

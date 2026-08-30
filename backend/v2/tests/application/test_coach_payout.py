@@ -758,7 +758,9 @@ async def test_naive_occurrence_before_first_rate_marks_unpaid_without_crashing(
     )
 
     assert statement.lines == []
-    assert rates.lookups == [datetime(2026, 5, 10, 18, 0, tzinfo=UTC)]
+    # Rate resolution is in-memory from one list_for_coach load (#529);
+    # no per-occurrence find_for_coach_at round-trips happen at all.
+    assert rates.lookups == []
     assert statement.unpaid_occurrence_ids == ["occ-before-first-rate"]
     assert [warning.reason for warning in statement.payout_warnings] == ["missing_rate"]
     assert statement.unpaid_occurrences[0].reason == "no_rate_configured"
@@ -1298,3 +1300,182 @@ async def test_no_replaced_row_for_uninvolved_coach_or_legacy_substitute() -> No
         row for row in scheduled.unpaid_occurrences if row.reason == "replaced_by_actual_coach"
     ]
     assert [row.occurrence_id for row in replaced_rows] == ["occ-1"]
+
+
+# ---------------------------------------------------------------------------
+# #529 — batched computation: one occurrence scan, one rate load per coach
+# ---------------------------------------------------------------------------
+
+
+class CountingOccurrenceQuery(FakeOccurrenceQuery):
+    def __init__(self, occurrences: list[PayableOccurrence]) -> None:
+        super().__init__(occurrences)
+        self.list_calls = 0
+
+    async def list_in_period(
+        self,
+        academy_id: str,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> list[PayableOccurrence]:
+        self.list_calls += 1
+        return await super().list_in_period(academy_id, period_start, period_end)
+
+
+class CountingRateRepo(FakeRateRepo):
+    def __init__(self, rates: list[CoachRate]) -> None:
+        super().__init__(rates)
+        self.find_calls = 0
+        self.list_calls = 0
+
+    async def find_for_coach_at(self, coach_id: str, at_time: datetime) -> CoachRate | None:
+        self.find_calls += 1
+        return await super().find_for_coach_at(coach_id, at_time)
+
+    async def list_for_coach(self, coach_id: str) -> list[CoachRate]:
+        self.list_calls += 1
+        return await super().list_for_coach(coach_id)
+
+
+def _per_session_rate(coach_id: str, amount_minor: int = 5000) -> CoachRate:
+    return CoachRate(
+        rate_id=f"cr-{coach_id}",
+        academy_id="acad-1",
+        coach_id=coach_id,
+        billing_unit="per_session",
+        amount_minor=amount_minor,
+        currency="USD",
+        effective_from=_dt("2026-01-01T00:00:00"),
+        effective_until=None,
+        status="active",
+    )
+
+
+@pytest.mark.asyncio
+async def test_execute_resolves_rates_from_one_timeline_load() -> None:
+    """Rate lookups must not scale with occurrence count (#529)."""
+    occurrences = [
+        _occurrence(
+            f"occ-{i}",
+            start=f"2026-05-{10 + i:02d}T18:00:00",
+            end=f"2026-05-{10 + i:02d}T19:00:00",
+        )
+        for i in range(5)
+    ]
+    rates = CountingRateRepo([_per_session_rate("coach-A")])
+
+    statement = await ComputeCoachPayout(
+        occurrences=FakeOccurrenceQuery(occurrences),
+        rates=rates,
+    ).execute(
+        coach_id="coach-A",
+        academy_id="acad-1",
+        period_start=_dt("2026-05-01T00:00:00"),
+        period_end=_dt("2026-06-01T00:00:00"),
+    )
+
+    assert len(statement.lines) == 5
+    assert statement.total_minor == 25000
+    assert rates.find_calls == 0
+    assert rates.list_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_execute_many_shares_one_occurrence_fetch_across_coaches() -> None:
+    """#529: the academy-month occurrence scan runs ONCE for N coaches."""
+    occurrences = [
+        _occurrence(
+            "occ-a1",
+            start="2026-05-10T18:00:00",
+            end="2026-05-10T19:00:00",
+            scheduled_coach_id="coach-A",
+        ),
+        _occurrence(
+            "occ-b1",
+            start="2026-05-11T18:00:00",
+            end="2026-05-11T19:00:00",
+            scheduled_coach_id="coach-B",
+        ),
+        _occurrence(
+            "occ-b2",
+            start="2026-05-12T18:00:00",
+            end="2026-05-12T19:00:00",
+            scheduled_coach_id="coach-B",
+        ),
+    ]
+    query = CountingOccurrenceQuery(occurrences)
+    rates = CountingRateRepo(
+        [_per_session_rate("coach-A"), _per_session_rate("coach-B", amount_minor=4000)]
+    )
+
+    statements = await ComputeCoachPayout(occurrences=query, rates=rates).execute_many(
+        coach_ids=["coach-A", "coach-B"],
+        academy_id="acad-1",
+        period_start=_dt("2026-05-01T00:00:00"),
+        period_end=_dt("2026-06-01T00:00:00"),
+    )
+
+    assert query.list_calls == 1
+    assert set(statements) == {"coach-A", "coach-B"}
+    assert statements["coach-A"].total_minor == 5000
+    assert [line.occurrence_id for line in statements["coach-A"].lines] == ["occ-a1"]
+    assert statements["coach-B"].total_minor == 8000
+    assert [line.occurrence_id for line in statements["coach-B"].lines] == ["occ-b1", "occ-b2"]
+    # One rate-timeline load per coach, not one lookup per occurrence.
+    assert rates.find_calls == 0
+    assert rates.list_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_execute_many_matches_individual_execute_results() -> None:
+    occurrences = [
+        _occurrence(
+            "occ-a1",
+            start="2026-05-10T18:00:00",
+            end="2026-05-10T19:00:00",
+            scheduled_coach_id="coach-A",
+        ),
+        _occurrence(
+            "occ-norate",
+            start="2026-05-11T18:00:00",
+            end="2026-05-11T19:00:00",
+            scheduled_coach_id="coach-NoRate",
+        ),
+    ]
+    rates = [_per_session_rate("coach-A")]
+
+    batched = await ComputeCoachPayout(
+        occurrences=FakeOccurrenceQuery(occurrences),
+        rates=FakeRateRepo(rates),
+    ).execute_many(
+        coach_ids=["coach-A", "coach-NoRate"],
+        academy_id="acad-1",
+        period_start=_dt("2026-05-01T00:00:00"),
+        period_end=_dt("2026-06-01T00:00:00"),
+    )
+
+    for coach_id in ("coach-A", "coach-NoRate"):
+        single = await ComputeCoachPayout(
+            occurrences=FakeOccurrenceQuery(occurrences),
+            rates=FakeRateRepo(rates),
+        ).execute(
+            coach_id=coach_id,
+            academy_id="acad-1",
+            period_start=_dt("2026-05-01T00:00:00"),
+            period_end=_dt("2026-06-01T00:00:00"),
+        )
+        assert batched[coach_id] == single
+
+
+@pytest.mark.asyncio
+async def test_execute_many_rejects_inverted_period() -> None:
+    with pytest.raises(ValueError, match="period_end must be after period_start"):
+        await ComputeCoachPayout(
+            occurrences=FakeOccurrenceQuery([]),
+            rates=FakeRateRepo([]),
+        ).execute_many(
+            coach_ids=["coach-A"],
+            academy_id="acad-1",
+            period_start=_dt("2026-06-01T00:00:00"),
+            period_end=_dt("2026-05-01T00:00:00"),
+        )

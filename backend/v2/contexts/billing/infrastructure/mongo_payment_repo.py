@@ -552,15 +552,42 @@ class MongoPaymentRepository(TenantScopedRepository):
         return stored
 
     async def consume(self, snapshot_id: str) -> BillingCalculationSnapshot | None:
-        """Atomically transition OPEN → CONSUMED; return updated snapshot."""
+        """Atomically transition OPEN → CONSUMED; return updated snapshot.
+
+        Enforces the quote TTL (issue #530): an OPEN snapshot whose
+        ``expires_at`` has passed cannot be consumed — it is stamped EXPIRED
+        instead and ``None`` is returned so the caller re-quotes. Legacy
+        snapshots without ``expires_at`` (or with it null) stay consumable.
+        """
         academy_id = current_academy_id()
         now = self._clock()
         doc = await self._db["billing_calculation_snapshots"].find_one_and_update(
-            {"academy_id": academy_id, "snapshot_id": snapshot_id, "status": "OPEN"},
+            {
+                "academy_id": academy_id,
+                "snapshot_id": snapshot_id,
+                "status": "OPEN",
+                # Matches docs where expires_at is null OR missing, plus
+                # unexpired ones — a stale quote must never be consumed.
+                "$or": [{"expires_at": None}, {"expires_at": {"$gt": now}}],
+            },
             {"$set": {"status": "CONSUMED", "consumed_at": now}},
             return_document=ReturnDocument.AFTER,
         )
-        return BillingCalculationSnapshot(**doc) if doc else None
+        if doc is not None:
+            return BillingCalculationSnapshot(**doc)
+        # No consumable doc: if an OPEN-but-expired snapshot exists, record
+        # WHY it could not be consumed so the audit trail shows EXPIRED
+        # rather than an eternally-OPEN quote.
+        await self._db["billing_calculation_snapshots"].update_one(
+            {
+                "academy_id": academy_id,
+                "snapshot_id": snapshot_id,
+                "status": "OPEN",
+                "expires_at": {"$lte": now},
+            },
+            {"$set": {"status": "EXPIRED", "expired_at": now}},
+        )
+        return None
 
     # Keep the legacy name so callers that already use it don't break.
     async def consume_quote_snapshot(self, snapshot_id: str) -> BillingCalculationSnapshot | None:

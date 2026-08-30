@@ -38,7 +38,7 @@ def test_coach_today_hydrates_existing_attendance(coach_client):
     mark = coach_client.post(
         "/api/v2/coach/attendance",
         json={
-            "mutation_id": "01HTESTHYDRATE0000000000001",
+            "mutation_id": "01HTESTHYDRATE000000000001",
             "occurrence_id": "occ-today-1",
             "session_id": "s-today-1",
             "student_id": "st1",
@@ -63,7 +63,7 @@ def test_coach_today_hydrates_late_attendance_without_response_validation_error(
     mark = coach_client.post(
         "/api/v2/coach/attendance",
         json={
-            "mutation_id": "01HTESTHYDRATE0000000000002",
+            "mutation_id": "01HTESTHYDRATE000000000002",
             "occurrence_id": "occ-today-1",
             "session_id": "s-today-1",
             "student_id": "st1",

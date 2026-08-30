@@ -23,7 +23,12 @@ BACKEND_PORT="${BACKEND_PORT:-8001}"
 BACKEND_URL="http://${BACKEND_HOST}:${BACKEND_PORT}"
 
 FRONTEND_HOST="${FRONTEND_HOST:-localhost}"
-FRONTEND_PORT="${FRONTEND_PORT:-3001}"
+# Per-worktree default port (#522): hashing the repo root into 3001-3999 keeps
+# concurrent worktrees from fighting over (or silently sharing) one frontend.
+# FRONTEND_PORT still overrides; CI keeps 3001 (workflows pin that URL).
+# shellcheck source=scripts/dev/lib/worktree-port.sh
+. "${ROOT_DIR}/scripts/dev/lib/worktree-port.sh"
+FRONTEND_PORT="${FRONTEND_PORT:-$(default_frontend_port "$(cd "${ROOT_DIR}" && pwd -P)")}"
 FRONTEND_URL="http://${FRONTEND_HOST}:${FRONTEND_PORT}"
 
 mkdir -p "${PID_DIR}" "${LOG_DIR}"

@@ -195,10 +195,10 @@ class _FakeCalculator:
     ) -> None:
         self._totals = totals  # coach_id -> (total_minor, currency[, unpaid_ids])
         self._warnings = warnings or {}
+        self.calculate_calls: list[str] = []
+        self.calculate_many_calls: list[list[str]] = []
 
-    async def calculate(
-        self, *, coach_id: str, academy_id: str, period_start: datetime, period_end: datetime
-    ):
+    def _calc_for(self, coach_id: str):
         from dataclasses import dataclass
 
         @dataclass(frozen=True)
@@ -225,6 +225,23 @@ class _FakeCalculator:
             unpaid_occurrence_ids=unpaid_ids,
             payout_warnings=self._warnings.get(coach_id, []),
         )
+
+    async def calculate(
+        self, *, coach_id: str, academy_id: str, period_start: datetime, period_end: datetime
+    ):
+        self.calculate_calls.append(coach_id)
+        return self._calc_for(coach_id)
+
+    async def calculate_many(
+        self,
+        *,
+        coach_ids: list[str],
+        academy_id: str,
+        period_start: datetime,
+        period_end: datetime,
+    ):
+        self.calculate_many_calls.append(list(coach_ids))
+        return {coach_id: self._calc_for(coach_id) for coach_id in coach_ids}
 
 
 def _warning(**overrides) -> PayoutWarning:
@@ -308,6 +325,60 @@ async def test_rows_include_unresolved_unpaid_count_even_when_total_is_nonzero()
     assert by_coach["c2"].unresolved_unpaid_count == 1
     assert by_coach["c2"].warning_count == 1
     assert by_coach["c2"].warning_status == "unresolved"
+
+
+@pytest.mark.asyncio
+async def test_ungenerated_previews_use_one_batched_calculation() -> None:
+    """#529: coaches lacking a persisted period must share ONE batched
+    calculation (one occurrence scan) instead of one full academy-month
+    scan per coach."""
+    reader = _FakeOccurrenceReader([("c1", 4), ("c2", 2), ("c3", 3)])
+    repo = FakePayoutPeriodRepository()
+    # c1 already has a period; c2 + c3 need previews.
+    await repo.save(
+        make_fake_period(
+            coach_id="c1",
+            period_start=JUNE_START,
+            period_end=JUNE_END,
+            academy_id="a1",
+            status="approved",
+            total_minor=40000,
+        )
+    )
+    calc = _FakeCalculator({"c2": (18000, "MYR", []), "c3": (9000, "MYR", [])})
+
+    uc = ListMonthlyPayroll(reader=reader, periods=repo, calculator=calc)
+    rows = await uc.execute(academy_id="a1", period_start=JUNE_START, period_end=JUNE_END)
+
+    assert calc.calculate_calls == []
+    assert calc.calculate_many_calls == [["c2", "c3"]]
+    by_coach = {r.coach_id: r for r in rows}
+    assert by_coach["c2"].total_minor == 18000
+    assert by_coach["c3"].total_minor == 9000
+
+
+@pytest.mark.asyncio
+async def test_all_generated_coaches_skip_calculation_entirely() -> None:
+    reader = _FakeOccurrenceReader([("c1", 4)])
+    repo = FakePayoutPeriodRepository()
+    await repo.save(
+        make_fake_period(
+            coach_id="c1",
+            period_start=JUNE_START,
+            period_end=JUNE_END,
+            academy_id="a1",
+            status="paid",
+            total_minor=40000,
+        )
+    )
+    calc = _FakeCalculator({})
+
+    uc = ListMonthlyPayroll(reader=reader, periods=repo, calculator=calc)
+    rows = await uc.execute(academy_id="a1", period_start=JUNE_START, period_end=JUNE_END)
+
+    assert calc.calculate_calls == []
+    assert calc.calculate_many_calls == []
+    assert rows[0].status == "paid"
 
 
 @pytest.mark.asyncio

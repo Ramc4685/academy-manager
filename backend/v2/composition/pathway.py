@@ -115,6 +115,7 @@ from backend.v2.contexts.student_progress.infrastructure.mongo_test_attempt_repo
     MongoTestAttemptRepository,
 )
 from backend.v2.shared.events import Outbox
+from backend.v2.shared.idempotency import IdempotencyStore
 from backend.v2.shared.tenancy import current_academy_id
 
 # ---------------------------------------------------------------------------
@@ -287,6 +288,7 @@ def compose_curriculum(db: AsyncIOMotorDatabase[Any]) -> CurriculumComposition:
 def compose_student_progress(
     db: AsyncIOMotorDatabase[Any],
     outbox: Outbox | None = None,
+    idempotency_store: IdempotencyStore | None = None,
 ) -> StudentProgressComposition:
     level_progress_repo = MongoLevelProgressRepository(db)
     skill_progress_repo = MongoSkillProgressRepository(db)
@@ -316,6 +318,7 @@ def compose_student_progress(
             level_progress=level_progress_repo,
             skill_lookup=skill_lookup,
             outbox=outbox,
+            idempotency_store=idempotency_store,
         ),
         recommend_level_up=RecommendLevelUp(
             level_progress=level_progress_repo,

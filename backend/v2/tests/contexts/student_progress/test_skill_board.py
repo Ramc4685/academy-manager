@@ -55,12 +55,25 @@ def _skill_progress(
 class _FakeLevelProgressRepo:
     def __init__(self, rows: list[StudentLevelProgress]) -> None:
         self._rows = rows
+        self.per_student_calls = 0
+        self.batch_calls = 0
 
     async def get_active(self, student_id: str, program_id: str) -> StudentLevelProgress | None:
+        self.per_student_calls += 1
         for row in self._rows:
             if row.student_id == student_id and row.program_id == program_id:
                 return row
         return None
+
+    async def list_active_for_students(
+        self, student_ids: list[str], program_id: str
+    ) -> list[StudentLevelProgress]:
+        self.batch_calls += 1
+        return [
+            row
+            for row in self._rows
+            if row.student_id in student_ids and row.program_id == program_id
+        ]
 
 
 class _FakeSkillProgressRepo:
@@ -78,9 +91,22 @@ class _FakeSkillProgressRepo:
 class _FakeRecommendationRepo:
     def __init__(self, by_student: dict[str, object] | None = None) -> None:
         self._by_student = by_student or {}
+        self.per_student_calls = 0
+        self.batch_calls = 0
 
     async def get_active_for_student(self, student_id: str, program_id: str) -> object | None:
+        self.per_student_calls += 1
         return self._by_student.get(student_id)
+
+    async def list_active_for_students(
+        self, student_ids: list[str], program_id: str
+    ) -> list[object]:
+        self.batch_calls += 1
+        return [
+            SimpleNamespace(student_id=student_id, status=getattr(rec, "status", None))
+            for student_id, rec in self._by_student.items()
+            if student_id in student_ids
+        ]
 
 
 class _FakeSkillLookup:
@@ -197,6 +223,32 @@ async def test_level_up_status_included_per_student() -> None:
     )
     board = await use_case.execute(_request(("stu-1", "Netra")))
     assert board.groups[0].students[0].level_up_status == "RECOMMENDED"
+
+
+@pytest.mark.asyncio
+async def test_board_batches_lookups_instead_of_querying_per_student() -> None:
+    """The board issues one batch query per repo, never one query per student."""
+    level_progress = _FakeLevelProgressRepo(
+        [_level_progress("stu-1", LEVEL_1), _level_progress("stu-2", LEVEL_2)]
+    )
+    recommendations = _FakeRecommendationRepo({"stu-1": SimpleNamespace(status="RECOMMENDED")})
+    use_case = GetSkillBoard(
+        level_progress=level_progress,
+        skill_progress=_FakeSkillProgressRepo([]),
+        recommendations=recommendations,
+        skill_lookup=_FakeSkillLookup(),
+    )
+
+    board = await use_case.execute(
+        _request(("stu-1", "Netra"), ("stu-2", "Jaya"), ("stu-3", "Aryan"))
+    )
+
+    assert len(board.groups) == 2
+    assert [u.student_id for u in board.unplaced] == ["stu-3"]
+    assert level_progress.batch_calls == 1
+    assert level_progress.per_student_calls == 0
+    assert recommendations.batch_calls == 1
+    assert recommendations.per_student_calls == 0
 
 
 @pytest.mark.asyncio

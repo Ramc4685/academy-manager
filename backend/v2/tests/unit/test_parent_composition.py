@@ -12,6 +12,7 @@ from backend.v2.contexts.billing.domain.connected_account import ConnectedAccoun
 from backend.v2.contexts.billing.domain.errors import (
     CheckoutCreationFailed,
     InvoicePayLinkUnavailable,
+    QuoteExpired,
 )
 from backend.v2.contexts.billing.domain.ledger import LedgerInvoice
 from backend.v2.contexts.onboarding.domain.errors import (
@@ -1652,3 +1653,123 @@ def test_compose_parent_fails_closed_under_saas_multi_academy(
             )
     finally:
         get_settings.cache_clear()
+
+
+async def test_paid_checkout_raises_quote_expired_before_stripe_when_consume_refuses(
+    allow_app_origin,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """consume() returning None (TTL elapsed, or a concurrent request burnt
+    the snapshot) must surface as a typed QuoteExpired — and it must do so
+    BEFORE the Stripe Checkout Session is minted, or a session with the stale
+    amount frozen into it exists with no consumable snapshot behind it
+    (issue #530)."""
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["quote-expired-paid-checkout"]
+
+    quote_now = _pinned_quote_clock()
+    await db["onboarding_applications"].insert_one(
+        _checkout_ready_application(datetime.now(UTC), status="DRAFT")
+    )
+    await db["sessions"].insert_one(_billable_session(quote_now))
+    await db["academy_connected_accounts"].insert_one(_connected_account_doc())
+
+    from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
+        MongoPaymentRepository,
+    )
+
+    async def _refuse_consume(self: Any, snapshot_id: str) -> None:
+        return None
+
+    monkeypatch.setattr(MongoPaymentRepository, "consume_quote_snapshot", _refuse_consume)
+
+    class _Stripe:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+
+        async def create_checkout_session(self, **kwargs: Any) -> tuple[str, str]:
+            self.calls.append(kwargs)
+            return "cs_should_not_exist", "https://checkout.stripe.test/should-not-exist"
+
+    stripe = _Stripe()
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=stripe,  # type: ignore[arg-type]
+        academy_id="acad",
+        clock=lambda: quote_now,
+    )
+
+    with tenant_scope("acad"), pytest.raises(QuoteExpired):
+        await parent.start_checkout_for_application(
+            parent_id="parent-1",
+            application_id="app-1",
+            success_url="https://app.example.com/parent/checkout/return?application_id=app-1",
+            cancel_url="https://app.example.com/parent/onboarding",
+        )
+
+    # Consume runs BEFORE the Stripe call: no session may exist.
+    assert stripe.calls == []
+    app_doc = await db["onboarding_applications"].find_one({"application_id": "app-1"})
+    assert app_doc["status"] == "DRAFT"
+    # And no pending Payment row was minted either.
+    assert await db["ledger_payments"].find_one({}) is None
+
+
+async def test_zero_amount_checkout_raises_quote_expired_when_consume_refuses(
+    allow_app_origin,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The $0 path must equally honor a refused consume: the application must
+    not sail on to PENDING_APPROVAL against a snapshot the audit trail says is
+    EXPIRED (issue #530)."""
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["quote-expired-zero-checkout"]
+
+    now = datetime.now(UTC)
+    from datetime import timedelta
+
+    app_doc_seed = _checkout_ready_application(now, status="DRAFT")
+    await db["onboarding_applications"].insert_one(app_doc_seed)
+    # Only class starts inside the same-day cutoff → 0 billable classes → $0.
+    await db["sessions"].insert_one(
+        {
+            "session_id": "sess-1",
+            "academy_id": "acad",
+            "status": "scheduled",
+            "title": "Beginner",
+            "start_at": now + timedelta(minutes=10),
+            "end_at": now + timedelta(minutes=70),
+            "capacity": 8,
+            "amount_cents": 6_000,
+        }
+    )
+
+    from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
+        MongoPaymentRepository,
+    )
+
+    async def _refuse_consume(self: Any, snapshot_id: str) -> None:
+        return None
+
+    monkeypatch.setattr(MongoPaymentRepository, "consume_quote_snapshot", _refuse_consume)
+
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=object(),  # type: ignore[arg-type]
+        academy_id="acad",
+    )
+
+    with tenant_scope("acad"), pytest.raises(QuoteExpired):
+        await parent.start_checkout_for_application(
+            parent_id="parent-1",
+            application_id="app-1",
+            success_url="https://app.example.com/parent/checkout/return?application_id=app-1",
+            cancel_url="https://app.example.com/parent/onboarding",
+        )
+
+    app_doc = await db["onboarding_applications"].find_one({"application_id": "app-1"})
+    assert app_doc["status"] == "DRAFT"

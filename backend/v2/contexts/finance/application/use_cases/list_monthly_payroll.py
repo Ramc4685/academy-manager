@@ -49,6 +49,20 @@ class ListMonthlyPayroll:
                 academy_id=academy_id, period_start=period_start, period_end=period_end
             )
         }
+        # One batched preview computation for every coach lacking a persisted
+        # period — the underlying academy-month occurrence scan is shared
+        # instead of repeated per coach (#529).
+        ungenerated = [c.coach_id for c in coaches if c.coach_id not in existing]
+        calculations = (
+            await self._calculator.calculate_many(
+                coach_ids=ungenerated,
+                academy_id=academy_id,
+                period_start=period_start,
+                period_end=period_end,
+            )
+            if ungenerated
+            else {}
+        )
         rows: list[MonthlyPayrollRow] = []
         for c in coaches:
             period = existing.get(c.coach_id)
@@ -76,12 +90,7 @@ class ListMonthlyPayroll:
                     )
                 )
             else:
-                calc = await self._calculator.calculate(
-                    coach_id=c.coach_id,
-                    academy_id=academy_id,
-                    period_start=period_start,
-                    period_end=period_end,
-                )
+                calc = calculations[c.coach_id]
                 rows.append(
                     MonthlyPayrollRow(
                         coach_id=c.coach_id,
