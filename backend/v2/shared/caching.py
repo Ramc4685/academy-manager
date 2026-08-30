@@ -12,8 +12,6 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 
-_MISSING = object()
-
 
 class TTLCache[V]:
     """Bounded TTL cache. Expired entries are dropped lazily on access.
@@ -70,9 +68,9 @@ class TTLCache[V]:
             if now >= expires_at:
                 self._entries.pop(key, None)
                 return
-        oldest = next(iter(self._entries), _MISSING)
-        if oldest is not _MISSING:
-            self._entries.pop(oldest, None)  # type: ignore[arg-type]
+        oldest = next(iter(self._entries), None)
+        if oldest is not None:
+            self._entries.pop(oldest, None)
 
     def __len__(self) -> int:
         return len(self._entries)
