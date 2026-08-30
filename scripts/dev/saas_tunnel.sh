@@ -146,11 +146,19 @@ cmd_smoke() {
   log "  API_URL=${SAAS_TUNNEL_BACKEND_URL}"
   log "  FRONTEND_URL=${SAAS_TUNNEL_FRONTEND_URL}"
 
+  # Internal tenant header is secret-gated (issue #519): read the staging
+  # proxy shared secret so the smoke can present x-cm-proxy-auth.
+  local proxy_secret=""
+  if [[ -f "${REPO_ROOT}/.local/saas-staging.env" ]]; then
+    proxy_secret="$(awk -F= '$1 == "V2_PROXY_SHARED_SECRET" { print substr($0, index($0, "=") + 1) }' "${REPO_ROOT}/.local/saas-staging.env")"
+  fi
+
   API_URL="${SAAS_TUNNEL_BACKEND_URL}" \
   FRONTEND_URL="${SAAS_TUNNEL_FRONTEND_URL}" \
   TENANT_HOST="tenant-smoke.localhost" \
   INTERNAL_TENANT_HEADER_NAME="x-internal-tenant-id" \
   INTERNAL_TENANT_HEADER_VALUE="${academy_id}" \
+  PROXY_AUTH_VALUE="${proxy_secret}" \
   AUTH_TOKEN="${id_token}" \
     "${SMOKE_SCRIPT}"
 }

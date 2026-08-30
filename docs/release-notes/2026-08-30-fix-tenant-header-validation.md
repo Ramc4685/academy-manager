@@ -24,12 +24,19 @@ tenant.
 
 ## Deploy notes
 Deployments using the internal tenant header must now also set
-`PROXY_SHARED_SECRET` and send `x-cm-proxy-auth` on internal-job and
+`V2_PROXY_SHARED_SECRET` and send `x-cm-proxy-auth` on internal-job and
 platform-tooling requests — the bare header stops resolving after this
 deploy. Set `V2_PLATFORM_BASE_DOMAIN` (e.g. `app.example.com`) in SaaS
 deployments to enforce base-domain matching; leaving it unset keeps the
 legacy first-label behaviour. The edge should continue to strip the
-internal header from external traffic.
+internal header from external traffic. The in-repo SaaS staging stack is
+self-consistent: `scripts/dev/saas_staging.sh` now generates
+`V2_PROXY_SHARED_SECRET` into `.local/saas-staging.env` (backfilled into
+existing env files), `docker-compose.saas.yml` sets
+`V2_PLATFORM_BASE_DOMAIN=localhost`, and the readiness smoke presents
+`x-cm-proxy-auth` via `PROXY_AUTH_VALUE`. Production (Fly) config must
+be updated by an operator — see the deploy/ops follow-up comment on the
+PR.
 
 ## Risk / rollback
 Fail-closed by design: misconfigured internal jobs lose tenant

@@ -704,6 +704,47 @@ def test_middleware_blocks_inactive_tenant_before_auth_loader() -> None:
     assert loader.calls == []
 
 
+def test_middleware_blocks_suspended_tenant_resolved_via_internal_header() -> None:
+    """SECURITY parity (#519): resolver.exists() deliberately does not check
+    academy lifecycle — the servable check downstream must still 423 a
+    suspended academy even when the tenant came from the internal header."""
+    loader = _RecordingLoader(
+        memberships={
+            ("u-coach", "academy-internal-job"): {
+                "membership_id": "m-internal",
+                "roles": ("admin",),
+            }
+        },
+    )
+
+    async def _inactive_status(_: str) -> tuple[bool, str | None]:
+        return False, "tenant_status_suspended"
+
+    app = _make_middleware_app(
+        loader=loader,
+        allowed_internal_header="X-Internal-Academy-Id",
+        internal_header_secret="proxy-secret",
+        status_checker=_inactive_status,
+    )
+    client = TestClient(app, base_url="http://unknown.internal.example.com")
+    r = client.get(
+        "/whoami",
+        headers={
+            "Authorization": "Bearer u-coach",
+            "X-Internal-Academy-Id": "academy-internal-job",
+            "x-cm-proxy-auth": "proxy-secret",
+        },
+    )
+
+    assert r.status_code == 423
+    assert r.json()["error"]["code"] == "Platform.TenantNotServable"
+    assert r.json()["error"]["details"] == {
+        "academy_id": "academy-internal-job",
+        "reason": "tenant_status_suspended",
+    }
+    assert loader.calls == []
+
+
 def test_middleware_allows_platform_routes_to_inspect_inactive_tenant() -> None:
     loader = _RecordingLoader(memberships={})
 
