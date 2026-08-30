@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from pymongo.errors import DuplicateKeyError
+
 from backend.v2.contexts.communications.application.ports import CampaignRepository
 from backend.v2.contexts.communications.domain.models import (
     Campaign,
@@ -31,6 +33,27 @@ class MongoCampaignRepository(TenantScopedRepository, CampaignRepository):
             return None
         return self._from_doc(doc)
 
+    async def try_claim(self, campaign: Campaign) -> bool:
+        """Insert-first claim against unique (academy_id, idempotency_key).
+
+        The duplicate-key error is the idempotency guard (mirrors the digest
+        ``try_claim`` pattern): a retried POST with the same key loses the
+        claim and must not send again.
+        """
+        if not campaign.idempotency_key:
+            raise ValueError("try_claim requires a campaign with an idempotency_key")
+        try:
+            await self._insert_one(self._to_doc(campaign))
+        except DuplicateKeyError:
+            return False
+        return True
+
+    async def get_by_idempotency_key(self, idempotency_key: str) -> Campaign | None:
+        doc = await self._find_one({"idempotency_key": idempotency_key})
+        if doc is None:
+            return None
+        return self._from_doc(doc)
+
     @staticmethod
     def _to_doc(c: Campaign) -> dict[str, Any]:
         desc = audience_descriptor(c.audience)
@@ -45,6 +68,7 @@ class MongoCampaignRepository(TenantScopedRepository, CampaignRepository):
             "status": str(c.status),
             "created_at": c.created_at,
             "sent_at": c.sent_at,
+            "idempotency_key": c.idempotency_key,
         }
 
     @staticmethod
@@ -68,4 +92,5 @@ class MongoCampaignRepository(TenantScopedRepository, CampaignRepository):
             status=CampaignStatus(doc.get("status", "draft")),
             created_at=doc["created_at"],
             sent_at=doc.get("sent_at"),
+            idempotency_key=doc.get("idempotency_key"),
         )

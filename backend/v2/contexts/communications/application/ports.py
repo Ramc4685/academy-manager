@@ -92,9 +92,33 @@ class CampaignRepository(Protocol):
     async def save(self, campaign: Campaign) -> None: ...
     async def get(self, campaign_id: str) -> Campaign | None: ...
 
+    async def try_claim(self, campaign: Campaign) -> bool:
+        """Insert-first idempotency claim.
+
+        Inserts the campaign against the unique
+        ``(academy_id, idempotency_key)`` index. Returns ``True`` when this
+        call won the claim (the campaign row now exists) and ``False`` when a
+        campaign with the same idempotency key already exists — the duplicate
+        key error is the idempotency guard, mirroring the digest
+        ``try_claim`` pattern.
+        """
+        ...
+
+    async def get_by_idempotency_key(self, idempotency_key: str) -> Campaign | None:
+        """Look up the campaign that holds the given idempotency claim."""
+        ...
+
 
 class DeliveryRepository(Protocol):
-    async def save_many(self, deliveries: list[Delivery]) -> None: ...
+    async def save_many(self, deliveries: list[Delivery]) -> None:
+        """Upsert delivery rows keyed by ``delivery_id``.
+
+        Called once with the QUEUED batch before the send loop (so a crashed
+        run is visible and countable) and again with final per-recipient
+        states after the loop; the second call overwrites the queued rows.
+        """
+        ...
+
     async def list_for_campaign(self, campaign_id: str) -> list[Delivery]: ...
 
 

@@ -13,10 +13,19 @@ class MongoDeliveryRepository(TenantScopedRepository, DeliveryRepository):
     collection_name = "message_deliveries"
 
     async def save_many(self, deliveries: list[Delivery]) -> None:
-        if not deliveries:
-            return
-        docs = [self._to_doc(d) for d in deliveries]
-        await self.collection.insert_many(docs)
+        """Upsert delivery rows keyed by delivery_id.
+
+        SendCampaign persists the QUEUED batch before the send loop and the
+        final per-recipient states after it; the second write must overwrite
+        the queued rows rather than raise on the unique delivery_id index.
+        """
+        for d in deliveries:
+            doc = self._to_doc(d)
+            await self._update_one(
+                {"delivery_id": d.delivery_id},
+                {"$set": {k: v for k, v in doc.items() if k != "academy_id"}},
+                upsert=True,
+            )
 
     async def list_for_campaign(self, campaign_id: str) -> list[Delivery]:
         cursor = self._find_many({"campaign_id": campaign_id})

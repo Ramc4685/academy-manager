@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from backend.v2.contexts.communications.application.errors import (
     AcademyAudience,
+    DuplicateCampaignError,
     EmptyAudienceError,
     SessionAudience,
 )
@@ -112,16 +113,20 @@ async def send_email_campaign(
                 audience=audience,
                 subject=payload.subject,
                 body=payload.body,
+                idempotency_key=payload.idempotency_key,
             )
         )
     except EmptyAudienceError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except DuplicateCampaignError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return SendCampaignResponse(
         campaign_id=result.campaign_id,
         total_recipients=result.total_recipients,
         sent_count=result.sent_count,
         failed_count=result.failed_count,
+        deduplicated=result.deduplicated,
     )
 
 
