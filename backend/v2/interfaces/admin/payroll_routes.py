@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import logging
+from datetime import UTC, datetime, tzinfo
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -15,20 +17,43 @@ from backend.v2.interfaces.admin.views import (
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
 
+log = logging.getLogger(__name__)
+
 router = APIRouter(tags=["admin.payroll"])
 
 
-def _month_window(month: str) -> tuple[datetime, datetime]:
+def _month_window(month: str, tz: tzinfo = UTC) -> tuple[datetime, datetime]:
+    """UTC instants bounding the calendar month in timezone ``tz``.
+
+    Occurrences are stored as UTC instants for academy-local class times, so
+    month bucketing must use academy-local month boundaries or a month-end
+    evening class rolls into the next month's payroll (#510).
+    """
     try:
         year_s, mon_s = month.split("-")
         year, mon = int(year_s), int(mon_s)
         if not 1 <= mon <= 12:
             raise ValueError
-        start = datetime(year, mon, 1, tzinfo=UTC)
+        start = datetime(year, mon, 1, tzinfo=tz)
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=422, detail="month must be YYYY-MM") from exc
-    end = datetime(year + (1 if mon == 12 else 0), (mon % 12) + 1, 1, tzinfo=UTC)
-    return start, end
+    end = datetime(year + (1 if mon == 12 else 0), (mon % 12) + 1, 1, tzinfo=tz)
+    return start.astimezone(UTC), end.astimezone(UTC)
+
+
+async def _academy_month_window(
+    month: str, *, academy_id: str, use_cases: AdminUseCases
+) -> tuple[datetime, datetime]:
+    tz: tzinfo = UTC
+    get_academy = getattr(use_cases, "get_academy_use_case", None)
+    if get_academy is not None:
+        try:
+            academy = await get_academy.execute(academy_id)
+            if academy.timezone:
+                tz = ZoneInfo(academy.timezone)
+        except (KeyError, ValueError):
+            log.warning("Invalid academy timezone for %s; defaulting to UTC", academy_id)
+    return _month_window(month, tz)
 
 
 @router.get("/payroll/{month}", response_model=AdminMonthlyPayrollView)
@@ -37,7 +62,9 @@ async def get_monthly_payroll(
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminMonthlyPayrollView:
-    start, end = _month_window(month)
+    start, end = await _academy_month_window(
+        month, academy_id=claims.academy_id, use_cases=use_cases
+    )
     uc = use_cases.list_monthly_payroll
     if uc is None:
         raise HTTPException(status_code=503, detail="Monthly payroll not configured")
@@ -76,7 +103,9 @@ async def bulk_generate_payroll(
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> BulkPayrollResultView:
-    start, end = _month_window(month)
+    start, end = await _academy_month_window(
+        month, academy_id=claims.academy_id, use_cases=use_cases
+    )
     uc = use_cases.bulk_generate_payroll
     if uc is None:
         raise HTTPException(status_code=503, detail="Bulk generate not configured")
@@ -90,7 +119,9 @@ async def bulk_recompute_payroll(
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> BulkPayrollResultView:
-    start, end = _month_window(month)
+    start, end = await _academy_month_window(
+        month, academy_id=claims.academy_id, use_cases=use_cases
+    )
     uc = use_cases.bulk_recompute_payroll
     if uc is None:
         raise HTTPException(status_code=503, detail="Bulk recompute not configured")
@@ -118,7 +149,9 @@ async def export_monthly_payroll_xlsx(
     repo = use_cases.payout_periods
     if repo is None:
         raise HTTPException(status_code=503, detail="Payout periods not configured")
-    start, end = _month_window(month)
+    start, end = await _academy_month_window(
+        month, academy_id=claims.academy_id, use_cases=use_cases
+    )
     periods = await repo.list_for_window(
         academy_id=claims.academy_id, period_start=start, period_end=end
     )

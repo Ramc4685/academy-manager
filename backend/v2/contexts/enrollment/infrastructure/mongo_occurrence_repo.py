@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
 from pymongo.errors import DuplicateKeyError
@@ -54,7 +54,12 @@ class MongoSessionOccurrenceRepository(TenantScopedRepository):
         coach_id: str,
         on_date: date,
     ) -> list[SessionOccurrence]:
-        start, end = _day_bounds_utc(on_date)
+        # Occurrences are stored as UTC instants but belong to a session-local
+        # calendar day. Fetch a widened UTC window (±1 day) so evening classes
+        # whose UTC instant rolls past midnight are still candidates; the
+        # application layer (ListCoachOccurrencesForDate) narrows the result
+        # to the requested date in each session's own timezone (#510).
+        start, end = _candidate_day_bounds_utc(on_date)
         cursor = self._find_many(
             {
                 "start_at": {"$gte": start, "$lte": end},
@@ -204,10 +209,14 @@ def _to_doc(occurrence: SessionOccurrence) -> dict[str, Any]:
     }
 
 
-def _day_bounds_utc(on_date: date) -> tuple[datetime, datetime]:
+def _candidate_day_bounds_utc(on_date: date) -> tuple[datetime, datetime]:
+    """UTC window guaranteed to contain every instant that falls on
+    ``on_date`` in ANY timezone (offsets span UTC-12..UTC+14, so ±1 day
+    around the UTC day covers them all). Callers must re-filter by the
+    session-local date."""
     return (
-        datetime.combine(on_date, time.min, tzinfo=UTC),
-        datetime.combine(on_date, time.max, tzinfo=UTC),
+        datetime.combine(on_date - timedelta(days=1), time.min, tzinfo=UTC),
+        datetime.combine(on_date + timedelta(days=1), time.max, tzinfo=UTC),
     )
 
 
