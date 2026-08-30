@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -30,6 +31,8 @@ from backend.v2.contexts.billing.infrastructure.mongo_tuition_discount_repo impo
 )
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # NOTE: The monthly-generation machinery (generate_monthly_payments and its
@@ -166,6 +169,27 @@ class MongoPaymentRepository(TenantScopedRepository):
             return
         legacy_existing = await self._find_one({"payment_id": payment.payment_id})
         if legacy_existing is None:
+            # Issue #505: never insert a second ledger_payments row for a
+            # charge the ledger already holds. Legacy subscription-invoice
+            # projections carry the same stripe_payment_intent_id as the
+            # ledger-native LedgerPayment written by the subscription-ledger
+            # sync; a second `succeeded` row double-counts the charge in every
+            # ledger-based revenue report.
+            stripe_pi = doc.get("stripe_payment_intent_id")
+            if stripe_pi:
+                pi_duplicate = await self._db["ledger_payments"].find_one(
+                    {"academy_id": academy_id, "stripe_payment_intent_id": stripe_pi},
+                    {"_id": 1, "payment_id": 1},
+                )
+                if pi_duplicate is not None:
+                    log.warning(
+                        "refusing duplicate ledger_payments insert: payment_id=%s "
+                        "stripe_payment_intent_id=%s already recorded as payment_id=%s",
+                        payment.payment_id,
+                        stripe_pi,
+                        pi_duplicate.get("payment_id"),
+                    )
+                    return
             # Phase 5 freeze: brand-new payments are ledger-native. The legacy
             # `payments` collection no longer receives inserts — only in-place
             # updates of historical docs. The marker keeps these docs visible

@@ -597,7 +597,9 @@ async def test_subscription_invoice_paid_allocates_existing_ledger_invoice_idemp
     assert payment["unapplied_amount_cents"] == 0
     assert await db["ledger_payments"].count_documents({"academy_id": acad}) == 1
     assert await db["payment_allocations"].count_documents({"academy_id": acad}) == 1
-    assert len(payments.by_id) == 1
+    # Issue #505: the ledger-native payment is the only record — no legacy
+    # projection row for the same charge.
+    assert len(payments.by_id) == 0
 
 
 @pytest.mark.asyncio

@@ -2728,7 +2728,88 @@ async def test_subscription_invoice_paid_allocates_existing_ledger_invoice() -> 
             "idempotency_key": "stripe-invoice-allocation:in_ledger",
         }
     ]
-    assert repo.by_pi["pi_ledger"].enrollment_id == "enr-1"
+    # Issue #505: the ledger-native payment above is the ONLY record of this
+    # charge — no legacy projection row may be written for the same PI.
+    assert repo.by_id == {}
+    assert "pi_ledger" not in repo.by_pi
+
+
+@pytest.mark.asyncio
+async def test_subscription_invoice_refund_routes_through_ledger_payment() -> None:
+    """Issue #505: with the legacy projection gone, a charge.refunded for a
+    legacy-subscription charge must find and update the ledger-native payment
+    (and its invoice's refunded amount), not silently drop the refund."""
+    repo = FakePaymentRepo()
+    subs = FakeSubscriptionRepo()
+    now = datetime.now(UTC)
+    subs.seed(
+        Subscription(
+            subscription_id="sub-refund-route",
+            academy_id="acad",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            session_id="s1",
+            stripe_subscription_id="stripe-sub-refund-route",
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    ledger = FakeBillingLedger(
+        _ledger_invoice(
+            invoice_id="inv-monthly-enr-1-2026-06",
+            parent_id="p1",
+            enrollment_id="enr-1",
+            period="2026-06",
+            balance_due_cents=7_000,
+        )
+    )
+    uc = _build(repo, subscriptions=subs, billing_ledger=ledger)
+
+    await uc.execute(
+        json.dumps(
+            {
+                "id": "evt_refund_route_paid",
+                "type": "invoice.paid",
+                "data": {
+                    "object": {
+                        "id": "in_refund_route",
+                        "subscription": "stripe-sub-refund-route",
+                        "payment_intent": "pi_refund_route",
+                        "amount_paid": 7_000,
+                        "amount_due": 7_000,
+                        "currency": "usd",
+                        "period_start": 1_781_712_000,
+                    }
+                },
+            }
+        ).encode(),
+        "test_signature",
+    )
+
+    assert repo.by_id == {}
+    assert len(ledger.payments) == 1
+
+    await uc.execute(
+        json.dumps(
+            {
+                "id": "evt_refund_route_refunded",
+                "type": "charge.refunded",
+                "data": {
+                    "object": {
+                        "id": "ch_refund_route",
+                        "payment_intent": "pi_refund_route",
+                        "amount_refunded": 7_000,
+                    }
+                },
+            }
+        ).encode(),
+        "test_signature",
+    )
+
+    payment = ledger.payments["ledger-pay-in_refund_route"]
+    assert payment.status == "refunded"
+    assert payment.refunded_cents == 7_000
 
 
 @pytest.mark.asyncio
@@ -2787,7 +2868,8 @@ async def test_subscription_invoice_paid_with_null_payment_intent_uses_invoice_i
         "test_signature",
     )
 
-    assert repo.by_pi["in_api_2026"].status == "succeeded"
+    # Issue #505: no legacy projection when the ledger recorded the payment.
+    assert repo.by_id == {}
     assert ledger.payments["ledger-pay-in_api_2026"].stripe_payment_intent_id == "in_api_2026"
     assert ledger.payments["ledger-pay-in_api_2026"].stripe_invoice_id == "in_api_2026"
     assert ledger.invoices["inv-monthly-enr-1-2026-06"].balance_due_cents == 0
@@ -2846,7 +2928,8 @@ async def test_subscription_invoice_paid_replay_does_not_duplicate_ledger_paymen
             "test_signature",
         )
 
-    assert len(repo.by_id) == 1
+    # Issue #505: no legacy projection when the ledger recorded the payment.
+    assert repo.by_id == {}
     assert len(ledger.payments) == 1
     assert len(ledger.allocations) == 1
     assert ledger.invoices["inv-monthly-enr-1-2026-06"].status == "paid"
@@ -2918,7 +3001,8 @@ async def test_payment_intent_succeeded_before_subscription_invoice_paid_waits_f
         "test_signature",
     )
 
-    assert len(repo.by_id) == 1
+    # Issue #505: no legacy projection when the ledger recorded the payment.
+    assert repo.by_id == {}
     assert len(ledger.payments) == 1
     assert (
         ledger.payments["ledger-pay-in_out_of_order"].stripe_payment_intent_id == "pi_out_of_order"
@@ -3330,18 +3414,22 @@ async def test_subscription_invoice_paid_retry_after_ledger_payment_before_alloc
 
     assert len(ledger.payments) == 1
     assert len(ledger.allocations) == 1
-    assert len(repo.by_id) == 1
+    # Issue #505: no legacy projection when the ledger recorded the payment.
+    assert repo.by_id == {}
     row = processing.by_key["acad:stripe_invoice:in_retry_after_payment"]
     assert row["recovery_point"] == "processed"
     assert row["event_ids"] == ["evt_retry_after_payment_1", "evt_retry_after_payment_2"]
 
 
 @pytest.mark.asyncio
-async def test_subscription_invoice_paid_retry_after_allocation_before_legacy_projection_resumes_without_duplicate_allocation() -> (
-    None
-):
+async def test_subscription_invoice_paid_never_calls_legacy_projection_save() -> None:
+    """Issue #505: once the ledger sync records the LedgerPayment, the legacy
+    projection is skipped entirely — ``payments.save`` is never invoked, so a
+    poisoned save cannot fail the event and no duplicate ``ledger_payments``
+    row can be inserted."""
     repo = FakePaymentRepo()
-    repo.fail_next_save = True
+    # Would raise if the handler ever called repo.save for this invoice.
+    repo.always_fail_save = True
     subs = FakeSubscriptionRepo()
     now = datetime.now(UTC)
     subs.seed(
@@ -3384,28 +3472,10 @@ async def test_subscription_invoice_paid_retry_after_allocation_before_legacy_pr
         "period_start": 1_781_712_000,
     }
 
-    with pytest.raises(RuntimeError, match="transient payment write failed"):
-        await uc.execute(
-            json.dumps(
-                {
-                    "id": "evt_retry_after_allocation_1",
-                    "type": "invoice.paid",
-                    "data": {"object": event_object},
-                }
-            ).encode(),
-            "test_signature",
-        )
-
-    assert len(ledger.payments) == 1
-    assert len(ledger.allocations) == 1
-    assert repo.by_id == {}
-    row = processing.by_key["acad:stripe_invoice:in_retry_after_allocation"]
-    assert row["recovery_point"] == "ledger_allocated"
-
     await uc.execute(
         json.dumps(
             {
-                "id": "evt_retry_after_allocation_2",
+                "id": "evt_retry_after_allocation_1",
                 "type": "invoice.paid",
                 "data": {"object": event_object},
             }
@@ -3415,13 +3485,10 @@ async def test_subscription_invoice_paid_retry_after_allocation_before_legacy_pr
 
     assert len(ledger.payments) == 1
     assert len(ledger.allocations) == 1
-    assert len(repo.by_id) == 1
+    assert repo.by_id == {}
     row = processing.by_key["acad:stripe_invoice:in_retry_after_allocation"]
     assert row["recovery_point"] == "processed"
-    assert row["event_ids"] == [
-        "evt_retry_after_allocation_1",
-        "evt_retry_after_allocation_2",
-    ]
+    assert row["event_ids"] == ["evt_retry_after_allocation_1"]
 
 
 @pytest.mark.asyncio
