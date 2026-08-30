@@ -1178,6 +1178,8 @@ def test_record_invoice_manual_payment_route(admin_client):
         assert kwargs["reference_number"] == "1001"
         assert kwargs["notes"] == "Front desk payment"
         assert kwargs["actor_id"]
+        # Issue #511: the client Idempotency-Key header must reach the use case.
+        assert kwargs["idempotency_key"] == "idem-route-1"
         return {
             "invoice_id": "inv-1",
             "payment_id": "manual-1",
@@ -1195,6 +1197,7 @@ def test_record_invoice_manual_payment_route(admin_client):
             "reference_number": "1001",
             "notes": "Front desk payment",
         },
+        headers={"Idempotency-Key": "idem-route-1"},
     )
 
     assert response.status_code == 201, response.text

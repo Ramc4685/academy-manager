@@ -2199,12 +2199,23 @@ export function chargeAdminInvoiceAutopay(
 export function recordAdminInvoicePayment(
   invoiceId: string,
   payload: RecordManualPaymentRequest,
+  options?: { idempotencyKey?: string },
 ): Promise<RecordManualPaymentResponse> {
+  // Issue #511: the backend keys idempotency on this header. A fresh key per
+  // submission lets legitimate repeat payments (same amount/method within the
+  // 7-day TTL) record instead of silently replaying the first result, while a
+  // caller that reuses a key gets safe retry semantics.
+  const idempotencyKey =
+    options?.idempotencyKey ??
+    (typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `manual-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   return apiFetch<RecordManualPaymentResponse>(
     `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/record-payment`,
     {
       method: "POST",
       body: JSON.stringify(payload),
+      headers: { "Idempotency-Key": idempotencyKey },
     },
   );
 }

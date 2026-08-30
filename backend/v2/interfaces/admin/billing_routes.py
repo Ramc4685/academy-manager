@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field, StringConstraints
 
 from backend.v2.contexts.billing.application.ports import StripeResourceNotFound
@@ -1079,11 +1079,17 @@ async def record_manual_payment(
     body: RecordManualPaymentRequest,
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> RecordManualPaymentResponse:
     """Record a manual payment (cash, check, etc.) against a ledger invoice.
 
     Creates a LedgerPayment and allocates it to the invoice balance.
     Partial payments are allowed; the invoice status updates accordingly.
+
+    Send an ``Idempotency-Key`` header (any unique string per submission) so
+    retries of the same submission replay safely while legitimate repeat
+    payments are still recorded. Without the header, a payload-identical
+    repeat within the idempotency TTL is rejected with 409 for confirmation.
     """
     record_payment = _required_callable(use_cases.record_manual_payment, "Manual payment recording")
     try:
@@ -1094,6 +1100,7 @@ async def record_manual_payment(
             reference_number=body.reference_number,
             notes=body.notes,
             actor_id=claims.user_id,
+            idempotency_key=idempotency_key,
         )
     except ValueError as exc:
         msg = str(exc)

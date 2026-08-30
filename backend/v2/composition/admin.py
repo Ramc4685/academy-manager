@@ -1508,19 +1508,32 @@ def compose_admin(
         reference_number: str | None,
         notes: str,
         actor_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         # Idempotency boundary. RecordManualPayment mints a fresh payment_id per call and
         # is NOT internally idempotent, so a client retry (e.g. after the audit append
-        # below failed) would record a SECOND payment and over-credit the invoice. Key on
-        # the logical request; reference_number/notes disambiguate genuinely-distinct
-        # manual entries that share an amount + method.
-        manual_idem_key = (
-            f"manual_payment:{invoice_id}:{amount_cents}:{payment_method}:"
-            f"{reference_number}:{notes}"
-        )
-        cached = await idempotency_store.get(manual_idem_key)
-        if cached is not None:
-            return cached["payload"]
+        # below failed) would record a SECOND payment and over-credit the invoice.
+        # Prefer a client-supplied Idempotency-Key (scoped to the invoice): retries of
+        # the same submission replay, while legitimate repeat payments mint a new key.
+        # Without a client key, fall back to the payload-derived key — but a hit there
+        # is only a *possible* duplicate (two identical cash payments in the 7-day TTL
+        # are legal), so surface a 409 for the caller to confirm instead of silently
+        # replaying the first result (issue #511).
+        if idempotency_key:
+            manual_idem_key = f"manual_payment:{invoice_id}:key:{idempotency_key}"
+            cached = await idempotency_store.get(manual_idem_key)
+            if cached is not None:
+                return cached["payload"]
+        else:
+            manual_idem_key = (
+                f"manual_payment:{invoice_id}:{amount_cents}:{payment_method}:"
+                f"{reference_number}:{notes}"
+            )
+            if await idempotency_store.get(manual_idem_key) is not None:
+                raise ValueError(
+                    "possible duplicate: an identical manual payment was recorded "
+                    "recently; resend with an Idempotency-Key header to confirm"
+                )
         result = await RecordManualPayment(ledger=billing_ledger_repo).execute(
             RecordManualPaymentCommand(
                 invoice_id=invoice_id,

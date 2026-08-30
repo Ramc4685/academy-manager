@@ -151,7 +151,7 @@ async def _seed_open_invoice(db) -> None:
 
 
 @pytest.mark.asyncio
-async def test_record_manual_payment_retry_does_not_double_record(admin_db) -> None:
+async def test_record_manual_payment_keyed_retry_does_not_double_record(admin_db) -> None:
     await _seed_open_invoice(admin_db)
     admin = _use_cases(admin_db)
 
@@ -163,6 +163,7 @@ async def test_record_manual_payment_retry_does_not_double_record(admin_db) -> N
             reference_number="1001",
             notes="Front desk payment",
             actor_id="admin-1",
+            idempotency_key="idem-abc",
         )
         second = await admin.record_manual_payment(
             invoice_id="inv-m",
@@ -171,6 +172,7 @@ async def test_record_manual_payment_retry_does_not_double_record(admin_db) -> N
             reference_number="1001",
             notes="Front desk payment",
             actor_id="admin-1",
+            idempotency_key="idem-abc",
         )
         invoice = await admin_db["invoices"].find_one({"academy_id": ACAD, "invoice_id": "inv-m"})
         payment_count = await admin_db["ledger_payments"].count_documents({"academy_id": ACAD})
@@ -183,6 +185,73 @@ async def test_record_manual_payment_retry_does_not_double_record(admin_db) -> N
     assert payment_count == 1
     assert invoice is not None and invoice["balance_due_cents"] == 4_500
     assert audit_count == 1
+
+
+@pytest.mark.asyncio
+async def test_record_manual_payment_distinct_keys_record_repeat_payments(admin_db) -> None:
+    """Issue #511: a legitimate identical repeat payment (new Idempotency-Key)
+
+    must be recorded, not silently swallowed by the payload-derived key."""
+    await _seed_open_invoice(admin_db)
+    admin = _use_cases(admin_db)
+
+    with tenant_scope(ACAD):
+        first = await admin.record_manual_payment(
+            invoice_id="inv-m",
+            amount_cents=2_500,
+            payment_method="cash",
+            reference_number=None,
+            notes="",
+            actor_id="admin-1",
+            idempotency_key="idem-week1",
+        )
+        second = await admin.record_manual_payment(
+            invoice_id="inv-m",
+            amount_cents=2_500,
+            payment_method="cash",
+            reference_number=None,
+            notes="",
+            actor_id="admin-1",
+            idempotency_key="idem-week2",
+        )
+        payment_count = await admin_db["ledger_payments"].count_documents({"academy_id": ACAD})
+        invoice = await admin_db["invoices"].find_one({"academy_id": ACAD, "invoice_id": "inv-m"})
+
+    assert first["payment_id"] != second["payment_id"]
+    assert payment_count == 2
+    assert invoice is not None and invoice["balance_due_cents"] == 2_000
+
+
+@pytest.mark.asyncio
+async def test_record_manual_payment_keyless_identical_repeat_raises_conflict(admin_db) -> None:
+    """Without a client key, a payload-identical repeat inside the TTL surfaces a
+
+    409-mapped ValueError for confirmation instead of replaying the cached result."""
+    await _seed_open_invoice(admin_db)
+    admin = _use_cases(admin_db)
+
+    with tenant_scope(ACAD):
+        await admin.record_manual_payment(
+            invoice_id="inv-m",
+            amount_cents=2_500,
+            payment_method="cash",
+            reference_number=None,
+            notes="",
+            actor_id="admin-1",
+        )
+        with pytest.raises(ValueError, match="possible duplicate"):
+            await admin.record_manual_payment(
+                invoice_id="inv-m",
+                amount_cents=2_500,
+                payment_method="cash",
+                reference_number=None,
+                notes="",
+                actor_id="admin-1",
+            )
+        payment_count = await admin_db["ledger_payments"].count_documents({"academy_id": ACAD})
+
+    # Money recorded exactly once; the repeat was rejected, not silently dropped.
+    assert payment_count == 1
 
 
 @pytest.mark.asyncio
