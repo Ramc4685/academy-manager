@@ -359,6 +359,57 @@ class TestRecipientResolution:
         assert resolver.calls[0] == ("academy", {"role": "parent"})
 
     @pytest.mark.asyncio
+    async def test_duplicate_recipients_are_deduped_before_send(self) -> None:
+        """Belt-and-suspenders send-time dedup (#520): a person resolved twice
+        — same user_id, or a second doc matched via auth_uid carrying a
+        different user_id but the same email — gets exactly one email and one
+        delivery row."""
+        use_case, resolver, sender, _campaigns, deliveries = _build_use_case()
+        resolver.by_academy = [
+            _recipient("p-1", email="parent-one@example.test"),
+            _recipient("p-1", email="parent-one@example.test"),  # same user_id
+            _recipient("auth-uid-p1", email="Parent-One@Example.test"),  # same email
+            _recipient("p-2"),
+        ]
+
+        result = await use_case.execute(
+            SendCampaignCommand(
+                academy_id="aca-1",
+                sender_id="u-admin",
+                audience=AcademyAudience(role="parent"),
+                subject="Hi",
+                body="Hello",
+            )
+        )
+
+        assert result.total_recipients == 2
+        assert result.sent_count == 2
+        assert [s["user_id"] for s in sender.sent] == ["p-1", "p-2"]
+        assert {d.recipient_user_id for d in deliveries.saved} == {"p-1", "p-2"}
+
+    @pytest.mark.asyncio
+    async def test_recipients_without_email_dedupe_only_by_user_id(self) -> None:
+        use_case, resolver, _sender, _campaigns, deliveries = _build_use_case()
+        resolver.by_academy = [
+            ResolvedRecipient(user_id="p-1", email=None),
+            ResolvedRecipient(user_id="p-1", email=None),
+            ResolvedRecipient(user_id="p-2", email=None),
+        ]
+
+        result = await use_case.execute(
+            SendCampaignCommand(
+                academy_id="aca-1",
+                sender_id="u-admin",
+                audience=AcademyAudience(role="parent"),
+                subject="Hi",
+                body="Hello",
+            )
+        )
+
+        assert result.total_recipients == 2
+        assert {d.recipient_user_id for d in deliveries.saved} == {"p-1", "p-2"}
+
+    @pytest.mark.asyncio
     async def test_session_audience_resolves_session_parents(self) -> None:
         use_case, resolver, _sender, _campaigns, deliveries = _build_use_case()
         resolver.by_session = {
