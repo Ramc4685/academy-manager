@@ -17,6 +17,7 @@ from pymongo import ReturnDocument
 from backend.v2.contexts.identity.domain.identity_aliases import (
     aliases_from_doc,
     identity_aliases,
+    membership_match_rank,
 )
 from backend.v2.contexts.identity.domain.models import (
     AcademyMembership,
@@ -104,18 +105,12 @@ class MongoMembershipRepository:
         The accounts alias matching unblocks are precisely the ones likely to
         have TWO rows in one academy: `ensure_parent_login` upserts a
         firebase-keyed row without removing the roster-keyed one, so a stale
-        `removed`/`invited` row can sit beside the live one. Ranking:
+        `removed`/`invited` row can sit beside the live one.
 
-        1. active status wins — a live membership beats a stale row whatever
-           it is keyed by (this is the row auth must see);
-        2. then an exact `user_id` hit beats an alias hit;
-        3. then `membership_id`, so the result is stable even for rows that
-           tie, rather than depending on Mongo's natural order.
+        The ordering itself lives with the alias helpers, because the role
+        *write* paths have to revoke exactly the row this read grants.
         """
-        status_rank = 0 if str(doc.get("status", "active")) == "active" else 1
-        exact_rank = 0 if str(doc.get("user_id", "")) == user_id else 1
-        tiebreak = str(doc.get("membership_id") or doc.get("_id") or "")
-        return (status_rank, exact_rank, tiebreak)
+        return membership_match_rank(doc, user_id)
 
     async def get_membership(
         self, academy_id: str, user_id: str, *, aliases: Sequence[str] | None = None
