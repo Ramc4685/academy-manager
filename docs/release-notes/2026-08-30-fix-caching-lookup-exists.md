@@ -22,7 +22,7 @@ None. No migration, no new environment configuration, no behaviour change for
 slug or custom-domain routing. Deployments that do not use the internal tenant
 header were unaffected by the defect and are unaffected by this fix.
 
-## Rollback
+## Risk / rollback
 Revert the commit. Doing so restores the `AttributeError` on internal-header
 requests, so prefer rolling back PR #571 or PR #584 instead if this needs to
 be undone.
