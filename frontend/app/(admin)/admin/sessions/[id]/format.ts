@@ -60,7 +60,9 @@ export function dollarsInputToCents(value: string): number | null {
 }
 
 export function hasRecurringSchedule(session: AdminSessionView): boolean {
-  return Boolean(session.days_of_week.length && session.start_time && session.end_time);
+  // Defensive `?.`: a payload without `days_of_week` used to throw here and take
+  // the whole session-detail page down to the error boundary (same class as #503).
+  return Boolean(session.days_of_week?.length && session.start_time && session.end_time);
 }
 
 export function sessionDateLabel(session: AdminSessionView): string {

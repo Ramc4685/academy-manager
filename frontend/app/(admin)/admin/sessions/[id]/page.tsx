@@ -51,6 +51,13 @@ const DETAIL_TABS = [
 ] as const;
 type DetailTab = (typeof DETAIL_TABS)[number]["id"];
 
+const CANCEL_FAILED_FALLBACK = "Could not cancel session.";
+
+function cancelErrorMessage(err: unknown): string {
+  const reason = err instanceof Error ? err.message.trim() : "";
+  return reason ? `Could not cancel session: ${reason}` : CANCEL_FAILED_FALLBACK;
+}
+
 export default function AdminSessionDetailPage() {
   const params = useParams();
   const sessionId = params.id as string;
@@ -64,6 +71,7 @@ export default function AdminSessionDetailPage() {
   const [occurrenceTarget, setOccurrenceTarget] = useState<AdminSessionOccurrenceView | null>(null);
   const [replacementOpen, setReplacementOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<DetailTab>("roster");
+  const [cancelError, setCancelError] = useState<string | null>(null);
 
   const sessionsQuery = useQuery({
     queryKey: queryKeys.admin.sessionDetail(sessionId),
@@ -92,8 +100,19 @@ export default function AdminSessionDetailPage() {
 
   const cancelSessionMutation = useMutation({
     mutationFn: () => deleteAdminSession(sessionId),
+    onMutate: () => {
+      setCancelError(null);
+    },
     onSuccess: () => {
       window.location.href = "/admin/sessions";
+    },
+    // #467: a failed cancel used to be silent — no redirect, no message.
+    onError: (err: unknown) => {
+      // The reason is folded into the message here, not at render time: an API
+      // error can carry an EMPTY message (`makeError` builds `new Error("")`
+      // for a non-JSON body), and rendering a fixed prefix beside the fallback
+      // string produced "Could not cancel session: Could not cancel session."
+      setCancelError(cancelErrorMessage(err));
     },
   });
 
@@ -245,6 +264,17 @@ export default function AdminSessionDetailPage() {
           </Button>
         </div>
       </div>
+
+      {cancelError && (
+        <Card p={16} style={{ borderColor: "#fecaca", background: "#fef2f2" }}>
+          <div role="alert" data-testid="admin-session-cancel-error" className="flex items-center justify-between gap-3">
+            <p className="text-sm text-red-800">{cancelError}</p>
+            <Button variant="secondary" size="sm" onClick={() => setCancelError(null)}>
+              Dismiss
+            </Button>
+          </div>
+        </Card>
+      )}
 
       {/* Replacement coaches */}
       <Card p={20} className="min-w-0">

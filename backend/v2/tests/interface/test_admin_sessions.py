@@ -14,7 +14,7 @@ Routes covered:
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from fastapi import FastAPI, Request
@@ -24,6 +24,12 @@ import backend.v2.composition.admin as admin_composition
 from backend.v2.composition.admin import compose_admin
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import FakeStripeGateway
 from backend.v2.contexts.coaching.domain.payout import CoachRate
+from backend.v2.contexts.coaching.infrastructure.mongo_payout_read_models import (
+    MongoPayableOccurrenceQuery,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_repo import (
+    MongoSessionOccurrenceRepository,
+)
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import MongoSessionRepository
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_writer import MongoSessionWriter
 from backend.v2.interfaces.admin.router import router as admin_router
@@ -2057,3 +2063,439 @@ def test_admin_correct_student_attendance_missing_mark_404(admin_client):
     )
     assert r.status_code == 404
     assert r.json()["error"]["code"] == "Coaching.AttendanceNotFound"
+
+
+# --- issue #467: cancel is a soft delete; cancelled sessions must not re-list ---
+
+
+@pytest.mark.asyncio
+async def test_cancelled_sessions_excluded_from_upcoming_listing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression for #467.
+
+    `DELETE /admin/sessions/{id}` only stamps status="cancelled"; the doc stays
+    in `sessions`. Both the dated query and the recurring-template query must
+    drop cancelled rows, while docs with a missing/None status still list.
+    """
+    monkeypatch.setattr(admin_composition, "datetime", _FrozenAdminDateTime)
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["admin-upcoming-cancelled"]
+    start = datetime(2026, 6, 3, 15, 0, tzinfo=UTC)
+    await db.sessions.insert_many(
+        [
+            {
+                "academy_id": "academy-b",
+                "session_id": "sess-live",
+                "title": "Live Dated",
+                "location": "Court 1",
+                "coach_id": "coach-1",
+                "capacity": 8,
+                "status": "scheduled",
+                "start_at": start,
+                "end_at": start + timedelta(hours=1),
+            },
+            {
+                "academy_id": "academy-b",
+                "session_id": "sess-cancelled",
+                "title": "Cancelled Dated",
+                "location": "Court 2",
+                "coach_id": "coach-2",
+                "capacity": 8,
+                "status": "cancelled",
+                "start_at": start + timedelta(hours=2),
+                "end_at": start + timedelta(hours=3),
+            },
+            {
+                # Legacy doc with no status field at all — must still appear.
+                "academy_id": "academy-b",
+                "session_id": "sess-no-status",
+                "title": "Legacy No Status",
+                "location": "Court 3",
+                "coach_id": "coach-3",
+                "capacity": 8,
+                "start_at": start + timedelta(days=1),
+                "end_at": start + timedelta(days=1, hours=1),
+            },
+            {
+                # Legacy doc with an explicit null status — must still appear.
+                "academy_id": "academy-b",
+                "session_id": "sess-null-status",
+                "title": "Legacy Null Status",
+                "location": "Court 4",
+                "coach_id": "coach-4",
+                "capacity": 8,
+                "status": None,
+                "start_at": start + timedelta(days=2),
+                "end_at": start + timedelta(days=2, hours=1),
+            },
+            {
+                "academy_id": "academy-b",
+                "session_id": "tpl-live",
+                "name": "Live Recurring",
+                "location": "Court 5",
+                "coach_id": "coach-5",
+                "max_students": 10,
+                "status": "active",
+                "days_of_week": ["Mon"],
+                "start_time": "09:15",
+                "end_time": "10:15",
+                "timezone": "America/Chicago",
+                "start_date": "2026-06-01",
+                "end_date": "2026-06-30",
+            },
+            {
+                "academy_id": "academy-b",
+                "session_id": "tpl-cancelled",
+                "name": "Cancelled Recurring",
+                "location": "Court 6",
+                "coach_id": "coach-6",
+                "max_students": 10,
+                "status": "cancelled",
+                "days_of_week": ["Mon", "Wed"],
+                "start_time": "11:15",
+                "end_time": "12:15",
+                "timezone": "America/Chicago",
+                "start_date": "2026-06-01",
+                "end_date": "2026-06-30",
+            },
+        ]
+    )
+
+    app = _mongo_admin_app(db)
+    with TestClient(app) as client:
+        response = client.get("/api/v2/admin/sessions?window=upcoming")
+
+    assert response.status_code == 200, response.text
+    sessions = response.json()["sessions"]
+    session_ids = [session["session_id"] for session in sessions]
+
+    assert "sess-cancelled" not in session_ids
+    assert "tpl-cancelled" not in session_ids
+    # No synthesized occurrence of the cancelled template leaked in either.
+    assert not any(row["title"] == "Cancelled Recurring" for row in sessions)
+    assert not any(row["status"] == "cancelled" for row in sessions)
+
+    # Live rows and legacy status-less rows are untouched.
+    assert "sess-live" in session_ids
+    assert "tpl-live" in session_ids
+    assert "sess-no-status" in session_ids
+    assert "sess-null-status" in session_ids
+
+
+@pytest.mark.asyncio
+async def test_cancelled_sessions_excluded_from_date_listing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The `?date=` branch has the same status-blindness; fix it consistently."""
+    monkeypatch.setattr(admin_composition, "datetime", _FrozenAdminDateTime)
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["admin-date-cancelled"]
+    start = datetime(2026, 6, 3, 15, 0, tzinfo=UTC)
+    await db.sessions.insert_many(
+        [
+            {
+                "academy_id": "academy-b",
+                "session_id": "sess-live",
+                "title": "Live Dated",
+                "location": "Court 1",
+                "coach_id": "coach-1",
+                "capacity": 8,
+                "status": "scheduled",
+                "start_at": start,
+                "end_at": start + timedelta(hours=1),
+            },
+            {
+                "academy_id": "academy-b",
+                "session_id": "sess-cancelled",
+                "title": "Cancelled Dated",
+                "location": "Court 2",
+                "coach_id": "coach-2",
+                "capacity": 8,
+                "status": "cancelled",
+                "start_at": start + timedelta(hours=2),
+                "end_at": start + timedelta(hours=3),
+            },
+            {
+                "academy_id": "academy-b",
+                "session_id": "sess-no-status",
+                "title": "Legacy No Status",
+                "location": "Court 3",
+                "coach_id": "coach-3",
+                "capacity": 8,
+                "start_at": start + timedelta(hours=4),
+                "end_at": start + timedelta(hours=5),
+            },
+            {
+                "academy_id": "academy-b",
+                "session_id": "tpl-cancelled",
+                "name": "Cancelled Recurring",
+                "location": "Court 4",
+                "coach_id": "coach-4",
+                "max_students": 10,
+                "status": "cancelled",
+                "days_of_week": ["Wed"],
+                "start_time": "09:15",
+                "end_time": "10:15",
+                "timezone": "America/Chicago",
+                "start_date": "2026-06-01",
+                "end_date": "2026-06-30",
+            },
+        ]
+    )
+
+    app = _mongo_admin_app(db)
+    with TestClient(app) as client:
+        response = client.get("/api/v2/admin/sessions?date=2026-06-03")
+
+    assert response.status_code == 200, response.text
+    session_ids = [session["session_id"] for session in response.json()["sessions"]]
+    assert "sess-cancelled" not in session_ids
+    assert "tpl-cancelled" not in session_ids
+    assert "sess-live" in session_ids
+    assert "sess-no-status" in session_ids
+
+
+@pytest.mark.asyncio
+async def test_cancel_session_then_relist_drops_the_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end #467: DELETE then re-list, and the row is gone."""
+    monkeypatch.setattr(admin_composition, "datetime", _FrozenAdminDateTime)
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["admin-cancel-then-relist"]
+    start = datetime(2026, 6, 3, 15, 0, tzinfo=UTC)
+    await db.sessions.insert_many(
+        [
+            {
+                "academy_id": "academy-b",
+                "session_id": "sess-doomed",
+                "title": "Doomed Dated",
+                "location": "Court 1",
+                "coach_id": "coach-1",
+                "capacity": 8,
+                "status": "scheduled",
+                "start_at": start,
+                "end_at": start + timedelta(hours=1),
+            },
+            {
+                "academy_id": "academy-b",
+                "session_id": "tpl-doomed",
+                "name": "Doomed Recurring",
+                "location": "Court 2",
+                "coach_id": "coach-2",
+                "max_students": 10,
+                "status": "active",
+                "days_of_week": ["Mon"],
+                "start_time": "09:15",
+                "end_time": "10:15",
+                "timezone": "America/Chicago",
+                "start_date": "2026-06-01",
+                "end_date": "2026-06-30",
+            },
+        ]
+    )
+
+    app = _mongo_admin_app(db)
+    with TestClient(app) as client:
+        before = client.get("/api/v2/admin/sessions?window=upcoming")
+        assert before.status_code == 200, before.text
+        before_ids = [row["session_id"] for row in before.json()["sessions"]]
+        assert "sess-doomed" in before_ids
+        assert "tpl-doomed" in before_ids
+
+        assert client.delete("/api/v2/admin/sessions/sess-doomed").status_code == 204
+        assert client.delete("/api/v2/admin/sessions/tpl-doomed").status_code == 204
+
+        after = client.get("/api/v2/admin/sessions?window=upcoming")
+
+    assert after.status_code == 200, after.text
+    after_ids = [row["session_id"] for row in after.json()["sessions"]]
+    assert "sess-doomed" not in after_ids
+    assert "tpl-doomed" not in after_ids
+
+    # Soft delete: the docs are still in Mongo, just flagged.
+    stored = await db.sessions.find_one({"academy_id": "academy-b", "session_id": "sess-doomed"})
+    assert stored is not None
+    assert stored["status"] == "cancelled"
+
+
+# NOTE: there is deliberately no `admin_client` (fake-composition) mirror of the
+# three tests above. The fake `list_admin_sessions` in conftest is a hand-written
+# double, so a test through it would only assert that the double does what the
+# double was written to do — it passed with both production fixes reverted.
+# The mongomock tests above exercise the real Mongo filters instead.
+
+
+# --- issue #467: cancelling a session must cancel its future occurrences ------
+#
+# `sessions.status` is not what the downstream readers look at. Coach payroll,
+# the admin expected-payroll report and the coach day view all key off the
+# OCCURRENCE's own status, so a cancelled session whose `session_occurrences`
+# rows stay "scheduled" keeps showing up on coach screens and keeps accruing
+# expected pay — while the admin listing fix hides it from the admin.
+
+
+_CANCEL_TEMPLATE = {
+    "academy_id": "academy-b",
+    "session_id": "tpl-cancel",
+    "name": "Doomed Recurring",
+    "location": "Court 1",
+    "coach_id": "coach-1",
+    "max_students": 10,
+    "amount_cents": 12000,
+    "status": "active",
+    "days_of_week": ["Mon", "Wed"],
+    "start_time": "09:15",
+    "end_time": "10:15",
+    "timezone": "America/Chicago",
+    "start_date": "2026-05-01",
+    "end_date": "2026-07-31",
+}
+
+# 09:15 America/Chicago == 14:15Z during CDT.
+_OCC_PAST_START = datetime(2026, 5, 27, 14, 15, tzinfo=UTC)  # before the frozen now
+_OCC_FUTURE_CLEAN_START = datetime(2026, 6, 15, 14, 15, tzinfo=UTC)
+_OCC_FUTURE_ATTENDED_START = datetime(2026, 6, 17, 14, 15, tzinfo=UTC)
+# Past the 60-day maintenance window (frozen now + 60d == 2026-07-31). Normal
+# occurrence maintenance never looks this far ahead; a cancel has to.
+_OCC_BEYOND_WINDOW_START = datetime(2026, 9, 2, 14, 15, tzinfo=UTC)
+
+
+def _occurrence(occurrence_id: str, start_at: datetime) -> dict[str, object]:
+    return {
+        "occurrence_id": occurrence_id,
+        "academy_id": "academy-b",
+        "session_id": "tpl-cancel",
+        "template_session_id": "tpl-cancel",
+        "start_at": start_at,
+        "end_at": start_at + timedelta(hours=1),
+        "status": "scheduled",
+        "scheduled_coach_id": "coach-1",
+        "actual_coach_id": None,
+        "substitute_coach_id": None,
+        "is_billable": True,
+        "is_payable": True,
+    }
+
+
+async def _seed_cancel_fixture(db) -> None:
+    await db.sessions.insert_one(dict(_CANCEL_TEMPLATE))
+    await db.session_occurrences.insert_many(
+        [
+            _occurrence("occ-past", _OCC_PAST_START),
+            _occurrence("occ-future-clean", _OCC_FUTURE_CLEAN_START),
+            _occurrence("occ-future-attended", _OCC_FUTURE_ATTENDED_START),
+            _occurrence("occ-beyond-window", _OCC_BEYOND_WINDOW_START),
+        ]
+    )
+    # The past class really happened: student attendance was taken.
+    await db.attendance.insert_one(
+        {
+            "academy_id": "academy-b",
+            "occurrence_id": "occ-past",
+            "student_id": "student-1",
+            "status": "present",
+        }
+    )
+    # A future occurrence that has already been acted on (coach attendance
+    # marked ahead of time) is NOT clean and must survive the cancel untouched.
+    await db.coach_attendance.insert_one(
+        {
+            "academy_id": "academy-b",
+            "occurrence_id": "occ-future-attended",
+            "coach_id": "coach-1",
+            "status": "present",
+            "role": "lead",
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_cancel_session_cancels_future_occurrences_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression for #467: the occurrences must follow the parent session."""
+    monkeypatch.setattr(admin_composition, "datetime", _FrozenAdminDateTime)
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["admin-cancel-occurrences"]
+    await _seed_cancel_fixture(db)
+
+    app = _mongo_admin_app(db)
+    with TestClient(app) as client:
+        assert client.delete("/api/v2/admin/sessions/tpl-cancel").status_code == 204
+
+    cancelled = await db.session_occurrences.find_one({"occurrence_id": "occ-future-clean"})
+    assert cancelled is not None
+    assert cancelled["status"] == "cancelled"
+    assert cancelled["cancellation_reason"] == "session_cancelled"
+
+    # Past attendance is history — the class happened and the coach gets paid.
+    past = await db.session_occurrences.find_one({"occurrence_id": "occ-past"})
+    assert past is not None
+    assert past["status"] == "scheduled"
+    assert "cancellation_reason" not in past
+
+    # A future occurrence somebody already acted on is left alone too.
+    acted_on = await db.session_occurrences.find_one({"occurrence_id": "occ-future-attended"})
+    assert acted_on is not None
+    assert acted_on["status"] == "scheduled"
+
+    # A clean future occurrence materialised BEYOND the 60-day maintenance
+    # window is still reached: a cancel drops the query's upper bound, so the
+    # far end of a long series cannot stay live after the session is cancelled.
+    beyond = await db.session_occurrences.find_one({"occurrence_id": "occ-beyond-window"})
+    assert beyond is not None
+    assert beyond["status"] == "cancelled"
+    assert beyond["cancellation_reason"] == "session_cancelled"
+
+    # Soft cancel: nothing was deleted.
+    assert await db.session_occurrences.count_documents({"academy_id": "academy-b"}) == 4
+
+
+@pytest.mark.asyncio
+async def test_cancelled_session_occurrences_leave_payroll_and_coach_day_view(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#467 downstream: the readers that key off occurrence status agree."""
+    monkeypatch.setattr(admin_composition, "datetime", _FrozenAdminDateTime)
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["admin-cancel-downstream"]
+    await _seed_cancel_fixture(db)
+
+    occurrences_repo = MongoSessionOccurrenceRepository(db)
+    payable_query = MongoPayableOccurrenceQuery(db)
+    period_start = datetime(2026, 6, 1, tzinfo=UTC)
+    period_end = datetime(2026, 7, 1, tzinfo=UTC)
+
+    with tenant_scope("academy-b"):
+        before_day_view = await occurrences_repo.list_for_coach_on_date(
+            coach_id="coach-1",
+            on_date=date(2026, 6, 15),
+        )
+    assert [o.occurrence_id for o in before_day_view] == ["occ-future-clean"]
+
+    before_payable = await payable_query.list_in_period("academy-b", period_start, period_end)
+    assert "occ-future-clean" in {o.occurrence_id for o in before_payable}
+
+    app = _mongo_admin_app(db)
+    with TestClient(app) as client:
+        assert client.delete("/api/v2/admin/sessions/tpl-cancel").status_code == 204
+
+    # Coach day view no longer offers the cancelled class.
+    with tenant_scope("academy-b"):
+        after_day_view = await occurrences_repo.list_for_coach_on_date(
+            coach_id="coach-1",
+            on_date=date(2026, 6, 15),
+        )
+    assert after_day_view == []
+
+    # Payroll: the occurrence is reported as cancelled, so ComputePayout's
+    # `status == "completed"` eligibility rule can never pay for it.
+    after_payable = {
+        o.occurrence_id: o
+        for o in await payable_query.list_in_period("academy-b", period_start, period_end)
+    }
+    assert after_payable["occ-future-clean"].status == "cancelled"
+    # The already-acted-on occurrence keeps its payable status.
+    assert after_payable["occ-future-attended"].status != "cancelled"
