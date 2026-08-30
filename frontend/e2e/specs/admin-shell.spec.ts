@@ -1,6 +1,10 @@
 import { test, expect, type Page, type Route } from "@playwright/test";
 
 import { openAdminNav } from "../helpers/nav";
+import {
+  stubCoachMessages,
+  stubParentMessages,
+} from "../fixtures/saas-stubs";
 
 const ADMIN_ME = {
   user_id: "user-admin-e2e",
@@ -412,6 +416,7 @@ async function stubAdminBff(page: Page, memberships = SINGLE_MEMBERSHIP) {
 
 async function stubCoachBff(page: Page) {
   await stubMe(page, COACH_ME);
+  await stubCoachMessages(page);
   await page.route("**/api/v2/coach/today*", (route) =>
     fulfillJson(route, { date: "2026-05-20", sessions: [] }),
   );
@@ -419,6 +424,7 @@ async function stubCoachBff(page: Page) {
 
 async function stubParentBff(page: Page) {
   await stubMe(page, PARENT_ME);
+  await stubParentMessages(page);
   await page.route("**/api/v2/parent/payments*", (route) =>
     fulfillJson(route, { payments: [] }),
   );

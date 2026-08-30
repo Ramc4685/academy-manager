@@ -157,6 +157,44 @@ else
   echo "ok   missing config is an error, not a silent empty shard list"
 fi
 
+# ── e2e_shard_list: never degrade to zero shards ─────────────────────────────
+# pre-push-checks.sh iterates over e2e_shard_list, which must turn a missing
+# config or an empty project list into a hard error instead of an empty loop
+# that skips every e2e shard while the gate exits 0.
+
+CASES=$((CASES + 1))
+if e2e_shard_list "/nonexistent/playwright.config.ts" >/dev/null 2>&1; then
+  echo "FAIL e2e_shard_list fails on a missing config"
+  FAILURES=$((FAILURES + 1))
+else
+  echo "ok   e2e_shard_list fails on a missing config"
+fi
+
+CASES=$((CASES + 1))
+EMPTY_CONFIG="$(mktemp)"
+printf '  use: { baseURL: "http://localhost:3001" },\n' > "$EMPTY_CONFIG"
+if e2e_shard_list "$EMPTY_CONFIG" >/dev/null 2>&1; then
+  echo "FAIL e2e_shard_list fails on a config with no projects"
+  FAILURES=$((FAILURES + 1))
+else
+  echo "ok   e2e_shard_list fails on a config with no projects"
+fi
+rm -f "$EMPTY_CONFIG"
+
+CASES=$((CASES + 1))
+SHARD_CONFIG="$(mktemp)"
+printf '      name: "chromium-mobile",\n      name: "webkit-mobile",\n' > "$SHARD_CONFIG"
+GOT_SHARDS="$(e2e_shard_list "$SHARD_CONFIG" || true)"
+rm -f "$SHARD_CONFIG"
+if [ "$GOT_SHARDS" = 'chromium-mobile
+webkit-mobile' ]; then
+  echo "ok   e2e_shard_list echoes the project list on success"
+else
+  echo "FAIL e2e_shard_list echoes the project list on success"
+  echo "     got:  $GOT_SHARDS"
+  FAILURES=$((FAILURES + 1))
+fi
+
 # The real config must expose every project CI runs as its own job, or the
 # local gate would skip a browser CI still enforces.
 CASES=$((CASES + 1))

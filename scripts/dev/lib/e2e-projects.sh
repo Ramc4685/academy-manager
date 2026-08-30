@@ -21,3 +21,20 @@ e2e_projects() {
   # use blocks do not.
   sed -n 's/^[[:space:]]*name:[[:space:]]*"\([^"]*\)".*/\1/p' "$config"
 }
+
+# Echoes the shard list, or fails with a message on stderr. A missing config
+# or an empty project list is an ERROR here, never an empty loop: `for p in
+# $(e2e_projects)` used to swallow the exit code and run zero e2e shards
+# while the gate still exited 0.
+e2e_shard_list() {
+  local projects
+  if ! projects="$(e2e_projects "${1:-}")"; then
+    echo "error: cannot read Playwright config for the e2e shard list" >&2
+    return 1
+  fi
+  if [ -z "$projects" ]; then
+    echo "error: Playwright config lists no projects — refusing to run zero e2e shards" >&2
+    return 1
+  fi
+  printf '%s\n' "$projects"
+}
