@@ -16,7 +16,7 @@ a failure must be retried, and a success must never be sent twice.
 from __future__ import annotations
 
 import importlib
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
@@ -35,6 +35,7 @@ from backend.v2.contexts.communications.domain.models import (
     AcademyAudience,
     DigestSendStatus,
 )
+from backend.v2.contexts.communications.infrastructure.digest_claim import STALE_QUEUED_AFTER
 from backend.v2.contexts.communications.infrastructure.mongo_digest_send_repo import (
     MongoDigestSendRepository,
 )
@@ -99,9 +100,15 @@ async def test_sent_claim_is_never_reclaimed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_queued_and_skipped_claims_are_never_reclaimed() -> None:
+async def test_fresh_queued_and_skipped_claims_are_never_reclaimed() -> None:
     """An in-flight (queued) row must not be re-claimed by a concurrent tick,
-    and a coach with nothing to teach is not re-examined all day."""
+    and a coach with nothing to teach is not re-examined all day.
+
+    "Fresh" is load-bearing: an ABANDONED queued row (older than
+    ``STALE_QUEUED_AFTER``) *is* reclaimable — see the stale test below. This
+    one pins the other side of that line, so widening the reclaim to queued
+    rows can never start stealing a send that is genuinely in flight.
+    """
     db = await _coach_db()
     with tenant_scope(ACADEMY_ID):
         repo = MongoDigestSendRepository(db)
@@ -334,3 +341,64 @@ async def test_the_use_case_marks_a_missing_address_non_retryable() -> None:
         second = await _digest_no_email().execute(command)
         assert (second.claimed, second.already_claimed) == (0, 1)
         assert sender.sent == []
+
+
+@pytest.mark.asyncio
+async def test_abandoned_queued_claim_is_reclaimed_once_stale() -> None:
+    """A crash between the QUEUED insert and mark_sent/mark_failed used to hold
+    the claim forever (issue #542, arm b).
+
+    ``try_claim`` inserts QUEUED *before* sending. If the process dies there the
+    row is neither ``failed`` (so the old reclaim skipped it) nor releasable, so
+    it held the unique ``(academy, recipient, date)`` claim for that date and the
+    recipient silently got nothing — no retry, ever.
+
+    Once the row is older than the 10-minute job lease it cannot be an in-flight
+    send by any live run, so a later tick may take it over.
+    """
+    db = await _coach_db()
+    with tenant_scope(ACADEMY_ID):
+        repo = MongoDigestSendRepository(db)
+
+        crashed = await repo.try_claim(ACADEMY_ID, "coach-crashed", DIGEST_DATE)
+        assert crashed is not None
+        # Still in flight a moment later: must NOT be stolen.
+        assert await repo.try_claim(ACADEMY_ID, "coach-crashed", DIGEST_DATE) is None
+
+        # Age the claim past the staleness cutoff, as a crashed run would.
+        await db["coach_digest_sends"].update_one(
+            {"digest_id": crashed.digest_id},
+            {
+                "$set": {
+                    "created_at": datetime.now(UTC) - (STALE_QUEUED_AFTER + timedelta(minutes=1))
+                }
+            },
+        )
+
+        recovered = await repo.try_claim(ACADEMY_ID, "coach-crashed", DIGEST_DATE)
+        assert recovered is not None, "an abandoned queued claim must be retryable"
+        assert recovered.digest_id == crashed.digest_id
+        assert recovered.status == DigestSendStatus.QUEUED
+        assert recovered.attempt_count == 2
+        # Still one row — recovered, not duplicated.
+        assert await db["coach_digest_sends"].count_documents({}) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_stale_sent_row_is_still_never_reclaimed() -> None:
+    """Staleness widens the QUEUED arm only. Age must never make a delivered
+    digest re-sendable — that is the invariant the whole module exists for.
+    """
+    db = await _coach_db()
+    with tenant_scope(ACADEMY_ID):
+        repo = MongoDigestSendRepository(db)
+
+        claim = await repo.try_claim(ACADEMY_ID, "coach-1", DIGEST_DATE)
+        assert claim is not None
+        await repo.mark_sent(claim.digest_id, "prov-1")
+        await db["coach_digest_sends"].update_one(
+            {"digest_id": claim.digest_id},
+            {"$set": {"created_at": datetime.now(UTC) - timedelta(days=1)}},
+        )
+
+        assert await repo.try_claim(ACADEMY_ID, "coach-1", DIGEST_DATE) is None

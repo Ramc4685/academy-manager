@@ -736,7 +736,17 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 env_enabled=settings.coach_digest_enabled,
                 env_hour=settings.coach_digest_hour,
             )
-            if not (schedule.enabled and schedule.hour == current_hour):
+            # `>=`, not `==`: the digest hour OPENS the window rather than
+            # being the only chance. With an exact match each academy got one
+            # tick a day, so a Resend outage or a deploy spanning that single
+            # hour lost the whole day's digest and the retry ladder added by
+            # #435/PR #489 could never fire — there was no later tick to fire
+            # on (issue #542). Later ticks are cheap: `try_claim` runs BEFORE
+            # plan generation, so an already-sent recipient costs one
+            # duplicate-key insert and one indexed no-op re-claim, and a `sent`
+            # row can never be re-claimed. The window closes on its own at
+            # midnight, when `digest_date` rolls over.
+            if not (schedule.enabled and current_hour >= schedule.hour):
                 continue
             with tenant_scope(academy_id):
                 result = await app.state.coach_digest.execute(
@@ -797,7 +807,17 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 env_enabled=settings.parent_digest_enabled,
                 env_hour=settings.parent_digest_hour,
             )
-            if not (schedule.enabled and schedule.hour == current_hour):
+            # `>=`, not `==`: the digest hour OPENS the window rather than
+            # being the only chance. With an exact match each academy got one
+            # tick a day, so a Resend outage or a deploy spanning that single
+            # hour lost the whole day's digest and the retry ladder added by
+            # #435/PR #489 could never fire — there was no later tick to fire
+            # on (issue #542). Later ticks are cheap: `try_claim` runs BEFORE
+            # plan generation, so an already-sent recipient costs one
+            # duplicate-key insert and one indexed no-op re-claim, and a `sent`
+            # row can never be re-claimed. The window closes on its own at
+            # midnight, when `digest_date` rolls over.
+            if not (schedule.enabled and current_hour >= schedule.hour):
                 continue
             with tenant_scope(academy_id):
                 result = await app.state.parent_digest.execute(
