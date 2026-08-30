@@ -7,6 +7,7 @@ Checkout Session. Returns the redirect URL the client navigates to.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 from pydantic import BaseModel
@@ -49,7 +50,7 @@ class StartCheckout:
         *,
         payment_repo: PaymentRepository,
         stripe: StripeGateway,
-        academy_id: str,
+        academy_id: str | Callable[[], str],
         connected_accounts: ConnectedAccountRepository | None = None,
         settings: BillingSettingsRepository | None = None,
         clock=lambda: datetime.now(UTC),
@@ -62,6 +63,9 @@ class StartCheckout:
         self._now = clock
 
     async def execute(self, cmd: StartCheckoutCommand) -> StartCheckoutResult:
+        # Resolved at execute time so a request-time tenant provider (issue
+        # #532) stamps the CURRENT academy, never a boot-time one.
+        academy_id = self._academy_id() if callable(self._academy_id) else self._academy_id
         connected_account_id = await self._ready_connected_account_id()
         payment_id = str(new_ulid())
         try:
@@ -72,7 +76,7 @@ class StartCheckout:
                 success_url=cmd.success_url,
                 cancel_url=cmd.cancel_url,
                 metadata={
-                    "academy_id": self._academy_id,
+                    "academy_id": academy_id,
                     "payment_id": payment_id,
                     "parent_id": cmd.parent_id,
                     "session_id": cmd.session_id,
@@ -86,7 +90,7 @@ class StartCheckout:
         now = self._now()
         payment = Payment(
             payment_id=payment_id,
-            academy_id=self._academy_id,
+            academy_id=academy_id,
             parent_id=cmd.parent_id,
             session_id=cmd.session_id,
             stripe_checkout_session_id=checkout_id,

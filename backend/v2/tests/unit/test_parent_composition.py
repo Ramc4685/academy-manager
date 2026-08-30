@@ -1596,6 +1596,65 @@ async def test_retiring_an_already_paid_checkout_does_not_corrupt_state(
     assert first_payment["status"] == "succeeded"
 
 
+# ---------------------------------------------------------------------------
+# Issue #532: fail-closed guard for static-tenant wiring under multi-academy
+# ---------------------------------------------------------------------------
+
+
+def _guard_settings(*, saas_mode: bool, tenancy_mode: str, allow: bool = False):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        saas_mode=saas_mode,
+        tenancy_mode=tenancy_mode,
+        allow_static_tenant_parent_wiring=allow,
+    )
+
+
+def test_guard_refuses_saas_multi_academy_by_default() -> None:
+    from backend.v2.composition.parent import ensure_multi_academy_composable
+
+    with pytest.raises(RuntimeError, match="boot-frozen academy_id"):
+        ensure_multi_academy_composable(
+            _guard_settings(saas_mode=True, tenancy_mode="multi_academy")
+        )
+
+
+def test_guard_allows_safe_and_acknowledged_modes() -> None:
+    from backend.v2.composition.parent import ensure_multi_academy_composable
+
+    # No saas_mode: every request resolves to default_academy_id — harmless.
+    ensure_multi_academy_composable(_guard_settings(saas_mode=False, tenancy_mode="multi_academy"))
+    # saas + single_academy: middleware refuses every tenant but primary.
+    ensure_multi_academy_composable(_guard_settings(saas_mode=True, tenancy_mode="single_academy"))
+    # Explicit operator acknowledgment (documented allowlist escape hatch).
+    ensure_multi_academy_composable(
+        _guard_settings(saas_mode=True, tenancy_mode="multi_academy", allow=True)
+    )
+
+
+def test_compose_parent_fails_closed_under_saas_multi_academy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The config flip that actually serves multiple tenants cannot silently
+    ship with the remaining single-tenant parent wiring (issue #532)."""
+    monkeypatch.setenv("V2_SAAS_MODE", "true")
+    monkeypatch.delenv("V2_ALLOW_STATIC_TENANT_PARENT_WIRING", raising=False)
+    monkeypatch.delenv("APP_TENANCY_MODE", raising=False)
+    get_settings.cache_clear()
+    try:
+        with pytest.raises(RuntimeError, match="boot-frozen academy_id"):
+            compose_parent(
+                _FakeDb(),
+                outbox=object(),  # type: ignore[arg-type]
+                idempotency_store=object(),  # type: ignore[arg-type]
+                stripe=_PortalStripe(),  # type: ignore[arg-type]
+                academy_id="acad",
+            )
+    finally:
+        get_settings.cache_clear()
+
+
 async def test_paid_checkout_raises_quote_expired_before_stripe_when_consume_refuses(
     allow_app_origin,
     monkeypatch: pytest.MonkeyPatch,

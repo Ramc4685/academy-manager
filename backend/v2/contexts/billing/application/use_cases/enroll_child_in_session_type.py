@@ -10,6 +10,7 @@ cancels the Stripe subscription at period end, and marks the enrollment cancelle
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -58,7 +59,7 @@ class EnrollChildInSessionType:
         session_types: SessionTypeRepository,
         stripe: StripeGateway,
         student_owner_lookup: StudentOwnerLookup,
-        academy_id: str,
+        academy_id: str | Callable[[], str],
         connected_accounts: ConnectedAccountRepository | None = None,
         settings: BillingSettingsRepository | None = None,
         clock=lambda: datetime.now(UTC),
@@ -73,6 +74,10 @@ class EnrollChildInSessionType:
         self._now = clock
 
     async def execute(self, cmd: EnrollChildCommand) -> dict[str, Any]:
+        # Resolved at execute time so a request-time tenant provider (issue
+        # #532) stamps the CURRENT academy — into both the Stripe checkout
+        # metadata and the persisted enrollment — never a boot-time one.
+        academy_id = self._academy_id() if callable(self._academy_id) else self._academy_id
         # 1. Validate student ownership
         owned = await self._owner_lookup.is_owned(cmd.parent_id, cmd.student_id)
         if not owned:
@@ -110,7 +115,7 @@ class EnrollChildInSessionType:
             success_url=cmd.success_url,
             cancel_url=cmd.cancel_url,
             metadata={
-                "academy_id": self._academy_id,
+                "academy_id": academy_id,
                 "enrollment_id": enrollment_id,
                 "parent_id": cmd.parent_id,
                 "student_id": cmd.student_id,
@@ -123,7 +128,7 @@ class EnrollChildInSessionType:
         # 5. Persist enrollment with active status
         enrollment = StudentBillingEnrollment(
             enrollment_id=enrollment_id,
-            academy_id=self._academy_id,
+            academy_id=academy_id,
             student_id=cmd.student_id,
             parent_id=cmd.parent_id,
             session_type_id=cmd.session_type_id,

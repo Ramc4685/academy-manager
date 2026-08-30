@@ -120,6 +120,7 @@ def _make_use_case(
     owned: dict[str, set[str]] | None = None,
     connected_accounts: FakeConnectedAccounts | None = None,
     settings: object | None = None,
+    academy_id="acad",
 ) -> EnrollChildInSessionType:
     if enrollments is None:
         enrollments = FakeEnrollmentRepo()
@@ -137,7 +138,7 @@ def _make_use_case(
         session_types=st_repo,
         stripe=stripe,
         student_owner_lookup=ownership,
-        academy_id="acad",
+        academy_id=academy_id,
         connected_accounts=connected_accounts,
         settings=settings,
         clock=lambda: _NOW,
@@ -478,3 +479,69 @@ async def test_cancel_without_stripe_subscription_updates_status_only():
     assert updated is not None
     assert updated.status == "cancelled"
     assert len(stripe.cancelled_subscriptions) == 0
+
+
+# ---------------------------------------------------------------------------
+# Issue #532: request-time academy resolution
+# ---------------------------------------------------------------------------
+
+
+def _boot_fallback_provider(boot: str = "academy-boot"):
+    """Mirror of compose_parent's request_academy_id helper."""
+    from backend.v2.shared.tenancy import TenantContextUnset, current_academy_id
+
+    def _provider() -> str:
+        try:
+            return current_academy_id()
+        except TenantContextUnset:
+            return boot
+
+    return _provider
+
+
+def _enroll_cmd() -> EnrollChildCommand:
+    return EnrollChildCommand(
+        parent_id="parent-1",
+        student_id="student-1",
+        session_type_id="st-1",
+        success_url="https://example.com/success",
+        cancel_url="https://example.com/cancel",
+    )
+
+
+@pytest.mark.asyncio
+async def test_enroll_stamps_request_time_academy_from_callable():
+    """A callable academy_id resolves at execute time, so the persisted
+    enrollment AND the Stripe checkout metadata carry the REQUEST academy,
+    never a boot-time one (issue #532)."""
+    from backend.v2.shared.tenancy import tenant_scope
+
+    stripe = FakeStripeGateway()
+    uc = _make_use_case(
+        session_type=_make_session_type(),
+        stripe=stripe,
+        academy_id=_boot_fallback_provider(),
+    )
+
+    with tenant_scope("academy-b"):
+        result = await uc.execute(_enroll_cmd())
+
+    assert result["enrollment"].academy_id == "academy-b"
+    assert stripe.autopay_setup_checkouts[0]["metadata"]["academy_id"] == "academy-b"
+
+
+@pytest.mark.asyncio
+async def test_enroll_callable_academy_falls_back_to_boot_without_context():
+    """Without a tenant scope the provider's boot fallback keeps
+    single-academy non-HTTP callers unchanged."""
+    stripe = FakeStripeGateway()
+    uc = _make_use_case(
+        session_type=_make_session_type(),
+        stripe=stripe,
+        academy_id=_boot_fallback_provider(),
+    )
+
+    result = await uc.execute(_enroll_cmd())
+
+    assert result["enrollment"].academy_id == "academy-boot"
+    assert stripe.autopay_setup_checkouts[0]["metadata"]["academy_id"] == "academy-boot"
