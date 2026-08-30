@@ -7,7 +7,7 @@ from datetime import UTC, date, datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 from backend.v2.contexts.student_progress.application.errors import (
     ProgressNextAction,
@@ -86,6 +86,15 @@ class RecordTestBody(BaseModel):
     notes: str = ""
     coach_override: bool = False
     override_reason: str | None = None
+    # Client-generated ULID; retries with the same id return the original
+    # result instead of recording a duplicate attempt.
+    mutation_id: str | None = None
+
+    @model_validator(mode="after")
+    def _success_not_above_attempts(self) -> RecordTestBody:
+        if self.success_count > self.attempts_count:
+            raise ValueError("success_count cannot exceed attempts_count")
+        return self
 
 
 class CoachEngagementStatsRow(BaseModel):
@@ -305,6 +314,7 @@ async def record_admin_skill_test(
                 notes=body.notes,
                 coach_override=body.coach_override,
                 override_reason=body.override_reason,
+                mutation_id=body.mutation_id,
             )
         )
     except StudentNotPlaced as exc:

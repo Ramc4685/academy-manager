@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from backend.v2.contexts.student_progress.application.ports import (
     SkillLookup,
@@ -33,6 +33,7 @@ from backend.v2.contexts.student_progress.domain.models import (
     TestAttempt,
 )
 from backend.v2.shared.events import Outbox
+from backend.v2.shared.idempotency import IdempotencyStore, idempotent
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import current_academy_id
 
@@ -56,6 +57,16 @@ class RecordTestAttemptCommand(BaseModel):
     coach_override: bool = False
     override_reason: str | None = None
     notes: str = ""
+    # Client-generated ULID used as the idempotency key so offline-sync or
+    # network retries return the original result instead of inserting
+    # duplicate attempts and re-emitting progress events.
+    mutation_id: str | None = None
+
+    @model_validator(mode="after")
+    def _success_not_above_attempts(self) -> RecordTestAttemptCommand:
+        if self.success_count > self.attempts_count:
+            raise ValueError("success_count cannot exceed attempts_count")
+        return self
 
 
 class RecordTestAttemptResult(BaseModel):
@@ -76,14 +87,28 @@ class RecordTestAttempt:
         test_attempts: TestAttemptRepository,
         skill_lookup: SkillLookup,
         outbox: Outbox | None = None,
+        idempotency_store: IdempotencyStore | None = None,
     ) -> None:
         self._level_progress = level_progress
         self._skill_progress = skill_progress
         self._test_attempts = test_attempts
         self._skill_lookup = skill_lookup
         self._outbox = outbox
+        self._idempotency_store = idempotency_store
 
     async def execute(self, cmd: RecordTestAttemptCommand) -> RecordTestAttemptResult:
+        if self._idempotency_store is not None and cmd.mutation_id:
+            return await self._execute_idempotent(cmd)
+        return await self._execute(cmd)
+
+    @idempotent(
+        key_from=lambda self, cmd: f"record_test_attempt:{cmd.mutation_id}",
+        result_type=RecordTestAttemptResult,
+    )
+    async def _execute_idempotent(self, cmd: RecordTestAttemptCommand) -> RecordTestAttemptResult:
+        return await self._execute(cmd)
+
+    async def _execute(self, cmd: RecordTestAttemptCommand) -> RecordTestAttemptResult:
         active = await self._level_progress.get_active(cmd.student_id, cmd.program_id)
         if active is None:
             raise StudentNotPlaced(

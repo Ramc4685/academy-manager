@@ -703,7 +703,7 @@ def compose_admin(
 
     enrollment_autopay_status_gateway = _EnrollmentAutopayStatusGateway()
     curriculum = compose_curriculum(db)
-    student_progress = compose_student_progress(db, outbox)
+    student_progress = compose_student_progress(db, outbox, idempotency_store=idempotency_store)
     generate_daily_teaching_plan = GenerateDailyTeachingPlan(
         occurrences=ListCoachOccurrencesForDate(
             occurrences=occurrences_r,
