@@ -911,3 +911,114 @@ async def test_promotion_writes_the_directory_before_granting_the_membership(db)
     )
     claims = await _claims_for(db, repo, "promoted@example.com", academy_id="academy-a")
     assert claims.roles == ("admin",)
+
+
+@pytest.mark.asyncio
+async def test_role_removal_mirrors_membership_keyed_by_an_identity_alias(db) -> None:
+    """`remove_role` is the ONLY revocation the admin UI can perform.
+
+    `change_role` — the endpoint the replacement path repairs — has no
+    frontend caller; both admin surfaces use the additive endpoints, and
+    `DELETE /admin/users/{id}/roles/{role}` lands here. So for exactly the
+    population the replacement fix exists for (a membership row keyed by
+    `auth_uid` rather than `users.user_id`), this is the path a real demotion
+    takes. The previous exact-`user_id` `$pull` matched nothing while the
+    directory, the audit row and the UI all reported the role removed, and
+    `LoadAuthClaims` kept resolving through the alias and serving `admin`.
+    """
+    await _seed_admin_with_membership(db, user_id="roster-staff", membership_user_id="fb-staff")
+    await db["users"].update_one(
+        {"user_id": "roster-staff"}, {"$set": {"roles": ["admin", "parent"]}}
+    )
+    await db["academy_memberships"].update_one(
+        {"membership_id": "m-staff"}, {"$set": {"roles": ["admin", "parent"]}}
+    )
+    repo = MongoUserRepository(db, default_academy_id="academy-a")
+
+    await repo.remove_role(
+        "roster-staff",
+        "admin",
+        academy_id="academy-a",
+        actor_id="admin-1",
+        reason="offboarded",
+    )
+
+    membership = await db["academy_memberships"].find_one({"membership_id": "m-staff"})
+    assert membership["roles"] == ["parent"], "alias-keyed row must actually lose the role"
+
+
+@pytest.mark.asyncio
+async def test_role_removal_fails_closed_when_the_only_row_is_alias_owned(db) -> None:
+    """A removal that cannot claim an alias-visible row must not report success.
+
+    Same reasoning as the replacement path: the row is skipped as foreign
+    (rewriting it could flatten another account's roles), but `LoadAuthClaims`
+    resolves through the same alias set and keeps serving `admin`. Reporting
+    the removal as done would leave live admin claims behind an audit trail
+    saying otherwise.
+    """
+    await _seed_admin_with_membership(db, user_id="u-staff", membership_user_id="shared-id")
+    await db["users"].update_one(
+        {"user_id": "u-staff"}, {"$set": {"roles": ["admin", "parent"]}}
+    )
+    await db["users"].insert_one(
+        {
+            "user_id": "shared-id",
+            "email": "other-account@example.com",
+            "display_name": "Other Account",
+            "role": "coach",
+            "roles": ["coach"],
+            "status": "active",
+            "is_active": True,
+            "academy_id": "academy-a",
+        }
+    )
+    repo = MongoUserRepository(db, default_academy_id="academy-a")
+
+    with pytest.raises(RoleRevocationFailed):
+        await repo.remove_role(
+            "u-staff",
+            "admin",
+            academy_id="academy-a",
+            actor_id="admin-1",
+            reason="offboarded",
+        )
+
+    # The other account's row is untouched — the skip did its job.
+    row = await db["academy_memberships"].find_one({"membership_id": "m-staff"})
+    assert row["roles"] == ["admin"]
+
+
+@pytest.mark.asyncio
+async def test_role_removal_reports_when_no_membership_row_matched(db, caplog) -> None:
+    """No reachable row is not a silent success.
+
+    "No membership row at all" and "row keyed outside every alias" are
+    indistinguishable from here and neither can keep a grant alive, so this
+    does not raise — but it must be visible in ops rather than no-opping
+    quietly, exactly like the replacement path's narrowing warning.
+    """
+    await db["users"].insert_one(
+        {
+            "user_id": "u-orphan",
+            "email": "orphan@example.com",
+            "display_name": "Orphan Staff",
+            "role": "admin",
+            "roles": ["admin", "parent"],
+            "status": "active",
+            "is_active": True,
+            "academy_id": "academy-a",
+        }
+    )
+    repo = MongoUserRepository(db, default_academy_id="academy-a")
+
+    with caplog.at_level(logging.WARNING):
+        await repo.remove_role(
+            "u-orphan",
+            "admin",
+            academy_id="academy-a",
+            actor_id="admin-1",
+            reason="offboarded",
+        )
+
+    assert "role removal matched no membership row to revoke" in caplog.text

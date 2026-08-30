@@ -1170,6 +1170,105 @@ class MongoUserRepository:
                 f"(primary {owned[0].get('membership_id')})"
             )
 
+    async def _pull_membership_role(
+        self,
+        doc: dict[str, Any],
+        *,
+        role: Role,
+        academy_id: str,
+        now: datetime,
+    ) -> None:
+        """Revoke a single role from this academy's membership row(s).
+
+        The removal twin of `_replace_membership_roles`, and load-bearing for
+        the same reason: `DELETE /admin/users/{id}/roles/{role}` is the ONLY
+        revocation the admin UI can perform (`change_role`, the endpoint the
+        replacement path repairs, has no frontend caller), so this is the code
+        path a real demotion actually takes.
+
+        Before this, the mirror was a single `update_one` keyed on the exact
+        resolved `user_id`, with no alias set and no result check. For exactly
+        the population the replacement fix exists for — an account whose
+        membership row is keyed by an alias (`auth_uid`/`firebase_uid`/`_id`)
+        rather than the resolved `user_id` — it `$pull`ed nothing while the
+        directory, the audit row and the UI all reported the role removed, and
+        `LoadAuthClaims` (which resolves through the alias set) kept serving it.
+
+        Resolution, ownership and the write check are identical to the
+        replacement path; only the mutation differs (`$pull` one role instead
+        of `$set` the whole array). A removal always drops a role, so the
+        fail-closed branch is unconditional here rather than gated on
+        `drops_a_role`.
+        """
+        memberships = self._db["academy_memberships"]
+        aliases = list(self._membership_aliases(doc))
+        rows = [
+            row
+            async for row in memberships.find(
+                {"academy_id": academy_id, "user_id": {"$in": aliases}}
+            )
+        ]
+
+        resolved_user_id = self._to_domain(doc).user_id
+        owned: list[dict[str, Any]] = []
+        skipped_foreign: list[dict[str, Any]] = []
+        for row in rows:
+            if await self._membership_is_foreign(row, doc):
+                skipped_foreign.append(row)
+                _log.error(
+                    "role removal skipped a membership row owned by another account",
+                    extra={
+                        "academy_id": academy_id,
+                        "user_id": resolved_user_id,
+                        "membership_id": row.get("membership_id"),
+                        "membership_user_id": row.get("user_id"),
+                    },
+                )
+                capture_message(
+                    "Identity alias collision on academy_memberships during role removal "
+                    f"for {resolved_user_id} in {academy_id}",
+                    level="error",
+                )
+                continue
+            owned.append(row)
+        owned.sort(key=lambda row: membership_match_rank(row, resolved_user_id))
+
+        if skipped_foreign:
+            raise RoleRevocationFailed(
+                f"role removal for {resolved_user_id} in {academy_id} could not claim "
+                f"{len(skipped_foreign)} alias-matched membership row(s) owned by another "
+                f"account (first {skipped_foreign[0].get('membership_id')}); "
+                "auth can still resolve them, so the old grant would stay live"
+            )
+
+        if not owned:
+            _log.warning(
+                "role removal matched no membership row to revoke",
+                extra={
+                    "academy_id": academy_id,
+                    "user_id": resolved_user_id,
+                    "aliases": aliases,
+                    "removed_role": role,
+                },
+            )
+            capture_message(
+                f"Role removal for {resolved_user_id} in {academy_id} matched no "
+                "academy_memberships row",
+                level="warning",
+            )
+            return
+
+        result = await memberships.update_many(
+            {"_id": {"$in": [row["_id"] for row in owned]}},
+            {"$pull": {"roles": role}, "$set": {"updated_at": now}},
+        )
+        if getattr(result, "matched_count", 0) != len(owned):
+            raise RoleRevocationFailed(
+                f"role removal for {resolved_user_id} in {academy_id} matched "
+                f"{getattr(result, 'matched_count', 0)} of {len(owned)} membership rows "
+                f"(primary {owned[0].get('membership_id')})"
+            )
+
     async def _write_audit(
         self,
         *,
@@ -1280,31 +1379,36 @@ class MongoUserRepository:
 
         resolved_user_id = self._to_domain(doc).user_id
         # Mirror into the SaaS source of truth (claims are built from this).
-        membership_update: dict[str, Any] = (
-            {"$addToSet": {"roles": role}} if adding else {"$pull": {"roles": role}}
-        )
-        membership_update["$set"] = {"updated_at": now}
-
-        # When adding a role, upsert the membership row if it doesn't exist
-        # (e.g., legacy parent accounts with no membership record).
-        upsert_kwargs = {"upsert": True} if adding else {}
-        if adding:
-            membership_update["$setOnInsert"] = {
-                "membership_id": str(new_ulid()),
-                "academy_id": academy_id,
-                "user_id": resolved_user_id,
-                "invited_by": actor_id,
-                "invited_at": now,
-                "accepted_at": now,
-                "created_at": now,
-                "status": "active",
-            }
-
-        await self._db["academy_memberships"].update_one(
-            {"academy_id": academy_id, "user_id": resolved_user_id},
-            membership_update,
-            **upsert_kwargs,
-        )
+        if not adding:
+            # Revocation resolves through the full alias set and checks its
+            # write, because this is the only revocation the admin UI can
+            # perform and an exact-`user_id` `$pull` silently no-ops on an
+            # alias-keyed row while reporting success everywhere else.
+            await self._pull_membership_role(
+                doc, role=role, academy_id=academy_id, now=now
+            )
+        else:
+            # The additive path keeps the exact-id upsert: granting through a
+            # row auth cannot reach is inert, not dangerous, and the upsert is
+            # what creates the row for legacy accounts that have none.
+            await self._db["academy_memberships"].update_one(
+                {"academy_id": academy_id, "user_id": resolved_user_id},
+                {
+                    "$addToSet": {"roles": role},
+                    "$set": {"updated_at": now},
+                    "$setOnInsert": {
+                        "membership_id": str(new_ulid()),
+                        "academy_id": academy_id,
+                        "user_id": resolved_user_id,
+                        "invited_by": actor_id,
+                        "invited_at": now,
+                        "accepted_at": now,
+                        "created_at": now,
+                        "status": "active",
+                    },
+                },
+                upsert=True,
+            )
 
         await self._write_audit(
             academy_id=academy_id,
