@@ -4,8 +4,11 @@ PR: #501
 
 ## What changed
 Level-up approval is now a compare-and-set: `update_status` filters on the
-expected prior state and reports whether it matched, and the use case performs
-that CAS before any certificate, level, or skill write. A replayed approval —
+expected prior state and reports whether it matched. The use case runs the
+approval's (idempotent) side effects first and performs that CAS **last**, so
+the status transition is the commit point: a failure part-way through leaves
+the recommendation `RECOMMENDED` and re-approvable, and the loser of a race
+re-applies the same writes and is then refused. A replayed approval —
 an admin double-click, two admins racing, or a retried POST — now aborts with
 409 instead of issuing a duplicate certificate, inserting a duplicate active
 level row, and re-seeding every skill at that level to NOT_STARTED (which
