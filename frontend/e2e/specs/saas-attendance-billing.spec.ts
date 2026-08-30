@@ -24,6 +24,7 @@ import {
   COACH_USER_B,
   fulfillJson,
   stubAcademy,
+  stubCoachMessages,
   stubMe,
   stubMemberships,
 } from "../fixtures/saas-stubs";
@@ -49,6 +50,7 @@ test.describe("SaaS v2 — coach attendance is tenant-scoped", () => {
       academy_id: COACH_USER_A.academy_id,
       roles: ["coach"],
     });
+    await stubCoachMessages(page);
 
     const today = "2026-05-22";
     await page.route("**/api/v2/coach/today*", (route) => {
@@ -120,6 +122,7 @@ test.describe("SaaS v2 — coach attendance is tenant-scoped", () => {
     const errors = collectConsoleErrors(page);
 
     await stubMe(page, COACH_USER_B);
+    await stubCoachMessages(page);
 
     // Tenant B's /coach/today is empty — they cannot see Asha (academy A).
     await page.route("**/api/v2/coach/today*", (route) => {

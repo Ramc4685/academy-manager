@@ -5,6 +5,7 @@ import {
   fulfillJson,
   stubMe,
   stubMemberships,
+  stubParentMessages,
   stubParentProfile,
 } from "../fixtures/saas-stubs";
 
@@ -53,6 +54,7 @@ async function stubParentShell(page: Parameters<typeof stubMe>[0]) {
   });
   // The parent layout fetches this on every /parent/* page (issue #380).
   await stubParentProfile(page, { user_id: "user-parent-qa" });
+  await stubParentMessages(page);
 }
 
 async function stubParentPayments(page: Parameters<typeof stubMe>[0]) {

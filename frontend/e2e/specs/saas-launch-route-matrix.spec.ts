@@ -14,8 +14,10 @@ import {
 import {
   ACADEMY_A,
   fulfillJson,
+  stubCoachMessages,
   stubMe,
   stubMemberships,
+  stubParentMessages,
 } from "../fixtures/saas-stubs";
 
 const ADMIN_ME = {
@@ -293,6 +295,7 @@ async function stubAdminLaunchBff(page: Page): Promise<void> {
 
 async function stubCoachLaunchBff(page: Page): Promise<void> {
   await stubMe(page, COACH_ME);
+  await stubCoachMessages(page);
   await page.route("**/api/v2/coach/today*", (route) =>
     fulfillJson(route, { date: "2026-05-22", sessions: [] })
   );
@@ -300,6 +303,7 @@ async function stubCoachLaunchBff(page: Page): Promise<void> {
 
 async function stubParentLaunchBff(page: Page): Promise<void> {
   await stubMe(page, PARENT_ME);
+  await stubParentMessages(page);
   await page.route("**/api/v2/parent/payments", (route) =>
     fulfillJson(route, { payments: [] })
   );

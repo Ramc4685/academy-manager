@@ -23,11 +23,20 @@ from backend.v2.contexts.onboarding.domain.models import Application, ChildProfi
 
 
 class FakeAppRepo:
+    """In-memory ApplicationRepository with REAL compare-and-set semantics.
+
+    `reopen_for_edit` / `restamp_checkout` must miss when the stored document
+    no longer matches what the caller read — a fake that always writes would
+    make every concurrency test below vacuous.
+    """
+
     def __init__(self, app: Application | None) -> None:
         self._app = app
+        self.saved: list[Application] = []
 
     async def save(self, app):
         self._app = app
+        self.saved.append(app)
 
     async def get(self, application_id):
         return self._app if self._app and self._app.application_id == application_id else None
@@ -35,8 +44,48 @@ class FakeAppRepo:
     async def latest_for_parent(self, _):
         return self._app
 
-    async def get_by_payment_id(self, _):
+    async def get_by_payment_id(self, payment_id):
+        if self._app is not None and self._app.payment_id == payment_id:
+            return self._app
+        return None
+
+    async def reopen_for_edit(self, application_id, *, expected_status, updated_at):
+        app = await self.get(application_id)
+        if app is None or app.status != expected_status:
+            return None
+        self._app = app.model_copy(update={"status": "DRAFT", "updated_at": updated_at})
         return self._app
+
+    async def restamp_checkout(
+        self,
+        application_id,
+        *,
+        expected_status,
+        expected_payment_id,
+        stripe_checkout_session_id,
+        payment_id,
+        updated_at,
+    ):
+        app = await self.get(application_id)
+        if app is None or app.status != expected_status or app.payment_id != expected_payment_id:
+            return None
+        updates: dict[str, object] = {"updated_at": updated_at}
+        if stripe_checkout_session_id is not None:
+            updates["stripe_checkout_session_id"] = stripe_checkout_session_id
+        if payment_id is not None:
+            updates["payment_id"] = payment_id
+        self._app = app.model_copy(update=updates)
+        return self._app
+
+
+class RecordingRetirement:
+    """Records what the use case asked Billing to kill off."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str | None, str | None]] = []
+
+    async def retire_checkout_attempt(self, *, checkout_session_id, payment_id):
+        self.calls.append((checkout_session_id, payment_id))
 
 
 class FakeWaiverRepo:
@@ -294,3 +343,326 @@ async def test_start_application_prefills_parent_profile_from_prior_application(
     assert fresh.parent_profile.phone == "5551234"
     # Child details must start blank for the new application.
     assert fresh.child_profile.first_name == ""
+
+
+@pytest.mark.asyncio
+async def test_restarting_checkout_repoints_application_at_the_live_payment() -> None:
+    """A parent who cancels the first Stripe session and pays on a second one
+    must not have their registration orphaned.
+
+    The application is already CHECKOUT_PENDING when the re-start happens, so
+    the status does not change — but the ids must: `checkout.session.completed`
+    for the SECOND payment resolves back to the application through
+    `get_by_payment_id`, and that lookup only works if the application carries
+    the live payment_id. Keeping the first payment_id leaves the parent charged
+    and the application stuck (P0)."""
+    repo = FakeAppRepo(
+        _app().model_copy(
+            update={
+                "status": "CHECKOUT_PENDING",
+                "stripe_checkout_session_id": "cs_first",
+                "payment_id": "pay-first",
+            }
+        )
+    )
+    uc = TransitionApplication(apps=repo)
+
+    updated = await uc.execute(
+        "app-1",
+        "CHECKOUT_PENDING",
+        stripe_checkout_session_id="cs_second",
+        payment_id="pay-second",
+    )
+
+    assert updated.status == "CHECKOUT_PENDING"
+    assert updated.payment_id == "pay-second"
+    assert updated.stripe_checkout_session_id == "cs_second"
+    assert repo._app is not None
+    assert repo._app.payment_id == "pay-second"
+    assert repo._app.stripe_checkout_session_id == "cs_second"
+
+
+@pytest.mark.asyncio
+async def test_same_status_transition_without_ids_leaves_the_application_untouched() -> None:
+    """The plain idempotent re-apply (no ids supplied) must stay a no-op — the
+    $0 checkout path calls CHECKOUT_PENDING with no ids at all."""
+    original = _app().model_copy(
+        update={
+            "status": "CHECKOUT_PENDING",
+            "stripe_checkout_session_id": "cs_first",
+            "payment_id": "pay-first",
+        }
+    )
+    repo = FakeAppRepo(original)
+    uc = TransitionApplication(apps=repo)
+
+    updated = await uc.execute("app-1", "CHECKOUT_PENDING")
+
+    assert updated is original
+    assert repo._app is original
+
+
+def _checkout_pending(**extra) -> Application:
+    """An application parked on a live Stripe Checkout Session."""
+    return _app().model_copy(
+        update={
+            "status": "CHECKOUT_PENDING",
+            "stripe_checkout_session_id": "cs_first",
+            "payment_id": "pay-first",
+            **extra,
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# Option A — returning from Stripe's cancel URL RESUMES the application.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_start_application_resumes_an_abandoned_checkout() -> None:
+    """The wizard calls start on mount, and Stripe's cancel_url points at the
+    wizard. Minting a second application here would leave the first one holding
+    a still-payable Checkout Session — one enrollment, two ways to be charged."""
+    from backend.v2.contexts.onboarding.application.use_cases.manage_application import (
+        StartApplication,
+        StartApplicationCommand,
+    )
+
+    repo = FakeAppRepo(_checkout_pending())
+    retirement = RecordingRetirement()
+    uc = StartApplication(
+        apps=repo,
+        academy_id=lambda: "acad",
+        checkout_retirement=retirement,
+    )
+
+    resumed = await uc.execute(
+        StartApplicationCommand(parent_user_id="alice", parent_email="alice@example.com")
+    )
+
+    assert resumed.application_id == "app-1"
+    # PatchApplication only accepts DRAFT, so a resume that left the status
+    # alone would hand the parent a wizard that 409s on every keystroke.
+    assert resumed.status == "DRAFT"
+    assert repo._app is not None
+    assert repo._app.status == "DRAFT"
+    # The superseded session must stop being payable.
+    assert retirement.calls == [("cs_first", "pay-first")]
+
+
+@pytest.mark.asyncio
+async def test_resume_leaves_the_payment_pointer_so_a_late_webhook_can_find_it() -> None:
+    """`get_by_payment_id` is the ONLY handle checkout.session.completed has
+    back to the application. Clearing payment_id on resume would orphan a
+    payment that succeeded in the instants before the resume won."""
+    from backend.v2.contexts.onboarding.application.use_cases.manage_application import (
+        StartApplication,
+        StartApplicationCommand,
+    )
+
+    repo = FakeAppRepo(_checkout_pending())
+    uc = StartApplication(apps=repo, academy_id=lambda: "acad")
+
+    await uc.execute(
+        StartApplicationCommand(parent_user_id="alice", parent_email="alice@example.com")
+    )
+
+    assert repo._app is not None
+    assert repo._app.payment_id == "pay-first"
+
+
+@pytest.mark.asyncio
+async def test_resume_never_resurrects_an_application_that_was_already_paid() -> None:
+    """The parent may have paid in the other tab while the wizard was mounting.
+
+    The compare-and-set on CHECKOUT_PENDING misses, and the use case must fall
+    through to a brand new application rather than dragging a paid one back to
+    DRAFT."""
+    from backend.v2.contexts.onboarding.application.use_cases.manage_application import (
+        StartApplication,
+        StartApplicationCommand,
+    )
+
+    paid = _checkout_pending().model_copy(update={"status": "PENDING_APPROVAL"})
+    repo = FakeAppRepo(paid)
+    # latest_for_parent hands back the stale CHECKOUT_PENDING read the caller
+    # would have taken a moment before the webhook landed.
+    stale = _checkout_pending()
+
+    async def _stale_latest(_):
+        return stale
+
+    repo.latest_for_parent = _stale_latest  # type: ignore[method-assign]
+    retirement = RecordingRetirement()
+    uc = StartApplication(
+        apps=repo,
+        academy_id=lambda: "acad",
+        checkout_retirement=retirement,
+    )
+
+    fresh = await uc.execute(
+        StartApplicationCommand(parent_user_id="alice", parent_email="alice@example.com")
+    )
+
+    assert fresh.application_id != "app-1"
+    assert fresh.status == "DRAFT"
+    # Nothing was retired: that Stripe session was PAID, and expiring/parking
+    # anything around it would erase a real charge.
+    assert retirement.calls == []
+
+
+@pytest.mark.asyncio
+async def test_payment_webhook_still_reaches_pending_approval_after_a_resume() -> None:
+    """The other side of the same race: the resume wins the CAS, and the
+    payment for the superseded session succeeds anyway. The webhook resolves
+    the application by payment_id and finds it sitting in DRAFT — that has to
+    complete, or the parent is charged with no registration."""
+    repo = FakeAppRepo(
+        _app().model_copy(
+            update={
+                "status": "DRAFT",
+                "stripe_checkout_session_id": "cs_first",
+                "payment_id": "pay-first",
+            }
+        )
+    )
+    uc = TransitionApplication(apps=repo)
+
+    updated = await uc.execute_for_payment("pay-first", "PENDING_APPROVAL")
+
+    assert updated is not None
+    assert updated.status == "PENDING_APPROVAL"
+
+
+@pytest.mark.asyncio
+async def test_a_draft_that_never_checked_out_cannot_be_reached_by_a_payment() -> None:
+    """DRAFT -> PENDING_APPROVAL is only safe because execute_for_payment
+    resolves through payment_id, which a never-checked-out draft does not
+    carry. Guard the assumption the transition table now leans on."""
+    repo = FakeAppRepo(_app())
+    uc = TransitionApplication(apps=repo)
+
+    assert await uc.execute_for_payment("pay-anything", "PENDING_APPROVAL") is None
+
+
+# ---------------------------------------------------------------------------
+# Re-stamp — concurrent / retried POST /parent/checkout/start.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_restart_retires_the_checkout_it_supersedes() -> None:
+    repo = FakeAppRepo(_checkout_pending())
+    retirement = RecordingRetirement()
+    uc = TransitionApplication(apps=repo, checkout_retirement=retirement)
+
+    await uc.execute(
+        "app-1",
+        "CHECKOUT_PENDING",
+        stripe_checkout_session_id="cs_second",
+        payment_id="pay-second",
+    )
+
+    assert repo._app is not None
+    assert repo._app.payment_id == "pay-second"
+    # Exactly one payable session may exist for an application.
+    assert retirement.calls == [("cs_first", "pay-first")]
+
+
+class _StaleReadRepo:
+    """Serves one stale read while writes go to the shared store.
+
+    This is the interleaving a read-then-blind-write cannot survive: the loser
+    decided what to write from a snapshot the winner has since replaced.
+    """
+
+    def __init__(self, inner: FakeAppRepo, stale: Application) -> None:
+        self._inner = inner
+        self._stale = stale
+
+    async def get(self, _application_id):
+        return self._stale
+
+    async def save(self, app):
+        await self._inner.save(app)
+
+    async def restamp_checkout(self, *args, **kwargs):
+        return await self._inner.restamp_checkout(*args, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_losing_concurrent_restart_leaves_the_winner_in_place() -> None:
+    """Two tabs start checkout at once. The compare-and-set covers payment_id,
+    so the second writer misses — and must NOT re-point the application at its
+    own payment, which would leave the winner's live payment orphaned."""
+    repo = FakeAppRepo(_checkout_pending())
+    retirement = RecordingRetirement()
+    winner = TransitionApplication(apps=repo, checkout_retirement=retirement)
+
+    await winner.execute(
+        "app-1",
+        "CHECKOUT_PENDING",
+        stripe_checkout_session_id="cs_winner",
+        payment_id="pay-winner",
+    )
+    retirement.calls.clear()
+
+    # The loser still holds the read it took BEFORE the winner wrote, so its
+    # expected_payment_id is the stale "pay-first".
+    loser = TransitionApplication(
+        apps=_StaleReadRepo(repo, _checkout_pending()),  # type: ignore[arg-type]
+        checkout_retirement=retirement,
+    )
+
+    with pytest.raises(ApplicationNotEditable) as excinfo:
+        await loser.execute(
+            "app-1",
+            "CHECKOUT_PENDING",
+            stripe_checkout_session_id="cs_loser",
+            payment_id="pay-loser",
+        )
+
+    assert excinfo.value.details["from_status"] == "CHECKOUT_PENDING"
+    # The application still points at the winner.
+    assert repo._app is not None
+    assert repo._app.payment_id == "pay-winner"
+    assert repo._app.stripe_checkout_session_id == "cs_winner"
+    # And the loser killed its OWN session rather than leaving a second payable
+    # one behind.
+    assert retirement.calls == [("cs_loser", "pay-loser")]
+
+
+@pytest.mark.asyncio
+async def test_restart_refuses_when_the_child_is_already_enrolled() -> None:
+    """The real ->CHECKOUT_PENDING transition runs this guard. The re-stamp
+    branch writes too, so the same guard has to hold there."""
+    repo = FakeAppRepo(
+        _checkout_pending(
+            child_profile=ChildProfile(
+                first_name="Aanya",
+                last_name="Raghavan",
+                date_of_birth="2015-04-02",
+                emergency_contact_name="Vikram",
+                emergency_contact_phone="+1 555 0111",
+            )
+        )
+    )
+    retirement = RecordingRetirement()
+    uc = TransitionApplication(
+        apps=repo,
+        student_registrations=ExistingStudentRegistrations(),
+        checkout_retirement=retirement,
+    )
+
+    with pytest.raises(ApplicationNotEditable, match="already enrolled"):
+        await uc.execute(
+            "app-1",
+            "CHECKOUT_PENDING",
+            stripe_checkout_session_id="cs_second",
+            payment_id="pay-second",
+        )
+
+    assert repo._app is not None
+    assert repo._app.payment_id == "pay-first"
+    assert retirement.calls == []

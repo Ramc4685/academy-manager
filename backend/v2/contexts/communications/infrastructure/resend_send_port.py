@@ -1,8 +1,12 @@
 """Resend-backed email send port.
 
-Uses the `resend` SDK (already in venv). Only instantiated by composition
-when APP_ENV=production (or staging) AND email_delivery_enabled=True.
-All other environments use StubEmailSendPort.
+Uses the `resend` SDK (already in venv). For sending, composition only
+instantiates this when APP_ENV=production (or staging) AND
+email_delivery_enabled=True — every send path goes through
+``composition.digests._build_email_sender``, and all other environments get
+StubEmailSendPort. The boot-time credential probe
+(``composition.digests.compose_email_credential_probe``) also builds one in
+any environment, but only to validate the API key; it never sends.
 
 ``send`` deliberately never raises — callers record a failed send and move on —
 which is also how an expired API key used to become invisible: every message
