@@ -387,6 +387,72 @@ async def test_on_enrollment_cancelled_promotes_oldest_waitlist_entry(db, acad) 
     assert any(e["name"] == "Enrollment.WaitlistPromoted" for e in events)
 
 
+@pytest.mark.asyncio
+async def test_on_enrollment_cancelled_parent_cancel_reason_promotes_end_to_end(db, acad) -> None:
+    """Parent self-cancel (PR #500) emits EnrollmentCancelled with
+    reason="parent_cancel" AFTER releasing the seat; the same handler must
+    promote the waitlist. Pins the full chain: waitlist entry promoted,
+    an active enrollment created for the promoted student, the freed seat
+    re-reserved, and WaitlistPromoted appended to the outbox."""
+    await _wire(db)
+
+    session_id = str(new_ulid())
+    await db["sessions"].insert_one(
+        {
+            "session_id": session_id,
+            "academy_id": "acad",
+            "coach_id": "coach-1",
+            "title": "Junior A",
+            "location": "Court 1",
+            "start_at": datetime(2026, 9, 1, 9, 0, tzinfo=UTC),
+            "end_at": datetime(2026, 9, 1, 10, 30, tzinfo=UTC),
+            "capacity": 1,
+            # Self-cancel already ran release_seat before appending the event.
+            "reserved_seats": 0,
+            "status": "scheduled",
+        }
+    )
+    waitlist_id = str(new_ulid())
+    await db["waitlist"].insert_one(
+        {
+            "waitlist_id": waitlist_id,
+            "academy_id": "acad",
+            "session_id": session_id,
+            "student_id": "st-waiting",
+            "parent_id": "p-waiting",
+            "joined_at": datetime(2026, 8, 1, 8, 0, tzinfo=UTC),
+            "status": "waiting",
+        }
+    )
+
+    event = EnrollmentCancelled(
+        aggregate_id="enr-parent",
+        academy_id="acad",
+        payload=EnrollmentCancelledPayload(
+            enrollment_id="enr-parent",
+            session_id=session_id,
+            student_id="st-cancelled",
+            reason="parent_cancel",
+        ),
+    )
+    await on_enrollment_cancelled(event)
+
+    entry = await db["waitlist"].find_one({"waitlist_id": waitlist_id})
+    assert entry["status"] == "promoted"
+
+    enrollment = await db["enrollments"].find_one(
+        {"session_id": session_id, "student_id": "st-waiting"}
+    )
+    assert enrollment is not None
+    assert enrollment["status"] == "active"
+
+    session = await db["sessions"].find_one({"session_id": session_id})
+    assert session["reserved_seats"] == 1
+
+    events = [doc async for doc in db["outbox_events"].find({})]
+    assert any(e["name"] == "Enrollment.WaitlistPromoted" for e in events)
+
+
 # ---------------------------------------------------------------------------
 # Dunning failure notice (issue #435)
 # ---------------------------------------------------------------------------
