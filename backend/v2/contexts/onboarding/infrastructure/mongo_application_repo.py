@@ -105,14 +105,22 @@ class MongoApplicationRepository(TenantScopedRepository):
         stripe_checkout_session_id: str | None,
         payment_id: str | None,
         updated_at: datetime,
+        new_status: str | None = None,
     ) -> Application | None:
-        """Atomically re-point an application at a newer live checkout.
+        """Atomically point an application at a live checkout.
 
-        The status does not move; the ids do. CAS covers `payment_id` as well
-        as `status` so two concurrent `POST /parent/checkout/start` calls
-        cannot both believe they own the application — the loser misses and
-        leaves the winner's payment in place. ``expected_payment_id=None``
-        matches a document with no payment stamped yet (missing or null).
+        CAS covers `payment_id` as well as `status` so two concurrent
+        `POST /parent/checkout/start` calls cannot both believe they own the
+        application — the loser misses and leaves the winner's payment in
+        place. ``expected_payment_id=None`` matches a document with no payment
+        stamped yet (missing or null).
+
+        ``new_status`` moves the status as part of the same atomic write, for
+        the DRAFT -> CHECKOUT_PENDING claim. Omit it to re-point an
+        application that is already CHECKOUT_PENDING, where the status must
+        not move. Both callers need the same CAS: the entry transition is
+        where two tabs first race, and a blind write there mints a second
+        payable Stripe session just as surely as a blind re-stamp does.
         """
         filter_: dict[str, Any] = {
             "application_id": application_id,
@@ -120,6 +128,8 @@ class MongoApplicationRepository(TenantScopedRepository):
             "payment_id": expected_payment_id,
         }
         updates: dict[str, Any] = {"updated_at": updated_at}
+        if new_status is not None:
+            updates["status"] = new_status
         if stripe_checkout_session_id is not None:
             updates["stripe_checkout_session_id"] = stripe_checkout_session_id
         if payment_id is not None:

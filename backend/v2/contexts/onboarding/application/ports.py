@@ -26,6 +26,7 @@ class ApplicationRepository(Protocol):
         stripe_checkout_session_id: str | None,
         payment_id: str | None,
         updated_at: datetime,
+        new_status: str | None = None,
     ) -> Application | None: ...
     async def claim_for_review(
         self,

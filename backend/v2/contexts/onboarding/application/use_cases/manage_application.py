@@ -397,6 +397,36 @@ class TransitionApplication:
             )
         if to == "CHECKOUT_PENDING":
             await self._assert_child_not_enrolled(app)
+            # The ENTRY transition needs the same CAS as the re-stamp below.
+            # This used to be a blind save, so two concurrent starts from one
+            # DRAFT application both wrote — leaving two live payable Stripe
+            # sessions and only the last-written payment_id, which is the sole
+            # handle `PaymentSucceeded` has. The re-stamp CAS never covered
+            # this because it only fires once the application is ALREADY
+            # CHECKOUT_PENDING; the first race happens on the way in.
+            claimed = await self._apps.restamp_checkout(
+                app.application_id,
+                expected_status=app.status,
+                expected_payment_id=app.payment_id,
+                stripe_checkout_session_id=stripe_checkout_session_id,
+                payment_id=payment_id,
+                updated_at=self._now(),
+                new_status=to,
+            )
+            if claimed is None:
+                # Lost the entry race. Ours is the losing attempt: retire the
+                # session we just minted rather than leave it payable, and
+                # never write over the winner's ids.
+                await self._retire_checkout_attempt(
+                    checkout_session_id=stripe_checkout_session_id,
+                    payment_id=payment_id,
+                )
+                raise ApplicationNotEditable(
+                    "checkout was superseded by a concurrent start",
+                    from_status=app.status,
+                    to_status=to,
+                )
+            return claimed
         updates: dict[str, object] = {"status": to, "updated_at": self._now()}
         if stripe_checkout_session_id is not None:
             updates["stripe_checkout_session_id"] = stripe_checkout_session_id

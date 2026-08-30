@@ -65,11 +65,14 @@ class FakeAppRepo:
         stripe_checkout_session_id,
         payment_id,
         updated_at,
+        new_status=None,
     ):
         app = await self.get(application_id)
         if app is None or app.status != expected_status or app.payment_id != expected_payment_id:
             return None
         updates: dict[str, object] = {"updated_at": updated_at}
+        if new_status is not None:
+            updates["status"] = new_status
         if stripe_checkout_session_id is not None:
             updates["stripe_checkout_session_id"] = stripe_checkout_session_id
         if payment_id is not None:
@@ -666,3 +669,51 @@ async def test_restart_refuses_when_the_child_is_already_enrolled() -> None:
     assert repo._app is not None
     assert repo._app.payment_id == "pay-first"
     assert retirement.calls == []
+
+
+@pytest.mark.asyncio
+async def test_losing_the_entry_race_from_draft_leaves_one_payable_session() -> None:
+    """Two tabs start checkout on the same DRAFT application at once.
+
+    The re-stamp CAS only fires once an application is ALREADY
+    CHECKOUT_PENDING, so it never covered this — the first race happens on the
+    way IN. That write used to be a blind `save`, so both tabs wrote: two live
+    payable Stripe sessions, and only the last-written `payment_id`, which is
+    the sole handle `PaymentSucceeded` has to find the application again.
+
+    The loser must now miss the CAS, retire the session IT minted, and leave
+    the winner's ids untouched.
+    """
+    repo = FakeAppRepo(_app())  # DRAFT, no payment stamped yet
+    retirement = RecordingRetirement()
+    winner = TransitionApplication(apps=repo, checkout_retirement=retirement)
+
+    await winner.execute(
+        "app-1",
+        "CHECKOUT_PENDING",
+        stripe_checkout_session_id="cs_winner",
+        payment_id="pay-winner",
+    )
+    retirement.calls.clear()
+
+    # The loser still holds its pre-race read: status DRAFT, no payment.
+    loser = TransitionApplication(
+        apps=_StaleReadRepo(repo, _app()),  # type: ignore[arg-type]
+        checkout_retirement=retirement,
+    )
+
+    with pytest.raises(ApplicationNotEditable):
+        await loser.execute(
+            "app-1",
+            "CHECKOUT_PENDING",
+            stripe_checkout_session_id="cs_loser",
+            payment_id="pay-loser",
+        )
+
+    # The winner still owns the application...
+    current = await repo.get("app-1")
+    assert current.status == "CHECKOUT_PENDING"
+    assert current.stripe_checkout_session_id == "cs_winner"
+    assert current.payment_id == "pay-winner"
+    # ...and the loser killed its OWN session, not the winner's.
+    assert retirement.calls == [("cs_loser", "pay-loser")]
