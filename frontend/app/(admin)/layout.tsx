@@ -14,6 +14,7 @@ import { TenantProvider } from "@/lib/tenant/tenant-context";
 
 import { Avatar } from "@/components/ds/avatar";
 import { Icon } from "@/components/ds/icons";
+import { ToastProvider } from "@/components/ds/toast";
 import { ShuttleMark } from "@/components/ds/shuttle";
 import {
   ADMIN_NAV,
@@ -65,6 +66,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   return (
     <TenantProvider>
+      <ToastProvider>
       <TenantChangeInvalidator />
       <AdminActionSlotProvider>
       <div className="min-h-screen flex bg-rally-paper">
@@ -105,6 +107,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         </div>
       </div>
       </AdminActionSlotProvider>
+      </ToastProvider>
     </TenantProvider>
   );
 }

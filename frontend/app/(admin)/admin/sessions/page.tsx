@@ -219,6 +219,7 @@ export default function AdminSessionsPage() {
               deleteMutation.mutate(id);
             }
           }}
+          pendingDeleteId={deleteMutation.isPending ? (deleteMutation.variables ?? null) : null}
         />
       )}
 
@@ -313,10 +314,12 @@ function SessionList({
   sessions,
   onEdit,
   onDelete,
+  pendingDeleteId,
 }: {
   sessions: AdminSessionView[];
   onEdit: (session: AdminSessionView) => void;
   onDelete: (id: string) => void;
+  pendingDeleteId: string | null;
 }) {
   return (
     <Card p={0}>
@@ -391,9 +394,10 @@ function SessionList({
                         variant="danger"
                         size="sm"
                         onClick={() => onDelete(s.session_id)}
+                        disabled={pendingDeleteId !== null}
                         aria-label={`Cancel session ${s.title}`}
                       >
-                        Cancel
+                        {pendingDeleteId === s.session_id ? "Cancelling…" : "Cancel"}
                       </Button>
                     </div>
                   </td>

@@ -10,6 +10,7 @@ import { useOnline } from "@/lib/pwa/online";
 import { useServiceWorkerUpdate } from "@/lib/pwa/update-flow";
 import { startAutoSync } from "@/lib/offline/sync";
 import { CoachInstallCard } from "@/components/coach/install-card";
+import { ToastProvider } from "@/components/ds/toast";
 import { PersonaSwitcher } from "@/components/persona/persona-switcher";
 import { AccessDeniedNotice } from "@/components/persona/access-denied-notice";
 import { PersonaLogoutButton } from "@/components/persona/logout-button";
@@ -41,6 +42,7 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
   }
 
   return (
+    <ToastProvider>
     <div
       className="min-h-screen flex flex-col"
       style={
@@ -123,6 +125,7 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
         </div>
       </nav>
     </div>
+    </ToastProvider>
   );
 }
 
