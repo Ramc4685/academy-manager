@@ -1,6 +1,6 @@
 # bounce-suppression
 
-PR: #TBD
+PR: #603
 
 ## What changed
 Nothing anywhere in v2 checked whether an address was worth mailing. Every
