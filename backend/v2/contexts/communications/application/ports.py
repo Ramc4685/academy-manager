@@ -102,6 +102,19 @@ class EmailSendPort(Protocol):
     ) -> SendOutcome: ...
 
 
+class AcademySlugLookup(Protocol):
+    """The academy's subdomain label, for building outbound links (#555).
+
+    ``TenantResolver`` (ADR-0007) reads the tenant from the first label of the
+    request host, so every emailed link has to be built on the academy's own
+    subdomain rather than the deployment's generic ``frontend_url``. The send
+    loops resolve the slug once per run and hand it to
+    ``UnsubscribeLinkBuilder.build``.
+    """
+
+    async def slug_for(self, academy_id: str) -> str | None: ...
+
+
 class EmailPreferenceRepository(Protocol):
     """Per-recipient email preferences (#555), tenant-scoped.
 

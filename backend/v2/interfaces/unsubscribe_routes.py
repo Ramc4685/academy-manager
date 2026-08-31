@@ -74,7 +74,19 @@ def _resolver(request: Request) -> ResolveUnsubscribeToken:
 
 
 def _resolve(request: Request, token: str) -> tuple[str, str]:
+    # Same contract as ``magic_link_routes``: in SaaS mode an unresolved tenant
+    # is a client error, never a pass. The middleware computes this from the
+    # request host, and the emailed link is built on the academy's own
+    # subdomain (``UnsubscribeLinkBuilder``), so a request that cannot be
+    # resolved did not come from a link we minted. Accepting it would make the
+    # ``expected_academy_id`` binding below a no-op on the exact host the
+    # emailed link uses — the branch would exist but never run.
     resolved_academy_id: str | None = getattr(request.state, "resolved_academy_id", None)
+    if bool(getattr(request.app.state, "saas_mode", False)) and not resolved_academy_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Tenant could not be resolved from the request host",
+        )
     try:
         target = _resolver(request).execute(token, expected_academy_id=resolved_academy_id)
     except UnsubscribeTokenInvalid:

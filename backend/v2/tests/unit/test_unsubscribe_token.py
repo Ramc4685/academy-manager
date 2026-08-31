@@ -93,3 +93,43 @@ class TestLinkBuilder:
             )
             is None
         )
+
+
+# --- the link's HOST, not just its token ------------------------------------
+#
+# `TenantResolver` (ADR-0007) reads the tenant from the first label of the
+# request host, and `interfaces/unsubscribe_routes` refuses a request whose
+# tenant did not resolve. A link built on the deployment's generic
+# `frontend_url` therefore does not merely weaken the cross-tenant check — it
+# is a link that cannot be acted on at all. Every other outbound link in the
+# same digest (portal, magic link) already goes through `academy_frontend_url`.
+
+
+def test_the_link_is_built_on_the_academys_own_subdomain() -> None:
+    builder = UnsubscribeLinkBuilder(frontend_url="https://app.courtmastr.com", secret=SECRET)
+
+    url = builder.build(academy_id="acad-a", user_id="u-1", academy_slug="blno")
+
+    assert url is not None
+    assert url.startswith("https://blno.courtmastr.com/unsubscribe?t="), url
+
+
+def test_two_academies_get_links_on_their_own_hosts() -> None:
+    builder = UnsubscribeLinkBuilder(frontend_url="https://app.courtmastr.com", secret=SECRET)
+
+    a = builder.build(academy_id="acad-a", user_id="u-1", academy_slug="blno")
+    b = builder.build(academy_id="acad-b", user_id="u-1", academy_slug="westside")
+
+    assert a is not None and b is not None
+    assert "//blno." in a and "//westside." in b
+
+
+def test_an_apex_host_with_no_subdomain_slot_is_left_alone() -> None:
+    """A 2-label host has no subdomain to replace; rewriting label 0 would
+    corrupt the apex domain itself. Matches `academy_frontend_url`."""
+    builder = UnsubscribeLinkBuilder(frontend_url="https://courtmastr.com", secret=SECRET)
+
+    url = builder.build(academy_id="acad-a", user_id="u-1", academy_slug="blno")
+
+    assert url is not None
+    assert url.startswith("https://courtmastr.com/unsubscribe?t="), url

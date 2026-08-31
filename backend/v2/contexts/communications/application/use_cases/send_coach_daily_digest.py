@@ -25,6 +25,7 @@ from typing import Any, Protocol
 
 from backend.v2.contexts.communications.application.digest_renderer import render_coach_digest
 from backend.v2.contexts.communications.application.ports import (
+    AcademySlugLookup,
     AudienceResolver,
     DigestSendRepository,
     EmailSendPort,
@@ -88,10 +89,26 @@ class SendCoachDailyDigest:
     sender: EmailSendPort
     plan_provider: PlanProvider
     unsubscribe_links: UnsubscribeLinkBuilder = field(default_factory=UnsubscribeLinkBuilder)
+    # The academy's subdomain label, so the unsubscribe link lands on the host
+    # TenantResolver can actually resolve (#555). Optional: with no lookup the
+    # link falls back to the generic frontend host, which the unsubscribe route
+    # refuses in SaaS mode rather than accepting on a weakened tenant check.
+    academy_slugs: AcademySlugLookup | None = None
     now: Callable[[], datetime] = field(default=_utcnow)
+
+    async def _academy_slug(self, academy_id: str) -> str | None:
+        """Resolved once per run, never per recipient. A lookup failure degrades
+        the footer to the generic host rather than losing the whole send."""
+        if self.academy_slugs is None:
+            return None
+        try:
+            return await self.academy_slugs.slug_for(academy_id)
+        except Exception:
+            return None
 
     async def execute(self, command: SendCoachDailyDigestCommand) -> SendCoachDailyDigestResult:
         digest_date = command.digest_date.isoformat()
+        academy_slug = await self._academy_slug(command.academy_id)
         coaches = await self.resolver.resolve_academy_audience(AcademyAudience(role="coach"))
         admin_emails: list[str] = []
         if command.admin_cc_enabled:
@@ -129,7 +146,9 @@ class SendCoachDailyDigest:
             subject, body = render_coach_digest(
                 plan,
                 unsubscribe_url=self.unsubscribe_links.build(
-                    academy_id=command.academy_id, user_id=coach.user_id
+                    academy_id=command.academy_id,
+                    user_id=coach.user_id,
+                    academy_slug=academy_slug,
                 ),
             )
             recipient = ResolvedRecipient(

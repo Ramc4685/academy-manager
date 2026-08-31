@@ -769,3 +769,44 @@ async def test_send_port_is_the_only_outbound_path() -> None:
     # The stub captured the single outbound attempt; nothing else is wired.
     assert len(sender.sent) == 1
     assert sender.sent[0]["subject"] == "Subject"
+
+
+@pytest.mark.asyncio
+async def test_the_campaign_unsubscribe_link_points_at_the_academys_own_host() -> None:
+    """The opt-out link has to land on the host TenantResolver can map.
+
+    ADR-0007 resolves the tenant from the first label of the request host, and
+    the unsubscribe endpoint refuses an unresolved tenant in SaaS mode. A footer
+    built on the deployment's generic `frontend_url` is therefore not a weaker
+    link — it is one nobody can act on. Every other outbound link in the same
+    mail (portal, magic link) already goes through `academy_frontend_url`.
+    """
+    from backend.v2.contexts.communications.application.unsubscribe_token import (
+        UnsubscribeLinkBuilder,
+    )
+
+    class _Slugs:
+        async def slug_for(self, academy_id: str) -> str:
+            return "blno"
+
+    resolver = FakeAudienceResolver()
+    resolver.by_academy = [_recipient("p-1", "p-1@example.test")]
+    sender = StubEmailSendPort()
+    use_case = SendCampaign(
+        campaigns=InMemoryCampaignRepository(),
+        deliveries=InMemoryDeliveryRepository(),
+        resolver=resolver,
+        sender=sender,
+        unsubscribe_links=UnsubscribeLinkBuilder(
+            frontend_url="https://app.courtmastr.com", secret="s3cret"
+        ),
+        academy_slugs=_Slugs(),
+        now=lambda: datetime(2026, 5, 21, 12, 0, tzinfo=UTC),
+        new_id=_counter_ids(),
+    )
+
+    await use_case.execute(_parent_command())
+
+    body = sender.sent[0]["body"]
+    assert "https://blno.courtmastr.com/unsubscribe?t=" in body, body[-400:]
+    assert "https://app.courtmastr.com/unsubscribe" not in body

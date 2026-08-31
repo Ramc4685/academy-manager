@@ -297,6 +297,7 @@ def compose_send_coach_daily_digest(db: AsyncIOMotorDatabase[Any]) -> SendCoachD
         sender=parts.sender,
         plan_provider=parts.plan_provider,
         unsubscribe_links=compose_unsubscribe_link_builder(get_settings()),
+        academy_slugs=_AcademySlugLookup(MongoAcademyRepository(db)),
     )
 
 
@@ -307,6 +308,8 @@ def compose_send_coach_digest_test(db: AsyncIOMotorDatabase[Any]) -> SendCoachDi
         resolver=parts.resolver,
         sender=parts.sender,
         plan_provider=parts.plan_provider,
+        unsubscribe_links=compose_unsubscribe_link_builder(get_settings()),
+        academy_slugs=_AcademySlugLookup(MongoAcademyRepository(db)),
     )
 
 
@@ -795,6 +798,27 @@ def _build_email_sender(settings: Any, db: AsyncIOMotorDatabase[Any] | None = No
     )
 
 
+def unwrap_send_port(sender: Any) -> Any:
+    """The adapter that would actually contact a provider.
+
+    ``_build_email_sender`` returns a ``GatedEmailSendPort`` decorator, so an
+    ``isinstance(sender, StubEmailSendPort)`` check on the *wrapper* is always
+    False — which would silently disarm the local/test "email is not enabled"
+    safety block in ``composition/admin.py`` and the env-gate tests. Callers
+    asking "is this a real sender?" must ask the inner port.
+    """
+    return getattr(sender, "inner", sender)
+
+
+def is_real_email_sender(sender: Any) -> bool:
+    """True when this port would actually contact a provider.
+
+    The one place the wrapper/inner distinction is interpreted, so no caller
+    has to remember to unwrap before an ``isinstance`` check.
+    """
+    return not isinstance(unwrap_send_port(sender), StubEmailSendPort)
+
+
 def compose_email_credential_probe() -> Any | None:
     """A port for the boot-time credential check, or ``None`` when there is no
     credential to check (issue #435).
@@ -855,7 +879,28 @@ def compose_send_parent_daily_digest(
         sender=_build_email_sender(settings, db),
         provider=provider,
         unsubscribe_links=compose_unsubscribe_link_builder(settings),
+        academy_slugs=_AcademySlugLookup(MongoAcademyRepository(db)),
     )
+
+
+class _AcademySlugLookup:
+    """``AcademySlugLookup`` over the academy directory (#555).
+
+    Every emailed link has to be built on the academy's own subdomain, because
+    ``TenantResolver`` reads the tenant from the host's first label. The parent
+    digest already resolves the slug this way for its portal links; this makes
+    the same host available to the coach digest and the campaign loop, which
+    have no academy repository of their own.
+    """
+
+    def __init__(self, academies: Any) -> None:
+        self._academies = academies
+
+    async def slug_for(self, academy_id: str) -> str | None:
+        doc = await self._academies.find_by_id(academy_id)
+        if not doc:
+            return None
+        return str(doc.get("slug") or "") or None
 
 
 def compose_unsubscribe_link_builder(settings: Any) -> UnsubscribeLinkBuilder:
@@ -886,4 +931,5 @@ def compose_send_campaign(
         resolver=MongoAudienceResolver(db=db),
         sender=sender,
         unsubscribe_links=compose_unsubscribe_link_builder(settings),
+        academy_slugs=_AcademySlugLookup(MongoAcademyRepository(db)),
     )

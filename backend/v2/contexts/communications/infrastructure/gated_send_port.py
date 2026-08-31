@@ -68,17 +68,3 @@ class GatedEmailSendPort(EmailSendPort):
             reply_to=reply_to,
             category=category,
         )
-
-
-def unwrap_send_port(port: EmailSendPort) -> EmailSendPort:
-    """The provider adapter underneath any gate decorators.
-
-    The Resend/Stub env gate is asserted by identity in several places
-    (``composition/admin.py``'s local-safety block, the composition env-gate
-    tests). Wrapping the port in a decorator would silently turn every one of
-    those ``isinstance(..., StubEmailSendPort)`` checks False and re-open the
-    hole the gate exists to close, so any such check must unwrap first.
-    """
-    while isinstance(port, GatedEmailSendPort):
-        port = port.inner
-    return port

@@ -34,6 +34,8 @@ import hmac
 from dataclasses import dataclass
 from urllib.parse import quote
 
+from backend.v2.shared.tenancy.academy_url import academy_frontend_url
+
 _VERSION = "u1"
 
 
@@ -86,15 +88,26 @@ class UnsubscribeLinkBuilder:
     Returns ``None`` when either the secret or the frontend base URL is
     missing — the footer then renders a plain "manage your email preferences"
     portal pointer instead of a dead link.
+
+    The URL is built on the recipient academy's own subdomain, exactly like
+    the portal and magic links in the very same digest
+    (``shared/tenancy/academy_url``): ``TenantResolver`` reads the tenant from
+    the host's first label, so a link on the deployment's generic
+    ``frontend_url`` resolves to no tenant at all. ``interfaces/unsubscribe_routes``
+    refuses an unresolved tenant in SaaS mode, so getting this host wrong does
+    not silently weaken the tenant check — it breaks the link loudly.
     """
 
     frontend_url: str | None = None
     secret: str | None = None
 
-    def build(self, *, academy_id: str, user_id: str) -> str | None:
-        if not self.frontend_url:
+    def build(
+        self, *, academy_id: str, user_id: str, academy_slug: str | None = None
+    ) -> str | None:
+        base = academy_frontend_url(frontend_url=self.frontend_url, academy_slug=academy_slug)
+        if not base:
             return None
         token = mint_unsubscribe_token(academy_id=academy_id, user_id=user_id, secret=self.secret)
         if token is None:
             return None
-        return f"{self.frontend_url.rstrip('/')}/unsubscribe?t={quote(token, safe='')}"
+        return f"{base.rstrip('/')}/unsubscribe?t={quote(token, safe='')}"

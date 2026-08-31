@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from backend.v2.contexts.communications.application.ports import (
+    AcademySlugLookup,
     AudienceResolver,
     CampaignRepository,
     DeliveryRepository,
@@ -139,8 +140,23 @@ class SendCampaign:
     # portal-pointer fallback rather than a dead link — the notice ships either
     # way.
     unsubscribe_links: UnsubscribeLinkBuilder = field(default_factory=UnsubscribeLinkBuilder)
+    # The academy's subdomain label, so the unsubscribe link lands on the host
+    # TenantResolver can actually resolve (#555). Optional: with no lookup the
+    # link falls back to the generic frontend host, which the unsubscribe route
+    # refuses in SaaS mode rather than accepting on a weakened tenant check.
+    academy_slugs: AcademySlugLookup | None = None
     now: Callable[[], datetime] = field(default=_utcnow)
     new_id: Callable[[], str] = field(default=new_ulid)
+
+    async def _academy_slug(self, academy_id: str) -> str | None:
+        """Resolved once per run, never per recipient. A lookup failure degrades
+        the footer to the generic host rather than losing the whole send."""
+        if self.academy_slugs is None:
+            return None
+        try:
+            return await self.academy_slugs.slug_for(academy_id)
+        except Exception:
+            return None
 
     async def execute(self, command: SendCampaignCommand) -> SendCampaignResult:
         recipients = _dedupe_recipients(await self._resolve(command.audience))
@@ -196,6 +212,7 @@ class SendCampaign:
         ]
         await self.deliveries.save_many(queued)
 
+        academy_slug = await self._academy_slug(command.academy_id)
         deliveries: list[Delivery] = []
         sent_count = 0
         failed_count = 0
@@ -203,7 +220,9 @@ class SendCampaign:
             body = append_unsubscribe_footer(
                 command.body,
                 self.unsubscribe_links.build(
-                    academy_id=command.academy_id, user_id=recipient.user_id
+                    academy_id=command.academy_id,
+                    user_id=recipient.user_id,
+                    academy_slug=academy_slug,
                 ),
             )
             outcome = await self.sender.send(

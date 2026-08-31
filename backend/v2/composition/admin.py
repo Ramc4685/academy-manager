@@ -28,6 +28,7 @@ from backend.v2.composition.digests import (
     compose_get_digest_delivery_log,
     compose_send_campaign,
     compose_send_coach_digest_test,
+    is_real_email_sender,
 )
 from backend.v2.composition.email_adapters import (
     AddCardReminderEmailAdapter,
@@ -233,12 +234,6 @@ from backend.v2.contexts.coaching.infrastructure.mongo_payout_read_models import
     MongoCoachRateLookup,
     MongoPayableOccurrenceQuery,
     MonthlyCoachOccurrenceReaderAdapter,
-)
-from backend.v2.contexts.communications.infrastructure.gated_send_port import (
-    unwrap_send_port,
-)
-from backend.v2.contexts.communications.infrastructure.stub_send_port import (
-    StubEmailSendPort,
 )
 from backend.v2.contexts.curriculum.infrastructure.mongo_criterion_repo import (
     MongoCriterionRepository,
@@ -968,7 +963,7 @@ def compose_admin(
     # any composition (AGENTS.md: "Do not send real email from local/test
     # environments").
     _email_sender = _build_email_sender(_s, db)
-    _email_sender_is_real = not isinstance(unwrap_send_port(_email_sender), StubEmailSendPort)
+    _email_sender_is_real = is_real_email_sender(_email_sender)
 
     product_repo = MongoProductRepository(db)
 

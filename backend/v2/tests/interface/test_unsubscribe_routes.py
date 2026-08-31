@@ -42,12 +42,20 @@ SECRET = "test-unsubscribe-secret"
 ACADEMY = "acad-a"
 
 
-def _build_app(db: Any, *, secret: str | None = SECRET, academy_id: str = ACADEMY) -> FastAPI:
+def _build_app(
+    db: Any,
+    *,
+    secret: str | None = SECRET,
+    academy_id: str | None = ACADEMY,
+    saas_mode: bool = True,
+) -> FastAPI:
     app = FastAPI()
+    app.state.saas_mode = saas_mode
 
     @app.middleware("http")
     async def _resolve_tenant(request: Request, call_next):  # type: ignore[no-untyped-def]
-        # Stands in for the real host-based tenant middleware.
+        # Stands in for the real host-based tenant middleware. `academy_id=None`
+        # is the real SaaS behaviour for a host TenantResolver cannot map.
         request.state.resolved_academy_id = academy_id
         return await call_next(request)
 
@@ -150,3 +158,31 @@ def test_with_no_secret_configured_the_endpoints_404(db: Any) -> None:
         assert (
             client.post("/api/v2/unsubscribe/preview", json={"token": "u1.a.b"}).status_code == 404
         )
+
+
+def test_an_unresolvable_host_is_refused_rather_than_waved_through(db: Any) -> None:
+    """The `expected_academy_id` binding must not be a branch that never runs.
+
+    In SaaS mode `TenantResolver` returns nothing for a host that is not an
+    academy subdomain, and the middleware then leaves `resolved_academy_id`
+    unset. If that were accepted, the cross-tenant check below it would be
+    skipped on every such request — a guard that exists only in the tests that
+    inject a tenant. `magic_link_routes` already refuses this case; so does
+    this one.
+    """
+    with TestClient(_build_app(db, academy_id=None)) as client:
+        response = client.post("/api/v2/unsubscribe/preview", json={"token": _token()})
+
+    assert response.status_code == 400
+    assert "host" in response.json()["detail"]
+
+
+def test_a_single_academy_deployment_still_works_without_a_resolved_tenant(db: Any) -> None:
+    """Non-SaaS single-academy deployments have no subdomain to resolve, and the
+    token's own MAC still binds the academy — so the strictness above is scoped
+    to SaaS mode rather than breaking the launch topology."""
+    with TestClient(_build_app(db, academy_id=None, saas_mode=False)) as client:
+        response = client.post("/api/v2/unsubscribe/preview", json={"token": _token()})
+
+    assert response.status_code == 200
+    assert response.json() == {"campaigns_opted_out": False, "digests_opted_out": False}
