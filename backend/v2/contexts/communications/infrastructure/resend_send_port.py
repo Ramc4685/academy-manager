@@ -19,9 +19,11 @@ turned into ``SendOutcome(ok=False)`` and mail simply stopped, for weeks
 * the ops digest counts failed digest sends, so a key that dies *between* boots
   still surfaces within a day.
 
-Not covered here, and still open: Resend bounce/complaint webhooks and a
-suppression list. Those need an inbound signed webhook route and a new
-collection — a separate slice, not a widening of this adapter.
+Bounce/complaint handling is deliberately *not* here either: Resend webhooks
+land on ``interfaces/email_webhook_routes.py`` and feed the
+``email_suppressions`` collection, and the send-time check is applied by
+``infrastructure/gated_send_port.GatedEmailSendPort`` wrapping this adapter
+(issue #556). This adapter still just sends.
 """
 
 from __future__ import annotations
@@ -111,9 +113,9 @@ class ResendEmailSendPort(EmailSendPort):
         reply_to: str | None = None,
         category: EmailCategory = EmailCategory.TRANSACTIONAL,
     ) -> SendOutcome:
-        # ``category`` is consumed by ``GatedEmailSendPort`` before we are
-        # reached; Resend has no field for it, so it is deliberately not put
-        # into ``SendParams``.
+        # ``category`` is a routing/gating concern consumed by
+        # ``GatedEmailSendPort`` before we are reached; Resend has no field for
+        # it, so it is deliberately not forwarded into ``SendParams``.
         if not recipient.email:
             return SendOutcome(ok=False, provider_message_id=None, failed_reason="no email address")
         try:

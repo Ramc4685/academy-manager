@@ -60,7 +60,7 @@ reports that email is broken.
 Merge this before #556: this branch carries the shared seam, and #556 is then a
 pure addition plus one composition line.
 
-Run migration `0157_email_preferences.py` before the first unsubscribe click. It
+Run migration `0159_email_preferences.py` before the first unsubscribe click. It
 creates the unique `(academy_id, user_id)` index that makes the preference write
 an upsert; without it, two concurrent clicks can create two rows.
 

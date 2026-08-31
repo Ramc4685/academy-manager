@@ -155,7 +155,14 @@ class SendParentDailyDigest:
                 )
                 failed += 1
             else:
-                await self.digests.mark_failed(claim.digest_id, outcome.failed_reason or "unknown")
+                # A gate-blocked send is a permanent fact, not a transient
+                # failure: retrying it just re-hits the same suppression on
+                # every subsequent run. Same reasoning as "no email address".
+                await self.digests.mark_failed(
+                    claim.digest_id,
+                    outcome.failed_reason or "unknown",
+                    retryable=not outcome.suppressed,
+                )
                 failed += 1
 
         return SendParentDailyDigestResult(

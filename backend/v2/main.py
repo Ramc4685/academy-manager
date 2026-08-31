@@ -30,7 +30,10 @@ from backend.v2.composition.admin import compose_admin
 from backend.v2.composition.coach import compose_coach
 from backend.v2.composition.digests import (
     compose_email_credential_probe,
+    compose_ingest_email_provider_event,
+    compose_list_email_suppressions,
     compose_ops_digest_sender,
+    compose_release_email_suppression,
     compose_send_coach_daily_digest,
     compose_send_parent_daily_digest,
     digest_window_open,
@@ -146,6 +149,7 @@ from backend.v2.contexts.platform.infrastructure.mongo_tenant_lifecycle_repo imp
 )
 from backend.v2.interfaces.admin.router import router as admin_router
 from backend.v2.interfaces.coach.router import router as coach_router
+from backend.v2.interfaces.email_webhook_routes import router as email_webhook_router
 from backend.v2.interfaces.magic_link_routes import router as magic_link_router
 from backend.v2.interfaces.me_routes import router as me_router
 from backend.v2.interfaces.owner.router import router as owner_router
@@ -313,6 +317,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.resolve_unsubscribe_token = ResolveUnsubscribeToken(
         secret=settings.unsubscribe_token_secret
     )
+    # Resend bounce/complaint ingestion (issue #556). ``None`` when no signing
+    # secret is configured — the route then 404s rather than accepting
+    # unverified bounce reports.
+    app.state.ingest_email_provider_event = compose_ingest_email_provider_event(db)
+    app.state.list_email_suppressions = compose_list_email_suppressions(db)
+    app.state.release_email_suppression = compose_release_email_suppression(db)
 
     # Tenant resolver — wired only in SaaS mode. In non-SaaS mode the
     # middleware falls back to ``settings.default_academy_id`` so existing
@@ -1453,6 +1463,7 @@ def create_app() -> FastAPI:
     app.include_router(registration_router, prefix="/api/v2")
     app.include_router(magic_link_router, prefix="/api/v2")
     app.include_router(unsubscribe_router, prefix="/api/v2")
+    app.include_router(email_webhook_router, prefix="/api/v2")
     if settings.enable_platform_routes:
         app.include_router(platform_router, prefix="/api/v2")
     app.include_router(coach_router, prefix="/api/v2")
