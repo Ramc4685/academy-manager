@@ -25,6 +25,7 @@ from .self_service_policy_routes import router as self_service_policy_router
 from .self_service_request_routes import router as self_service_request_router
 from .session_type_routes import router as session_type_router
 from .sessions_routes import router as sessions_router
+from .suppression_routes import router as suppression_router
 from .teaching_plan_routes import router as teaching_plan_router
 from .waitlist_routes import router as waitlist_router
 from .waiver_routes import router as waiver_router
@@ -54,3 +55,4 @@ router.include_router(pathway_router)
 router.include_router(progress_router)
 router.include_router(self_service_policy_router)
 router.include_router(self_service_request_router)
+router.include_router(suppression_router)

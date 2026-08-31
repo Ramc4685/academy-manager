@@ -127,6 +127,15 @@ class Settings(BaseSettings):
     frontend_url: str | None = Field(default=None)
     scheduler_tz: str = Field(default="UTC")
     resend_api_key: str | None = Field(default=None)
+    resend_webhook_secret: str | None = Field(
+        default=None,
+        description=(
+            "Svix signing secret (whsec_...) for the Resend bounce/complaint webhook. "
+            "Unset ⇒ the webhook route is not mounted and suppression ingestion is off. "
+            "There is deliberately no empty-string fallback: verifying with a guessable "
+            "key would be worse than not verifying at all (cf. issue #547)."
+        ),
+    )
     sender_email: str | None = Field(default=None)
     email_delivery_enabled: bool = Field(
         default=False,
@@ -237,6 +246,10 @@ class Settings(BaseSettings):
             self.frontend_url = os.environ.get("FRONTEND_URL", self.frontend_url)
         if "V2_SCHEDULER_TZ" not in os.environ:
             self.scheduler_tz = os.environ.get("SCHEDULER_TZ", self.scheduler_tz)
+        if "V2_RESEND_WEBHOOK_SECRET" not in os.environ:
+            self.resend_webhook_secret = os.environ.get(
+                "RESEND_WEBHOOK_SECRET", self.resend_webhook_secret
+            )
         if "V2_SENDER_EMAIL" not in os.environ:
             self.sender_email = os.environ.get("SENDER_EMAIL", self.sender_email)
         if "V2_OPS_ALERT_EMAIL" not in os.environ:

@@ -27,6 +27,7 @@ from backend.v2.composition.digests import (
     _build_email_sender,
     compose_get_digest_delivery_log,
     compose_send_coach_digest_test,
+    is_real_email_sender,
 )
 from backend.v2.composition.email_adapters import (
     AddCardReminderEmailAdapter,
@@ -244,9 +245,6 @@ from backend.v2.contexts.communications.infrastructure.mongo_campaign_repo impor
 )
 from backend.v2.contexts.communications.infrastructure.mongo_delivery_repo import (
     MongoDeliveryRepository,
-)
-from backend.v2.contexts.communications.infrastructure.stub_send_port import (
-    StubEmailSendPort,
 )
 from backend.v2.contexts.curriculum.infrastructure.mongo_criterion_repo import (
     MongoCriterionRepository,
@@ -975,8 +973,8 @@ def compose_admin(
     # delivery flags and Resend credentials cannot mail real families through
     # any composition (AGENTS.md: "Do not send real email from local/test
     # environments").
-    _email_sender = _build_email_sender(_s)
-    _email_sender_is_real = not isinstance(_email_sender, StubEmailSendPort)
+    _email_sender = _build_email_sender(_s, db)
+    _email_sender_is_real = is_real_email_sender(_email_sender)
 
     product_repo = MongoProductRepository(db)
 

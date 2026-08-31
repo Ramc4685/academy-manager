@@ -43,6 +43,13 @@ from backend.v2.contexts.communications.application.parent_digest_view import (
 from backend.v2.contexts.communications.application.use_cases.get_digest_delivery_log import (
     GetDigestDeliveryLog,
 )
+from backend.v2.contexts.communications.application.use_cases.ingest_email_provider_event import (
+    IngestEmailProviderEvent,
+)
+from backend.v2.contexts.communications.application.use_cases.list_email_suppressions import (
+    ListEmailSuppressions,
+    ReleaseEmailSuppression,
+)
 from backend.v2.contexts.communications.application.use_cases.send_coach_daily_digest import (
     SendCoachDailyDigest,
 )
@@ -51,6 +58,9 @@ from backend.v2.contexts.communications.application.use_cases.send_coach_digest_
 )
 from backend.v2.contexts.communications.application.use_cases.send_parent_daily_digest import (
     SendParentDailyDigest,
+)
+from backend.v2.contexts.communications.infrastructure.gated_send_port import (
+    GatedEmailSendPort,
 )
 from backend.v2.contexts.communications.infrastructure.mongo_audience_resolver import (
     MongoAudienceResolver,
@@ -61,8 +71,18 @@ from backend.v2.contexts.communications.infrastructure.mongo_digest_send_repo im
 from backend.v2.contexts.communications.infrastructure.mongo_parent_digest_send_repo import (
     MongoParentDigestSendRepository,
 )
+from backend.v2.contexts.communications.infrastructure.mongo_provider_event_repo import (
+    MongoEmailProviderEventDedup,
+)
+from backend.v2.contexts.communications.infrastructure.mongo_suppression_repo import (
+    MongoSuppressionGate,
+    MongoSuppressionRepository,
+)
 from backend.v2.contexts.communications.infrastructure.resend_send_port import (
     ResendEmailSendPort,
+)
+from backend.v2.contexts.communications.infrastructure.resend_signature import (
+    ResendSignatureVerifier,
 )
 from backend.v2.contexts.communications.infrastructure.stub_send_port import (
     StubEmailSendPort,
@@ -266,7 +286,7 @@ def _build_digest_parts(db: AsyncIOMotorDatabase[Any]) -> _DigestParts:
         # Shared env-gated factory (defined below): the coach daily digest and
         # the admin-triggered digest test must not be the paths that mail real
         # coaches from a dev stack that inherited delivery flags and a key.
-        sender=_build_email_sender(settings),
+        sender=_build_email_sender(settings, db),
         plan_provider=plan_provider,
     )
 
@@ -739,7 +759,7 @@ class _ParentDigestProvider:
 _REAL_EMAIL_ENVS = frozenset({"staging", "prod"})
 
 
-def _build_email_sender(settings: Any) -> Any:
+def _build_email_sender(settings: Any, db: AsyncIOMotorDatabase[Any] | None = None) -> Any:
     """Resend/Stub gating for every digest send path.
 
     The single construction site for any adapter that *sends* (enforced by
@@ -764,8 +784,40 @@ def _build_email_sender(settings: Any) -> Any:
     )
     env = str(getattr(settings, "env", "") or "").lower()
     if settings.email_delivery_enabled and settings.resend_api_key and env in _REAL_EMAIL_ENVS:
-        return ResendEmailSendPort(api_key=settings.resend_api_key, from_address=from_address)
-    return StubEmailSendPort()
+        inner: Any = ResendEmailSendPort(api_key=settings.resend_api_key, from_address=from_address)
+    else:
+        inner = StubEmailSendPort()
+    if db is None:
+        return inner
+    # THE send-time gate seam. Wrapping (rather than editing each send loop)
+    # is what makes "every send path checks the suppression list" true by
+    # construction instead of by review. The stub is wrapped too, so the gate
+    # is exercised in dev and CI rather than only in production.
+    return GatedEmailSendPort(
+        inner=inner,
+        suppressions=MongoSuppressionGate(MongoSuppressionRepository(db)),
+    )
+
+
+def unwrap_send_port(sender: Any) -> Any:
+    """The adapter that would actually contact a provider.
+
+    ``_build_email_sender`` returns a ``GatedEmailSendPort`` decorator, so an
+    ``isinstance(sender, StubEmailSendPort)`` check on the *wrapper* is always
+    False — which would silently disarm the local/test "email is not enabled"
+    safety block in ``composition/admin.py`` and the env-gate tests. Callers
+    asking "is this a real sender?" must ask the inner port.
+    """
+    return getattr(sender, "inner", sender)
+
+
+def is_real_email_sender(sender: Any) -> bool:
+    """True when this port would actually contact a provider.
+
+    The one place the wrapper/inner distinction is interpreted, so no caller
+    has to remember to unwrap before an ``isinstance`` check.
+    """
+    return not isinstance(unwrap_send_port(sender), StubEmailSendPort)
 
 
 def compose_email_credential_probe() -> Any | None:
@@ -793,6 +845,11 @@ def compose_ops_digest_sender() -> Any:
 
     Reuses the parent/coach digest gating verbatim so the ops digest cannot be
     the one path that sends real email from a dev or test deployment.
+
+    Deliberately left UNGATED by the suppression/preference seam (no ``db``):
+    its recipient is ``ops-alert``/``settings.ops_alert_email``, not a tenant
+    user, and it is the channel that reports *that email is broken*. Silently
+    suppressing it would hide the very failure it exists to surface.
     """
     return _build_email_sender(get_settings())
 
@@ -819,6 +876,36 @@ def compose_send_parent_daily_digest(
     return SendParentDailyDigest(
         digests=MongoParentDigestSendRepository(db),
         resolver=MongoAudienceResolver(db=db),
-        sender=_build_email_sender(settings),
+        sender=_build_email_sender(settings, db),
         provider=provider,
     )
+
+
+def compose_ingest_email_provider_event(
+    db: AsyncIOMotorDatabase[Any],
+) -> IngestEmailProviderEvent | None:
+    """Resend bounce/complaint ingestion, or ``None`` when it is not configured.
+
+    Fail-closed on the secret: with no ``resend_webhook_secret`` we return
+    ``None`` and the route is never mounted, rather than mounting an endpoint
+    that verifies with an empty key. (``composition/admin.py`` does exactly
+    that for the Stripe Connect state secret — ``or ""`` — see issue #547;
+    that pattern is deliberately not copied here.)
+    """
+    settings = get_settings()
+    secret = (settings.resend_webhook_secret or "").strip()
+    if not secret:
+        return None
+    return IngestEmailProviderEvent(
+        suppressions=MongoSuppressionRepository(db),
+        events=MongoEmailProviderEventDedup(db),
+        verifier=ResendSignatureVerifier(secret=secret),
+    )
+
+
+def compose_list_email_suppressions(db: AsyncIOMotorDatabase[Any]) -> ListEmailSuppressions:
+    return ListEmailSuppressions(suppressions=MongoSuppressionRepository(db))
+
+
+def compose_release_email_suppression(db: AsyncIOMotorDatabase[Any]) -> ReleaseEmailSuppression:
+    return ReleaseEmailSuppression(suppressions=MongoSuppressionRepository(db))

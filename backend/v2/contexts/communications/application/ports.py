@@ -9,9 +9,15 @@ provider.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
+from backend.v2.contexts.communications.domain.email_category import EmailCategory
+from backend.v2.contexts.communications.domain.email_suppression import (
+    EmailSuppression,
+    SuppressionReason,
+)
 from backend.v2.contexts.communications.domain.models import (
     AcademyAudience,
     Campaign,
@@ -40,6 +46,7 @@ class SendOutcome:
     ok: bool
     provider_message_id: str | None
     failed_reason: str | None
+    suppressed: bool = False  # blocked by a send-time gate; never retry
 
 
 class AudienceResolver(Protocol):
@@ -85,6 +92,7 @@ class EmailSendPort(Protocol):
         cc: list[str] | None = None,
         bcc: list[str] | None = None,
         reply_to: str | None = None,
+        category: EmailCategory = EmailCategory.TRANSACTIONAL,
     ) -> SendOutcome: ...
 
 
@@ -154,3 +162,59 @@ class DigestSendRepository(Protocol):
     async def mark_skipped_empty(self, digest_id: str) -> None: ...
 
     async def list_recent(self, academy_id: str, limit: int) -> list[DigestSend]: ...
+
+
+class SuppressionRepository(Protocol):
+    """Store of provider-observed dead/complaining addresses (issue #556).
+
+    NOT tenant-scoped by design — see ``MongoSuppressionRepository``.
+    """
+
+    async def record(
+        self,
+        *,
+        email: str,
+        reason: SuppressionReason,
+        bounce_subtype: str | None = None,
+        provider_event_id: str | None = None,
+    ) -> EmailSuppression:
+        """Upsert the suppression for ``email``.
+
+        Idempotent on the address: a repeat event bumps ``last_seen_at`` and may
+        *escalate* the reason (complaint → hard_bounce), never downgrade it, and
+        re-activates an address an admin had released.
+        """
+        ...
+
+    async def get_active(self, email: str) -> EmailSuppression | None: ...
+
+    async def list_active(self, *, limit: int = 100) -> list[EmailSuppression]: ...
+
+    async def release(self, *, email: str, released_by: str) -> bool:
+        """Deactivate a suppression. Returns False when there was none."""
+        ...
+
+
+class ProviderEventDedup(Protocol):
+    """Insert-first idempotency lock for inbound provider webhooks.
+
+    Mirrors ``StripeEventDedup``: the duplicate-key error IS the guard, so a
+    provider retry can never apply the same event twice.
+    """
+
+    async def claim(self, *, event_id: str, event_type: str, payload: dict[str, Any]) -> bool: ...
+
+    async def mark_processed(self, event_id: str, *, status: str = "processed") -> None: ...
+
+    async def mark_failed(self, event_id: str, error: str) -> None: ...
+
+
+class ProviderSignatureVerifier(Protocol):
+    """Verifies an inbound webhook's signature over its RAW body.
+
+    Implementations raise ``InvalidProviderSignature`` on any failure and
+    return ``None`` on success. Kept as a port so the interface layer never
+    imports the crypto adapter directly (import-linter contract 4).
+    """
+
+    def verify(self, *, payload: bytes, headers: Mapping[str, str]) -> None: ...
