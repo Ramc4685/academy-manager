@@ -20,7 +20,11 @@ function assertLocalAuthBaseURL(rawBaseURL: string): string {
 
 export default defineConfig({
   testDir: "./e2e/specs",
-  testMatch: ["local-auth-qa.spec.ts", "local-auth-inventory.spec.ts"],
+  testMatch: [
+    "local-auth-qa.spec.ts",
+    "local-auth-inventory.spec.ts",
+    "local-auth-sessions.spec.ts",
+  ],
   outputDir: `${evidenceDir}/playwright-artifacts`,
   timeout: 45 * 1000,
   expect: { timeout: 10_000 },
@@ -42,6 +46,14 @@ export default defineConfig({
     {
       name: "local-auth-chromium-mobile",
       use: { ...devices["Pixel 7"] },
+      testIgnore: ["local-auth-sessions.spec.ts"],
+    },
+    {
+      // The admin sessions table scrolls horizontally, so at Pixel 7 width the
+      // row actions sit off-screen. Run that spec at desktop width instead.
+      name: "local-auth-chromium-desktop",
+      use: { ...devices["Desktop Chrome"] },
+      testMatch: ["local-auth-sessions.spec.ts"],
     },
   ],
 });
