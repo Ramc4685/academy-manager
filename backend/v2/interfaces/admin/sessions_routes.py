@@ -198,7 +198,13 @@ async def cancel_session(
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> None:
-    await use_cases.cancel_session.execute(CancelSessionCommand(session_id=session_id))
+    session = await use_cases.cancel_session.execute(CancelSessionCommand(session_id=session_id))
+    # #467: cancel is a soft delete on `sessions`, but downstream readers (coach
+    # day view, payout read models) key off the OCCURRENCE status. Run the same
+    # occurrence maintenance create/edit run so future, un-acted-on occurrences
+    # follow the parent into "cancelled".
+    if session is not None and use_cases.maintain_session_occurrences is not None:
+        await use_cases.maintain_session_occurrences(session)  # type: ignore[operator]
 
 
 @router.get(

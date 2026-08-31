@@ -2213,15 +2213,25 @@ def compose_admin(
             local_end += timedelta(days=1)
         return local_start.astimezone(UTC), local_end.astimezone(UTC)
 
+    # Cancel is a soft delete: CancelSession stamps status="cancelled" and leaves
+    # the doc in `sessions`. Admin listings must drop those rows or a cancelled
+    # session reappears on every refetch. `$ne` also matches docs where `status`
+    # is missing or null, so legacy sessions without a status still list.
+    _NOT_CANCELLED_SESSION: dict[str, Any] = {"status": {"$ne": "cancelled"}}
+
     def _dated_session_range_filter(start: datetime, end: datetime) -> dict[str, Any]:
         return {
             "start_at": {"$gte": start, "$lte": end},
+            **_NOT_CANCELLED_SESSION,
             "$or": [
                 {"days_of_week": {"$exists": False}},
                 {"days_of_week": []},
                 {"days_of_week": None},
             ],
         }
+
+    def _recurring_template_filter() -> dict[str, Any]:
+        return {"days_of_week": {"$exists": True}, **_NOT_CANCELLED_SESSION}
 
     def _series_local_clock_signature(
         row: dict[str, Any],
@@ -2558,11 +2568,18 @@ def compose_admin(
         from backend.v2.shared.tenancy import current_academy_id
 
         candidates = _series_occurrence_candidates(session)
-        if not candidates and session.status != "cancelled":
+        session_is_cancelled = session.status == "cancelled"
+        if not candidates and not session_is_cancelled:
             return
         academy_id = current_academy_id()
         now = datetime.now(UTC)
         window_end = now + timedelta(days=60, hours=23, minutes=59, seconds=59)
+        # Normal maintenance only reconciles the 60-day materialisation window.
+        # A cancel has to reach EVERY future occurrence, including any dated row
+        # materialised beyond that window, so drop the upper bound (#467).
+        start_at_filter: dict[str, Any] = (
+            {"$gte": now} if session_is_cancelled else {"$gte": now, "$lte": window_end}
+        )
         cursor = db["session_occurrences"].find(
             {
                 "academy_id": academy_id,
@@ -2570,7 +2587,7 @@ def compose_admin(
                     {"session_id": session.session_id},
                     {"template_session_id": session.session_id},
                 ],
-                "start_at": {"$gte": now, "$lte": window_end},
+                "start_at": start_at_filter,
             }
         )
         existing = {str(doc["occurrence_id"]): doc async for doc in cursor}
@@ -2578,10 +2595,27 @@ def compose_admin(
         for occurrence_id, doc in existing.items():
             if occurrence_id in candidate_ids:
                 continue
-            if await _is_clean_future_occurrence(doc, now=now):
-                await db["session_occurrences"].delete_one(
-                    {"academy_id": academy_id, "occurrence_id": occurrence_id}
+            if not await _is_clean_future_occurrence(doc, now=now):
+                # Past / attended / already-paid occurrences are history: the
+                # class really happened and the coach must still be paid.
+                continue
+            if session_is_cancelled:
+                # Soft-cancel, matching the parent session. Never delete: the
+                # occurrence is the audit trail for a class that was scheduled.
+                await db["session_occurrences"].update_one(
+                    {"academy_id": academy_id, "occurrence_id": occurrence_id},
+                    {
+                        "$set": {
+                            "status": "cancelled",
+                            "cancellation_reason": "session_cancelled",
+                            "updated_at": now,
+                        }
+                    },
                 )
+                continue
+            await db["session_occurrences"].delete_one(
+                {"academy_id": academy_id, "occurrence_id": occurrence_id}
+            )
 
         for row in candidates:
             existing_doc = existing.get(str(row["occurrence_id"]))
@@ -2634,7 +2668,7 @@ def compose_admin(
             )
             upcoming_docs = [doc async for doc in v2_cursor]
             template_cursor = sessions_r._find_many(
-                {"days_of_week": {"$exists": True}},
+                _recurring_template_filter(),
             )
             template_docs = [doc async for doc in template_cursor]
             upcoming_docs.extend(
@@ -2675,7 +2709,7 @@ def compose_admin(
             all_docs.append(doc)
 
         legacy_cursor = sessions_r._find_many(
-            {"days_of_week": {"$exists": True}},
+            _recurring_template_filter(),
         )
         template_docs = [doc async for doc in legacy_cursor]
         all_docs.extend(

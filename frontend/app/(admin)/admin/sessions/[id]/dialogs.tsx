@@ -152,9 +152,9 @@ export function AddToRosterDialog({
           </>
         )}
         <DialogActions>
-          <Dialog.Close asChild>
-            <Button variant="secondary" size="sm" type="button">Cancel</Button>
-          </Dialog.Close>
+          <Button variant="secondary" size="sm" type="button" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
           <Button variant="primary" size="sm" type="submit" disabled={mutation.isPending}>
             {mutation.isPending ? "Enrolling…" : "Enroll"}
           </Button>

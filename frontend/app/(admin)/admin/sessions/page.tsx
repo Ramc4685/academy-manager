@@ -28,6 +28,11 @@ import {
   type CreateSessionRequest,
   type EditSessionRequest,
 } from "@/lib/api/admin";
+// #503-class hardening: `hasRecurringSchedule` (and the `buildEditSessionForm`
+// that depends on it) used to be copy-pasted here verbatim. The copy lacked the
+// optional-chaining guard, so a payload without `days_of_week` crashed this page
+// to the error boundary. One implementation now, so the two cannot drift again.
+import { buildEditSessionForm, hasRecurringSchedule } from "./[id]/format";
 import { queryKeys } from "@/lib/query/keys";
 
 import { Avatar } from "@/components/ds/avatar";
@@ -97,45 +102,12 @@ function dollarsInputToCents(value: string): number | null {
   return Math.round(parsed * 100);
 }
 
-function hasRecurringSchedule(session: AdminSessionView): boolean {
-  return Boolean(session.days_of_week.length && session.start_time && session.end_time);
-}
-
 function sessionDateLabel(session: AdminSessionView): string {
   return new Date(session.start_at).toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
     year: "numeric",
   });
-}
-
-function buildEditSessionForm(session: AdminSessionView): EditSessionRequest {
-  const common = {
-    coach_id: session.coach_id,
-    title: session.title,
-    location: session.location,
-    capacity: session.capacity,
-    amount_cents: session.amount_cents,
-    reason: "",
-  };
-  if (hasRecurringSchedule(session)) {
-    return {
-      ...common,
-      days_of_week: [...session.days_of_week],
-      start_time: session.start_time,
-      end_time: session.end_time,
-      timezone: session.timezone ?? DEFAULT_TIMEZONE,
-    };
-  }
-  return {
-    ...common,
-    start_at: session.start_at,
-    end_at: session.end_at,
-    days_of_week: [],
-    start_time: null,
-    end_time: null,
-    timezone: session.timezone ?? DEFAULT_TIMEZONE,
-  };
 }
 
 function fillChip(enrolled: number, capacity: number): { variant: ChipVariant; label: string } {
@@ -146,10 +118,18 @@ function fillChip(enrolled: number, capacity: number): { variant: ChipVariant; l
   return { variant: "open", label: "OPEN" };
 }
 
+const CANCEL_FAILED_FALLBACK = "Could not cancel session.";
+
+function cancelErrorMessage(err: unknown): string {
+  const reason = err instanceof Error ? err.message.trim() : "";
+  return reason ? `Could not cancel session: ${reason}` : CANCEL_FAILED_FALLBACK;
+}
+
 export default function AdminSessionsPage() {
   const [view, setView] = useState<"table" | "calendar">("table");
   const [createOpen, setCreateOpen] = useState(false);
   const [editSession, setEditSession] = useState<AdminSessionView | null>(null);
+  const [cancelError, setCancelError] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
   const { data, isLoading, isError, refetch } = useQuery({
@@ -159,8 +139,21 @@ export default function AdminSessionsPage() {
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => deleteAdminSession(id),
+    onMutate: () => {
+      setCancelError(null);
+    },
     onSuccess: () => {
+      setCancelError(null);
       void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
+    },
+    // #467: without this, a 403/404/500 was swallowed by `.mutate()` and the
+    // cancel looked identical to a success.
+    onError: (err: unknown) => {
+      // The reason is folded into the message here, not at render time: an API
+      // error can carry an EMPTY message (`makeError` builds `new Error("")`
+      // for a non-JSON body), and rendering a fixed prefix beside the fallback
+      // string produced "Could not cancel session: Could not cancel session."
+      setCancelError(cancelErrorMessage(err));
     },
   });
 
@@ -193,6 +186,17 @@ export default function AdminSessionsPage() {
             <p className="text-sm text-red-800">Failed to load sessions.</p>
             <Button variant="secondary" size="sm" onClick={() => void refetch()}>
               Retry
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      {cancelError && (
+        <Card p={16} style={{ borderColor: "#fecaca", background: "#fef2f2" }}>
+          <div role="alert" data-testid="admin-sessions-cancel-error" className="flex items-center justify-between gap-3">
+            <p className="text-sm text-red-800">{cancelError}</p>
+            <Button variant="secondary" size="sm" onClick={() => setCancelError(null)}>
+              Dismiss
             </Button>
           </div>
         </Card>

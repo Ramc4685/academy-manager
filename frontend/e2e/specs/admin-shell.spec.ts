@@ -137,6 +137,47 @@ const ARCHIVED_SESSION_TYPE_E2E = {
   updated_at: "2026-06-01T00:00:00Z",
 } as const;
 
+const SESSION_DETAIL_E2E = {
+  session_id: "some-session-id",
+  coach_id: "coach-e2e",
+  coach_name: "Coach E2E",
+  title: "Session E2E",
+  location: "Court 1",
+  start_at: "2099-01-01T10:00:00Z",
+  end_at: "2099-01-01T11:00:00Z",
+  days_of_week: [],
+  start_time: null,
+  end_time: null,
+  timezone: "UTC",
+  capacity: 10,
+  amount_cents: 10000,
+  status: "scheduled",
+  enrolled_count: 0,
+  waitlist_count: 0,
+} as const;
+
+// Same row with `days_of_week` deliberately ABSENT — not `[]`. Session documents
+// predate the field, and `hasRecurringSchedule` read `.length` off it unguarded,
+// so one missing key took the whole page to the error boundary. `[]` does NOT
+// exercise that branch, so this fixture exists to keep the `?.` honest.
+const SESSION_NO_DAYS_E2E = {
+  session_id: "no-days-session-id",
+  coach_id: "coach-e2e",
+  coach_name: "Coach E2E",
+  title: "Legacy No Days",
+  location: "Court 9",
+  start_at: "2099-01-01T10:00:00Z",
+  end_at: "2099-01-01T11:00:00Z",
+  start_time: null,
+  end_time: null,
+  timezone: "UTC",
+  capacity: 10,
+  amount_cents: 10000,
+  status: "scheduled",
+  enrolled_count: 0,
+  waitlist_count: 0,
+} as const;
+
 const BENIGN_PATTERNS: RegExp[] = [
   /Download the React DevTools/i,
   /Fast Refresh/i,
@@ -631,6 +672,10 @@ test.describe("Rally admin shell", () => {
 
   for (const route of ADMIN_ROUTES) {
     test(`route ${route.href} mounts`, async ({ page }) => {
+      // Even with a 15s budget these mounts intermittently blow their deadline
+      // on webkit-mobile during full-suite runs; they pass in isolation in ~3s.
+      // Same webkit-under-load pattern as "session detail page mounts" below.
+      test.slow();
       const errors = collectConsoleErrors(page);
       await stubAdminBff(page);
       await page.goto(route.href);
@@ -1068,6 +1113,274 @@ test.describe("Rally admin shell", () => {
       errors,
       `Console errors on session detail: ${errors.join("\n")}`,
     ).toEqual([]);
+  });
+
+  // Regression for #503: `AddToRosterDialog` renders a custom `RallyModal`, not a
+  // Radix `Dialog.Root`. An orphaned `Dialog.Close` inside it threw during render
+  // and replaced the whole page with the app error boundary.
+  test("add to roster dialog opens without crashing the page", async ({ page }) => {
+    test.slow();
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    // Override the empty-students stub so the StudentSelect branch renders.
+    await page.route("**/api/v2/admin/students*", (route) =>
+      fulfillJson(route, {
+        students: [
+          {
+            student_id: "student-e2e-1",
+            full_name: "Rory Roster",
+            parent_id: "parent-e2e-1",
+            parent_name: "Parent E2E",
+            parent_email: "parent@example.com",
+            status: "active",
+            active_session_count: 1,
+            active_session_total: 1,
+            active_session_names: ["Session E2E"],
+            last_seen_at: null,
+            attendance_rate: null,
+            dues_status: "current",
+          },
+        ],
+      }),
+    );
+    // POST quote — stubAdminBff's catch-all is GET-only, so without this the
+    // request falls through to the real network.
+    await page.route("**/api/v2/admin/enrollments/quote", (route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      return fulfillJson(route, {
+        snapshot_id: "snap-e2e",
+        quote_expires_at: null,
+        amount_due_cents: 5000,
+        monthly_price_cents: 10000,
+        billing_period: "2026-09",
+        total_eligible_classes_this_month: 8,
+        billable_remaining_classes_this_month: 4,
+        formula: "prorated",
+        included_occurrence_ids: [],
+        excluded_occurrences: {},
+        policy_version: "v1",
+        settings_version: "v1",
+        schedule_signature: null,
+      });
+    });
+
+    // One roster row so RosterPanel renders its own LevelSelect. That page-level
+    // combobox sits BEFORE the portalled dialog in the DOM, which is exactly why
+    // the dialog's select must be located through the dialog and not by `.first()`.
+    await page.route("**/api/v2/admin/sessions/*/enrollments", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, {
+        enrollments: [
+          {
+            enrollment_id: "enr-e2e-1",
+            session_id: "some-session-id",
+            student_id: "student-e2e-1",
+            parent_id: "parent-e2e-1",
+            full_name: "Rory Roster",
+            status: "active",
+            enrolled_at: "2026-01-01T00:00:00Z",
+            dues_status: "current",
+          },
+        ],
+      });
+    });
+
+    // The GET-only catch-all answers the session-detail fetch with `{}`; stub a
+    // realistic row so the header renders the real session.
+    await page.route("**/api/v2/admin/sessions/*", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, SESSION_DETAIL_E2E);
+    });
+
+    await page.goto("/admin/sessions/some-session-id");
+    await expect(page.getByTestId("admin-session-detail")).toBeVisible();
+
+    await page.getByRole("button", { name: "Add to roster" }).click();
+
+    // The dialog opened...
+    await expect(page.getByRole("button", { name: "Enroll" })).toBeVisible();
+    // ...and the page did NOT fall through to app/error.tsx.
+    await expect(page.getByTestId("admin-session-detail")).toBeVisible();
+    await expect(page.getByText("Something went wrong")).toHaveCount(0);
+
+    // Exercise the StudentSelect + quote banner branch.
+    // Scoped to the dialog on purpose: `RallyModal` portals to the END of
+    // <body>, so its select is the LAST combobox on the page, never the first.
+    // `getByRole("combobox").first()` only worked while the roster stub was
+    // empty and RosterPanel rendered no LevelSelect of its own.
+    await page.getByRole("dialog").getByRole("combobox").selectOption("student-e2e-1");
+    await expect(page.getByText("First month:")).toBeVisible();
+
+    await expect(page.getByTestId("admin-session-detail")).toBeVisible();
+    await expect(page.getByText("Something went wrong")).toHaveCount(0);
+    expect(
+      errors,
+      `Console errors on add-to-roster: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  // Regression for #467: a failed session cancel was completely silent — the
+  // mutation was fired with `.mutate()` and had no `onError`.
+  test("failed session cancel surfaces an error", async ({ page }) => {
+    test.slow();
+    await stubAdminBff(page);
+    await page.route("**/api/v2/admin/sessions*", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, {
+        sessions: [
+          {
+            session_id: "session-e2e-1",
+            coach_id: "coach-e2e",
+            coach_name: "Coach E2E",
+            title: "Cancelable Session",
+            location: "Court 1",
+            start_at: "2099-01-01T10:00:00Z",
+            end_at: "2099-01-01T11:00:00Z",
+            days_of_week: [],
+            start_time: null,
+            end_time: null,
+            timezone: "UTC",
+            capacity: 10,
+            amount_cents: 10000,
+            status: "scheduled",
+            enrolled_count: 2,
+            waitlist_count: 0,
+          },
+        ],
+      });
+    });
+    let failureMode: "reason" | "blank" = "reason";
+    await page.route("**/api/v2/admin/sessions/*", (route) => {
+      if (route.request().method() !== "DELETE") return route.fallback();
+      return route.fulfill(
+        failureMode === "reason"
+          ? {
+              status: 403,
+              contentType: "application/json",
+              body: JSON.stringify({ detail: "Not allowed to cancel this session." }),
+            }
+          : // Error envelope with a BLANK message — `makeError` copies it onto
+            // the Error verbatim, so `err.message` is "". That is the payload
+            // that used to render "Could not cancel session: Could not cancel
+            // session." from a literal prefix plus the identical fallback.
+            {
+              status: 500,
+              contentType: "application/json",
+              body: JSON.stringify({ error: { code: "Internal", message: "" } }),
+            },
+      );
+    });
+    page.on("dialog", (dialog) => void dialog.accept());
+
+    await page.goto("/admin/sessions");
+    await expect(page.getByTestId("admin-sessions")).toBeVisible();
+    await page.getByRole("button", { name: "Cancel session Cancelable Session" }).click();
+
+    const banner = page.getByTestId("admin-sessions-cancel-error");
+    await expect(banner).toBeVisible();
+    // Assert the SERVER's reason, not the hardcoded prefix: "Could not cancel
+    // session" is both the prefix and the generic fallback, so matching only
+    // that cannot tell a surfaced reason from a swallowed one.
+    await expect(banner.locator("p")).toHaveText(
+      "Could not cancel session: Not allowed to cancel this session.",
+    );
+
+    // The cancel FAILED, so the row must still be there. Without this, a future
+    // optimistic update that removed the row and showed the error would pass.
+    await expect(page.getByText("Cancelable Session")).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Cancel session Cancelable Session" }),
+    ).toBeVisible();
+
+    // Blank-message failure: exactly one "Could not cancel session".
+    await banner.getByRole("button", { name: "Dismiss" }).click();
+    await expect(banner).toBeHidden();
+    failureMode = "blank";
+    await page.getByRole("button", { name: "Cancel session Cancelable Session" }).click();
+    await expect(banner.locator("p")).toHaveText("Could not cancel session.");
+  });
+
+  // #467 on the DETAIL page — the primary cancel entry point. Its banner had no
+  // coverage at all: deleting the whole `onError` block left the suite green.
+  test("failed session cancel surfaces an error on the detail page", async ({ page }) => {
+    test.slow();
+    await stubAdminBff(page);
+    let failureMode: "reason" | "blank" = "reason";
+    await page.route("**/api/v2/admin/sessions/*", (route) => {
+      const method = route.request().method();
+      if (method === "GET") return fulfillJson(route, SESSION_DETAIL_E2E);
+      if (method !== "DELETE") return route.fallback();
+      return route.fulfill(
+        failureMode === "reason"
+          ? {
+              status: 403,
+              contentType: "application/json",
+              body: JSON.stringify({ detail: "Not allowed to cancel this session." }),
+            }
+          : {
+              status: 500,
+              contentType: "application/json",
+              body: JSON.stringify({ error: { code: "Internal", message: "" } }),
+            },
+      );
+    });
+    page.on("dialog", (dialog) => void dialog.accept());
+
+    await page.goto("/admin/sessions/some-session-id");
+    await expect(page.getByTestId("admin-session-detail")).toBeVisible();
+    await page.getByRole("button", { name: "Cancel session" }).click();
+
+    const banner = page.getByTestId("admin-session-cancel-error");
+    await expect(banner).toBeVisible();
+    await expect(banner.locator("p")).toHaveText(
+      "Could not cancel session: Not allowed to cancel this session.",
+    );
+    // A failed cancel must not navigate away to the list.
+    await expect(page.getByTestId("admin-session-detail")).toBeVisible();
+
+    await banner.getByRole("button", { name: "Dismiss" }).click();
+    await expect(banner).toBeHidden();
+    failureMode = "blank";
+    await page.getByRole("button", { name: "Cancel session" }).click();
+    await expect(banner.locator("p")).toHaveText("Could not cancel session.");
+  });
+
+  // #503-class: a session payload with NO `days_of_week` key must not crash the
+  // edit dialog (and with it the page) to the error boundary.
+  test("session detail edit dialog survives a payload without days_of_week", async ({ page }) => {
+    test.slow();
+    await stubAdminBff(page);
+    await page.route("**/api/v2/admin/sessions/*", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, SESSION_NO_DAYS_E2E);
+    });
+
+    await page.goto("/admin/sessions/no-days-session-id");
+    await expect(page.getByTestId("admin-session-detail")).toBeVisible();
+    await page.getByRole("button", { name: "Edit session" }).click();
+
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await expect(page.getByRole("dialog").getByText("Edit session")).toBeVisible();
+    await expect(page.getByTestId("admin-session-detail")).toBeVisible();
+    await expect(page.getByText("Something went wrong")).toHaveCount(0);
+  });
+
+  test("sessions list edit dialog survives a payload without days_of_week", async ({ page }) => {
+    test.slow();
+    await stubAdminBff(page);
+    await page.route("**/api/v2/admin/sessions*", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, { sessions: [SESSION_NO_DAYS_E2E] });
+    });
+
+    await page.goto("/admin/sessions");
+    await expect(page.getByTestId("admin-sessions")).toBeVisible();
+    await page.getByRole("button", { name: "Edit session Legacy No Days" }).click();
+
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await expect(page.getByRole("dialog").getByText("Edit session")).toBeVisible();
+    await expect(page.getByTestId("admin-sessions")).toBeVisible();
+    await expect(page.getByText("Something went wrong")).toHaveCount(0);
   });
 
   test("coach smoke route mounts", async ({ page }) => {

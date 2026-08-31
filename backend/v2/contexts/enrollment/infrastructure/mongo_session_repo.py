@@ -44,6 +44,10 @@ def synthesize_recurring_session_docs(
     """Expand legacy recurring templates into dated read-model rows."""
     rows: list[dict[str, Any]] = []
     for template in template_docs:
+        # A cancelled template has no live occurrences: cancel is a soft delete
+        # (status="cancelled", doc retained), so never synthesize rows for it.
+        if str(template.get("status") or "scheduled") == "cancelled":
+            continue
         timezone_name = str(template.get("timezone") or "America/Chicago")
         tz = ZoneInfo(timezone_name)
         active_start = _coerce_template_date(template.get("start_date"))

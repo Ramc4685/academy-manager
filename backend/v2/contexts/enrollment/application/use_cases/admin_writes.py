@@ -378,7 +378,16 @@ class CancelSession:
         self._outbox = outbox
         self._academy_id = academy_id
 
-    async def execute(self, cmd: CancelSessionCommand) -> None:
+    async def execute(self, cmd: CancelSessionCommand) -> Session | None:
+        """Cancel the session and return the post-cancel aggregate.
+
+        The interface layer feeds the returned session back into
+        ``maintain_session_occurrences`` (exactly as create/edit do) so the
+        already-materialised ``session_occurrences`` rows follow the parent
+        into "cancelled" (#467). Returning the aggregate keeps the occurrence
+        write in the composition layer that owns that collection instead of
+        adding a second occurrence writer here.
+        """
         active = await self._enrollments_q.active_for_session(cmd.session_id)
         await self._sessions.update_status(cmd.session_id, "cancelled")
         for e in active:
@@ -395,6 +404,7 @@ class CancelSession:
                     ),
                 )
             )
+        return await self._sessions.get(cmd.session_id)
 
 
 # -- Roster + enrollment writes -----------------------------------------

@@ -1774,12 +1774,19 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
     revenue_query = AcademyRevenueQuery(payments=payments)
 
     async def list_admin_sessions(on_date, *, window=None, coach_id=None):
+        # Mirrors production: cancel is a soft delete, so cancelled sessions
+        # must never come back from the admin listings.
+        live = [
+            s
+            for s in sessions.sessions.values()
+            if str(getattr(s, "status", None) or "scheduled") != "cancelled"
+        ]
         if window == "upcoming":
             today = _now().date()
-            return [s for s in sessions.sessions.values() if s.start_at.date() >= today]
+            return [s for s in live if s.start_at.date() >= today]
         if on_date is None:
             on_date = _now().date()
-        return [s for s in sessions.sessions.values() if s.start_at.date() == on_date]
+        return [s for s in live if s.start_at.date() == on_date]
 
     async def list_admin_enrollments_for_session(session_id):
         active = await enrollments_q.active_for_session(session_id)
