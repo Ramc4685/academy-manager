@@ -30,6 +30,7 @@ from backend.v2.contexts.communications.application.use_cases.send_coach_daily_d
     SendCoachDailyDigest,
     SendCoachDailyDigestCommand,
 )
+from backend.v2.contexts.communications.domain.email_category import EmailCategory
 from backend.v2.contexts.communications.domain.models import (
     MAX_DIGEST_SEND_ATTEMPTS,
     AcademyAudience,
@@ -230,6 +231,7 @@ class _ScriptedSender:
         cc: list[str] | None = None,
         bcc: list[str] | None = None,
         reply_to: str | None = None,
+        category: EmailCategory = EmailCategory.TRANSACTIONAL,
     ) -> SendOutcome:
         if self._remaining_failures > 0:
             self._remaining_failures -= 1

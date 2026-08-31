@@ -362,4 +362,112 @@ async def test_digest_to_a_suppressed_coach_is_skipped_and_recorded(db) -> None:
     assert result.sent == 0
     assert result.failed == 1
     assert stub.sent == []
-    assert digests.failures == [("acad-a:coach-1:2026-08-31", "suppressed:hard_bounce", True)]
+    # retryable=False: the address is dead, re-attempting it every night
+    # would just re-hit the same suppression.
+    assert digests.failures == [("acad-a:coach-1:2026-08-31", "suppressed:hard_bounce", False)]
+
+
+# ---------------------------------------------------------------------------
+# Category threading through the REAL send loops (remediation for #556 review)
+#
+# The tests above that drive a real loop all use HARD_BOUNCE, which blocks
+# every category — so they stay green even if no send loop passes `category=`
+# at all. That was in fact the shipped state: `SendCampaign` and the digests
+# called `sender.send(...)` without a category, every send arrived at the gate
+# as TRANSACTIONAL, and a `complaint` suppression therefore blocked nothing in
+# production. These tests pin the threading itself by using a reason whose
+# blocking decision *depends* on the category.
+# ---------------------------------------------------------------------------
+
+
+COMPLAINER = "spamreporter@example.com"
+
+
+@pytest.mark.asyncio
+async def test_campaign_to_a_complainant_is_skipped_by_the_real_send_loop(db) -> None:
+    """Someone who hit "report spam" must not receive the next bulk campaign.
+
+    This fails unless ``SendCampaign`` actually passes
+    ``category=EmailCategory.CAMPAIGN``: a COMPLAINT suppression does not block
+    TRANSACTIONAL, so an un-threaded loop delivers the marketing blast.
+    """
+    gated, stub, repo = await _gated(db)
+    await repo.record(email=COMPLAINER, reason=SuppressionReason.COMPLAINT)
+
+    deliveries = _Deliveries()
+    use_case = SendCampaign(
+        campaigns=_Campaigns(),
+        deliveries=deliveries,
+        resolver=_Resolver(
+            [
+                ResolvedRecipient(user_id="u-complained", email=COMPLAINER),
+                ResolvedRecipient(user_id="u-live", email="live@example.com"),
+            ]
+        ),
+        sender=gated,
+    )
+
+    result = await use_case.execute(
+        SendCampaignCommand(
+            academy_id="acad-a",
+            sender_id="admin-1",
+            audience=AcademyAudience(role="parent"),
+            subject="Summer camp promo",
+            body="<p>buy</p>",
+        )
+    )
+
+    assert result.sent_count == 1
+    assert result.failed_count == 1
+    assert [row["email"] for row in stub.sent] == ["live@example.com"]
+    # and the send that did go out was labelled as the campaign it is
+    assert stub.sent[0]["category"] is EmailCategory.CAMPAIGN
+
+    rows = {d.recipient_user_id: d for d in await deliveries.list_for_campaign(result.campaign_id)}
+    assert rows["u-complained"].status is DeliveryStatus.FAILED
+    assert rows["u-complained"].failed_reason == "suppressed:complaint"
+
+
+@pytest.mark.asyncio
+async def test_digest_to_a_complainant_is_skipped_by_the_real_send_loop(db) -> None:
+    """Same for the coach daily digest, which must arrive as DIGEST."""
+    gated, stub, repo = await _gated(db)
+    await repo.record(email=BOUNCED, reason=SuppressionReason.COMPLAINT)
+
+    digests = _DigestSends()
+    use_case = SendCoachDailyDigest(
+        digests=digests,
+        resolver=_Resolver([ResolvedRecipient(user_id="coach-1", email=BOUNCED)]),
+        sender=gated,
+        plan_provider=_PlanProvider(),
+    )
+
+    result = await use_case.execute(
+        SendCoachDailyDigestCommand(academy_id="acad-a", digest_date=date(2026, 8, 31))
+    )
+
+    assert result.sent == 0
+    assert result.failed == 1
+    assert stub.sent == []
+    assert digests.failures == [("acad-a:coach-1:2026-08-31", "suppressed:complaint", False)]
+
+
+@pytest.mark.asyncio
+async def test_complainant_still_receives_transactional_mail(db) -> None:
+    """The mirror case: a complaint must NOT stop an invoice.
+
+    Guards against "fix" the threading by making COMPLAINT block everything.
+    """
+    gated, stub, _repo = await _gated(db)
+    repo = MongoSuppressionRepository(db)
+    await repo.record(email=COMPLAINER, reason=SuppressionReason.COMPLAINT)
+
+    outcome = await gated.send(
+        recipient=ResolvedRecipient(user_id="u-complained", email=COMPLAINER),
+        subject="Invoice for September",
+        body="<p>$120</p>",
+        category=EmailCategory.TRANSACTIONAL,
+    )
+
+    assert outcome.ok is True
+    assert [row["email"] for row in stub.sent] == [COMPLAINER]

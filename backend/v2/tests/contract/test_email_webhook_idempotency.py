@@ -124,3 +124,74 @@ async def test_soft_bounce_is_logged_but_never_suppressed(db) -> None:
     assert await db["email_suppressions"].count_documents({}) == 0
     event = await db["email_provider_events"].find_one({"event_id": "msg_d"})
     assert event["status"] == "processed"
+
+
+# ---------------------------------------------------------------------------
+# A FAILED attempt must be retryable (remediation for #556 review)
+#
+# `accept` deliberately re-raises so the route 500s and Resend retries. That
+# only works if the dedup lets the retry back in. The first cut returned False
+# for any DuplicateKeyError, so the retry was answered "duplicate" and the
+# bounce was dropped forever — the 500 provoked a retry that could never
+# succeed. `MongoStripeEventDedup.claim` already reclaims failed rows; this
+# pins the same behaviour here.
+# ---------------------------------------------------------------------------
+
+
+class _ExplodingOnceSuppressions(MongoSuppressionRepository):
+    """Real repository whose first `record` raises, as a transient blip would."""
+
+    def __init__(self, db) -> None:
+        super().__init__(db)
+        self.calls = 0
+
+    async def record(self, **kwargs):  # type: ignore[override]
+        self.calls += 1
+        if self.calls == 1:
+            raise ConnectionError("transient mongo blip")
+        return await super().record(**kwargs)
+
+
+@pytest.mark.asyncio
+async def test_failed_event_is_reapplied_when_the_provider_retries(db) -> None:
+    await db["email_suppressions"].create_index("email", unique=True)
+    await db["email_provider_events"].create_index("event_id", unique=True)
+    suppressions = _ExplodingOnceSuppressions(db)
+    use_case = IngestEmailProviderEvent(
+        suppressions=suppressions,
+        events=MongoEmailProviderEventDedup(db),
+        verifier=ResendSignatureVerifier(secret=SECRET),
+    )
+    payload, headers = _signed(BOUNCE, svix_id="msg_retry")
+
+    # First delivery blows up mid-apply -> route would 500 -> Resend retries.
+    with pytest.raises(ConnectionError):
+        await use_case.accept(payload=payload, headers=headers)
+    assert await db["email_suppressions"].count_documents({}) == 0
+    row = await db["email_provider_events"].find_one({"event_id": "msg_retry"})
+    assert row["status"] == "failed"
+
+    # The retry must be let back in, not answered "duplicate".
+    result = await use_case.accept(payload=payload, headers=headers)
+
+    assert result["status"] == "processed"
+    stored = await MongoSuppressionRepository(db).get_active("dead@example.com")
+    assert stored is not None
+    assert stored.reason is SuppressionReason.HARD_BOUNCE
+    # still exactly one event row, now succeeded, with the attempt counted
+    assert await db["email_provider_events"].count_documents({}) == 1
+    row = await db["email_provider_events"].find_one({"event_id": "msg_retry"})
+    assert row["status"] == "processed"
+    assert row["attempts"] == 2
+
+
+@pytest.mark.asyncio
+async def test_a_successfully_processed_event_is_still_never_reapplied(db) -> None:
+    """The reclaim must not weaken the idempotency guarantee it sits inside."""
+    use_case = await _wire(db)
+    payload, headers = _signed(BOUNCE, svix_id="msg_done")
+
+    assert (await use_case.accept(payload=payload, headers=headers))["status"] == "processed"
+    for _ in range(3):
+        assert (await use_case.accept(payload=payload, headers=headers))["status"] == "duplicate"
+    assert await db["email_provider_events"].count_documents({}) == 1

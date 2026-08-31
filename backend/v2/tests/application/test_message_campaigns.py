@@ -34,6 +34,7 @@ from backend.v2.contexts.communications.application.use_cases.send_campaign impo
     SendCampaign,
     SendCampaignCommand,
 )
+from backend.v2.contexts.communications.domain.email_category import EmailCategory
 from backend.v2.contexts.communications.domain.errors import (
     EmptyAudienceError,
     InvalidAudienceError,
@@ -113,6 +114,7 @@ class StubEmailSendPort(EmailSendPort):
         recipient: ResolvedRecipient,
         subject: str,
         body: str,
+        category: EmailCategory = EmailCategory.TRANSACTIONAL,
     ) -> SendOutcome:
         record = {
             "user_id": recipient.user_id,
@@ -695,6 +697,7 @@ class CrashingSendPort(EmailSendPort):
         recipient: ResolvedRecipient,
         subject: str,
         body: str,
+        category: EmailCategory = EmailCategory.TRANSACTIONAL,
     ) -> SendOutcome:
         if recipient.email == self.crash_on_email:
             raise RuntimeError("process died mid-loop")

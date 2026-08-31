@@ -33,6 +33,7 @@ from backend.v2.contexts.communications.application.ports import (
     EmailSendPort,
     ResolvedRecipient,
 )
+from backend.v2.contexts.communications.domain.email_category import EmailCategory
 from backend.v2.contexts.communications.domain.errors import (
     DuplicateCampaignError,
     EmptyAudienceError,
@@ -192,6 +193,7 @@ class SendCampaign:
                 recipient=recipient,
                 subject=command.subject,
                 body=command.body,
+                category=EmailCategory.CAMPAIGN,
             )
             if outcome.ok:
                 deliveries.append(

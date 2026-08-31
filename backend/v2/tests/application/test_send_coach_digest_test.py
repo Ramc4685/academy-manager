@@ -25,6 +25,7 @@ from backend.v2.contexts.communications.application.use_cases.send_coach_digest_
     SendCoachDigestTest,
     SendCoachDigestTestCommand,
 )
+from backend.v2.contexts.communications.domain.email_category import EmailCategory
 from backend.v2.contexts.communications.domain.models import DigestSend, DigestSendStatus
 
 ACADEMY_ID = "acad-1"
@@ -97,7 +98,7 @@ class FakeSelectedResolver(AudienceResolver):
 class StubSendPort:
     sent: list[dict[str, Any]] = field(default_factory=list)
 
-    async def send(self, *, recipient, subject, body):
+    async def send(self, *, recipient, subject, body, category=EmailCategory.TRANSACTIONAL):
         self.sent.append({"email": recipient.email, "subject": subject})
         return SendOutcome(
             ok=True, provider_message_id=f"stub-{len(self.sent)}", failed_reason=None

@@ -33,16 +33,25 @@ the idempotency log. Migration `0158` adds both plus their unique indexes.
 
 **One gate, at one seam.** `GatedEmailSendPort` decorates whatever adapter
 `digests._build_email_sender` produced, so "every send path checks the list" is
-true by construction — no send loop grew a check, and `composition/email_adapters.py`
-is untouched. The check is reason-aware: a `hard_bounce` blocks **every**
-category including transactional (the mailbox does not exist; the invoice is
-still in the parent portal), while a `complaint` or an admin `manual` entry
-blocks digests and campaigns but still lets an invoice through. Soft bounces
+true by construction — no send loop grew its own check, and
+`composition/email_adapters.py` is untouched. The check is reason-aware: a
+`hard_bounce` blocks **every** category including transactional (the mailbox
+does not exist; the invoice is still in the parent portal), while a `complaint`
+blocks digests and campaigns but still lets an invoice through. That last
+distinction only works if the bulk send loops say which category they are, so
+`SendCampaign` passes `category=CAMPAIGN` and the three digest senders pass
+`category=DIGEST`; everything else keeps the `TRANSACTIONAL` default. A
+structural tripwire (`tests/structural/test_email_category_threading.py`) fails
+the build if a future digest/campaign loop forgets, because the failure mode is
+silent: it would be gated as transactional and complaints would stop nothing.
+Soft bounces
 and delivery delays never suppress at all — a full mailbox is not a dead
 address. A blocked recipient comes back as `SendOutcome(ok=False,
 suppressed=True, failed_reason="suppressed:hard_bounce")`, which the existing
 loops already record, so it lands in the campaign delivery log and the digest
-send log rather than vanishing. A Mongo outage in the gate returns ALLOW and
+send log rather than vanishing — and the digest row is marked `retryable=False`,
+since re-attempting a suppressed address every night only re-hits the same
+gate. A Mongo outage in the gate returns ALLOW and
 logs: a gate that fails closed on a blip would stop every invoice in the system
 (the #435 lesson).
 
@@ -50,18 +59,33 @@ The ops digest is the one path left ungated on purpose — its recipient is
 `ops-alert`, not a tenant user, and it is the channel that reports that email
 is broken.
 
-Admins get `GET /api/v2/admin/communications/suppressions` and a
-`POST .../{email}/release` escape hatch. A release is not permanent: the next
-bounce for that address re-suppresses it, and a reason can escalate
-(complaint → hard_bounce) but never downgrade.
+**The admin surface is platform-scoped, not tenant-scoped.**
+`GET /api/v2/platform/communications/suppressions` lists the entries and
+`POST .../{email}/release` is the escape hatch. Both live under `/platform`
+behind `platform_admin`/`platform_support` rather than under `/admin` behind
+`require_persona("admin")`, because the list is global: an academy-scoped admin
+guard would have shown every tenant's parent and coach addresses (plus who
+filed a spam complaint) to any single tenant's admin, and let them release
+another tenant's bounce. Reading is open to platform support; releasing is
+`platform_admin` only. A release is not permanent: the next bounce for that
+address re-suppresses it, and a reason can escalate (complaint → hard_bounce)
+but never downgrade. `SuppressionReason.MANUAL` exists in the taxonomy but
+nothing writes it yet — there is no "suppress this address by hand" endpoint.
 
-One regression this introduces and closes in the same commit:
+Two regressions this introduces and closes in the same PR. First,
 `composition/admin.py` decided whether the local/test "email delivery is not
 enabled" safety block applied by asking `isinstance(sender, StubEmailSendPort)`.
 Once the sender is a decorator, that is False in *every* environment. The
 check now goes through `digests.is_real_email_sender`, and
 `v2/tests/composition/test_digest_email_env_gate.py` — which would otherwise
 have become a tripwire that can never fire — unwraps too.
+
+Second, the webhook's idempotency claim originally treated *any* duplicate-key
+error as "already handled". `accept` deliberately re-raises so the route 500s
+and Resend retries, but that retry was then answered `duplicate`, so a bounce
+whose apply-step hit a transient Mongo error was dropped forever. `claim` now
+reclaims a row whose status is `failed`, matching `MongoStripeEventDedup`;
+`received`, `processed` and `ignored` still short-circuit.
 
 ## Deploy notes
 **Set `RESEND_WEBHOOK_SECRET` (or `V2_RESEND_WEBHOOK_SECRET`) before this is

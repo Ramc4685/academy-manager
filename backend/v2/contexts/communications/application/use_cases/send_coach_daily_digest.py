@@ -30,6 +30,7 @@ from backend.v2.contexts.communications.application.ports import (
     EmailSendPort,
     ResolvedRecipient,
 )
+from backend.v2.contexts.communications.domain.email_category import EmailCategory
 from backend.v2.contexts.communications.domain.models import AcademyAudience
 
 
@@ -130,13 +131,24 @@ class SendCoachDailyDigest:
             # BCC (not CC) so no coach sees the other admins' addresses.
             bcc = [e for e in admin_emails if e != coach.email]
             outcome = await self.sender.send(
-                recipient=recipient, subject=subject, body=body, bcc=bcc or None
+                recipient=recipient,
+                subject=subject,
+                body=body,
+                bcc=bcc or None,
+                category=EmailCategory.DIGEST,
             )
             if outcome.ok:
                 await self.digests.mark_sent(claim.digest_id, outcome.provider_message_id)
                 sent += 1
             else:
-                await self.digests.mark_failed(claim.digest_id, outcome.failed_reason or "unknown")
+                # A gate-blocked send is a permanent fact, not a transient
+                # failure: retrying it just re-hits the same suppression on
+                # every subsequent run. Same reasoning as "no email address".
+                await self.digests.mark_failed(
+                    claim.digest_id,
+                    outcome.failed_reason or "unknown",
+                    retryable=not outcome.suppressed,
+                )
                 failed += 1
 
         return SendCoachDailyDigestResult(

@@ -1,9 +1,10 @@
-"""Admin read/release over the suppression list (issue #556).
+"""Platform read/release over the suppression list (issue #556).
 
 The list is global by design (see ``MongoSuppressionRepository``), so this is
-deliberately a small, read-mostly surface: an admin can see which addresses the
-provider has told us are dead and release one they believe was a mistake. A
-release is not permanent — the next bounce for that address re-suppresses it.
+deliberately a small, read-mostly surface exposed under ``/platform`` and NOT
+``/admin``: an academy-scoped admin must not see or mutate other tenants'
+addresses. A release is not permanent — the next bounce for that address
+re-suppresses it.
 """
 
 from __future__ import annotations
