@@ -2211,8 +2211,12 @@ async def test_a_restamp_keeps_the_superseded_payment_findable_for_a_late_webhoo
         assert app_doc["payment_id"] != "pay-first"
 
         repo = MongoApplicationRepository(db)
-        # ...and the id it replaced is still a valid handle back to it.
-        found = await repo.get_by_payment_id("pay-first")
+        # ...and the id it replaced is still a valid handle back to it — through
+        # the ARCHIVE lookup, which only the advance path may use. The live
+        # lookup must NOT answer for it, or a stale expiry/capacity event for
+        # the replaced attempt would terminate the live one (#549).
+        assert await repo.get_by_payment_id("pay-first") is None
+        found = await repo.get_by_superseded_payment_id("pay-first")
         assert found is not None
         assert found.application_id == "app-1"
         assert "pay-first" in found.superseded_payment_ids
@@ -2367,3 +2371,50 @@ async def test_a_later_successful_retirement_clears_the_worklist_entry(
         await retirement.retire_checkout_attempt(checkout_session_id="cs_1", payment_id="pay-1")
 
     assert await db["unretired_checkout_sessions"].count_documents({}) == 0
+
+
+async def test_a_rotated_api_key_parks_the_session_instead_of_calling_it_terminal(
+    allow_app_origin,
+) -> None:
+    """End-to-end through the REAL gateway: a 401 must not read as "already paid".
+
+    This is the whole worklist claim under the failure ops are most likely to
+    cause. Classifying by "is this transient?" and defaulting to terminal wrote
+    ZERO rows and logged INFO "already terminal at Stripe" for a session that
+    was still wide open and payable — the exact #549 swallow, with the
+    monitoring signal reading healthy.
+    """
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    stripe_lib = pytest.importorskip("stripe")
+    from backend.v2.composition.parent import _StripeCheckoutAttemptRetirement
+    from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
+        MongoPaymentRepository,
+    )
+    from backend.v2.contexts.billing.infrastructure.mongo_unretired_checkout_repo import (
+        MongoUnretiredCheckoutSessionRepository,
+    )
+    from backend.v2.contexts.billing.infrastructure.stripe_gateway import RealStripeGateway
+
+    db = mongomock_motor.AsyncMongoMockClient()["retirement-401"]
+    await db["ledger_payments"].insert_one(_pending_ledger_payment("pay-1", "cs_1"))
+
+    gateway = RealStripeGateway(api_key="sk_test_549", webhook_secret="whsec_549")
+
+    def _expire(_session_id: str, **_kwargs: object) -> None:
+        raise stripe_lib.AuthenticationError("Invalid API Key provided", http_status=401)
+
+    gateway._stripe.checkout.Session.expire = _expire  # type: ignore[attr-defined]
+
+    retirement = _StripeCheckoutAttemptRetirement(
+        stripe=gateway,
+        payments=MongoPaymentRepository(db),  # type: ignore[arg-type]
+        clock=lambda: datetime(2026, 3, 4, tzinfo=UTC),
+        unretired=MongoUnretiredCheckoutSessionRepository(db),
+    )
+
+    with tenant_scope("acad"):
+        await retirement.retire_checkout_attempt(checkout_session_id="cs_1", payment_id="pay-1")
+
+    parked = await db["unretired_checkout_sessions"].find_one({"checkout_session_id": "cs_1"})
+    assert parked is not None
+    assert parked["payment_id"] == "pay-1"

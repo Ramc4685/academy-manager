@@ -46,7 +46,10 @@ from backend.v2.contexts.identity.application.use_cases.register_public_parent i
 from backend.v2.contexts.onboarding.application.use_cases.manage_application import (
     TransitionApplication,
 )
-from backend.v2.contexts.onboarding.domain.errors import ApplicationForPaymentNotFound
+from backend.v2.contexts.onboarding.domain.errors import (
+    ApplicationForPaymentNotFound,
+    ApplicationNotEditable,
+)
 from backend.v2.contexts.student_progress.domain.events import StudentPlacedInLevel
 from backend.v2.shared.events import handler
 from backend.v2.shared.tenancy.context import tenant_scope
@@ -137,6 +140,26 @@ async def on_payment_succeeded(event: PaymentSucceeded) -> None:
                     "session_id": payload.session_id,
                     "amount_cents": payload.amount_cents,
                     "to_status": "PENDING_APPROVAL",
+                },
+            )
+        except ApplicationNotEditable as exc:
+            # The application was FOUND but is somewhere a paid registration
+            # cannot advance from — a terminal status reached by some earlier
+            # path. Retrying cannot help (the transition table is static), so
+            # re-raising would only spin the outbox; but this is money that
+            # moved against a registration that will not progress, which is the
+            # exact charged-but-unadvanced case the marker exists to page on.
+            # It used to escape this handler unclassified (#549).
+            log.error(
+                "onboarding_application_unresolved_for_payment",
+                extra={
+                    "marker": "onboarding_application_unresolved_for_payment",
+                    "payment_id": payload.payment_id,
+                    "parent_id": payload.parent_id,
+                    "session_id": payload.session_id,
+                    "amount_cents": payload.amount_cents,
+                    "to_status": "PENDING_APPROVAL",
+                    "reason": str(exc),
                 },
             )
 

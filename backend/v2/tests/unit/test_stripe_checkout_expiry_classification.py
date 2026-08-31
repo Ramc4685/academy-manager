@@ -93,3 +93,70 @@ async def test_a_successful_expiry_raises_nothing(gateway: RealStripeGateway) ->
     await gateway.expire_checkout_session("cs_open")
 
     assert calls == ["cs_open"]
+
+
+async def test_a_rotated_api_key_is_reported_as_transient(gateway: RealStripeGateway) -> None:
+    """401 says nothing about the SESSION — it says our credentials are wrong.
+
+    Classifying by "is this transient?" and defaulting to terminal filed this
+    as "already paid" and left the session wide open and payable, with no
+    worklist row and an INFO log asserting a state Stripe never confirmed.
+    """
+    _raise(gateway, stripe.AuthenticationError("Invalid API Key provided", http_status=401))
+
+    with pytest.raises(StripeTransientFailure):
+        await gateway.expire_checkout_session("cs_open")
+
+
+async def test_a_restricted_key_is_reported_as_transient(gateway: RealStripeGateway) -> None:
+    _raise(
+        gateway,
+        stripe.PermissionError(
+            "The provided key does not have the required permissions", http_status=403
+        ),
+    )
+
+    with pytest.raises(StripeTransientFailure):
+        await gateway.expire_checkout_session("cs_open")
+
+
+async def test_an_unknown_session_is_reported_as_transient(gateway: RealStripeGateway) -> None:
+    """`resource_missing` for a session WE minted means we are talking to the
+    wrong Stripe account or mode, not that the session is unpayable."""
+    _raise(
+        gateway,
+        stripe.InvalidRequestError(
+            "No such checkout.session: cs_open", param="id", http_status=404
+        ),
+    )
+
+    with pytest.raises(StripeTransientFailure):
+        await gateway.expire_checkout_session("cs_open")
+
+
+async def test_an_unrecognised_400_is_reported_as_transient(gateway: RealStripeGateway) -> None:
+    """The default must be transient. A 400 whose message we cannot read costs
+    at most a spurious reconciliation row; calling it terminal costs a payable
+    session nobody ever looks at again."""
+    _raise(
+        gateway,
+        stripe.InvalidRequestError("Something we have never seen", param=None, http_status=400),
+    )
+
+    with pytest.raises(StripeTransientFailure):
+        await gateway.expire_checkout_session("cs_open")
+
+
+async def test_stripes_real_open_state_wording_is_terminal(gateway: RealStripeGateway) -> None:
+    """The live API's actual sentence, backticks and all."""
+    _raise(
+        gateway,
+        stripe.InvalidRequestError(
+            "You may only expire a Checkout Session that is in the `open` state.",
+            param=None,
+            http_status=400,
+        ),
+    )
+
+    with pytest.raises(StripeCheckoutSessionNotExpirable):
+        await gateway.expire_checkout_session("cs_done")

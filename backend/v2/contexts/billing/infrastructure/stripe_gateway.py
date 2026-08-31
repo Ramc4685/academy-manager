@@ -33,6 +33,19 @@ _STRIPE_METADATA_VALUE_LIMIT = 500
 _CHECKOUT_SESSION_TTL_SECONDS = 31 * 60
 
 
+# Substrings that identify Stripe's deterministic refusal to expire a Checkout
+# Session that is no longer open ("You may only expire a Checkout Session that
+# is in the `open` state."). Matching the message is a heuristic, but it is a
+# heuristic that fails SAFE: an unrecognised message is treated as transient and
+# lands on the reconciliation worklist rather than being swallowed (#549).
+_TERMINAL_EXPIRY_MARKERS = (
+    "you may only expire",
+    "not in the open state",
+    "already expired",
+    "already been completed",
+)
+
+
 def _autopay_enrollment_ids_value(enrollment_ids: list[str] | None) -> str:
     """Comma-join distinct enrollment ids for Stripe metadata.
 
@@ -347,41 +360,43 @@ class RealStripeGateway(StripeGateway):
             # and collapsing both into one ValueError is what made the swallow
             # unsafe (#549). Classify here, where the Stripe exception types are
             # actually visible; this is the only file allowed to import stripe.
-            if self._is_transient_stripe_error(exc):
-                raise StripeTransientFailure(
-                    f"Stripe Checkout Session expiry could not be completed: {exc}"
+            if self._is_terminal_expiry_refusal(exc):
+                raise StripeCheckoutSessionNotExpirable(
+                    f"Stripe Checkout Session expiry refused: {exc}"
                 ) from exc
-            raise StripeCheckoutSessionNotExpirable(
-                f"Stripe Checkout Session expiry refused: {exc}"
+            raise StripeTransientFailure(
+                f"Stripe Checkout Session expiry could not be completed: {exc}"
             ) from exc
 
-    def _is_transient_stripe_error(self, exc: Exception) -> bool:
-        """True when the call may succeed on a retry.
+    def _is_terminal_expiry_refusal(self, exc: Exception) -> bool:
+        """True ONLY for the one failure that proves the session is not payable.
 
-        Deliberately fails SAFE: anything not recognisably a deterministic
-        client-side refusal (a 4xx the API actually evaluated) counts as
-        transient, so an unfamiliar failure is reconciled rather than filed away
-        as "already paid".
+        Stripe answers an expiry on a session that is no longer open with a 400
+        `InvalidRequestError` naming that state. That — and nothing else — means
+        the session cannot be paid, which is the "parent paid on the old tab"
+        race a supersede has to survive.
+
+        The polarity matters and it is the inverse of the obvious one. Asking
+        "is this transient?" and defaulting to terminal quietly files a whole
+        family of real production failures — a rotated or wrong-mode API key
+        (401), a restricted key without checkout write scope (403), a
+        platform/connected-account id mismatch (404 `resource_missing`) — as
+        "already paid" while the session is still wide open and payable. That is
+        the exact swallow #549 exists to remove. Asking "is this the terminal
+        refusal?" and defaulting to transient costs at most a spurious
+        reconciliation row.
         """
-        transient_types = tuple(
-            cls
-            for cls in (
-                getattr(self._stripe, "APIConnectionError", None),
-                getattr(self._stripe, "RateLimitError", None),
-                getattr(self._stripe, "APIError", None),
-            )
-            if isinstance(cls, type)
-        )
-        if transient_types and isinstance(exc, transient_types):
-            # `stripe.APIError` is the generic 5xx/unknown-response class, and
-            # the deterministic refusals (InvalidRequestError, ...) are siblings
-            # of it rather than subclasses.
-            return True
+        invalid_request = getattr(self._stripe, "InvalidRequestError", None)
+        if not isinstance(invalid_request, type) or not isinstance(exc, invalid_request):
+            return False
         status = getattr(exc, "http_status", None)
-        if status is None:
-            # No HTTP exchange completed — the request never got an answer.
-            return True
-        return int(status) >= 500 or int(status) == 429
+        if status is None or int(status) != 400:
+            # A 404 `resource_missing` is an InvalidRequestError too, and it
+            # says nothing about whether a session we minted is payable — it
+            # usually says we are talking to the wrong Stripe account or mode.
+            return False
+        message = str(getattr(exc, "user_message", None) or exc).replace("`", "").lower()
+        return any(marker in message for marker in _TERMINAL_EXPIRY_MARKERS)
 
     async def retrieve_invoice(self, stripe_invoice_id: str) -> dict[str, Any]:
         def _retrieve() -> Any:

@@ -73,24 +73,33 @@ class MongoApplicationRepository(TenantScopedRepository):
         return None
 
     async def get_by_payment_id(self, payment_id: str) -> Application | None:
-        """Resolve an application from a payment id — current OR superseded.
+        """Resolve an application from the payment attempt it CURRENTLY owns.
+
+        Deliberately narrow. A superseded attempt resolves through
+        `get_by_superseded_payment_id` instead, and only the advance path is
+        allowed to use it — see `TransitionApplication.execute_for_payment`.
+        """
+        doc = await self._find_one({"payment_id": payment_id})
+        return self._to_domain(doc) if doc else None
+
+    async def get_by_superseded_payment_id(self, payment_id: str) -> Application | None:
+        """Resolve an application from an attempt a re-stamp REPLACED.
 
         A re-stamp re-points `payment_id` at the newest checkout attempt, and
         the parent may have completed the attempt it replaced moments earlier
-        (charge accepted, webhook not yet landed). This lookup is the only
-        handle `checkout.session.completed` has back to the application, so
-        matching the archived ids too is what stops that charge orphaning the
-        registration (#549). Payment ids are unique per attempt, so the $or can
-        never match two different applications.
+        (charge accepted, webhook not yet landed). The archived id is the only
+        handle that late `checkout.session.completed` has back to the
+        application, so without this the charge orphans the registration
+        (#549).
+
+        Kept SEPARATE from `get_by_payment_id` on purpose. Folding both into
+        one `$or` widened every caller, and the destructive ones —
+        `CHECKOUT_EXPIRED`, `CAPACITY_FAILED_REFUNDING` — then let a stale
+        event for a replaced attempt drive the application's LIVE attempt into
+        a terminal state it has no transition out of. Payment ids are unique
+        per attempt, so this can never match two different applications.
         """
-        doc = await self._find_one(
-            {
-                "$or": [
-                    {"payment_id": payment_id},
-                    {"superseded_payment_ids": payment_id},
-                ]
-            }
-        )
+        doc = await self._find_one({"superseded_payment_ids": payment_id})
         return self._to_domain(doc) if doc else None
 
     async def list_by_status(self, statuses: list[str]) -> list[Application]:

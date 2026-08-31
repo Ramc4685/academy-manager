@@ -46,16 +46,17 @@ class FakeAppRepo:
         return self._app
 
     async def get_by_payment_id(self, payment_id):
-        if self._app is None:
+        # Mirrors the adapter: the LIVE attempt only.
+        if self._app is None or payment_id != self._app.payment_id:
             return None
-        # Mirrors the adapter: a superseded id still resolves, so a webhook for
-        # a checkout the parent completed just before a re-stamp can still find
-        # its application (#549).
-        if payment_id == self._app.payment_id:
-            return self._app
-        if payment_id in self._app.superseded_payment_ids:
-            return self._app
-        return None
+        return self._app
+
+    async def get_by_superseded_payment_id(self, payment_id):
+        # Mirrors the adapter: an attempt a re-stamp replaced. Kept separate so
+        # only the advance path can resolve through it (#549).
+        if self._app is None or payment_id not in self._app.superseded_payment_ids:
+            return None
+        return self._app
 
     async def reopen_for_edit(self, application_id, *, expected_status, updated_at):
         app = await self.get(application_id)
@@ -768,3 +769,62 @@ async def test_losing_the_entry_race_from_draft_leaves_one_payable_session() -> 
     assert current.payment_id == "pay-winner"
     # ...and the loser killed its OWN session, not the winner's.
     assert retirement.calls == [("cs_loser", "pay-loser")]
+
+
+# ---------------------------------------------------------------------------
+# The archive is a ONE-WAY DOOR: it may advance an application, never retire it.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("destructive", ["CHECKOUT_EXPIRED", "CAPACITY_FAILED_REFUNDING"])
+async def test_a_stale_event_for_a_superseded_attempt_cannot_retire_the_live_one(
+    destructive: str,
+) -> None:
+    """Archiving the superseded payment id must not widen the DESTRUCTIVE paths.
+
+    Retirement expires the old Stripe session, which is what MAKES Stripe emit
+    `checkout.session.expired` for it. The webhook's own
+    `payment.status == "pending"` guard is supposed to absorb that, but the
+    write arming it is neither atomic with the CAS nor exception-guarded — so
+    the stale event does reach here.
+
+    If the archive answered that event, the application would be parked in
+    CHECKOUT_PENDING -> CHECKOUT_EXPIRED, which has NO outgoing transition and
+    is not a status checkout can be restarted from, while the parent is paying
+    the live attempt. Charged, unadvanced and unrecoverable — strictly worse
+    than the orphan the archive repairs.
+    """
+    repo = FakeAppRepo(_checkout_pending())
+    uc = TransitionApplication(apps=repo)
+
+    await uc.execute(
+        "app-1",
+        "CHECKOUT_PENDING",
+        stripe_checkout_session_id="cs_second",
+        payment_id="pay-second",
+    )
+    assert repo._app is not None
+    assert repo._app.superseded_payment_ids == ["pay-first"]
+
+    # The superseded attempt's own expiry / capacity event lands late.
+    with pytest.raises(ApplicationForPaymentNotFound):
+        await uc.execute_for_payment("pay-first", destructive)
+
+    # The live attempt is untouched and can still be paid.
+    assert repo._app.status == "CHECKOUT_PENDING"
+    assert repo._app.payment_id == "pay-second"
+
+    advanced = await uc.execute_for_payment("pay-second", "PENDING_APPROVAL")
+    assert advanced.status == "PENDING_APPROVAL"
+
+
+@pytest.mark.asyncio
+async def test_the_live_attempt_still_reaches_its_own_destructive_targets() -> None:
+    """The narrowing above must not disarm the normal expiry path."""
+    repo = FakeAppRepo(_checkout_pending())
+    uc = TransitionApplication(apps=repo)
+
+    expired = await uc.execute_for_payment("pay-first", "CHECKOUT_EXPIRED")
+
+    assert expired.status == "CHECKOUT_EXPIRED"

@@ -323,6 +323,13 @@ _TRANSITIONS: dict[str, set[str]] = {
 }
 
 
+# The ONLY transition a payment id the application has already superseded may
+# drive. Advancing a paid registration is safe and is the point of the archive
+# (#549); every other target is destructive, and a stale event for a replaced
+# attempt must never reach the live one.
+_SUPERSEDED_RESOLVABLE_TARGETS = frozenset({"PENDING_APPROVAL"})
+
+
 class TransitionApplication:
     """Internal helper used by Billing event handlers + admin paths.
 
@@ -358,14 +365,27 @@ class TransitionApplication:
         indistinguishable at the call site and turned the dangerous one into a
         shrug: a registration checkout that was paid but whose application no
         longer pointed at the payment silently went nowhere — money taken,
-        application stuck, no alert (#549). The lookup now also matches
-        superseded payment ids, so that case should no longer arise; when it
-        does anyway it must be loud. Payments that never had an onboarding
-        context (invoices, subscriptions, admin-recorded payments) still reach
-        here, and the handler names that case explicitly instead of letting the
-        return value stand in for it.
+        application stuck, no alert (#549). Payments that never had an
+        onboarding context (invoices, subscriptions, admin-recorded payments)
+        still reach here, and the handler names that case explicitly instead of
+        letting the return value stand in for it.
+
+        A payment id the application has SUPERSEDED resolves only for
+        ``PENDING_APPROVAL``. That asymmetry is the whole safety property, so
+        it lives here rather than in the adapter: the archive exists to let a
+        late `checkout.session.completed` for an attempt the parent actually
+        paid still advance the registration. Letting the same archive answer a
+        destructive target would be strictly worse than the orphan it repairs —
+        a stale `checkout.session.expired` for the replaced attempt would park
+        the application in ``CHECKOUT_EXPIRED``, which has no outgoing
+        transition and is not a status checkout can be restarted from, while
+        the live attempt is being paid. The guard cannot be delegated to the
+        webhook's own `payment.status == "pending"` check either: the write
+        that arms it is neither atomic with the CAS nor exception-guarded.
         """
         app = await self._apps.get_by_payment_id(payment_id)
+        if app is None and to in _SUPERSEDED_RESOLVABLE_TARGETS:
+            app = await self._apps.get_by_superseded_payment_id(payment_id)
         if app is None:
             raise ApplicationForPaymentNotFound(
                 "no onboarding application claims this payment",

@@ -2,12 +2,12 @@
 
 Two additions:
 
-* ``onboarding_applications`` — ``get_by_payment_id`` is the ONLY handle
-  ``checkout.session.completed`` has back to an application, and it now matches
-  the archived ``superseded_payment_ids`` as well as the live ``payment_id``.
-  Neither field was indexed, so that lookup collection-scanned on every payment
-  webhook; the ``$or`` makes an index union possible, which needs both legs
-  indexed to be worth anything.
+* ``onboarding_applications`` — a payment id is the ONLY handle
+  ``checkout.session.completed`` has back to an application, and there are now
+  two lookups: ``get_by_payment_id`` on the live ``payment_id`` and
+  ``get_by_superseded_payment_id`` on the archived ``superseded_payment_ids``.
+  Neither field was indexed, so the live lookup collection-scanned on every
+  payment webhook and the archive lookup would have done the same.
 
 * ``unretired_checkout_sessions`` — the reconciliation worklist of superseded
   Checkout Sessions that stayed payable because Stripe could not be reached.
