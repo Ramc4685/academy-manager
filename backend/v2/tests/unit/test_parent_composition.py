@@ -9,6 +9,9 @@ from typing import Any
 import pytest
 
 from backend.v2.composition.parent import compose_parent, compose_parent_webhook_handler
+from backend.v2.contexts.billing.application.ports import (
+    StripeCheckoutSessionNotExpirable,
+)
 from backend.v2.contexts.billing.domain.connected_account import ConnectedAccount
 from backend.v2.contexts.billing.domain.errors import (
     CheckoutCreationFailed,
@@ -1568,7 +1571,7 @@ async def test_retiring_an_already_paid_checkout_does_not_corrupt_state(
 
         async def expire_checkout_session(self, checkout_session_id: str) -> None:
             self.expire_attempts.append(checkout_session_id)
-            raise ValueError("You may only expire an open Checkout Session.")
+            raise StripeCheckoutSessionNotExpirable("You may only expire an open Checkout Session.")
 
     stripe = _StripeThatRefusesExpiry()
     parent = compose_parent(
@@ -1769,7 +1772,9 @@ async def test_retiring_the_same_checkout_attempt_twice_is_harmless(
         async def expire_checkout_session(self, checkout_session_id: str) -> None:
             self.expired.append(checkout_session_id)
             if len(self.expired) > 1:
-                raise ValueError("You may only expire an open Checkout Session.")
+                raise StripeCheckoutSessionNotExpirable(
+                    "You may only expire an open Checkout Session."
+                )
 
     stripe = _StripeRefusingSecondExpiry()
     first_now = datetime(2026, 1, 1, tzinfo=UTC)
@@ -2134,3 +2139,231 @@ async def test_zero_amount_checkout_raises_quote_expired_when_consume_refuses(
 
     app_doc = await db["onboarding_applications"].find_one({"application_id": "app-1"})
     assert app_doc["status"] == "DRAFT"
+
+
+# ---------------------------------------------------------------------------
+# Issue #549 — the two residual races left open by #499 / #590
+# ---------------------------------------------------------------------------
+
+
+async def test_a_restamp_keeps_the_superseded_payment_findable_for_a_late_webhook(
+    allow_app_origin,
+) -> None:
+    """A re-stamp must not orphan a paid-but-not-yet-webhooked application.
+
+    The parent completes payment on the FIRST tab; Stripe accepts the charge but
+    `checkout.session.completed` has not landed yet. A start from the second tab
+    wins the re-stamp CAS and moves `payment_id` to the new attempt.
+
+    `PaymentSucceeded` resolves the application through `get_by_payment_id` and
+    nothing else, so before #549 that late webhook found NOTHING: the parent was
+    charged and the application sat in CHECKOUT_PENDING forever, with
+    `execute_for_payment` returning None and no alert anywhere.
+
+    Driven through the REAL `MongoApplicationRepository`, because the archive is
+    an adapter-level guarantee: it has to be written in the SAME atomic update
+    as the overwrite it compensates for.
+    """
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    from backend.v2.contexts.onboarding.application.use_cases.manage_application import (
+        TransitionApplication,
+    )
+    from backend.v2.contexts.onboarding.infrastructure.mongo_application_repo import (
+        MongoApplicationRepository,
+    )
+
+    db = mongomock_motor.AsyncMongoMockClient()["restamp-late-webhook"]
+
+    quote_now = _pinned_quote_clock()
+    await db["onboarding_applications"].insert_one(
+        _checkout_ready_application(
+            datetime.now(UTC),
+            status="CHECKOUT_PENDING",
+            stripe_checkout_session_id="cs_first",
+            payment_id="pay-first",
+        )
+    )
+    await db["sessions"].insert_one(_billable_session(quote_now))
+    await db["academy_connected_accounts"].insert_one(_connected_account_doc())
+    await db["ledger_payments"].insert_one(_pending_ledger_payment("pay-first", "cs_first"))
+
+    stripe = _RecordingStripe(checkout_session_id="cs_second")
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=stripe,  # type: ignore[arg-type]
+        academy_id="acad",
+        clock=lambda: quote_now,
+    )
+
+    with tenant_scope("acad"):
+        result = await parent.start_checkout_for_application(
+            parent_id="parent-1",
+            application_id="app-1",
+            success_url="https://app.example.com/parent/checkout/return?application_id=app-1",
+            cancel_url="https://app.example.com/parent/onboarding",
+        )
+
+        # The re-stamp happened: the application now points at the second attempt.
+        app_doc = await db["onboarding_applications"].find_one({"application_id": "app-1"})
+        assert app_doc["payment_id"] == result.payment_id
+        assert app_doc["payment_id"] != "pay-first"
+
+        repo = MongoApplicationRepository(db)
+        # ...and the id it replaced is still a valid handle back to it.
+        found = await repo.get_by_payment_id("pay-first")
+        assert found is not None
+        assert found.application_id == "app-1"
+        assert "pay-first" in found.superseded_payment_ids
+
+        # The late `checkout.session.completed` for the FIRST session therefore
+        # still advances the registration instead of vanishing.
+        updated = await TransitionApplication(apps=repo).execute_for_payment(
+            "pay-first", "PENDING_APPROVAL"
+        )
+
+    assert updated.status == "PENDING_APPROVAL"
+    app_doc = await db["onboarding_applications"].find_one({"application_id": "app-1"})
+    assert app_doc["status"] == "PENDING_APPROVAL"
+
+
+async def test_a_transient_stripe_failure_parks_the_session_for_reconciliation(
+    allow_app_origin, caplog
+) -> None:
+    """A network blip must not leave a superseded session silently payable.
+
+    `expire_checkout_session` used to turn EVERY StripeError into a bare
+    ValueError, so `_expire_session` could not tell "already complete or
+    expired" (benign — the parent paid on the old tab) from "we never reached
+    Stripe" (the session is still open and payable). Both were logged at INFO
+    and forgotten (#549).
+
+    Injects a REAL `stripe.APIConnectionError`, not a stand-in ValueError.
+    """
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    stripe_lib = pytest.importorskip("stripe")
+    from backend.v2.composition.parent import _StripeCheckoutAttemptRetirement
+    from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
+        MongoPaymentRepository,
+    )
+    from backend.v2.contexts.billing.infrastructure.mongo_unretired_checkout_repo import (
+        MongoUnretiredCheckoutSessionRepository,
+    )
+
+    db = mongomock_motor.AsyncMongoMockClient()["transient-retirement"]
+    await db["ledger_payments"].insert_one(_pending_ledger_payment("pay-1", "cs_1"))
+
+    class _UnreachableStripe:
+        async def expire_checkout_session(self, checkout_session_id: str) -> None:
+            raise stripe_lib.APIConnectionError(
+                "Unexpected error communicating with Stripe: connection reset"
+            )
+
+    now = datetime(2026, 3, 4, tzinfo=UTC)
+    retirement = _StripeCheckoutAttemptRetirement(
+        stripe=_UnreachableStripe(),  # type: ignore[arg-type]
+        payments=MongoPaymentRepository(db),  # type: ignore[arg-type]
+        clock=lambda: now,
+        unretired=MongoUnretiredCheckoutSessionRepository(db),
+    )
+
+    with tenant_scope("acad"), caplog.at_level(logging.INFO):
+        await retirement.retire_checkout_attempt(checkout_session_id="cs_1", payment_id="pay-1")
+
+    # The un-retired session is on a worklist a reconciliation pass can read.
+    parked = await db["unretired_checkout_sessions"].find_one({"checkout_session_id": "cs_1"})
+    assert parked is not None
+    assert parked["payment_id"] == "pay-1"
+    assert parked["reason"] == "APIConnectionError"
+    assert parked["attempts"] == 1
+
+    # ...and it is NOT reported as if it were fine.
+    retirement_records = [
+        record for record in caplog.records if "checkout retirement" in record.getMessage()
+    ]
+    assert retirement_records, "the failure must be logged"
+    assert all(record.levelno >= logging.WARNING for record in retirement_records)
+
+
+async def test_an_already_terminal_stripe_session_is_not_parked_for_reconciliation(
+    allow_app_origin,
+) -> None:
+    """The legitimate swallow must stay a swallow.
+
+    Stripe refusing to expire an already complete/expired session is the race a
+    supersede exists to survive — nothing is left payable, so it must NOT land
+    on the reconciliation worklist or the worklist becomes noise nobody reads.
+    """
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    from backend.v2.composition.parent import _StripeCheckoutAttemptRetirement
+    from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
+        MongoPaymentRepository,
+    )
+    from backend.v2.contexts.billing.infrastructure.mongo_unretired_checkout_repo import (
+        MongoUnretiredCheckoutSessionRepository,
+    )
+
+    db = mongomock_motor.AsyncMongoMockClient()["terminal-retirement"]
+    await db["ledger_payments"].insert_one(_pending_ledger_payment("pay-1", "cs_1"))
+
+    class _AlreadyCompleteStripe:
+        async def expire_checkout_session(self, checkout_session_id: str) -> None:
+            raise StripeCheckoutSessionNotExpirable("You may only expire an open Checkout Session.")
+
+    retirement = _StripeCheckoutAttemptRetirement(
+        stripe=_AlreadyCompleteStripe(),  # type: ignore[arg-type]
+        payments=MongoPaymentRepository(db),  # type: ignore[arg-type]
+        clock=lambda: datetime(2026, 3, 4, tzinfo=UTC),
+        unretired=MongoUnretiredCheckoutSessionRepository(db),
+    )
+
+    with tenant_scope("acad"):
+        await retirement.retire_checkout_attempt(checkout_session_id="cs_1", payment_id="pay-1")
+
+    assert await db["unretired_checkout_sessions"].count_documents({}) == 0
+
+
+async def test_a_later_successful_retirement_clears_the_worklist_entry(
+    allow_app_origin,
+) -> None:
+    """The worklist is a live list of payable orphans, not an append-only log.
+
+    A session that failed transiently and was retired on the next attempt must
+    come off it, or every reconciliation run re-investigates a solved problem.
+    """
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    stripe_lib = pytest.importorskip("stripe")
+    from backend.v2.composition.parent import _StripeCheckoutAttemptRetirement
+    from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
+        MongoPaymentRepository,
+    )
+    from backend.v2.contexts.billing.infrastructure.mongo_unretired_checkout_repo import (
+        MongoUnretiredCheckoutSessionRepository,
+    )
+
+    db = mongomock_motor.AsyncMongoMockClient()["retirement-recovery"]
+    await db["ledger_payments"].insert_one(_pending_ledger_payment("pay-1", "cs_1"))
+
+    class _FlakyStripe:
+        def __init__(self) -> None:
+            self.attempts = 0
+
+        async def expire_checkout_session(self, checkout_session_id: str) -> None:
+            self.attempts += 1
+            if self.attempts == 1:
+                raise stripe_lib.APIConnectionError("connection reset")
+
+    retirement = _StripeCheckoutAttemptRetirement(
+        stripe=_FlakyStripe(),  # type: ignore[arg-type]
+        payments=MongoPaymentRepository(db),  # type: ignore[arg-type]
+        clock=lambda: datetime(2026, 3, 4, tzinfo=UTC),
+        unretired=MongoUnretiredCheckoutSessionRepository(db),
+    )
+
+    with tenant_scope("acad"):
+        await retirement.retire_checkout_attempt(checkout_session_id="cs_1", payment_id="pay-1")
+        assert await db["unretired_checkout_sessions"].count_documents({}) == 1
+        await retirement.retire_checkout_attempt(checkout_session_id="cs_1", payment_id="pay-1")
+
+    assert await db["unretired_checkout_sessions"].count_documents({}) == 0

@@ -19,6 +19,7 @@ from backend.v2.contexts.onboarding.application.ports import (
     WaiverRepository,
 )
 from backend.v2.contexts.onboarding.domain.errors import (
+    ApplicationForPaymentNotFound,
     ApplicationNotEditable,
     ApplicationNotFound,
     NoActiveWaiver,
@@ -347,16 +348,30 @@ class TransitionApplication:
         self,
         payment_id: str,
         to: str,
-    ) -> Application | None:
+    ) -> Application:
         """Locate the application by payment_id and transition it.
 
         Used by Billing event handlers in composition/event_handlers.py.
-        No-ops (returns None) if no application is associated with the
-        payment (e.g., admin-issued payment without onboarding context).
+
+        Raises ``ApplicationForPaymentNotFound`` when nothing claims the
+        payment. This USED to return ``None``, which made the two cases
+        indistinguishable at the call site and turned the dangerous one into a
+        shrug: a registration checkout that was paid but whose application no
+        longer pointed at the payment silently went nowhere — money taken,
+        application stuck, no alert (#549). The lookup now also matches
+        superseded payment ids, so that case should no longer arise; when it
+        does anyway it must be loud. Payments that never had an onboarding
+        context (invoices, subscriptions, admin-recorded payments) still reach
+        here, and the handler names that case explicitly instead of letting the
+        return value stand in for it.
         """
         app = await self._apps.get_by_payment_id(payment_id)
         if app is None:
-            return None
+            raise ApplicationForPaymentNotFound(
+                "no onboarding application claims this payment",
+                payment_id=payment_id,
+                to_status=to,
+            )
         return await self.execute(app.application_id, to)  # type: ignore[arg-type]
 
     async def execute(

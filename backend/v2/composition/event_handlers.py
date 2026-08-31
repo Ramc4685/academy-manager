@@ -46,6 +46,7 @@ from backend.v2.contexts.identity.application.use_cases.register_public_parent i
 from backend.v2.contexts.onboarding.application.use_cases.manage_application import (
     TransitionApplication,
 )
+from backend.v2.contexts.onboarding.domain.errors import ApplicationForPaymentNotFound
 from backend.v2.contexts.student_progress.domain.events import StudentPlacedInLevel
 from backend.v2.shared.events import handler
 from backend.v2.shared.tenancy.context import tenant_scope
@@ -112,18 +113,49 @@ async def on_payment_succeeded(event: PaymentSucceeded) -> None:
         if payload.session_id is None:
             log.info("PaymentSucceeded without session_id; subscription path TBD")
             return
-        await deps.transition_application.execute_for_payment(
-            payment_id=payload.payment_id, to="PENDING_APPROVAL"
-        )
+        try:
+            await deps.transition_application.execute_for_payment(
+                payment_id=payload.payment_id, to="PENDING_APPROVAL"
+            )
+        except ApplicationForPaymentNotFound:
+            # Most PaymentSucceeded events are not registrations at all —
+            # invoices, subscription renewals and admin-recorded payments all
+            # land here with no onboarding application, and that is fine.
+            # What is NOT fine is the case this used to be indistinguishable
+            # from: a registration checkout that was paid while its application
+            # pointed somewhere else. `execute_for_payment` now matches
+            # superseded payment ids too, so a miss here should be the benign
+            # kind — but it is money that moved, so it is recorded at WARNING
+            # under a stable marker a reconciliation query can select on,
+            # rather than swallowed by a `None` nobody looked at (#549).
+            log.warning(
+                "onboarding_application_unresolved_for_payment",
+                extra={
+                    "marker": "onboarding_application_unresolved_for_payment",
+                    "payment_id": payload.payment_id,
+                    "parent_id": payload.parent_id,
+                    "session_id": payload.session_id,
+                    "amount_cents": payload.amount_cents,
+                    "to_status": "PENDING_APPROVAL",
+                },
+            )
 
 
 @handler(event=CheckoutExpired, schema_version=1)
 async def on_checkout_expired(event: CheckoutExpired) -> None:
     deps = _require_deps()
     with tenant_scope(event.academy_id):
-        await deps.transition_application.execute_for_payment(
-            payment_id=event.payload.payment_id, to="CHECKOUT_EXPIRED"
-        )
+        try:
+            await deps.transition_application.execute_for_payment(
+                payment_id=event.payload.payment_id, to="CHECKOUT_EXPIRED"
+            )
+        except ApplicationForPaymentNotFound:
+            # No money moved, so this one is genuinely uninteresting: every
+            # non-registration checkout that times out arrives here.
+            log.info(
+                "checkout expired for payment %s with no onboarding application",
+                event.payload.payment_id,
+            )
 
 
 @handler(event=CapacityExceededEvent, schema_version=1)
@@ -135,9 +167,22 @@ async def on_capacity_exceeded(event: CapacityExceededEvent) -> None:
     with tenant_scope(event.academy_id):
         # Move onboarding state to CAPACITY_FAILED_REFUNDING first so an
         # admin sees the intermediate state if anything blows up.
-        await deps.transition_application.execute_for_payment(
-            payment_id=payload.payment_id, to="CAPACITY_FAILED_REFUNDING"
-        )
+        try:
+            await deps.transition_application.execute_for_payment(
+                payment_id=payload.payment_id, to="CAPACITY_FAILED_REFUNDING"
+            )
+        except ApplicationForPaymentNotFound:
+            # The refund below still has to run — it is a real charge — but an
+            # over-capacity registration whose application cannot be found is a
+            # genuine anomaly, not routine traffic like the succeeded path.
+            log.error(
+                "onboarding_application_unresolved_for_payment",
+                extra={
+                    "marker": "onboarding_application_unresolved_for_payment",
+                    "payment_id": payload.payment_id,
+                    "to_status": "CAPACITY_FAILED_REFUNDING",
+                },
+            )
         try:
             await deps.issue_refund.execute(
                 IssueRefundCommand(
@@ -146,14 +191,22 @@ async def on_capacity_exceeded(event: CapacityExceededEvent) -> None:
                     reason="capacity_failed",
                 )
             )
-            await deps.transition_application.execute_for_payment(
-                payment_id=payload.payment_id, to="REFUNDED"
-            )
+            try:
+                await deps.transition_application.execute_for_payment(
+                    payment_id=payload.payment_id, to="REFUNDED"
+                )
+            except ApplicationForPaymentNotFound:
+                # Already reported above; the refund itself succeeded, and
+                # falling into the refund-failed branch would misreport that.
+                pass
         except Exception:
             log.exception("Auto-refund failed for payment %s", payload.payment_id)
-            await deps.transition_application.execute_for_payment(
-                payment_id=payload.payment_id, to="CAPACITY_FAILED_REFUND_FAILED"
-            )
+            try:
+                await deps.transition_application.execute_for_payment(
+                    payment_id=payload.payment_id, to="CAPACITY_FAILED_REFUND_FAILED"
+                )
+            except ApplicationForPaymentNotFound:
+                pass
 
 
 @handler(event=EnrollmentCancelled, schema_version=1)

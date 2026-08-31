@@ -16,6 +16,7 @@ from backend.v2.contexts.onboarding.application.use_cases.manage_application imp
     TransitionApplication,
 )
 from backend.v2.contexts.onboarding.domain.errors import (
+    ApplicationForPaymentNotFound,
     ApplicationNotEditable,
     ApplicationNotFound,
 )
@@ -45,7 +46,14 @@ class FakeAppRepo:
         return self._app
 
     async def get_by_payment_id(self, payment_id):
-        if self._app is not None and self._app.payment_id == payment_id:
+        if self._app is None:
+            return None
+        # Mirrors the adapter: a superseded id still resolves, so a webhook for
+        # a checkout the parent completed just before a re-stamp can still find
+        # its application (#549).
+        if payment_id == self._app.payment_id:
+            return self._app
+        if payment_id in self._app.superseded_payment_ids:
             return self._app
         return None
 
@@ -77,6 +85,16 @@ class FakeAppRepo:
             updates["stripe_checkout_session_id"] = stripe_checkout_session_id
         if payment_id is not None:
             updates["payment_id"] = payment_id
+        if (
+            expected_payment_id is not None
+            and payment_id is not None
+            and payment_id != expected_payment_id
+            and expected_payment_id not in app.superseded_payment_ids
+        ):
+            updates["superseded_payment_ids"] = [
+                *app.superseded_payment_ids,
+                expected_payment_id,
+            ]
         self._app = app.model_copy(update=updates)
         return self._app
 
@@ -542,11 +560,44 @@ async def test_payment_webhook_still_reaches_pending_approval_after_a_resume() -
 async def test_a_draft_that_never_checked_out_cannot_be_reached_by_a_payment() -> None:
     """DRAFT -> PENDING_APPROVAL is only safe because execute_for_payment
     resolves through payment_id, which a never-checked-out draft does not
-    carry. Guard the assumption the transition table now leans on."""
+    carry. Guard the assumption the transition table now leans on.
+
+    The miss RAISES rather than returning None: the two things the old None
+    stood for — "not an onboarding payment at all" and "an onboarding payment
+    whose application we lost" — are wildly different, and collapsing them is
+    what let a paid-but-orphaned registration pass unnoticed (#549)."""
     repo = FakeAppRepo(_app())
     uc = TransitionApplication(apps=repo)
 
-    assert await uc.execute_for_payment("pay-anything", "PENDING_APPROVAL") is None
+    with pytest.raises(ApplicationForPaymentNotFound) as excinfo:
+        await uc.execute_for_payment("pay-anything", "PENDING_APPROVAL")
+
+    assert excinfo.value.details["payment_id"] == "pay-anything"
+
+
+@pytest.mark.asyncio
+async def test_a_restamp_archives_the_payment_id_it_overwrites() -> None:
+    """The re-stamp is what creates the orphan window: the parent may have
+    completed the FIRST session at Stripe moments before the second start won
+    the CAS. `get_by_payment_id` is the only handle the webhook has, so the id
+    being overwritten has to remain resolvable (#549)."""
+    repo = FakeAppRepo(_checkout_pending())
+    uc = TransitionApplication(apps=repo)
+
+    await uc.execute(
+        "app-1",
+        "CHECKOUT_PENDING",
+        stripe_checkout_session_id="cs_second",
+        payment_id="pay-second",
+    )
+
+    assert repo._app is not None
+    assert repo._app.payment_id == "pay-second"
+    assert repo._app.superseded_payment_ids == ["pay-first"]
+
+    updated = await uc.execute_for_payment("pay-first", "PENDING_APPROVAL")
+
+    assert updated.status == "PENDING_APPROVAL"
 
 
 # ---------------------------------------------------------------------------

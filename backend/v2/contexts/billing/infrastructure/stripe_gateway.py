@@ -13,8 +13,10 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from backend.v2.contexts.billing.application.ports import (
+    StripeCheckoutSessionNotExpirable,
     StripeGateway,
     StripeResourceNotFound,
+    StripeTransientFailure,
 )
 
 log = logging.getLogger(__name__)
@@ -339,9 +341,47 @@ class RealStripeGateway(StripeGateway):
             await asyncio.to_thread(_expire)
         except self._stripe.StripeError as exc:
             # Stripe refuses to expire a session that is already complete or
-            # expired. That is the exact race a supersede has to survive, so we
-            # only make the failure typed — the caller decides it is benign.
-            raise ValueError(f"Stripe Checkout Session expiry failed: {exc}") from exc
+            # expired. That is the exact race a supersede has to survive and the
+            # only failure a caller may swallow. Everything else — a connection
+            # drop, a timeout, a rate limit, a 5xx — leaves the session PAYABLE,
+            # and collapsing both into one ValueError is what made the swallow
+            # unsafe (#549). Classify here, where the Stripe exception types are
+            # actually visible; this is the only file allowed to import stripe.
+            if self._is_transient_stripe_error(exc):
+                raise StripeTransientFailure(
+                    f"Stripe Checkout Session expiry could not be completed: {exc}"
+                ) from exc
+            raise StripeCheckoutSessionNotExpirable(
+                f"Stripe Checkout Session expiry refused: {exc}"
+            ) from exc
+
+    def _is_transient_stripe_error(self, exc: Exception) -> bool:
+        """True when the call may succeed on a retry.
+
+        Deliberately fails SAFE: anything not recognisably a deterministic
+        client-side refusal (a 4xx the API actually evaluated) counts as
+        transient, so an unfamiliar failure is reconciled rather than filed away
+        as "already paid".
+        """
+        transient_types = tuple(
+            cls
+            for cls in (
+                getattr(self._stripe, "APIConnectionError", None),
+                getattr(self._stripe, "RateLimitError", None),
+                getattr(self._stripe, "APIError", None),
+            )
+            if isinstance(cls, type)
+        )
+        if transient_types and isinstance(exc, transient_types):
+            # `stripe.APIError` is the generic 5xx/unknown-response class, and
+            # the deterministic refusals (InvalidRequestError, ...) are siblings
+            # of it rather than subclasses.
+            return True
+        status = getattr(exc, "http_status", None)
+        if status is None:
+            # No HTTP exchange completed — the request never got an answer.
+            return True
+        return int(status) >= 500 or int(status) == 429
 
     async def retrieve_invoice(self, stripe_invoice_id: str) -> dict[str, Any]:
         def _retrieve() -> Any:

@@ -80,6 +80,12 @@ class Application(BaseModel):
     waiver_acceptance: WaiverAcceptance | None = None
     stripe_checkout_session_id: str | None = None
     payment_id: str | None = None
+    # Payment ids this application used to point at, oldest first. A re-stamp
+    # moves `payment_id` to the newest checkout attempt, but the parent may
+    # already have paid the one it replaced — `get_by_payment_id` is the ONLY
+    # handle `checkout.session.completed` has back here, so the superseded id
+    # has to stay findable or that charge orphans the registration (#549).
+    superseded_payment_ids: list[str] = Field(default_factory=list)
     student_id: str | None = None
     enrollment_id: str | None = None
     waitlist_id: str | None = None
