@@ -1779,12 +1779,73 @@ def compose_parent(
                 cancel_url=cancel_url,
             )
         )
-        await transition.execute(
-            app.application_id,
-            "CHECKOUT_PENDING",
-            stripe_checkout_session_id=result.checkout_session_id,
-            payment_id=result.payment_id,
-        )
+        # From here to the transition below there is a PAYABLE Stripe session
+        # and a pending ledger_payments row that NO application references yet
+        # — the transition is what stamps the claim, so it cannot run first
+        # (it consumes both ids). Every raise in this window therefore has to
+        # unwind the attempt itself, or the parent can still pay a session
+        # nothing points back at: `checkout.session.completed` resolves the
+        # payment by checkout_session_id and marks it succeeded, then
+        # `execute_for_payment` looks the application up by payment_id, finds
+        # None and returns silently. Money taken, application stuck, no alert,
+        # and there is no sweeper (issue #590).
+        #
+        # The window is genuinely reachable: the transition's own
+        # `_assert_child_not_enrolled` runs BEFORE its CAS (ambiguous
+        # same-name registration, or an enrollment that appeared since the
+        # last child-profile patch), the composition's status guard above is
+        # a TOCTOU read, and the transition's re-read can raise
+        # ApplicationNotFound or any Mongo error.
+        try:
+            await transition.execute(
+                app.application_id,
+                "CHECKOUT_PENDING",
+                stripe_checkout_session_id=result.checkout_session_id,
+                payment_id=result.payment_id,
+            )
+        except Exception:
+            try:
+                # Same instance the transition itself retires with, and it can
+                # run over ids the transition already touched on TWO paths:
+                #
+                #  * lost CAS — the transition retires the attempt it just
+                #    minted and THEN raises ApplicationNotEditable, so this is
+                #    a second retirement of the SAME ids. Harmless by
+                #    construction: _expire_session swallows Stripe's "already
+                #    expired" refusal, and retire_checkout_attempt no-ops on a
+                #    payment that is no longer `pending`.
+                #
+                #  * post-commit — on the re-stamp path _restamp_checkout
+                #    retires the OLD attempt AFTER its CAS has committed, and
+                #    that call is not exception-guarded (only the Stripe expire
+                #    inside it is; _payments.get/save are not). A Mongo error
+                #    there raises with the new ids already stamped, so this
+                #    compensation retires the session the application NOW
+                #    points at. Accepted: no money is at risk, because execute
+                #    raised and the caller therefore never receives
+                #    `redirect_url` — the parent is never sent to that session.
+                #    And it self-heals: the application is left
+                #    CHECKOUT_PENDING, which is in _CHECKOUT_STARTABLE_STATUSES,
+                #    so the next start re-stamps it with a fresh session. The
+                #    composition cannot tell "committed" from "did not commit"
+                #    here, and guessing the other way leaks a payable orphan —
+                #    the bug this whole block exists to close.
+                await checkout_retirement.retire_checkout_attempt(
+                    checkout_session_id=result.checkout_session_id,
+                    payment_id=result.payment_id,
+                )
+            except Exception:
+                # Never let the compensation's own failure mask the error the
+                # wizard is supposed to render — but never let it pass unseen
+                # either, since what it leaks is a payable session.
+                log.exception(
+                    "checkout compensation failed: session %s / payment %s may still be "
+                    "payable for application %s",
+                    result.checkout_session_id,
+                    result.payment_id,
+                    app.application_id,
+                )
+            raise
         return result
 
     async def start_autopay_for_enrollment(
