@@ -16,8 +16,9 @@ re-cancel by hand.
 
 What it does, per academy:
   1. Finds ``sessions`` with ``status: "cancelled"`` that still have
-     ``session_occurrences`` with ``status: "scheduled"`` and
-     ``start_at >= now``.
+     ``session_occurrences`` at ``status: "scheduled"``, split into two
+     buckets: FUTURE (``start_at >= now``, repairable) and PAST
+     (``start_at < now``, reported only).
   2. Reports the before-count (per academy, per session) BEFORE writing.
   3. Unless ``--apply`` is passed it stops there — **dry run is the
      default**, and a missing/misspelled flag can only ever produce a dry
@@ -53,10 +54,28 @@ are reported as "retained".
 Idempotent: a second run soft-cancels nothing and reports zero sessions
 repaired.
 
-NOT COVERED: payroll that was already GENERATED off these occurrences is
-not corrected here. This script fixes future accrual only; a payout
-period already generated (or approved/paid) keeps whatever lines it was
-built from and needs separate attention.
+NOT COVERED — but REPORTED, loudly, because an audit that cannot see the
+damage is worse than no audit:
+
+* PAST occurrences left at ``"scheduled"``. A session cancelled months
+  ago has its whole stranded run behind ``now``, so the future bucket is
+  empty and a future-only report would call that session clean. It is
+  not: ``effective_occurrence_status`` reads a past ``scheduled``
+  occurrence as ``"completed"`` and
+  ``MonthlyCoachOccurrenceReaderAdapter.coaches_with_occurrences`` selects
+  exactly those rows, so the next payroll generation pays for a class
+  that was cancelled and never taught. The cascade refuses to touch the
+  past by design, so this script only counts and lists them — widening
+  the WRITE to the past would be a change to #589's predicate and a
+  money decision for the issue owner, not something to slip into a
+  backfill.
+* Payroll already GENERATED off any of these occurrences. A payout period
+  already generated (or approved/paid) keeps whatever lines it was built
+  from and needs separate attention.
+* Cancelled sessions carrying no ``academy_id``: they cannot be
+  tenant-scoped, so the cascade can never repair them. They are counted
+  as failures and make the run exit non-zero rather than being logged
+  away.
 
 Usage:
     # dry run (default — writes nothing)
@@ -75,7 +94,7 @@ import logging
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 if __file__.startswith("<"):
     ROOT = Path.cwd()
@@ -110,19 +129,30 @@ PAYROLL_CAVEAT = (
     "reviewed separately (see issue #593)."
 )
 
+PAST_OCCURRENCE_CAVEAT = (
+    "WARNING: the sessions below still own PAST occurrences left at status "
+    "'scheduled'. This script does NOT repair them — the #589 cascade refuses "
+    "to touch the past on purpose — but they are not inert: "
+    "`effective_occurrence_status` reads a past 'scheduled' occurrence as "
+    "'completed', and `MonthlyCoachOccurrenceReaderAdapter` selects exactly "
+    "those rows, so the NEXT payroll generation will pay for classes that were "
+    "cancelled and never taught. Review these dates by hand before generating "
+    "payroll for the periods they fall in."
+)
+
 
 def session_identity(doc: dict[str, Any]) -> str:
     """The id the occurrence rows point at (also used by tests)."""
     return str(doc.get("session_id") or doc.get("_id"))
 
 
-def live_occurrence_filter(
+def _occurrence_filter(
     *,
     academy_id: str,
     session_id: str,
-    now: datetime,
+    start_at: dict[str, Any],
 ) -> dict[str, Any]:
-    """Future occurrences still advertising themselves as scheduled.
+    """Occurrences of one session still advertising themselves as scheduled.
 
     Mirrors the read side of ``maintain_session_occurrences``: occurrences
     attach to a session by either ``session_id`` or ``template_session_id``,
@@ -131,7 +161,7 @@ def live_occurrence_filter(
     """
     return {
         "academy_id": academy_id,
-        "start_at": {"$gte": now},
+        "start_at": start_at,
         "$and": [
             {"$or": [{"session_id": session_id}, {"template_session_id": session_id}]},
             {
@@ -143,6 +173,39 @@ def live_occurrence_filter(
             },
         ],
     }
+
+
+def live_occurrence_filter(
+    *,
+    academy_id: str,
+    session_id: str,
+    now: datetime,
+) -> dict[str, Any]:
+    """FUTURE scheduled occurrences — the ones the cascade can repair."""
+    return _occurrence_filter(academy_id=academy_id, session_id=session_id, start_at={"$gte": now})
+
+
+def past_occurrence_filter(
+    *,
+    academy_id: str,
+    session_id: str,
+    now: datetime,
+) -> dict[str, Any]:
+    """PAST scheduled occurrences — reported, never repaired.
+
+    The #589 cascade deliberately refuses to touch the past
+    (``_is_clean_future_occurrence``), so this script cannot repair these
+    either. They still matter: ``effective_occurrence_status`` reads a past
+    ``scheduled`` occurrence as ``"completed"``, and
+    ``MonthlyCoachOccurrenceReaderAdapter.coaches_with_occurrences`` matches
+    ``{"status": {"$ne": "cancelled"}, "$or": [{"status": "completed"},
+    {"end_at": {"$lt": now}}]}`` — so a stranded past occurrence under a
+    cancelled session is counted as payable work by the NEXT payroll
+    generation. Counting them is the whole point of an audit script: a
+    session cancelled months ago has its entire stranded run in the past,
+    and reporting only the future bucket would report that session as clean.
+    """
+    return _occurrence_filter(academy_id=academy_id, session_id=session_id, start_at={"$lt": now})
 
 
 async def _count_live_occurrences(
@@ -159,43 +222,90 @@ async def _count_live_occurrences(
     )
 
 
+async def _count_past_occurrences(
+    db: Any,
+    *,
+    academy_id: str,
+    session_id: str,
+    now: datetime,
+) -> int:
+    return int(
+        await db[OCCURRENCES_COLLECTION].count_documents(
+            past_occurrence_filter(academy_id=academy_id, session_id=session_id, now=now)
+        )
+    )
+
+
+class SessionScan(NamedTuple):
+    """What one pass over ``sessions`` found.
+
+    ``skipped`` is not an empty category to be logged away: a cancelled
+    session with no ``academy_id`` cannot be tenant-scoped, so the cascade
+    can never repair it. It is surfaced in the report and counted towards
+    a non-zero exit so the run can never look clean while leaving a broken
+    session behind.
+    """
+
+    rows: list[dict[str, Any]]
+    skipped: list[dict[str, Any]]
+
+
 async def find_half_cancelled_sessions(
     db: Any,
     *,
     now: datetime,
     academy_id: str | None = None,
-) -> list[dict[str, Any]]:
-    """Cancelled sessions that still own future ``scheduled`` occurrences."""
+) -> SessionScan:
+    """Cancelled sessions that still own ``scheduled`` occurrences.
+
+    A session is reported when EITHER bucket is non-empty. Only the future
+    bucket is repairable; the past bucket exists so a session whose whole
+    stranded run is already in the past cannot be invisible to the audit.
+    """
     query: dict[str, Any] = {"status": "cancelled"}
     if academy_id is not None:
         query["academy_id"] = academy_id
 
     rows: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
     cursor = db[SESSIONS_COLLECTION].find(query)
     async for doc in cursor:
+        session_id = session_identity(doc)
         doc_academy = str(doc.get("academy_id") or "")
         if not doc_academy:
             logger.warning(
                 "skipping session without academy_id: %s — cannot tenant-scope the cascade",
-                session_identity(doc),
+                session_id,
+            )
+            skipped.append(
+                {
+                    "academy_id": "",
+                    "session_id": session_id,
+                    "title": str(doc.get("title") or doc.get("name") or ""),
+                    "reason": "no academy_id — cannot tenant-scope the cascade",
+                }
             )
             continue
-        session_id = session_identity(doc)
-        count = await _count_live_occurrences(
+        future_count = await _count_live_occurrences(
             db, academy_id=doc_academy, session_id=session_id, now=now
         )
-        if count == 0:
+        past_count = await _count_past_occurrences(
+            db, academy_id=doc_academy, session_id=session_id, now=now
+        )
+        if future_count == 0 and past_count == 0:
             continue
         rows.append(
             {
                 "academy_id": doc_academy,
                 "session_id": session_id,
                 "title": str(doc.get("title") or doc.get("name") or ""),
-                "future_scheduled": count,
+                "future_scheduled": future_count,
+                "past_scheduled": past_count,
             }
         )
     rows.sort(key=lambda r: (r["academy_id"], r["session_id"]))
-    return rows
+    skipped.sort(key=lambda r: r["session_id"])
+    return SessionScan(rows=rows, skipped=skipped)
 
 
 def _build_cascade(db: Any) -> Any:
@@ -228,8 +338,11 @@ async def recancel_half_cancelled_sessions(
 ) -> dict[str, Any]:
     """Run one repair pass against an injected database."""
     cutoff = now or datetime.now(UTC)
-    before_rows = await find_half_cancelled_sessions(db, now=cutoff, academy_id=academy_id)
+    before_scan = await find_half_cancelled_sessions(db, now=cutoff, academy_id=academy_id)
+    before_rows = before_scan.rows
     before_total = sum(int(r["future_scheduled"]) for r in before_rows)
+    past_total = sum(int(r["past_scheduled"]) for r in before_rows)
+    repairable_rows = [r for r in before_rows if int(r["future_scheduled"]) > 0]
 
     by_academy: dict[str, list[dict[str, Any]]] = {}
     for row in before_rows:
@@ -243,32 +356,49 @@ async def recancel_half_cancelled_sessions(
     print(f"Mode: {mode_label}")
     print(f"Academy filter: {academy_id or 'ALL academies'}")
     print(f"Cutoff (now, UTC): {cutoff.isoformat()}")
-    print(f"Cancelled sessions with future scheduled occurrences: {len(before_rows)}")
+    print(f"Cancelled sessions with stranded scheduled occurrences: {len(before_rows)}")
     print(f"Future scheduled occurrences under cancelled sessions (before): {before_total}")
+    print(f"PAST scheduled occurrences under cancelled sessions (NOT repaired): {past_total}")
+    print(f"Cancelled sessions skipped (no academy_id): {len(before_scan.skipped)}")
 
     for acad in sorted(by_academy):
         rows = by_academy[acad]
-        subtotal = sum(int(r["future_scheduled"]) for r in rows)
-        print(f"\nAcademy {acad}: {len(rows)} session(s), {subtotal} occurrence(s)")
-        header = f"  {'Session':<28} | {'Title':<28} | {'Future scheduled':>16}"
+        future_subtotal = sum(int(r["future_scheduled"]) for r in rows)
+        past_subtotal = sum(int(r["past_scheduled"]) for r in rows)
+        print(
+            f"\nAcademy {acad}: {len(rows)} session(s), "
+            f"{future_subtotal} future + {past_subtotal} past occurrence(s)"
+        )
+        header = f"  {'Session':<28} | {'Title':<28} | {'Future':>8} | {'Past':>8}"
         print(header)
         print("  " + "-" * (len(header) - 2))
         for r in rows:
             print(
                 f"  {r['session_id'][:26]:<28} | {r['title'][:26]:<28} | "
-                f"{r['future_scheduled']:>16}"
+                f"{r['future_scheduled']:>8} | {r['past_scheduled']:>8}"
             )
+
+    if past_total:
+        print(f"\n{PAST_OCCURRENCE_CAVEAT}")
+        for r in before_rows:
+            if int(r["past_scheduled"]):
+                print(
+                    f"  PAST {r['academy_id']}/{r['session_id']}: "
+                    f"{r['past_scheduled']} occurrence(s) — needs manual payroll review"
+                )
 
     repaired: list[dict[str, Any]] = []
     unchanged: list[dict[str, Any]] = []
-    failed: list[dict[str, Any]] = []
+    # A cancelled session with no academy_id cannot be repaired by anything
+    # here, so it starts life as a failure rather than a log line.
+    failed: list[dict[str, Any]] = list(before_scan.skipped)
     cancelled_total = 0
     after_total = before_total
 
-    if apply and before_rows:
+    if apply and repairable_rows:
         maintain = _build_cascade(db)
         sessions_writer = MongoSessionWriter(db)
-        for row in before_rows:
+        for row in repairable_rows:
             acad = row["academy_id"]
             session_id = row["session_id"]
             try:
@@ -304,8 +434,8 @@ async def recancel_half_cancelled_sessions(
         # Re-derive the after-count from the database rather than from the
         # per-session bookkeeping, so a skipped or failed session is counted
         # as still-broken instead of silently dropping out of the total.
-        after_rows = await find_half_cancelled_sessions(db, now=cutoff, academy_id=academy_id)
-        after_total = sum(int(r["future_scheduled"]) for r in after_rows)
+        after_scan = await find_half_cancelled_sessions(db, now=cutoff, academy_id=academy_id)
+        after_total = sum(int(r["future_scheduled"]) for r in after_scan.rows)
 
     # -----------------------------------------------------------------
     print("\n=== RESULT ===")
@@ -321,16 +451,22 @@ async def recancel_half_cancelled_sessions(
         print(f"Sessions with nothing left to repair: {len(unchanged)}")
         print(f"Occurrences soft-cancelled: {cancelled_total}")
         print(f"Future scheduled occurrences under cancelled sessions (after): {after_total}")
-        if after_total and not failed:
+        # Only claim the tenant is clean when the PAST bucket is empty too and
+        # nothing was skipped — otherwise "after: 0" reads as "nothing left to
+        # do" while stranded past occurrences are still headed for payroll.
+        if after_total and not failed and not past_total:
             print(
                 "  All remaining rows were RETAINED on purpose — the cascade's "
                 "safety predicate protects occurrences that are attended, "
                 "coach-assigned, or already on a payout line."
             )
-        if failed:
-            print(f"Sessions skipped or failed: {len(failed)}")
-            for row in failed:
-                print(f"  SKIPPED {row['academy_id']}/{row['session_id']}: {row['reason']}")
+    print(f"PAST scheduled occurrences still needing manual review: {past_total}")
+    if failed:
+        print(f"Sessions skipped or failed: {len(failed)}")
+        for row in failed:
+            print(
+                f"  SKIPPED {row['academy_id'] or '<no academy_id>'}/{row['session_id']}: {row['reason']}"
+            )
     print(f"\n{PAYROLL_CAVEAT}")
 
     return {
@@ -338,6 +474,7 @@ async def recancel_half_cancelled_sessions(
         "cutoff": cutoff,
         "sessions_found": len(before_rows),
         "before_total": before_total,
+        "past_total": past_total,
         "after_total": after_total,
         "occurrences_cancelled": cancelled_total,
         "sessions_repaired": len(repaired),
@@ -345,6 +482,7 @@ async def recancel_half_cancelled_sessions(
         "repaired": repaired,
         "unchanged": unchanged,
         "failed": failed,
+        "skipped_no_academy": before_scan.skipped,
     }
 
 

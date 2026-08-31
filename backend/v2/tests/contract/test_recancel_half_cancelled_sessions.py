@@ -140,14 +140,17 @@ async def _status_of(db, occurrence_id: str) -> str:
 async def test_finder_reports_only_cancelled_sessions_with_live_future_occurrences(db) -> None:
     await _seed(db)
 
-    rows = await find_half_cancelled_sessions(db, now=NOW)
+    scan = await find_half_cancelled_sessions(db, now=NOW)
 
-    assert [r["session_id"] for r in rows] == ["sess-cancelled"]
+    assert [r["session_id"] for r in scan.rows] == ["sess-cancelled"]
     # occ-clean, occ-clean-far, occ-coach-assigned, occ-attended,
     # occ-on-payout-line. Not the past one, not the already-cancelled one,
     # not the live session's occurrence.
-    assert rows[0]["future_scheduled"] == 5
-    assert rows[0]["academy_id"] == ACADEMY
+    assert scan.rows[0]["future_scheduled"] == 5
+    # occ-past is behind `now`: not repairable, but it must still be counted.
+    assert scan.rows[0]["past_scheduled"] == 1
+    assert scan.rows[0]["academy_id"] == ACADEMY
+    assert scan.skipped == []
 
 
 @pytest.mark.asyncio
@@ -219,6 +222,84 @@ async def test_second_apply_run_is_a_no_op(db) -> None:
 
     third = await recancel_half_cancelled_sessions(db, apply=True, now=NOW)
     assert third["occurrences_cancelled"] == 0
+
+
+# --- the audit must not under-report the damage it exists to measure -------
+
+
+@pytest.mark.asyncio
+async def test_session_whose_stranded_run_is_entirely_past_is_still_reported(db) -> None:
+    """The #593 population is mostly *old* cancels.
+
+    A session cancelled weeks ago has every stranded occurrence behind
+    ``now``, so the repairable (future) bucket is empty. Reporting only
+    that bucket would tell the operator this academy is clean while
+    ``MonthlyCoachOccurrenceReaderAdapter`` still selects those rows —
+    `effective_occurrence_status` reads a past "scheduled" occurrence as
+    "completed" — and pays a coach for classes that never happened.
+    """
+    doc = _cancelled_session()
+    doc.update({"session_id": "sess-old-cancel", "title": "Cancelled Last Month"})
+    await db.sessions.insert_one(doc)
+    await db.session_occurrences.insert_many(
+        [
+            _occurrence(
+                "occ-past-1",
+                NOW - timedelta(days=10),
+                session_id="sess-old-cancel",
+                template_session_id="sess-old-cancel",
+            ),
+            _occurrence(
+                "occ-past-2",
+                NOW - timedelta(days=8),
+                session_id="sess-old-cancel",
+                template_session_id="sess-old-cancel",
+            ),
+        ]
+    )
+
+    result = await recancel_half_cancelled_sessions(db, apply=True, now=NOW)
+
+    assert result["sessions_found"] == 1
+    assert result["before_total"] == 0  # nothing repairable
+    assert result["past_total"] == 2  # but two rows headed for payroll
+    assert result["rows"][0]["session_id"] == "sess-old-cancel"
+    assert result["rows"][0]["future_scheduled"] == 0
+    assert result["rows"][0]["past_scheduled"] == 2
+
+    # Reported, never repaired: the #589 cascade refuses to touch the past
+    # and this script must not quietly widen that decision.
+    assert result["occurrences_cancelled"] == 0
+    assert await _status_of(db, "occ-past-1") == "scheduled"
+    assert await _status_of(db, "occ-past-2") == "scheduled"
+
+
+@pytest.mark.asyncio
+async def test_session_without_academy_id_is_a_failure_not_a_log_line(db) -> None:
+    """It cannot be tenant-scoped, so nothing here can ever repair it.
+
+    Dropping it with a WARNING left the summary reading 0/0/clean while a
+    broken session stayed broken and the process exited 0.
+    """
+    doc = _cancelled_session()
+    doc.update({"session_id": "sess-no-academy", "title": "Orphan"})
+    doc.pop("academy_id")
+    await db.sessions.insert_one(doc)
+    await db.session_occurrences.insert_one(
+        _occurrence(
+            "occ-orphan",
+            FUTURE,
+            session_id="sess-no-academy",
+            template_session_id="sess-no-academy",
+        )
+    )
+
+    result = await recancel_half_cancelled_sessions(db, apply=True, now=NOW)
+
+    assert [r["session_id"] for r in result["skipped_no_academy"]] == ["sess-no-academy"]
+    # It lands in `failed`, which is what drives the non-zero exit code.
+    assert [r["session_id"] for r in result["failed"]] == ["sess-no-academy"]
+    assert await _status_of(db, "occ-orphan") == "scheduled"
 
 
 # --- the flag itself is a safety control, so it gets its own tests ----------
