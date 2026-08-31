@@ -17,7 +17,7 @@ inbox.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Protocol
 
@@ -31,6 +31,10 @@ from backend.v2.contexts.communications.application.ports import (
     EmailSendPort,
     ResolvedRecipient,
 )
+from backend.v2.contexts.communications.application.unsubscribe_token import (
+    UnsubscribeLinkBuilder,
+)
+from backend.v2.contexts.communications.domain.email_category import EmailCategory
 from backend.v2.contexts.communications.domain.models import AcademyAudience
 
 
@@ -66,6 +70,7 @@ class SendParentDailyDigest:
     resolver: AudienceResolver
     sender: EmailSendPort
     provider: ParentDigestProvider
+    unsubscribe_links: UnsubscribeLinkBuilder = field(default_factory=UnsubscribeLinkBuilder)
 
     async def execute(self, command: SendParentDailyDigestCommand) -> SendParentDailyDigestResult:
         digest_date = command.digest_date.isoformat()
@@ -98,18 +103,38 @@ class SendParentDailyDigest:
                 failed += 1
                 continue
 
-            subject, body = render_parent_digest(view)
+            subject, body = render_parent_digest(
+                view,
+                unsubscribe_url=self.unsubscribe_links.build(
+                    academy_id=command.academy_id, user_id=parent.user_id
+                ),
+            )
             recipient = ResolvedRecipient(
                 user_id=parent.user_id,
                 email=parent.email,
                 display_name=parent.display_name,
             )
             outcome = await self.sender.send(
-                recipient=recipient, subject=subject, body=body, reply_to=view.reply_to
+                recipient=recipient,
+                subject=subject,
+                body=body,
+                reply_to=view.reply_to,
+                category=EmailCategory.DIGEST,
             )
             if outcome.ok:
                 await self.digests.mark_sent(claim.digest_id, outcome.provider_message_id)
                 sent += 1
+            elif outcome.suppressed:
+                # NOT retryable. A FAILED row with attempts left is re-claimed
+                # by the next hourly tick, so a retryable unsubscribe would
+                # rebuild the plan and re-hit the same gate three times a day
+                # forever, churning attempt_count and polluting the ops
+                # digest's "lost digests" count. Non-retryable rows are
+                # excluded from that count by design — the right bucket.
+                await self.digests.mark_failed(
+                    claim.digest_id, outcome.failed_reason or "blocked", retryable=False
+                )
+                failed += 1
             else:
                 await self.digests.mark_failed(claim.digest_id, outcome.failed_reason or "unknown")
                 failed += 1

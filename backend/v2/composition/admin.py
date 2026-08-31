@@ -26,6 +26,7 @@ from backend.v2.composition.connected_account_adapters import (
 from backend.v2.composition.digests import (
     _build_email_sender,
     compose_get_digest_delivery_log,
+    compose_send_campaign,
     compose_send_coach_digest_test,
 )
 from backend.v2.composition.email_adapters import (
@@ -233,17 +234,8 @@ from backend.v2.contexts.coaching.infrastructure.mongo_payout_read_models import
     MongoPayableOccurrenceQuery,
     MonthlyCoachOccurrenceReaderAdapter,
 )
-from backend.v2.contexts.communications.application.use_cases.send_campaign import (
-    SendCampaign,
-)
-from backend.v2.contexts.communications.infrastructure.mongo_audience_resolver import (
-    MongoAudienceResolver,
-)
-from backend.v2.contexts.communications.infrastructure.mongo_campaign_repo import (
-    MongoCampaignRepository,
-)
-from backend.v2.contexts.communications.infrastructure.mongo_delivery_repo import (
-    MongoDeliveryRepository,
+from backend.v2.contexts.communications.infrastructure.gated_send_port import (
+    unwrap_send_port,
 )
 from backend.v2.contexts.communications.infrastructure.stub_send_port import (
     StubEmailSendPort,
@@ -975,8 +967,8 @@ def compose_admin(
     # delivery flags and Resend credentials cannot mail real families through
     # any composition (AGENTS.md: "Do not send real email from local/test
     # environments").
-    _email_sender = _build_email_sender(_s)
-    _email_sender_is_real = not isinstance(_email_sender, StubEmailSendPort)
+    _email_sender = _build_email_sender(_s, db)
+    _email_sender_is_real = not isinstance(unwrap_send_port(_email_sender), StubEmailSendPort)
 
     product_repo = MongoProductRepository(db)
 
@@ -1690,12 +1682,7 @@ def compose_admin(
         )
         return created.model_dump(mode="json")
 
-    send_campaign = SendCampaign(
-        campaigns=MongoCampaignRepository(db),
-        deliveries=MongoDeliveryRepository(db),
-        resolver=MongoAudienceResolver(db=db),
-        sender=_email_sender,
-    )
+    send_campaign = compose_send_campaign(db, _email_sender, _s)
     waivers_repo = MongoAdminWaiverRepository(db)
     list_admin_waivers = ListAdminWaivers(waivers_repo)
     waiver_templates_repo = MongoWaiverTemplateRepository(db)

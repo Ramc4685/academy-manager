@@ -30,6 +30,10 @@ from backend.v2.contexts.communications.application.ports import (
     EmailSendPort,
     ResolvedRecipient,
 )
+from backend.v2.contexts.communications.application.unsubscribe_token import (
+    UnsubscribeLinkBuilder,
+)
+from backend.v2.contexts.communications.domain.email_category import EmailCategory
 from backend.v2.contexts.communications.domain.models import AcademyAudience
 
 
@@ -83,6 +87,7 @@ class SendCoachDailyDigest:
     resolver: AudienceResolver
     sender: EmailSendPort
     plan_provider: PlanProvider
+    unsubscribe_links: UnsubscribeLinkBuilder = field(default_factory=UnsubscribeLinkBuilder)
     now: Callable[[], datetime] = field(default=_utcnow)
 
     async def execute(self, command: SendCoachDailyDigestCommand) -> SendCoachDailyDigestResult:
@@ -121,7 +126,12 @@ class SendCoachDailyDigest:
                 failed += 1
                 continue
 
-            subject, body = render_coach_digest(plan)
+            subject, body = render_coach_digest(
+                plan,
+                unsubscribe_url=self.unsubscribe_links.build(
+                    academy_id=command.academy_id, user_id=coach.user_id
+                ),
+            )
             recipient = ResolvedRecipient(
                 user_id=coach.user_id,
                 email=coach.email,
@@ -130,11 +140,22 @@ class SendCoachDailyDigest:
             # BCC (not CC) so no coach sees the other admins' addresses.
             bcc = [e for e in admin_emails if e != coach.email]
             outcome = await self.sender.send(
-                recipient=recipient, subject=subject, body=body, bcc=bcc or None
+                recipient=recipient,
+                subject=subject,
+                body=body,
+                bcc=bcc or None,
+                category=EmailCategory.DIGEST,
             )
             if outcome.ok:
                 await self.digests.mark_sent(claim.digest_id, outcome.provider_message_id)
                 sent += 1
+            elif outcome.suppressed:
+                # Not retryable — see SendParentDailyDigest: a re-claimed
+                # FAILED row would re-hit the same gate every tick.
+                await self.digests.mark_failed(
+                    claim.digest_id, outcome.failed_reason or "blocked", retryable=False
+                )
+                failed += 1
             else:
                 await self.digests.mark_failed(claim.digest_id, outcome.failed_reason or "unknown")
                 failed += 1

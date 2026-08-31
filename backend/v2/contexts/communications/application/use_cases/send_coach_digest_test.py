@@ -32,6 +32,7 @@ from backend.v2.contexts.communications.application.use_cases.send_coach_daily_d
     PlanProvider,
     plan_is_empty,
 )
+from backend.v2.contexts.communications.domain.email_category import EmailCategory
 from backend.v2.contexts.communications.domain.models import SelectedRecipientsAudience
 
 
@@ -121,6 +122,10 @@ class SendCoachDigestTest:
             ),
             subject=subject,
             body=body,
+            # An admin-triggered test is still a digest: it must respect a hard
+            # bounce and an opt-out rather than being the one path that mails a
+            # recipient who asked us to stop.
+            category=EmailCategory.DIGEST,
         )
         if outcome.ok:
             await self.digests.mark_sent(send.digest_id, outcome.provider_message_id)

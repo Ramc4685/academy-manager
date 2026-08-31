@@ -21,6 +21,9 @@ from backend.v2.composition.digests import (
     compose_send_coach_daily_digest,
     compose_send_coach_digest_test,
 )
+from backend.v2.contexts.communications.infrastructure.gated_send_port import (
+    unwrap_send_port,
+)
 from backend.v2.contexts.communications.infrastructure.resend_send_port import (
     ResendEmailSendPort,
 )
@@ -66,7 +69,7 @@ def test_coach_daily_digest_uses_stub_outside_staging_and_prod(
 
     use_case = compose_send_coach_daily_digest(db)
 
-    assert isinstance(use_case.sender, StubEmailSendPort), (
+    assert isinstance(unwrap_send_port(use_case.sender), StubEmailSendPort), (
         f"the hourly coach digest wired the real Resend adapter in env={env!r}; "
         "a dev stack that inherited EMAIL_DELIVERY_ENABLED + RESEND_API_KEY "
         "would e-mail real coaches"
@@ -81,7 +84,7 @@ def test_coach_digest_test_uses_stub_outside_staging_and_prod(
 
     use_case = compose_send_coach_digest_test(db)
 
-    assert isinstance(use_case.sender, StubEmailSendPort), (
+    assert isinstance(unwrap_send_port(use_case.sender), StubEmailSendPort), (
         f"the admin-triggered coach digest test wired the real Resend adapter in env={env!r}"
     )
 
@@ -99,7 +102,7 @@ def test_coach_daily_digest_uses_resend_in_approved_env(
 
     use_case = compose_send_coach_daily_digest(db)
 
-    assert isinstance(use_case.sender, ResendEmailSendPort)
+    assert isinstance(unwrap_send_port(use_case.sender), ResendEmailSendPort)
 
 
 def test_coach_daily_digest_uses_stub_without_credentials(db, monkeypatch) -> None:
@@ -110,6 +113,6 @@ def test_coach_daily_digest_uses_stub_without_credentials(db, monkeypatch) -> No
     get_settings.cache_clear()
     try:
         use_case = compose_send_coach_daily_digest(db)
-        assert isinstance(use_case.sender, StubEmailSendPort)
+        assert isinstance(unwrap_send_port(use_case.sender), StubEmailSendPort)
     finally:
         get_settings.cache_clear()
