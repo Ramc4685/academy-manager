@@ -115,3 +115,6 @@ frontend/.autopay-*.mjs
 output/
 test_reports/
 /*.png
+
+# pnpm's content-addressable store, created when installing inside a worktree.
+frontend/.pnpm-store/
