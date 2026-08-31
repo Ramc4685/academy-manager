@@ -1369,6 +1369,55 @@ class MongoUserRepository:
         if primary not in new_roles:
             primary = new_roles[0]
 
+        # Write order follows the DIRECTION of the change, for exactly the
+        # reasons spelled out on `change_role` above: `academy_memberships` —
+        # not this `users` doc — is what `LoadAuthClaims` turns into request
+        # claims, so a partial failure must never leave the membership wider
+        # than the directory shows.
+        #
+        # `change_role` got that ordering; this function, the one the admin UI
+        # can actually reach (`DELETE /admin/users/{id}/roles/{role}`), did
+        # not. It wrote the directory first and mirrored afterwards, and
+        # `_pull_membership_role` can raise — an alias-matched row owned by
+        # another account, or a revocation write that did not land. Nothing
+        # rolled the directory write back and the audit insert never ran, so
+        # the account was listed as demoted, unaudited, and still holding live
+        # admin claims, with no API-reachable remedy: a retry re-raises at the
+        # same point forever, and the reconcile script withholds correction for
+        # the alias-collision class (issue #591).
+        if not adding:
+            # Narrowing: revoke the membership FIRST, so a failure at any later
+            # point can only leave effective access at what the actor asked for
+            # or narrower. The revocation resolves through the full alias set
+            # and checks its write, because this is the only revocation the
+            # admin UI can perform and an exact-`user_id` `$pull` silently
+            # no-ops on an alias-keyed row while reporting success everywhere.
+            #
+            # It is handed the BEFORE doc, exactly as `_replace_membership_roles`
+            # is on the narrowing branch of `change_role`. That is safe because
+            # it reads nothing but identity: `_membership_aliases` reads
+            # `user_id`/`auth_uid`/`firebase_uid` (via `aliases_from_doc`) plus
+            # the `_to_domain` fallback to `_id`, and `_membership_is_foreign`
+            # reads `_to_domain(...).user_id` and `_id`. The directory `$set`
+            # below touches only `role`, `roles` and `updated_at`, so before and
+            # after resolve to the same aliases and the same membership rows.
+            await self._pull_membership_role(before, role=role, academy_id=academy_id, now=now)
+
+        # NOT fixed here: two admins removing two *different* roles still race.
+        # Both read `roles`, both clear the last-role guard against their own
+        # stale snapshot, and this `$set` is last-write-wins, while the two
+        # membership `$pull`s compose to `roles: []` (issue #591, second race).
+        # A compare-and-set on this write cannot close it, because the
+        # membership `$pull` above has already run by the time we get here — the
+        # CAS would refuse *after* the harm, not instead of it. Closing it needs
+        # the guard on the `$pull` itself, or an admission gate that runs before
+        # it; neither is demonstrable on mongomock. Left as-is deliberately.
+        #
+        # Widening writes the directory FIRST for the mirror-image reason:
+        # granting the membership and then failing the `users` update would hand
+        # out live claims the directory does not show — fail-open, and invisible
+        # to anyone reading the admin UI. So the directory write sits between
+        # the two membership branches and each direction gets its safe order.
         doc = await self.collection.find_one_and_update(
             {"academy_id": academy_id, **self._id_filter(user_id)},
             {"$set": {"role": primary, "roles": new_roles, "updated_at": now}},
@@ -1378,14 +1427,7 @@ class MongoUserRepository:
             return None
 
         resolved_user_id = self._to_domain(doc).user_id
-        # Mirror into the SaaS source of truth (claims are built from this).
-        if not adding:
-            # Revocation resolves through the full alias set and checks its
-            # write, because this is the only revocation the admin UI can
-            # perform and an exact-`user_id` `$pull` silently no-ops on an
-            # alias-keyed row while reporting success everywhere else.
-            await self._pull_membership_role(doc, role=role, academy_id=academy_id, now=now)
-        else:
+        if adding:
             # The additive path keeps the exact-id upsert: granting through a
             # row auth cannot reach is inert, not dangerous, and the upsert is
             # what creates the row for legacy accounts that have none.

@@ -982,9 +982,106 @@ async def test_role_removal_fails_closed_when_the_only_row_is_alias_owned(db) ->
             reason="offboarded",
         )
 
+    # Nothing was reported as done, and nothing was half-written — the same
+    # two assertions the replacement-path twin makes. Before the ordering fix
+    # both of these failed: the directory `$set` had already landed, so the
+    # account read as demoted while `LoadAuthClaims` (which resolves through
+    # the same alias set) kept serving `admin`, and the audit insert after the
+    # raise never ran, so nothing recorded it (issue #591).
+    directory = await db["users"].find_one({"user_id": "u-staff"})
+    assert directory["roles"] == ["admin", "parent"]
+    assert await db["audit_logs"].count_documents({}) == 0
     # The other account's row is untouched — the skip did its job.
     row = await db["academy_memberships"].find_one({"membership_id": "m-staff"})
     assert row["roles"] == ["admin"]
+
+
+@pytest.mark.asyncio
+async def test_role_removal_revokes_the_membership_before_writing_the_directory(db) -> None:
+    """A removal must narrow claims before it narrows the directory.
+
+    `DELETE /admin/users/{id}/roles/{role}` is the only revocation the admin UI
+    can reach. `_pull_membership_role` can raise — a foreign alias-matched row,
+    or a revocation write that did not land — and nothing rolls a directory
+    write back, so ordering is the entire safety property here: revoke first
+    and a partial failure leaves access at what the actor asked for or less;
+    write the directory first and it leaves live admin claims behind a
+    directory that says `parent` (issue #591).
+
+    Pinned as a call sequence rather than an end state, because the contract
+    suite runs on mongomock and cannot demonstrate a torn write.
+    """
+    await _seed_admin_with_membership(db, user_id="u-staff", membership_user_id="u-staff")
+    await db["users"].update_one({"user_id": "u-staff"}, {"$set": {"roles": ["admin", "parent"]}})
+    await db["academy_memberships"].update_one(
+        {"membership_id": "m-staff"}, {"$set": {"roles": ["admin", "parent"]}}
+    )
+    repo = MongoUserRepository(db, default_academy_id="academy-a")
+
+    order: list[str] = []
+    real_pull = repo._pull_membership_role
+    real_update = repo.collection.find_one_and_update
+
+    async def _tracked_pull(*args, **kwargs):
+        order.append("membership")
+        return await real_pull(*args, **kwargs)
+
+    async def _tracked_update(*args, **kwargs):
+        order.append("directory")
+        return await real_update(*args, **kwargs)
+
+    repo._pull_membership_role = _tracked_pull  # type: ignore[method-assign]
+    repo.collection.find_one_and_update = _tracked_update  # type: ignore[method-assign]
+    try:
+        await repo.remove_role(
+            "u-staff",
+            "admin",
+            academy_id="academy-a",
+            actor_id="admin-1",
+            reason="offboarded",
+        )
+    finally:
+        repo.collection.find_one_and_update = real_update  # type: ignore[method-assign]
+
+    assert order == ["membership", "directory"], (
+        "a removal must revoke the membership before writing the directory, so a "
+        "partial failure can only ever leave claims narrower than the directory"
+    )
+    claims = await _claims_for(db, repo, "terminated-staff@example.com", academy_id="academy-a")
+    assert claims.roles == ("parent",)
+
+
+@pytest.mark.asyncio
+async def test_role_removal_aborts_when_the_revocation_write_is_lost(db) -> None:
+    """A removal whose membership `$pull` did not land fails the operation.
+
+    The removal twin of `test_role_change_aborts_when_the_revocation_write_is_lost`.
+    Without it the `matched_count` check at the end of `_pull_membership_role`
+    is vacuous on this path: neutering it to `if False:` left the whole suite
+    green, so a lost revocation was reported as a completed demotion while the
+    membership row — and therefore `claims.roles` — still said `admin`.
+    """
+    await _seed_admin_with_membership(db, user_id="u-staff", membership_user_id="u-staff")
+    await db["users"].update_one({"user_id": "u-staff"}, {"$set": {"roles": ["admin", "parent"]}})
+    await db["academy_memberships"].update_one(
+        {"membership_id": "m-staff"}, {"$set": {"roles": ["admin", "parent"]}}
+    )
+    repo = MongoUserRepository(_LostMembershipWriteDb(db), default_academy_id="academy-a")
+
+    with pytest.raises(RoleRevocationFailed):
+        await repo.remove_role(
+            "u-staff",
+            "admin",
+            academy_id="academy-a",
+            actor_id="admin-1",
+            reason="offboarded",
+        )
+
+    directory = await db["users"].find_one({"user_id": "u-staff"})
+    assert directory["roles"] == ["admin", "parent"]
+    assert await db["audit_logs"].count_documents({}) == 0
+    claims = await _claims_for(db, repo, "terminated-staff@example.com", academy_id="academy-a")
+    assert claims.roles == ("admin", "parent")
 
 
 @pytest.mark.asyncio
