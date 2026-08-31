@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, date, datetime
 from typing import Any
 
@@ -1594,6 +1595,366 @@ async def test_retiring_an_already_paid_checkout_does_not_corrupt_state(
     # The already-succeeded payment is untouched.
     first_payment = await db["ledger_payments"].find_one({"payment_id": "pay-first"})
     assert first_payment["status"] == "succeeded"
+
+
+# ---------------------------------------------------------------------------
+# Issue #590: the mint-then-transition window
+# ---------------------------------------------------------------------------
+
+
+def _registered_student(student_id: str, **extra: Any) -> dict[str, Any]:
+    """A students row that matches the checkout application's child by name."""
+    doc: dict[str, Any] = {
+        "academy_id": "acad",
+        "student_id": student_id,
+        "parent_id": "parent-1",
+        "full_name": "Aanya Raghavan",
+    }
+    doc.update(extra)
+    return doc
+
+
+class _RecordingStripe:
+    """Mints one session and records every expiry attempt against it."""
+
+    def __init__(self, checkout_session_id: str = "cs_new") -> None:
+        self.checkout_session_id = checkout_session_id
+        self.created: list[dict[str, Any]] = []
+        self.expired: list[str] = []
+
+    async def create_checkout_session(self, **kwargs: Any) -> tuple[str, str]:
+        self.created.append(kwargs)
+        return self.checkout_session_id, "https://checkout.stripe.test/new"
+
+    async def expire_checkout_session(self, checkout_session_id: str) -> None:
+        self.expired.append(checkout_session_id)
+
+
+async def test_entry_claim_moves_a_draft_application_to_checkout_pending(
+    allow_app_origin,
+) -> None:
+    """The DRAFT -> CHECKOUT_PENDING claim must actually MOVE the status.
+
+    Driven through the REAL `MongoApplicationRepository`, from DRAFT, because
+    that is the only way this assertion means anything: the application-layer
+    tests use a fake repo that reimplements the `new_status` branch itself,
+    and the one real-adapter assertion of `status == "CHECKOUT_PENDING"` sits
+    in a restart test whose application was ALREADY CHECKOUT_PENDING and so
+    passes no matter what the adapter writes (issue #590).
+
+    If the claim does not move the status the application stays DRAFT while a
+    payable session exists against it — `checkout.session.completed` would then
+    drive it CHECKOUT_PENDING -> ... from a status it never legally left.
+    """
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["draft-entry-claim"]
+
+    quote_now = _pinned_quote_clock()
+    await db["onboarding_applications"].insert_one(
+        _checkout_ready_application(datetime.now(UTC), status="DRAFT")
+    )
+    await db["sessions"].insert_one(_billable_session(quote_now))
+    await db["academy_connected_accounts"].insert_one(_connected_account_doc())
+
+    stripe = _RecordingStripe()
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=stripe,  # type: ignore[arg-type]
+        academy_id="acad",
+        clock=lambda: quote_now,
+    )
+
+    with tenant_scope("acad"):
+        result = await parent.start_checkout_for_application(
+            parent_id="parent-1",
+            application_id="app-1",
+            success_url="https://app.example.com/parent/checkout/return?application_id=app-1",
+            cancel_url="https://app.example.com/parent/onboarding",
+        )
+
+    app_doc = await db["onboarding_applications"].find_one({"application_id": "app-1"})
+    assert app_doc["status"] == "CHECKOUT_PENDING"
+    assert app_doc["stripe_checkout_session_id"] == "cs_new"
+    assert app_doc["payment_id"] == result.payment_id
+    # Nothing was retired: this attempt is the live one.
+    assert stripe.expired == []
+
+
+async def test_a_failed_transition_retires_the_session_it_just_minted(
+    allow_app_origin,
+) -> None:
+    """A raise in the mint-then-transition window must not leave money on the table.
+
+    The Stripe session and its pending Payment exist before the transition
+    stamps them onto the application, and `_assert_child_not_enrolled` runs
+    ahead of the CAS — so an ambiguous same-name registration raises with a
+    payable session that no application references. Paying it would mark the
+    payment succeeded and then silently no-op in `execute_for_payment`, which
+    resolves by payment_id (issue #590).
+
+    Two same-name rows, one dated and one not, are all the ambiguity guard
+    needs; no enrollment is involved.
+    """
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["orphaned-checkout"]
+
+    quote_now = _pinned_quote_clock()
+    await db["onboarding_applications"].insert_one(
+        _checkout_ready_application(datetime.now(UTC), status="DRAFT")
+    )
+    await db["sessions"].insert_one(_billable_session(quote_now))
+    await db["academy_connected_accounts"].insert_one(_connected_account_doc())
+    await db["students"].insert_many(
+        [
+            _registered_student("stu-dated", date_of_birth="2015-04-02"),
+            _registered_student("stu-undated"),
+        ]
+    )
+
+    stripe = _RecordingStripe()
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=stripe,  # type: ignore[arg-type]
+        academy_id="acad",
+        clock=lambda: quote_now,
+    )
+
+    with tenant_scope("acad"), pytest.raises(ApplicationNotEditable) as excinfo:
+        await parent.start_checkout_for_application(
+            parent_id="parent-1",
+            application_id="app-1",
+            success_url="https://app.example.com/parent/checkout/return?application_id=app-1",
+            cancel_url="https://app.example.com/parent/onboarding",
+        )
+
+    # The parent still gets the SAME error the wizard renders today; the
+    # compensation must not swallow or replace it.
+    assert "more than one possible child record" in str(excinfo.value)
+    # The session really was minted, and really was retired again.
+    assert len(stripe.created) == 1
+    assert stripe.expired == ["cs_new"]
+    payments = [doc async for doc in db["ledger_payments"].find({})]
+    assert len(payments) == 1
+    assert payments[0]["status"] == "expired"
+    app_doc = await db["onboarding_applications"].find_one({"application_id": "app-1"})
+    assert app_doc["status"] == "DRAFT"
+    assert app_doc.get("payment_id") is None
+
+
+async def test_retiring_the_same_checkout_attempt_twice_is_harmless(
+    allow_app_origin,
+) -> None:
+    """The lost-CAS path retires and THEN raises, so the compensation added for
+    #590 runs retirement a SECOND time on the same ids. That must be a no-op:
+    Stripe refuses to expire an already-expired session (swallowed), and the
+    payment is no longer `pending` so it is left exactly as the first run wrote
+    it. Pinned directly on the retirement object the composition wires."""
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    from backend.v2.composition.parent import _StripeCheckoutAttemptRetirement
+    from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
+        MongoPaymentRepository,
+    )
+
+    db = mongomock_motor.AsyncMongoMockClient()["double-retirement"]
+    await db["ledger_payments"].insert_one(_pending_ledger_payment("pay-1", "cs_1"))
+
+    class _StripeRefusingSecondExpiry:
+        def __init__(self) -> None:
+            self.expired: list[str] = []
+
+        async def expire_checkout_session(self, checkout_session_id: str) -> None:
+            self.expired.append(checkout_session_id)
+            if len(self.expired) > 1:
+                raise ValueError("You may only expire an open Checkout Session.")
+
+    stripe = _StripeRefusingSecondExpiry()
+    first_now = datetime(2026, 1, 1, tzinfo=UTC)
+    second_now = datetime(2026, 2, 2, tzinfo=UTC)
+    clocks = iter((first_now, second_now, second_now))
+    retirement = _StripeCheckoutAttemptRetirement(
+        stripe=stripe,  # type: ignore[arg-type]
+        payments=MongoPaymentRepository(db),  # type: ignore[arg-type]
+        clock=lambda: next(clocks),
+    )
+
+    with tenant_scope("acad"):
+        await retirement.retire_checkout_attempt(checkout_session_id="cs_1", payment_id="pay-1")
+        # Second run must neither raise nor rewrite the parked payment.
+        await retirement.retire_checkout_attempt(checkout_session_id="cs_1", payment_id="pay-1")
+
+    assert stripe.expired == ["cs_1", "cs_1"]
+    payment = await db["ledger_payments"].find_one({"payment_id": "pay-1"})
+    assert payment["status"] == "expired"
+    # mongomock hands datetimes back naive; only the instant matters here.
+    assert payment["updated_at"].replace(tzinfo=UTC) == first_now
+
+
+async def test_a_retirement_failure_after_the_restamp_commits_stays_recoverable(
+    allow_app_origin, monkeypatch
+) -> None:
+    """The compensation may fire on a transition that DID commit. That is safe.
+
+    `_restamp_checkout` retires the OLD attempt AFTER its CAS has already
+    written the new ids, and that retirement is not exception-guarded (only
+    the Stripe expire call is swallowed; `_payments.get`/`save` are not). So a
+    Mongo error there raises out of `transition.execute` with the re-stamp
+    already committed, and the composition's compensation then retires the ids
+    the application now points at — expiring the session it just claimed.
+
+    Accepted deliberately, for two reasons this test pins:
+      * no money is at risk — `execute` raised, so the caller never receives
+        `redirect_url` and the parent is never sent to that session;
+      * it self-heals — the application is left CHECKOUT_PENDING, which is in
+        `_CHECKOUT_STARTABLE_STATUSES`, so the very next start re-stamps it
+        with a fresh session (issue #590).
+
+    The alternative — leaving the compensation off this path — is strictly
+    worse: it would have to distinguish "committed" from "did not commit",
+    which the composition cannot see, and guessing wrong the other way leaks a
+    payable orphan, which is the whole bug.
+    """
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    from backend.v2.composition.parent import _CHECKOUT_STARTABLE_STATUSES
+    from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
+        MongoPaymentRepository,
+    )
+
+    db = mongomock_motor.AsyncMongoMockClient()["post-commit-retirement-failure"]
+
+    quote_now = _pinned_quote_clock()
+    await db["onboarding_applications"].insert_one(
+        _checkout_ready_application(
+            datetime.now(UTC),
+            status="CHECKOUT_PENDING",
+            stripe_checkout_session_id="cs_first",
+            payment_id="pay-first",
+        )
+    )
+    await db["sessions"].insert_one(_billable_session(quote_now))
+    await db["academy_connected_accounts"].insert_one(_connected_account_doc())
+    await db["ledger_payments"].insert_one(_pending_ledger_payment("pay-first", "cs_first"))
+
+    # Break the OLD attempt's retirement only, at the exact unguarded call:
+    # `_expire_session` swallows Stripe errors, so the reachable raise is the
+    # payment read/write that follows it.
+    real_get = MongoPaymentRepository.get
+
+    async def _get(self: Any, payment_id: str) -> Any:
+        if payment_id == "pay-first":
+            raise RuntimeError("mongo unavailable while parking the superseded payment")
+        return await real_get(self, payment_id)
+
+    monkeypatch.setattr(MongoPaymentRepository, "get", _get)
+
+    stripe = _RecordingStripe(checkout_session_id="cs_second")
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=stripe,  # type: ignore[arg-type]
+        academy_id="acad",
+        clock=lambda: quote_now,
+    )
+
+    with tenant_scope("acad"), pytest.raises(RuntimeError) as excinfo:
+        await parent.start_checkout_for_application(
+            parent_id="parent-1",
+            application_id="app-1",
+            success_url="https://app.example.com/parent/checkout/return?application_id=app-1",
+            cancel_url="https://app.example.com/parent/onboarding",
+        )
+
+    # The original failure is what the caller sees — so no redirect_url, and
+    # the parent is never pointed at cs_second.
+    assert "mongo unavailable" in str(excinfo.value)
+
+    # The re-stamp really did commit before the failure...
+    app_doc = await db["onboarding_applications"].find_one({"application_id": "app-1"})
+    assert app_doc["stripe_checkout_session_id"] == "cs_second"
+    # ...and the compensation therefore retired the ids the application now
+    # holds: cs_second is expired at Stripe and its payment parked.
+    assert stripe.expired == ["cs_first", "cs_second"]
+    new_payment = await db["ledger_payments"].find_one({"payment_id": app_doc["payment_id"]})
+    assert new_payment["status"] == "expired"
+    # Nothing was left payable: the old attempt's session was expired too, and
+    # its payment is the only pending row (the failure is why it stayed that
+    # way — the `checkout.session.expired` webhook still parks it).
+    first_payment = await db["ledger_payments"].find_one({"payment_id": "pay-first"})
+    assert first_payment["status"] == "pending"
+
+    # Self-healing: a retry is legal from here, and re-stamps.
+    assert app_doc["status"] == "CHECKOUT_PENDING"
+    assert app_doc["status"] in _CHECKOUT_STARTABLE_STATUSES
+
+
+async def test_a_failing_compensation_does_not_mask_the_original_error(
+    allow_app_origin, monkeypatch, caplog
+) -> None:
+    """The compensation is best-effort; the wizard's error is not.
+
+    If retirement itself blows up, the parent must still get the actionable
+    error that caused the abort — not a Mongo/Stripe error from the cleanup
+    that ran afterwards. The failure still has to be logged, because what it
+    leaks is a payable session (issue #590).
+    """
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    from backend.v2.composition.parent import _StripeCheckoutAttemptRetirement
+
+    db = mongomock_motor.AsyncMongoMockClient()["compensation-failure"]
+
+    quote_now = _pinned_quote_clock()
+    await db["onboarding_applications"].insert_one(
+        _checkout_ready_application(datetime.now(UTC), status="DRAFT")
+    )
+    await db["sessions"].insert_one(_billable_session(quote_now))
+    await db["academy_connected_accounts"].insert_one(_connected_account_doc())
+    # Same ambiguity as the orphan test above: it raises AFTER the session is
+    # minted and BEFORE the CAS, which is the window the compensation guards.
+    await db["students"].insert_many(
+        [
+            _registered_student("stu-dated", date_of_birth="2015-04-02"),
+            _registered_student("stu-undated"),
+        ]
+    )
+
+    async def _explode(self: Any, **kwargs: Any) -> None:
+        raise RuntimeError("stripe down while retiring the orphaned attempt")
+
+    monkeypatch.setattr(_StripeCheckoutAttemptRetirement, "retire_checkout_attempt", _explode)
+
+    stripe = _RecordingStripe()
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=stripe,  # type: ignore[arg-type]
+        academy_id="acad",
+        clock=lambda: quote_now,
+    )
+
+    with (
+        caplog.at_level(logging.ERROR, logger="backend.v2.composition.parent"),
+        tenant_scope("acad"),
+        pytest.raises(ApplicationNotEditable) as excinfo,
+    ):
+        await parent.start_checkout_for_application(
+            parent_id="parent-1",
+            application_id="app-1",
+            success_url="https://app.example.com/parent/checkout/return?application_id=app-1",
+            cancel_url="https://app.example.com/parent/onboarding",
+        )
+
+    # The ORIGINAL error, not the compensation's RuntimeError.
+    assert "more than one possible child record" in str(excinfo.value)
+    # Swallowed, but never silent: the leaked session is named in the log.
+    assert any(
+        "checkout compensation failed" in record.getMessage() and "cs_new" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 # ---------------------------------------------------------------------------
