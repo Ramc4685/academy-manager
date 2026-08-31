@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 from backend.v2.contexts.billing.application.ports import (
     OccurrenceCatalog,
@@ -58,7 +59,7 @@ class QuoteEnrollment:
         now = self._clock()
         timezone_name = str(session_doc.get("timezone") or "America/Chicago")
         period = BillingPeriod.from_label(
-            cmd.billing_start_at.strftime("%Y-%m"),
+            _period_label(cmd.billing_start_at, timezone_name),
             timezone_name=timezone_name,
         )
         occ_list = await self._occurrences.list_for_session(session_doc, period)
@@ -83,6 +84,28 @@ class QuoteEnrollment:
             now=now,
         )
         return stored
+
+
+def _period_label(instant: datetime, timezone_name: str) -> str:
+    """``YYYY-MM`` label of ``instant`` in the session's own timezone.
+
+    ``BillingPeriod.from_label`` builds the period bounds from *local* month
+    boundaries, so the label has to be local too. Deriving it from a UTC
+    instant labels the next month for a US evening near month-end — 8pm
+    Chicago on Aug 31 is 01:00 UTC Sep 1 — which skips current-month
+    proration and misaligns the zero-amount skip period (#541).
+
+    Follows the local-bucketing pattern from the #510 fix (commit 118f4622):
+    naive datetimes are treated as UTC instants, and an unknown timezone name
+    falls back to UTC rather than raising here (``from_label`` still rejects
+    it, exactly as before this change).
+    """
+    moment = instant if instant.tzinfo is not None else instant.replace(tzinfo=UTC)
+    try:
+        tz = ZoneInfo(timezone_name)
+    except (KeyError, ValueError):
+        return moment.astimezone(UTC).strftime("%Y-%m")
+    return moment.astimezone(tz).strftime("%Y-%m")
 
 
 def _session_amount_cents(doc: dict) -> int:

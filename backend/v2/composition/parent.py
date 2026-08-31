@@ -1733,7 +1733,12 @@ def compose_parent(
             # generator has no proration signal at all (enrollment docs never
             # carry billing_start_at/created_at) and would charge full tuition
             # for this period once the enrollment exists.
-            zero_quote_period = clock().strftime("%Y-%m")
+            # Reuse the quote's own label instead of re-deriving one from a
+            # fresh UTC now(): the quote's period is built in the session's
+            # timezone, so a UTC label disagrees with it (and with the monthly
+            # generator's skip_periods comparison) for the several evening
+            # hours before local month-end (#541).
+            zero_quote_period = quote.billing_period_label
             await apps_repo.save(app.model_copy(update={"zero_quote_period": zero_quote_period}))
             if quote.snapshot_id:
                 consumed = await payments_repo.consume_quote_snapshot(quote.snapshot_id)

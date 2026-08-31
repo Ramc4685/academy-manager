@@ -221,3 +221,133 @@ async def test_quote_enrollment_zero_classes_yields_zero_amount() -> None:
     )
     assert result.final_amount_cents == 0
     assert result.status == "OPEN"
+
+
+# ---------------------------------------------------------------------------
+# #541 — the period label must be session-local, not UTC
+# ---------------------------------------------------------------------------
+
+# 8:15pm CDT on Aug 31 2026 is already 00:15 UTC on Sep 1: the five evening
+# hours in which a UTC-derived label disagrees with the session-local period
+# bounds it is supposed to describe.
+_MONTH_END_EVENING_CHICAGO = datetime(2026, 9, 1, 0, 15, tzinfo=UTC)
+
+
+def _august_chicago_occurrences() -> list[ClassOccurrence]:
+    """Four Monday evening classes plus a late one on Aug 31, all local-August."""
+    rows = [
+        # Mon 6:00pm CDT -> 23:00 UTC the same day.
+        ClassOccurrence(
+            occurrence_id=f"sess-1:2026-08-{day:02d}:18:00",
+            session_id="sess-1",
+            start_at=datetime(2026, 8, day, 23, 0, tzinfo=UTC),
+            end_at=datetime(2026, 8, day, 23, 59, tzinfo=UTC),
+            status="scheduled",
+            is_billable=True,
+            timezone="America/Chicago",
+        )
+        for day in (3, 10, 17, 24)
+    ]
+    # Mon Aug 31, 9:30pm CDT -> 02:30 UTC on Sep 1. Still August locally, and
+    # far enough out to clear the 2h same-day cutoff from the 8:15pm quote.
+    rows.append(
+        ClassOccurrence(
+            occurrence_id="sess-1:2026-08-31:21:30",
+            session_id="sess-1",
+            start_at=datetime(2026, 9, 1, 2, 30, tzinfo=UTC),
+            end_at=datetime(2026, 9, 1, 3, 30, tzinfo=UTC),
+            status="scheduled",
+            is_billable=True,
+            timezone="America/Chicago",
+        )
+    )
+    return rows
+
+
+@pytest.mark.asyncio
+async def test_month_end_evening_quote_labels_the_local_month() -> None:
+    """A month-end evening checkout for a US tenant must quote the LOCAL month.
+
+    Regression for #541: the label was derived from the UTC instant while
+    ``BillingPeriod.from_label`` builds the bounds in the session timezone, so
+    an 8:15pm Chicago quote on Aug 31 was labelled "2026-09". That skipped the
+    remaining August class entirely (September has no occurrences yet), and
+    priced the parent's "first month" against the wrong month.
+    """
+    sessions = _FakeSessionLoader(_SESSION_DOC)  # America/Chicago
+    snapshots = _FakeSnapshotWriter()
+    occurrences_catalog = _FakeOccurrenceCatalog(_august_chicago_occurrences())
+
+    uc = QuoteEnrollment(
+        sessions=sessions,
+        snapshots=snapshots,
+        occurrences=occurrences_catalog,
+        clock=lambda: _MONTH_END_EVENING_CHICAGO,
+    )
+    result = await uc.execute(
+        QuoteEnrollmentCommand(
+            session_id="sess-1",
+            billing_start_at=_MONTH_END_EVENING_CHICAGO,
+            calculated_by="parent-1",
+        )
+    )
+
+    assert result.billing_period_label == "2026-08"
+    # Bounds are local August, and the label agrees with them.
+    assert result.billing_period_start.astimezone(UTC) == datetime(2026, 8, 1, 5, 0, tzinfo=UTC)
+    assert result.billing_period_end.astimezone(UTC) == datetime(2026, 9, 1, 5, 0, tzinfo=UTC)
+    # All five August classes are eligible; only the 9:30pm one is still
+    # billable, so the parent is prorated 1/5 of August instead of being
+    # quoted a phantom September.
+    assert result.total_eligible_classes == 5
+    assert result.billable_remaining_classes == 1
+    assert result.proration_ratio == "1/5"
+    assert result.final_amount_cents == 2_000
+
+
+@pytest.mark.asyncio
+async def test_month_end_evening_quote_keeps_utc_month_for_a_utc_session() -> None:
+    """The local-month rule is a no-op for a session that really is on UTC."""
+    sessions = _FakeSessionLoader({**_SESSION_DOC, "timezone": "UTC"})
+    snapshots = _FakeSnapshotWriter()
+    occurrences_catalog = _FakeOccurrenceCatalog([])
+
+    uc = QuoteEnrollment(
+        sessions=sessions,
+        snapshots=snapshots,
+        occurrences=occurrences_catalog,
+        clock=lambda: _MONTH_END_EVENING_CHICAGO,
+    )
+    result = await uc.execute(
+        QuoteEnrollmentCommand(
+            session_id="sess-1",
+            billing_start_at=_MONTH_END_EVENING_CHICAGO,
+            calculated_by="parent-1",
+        )
+    )
+
+    assert result.billing_period_label == "2026-09"
+
+
+@pytest.mark.asyncio
+async def test_naive_billing_start_is_read_as_a_utc_instant() -> None:
+    """Mongo round-trips drop tzinfo; a naive start must not crash or shift."""
+    sessions = _FakeSessionLoader(_SESSION_DOC)  # America/Chicago
+    snapshots = _FakeSnapshotWriter()
+    occurrences_catalog = _FakeOccurrenceCatalog([])
+
+    uc = QuoteEnrollment(
+        sessions=sessions,
+        snapshots=snapshots,
+        occurrences=occurrences_catalog,
+        clock=lambda: _MONTH_END_EVENING_CHICAGO,
+    )
+    result = await uc.execute(
+        QuoteEnrollmentCommand(
+            session_id="sess-1",
+            billing_start_at=datetime(2026, 9, 1, 0, 15),  # naive == UTC
+            calculated_by="parent-1",
+        )
+    )
+
+    assert result.billing_period_label == "2026-08"
