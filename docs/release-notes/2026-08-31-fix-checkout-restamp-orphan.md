@@ -1,6 +1,6 @@
 # checkout-restamp-orphan
 
-PR: #TBD
+PR: #601
 
 ## What changed
 Two residual races left open by #499 / #590, both in the superseded-checkout
