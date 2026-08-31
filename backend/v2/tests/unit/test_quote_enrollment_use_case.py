@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 import pytest
@@ -351,3 +351,105 @@ async def test_naive_billing_start_is_read_as_a_utc_instant() -> None:
     )
 
     assert result.billing_period_label == "2026-08"
+
+
+def _september_pacific_occurrences() -> list[ClassOccurrence]:
+    """Four Tuesday 6pm classes in LOCAL September for a Los Angeles session.
+
+    Sep 1 2026 is a Tuesday, so the September Tuesdays are the 1st, 8th, 15th
+    and 22nd (plus the 29th). 6pm PDT is 01:00 UTC the following day.
+    """
+    rows: list[ClassOccurrence] = []
+    for day in (1, 8, 15, 22, 29):
+        rows.append(
+            ClassOccurrence(
+                occurrence_id=f"sess-la:2026-09-{day:02d}:18:00",
+                session_id="sess-la",
+                start_at=datetime(2026, 9, day + 1, 1, 0, tzinfo=UTC),
+                end_at=datetime(2026, 9, day + 1, 2, 0, tzinfo=UTC),
+                status="scheduled",
+                is_billable=True,
+                timezone="America/Los_Angeles",
+            )
+        )
+    return rows
+
+
+@pytest.mark.asyncio
+async def test_explicit_start_date_resolves_in_the_session_timezone() -> None:
+    """An explicit start date must be local midnight of the SESSION's zone.
+
+    Regression for the first remediation of #541. The composition layer used
+    to pin a caller-supplied ``start_date`` to ``America/Chicago`` midnight
+    and pass the resulting instant down as ``billing_start_at``. Once the
+    period label began reading that instant in the *session's* timezone, that
+    hardcoded Chicago midnight landed on the previous day for every session
+    west of Chicago — 2026-09-01 00:00 CDT is 2026-08-31 22:00 PDT — so a
+    Los Angeles academy asking for a September 1st start was quoted the
+    already-generated month of August, in which every class precedes the
+    billing start. The quote silently collapsed to $0.00.
+
+    The calendar date now travels down as a ``date`` and is resolved against
+    the session's own clock, so the label, the bounds and the proration
+    cutoff all agree in every timezone.
+    """
+    session_doc = {
+        **_SESSION_DOC,
+        "session_id": "sess-la",
+        "timezone": "America/Los_Angeles",
+    }
+    sessions = _FakeSessionLoader(session_doc)
+    snapshots = _FakeSnapshotWriter()
+    occurrences_catalog = _FakeOccurrenceCatalog(_september_pacific_occurrences())
+
+    uc = QuoteEnrollment(
+        sessions=sessions,
+        snapshots=snapshots,
+        occurrences=occurrences_catalog,
+        clock=lambda: datetime(2026, 8, 20, 17, 0, tzinfo=UTC),
+    )
+    result = await uc.execute(
+        QuoteEnrollmentCommand(
+            session_id="sess-la",
+            billing_start_at=datetime(2026, 8, 20, 17, 0, tzinfo=UTC),
+            billing_start_date=date(2026, 9, 1),
+            calculated_by="admin",
+        )
+    )
+
+    assert result.billing_period_label == "2026-09"
+    # Local September bounds: Sep 1 00:00 PDT == 07:00 UTC.
+    assert result.billing_period_start.astimezone(UTC) == datetime(2026, 9, 1, 7, 0, tzinfo=UTC)
+    assert result.billing_period_end.astimezone(UTC) == datetime(2026, 10, 1, 7, 0, tzinfo=UTC)
+    # Every September class is on or after local midnight Sep 1, so a full
+    # month is quoted rather than the $0 that a stale August period produced.
+    assert result.total_eligible_classes == 5
+    assert result.billable_remaining_classes == 5
+    assert result.proration_ratio == "5/5"
+    assert result.final_amount_cents == 10_000
+
+
+@pytest.mark.asyncio
+async def test_explicit_start_date_is_unchanged_for_a_chicago_session() -> None:
+    """The same start date on a Chicago session keeps its pre-existing bounds."""
+    sessions = _FakeSessionLoader(_SESSION_DOC)  # America/Chicago
+    snapshots = _FakeSnapshotWriter()
+    occurrences_catalog = _FakeOccurrenceCatalog([])
+
+    uc = QuoteEnrollment(
+        sessions=sessions,
+        snapshots=snapshots,
+        occurrences=occurrences_catalog,
+        clock=lambda: datetime(2026, 8, 20, 17, 0, tzinfo=UTC),
+    )
+    result = await uc.execute(
+        QuoteEnrollmentCommand(
+            session_id="sess-1",
+            billing_start_at=datetime(2026, 8, 20, 17, 0, tzinfo=UTC),
+            billing_start_date=date(2026, 9, 1),
+            calculated_by="admin",
+        )
+    )
+
+    assert result.billing_period_label == "2026-09"
+    assert result.billing_period_start.astimezone(UTC) == datetime(2026, 9, 1, 5, 0, tzinfo=UTC)

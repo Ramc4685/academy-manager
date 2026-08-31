@@ -6,9 +6,8 @@ import hashlib
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime
 from typing import Any, Protocol, TypeVar
-from zoneinfo import ZoneInfo
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import OperationFailure
@@ -1643,11 +1642,11 @@ def compose_parent(
             owned = {str(s.get("student_id") or s["_id"]) for s in students}
             if student_id not in owned:
                 raise SessionNotFound("student not found", student_id=student_id)
-        billing_start = _start_date_to_datetime(start_date)
         return await quote_enrollment_uc.execute(
             QuoteEnrollmentCommand(
                 session_id=session_id,
-                billing_start_at=billing_start,
+                billing_start_at=datetime.now(UTC),
+                billing_start_date=_parse_start_date(start_date),
                 calculated_by=parent_id,
                 parent_id=parent_id,
                 student_id=student_id,
@@ -2175,12 +2174,19 @@ def _session_amount_cents(doc: dict[str, object]) -> int:
     return 2500
 
 
-def _start_date_to_datetime(value: str | None) -> datetime:
+def _parse_start_date(value: str | None) -> date | None:
+    """Parse a caller-supplied start date, leaving the timezone to the caller.
+
+    This used to pin the date to ``America/Chicago`` midnight and hand the
+    resulting instant down as ``billing_start_at``. That hardcoded zone is
+    wrong for any session that is not in Chicago, and once QuoteEnrollment
+    began reading the billing start in the *session's* timezone it became
+    actively harmful: Chicago midnight on the 1st is 22:00 on the last day of
+    the previous month in Los Angeles, so the quote would be labelled, priced
+    and persisted against the wrong month (#541). The calendar date now
+    travels down as a date and QuoteEnrollment resolves it against the
+    session's own clock.
+    """
     if not value:
-        return datetime.now(UTC)
-    local = datetime.combine(
-        datetime.fromisoformat(value).date(),
-        time.min,
-        tzinfo=ZoneInfo("America/Chicago"),
-    )
-    return local.astimezone(UTC)
+        return None
+    return datetime.fromisoformat(value).date()
