@@ -148,15 +148,15 @@ def _load_or_create_owner_password(owner_email: str) -> str:
         "owner_email": owner_email,
         "owner_password": generated,
     }
-    LOCAL_CREDS_FILE.write_text(
-        json.dumps(
-            {
-                "owners": owners,
-                "note": _credentials_note(),
-            },
-            indent=2,
-        )
-    )
+    # Preserve everything else already in the file. seed_blno_staging.py writes
+    # `coaches` and `sample_parent` here, and this seed runs *after* it in the
+    # documented flow (blno-seed, then `seed --slug blno` to mint a token). A
+    # bare {owners, note} write silently destroyed those entries, which is what
+    # the real-auth E2E harness reads — so the local-auth suite reported
+    # "missing LOCAL_AUTH_COACH_PASSWORD / LOCAL_AUTH_PARENT_PASSWORD" and skipped.
+    data["owners"] = owners
+    data["note"] = _credentials_note()
+    LOCAL_CREDS_FILE.write_text(json.dumps(data, indent=2))
     try:
         LOCAL_CREDS_FILE.chmod(0o600)
     except OSError:
