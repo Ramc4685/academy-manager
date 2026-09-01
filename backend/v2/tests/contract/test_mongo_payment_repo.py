@@ -2296,3 +2296,51 @@ async def test_consume_legacy_snapshot_without_expires_at_still_works(db, acad) 
 
     assert consumed is not None
     assert consumed.status == "CONSUMED"
+
+
+@pytest.mark.asyncio
+async def test_month_end_evening_enrollment_is_not_re_prorated_next_month(db, acad) -> None:
+    """The generator's first-month gate must bucket billing_start locally.
+
+    Regression for #541 (generator side). ``billing_start_at`` is the UTC
+    instant recorded at checkout, but the period label it is compared against
+    is a local month — and ``BillingPeriod.from_label`` two lines up builds
+    the bounds in the session's timezone. Comparing the raw UTC label reads a
+    month ahead for the several evening hours before local month-end.
+
+    An enrollment created at 8:15pm Chicago on May 31 (01:15 UTC Jun 1) has a
+    UTC label of "2026-06", so the June run misread it as a *first-month*
+    enrollment and prorated June down to the classes remaining after the run
+    date — undercharging a parent who attends the whole month, and who has
+    already paid a prorated May at checkout. Locally the enrollment starts in
+    May, so June is a full month of tuition.
+    """
+    repo = MongoPaymentRepository(
+        db,
+        # Mid-June run: if the gate wrongly takes the first-month branch the
+        # proration drops every class before this instant, so the two branches
+        # produce visibly different money.
+        clock=lambda: datetime(2026, 6, 16, 12, 0, tzinfo=UTC),
+        ledger_repo=MongoBillingLedgerRepository(db),
+    )
+    await _seed_monthly_enrollment(
+        db,
+        acad,
+        enrollment_id="enroll-tz",
+        session_id="sess-tz",
+        student_id="student-tz",
+        parent_id="parent-tz",
+        extra_enrollment={
+            # 2026-05-31 20:15 America/Chicago
+            "billing_start_at": datetime(2026, 6, 1, 1, 15, tzinfo=UTC),
+            "created_at": datetime(2026, 6, 1, 1, 15, tzinfo=UTC),
+        },
+    )
+
+    result = await repo.generate_monthly_payments("2026-06")
+
+    assert result.created == 1
+    invoice = await db["invoices"].find_one({"academy_id": acad, "enrollment_id": "enroll-tz"})
+    assert invoice is not None
+    # Full monthly tuition, not a second proration.
+    assert invoice["total_cents"] == 10_000

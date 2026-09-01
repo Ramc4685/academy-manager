@@ -8,7 +8,8 @@ they delegate here instead.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time
+from zoneinfo import ZoneInfo
 
 from backend.v2.contexts.billing.application.ports import (
     OccurrenceCatalog,
@@ -32,6 +33,13 @@ class QuoteEnrollmentCommand:
     student_id: str | None = None
     enrollment_id: str | None = None
     ttl_minutes: int = 15
+    #: A caller-chosen *calendar* start date, when the caller has one. It is
+    #: resolved to local midnight of the session's own timezone inside
+    #: ``execute`` — a calendar date has no meaning until you know whose clock
+    #: it is on, and only the use case has the session doc (#541). When set it
+    #: supersedes ``billing_start_at``, which then only carries the "no start
+    #: date given, start now" fallback.
+    billing_start_date: date | None = None
 
 
 class QuoteEnrollment:
@@ -57,8 +65,13 @@ class QuoteEnrollment:
 
         now = self._clock()
         timezone_name = str(session_doc.get("timezone") or "America/Chicago")
+        billing_start_at = _resolve_billing_start(
+            instant=cmd.billing_start_at,
+            start_date=cmd.billing_start_date,
+            timezone_name=timezone_name,
+        )
         period = BillingPeriod.from_label(
-            cmd.billing_start_at.strftime("%Y-%m"),
+            _period_label(billing_start_at, timezone_name),
             timezone_name=timezone_name,
         )
         occ_list = await self._occurrences.list_for_session(session_doc, period)
@@ -68,7 +81,7 @@ class QuoteEnrollment:
             discount_cents=0,
             period=period,
             occurrences=occ_list,
-            billing_start_at=cmd.billing_start_at,
+            billing_start_at=billing_start_at,
             calculated_at=now,
             calculated_by=cmd.calculated_by,
         )
@@ -83,6 +96,61 @@ class QuoteEnrollment:
             now=now,
         )
         return stored
+
+
+def _zone(timezone_name: str) -> ZoneInfo:
+    """The session's timezone, falling back to UTC on an unknown name.
+
+    Follows the local-bucketing pattern from the #510 fix (commit 118f4622).
+    Swallowing the bad name here changes nothing observable: every caller
+    hands the same name to ``BillingPeriod.from_label`` a line later, which
+    constructs its own ``ZoneInfo`` and raises exactly as it did before.
+    """
+    try:
+        return ZoneInfo(timezone_name)
+    except (KeyError, ValueError):
+        return ZoneInfo("UTC")
+
+
+def _resolve_billing_start(
+    *,
+    instant: datetime,
+    start_date: date | None,
+    timezone_name: str,
+) -> datetime:
+    """Pin the billing start to the session's own clock.
+
+    A caller-chosen ``start_date`` is a calendar date, not an instant: "start
+    on September 1st" means local midnight *for that session*. The composition
+    layer cannot resolve it, because only the use case has loaded the session
+    doc and therefore its timezone.
+
+    This matters because ``_period_label`` now reads the instant in the
+    session's zone. Converting a date at some *other* zone's midnight (the
+    composition helpers hardcoded ``America/Chicago``) lands on the previous
+    day for any session west of it — 2026-09-01 Chicago midnight is
+    2026-08-31 22:00 in Los Angeles — which would silently label, price and
+    persist the wrong month (#541).
+    """
+    if start_date is None:
+        return instant
+    return datetime.combine(start_date, time.min, tzinfo=_zone(timezone_name))
+
+
+def _period_label(instant: datetime, timezone_name: str) -> str:
+    """``YYYY-MM`` label of ``instant`` in the session's own timezone.
+
+    ``BillingPeriod.from_label`` builds the period bounds from *local* month
+    boundaries, so the label has to be local too. Deriving it from a UTC
+    instant labels the next month for a US evening near month-end — 8pm
+    Chicago on Aug 31 is 01:00 UTC Sep 1 — which skips current-month
+    proration and misaligns the zero-amount skip period (#541).
+
+    Naive datetimes are treated as UTC instants, since that is what Mongo
+    hands back after dropping tzinfo.
+    """
+    moment = instant if instant.tzinfo is not None else instant.replace(tzinfo=UTC)
+    return moment.astimezone(_zone(timezone_name)).strftime("%Y-%m")
 
 
 def _session_amount_cents(doc: dict) -> int:

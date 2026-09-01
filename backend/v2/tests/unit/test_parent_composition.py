@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, date, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -1077,7 +1078,12 @@ async def test_zero_amount_checkout_skips_stripe_and_moves_to_pending_approval(
     assert result.redirect_url == success_url
     app_doc = await db["onboarding_applications"].find_one({"application_id": "app-1"})
     assert app_doc["status"] == "PENDING_APPROVAL"
-    assert app_doc["zero_quote_period"] == now.strftime("%Y-%m")
+    # The stamped period is the session-local one (#541): the session carries
+    # no timezone, so QuoteEnrollment defaults it to America/Chicago, and a
+    # UTC label would disagree for the evening hours before local month-end.
+    assert app_doc["zero_quote_period"] == now.astimezone(ZoneInfo("America/Chicago")).strftime(
+        "%Y-%m"
+    )
 
 
 async def test_zero_amount_checkout_still_rejects_an_incomplete_application(
@@ -1362,9 +1368,16 @@ def _pinned_quote_clock() -> datetime:
     calendar date: the parent session CATALOG still uses the wall clock (it
     only lists sessions meeting in the next 30 days), so the session has to be
     live now as well as billable then.
+
+    The month is the SESSION-LOCAL one (#541). Quotes are periodised in the
+    session's timezone, so pinning to the first UTC instant of the month lands
+    on the evening of the 31st in Chicago: the quote would cover the previous
+    local month, none of this month's classes would be eligible, and every
+    test here would silently fall into the $0 branch that never calls Stripe.
     """
-    now = datetime.now(UTC)
-    return datetime(now.year, now.month, 1, tzinfo=UTC)
+    tz = ZoneInfo("America/Chicago")
+    now = datetime.now(tz)
+    return datetime(now.year, now.month, 1, tzinfo=tz)
 
 
 def _billable_session(quote_now: datetime) -> dict[str, Any]:
@@ -2418,3 +2431,87 @@ async def test_a_rotated_api_key_parks_the_session_instead_of_calling_it_termina
     parked = await db["unretired_checkout_sessions"].find_one({"checkout_session_id": "cs_1"})
     assert parked is not None
     assert parked["payment_id"] == "pay-1"
+
+
+# 8:15pm CDT on Aug 31 2027 — already 00:15 UTC on Sep 1. Deliberately a fixed
+# calendar instant rather than one derived from the wall clock: the point of
+# the test is the boundary, and it has to be the boundary on every run.
+_MONTH_END_EVENING_CHICAGO = datetime(2027, 9, 1, 0, 15, tzinfo=UTC)
+
+
+def _catalog_session_meeting_soon() -> dict[str, Any]:
+    """A one-off session live in the parent catalog's rolling wall-clock window.
+
+    The catalog still filters on `datetime.now(UTC)`, so the session has to
+    meet in the next 30 days for real, even though the quote is priced against
+    a pinned month-end instant. Its single class is nowhere near the pinned
+    period, so the quote has zero eligible classes and takes the $0 branch.
+    """
+    from datetime import timedelta
+
+    now = datetime.now(UTC)
+    return {
+        "session_id": "sess-1",
+        "academy_id": "acad",
+        "status": "scheduled",
+        "title": "Beginner",
+        "timezone": "America/Chicago",
+        "start_at": now + timedelta(hours=3),
+        "end_at": now + timedelta(hours=4),
+        "capacity": 8,
+        "amount_cents": 6_000,
+    }
+
+
+async def test_zero_quote_period_is_stamped_in_the_session_timezone(
+    allow_app_origin,
+) -> None:
+    """The $0 skip period must be the LOCAL month, not the UTC one (#541).
+
+    `zero_quote_period` is the only proration signal admin approval hands the
+    monthly generator (it becomes `skip_periods` on the enrollment). It used to
+    be re-derived from a fresh `now(UTC)`, so an 8:15pm Chicago checkout on
+    Aug 31 stamped "2027-09" while the quote it came from covered local
+    August — the generator then compares against its own period label and the
+    skip lands on the wrong month, billing full tuition for the skipped one.
+    """
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["zero-quote-period-tz"]
+
+    await db["onboarding_applications"].insert_one(
+        _checkout_ready_application(datetime.now(UTC), status="DRAFT")
+    )
+    await db["sessions"].insert_one(_catalog_session_meeting_soon())
+
+    class _RefusingStripe:
+        def __init__(self) -> None:
+            self.checkout_calls: list[dict[str, Any]] = []
+
+        async def create_checkout_session(self, **kwargs: Any) -> tuple[str, str]:
+            self.checkout_calls.append(kwargs)
+            return "cs_should_not_exist", "https://checkout.stripe.test/nope"
+
+    stripe = _RefusingStripe()
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=stripe,  # type: ignore[arg-type]
+        academy_id="acad",
+        clock=lambda: _MONTH_END_EVENING_CHICAGO,
+    )
+
+    success_url = "https://app.example.com/parent/checkout/return?application_id=app-1"
+    with tenant_scope("acad"):
+        result = await parent.start_checkout_for_application(
+            parent_id="parent-1",
+            application_id="app-1",
+            success_url=success_url,
+            cancel_url="https://app.example.com/parent/onboarding",
+        )
+
+    assert stripe.checkout_calls == []
+    assert result.payment_id == ""
+    app_doc = await db["onboarding_applications"].find_one({"application_id": "app-1"})
+    assert app_doc["status"] == "PENDING_APPROVAL"
+    assert app_doc["zero_quote_period"] == "2027-08"

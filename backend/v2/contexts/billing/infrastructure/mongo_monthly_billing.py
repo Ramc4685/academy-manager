@@ -986,6 +986,23 @@ def _session_amount_cents(doc: dict[str, object]) -> int:
     return 0
 
 
+def _local_period_label(instant: datetime, timezone_name: str) -> str:
+    """``YYYY-MM`` label of ``instant`` in the session's own timezone.
+
+    Mirrors ``_period_label`` in
+    ``backend.v2.contexts.billing.application.use_cases.quote_enrollment`` —
+    the generator and the checkout quote have to bucket an instant into a
+    month the same way, or the first-month handshake between them breaks at
+    the local month boundary (#541). An unknown zone name falls back to UTC,
+    matching ``_coerce_datetime``'s treatment of naive values.
+    """
+    try:
+        tz = ZoneInfo(timezone_name)
+    except (KeyError, ValueError):
+        tz = ZoneInfo("UTC")
+    return instant.astimezone(tz).strftime("%Y-%m")
+
+
 def _coerce_datetime(value: object | None) -> datetime | None:
     if value is None:
         return None
@@ -1101,8 +1118,19 @@ async def _resolve_charge_for_enrollment(
         else 0
     )
 
-    # Not a first-month enrollment → full monthly tuition
-    if billing_start is None or billing_start.strftime("%Y-%m") != period:
+    # Not a first-month enrollment → full monthly tuition.
+    #
+    # The label has to be built in the session's timezone, because that is the
+    # clock QuoteEnrollment labelled the checkout quote with and the clock
+    # BillingPeriod.from_label built `billing_period` with two lines up. Using
+    # the raw UTC instant here reads a month ahead for the several evening
+    # hours before local month-end, so an enrollment created at 8:15pm Chicago
+    # on Aug 31 (01:15 UTC Sep 1) was misread as a first-month enrollment for
+    # September and re-prorated, undercharging a parent who attended the whole
+    # month. It also broke the handshake with the checkout quote: the parent's
+    # real prorated snapshot is labelled with the local month, so the
+    # prior_consumed lookup below could never find it (#541).
+    if billing_start is None or _local_period_label(billing_start, timezone_name) != period:
         net = max(amount_cents - mdc, 0)
         discount = amount_cents - net
         snapshot = _build_monthly_tuition_snapshot(
