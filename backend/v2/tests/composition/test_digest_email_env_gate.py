@@ -11,6 +11,11 @@ environments", and ``ResendEmailSendPort``'s own contract).
 
 Nothing here sends anything: every assertion is on which *port object*
 composition returns.
+
+Since #556 the composed sender is a ``GatedEmailSendPort`` decorator (the
+suppression seam), so these assertions go through ``unwrap_send_port``: an
+``isinstance`` check on the wrapper is False for *every* adapter and would
+turn this whole file into a tripwire that can never fire again.
 """
 
 from __future__ import annotations
@@ -104,15 +109,19 @@ def test_coach_daily_digest_uses_resend_in_approved_env(
     use_case = compose_send_coach_daily_digest(db)
 
     assert isinstance(unwrap_send_port(use_case.sender), ResendEmailSendPort)
-    # ...and the real adapter is still behind the send-time recipient gate.
-    # Asserted on the attached gate, not merely on the wrapper type: a
-    # mis-resolved merge that dropped `preferences=` (or #556's `suppressions=`)
-    # would still leave a GatedEmailSendPort here and silently un-gate every
-    # bulk send.
+    # ...and the real adapter is still behind BOTH send-time recipient gates.
+    # Asserted on the attached gates, not merely on the wrapper type: a
+    # mis-resolved merge that dropped `preferences=` (#555) or `suppressions=`
+    # (#556) would still leave a GatedEmailSendPort here and silently un-gate
+    # every bulk send.
     assert isinstance(use_case.sender, GatedEmailSendPort)
     assert use_case.sender.preferences is not None, (
         "the composed sender is a gate with no preference gate attached; "
         "unsubscribed recipients would be e-mailed anyway"
+    )
+    assert use_case.sender.suppressions is not None, (
+        "the composed sender is a gate with no suppression gate attached; "
+        "hard-bounced and complaining addresses would be e-mailed anyway"
     )
 
 

@@ -3,9 +3,14 @@
 Introduced by #555 (recipient unsubscribe) and shared with #556 (bounce
 suppression): both gates answer "may this address receive *this kind* of
 message", and that question is meaningless without a category. It lives in
-``domain/`` because it is a vocabulary, not a policy — the policies (a
-preference gate never blocks transactional mail; a hard bounce blocks
-everything) live with their gate implementations.
+``domain/`` because it is a vocabulary, not a policy — the policies live with
+their gate implementations.
+
+The category is what lets the two gates answer *different* questions about the
+same recipient: an unsubscribe preference stops digests and campaigns without
+stopping an invoice, while a hard bounce stops everything. It is threaded from
+the send loops into ``EmailSendPort.send`` and consulted by every
+``RecipientGate``.
 """
 
 from __future__ import annotations
@@ -29,7 +34,9 @@ class EmailCategory(StrEnum):
 #: Categories a recipient may switch off. ``TRANSACTIONAL`` is deliberately
 #: absent: CAN-SPAM's opt-out covers commercial messages, and a family that
 #: could suppress its own invoice would be a billing incident, not a
-#: preference.
+#: preference. Note this constrains *preferences* only — a hard bounce or a
+#: spam complaint suppresses every category, transactional included, because
+#: the mailbox itself is gone or hostile.
 UNSUBSCRIBABLE_CATEGORIES: frozenset[EmailCategory] = frozenset(
     {EmailCategory.DIGEST, EmailCategory.CAMPAIGN}
 )

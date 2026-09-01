@@ -7,7 +7,9 @@ they are applied in exactly one place,
 :class:`~backend.v2.contexts.communications.infrastructure.gated_send_port.GatedEmailSendPort`,
 so no send loop has to remember to check anything.
 
-Application layer: pure protocol + value object, no Mongo, no provider.
+Application layer: pure protocol + value object, no Mongo, no provider, so it
+may be implemented by Mongo-backed adapters without either the use cases or the
+send loops learning about them.
 """
 
 from __future__ import annotations
@@ -34,9 +36,9 @@ class RecipientGate(Protocol):
     """A send-time veto consulted once per recipient, inside the send port.
 
     Implementations MUST NOT raise: a gate that cannot answer returns
-    :data:`ALLOW`. A preference-store outage must not silently stop all mail
-    (the #435 lesson — email that fails quietly stays broken for weeks), but it
-    must be logged.
+    :data:`ALLOW`. A preference- or suppression-store outage must not silently
+    stop all mail (the #435 lesson — email that fails quietly stays broken for
+    weeks), but it must be logged.
     """
 
     async def check(

@@ -136,6 +136,15 @@ class Settings(BaseSettings):
             "fallback: signing with an empty key would let anyone forge a link."
         ),
     )
+    resend_webhook_secret: str | None = Field(
+        default=None,
+        description=(
+            "Svix signing secret (whsec_...) for the Resend bounce/complaint webhook. "
+            "Unset ⇒ the webhook route is not mounted and suppression ingestion is off. "
+            "There is deliberately no empty-string fallback: verifying with a guessable "
+            "key would be worse than not verifying at all (cf. issue #547)."
+        ),
+    )
     sender_email: str | None = Field(default=None)
     email_delivery_enabled: bool = Field(
         default=False,
@@ -249,6 +258,10 @@ class Settings(BaseSettings):
         if "V2_UNSUBSCRIBE_TOKEN_SECRET" not in os.environ:
             self.unsubscribe_token_secret = os.environ.get(
                 "UNSUBSCRIBE_TOKEN_SECRET", self.unsubscribe_token_secret
+            )
+        if "V2_RESEND_WEBHOOK_SECRET" not in os.environ:
+            self.resend_webhook_secret = os.environ.get(
+                "RESEND_WEBHOOK_SECRET", self.resend_webhook_secret
             )
         if "V2_SENDER_EMAIL" not in os.environ:
             self.sender_email = os.environ.get("SENDER_EMAIL", self.sender_email)

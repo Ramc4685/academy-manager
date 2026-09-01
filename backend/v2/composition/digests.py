@@ -46,6 +46,13 @@ from backend.v2.contexts.communications.application.unsubscribe_token import (
 from backend.v2.contexts.communications.application.use_cases.get_digest_delivery_log import (
     GetDigestDeliveryLog,
 )
+from backend.v2.contexts.communications.application.use_cases.ingest_email_provider_event import (
+    IngestEmailProviderEvent,
+)
+from backend.v2.contexts.communications.application.use_cases.list_email_suppressions import (
+    ListEmailSuppressions,
+    ReleaseEmailSuppression,
+)
 from backend.v2.contexts.communications.application.use_cases.send_campaign import (
     SendCampaign,
 )
@@ -79,8 +86,18 @@ from backend.v2.contexts.communications.infrastructure.mongo_email_preference_re
 from backend.v2.contexts.communications.infrastructure.mongo_parent_digest_send_repo import (
     MongoParentDigestSendRepository,
 )
+from backend.v2.contexts.communications.infrastructure.mongo_provider_event_repo import (
+    MongoEmailProviderEventDedup,
+)
+from backend.v2.contexts.communications.infrastructure.mongo_suppression_repo import (
+    MongoSuppressionGate,
+    MongoSuppressionRepository,
+)
 from backend.v2.contexts.communications.infrastructure.resend_send_port import (
     ResendEmailSendPort,
+)
+from backend.v2.contexts.communications.infrastructure.resend_signature import (
+    ResendSignatureVerifier,
 )
 from backend.v2.contexts.communications.infrastructure.stub_send_port import (
     StubEmailSendPort,
@@ -792,8 +809,17 @@ def _build_email_sender(settings: Any, db: AsyncIOMotorDatabase[Any] | None = No
         inner = StubEmailSendPort()
     if db is None:
         return inner
+    # THE send-time gate seam. Wrapping (rather than editing each send loop)
+    # is what makes "every send path checks BOTH gates" true by construction
+    # instead of by review. The stub is wrapped too, so the gates are
+    # exercised in dev and CI rather than only in production.
+    #
+    # Order matters: `suppressions` first. A hard bounce/complaint is a fact
+    # about the mailbox and outranks every category, transactional included;
+    # `preferences` is a choice about content and never blocks transactional.
     return GatedEmailSendPort(
         inner=inner,
+        suppressions=MongoSuppressionGate(MongoSuppressionRepository(db)),
         preferences=MongoEmailPreferenceGate(db),
     )
 
@@ -933,3 +959,33 @@ def compose_send_campaign(
         unsubscribe_links=compose_unsubscribe_link_builder(settings),
         academy_slugs=_AcademySlugLookup(MongoAcademyRepository(db)),
     )
+
+
+def compose_ingest_email_provider_event(
+    db: AsyncIOMotorDatabase[Any],
+) -> IngestEmailProviderEvent | None:
+    """Resend bounce/complaint ingestion, or ``None`` when it is not configured.
+
+    Fail-closed on the secret: with no ``resend_webhook_secret`` we return
+    ``None`` and the route is never mounted, rather than mounting an endpoint
+    that verifies with an empty key. (``composition/admin.py`` does exactly
+    that for the Stripe Connect state secret — ``or ""`` — see issue #547;
+    that pattern is deliberately not copied here.)
+    """
+    settings = get_settings()
+    secret = (settings.resend_webhook_secret or "").strip()
+    if not secret:
+        return None
+    return IngestEmailProviderEvent(
+        suppressions=MongoSuppressionRepository(db),
+        events=MongoEmailProviderEventDedup(db),
+        verifier=ResendSignatureVerifier(secret=secret),
+    )
+
+
+def compose_list_email_suppressions(db: AsyncIOMotorDatabase[Any]) -> ListEmailSuppressions:
+    return ListEmailSuppressions(suppressions=MongoSuppressionRepository(db))
+
+
+def compose_release_email_suppression(db: AsyncIOMotorDatabase[Any]) -> ReleaseEmailSuppression:
+    return ReleaseEmailSuppression(suppressions=MongoSuppressionRepository(db))

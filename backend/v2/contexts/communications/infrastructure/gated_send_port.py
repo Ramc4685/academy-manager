@@ -2,7 +2,9 @@
 
 THE seam. Both the recipient's unsubscribe preferences (#555) and the provider
 suppression list (#556) hook in here and nowhere else; no send loop performs
-its own check, so a new send path cannot forget one.
+its own check, so a new send path cannot forget one. Wrapping (rather than
+editing each send loop) is what makes "every send path checks both gates" true
+by construction instead of by review.
 
 Order is deliberate: suppression is a deliverability/hard fact about the
 mailbox and is checked first; preferences — a choice about content — second.
@@ -10,7 +12,8 @@ mailbox and is checked first; preferences — a choice about content — second.
 This decorator is not ``ResendEmailSendPort``; it wraps whatever
 ``composition.digests._build_email_sender`` produced, so the staging/prod env
 gate enforced by ``tests/structural/test_email_sender_construction.py`` is
-untouched.
+untouched. The stub is wrapped too, so the gates are exercised in dev and CI
+rather than only in production.
 """
 
 from __future__ import annotations
@@ -28,6 +31,8 @@ from backend.v2.contexts.communications.domain.email_category import EmailCatego
 
 @dataclass
 class GatedEmailSendPort(EmailSendPort):
+    """Decorator over any EmailSendPort that applies the send-time gates."""
+
     inner: EmailSendPort
     suppressions: RecipientGate | None = None  # #556
     preferences: RecipientGate | None = None  # #555
