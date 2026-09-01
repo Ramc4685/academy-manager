@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any, Protocol, TypeVar
+from zoneinfo import ZoneInfo
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import OperationFailure
@@ -810,7 +811,17 @@ def compose_parent(
                 )
                 return {"skipped": True, "reason": "student_not_found"}
             parent_id = student[0].parent_id
-            period = datetime.now(UTC).strftime("%Y-%m")
+            # The fee's period is a *calendar* month label, and both
+            # ``get_open_invoice_for_student`` below and
+            # ``AddInvoiceLineCommand.period`` key off it. Derive it on the
+            # session's own clock, the way QuoteEnrollment labels the checkout
+            # quote (#541): a raw UTC label reads a month ahead for the several
+            # evening hours before local month-end, so a parent cancelling at
+            # 8:30pm Chicago on Nov 30 had the fee attached to — or a fresh
+            # invoice opened for — December.
+            session = await sessions_query.get(enrollment.session_id)
+            timezone_name = (session.timezone if session is not None else None) or "America/Chicago"
+            period = _local_period_label(clock(), timezone_name)
 
             existing_invoice = await billing_ledger_repo.get_open_invoice_for_student(
                 enrollment.student_id, period
@@ -2237,6 +2248,28 @@ def _session_amount_cents(doc: dict[str, object]) -> int:
     if doc.get("monthly_price") is not None:
         return round(float(doc["monthly_price"]) * 100)  # type: ignore[arg-type]
     return 2500
+
+
+def _local_period_label(instant: datetime, timezone_name: str) -> str:
+    """``YYYY-MM`` label of ``instant`` on the session's own clock.
+
+    Mirrors ``_period_label`` in
+    ``backend.v2.contexts.billing.application.use_cases.quote_enrollment`` and
+    ``_local_period_label`` in
+    ``backend.v2.contexts.billing.infrastructure.mongo_monthly_billing`` — every
+    site that turns an instant into a billing-period label has to agree, or the
+    labels stop naming the same invoice at the local month boundary (#541).
+
+    Naive datetimes are treated as UTC instants (what Mongo hands back after
+    dropping tzinfo); an unknown zone name falls back to UTC rather than
+    raising, because a bad zone must not be able to block a cancellation.
+    """
+    moment = instant if instant.tzinfo is not None else instant.replace(tzinfo=UTC)
+    try:
+        tz = ZoneInfo(timezone_name)
+    except (KeyError, ValueError):
+        tz = ZoneInfo("UTC")
+    return moment.astimezone(tz).strftime("%Y-%m")
 
 
 def _parse_start_date(value: str | None) -> date | None:
