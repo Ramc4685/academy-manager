@@ -30,7 +30,10 @@ from backend.v2.composition.admin import compose_admin
 from backend.v2.composition.coach import compose_coach
 from backend.v2.composition.digests import (
     compose_email_credential_probe,
+    compose_ingest_email_provider_event,
+    compose_list_email_suppressions,
     compose_ops_digest_sender,
+    compose_release_email_suppression,
     compose_send_coach_daily_digest,
     compose_send_parent_daily_digest,
     digest_window_open,
@@ -63,11 +66,23 @@ from backend.v2.contexts.billing.infrastructure.mongo_connected_account_repo imp
     MongoConnectedAccountRepository,
 )
 from backend.v2.contexts.communications.application.ports import ResolvedRecipient
+from backend.v2.contexts.communications.application.use_cases.get_email_preferences import (
+    GetEmailPreferences,
+)
+from backend.v2.contexts.communications.application.use_cases.resolve_unsubscribe_token import (
+    ResolveUnsubscribeToken,
+)
 from backend.v2.contexts.communications.application.use_cases.send_coach_daily_digest import (
     SendCoachDailyDigestCommand,
 )
 from backend.v2.contexts.communications.application.use_cases.send_parent_daily_digest import (
     SendParentDailyDigestCommand,
+)
+from backend.v2.contexts.communications.application.use_cases.set_email_preferences import (
+    SetEmailPreferences,
+)
+from backend.v2.contexts.communications.infrastructure.mongo_email_preference_repo import (
+    MongoEmailPreferenceRepository,
 )
 from backend.v2.contexts.identity.application.list_my_memberships_use_case import (
     ListMyMembershipsUseCase,
@@ -134,6 +149,7 @@ from backend.v2.contexts.platform.infrastructure.mongo_tenant_lifecycle_repo imp
 )
 from backend.v2.interfaces.admin.router import router as admin_router
 from backend.v2.interfaces.coach.router import router as coach_router
+from backend.v2.interfaces.email_webhook_routes import router as email_webhook_router
 from backend.v2.interfaces.magic_link_routes import router as magic_link_router
 from backend.v2.interfaces.me_routes import router as me_router
 from backend.v2.interfaces.owner.router import router as owner_router
@@ -141,6 +157,7 @@ from backend.v2.interfaces.parent.router import router as parent_router
 from backend.v2.interfaces.platform.router import router as platform_router
 from backend.v2.interfaces.registration_routes import router as registration_router
 from backend.v2.interfaces.student.router import router as student_router
+from backend.v2.interfaces.unsubscribe_routes import router as unsubscribe_router
 from backend.v2.migrations import run_pending_migrations
 from backend.v2.shared.auth.middleware import TenancyMiddleware
 from backend.v2.shared.caching import TTLCache
@@ -287,6 +304,25 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         links=MongoMagicLinkRepository(db),
         tokens=get_firebase_admin_adapter(),
     )
+
+    # Recipient email preferences (#555). Both the public token-authenticated
+    # unsubscribe routes and the logged-in parent routes read these off
+    # app.state, so the interfaces layer never imports a repository directly.
+    _email_preference_repo = MongoEmailPreferenceRepository(db)
+    app.state.get_email_preferences = GetEmailPreferences(preferences=_email_preference_repo)
+    app.state.set_email_preferences = SetEmailPreferences(preferences=_email_preference_repo)
+    # Fail closed: with no secret configured nothing was ever signed, the
+    # footer rendered a portal pointer instead of a link, and the unsubscribe
+    # endpoints 404. There is deliberately no fallback onto another secret.
+    app.state.resolve_unsubscribe_token = ResolveUnsubscribeToken(
+        secret=settings.unsubscribe_token_secret
+    )
+    # Resend bounce/complaint ingestion (issue #556). ``None`` when no signing
+    # secret is configured — the route then 404s rather than accepting
+    # unverified bounce reports.
+    app.state.ingest_email_provider_event = compose_ingest_email_provider_event(db)
+    app.state.list_email_suppressions = compose_list_email_suppressions(db)
+    app.state.release_email_suppression = compose_release_email_suppression(db)
 
     # Tenant resolver — wired only in SaaS mode. In non-SaaS mode the
     # middleware falls back to ``settings.default_academy_id`` so existing
@@ -1426,6 +1462,8 @@ def create_app() -> FastAPI:
     app.include_router(me_router, prefix="/api/v2")
     app.include_router(registration_router, prefix="/api/v2")
     app.include_router(magic_link_router, prefix="/api/v2")
+    app.include_router(unsubscribe_router, prefix="/api/v2")
+    app.include_router(email_webhook_router, prefix="/api/v2")
     if settings.enable_platform_routes:
         app.include_router(platform_router, prefix="/api/v2")
     app.include_router(coach_router, prefix="/api/v2")

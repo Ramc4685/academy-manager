@@ -16,6 +16,7 @@ from backend.v2.contexts.communications.application.ports import (
     ResolvedRecipient,
     SendOutcome,
 )
+from backend.v2.contexts.communications.domain.email_category import EmailCategory
 
 
 @dataclass
@@ -31,6 +32,7 @@ class StubEmailSendPort(EmailSendPort):
         cc: list[str] | None = None,
         bcc: list[str] | None = None,
         reply_to: str | None = None,
+        category: EmailCategory = EmailCategory.TRANSACTIONAL,
     ) -> SendOutcome:
         record_id = f"stub-{len(self.sent) + 1:06d}"
         self.sent.append(
@@ -43,6 +45,7 @@ class StubEmailSendPort(EmailSendPort):
                 "cc": list(cc) if cc else [],
                 "bcc": list(bcc) if bcc else [],
                 "reply_to": reply_to,
+                "category": category,
             }
         )
         return SendOutcome(

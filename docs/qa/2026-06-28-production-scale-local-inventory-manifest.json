@@ -3186,6 +3186,55 @@
       ]
     },
     {
+      "route": "/unsubscribe",
+      "role": "public",
+      "source": "frontend/app/(marketing)/unsubscribe/page.tsx",
+      "workflows": [
+        "Open the emailed unsubscribe link",
+        "Save opt-out choices",
+        "Re-open the link and opt back in"
+      ],
+      "controls": {
+        "buttons": [
+          "Save my preferences",
+          "Go to sign in"
+        ],
+        "inputs": [
+          "Announcements and updates",
+          "Daily summary emails"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "ready",
+        "saving",
+        "saved",
+        "validation: invalid or foreign token",
+        "not found: unsubscribe is not configured on this deployment",
+        "error"
+      ],
+      "risk_edges": [
+        "Nothing may change on page load — a mail scanner's link prefetch must not unsubscribe anyone",
+        "Transactional email must not be offered as something to switch off",
+        "A token from another academy must be refused, not silently applied"
+      ],
+      "acceptance": [
+        "The emailed link opens the page and shows the recipient's current choices",
+        "Saving records the opt-out and the confirmation reflects what was saved",
+        "Re-opening the link and clearing the boxes opts the recipient back in",
+        "No request that changes preferences is issued until the recipient clicks Save",
+        "There is no control for receipts, invoices, or sign-in email",
+        "An altered or foreign token renders the invalid-link state, never a partial save",
+        "Workflow evidence: \"Open the emailed unsubscribe link\" completes for the public route /unsubscribe with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Save opt-out choices\" completes for the public route /unsubscribe with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Re-open the link and opt back in\" completes for the public route /unsubscribe with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Nothing may change on page load — a mail scanner's link prefetch must not unsubscribe anyone\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Transactional email must not be offered as something to switch off\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"A token from another academy must be refused, not silently applied\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
       "route": "/student/dashboard",
       "role": "student",
       "source": "frontend/app/(student)/student/dashboard/page.tsx",

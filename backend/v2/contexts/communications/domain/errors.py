@@ -27,3 +27,12 @@ class EmptyAudienceError(CommunicationsError):
     to mark a campaign as 'sent' against an empty audience because the audit
     trail would imply a successful send that never happened.
     """
+
+
+class InvalidProviderSignature(CommunicationsError):
+    """Raised when an inbound provider webhook fails signature verification.
+
+    Mapped to HTTP 401 by the webhook route. Nothing is written before the
+    signature is checked, so a forged or replayed request leaves no trace in
+    the suppression list or the event log.
+    """

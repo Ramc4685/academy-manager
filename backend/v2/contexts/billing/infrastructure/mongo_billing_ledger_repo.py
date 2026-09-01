@@ -545,6 +545,71 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             if existing is not None:
                 return await self._existing_allocation_result(existing)
             raise
+        # ------------------------------------------------------------------
+        # Write ordering (#518): DEBIT THE PAYMENT FIRST, then post the invoice.
+        #
+        # ``result`` was computed from the ``payment_doc`` snapshot read above.
+        # A concurrent allocator (webhook worker vs. admin legacy match vs.
+        # reconciler — each under its own idempotency key) can consume the same
+        # unapplied balance between that read and this write, so the payment
+        # side needs the same conditional-write treatment the invoice side
+        # already had. A plain ``$set`` from the stale snapshot let both writers
+        # spend the same money.
+        #
+        # The payment's unapplied balance is the scarce resource, so it is
+        # reserved before any invoice is marked paid. If the process dies
+        # between the two writes the ledger is left with the funds RESERVED but
+        # the invoice not yet posted: conservative (the money cannot be spent a
+        # second time), and self-healing, because the repair paths re-derive
+        # both the invoice balance and the unapplied balance from the
+        # authoritative allocation rows. The opposite order would leave an
+        # invoice marked paid while the payment still advertises the funds as
+        # available — i.e. it would leave the double-spend window open exactly
+        # where a human is least likely to look.
+        #
+        # The overpayment credit is minted BEFORE the debit for the same reason
+        # the allocation row is: from the moment a row is visible to a
+        # concurrent repair, that repair derives the balance as
+        # ``amount - allocated - credits``. A row visible without its credit
+        # makes the repair compute an inflated balance and ``$set`` phantom
+        # funds that a later allocation can legitimately spend. Row and credit
+        # therefore become visible together, ahead of the write that consumes
+        # them, and ``_rollback_pending_allocation`` removes both if the
+        # allocation does not land.
+        # ------------------------------------------------------------------
+        if result.overpayment_credit is not None:
+            existing_credit = await self._db["account_credit_ledger"].find_one(
+                {
+                    "academy_id": academy_id,
+                    "source_type": "OVERPAYMENT",
+                    "source_id": result.allocation.allocation_id,
+                }
+            )
+            if existing_credit is None:
+                await self._db["account_credit_ledger"].insert_one(
+                    _mongo_doc(result.overpayment_credit)
+                )
+        snapshot_unapplied = int(payment_doc.get("unapplied_amount_cents", 0))
+        consumed_cents = snapshot_unapplied - result.payment.unapplied_amount_cents
+        payment_update = await self.ledger_payments.update_one(
+            {
+                "academy_id": academy_id,
+                "payment_id": payment_id,
+                "unapplied_amount_cents": {"$gte": consumed_cents},
+            },
+            {
+                "$inc": {"unapplied_amount_cents": -consumed_cents},
+                "$set": {"updated_at": result.payment.updated_at},
+            },
+        )
+        if getattr(payment_update, "matched_count", 0) != 1:
+            await self._rollback_pending_allocation(
+                academy_id=academy_id,
+                payment_id=payment_id,
+                allocation_id=result.allocation.allocation_id,
+                idempotency_key=idempotency_key,
+            )
+            raise ValueError("payment funds changed during allocation; retry")
         invoice_update = await self.collection.update_one(
             {
                 "academy_id": academy_id,
@@ -561,35 +626,16 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             },
         )
         if getattr(invoice_update, "matched_count", 0) != 1:
-            await self._db["payment_allocations"].delete_one(
-                {
-                    "academy_id": academy_id,
-                    "allocation_id": result.allocation.allocation_id,
-                    "idempotency_key": idempotency_key,
-                }
+            # The debit landed but the invoice was never posted, so the reserved
+            # funds have to go back. Re-derive rather than ``$inc`` them back:
+            # see ``_rollback_pending_allocation``.
+            await self._rollback_pending_allocation(
+                academy_id=academy_id,
+                payment_id=payment_id,
+                allocation_id=result.allocation.allocation_id,
+                idempotency_key=idempotency_key,
             )
             raise ValueError("invoice changed during allocation; retry")
-        await self.ledger_payments.update_one(
-            {"academy_id": academy_id, "payment_id": payment_id},
-            {
-                "$set": {
-                    "unapplied_amount_cents": result.payment.unapplied_amount_cents,
-                    "updated_at": result.payment.updated_at,
-                }
-            },
-        )
-        if result.overpayment_credit is not None:
-            existing_credit = await self._db["account_credit_ledger"].find_one(
-                {
-                    "academy_id": academy_id,
-                    "source_type": "OVERPAYMENT",
-                    "source_id": result.allocation.allocation_id,
-                }
-            )
-            if existing_credit is None:
-                await self._db["account_credit_ledger"].insert_one(
-                    _mongo_doc(result.overpayment_credit)
-                )
         stored_allocation = await self._db["payment_allocations"].find_one(
             {"academy_id": academy_id, "idempotency_key": idempotency_key}
         )
@@ -890,6 +936,54 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             }
         return rows
 
+    async def _rollback_pending_allocation(
+        self,
+        *,
+        academy_id: str,
+        payment_id: str,
+        allocation_id: str,
+        idempotency_key: str,
+    ) -> None:
+        """Undo a half-applied allocation and RE-DERIVE the payment's balance.
+
+        Removes the allocation row and any overpayment credit minted alongside
+        it, then recomputes ``unapplied_amount_cents`` from the rows that
+        actually survive.
+
+        Re-deriving rather than ``$inc``-ing the reserved amount back is what
+        makes this safe. An allocation row is visible to concurrent readers from
+        the moment it is inserted, and every repair path derives the balance as
+        ``amount - refunded - allocated - credits``. So between the insert and
+        the guarded debit, another writer's terminal repair can already have
+        written the balance down *on this row's behalf*. If the debit then loses
+        its CAS and we merely dropped the row, the money that repair deducted
+        would be stranded: unspendable, with no flag and no error (the flag only
+        catches over-allocation, never a deficit). Conversely, if no repair ran,
+        a blind refund ``$inc`` would be right only by luck — and in the
+        invoice-CAS branch it would double-refund whatever a repair had already
+        restored, minting phantom funds. Recomputing from the surviving rows
+        converges to the correct balance in every one of those interleavings.
+        """
+        await self._db["account_credit_ledger"].delete_one(
+            {
+                "academy_id": academy_id,
+                "source_type": "OVERPAYMENT",
+                "source_id": allocation_id,
+            }
+        )
+        await self._db["payment_allocations"].delete_one(
+            {
+                "academy_id": academy_id,
+                "allocation_id": allocation_id,
+                "idempotency_key": idempotency_key,
+            }
+        )
+        await self._repair_payment_after_allocation_change(
+            academy_id=academy_id,
+            payment_id=payment_id,
+            now=self._clock(),
+        )
+
     async def _existing_allocation_result(
         self, allocation_doc: dict[str, object]
     ) -> LedgerAllocationResult:
@@ -912,6 +1006,70 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             allocation=allocation,
             overpayment_credit=self._credit_from_doc(credit_doc) if credit_doc else None,
         )
+
+    def _resolve_unapplied(
+        self,
+        *,
+        academy_id: str,
+        payment_id: str,
+        payment_amount_cents: int,
+        refunded_cents: int,
+        allocated_cents: int,
+        overpayment_credit_cents: int,
+    ) -> tuple[int, int]:
+        """Recompute a payment's unapplied balance from its allocation rows.
+
+        Returns ``(unapplied_cents, over_allocated_cents)``.
+
+        The two numbers answer different questions and are deliberately derived
+        from different formulas:
+
+        * ``unapplied`` is spendable money: ``amount - refunded - allocated -
+          credits``. Refunds reduce it, because refunded money is gone. It is
+          floored at 0 — ``LedgerPayment`` declares the field ``ge=0``, so a
+          negative value cannot round-trip through the domain model at all.
+          (The Mongo validator in migration 0132 types the field as ``MONEY``
+          without a minimum; the constraint that actually bites is pydantic's.)
+
+        * ``over_allocated`` is the #518 double-spend signal:
+          ``allocated + credits - amount``, floored at 0, and pointedly WITHOUT
+          refunds. Allocations survive a refund by design (see
+          ``_on_charge_refunded_ledger``: "the payment did happen"), so folding
+          refunds in here would flag every refunded-but-allocated payment as a
+          double-spend and bury the real ones. Applying more than the payment
+          was ever worth, on the other hand, is impossible without the same
+          funds having been spent twice — refund or no refund.
+
+        Flooring ``unapplied`` alone was the old behaviour, and it made a
+        double-spend indistinguishable from a fully-applied payment. The
+        overflow is now surfaced instead: returned for the caller to persist as
+        ``over_allocated_cents`` and logged at ERROR.
+        """
+        unapplied = max(
+            0, payment_amount_cents - refunded_cents - allocated_cents - overpayment_credit_cents
+        )
+        over_allocated = max(0, allocated_cents + overpayment_credit_cents - payment_amount_cents)
+        if over_allocated:
+            log.error(
+                "billing ledger over-allocation detected: academy=%s payment=%s "
+                "amount_cents=%d refunded_cents=%d allocated_cents=%d "
+                "overpayment_credit_cents=%d over_allocated_cents=%d — more money was "
+                "applied than this payment was ever worth, so the same funds were spent "
+                "more than once; unapplied_amount_cents is stored as 0 and the payment "
+                "is flagged with over_allocated_cents for manual reconciliation. The "
+                "flag is re-derived on every repair, so a value that appears while a "
+                "concurrent allocation is still in flight clears itself once that "
+                "allocation commits or rolls back; alert on the persisted field rather "
+                "than on this line",
+                academy_id,
+                payment_id,
+                payment_amount_cents,
+                refunded_cents,
+                allocated_cents,
+                overpayment_credit_cents,
+                over_allocated,
+            )
+        return unapplied, over_allocated
 
     async def _repair_allocation_projection(
         self,
@@ -951,13 +1109,30 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             payment_id=allocation.payment_id,
         )
         payment_amount = int(payment_doc.get("amount_cents", 0))
-        repaired_unapplied = max(0, payment_amount - allocated_from_payment - overpayment_credit)
+        # Refunds must be subtracted here too. This ``$set`` is the last write
+        # to ``unapplied_amount_cents`` on every allocate path, so ignoring
+        # ``refunded_cents`` (the old behaviour) re-inflated the balance the
+        # guarded debit had just reserved: on a partially refunded payment the
+        # refunded money became allocatable again — a double-spend needing no
+        # race at all — and it left the two repair paths permanently
+        # disagreeing about the same payment.
+        repaired_unapplied, over_allocated = self._resolve_unapplied(
+            academy_id=academy_id,
+            payment_id=allocation.payment_id,
+            payment_amount_cents=payment_amount,
+            refunded_cents=int(payment_doc.get("refunded_cents") or 0),
+            allocated_cents=allocated_from_payment,
+            overpayment_credit_cents=overpayment_credit,
+        )
 
         invoice_stale = (
             int(invoice_doc.get("balance_due_cents", 0)) != repaired_balance
             or current_status != repaired_status
         )
-        payment_stale = int(payment_doc.get("unapplied_amount_cents", 0)) != repaired_unapplied
+        payment_stale = (
+            int(payment_doc.get("unapplied_amount_cents", 0)) != repaired_unapplied
+            or int(payment_doc.get("over_allocated_cents", 0) or 0) != over_allocated
+        )
         if invoice_stale or payment_stale:
             now = self._clock()
             if invoice_stale:
@@ -977,6 +1152,7 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
                     {
                         "$set": {
                             "unapplied_amount_cents": repaired_unapplied,
+                            "over_allocated_cents": over_allocated,
                             "updated_at": now,
                         }
                     },
@@ -1042,10 +1218,23 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         )
         amount = int(payment_doc.get("amount_cents") or 0)
         refunded = int(payment_doc.get("refunded_cents") or 0)
-        unapplied = max(0, amount - refunded - allocated_from_payment - overpayment_credit)
+        unapplied, over_allocated = self._resolve_unapplied(
+            academy_id=academy_id,
+            payment_id=payment_id,
+            payment_amount_cents=amount,
+            refunded_cents=refunded,
+            allocated_cents=allocated_from_payment,
+            overpayment_credit_cents=overpayment_credit,
+        )
         await self.ledger_payments.update_one(
             {"academy_id": academy_id, "payment_id": payment_id},
-            {"$set": {"unapplied_amount_cents": unapplied, "updated_at": now}},
+            {
+                "$set": {
+                    "unapplied_amount_cents": unapplied,
+                    "over_allocated_cents": over_allocated,
+                    "updated_at": now,
+                }
+            },
         )
 
     async def _void_overpayment_credit_for_allocation(

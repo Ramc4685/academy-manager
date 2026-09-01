@@ -23,15 +23,20 @@ from typing import Any, Protocol
 
 from backend.v2.contexts.communications.application.digest_renderer import render_coach_digest
 from backend.v2.contexts.communications.application.ports import (
+    AcademySlugLookup,
     AudienceResolver,
     DigestSendRepository,
     EmailSendPort,
     ResolvedRecipient,
 )
+from backend.v2.contexts.communications.application.unsubscribe_token import (
+    UnsubscribeLinkBuilder,
+)
 from backend.v2.contexts.communications.application.use_cases.send_coach_daily_digest import (
     PlanProvider,
     plan_is_empty,
 )
+from backend.v2.contexts.communications.domain.email_category import EmailCategory
 from backend.v2.contexts.communications.domain.models import SelectedRecipientsAudience
 
 
@@ -68,7 +73,21 @@ class SendCoachDigestTest:
     resolver: AudienceResolver
     sender: EmailSendPort
     plan_provider: PlanProvider
+    # The admin-triggered test send is a real DIGEST-category email to a real
+    # coach, so it carries the same opt-out footer as the hourly digest (#555).
+    # Without these it was the one digest path that shipped the no-link
+    # fallback sentence even with a signing secret configured.
+    unsubscribe_links: UnsubscribeLinkBuilder = field(default_factory=UnsubscribeLinkBuilder)
+    academy_slugs: AcademySlugLookup | None = None
     now: _Clock = field(default=_utcnow)
+
+    async def _academy_slug(self, academy_id: str) -> str | None:
+        if self.academy_slugs is None:
+            return None
+        try:
+            return await self.academy_slugs.slug_for(academy_id)
+        except Exception:
+            return None
 
     async def execute(self, command: SendCoachDigestTestCommand) -> SendCoachDigestTestResult:
         recipients = await self.resolver.resolve_selected_audience(
@@ -112,7 +131,14 @@ class SendCoachDigestTest:
                 detail="Recipient has no email address.",
             )
 
-        subject, body = render_coach_digest(plan)
+        subject, body = render_coach_digest(
+            plan,
+            unsubscribe_url=self.unsubscribe_links.build(
+                academy_id=command.academy_id,
+                user_id=recipient.user_id,
+                academy_slug=await self._academy_slug(command.academy_id),
+            ),
+        )
         outcome = await self.sender.send(
             recipient=ResolvedRecipient(
                 user_id=recipient.user_id,
@@ -121,6 +147,10 @@ class SendCoachDigestTest:
             ),
             subject=subject,
             body=body,
+            # An admin-triggered test is still a digest: it must respect a hard
+            # bounce and an opt-out rather than being the one path that mails a
+            # recipient who asked us to stop.
+            category=EmailCategory.DIGEST,
         )
         if outcome.ok:
             await self.digests.mark_sent(send.digest_id, outcome.provider_message_id)
