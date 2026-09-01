@@ -1035,3 +1035,145 @@ async def test_billing_port_adapter_is_idempotent_against_real_ledger() -> None:
             {"academy_id": academy_id, "invoice_id": invoice_id, "source_id": idempotency_key}
         )
         assert lines == 1
+
+
+# ---------------------------------------------------------------------------
+# #541 follow-up: the fee's invoice period must be built on the session's own
+# clock, not a raw UTC instant. ``get_open_invoice_for_student(student_id,
+# period)`` and ``AddInvoiceLineCommand.period`` both key off this label, so a
+# UTC label attaches a month-end evening cancellation to (or opens) the NEXT
+# month's invoice.
+# ---------------------------------------------------------------------------
+
+
+async def test_cancellation_fee_period_uses_the_session_timezone() -> None:
+    """8:30pm Chicago on Nov 30 is 02:30 UTC Dec 1 — the fee belongs to November."""
+
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    from backend.v2.composition.parent import compose_parent
+    from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import FakeStripeGateway
+    from backend.v2.shared.idempotency.mongo_store import MongoIdempotencyStore
+    from backend.v2.shared.tenancy.context import tenant_scope
+
+    academy_id = "acad"
+    client = mongomock_motor.AsyncMongoMockClient()
+    db = client["test_db"]
+
+    class _FakeOutbox:
+        async def append(self, event: object) -> None:
+            return None
+
+    # 2026-12-01T02:30Z == 2026-11-30 20:30 America/Chicago. Deliberately a
+    # month that is neither the real wall-clock month nor the UTC month of the
+    # frozen instant, so the assertion cannot go green by coincidence: it fails
+    # if the port reads real time AND it fails if it reads the frozen instant
+    # in UTC.
+    frozen = datetime(2026, 12, 1, 2, 30, tzinfo=UTC)
+
+    with tenant_scope(academy_id):
+        await db["students"].insert_one(
+            {
+                "academy_id": academy_id,
+                "student_id": "student-1",
+                "parent_id": "parent-1",
+                "full_name": "Kid One",
+            }
+        )
+        await db["sessions"].insert_one(
+            {
+                "academy_id": academy_id,
+                "session_id": "session-1",
+                "title": "Evening Squad",
+                "timezone": "America/Chicago",
+                "start_at": datetime(2026, 8, 3, 23, 0, tzinfo=UTC),
+                "end_at": datetime(2026, 8, 4, 0, 0, tzinfo=UTC),
+            }
+        )
+
+        composition = compose_parent(
+            db,
+            _FakeOutbox(),  # type: ignore[arg-type]
+            MongoIdempotencyStore(db),
+            FakeStripeGateway(),
+            academy_id=academy_id,
+            clock=lambda: frozen,
+        )
+        billing_port = composition.self_cancel_enrollment._billing  # type: ignore[attr-defined]
+
+        result = await billing_port.record_cancellation_fee(
+            enrollment=_enrollment(),
+            fee_cents=2500,
+            reason="Cancellation fee",
+            actor_id="parent-1",
+            idempotency_key="enr-1-self-cancel-fee",
+        )
+
+        invoice = await db["invoices"].find_one(
+            {"academy_id": academy_id, "invoice_id": result["invoice_id"]}
+        )
+        assert invoice is not None
+        assert invoice["period"] == "2026-11"
+
+
+async def test_cancellation_fee_period_falls_back_to_utc_for_an_unknown_zone() -> None:
+    """An unparseable session timezone must not break cancellation billing."""
+
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    from backend.v2.composition.parent import compose_parent
+    from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import FakeStripeGateway
+    from backend.v2.shared.idempotency.mongo_store import MongoIdempotencyStore
+    from backend.v2.shared.tenancy.context import tenant_scope
+
+    academy_id = "acad"
+    client = mongomock_motor.AsyncMongoMockClient()
+    db = client["test_db"]
+
+    class _FakeOutbox:
+        async def append(self, event: object) -> None:
+            return None
+
+    frozen = datetime(2026, 12, 1, 2, 30, tzinfo=UTC)
+
+    with tenant_scope(academy_id):
+        await db["students"].insert_one(
+            {
+                "academy_id": academy_id,
+                "student_id": "student-1",
+                "parent_id": "parent-1",
+                "full_name": "Kid One",
+            }
+        )
+        await db["sessions"].insert_one(
+            {
+                "academy_id": academy_id,
+                "session_id": "session-1",
+                "title": "Evening Squad",
+                "timezone": "Mars/Olympus_Mons",
+                "start_at": datetime(2026, 8, 3, 23, 0, tzinfo=UTC),
+                "end_at": datetime(2026, 8, 4, 0, 0, tzinfo=UTC),
+            }
+        )
+
+        composition = compose_parent(
+            db,
+            _FakeOutbox(),  # type: ignore[arg-type]
+            MongoIdempotencyStore(db),
+            FakeStripeGateway(),
+            academy_id=academy_id,
+            clock=lambda: frozen,
+        )
+        billing_port = composition.self_cancel_enrollment._billing  # type: ignore[attr-defined]
+
+        result = await billing_port.record_cancellation_fee(
+            enrollment=_enrollment(),
+            fee_cents=2500,
+            reason="Cancellation fee",
+            actor_id="parent-1",
+            idempotency_key="enr-1-self-cancel-fee",
+        )
+
+        invoice = await db["invoices"].find_one(
+            {"academy_id": academy_id, "invoice_id": result["invoice_id"]}
+        )
+        assert invoice is not None
+        assert invoice["period"] == "2026-12"

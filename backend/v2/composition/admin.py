@@ -3928,7 +3928,8 @@ def compose_admin(
         return await _quote_enrollment_uc.execute(
             QuoteEnrollmentCommand(
                 session_id=session_id,
-                billing_start_at=_start_date_to_datetime(start_date),
+                billing_start_at=datetime.now(UTC),
+                billing_start_date=_parse_start_date(start_date),
                 calculated_by="admin",
                 student_id=student_id,
             )
@@ -4771,12 +4772,8 @@ class _SessionTypeChangedEventSink:
         )
 
 
-def _start_date_to_datetime(value: str | None) -> datetime:
+def _parse_start_date(value: str | None) -> date | None:
+    """Parse a start date; QuoteEnrollment resolves it in the session tz (#541)."""
     if not value:
-        return datetime.now(UTC)
-    local = datetime.combine(
-        datetime.fromisoformat(value).date(),
-        time.min,
-        tzinfo=ZoneInfo("America/Chicago"),
-    )
-    return local.astimezone(UTC)
+        return None
+    return datetime.fromisoformat(value).date()
