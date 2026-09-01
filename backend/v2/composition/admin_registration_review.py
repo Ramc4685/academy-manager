@@ -11,7 +11,9 @@ from pydantic import BaseModel, Field
 
 from backend.v2.contexts.enrollment.application.ports import (
     EnrollmentEventRepository,
+    EnrollmentWelcomeNotifier,
     EnrollmentWriter,
+    RosterChangeNotifier,
     SessionWriter,
     StudentWriter,
     WaitlistRepository,
@@ -201,6 +203,8 @@ class AdminRegistrationReview:
         student_registrations: StudentRegistrationQuery | None = None,
         refunds: RegistrationRefundIssuer | None = None,
         paid_period_resolver: PaidPeriodResolver | None = None,
+        welcome_notifier: EnrollmentWelcomeNotifier | None = None,
+        roster_notifier: RosterChangeNotifier | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._apps = apps
@@ -216,6 +220,8 @@ class AdminRegistrationReview:
         self._student_registrations = student_registrations
         self._refunds = refunds
         self._paid_period_resolver = paid_period_resolver
+        self._welcome_notifier = welcome_notifier
+        self._roster_notifier = roster_notifier
         self._now = clock
 
     async def list_pending(self) -> list[AdminRegistrationRow]:
@@ -387,6 +393,15 @@ class AdminRegistrationReview:
                     "Registration %s was approved, but trial conversion linking failed",
                     decided.application_id,
                 )
+            # #613 welcome email. After `_complete_review`, so the approval is
+            # already durable, and swallowing: a Resend outage must never turn
+            # into a failed approval, and re-running approve() on a decided
+            # application is a no-op the admin cannot use to retry the send.
+            await self._notify_welcome(decided, session=session, full_name=full_name)
+            # #612 staff alert, same best-effort contract as the welcome mail
+            # and deliberately after `_complete_review`: the alert quotes a
+            # roster count, which is only final once the approval is.
+            await self._notify_roster(decided, session=session, full_name=full_name)
             return await self._detail(decided)
         except Exception:
             if student_id is not None:
@@ -398,6 +413,59 @@ class AdminRegistrationReview:
                 updated_at=self._now(),
             )
             raise
+
+    async def _notify_welcome(
+        self,
+        app: Application,
+        *,
+        session: Session,
+        full_name: str,
+    ) -> None:
+        """Best-effort parent welcome email on approval (#613).
+
+        Never raises: approval is already committed by the time this runs, and
+        an approval that reports failure because a mail provider blipped would
+        be re-attempted against an already-decided application.
+        """
+        if self._welcome_notifier is None:
+            return
+        try:
+            await self._welcome_notifier.send_welcome(
+                session_id=session.session_id,
+                student_name=full_name,
+                parent_user_id=app.parent_user_id,
+                parent_email=str(app.parent_email) or None,
+            )
+        except Exception:
+            logger.exception(
+                "Registration %s was approved, but the welcome email failed",
+                app.application_id,
+            )
+
+    async def _notify_roster(
+        self,
+        app: Application,
+        *,
+        session: Session,
+        full_name: str,
+    ) -> None:
+        """Best-effort roster alert to the coach and the academy's staff (#612)."""
+        if self._roster_notifier is None:
+            return
+        try:
+            await self._roster_notifier.roster_changed(
+                change="approved",
+                session_id=session.session_id,
+                student_id=str(app.student_id or ""),
+                student_name=full_name,
+                actor_id=getattr(app, "decided_by", None),
+                parent_user_id=app.parent_user_id,
+            )
+        except Exception:
+            logger.exception(
+                "enrollment.roster_notification_failed",
+                extra={"change": "approved", "application_id": app.application_id},
+            )
 
     async def waitlist(self, command: WaitlistRegistrationCommand) -> AdminRegistrationDetail:
         app = await self._get(command.application_id)

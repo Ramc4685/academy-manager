@@ -46,6 +46,10 @@ class FakeStudents:
     async def upsert(self, student: Student) -> None:
         self.rows.append(student)
 
+    async def ensure_exists(self, student: Student) -> bool:
+        self.rows.append(student)
+        return True
+
 
 @dataclass
 class FakeEnrollments:

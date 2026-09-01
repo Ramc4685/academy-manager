@@ -13,6 +13,7 @@ import {
   type AttendanceStatus,
   type CoachRosterEntry,
 } from "@/lib/api/coach";
+import { AnnouncementsPanel } from "@/components/announcements/AnnouncementsPanel";
 import { BillingPreviewDrawer } from "@/components/coach/billing-preview-drawer";
 import { SessionDetailTabs } from "@/components/coach/SessionDetailTabs";
 import { Chip } from "@/components/ds/chip";
@@ -341,6 +342,23 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
             ))}
           </ul>
         )}
+      </section>
+
+      {/*
+        Announcements are SESSION-scoped, but this route's id may be an
+        occurrence_id (see the SessionDetailTabs docstring and the
+        `occurrence_id || session_id` lookup above). Passing `decodedId` would
+        404 on every recurring session, so the resolved `session.session_id`
+        is what goes down.
+      */}
+      <section className="mt-6">
+        <h2
+          className="mb-2 text-sm font-semibold uppercase tracking-wide"
+          style={{ color: "var(--rally-muted)" }}
+        >
+          Announcements
+        </h2>
+        <AnnouncementsPanel persona="coach" sessionId={session.session_id} />
       </section>
     </section>
   );

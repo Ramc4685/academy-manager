@@ -54,11 +54,17 @@ class UnsubscribePreviewRequest(_TokenBody):
 class UnsubscribeConfirmRequest(_TokenBody):
     campaigns: bool
     digests: bool
+    # Optional, and optional on purpose (#612). The model forbids extra keys,
+    # so a required field here would 422 every request from the currently
+    # deployed unsubscribe page; a `= False` default would silently
+    # re-subscribe anyone who saved from it. `None` means "leave unchanged".
+    notifications: bool | None = None
 
 
 class UnsubscribeStateResponse(BaseModel):
     campaigns_opted_out: bool
     digests_opted_out: bool
+    notifications_opted_out: bool = False
 
 
 def _resolver(request: Request) -> ResolveUnsubscribeToken:
@@ -105,6 +111,7 @@ async def preview_unsubscribe(
     return UnsubscribeStateResponse(
         campaigns_opted_out=current.campaigns_opted_out,
         digests_opted_out=current.digests_opted_out,
+        notifications_opted_out=current.notifications_opted_out,
     )
 
 
@@ -120,10 +127,12 @@ async def confirm_unsubscribe(
                 user_id=user_id,
                 campaigns_opted_out=body.campaigns,
                 digests_opted_out=body.digests,
+                notifications_opted_out=body.notifications,
                 source="link",
             )
         )
     return UnsubscribeStateResponse(
         campaigns_opted_out=saved.campaigns_opted_out,
         digests_opted_out=saved.digests_opted_out,
+        notifications_opted_out=saved.notifications_opted_out,
     )

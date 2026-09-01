@@ -28,6 +28,14 @@ export interface AdminSessionView {
   status: "scheduled" | "cancelled" | "completed";
   enrolled_count: number;
   waitlist_count: number;
+  // Communication pack (#613) — optional per-session onboarding facts.
+  whatsapp_group_link?: string | null;
+  venue_address?: string | null;
+  parking_notes?: string | null;
+  what_to_bring?: string | null;
+  arrival_minutes_before?: number | null;
+  coach_contact_policy?: string | null;
+  absence_policy?: string | null;
 }
 
 export interface AdminSessionList {
@@ -103,6 +111,13 @@ export interface CreateSessionRequest {
   timezone?: string | null;
   capacity: number;
   amount_cents?: number | null;
+  whatsapp_group_link?: string | null;
+  venue_address?: string | null;
+  parking_notes?: string | null;
+  what_to_bring?: string | null;
+  arrival_minutes_before?: number | null;
+  coach_contact_policy?: string | null;
+  absence_policy?: string | null;
 }
 
 export interface EditSessionRequest {
@@ -117,6 +132,13 @@ export interface EditSessionRequest {
   timezone?: string | null;
   capacity?: number;
   amount_cents?: number | null;
+  whatsapp_group_link?: string | null;
+  venue_address?: string | null;
+  parking_notes?: string | null;
+  what_to_bring?: string | null;
+  arrival_minutes_before?: number | null;
+  coach_contact_policy?: string | null;
+  absence_policy?: string | null;
   reason?: string;
 }
 

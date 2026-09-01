@@ -46,45 +46,67 @@ def _message(**overrides) -> Message:
 class _FakeMessageRepo:
     rows: dict[str, Message] = field(default_factory=dict)
 
-    async def for_recipient(self, recipient_id: str) -> list[Message]:
+    def _visible(self, m: Message, recipient_id: str, visible_session_ids) -> bool:
+        """Mirrors MongoMessageRepository._visibility_filter (#614)."""
+        if m.deleted_at is not None:
+            return False
+        if m.recipient_id == recipient_id:
+            return True
+        if m.kind != "announcement":
+            return False
+        if m.scope_type != "session":
+            return True
+        return m.scope_id in set(visible_session_ids)
+
+    async def for_recipient(self, recipient_id: str, *, visible_session_ids) -> list[Message]:
         return sorted(
-            (
-                m
-                for m in self.rows.values()
-                if m.recipient_id == recipient_id or m.kind == "announcement"
-            ),
+            (m for m in self.rows.values() if self._visible(m, recipient_id, visible_session_ids)),
             key=lambda m: m.created_at,
             reverse=True,
         )
 
-    async def mark_read(self, message_id: str, user_id: str) -> None:
+    async def mark_read(self, message_id: str, user_id: str, *, visible_session_ids) -> None:
         # Mirrors MongoMessageRepository.mark_read: only messages the caller
-        # can actually read (own DM or an announcement) are markable.
+        # can actually read are markable.
         m = self.rows.get(message_id)
-        if m is None:
-            return
-        if m.recipient_id != user_id and m.kind != "announcement":
+        if m is None or not self._visible(m, user_id, visible_session_ids):
             return
         if user_id not in m.read_by:
             m.read_by.append(user_id)
 
 
 class _FakeParentUseCases:
-    def __init__(self, repo: _FakeMessageRepo) -> None:
-        self.list_messages = repo.for_recipient
-        self.mark_message_read = repo.mark_read
+    """Mirrors composition/parent.py: the closure resolves the parent's live
+    active-enrollment session ids and hands them to the repository. The routes
+    themselves take no session argument, which is why the scoping has to be
+    tested through this shape rather than against the repo directly."""
+
+    def __init__(self, repo: _FakeMessageRepo, visible_session_ids=()) -> None:
+        self._repo = repo
+        self._visible = tuple(visible_session_ids)
+
+    async def list_messages(self, parent_id: str) -> list[Message]:
+        return await self._repo.for_recipient(parent_id, visible_session_ids=self._visible)
+
+    async def mark_message_read(self, message_id: str, user_id: str) -> None:
+        await self._repo.mark_read(message_id, user_id, visible_session_ids=self._visible)
 
 
 @contextmanager
 def _make_client(
-    repo: _FakeMessageRepo | None = None, role: str = "parent", user_id: str = "p1"
+    repo: _FakeMessageRepo | None = None,
+    role: str = "parent",
+    user_id: str = "p1",
+    visible_session_ids=(),
 ) -> Iterator[TestClient]:
     repo = repo if repo is not None else _FakeMessageRepo()
     app = FastAPI()
     register_exception_handlers(app)
     app.include_router(parent_router, prefix="/api/v2")
     app.dependency_overrides[get_auth_claims] = lambda: _claims(role, user_id)
-    app.dependency_overrides[get_parent_use_cases] = lambda: _FakeParentUseCases(repo)
+    app.dependency_overrides[get_parent_use_cases] = lambda: _FakeParentUseCases(
+        repo, visible_session_ids
+    )
     with TestClient(app) as client:
         client.messages_repo = repo  # type: ignore[attr-defined]
         yield client
@@ -198,3 +220,79 @@ def test_parent_messages_requires_auth():
     with _anon_client() as client:
         r = client.get("/api/v2/parent/messages")
     assert r.status_code == 401
+
+
+# --- #614 session announcement scoping ---------------------------------
+
+
+def _session_announcement(**overrides) -> Message:
+    return _message(
+        message_id="ann-1",
+        kind="announcement",
+        recipient_id=None,
+        body="Court 3 is closed tonight",
+        scope_type="session",
+        scope_id="sess-1",
+        scope_label="Tuesday Juniors",
+        urgency="urgent",
+        author_display_name="Coach Riya",
+        **overrides,
+    )
+
+
+def test_enrolled_parent_sees_the_session_announcement_with_its_label():
+    repo = _FakeMessageRepo(rows={"ann-1": _session_announcement()})
+    with _make_client(repo, visible_session_ids=("sess-1",)) as client:
+        r = client.get("/api/v2/parent/messages")
+
+    assert r.status_code == 200, r.text
+    [view] = r.json()["messages"]
+    assert view["body"] == "Court 3 is closed tonight"
+    # The label is what tells a family with three children in three classes
+    # WHICH class was cancelled.
+    assert view["scope_label"] == "Tuesday Juniors"
+    assert view["urgency"] == "urgent"
+    assert view["author_display_name"] == "Coach Riya"
+
+
+def test_parent_without_the_enrollment_cannot_see_the_session_announcement():
+    """THE #614 LEAK REGRESSION TEST.
+
+    Same academy, same endpoint, no active enrollment in that session. Before
+    the fix ``for_recipient`` matched every ``kind == "announcement"`` document
+    in the tenant, so this parent would have read another class's message.
+    """
+    repo = _FakeMessageRepo(
+        rows={
+            "ann-1": _session_announcement(),
+            "m-2": _message(
+                message_id="m-2", kind="announcement", recipient_id=None, body="Academy closed"
+            ),
+        }
+    )
+    with _make_client(repo, user_id="p2", visible_session_ids=()) as client:
+        r = client.get("/api/v2/parent/messages")
+
+    assert r.status_code == 200, r.text
+    bodies = [m["body"] for m in r.json()["messages"]]
+    # The academy-wide announcement still arrives — no regression there.
+    assert bodies == ["Academy closed"]
+
+
+def test_unenrolled_parent_cannot_forge_a_read_receipt_on_a_session_announcement():
+    repo = _FakeMessageRepo(rows={"ann-1": _session_announcement()})
+    with _make_client(repo, user_id="p2", visible_session_ids=()) as client:
+        r = client.post("/api/v2/parent/messages/ann-1/read")
+
+    # 200 either way: the endpoint must not become an existence oracle.
+    assert r.status_code == 200, r.text
+    assert repo.rows["ann-1"].read_by == []
+
+
+def test_enrolled_parent_can_mark_the_session_announcement_read():
+    repo = _FakeMessageRepo(rows={"ann-1": _session_announcement()})
+    with _make_client(repo, visible_session_ids=("sess-1",)) as client:
+        r = client.post("/api/v2/parent/messages/ann-1/read")
+
+    assert r.status_code == 200, r.text
+    assert repo.rows["ann-1"].read_by == ["p1"]

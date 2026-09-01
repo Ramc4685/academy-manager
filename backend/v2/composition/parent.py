@@ -19,6 +19,7 @@ from backend.v2.composition.pathway import (
     compose_curriculum,
     compose_student_progress,
 )
+from backend.v2.composition.roster_notifications import compose_roster_notifier
 from backend.v2.contexts.billing.application.ports import (
     StripeCheckoutSessionNotExpirable,
     StripeGateway,
@@ -214,7 +215,7 @@ from backend.v2.contexts.onboarding.infrastructure.mongo_parent_waiver_repo impo
 from backend.v2.contexts.onboarding.infrastructure.mongo_registration_waiver_repo import (
     MongoRegistrationWaiverRepository,
 )
-from backend.v2.shared.comms import MongoMessageRepository
+from backend.v2.shared.comms import Message, MongoMessageRepository
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore
@@ -866,6 +867,10 @@ def compose_parent(
                 "deduped": False,
             }
 
+    # #612 staff roster alerts for the parent-side triggers: a self-cancel and
+    # the waitlist promotion it frees a seat for.
+    roster_notifier = compose_roster_notifier(db, settings)
+
     preview_self_cancel = PreviewSelfCancel(
         enrollments=enrollments_writer,
         students=students_query,
@@ -881,6 +886,7 @@ def compose_parent(
         outbox=outbox,
         billing=_SelfCancelFeeBillingPort(),
         enrollment_events=enrollment_events,
+        roster_notifier=roster_notifier,
     )
 
     confirm_enrollment = ConfirmEnrollment(
@@ -899,6 +905,7 @@ def compose_parent(
         enrollments=enrollments_writer,
         outbox=outbox,
         enrollment_events=enrollment_events,
+        roster_notifier=roster_notifier,
         academy_id=request_academy_id,
     )
 
@@ -2100,6 +2107,43 @@ def compose_parent(
     # Messages inbox (UIM13) — shared comms store, per-recipient read routes.
     messages_repo = MongoMessageRepository(db)
 
+    async def _visible_session_ids(parent_id: str) -> list[str]:
+        """Sessions this parent's children are ACTIVELY enrolled in (#614).
+
+        Resolved per request, never captured at composition time: the tenant
+        comes from ``current_academy_id()`` inside the closure, and the roster
+        is read live so a family that joins or leaves a class gains or loses
+        that class's announcements immediately, with no backfill.
+
+        A withdrawn family losing access to the class's past announcements is
+        the intended, privacy-correct behaviour — the announcement is about a
+        class they are no longer in.
+        """
+        academy_id = current_academy_id()  # request-time tenant (C4)
+        students = await _parent_students(parent_id)
+        student_ids = [str(s.get("student_id") or s["_id"]) for s in students]
+        if not student_ids:
+            return []
+        cursor = db["enrollments"].find(
+            {
+                "academy_id": academy_id,
+                "student_id": {"$in": student_ids},
+                "status": "active",
+            },
+            {"session_id": 1},
+        )
+        return sorted({str(doc["session_id"]) async for doc in cursor if doc.get("session_id")})
+
+    async def list_messages(parent_id: str) -> list[Message]:
+        return await messages_repo.for_recipient(
+            parent_id, visible_session_ids=await _visible_session_ids(parent_id)
+        )
+
+    async def mark_message_read(message_id: str, user_id: str) -> None:
+        await messages_repo.mark_read(
+            message_id, user_id, visible_session_ids=await _visible_session_ids(user_id)
+        )
+
     return ParentComposition(
         start_application=start_app,
         patch_application=patch_app,
@@ -2143,8 +2187,8 @@ def compose_parent(
         get_registration_waiver=get_registration_waiver,
         student_progress=sp_composition,
         curriculum=curriculum_composition,
-        list_messages=messages_repo.for_recipient,
-        mark_message_read=messages_repo.mark_read,
+        list_messages=list_messages,
+        mark_message_read=mark_message_read,
         get_parent_profile=get_parent_profile,
         update_parent_profile=update_parent_profile,
         confirm_parent_email=confirm_parent_email,

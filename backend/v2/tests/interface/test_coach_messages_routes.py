@@ -122,3 +122,46 @@ def test_coach_mark_read_wrong_persona_404(parent_client):
 def test_coach_messages_requires_auth(anon_client):
     r = anon_client.get("/api/v2/coach/messages")
     assert r.status_code == 401
+
+
+# --- #614 session announcement scoping ---------------------------------
+
+
+def _session_announcement(session_id: str = "s-today-1", **overrides) -> Message:
+    fields = dict(
+        message_id="ann-1",
+        kind="announcement",
+        recipient_id=None,
+        body="Court 3 is closed tonight",
+        scope_type="session",
+        scope_id=session_id,
+        scope_label="Junior A",
+    )
+    fields.update(overrides)
+    return _message(**fields)
+
+
+def test_assigned_coach_sees_the_session_announcement(coach_client):
+    # `coach-1` is the coach_id on s-today-1 in the shared seed.
+    coach_client.messages_repo.rows["ann-1"] = _session_announcement()
+
+    r = coach_client.get("/api/v2/coach/messages")
+
+    assert r.status_code == 200, r.text
+    [view] = r.json()["messages"]
+    assert view["scope_label"] == "Junior A"
+
+
+def test_coach_does_not_see_another_coachs_session_announcement(coach_client):
+    coach_client.messages_repo.rows["ann-1"] = _session_announcement(
+        session_id="s-not-mine", scope_label="Someone else's class"
+    )
+    coach_client.messages_repo.rows["m-2"] = _message(
+        message_id="m-2", kind="announcement", recipient_id=None, body="Academy closed"
+    )
+
+    r = coach_client.get("/api/v2/coach/messages")
+
+    assert r.status_code == 200, r.text
+    # The academy-wide announcement is untouched by the new scoping.
+    assert [m["body"] for m in r.json()["messages"]] == ["Academy closed"]

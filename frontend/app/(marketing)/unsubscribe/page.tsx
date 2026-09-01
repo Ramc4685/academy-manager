@@ -54,6 +54,7 @@ function UnsubscribeContent() {
   const [status, setStatus] = useState<Status>("loading");
   const [campaigns, setCampaigns] = useState(true);
   const [digests, setDigests] = useState(false);
+  const [notifications, setNotifications] = useState(false);
 
   useEffect(() => {
     if (!token) {
@@ -65,11 +66,16 @@ function UnsubscribeContent() {
       try {
         const state = await previewUnsubscribe(token);
         if (cancelled) return;
-        // Pre-tick "campaigns" for a recipient who is still opted in: they
-        // clicked Unsubscribe, so that is the choice they came to make. One
-        // click then confirms it.
-        setCampaigns(state.campaigns_opted_out || !state.digests_opted_out);
+        // Pre-tick "campaigns" only for a recipient who has never switched
+        // anything off: they clicked Unsubscribe, so that is the choice they
+        // came to make, and one click confirms it. Anyone with an existing
+        // choice sees exactly what they already chose — with three categories,
+        // inferring from one of them would silently re-tick another.
+        const untouched =
+          !state.campaigns_opted_out && !state.digests_opted_out && !state.notifications_opted_out;
+        setCampaigns(untouched ? true : state.campaigns_opted_out);
         setDigests(state.digests_opted_out);
+        setNotifications(state.notifications_opted_out);
         setStatus("ready");
       } catch (err) {
         if (cancelled) return;
@@ -85,16 +91,17 @@ function UnsubscribeContent() {
     if (!token) return;
     setStatus("saving");
     try {
-      const state = await confirmUnsubscribe(token, { campaigns, digests });
+      const state = await confirmUnsubscribe(token, { campaigns, digests, notifications });
       setCampaigns(state.campaigns_opted_out);
       setDigests(state.digests_opted_out);
+      setNotifications(state.notifications_opted_out);
       setStatus("saved");
     } catch (err) {
       setStatus(statusFor(err));
     }
-  }, [token, campaigns, digests]);
+  }, [token, campaigns, digests, notifications]);
 
-  const nothingSelected = !campaigns && !digests;
+  const nothingSelected = !campaigns && !digests && !notifications;
 
   return (
     <main className="grid min-h-dvh place-items-center bg-slate-50 p-6 font-body text-slate-950">
@@ -153,6 +160,21 @@ function UnsubscribeContent() {
               </span>
             </label>
 
+            <label className="mt-4 flex items-start gap-3 text-sm text-slate-800">
+              <input
+                type="checkbox"
+                className="mt-1 h-4 w-4 rounded border-slate-300"
+                checked={notifications}
+                onChange={(e) => setNotifications(e.target.checked)}
+              />
+              <span>
+                <span className="font-medium">Roster change alerts</span>
+                <span className="block text-slate-600">
+                  Emails to coaches and staff when a student joins, moves, or leaves a class.
+                </span>
+              </span>
+            </label>
+
             <p className="mt-4 text-xs text-slate-500">
               Receipts, invoices, and account or sign-in emails are always sent — they are
               not marketing, and turning them off would mean missing a payment.
@@ -171,10 +193,12 @@ function UnsubscribeContent() {
         {status === "saved" ? (
           <div className={CARD} role="status" aria-live="polite">
             <h1 className="font-display text-2xl font-bold text-slate-900">
-              {campaigns || digests ? "You're unsubscribed" : "You're still subscribed"}
+              {campaigns || digests || notifications
+                ? "You're unsubscribed"
+                : "You're still subscribed"}
             </h1>
             <p className="mt-2 text-sm text-slate-600">
-              {campaigns || digests
+              {campaigns || digests || notifications
                 ? "We've saved your choices. It can take a little while for anything already on its way to stop."
                 : "No changes — you'll keep receiving these emails."}
             </p>

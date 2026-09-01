@@ -134,18 +134,25 @@ export function PersonaInbox({
 
 function MessageRow({ message }: { message: InboxMessage }) {
   const isAnnouncement = message.kind === "announcement";
+  const isUrgent = message.urgency === "urgent";
+  // Red for urgent, amber for a routine announcement, blue for a DM.
+  const accent = isUrgent ? "#dc2626" : isAnnouncement ? "#f59e0b" : "#2563eb";
   return (
     <li data-testid="message-row">
-      <Card
-        p={12}
-        accent={isAnnouncement ? "#f59e0b" : "#2563eb"}
-        className="flex items-start gap-2"
-      >
+      <Card p={12} accent={accent} className="flex items-start gap-2">
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs font-semibold uppercase tracking-wide text-rally-subtle">
               {isAnnouncement ? "Announcement" : "Direct message"}
             </span>
+            {isUrgent && (
+              <span
+                data-testid="urgent-chip"
+                className="rounded-full bg-status-red-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-status-red-800"
+              >
+                Urgent
+              </span>
+            )}
             {!message.read && (
               <span
                 data-testid="unread-dot"
@@ -154,8 +161,26 @@ function MessageRow({ message }: { message: InboxMessage }) {
               />
             )}
           </div>
-          <p className="mt-1 text-sm text-rally-ink">{message.body}</p>
+          {message.scope_label && (
+            <p
+              data-testid="message-scope-label"
+              className="mt-1 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted"
+            >
+              {message.scope_label}
+            </p>
+          )}
+          {/*
+            Plain text child: React escapes it, so an announcement body
+            containing markup renders as characters. `whitespace-pre-wrap`
+            keeps the author's line breaks without any HTML.
+          */}
+          <p className="mt-1 whitespace-pre-wrap text-sm text-rally-ink">
+            {message.body}
+          </p>
           <p className="mt-1 text-[11px] text-rally-subtle">
+            {message.author_display_name
+              ? `${message.author_display_name} · `
+              : ""}
             {new Date(message.created_at).toLocaleTimeString([], {
               hour: "numeric",
               minute: "2-digit",

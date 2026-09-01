@@ -18,10 +18,15 @@ interface InboxMessage {
   body: string;
   created_at: string;
   read: boolean;
+  // #614 session announcements.
+  scope_label?: string;
+  urgency?: "routine" | "urgent";
+  author_display_name?: string;
 }
 
 const ANNOUNCEMENT_BODY = "Tournament this Saturday";
 const DM_BODY = "Please review the updated roster";
+const URGENT_ANNOUNCEMENT_BODY = "Court 3 is closed tonight";
 
 function seedMessages(): InboxMessage[] {
   const createdAt = new Date().toISOString();
@@ -41,6 +46,18 @@ function seedMessages(): InboxMessage[] {
       body: ANNOUNCEMENT_BODY,
       created_at: createdAt,
       read: true,
+    },
+    // #614 session announcement: carries the class label and an urgency.
+    {
+      message_id: "m-ann-session",
+      kind: "announcement",
+      sender_persona: "coach",
+      body: URGENT_ANNOUNCEMENT_BODY,
+      created_at: createdAt,
+      read: true,
+      scope_label: "Tuesday Juniors",
+      urgency: "urgent",
+      author_display_name: "Coach Riya",
     },
   ];
 }
@@ -136,6 +153,34 @@ test.describe("coach messages inbox", () => {
 
     await page.goto("/coach/messages");
     await expect(page.getByTestId("coach-messages")).toContainText("No messages yet");
+  });
+});
+
+test.describe("session announcements in the inbox (#614)", () => {
+  test("a session announcement shows its class label and an urgent chip", async ({
+    page,
+  }) => {
+    await stubIdentity(page, ["parent"]);
+    await stubMessages(page, "parent");
+
+    await page.goto("/parent/messages");
+
+    const row = page
+      .getByTestId("message-row")
+      .filter({ hasText: URGENT_ANNOUNCEMENT_BODY });
+    await expect(row).toBeVisible();
+    // The class label is what tells a family WHICH class this is about.
+    await expect(row.getByTestId("message-scope-label")).toHaveText(
+      "Tuesday Juniors",
+    );
+    await expect(row.getByTestId("urgent-chip")).toBeVisible();
+
+    // The academy-wide announcement is unchanged: no label, no urgent chip.
+    const academyWide = page
+      .getByTestId("message-row")
+      .filter({ hasText: ANNOUNCEMENT_BODY });
+    await expect(academyWide.getByTestId("message-scope-label")).toHaveCount(0);
+    await expect(academyWide.getByTestId("urgent-chip")).toHaveCount(0);
   });
 });
 

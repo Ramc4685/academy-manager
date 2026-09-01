@@ -56,4 +56,7 @@ def _view(m: Message, user_id: str) -> CoachMessageView:
         body=m.body,
         created_at=m.created_at,
         read=user_id in m.read_by,
+        scope_label=m.scope_label,
+        urgency=m.urgency,
+        author_display_name=m.author_display_name,
     )

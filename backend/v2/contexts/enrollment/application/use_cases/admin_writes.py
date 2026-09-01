@@ -13,16 +13,20 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from datetime import UTC, date, datetime, time, timedelta
-from typing import Literal, Protocol
+from typing import Literal, NoReturn, Protocol
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
+from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.enrollment.application.ports import (
     EnrollmentEventRepository,
     EnrollmentLifecycleBillingPort,
     EnrollmentQuery,
+    EnrollmentWelcomeNotifier,
     EnrollmentWriter,
+    RosterChangeKind,
+    RosterChangeNotifier,
     SessionWriter,
     StudentQuery,
     StudentWriter,
@@ -33,9 +37,13 @@ from backend.v2.contexts.enrollment.application.use_cases.billing_deferrals impo
     BillingDeferralRepository,
 )
 from backend.v2.contexts.enrollment.domain.errors import (
+    CapacityExceeded,
     DuplicateSessionSeries,
     EnrollmentNotFound,
+    SeatCounterDrift,
+    SessionNotEnrollable,
     SessionNotFound,
+    StudentAlreadyOnRoster,
 )
 from backend.v2.contexts.enrollment.domain.events import (
     EnrollmentCancelled,
@@ -46,6 +54,7 @@ from backend.v2.contexts.enrollment.domain.models import Enrollment, Session, St
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.ids import new_ulid
+from backend.v2.shared.security.external_url import validate_external_url
 
 log = logging.getLogger(__name__)
 
@@ -170,6 +179,55 @@ def _representative_series_datetimes(
     return start.astimezone(UTC), end.astimezone(UTC)
 
 
+#: The per-session "communication pack" (#613). Named once so the create
+#: command, the edit command and the edit update loop cannot drift apart —
+#: this feature's whole failure mode is a field silently missing from one hop.
+COMMUNICATION_PACK_FIELDS: tuple[str, ...] = (
+    "whatsapp_group_link",
+    "venue_address",
+    "parking_notes",
+    "what_to_bring",
+    "arrival_minutes_before",
+    "coach_contact_policy",
+    "absence_policy",
+)
+
+
+async def _notify_roster_change(
+    notifier: RosterChangeNotifier | None,
+    *,
+    change: RosterChangeKind,
+    session_id: str,
+    student_id: str,
+    **details: object,
+) -> None:
+    """Fire a staff roster alert (#612) without ever risking the write.
+
+    Every caller invokes this as the *last* statement of `execute`, after the
+    state has settled: `CancelEnrollment` records its lifecycle event before
+    `release_seat`, and the alert quotes a roster count, so firing earlier
+    would announce a number that is about to change.
+
+    Swallows everything. A notification failure that propagated would report a
+    cancellation as failed to an admin whose cancellation actually happened —
+    and the retry would then be a no-op against an already-cancelled row.
+    """
+    if notifier is None:
+        return
+    try:
+        await notifier.roster_changed(
+            change=change,
+            session_id=session_id,
+            student_id=student_id,
+            **details,  # type: ignore[arg-type]
+        )
+    except Exception:
+        log.exception(
+            "enrollment.roster_notification_failed",
+            extra={"change": change, "session_id": session_id, "student_id": student_id},
+        )
+
+
 class CreateSessionCommand(BaseModel):
     model_config = {"frozen": True}
     coach_id: str
@@ -183,6 +241,13 @@ class CreateSessionCommand(BaseModel):
     start_time: str | None = None
     end_time: str | None = None
     timezone: str | None = None
+    whatsapp_group_link: str | None = None
+    venue_address: str | None = None
+    parking_notes: str | None = None
+    what_to_bring: str | None = None
+    arrival_minutes_before: int | None = Field(default=None, ge=0, le=120)
+    coach_contact_policy: str | None = None
+    absence_policy: str | None = None
 
 
 class CreateSession:
@@ -227,6 +292,7 @@ class CreateSession:
             start_time=cmd.start_time,
             end_time=cmd.end_time,
             timezone=cmd.timezone,
+            **{field: getattr(cmd, field) for field in COMMUNICATION_PACK_FIELDS},
         )
         await self._sessions.create(session)
         return session
@@ -269,8 +335,19 @@ class EditSessionCommand(BaseModel):
     start_time: str | None = None
     end_time: str | None = None
     timezone: str | None = None
+    whatsapp_group_link: str | None = None
+    venue_address: str | None = None
+    parking_notes: str | None = None
+    what_to_bring: str | None = None
+    arrival_minutes_before: int | None = Field(default=None, ge=0, le=120)
+    coach_contact_policy: str | None = None
+    absence_policy: str | None = None
     actor_id: str | None = None
     reason: str | None = None
+
+
+#: Fields an explicit `null` is allowed to clear (see the update loop below).
+_CLEARABLE_SESSION_FIELDS: frozenset[str] = frozenset({"amount_cents", *COMMUNICATION_PACK_FIELDS})
 
 
 class EditSession:
@@ -295,12 +372,28 @@ class EditSession:
             "start_time",
             "end_time",
             "timezone",
+            *COMMUNICATION_PACK_FIELDS,
         ):
             value = getattr(cmd, field_name)
+            # An explicit `null` has to be writable for every *optional* field
+            # or an admin can set a WhatsApp link and never remove one. The
+            # route builds the command with `exclude_unset=True`, so only a
+            # body that actually names the field can clear it — a partial
+            # PATCH still cannot blank the pack by omission.
             if value is not None or (
-                field_name == "amount_cents" and field_name in cmd.model_fields_set
+                field_name in _CLEARABLE_SESSION_FIELDS and field_name in cmd.model_fields_set
             ):
                 update[field_name] = value
+
+        # `model_copy(update=...)` below deliberately skips validators, so the
+        # domain field_validator that guards the link on *construction* never
+        # runs on an edit. Re-assert it here or the one code path an admin
+        # actually uses would be the one path with no scheme check.
+        if "whatsapp_group_link" in update:
+            update["whatsapp_group_link"] = validate_external_url(
+                update["whatsapp_group_link"],  # type: ignore[arg-type]
+                field_label="WhatsApp group link",
+            )
 
         recurring_values = {
             "days_of_week": update.get("days_of_week", current.days_of_week),
@@ -425,7 +518,28 @@ class EditRosterAdd:
 
     Useful for academy comp seats / scholarships. Reserves a seat atomically
     via the same try_reserve_seat path used by ConfirmEnrollment.
+
+    Issue #610 — the reserve is all-or-nothing. `try_reserve_seat` increments
+    a shared counter *before* the writes that follow it, so the writes up to
+    and including `enrollments.create` run inside a compensating block: a
+    failure there releases the seat before the error propagates. Everything
+    after that row exists (the lifecycle event, the emails) is best-effort and
+    must never release the seat — a released seat under a live enrollment is
+    the same drift in the opposite direction, and it lets the session admit
+    one student past capacity. Without the compensation, a failed add
+    permanently
+    inflated `reserved_seats`, and because `release_seat` floors at zero the
+    drift is one-way and never self-heals — the reported symptom was a session
+    whose roster stayed frozen while its seat count climbed until it looked
+    full.
     """
+
+    #: Statuses that mean "this student is already on this roster". A cancelled
+    #: row must not block a re-add.
+    _BLOCKING_STATUSES = frozenset({"active", "paused"})
+
+    #: Mirrors the `$in` predicate in `MongoSessionWriter.try_reserve_seat`.
+    _ENROLLABLE_STATUSES = frozenset({"scheduled", "active", "open"})
 
     def __init__(
         self,
@@ -433,53 +547,211 @@ class EditRosterAdd:
         sessions: SessionWriter,
         enrollments: EnrollmentWriter,
         students: StudentWriter,
-        academy_id: str,
+        academy_id: str | Callable[[], str],
         enrollment_events: EnrollmentEventRepository | None = None,
+        welcome_notifier: EnrollmentWelcomeNotifier | None = None,
+        roster_notifier: RosterChangeNotifier | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._sessions = sessions
         self._enrollments = enrollments
         self._students = students
+        # A callable is resolved at execute time so the request tenant wins
+        # over the boot-time value (the #532-class trap); a plain string is
+        # still accepted for the non-HTTP callers and the test fakes.
         self._academy_id = academy_id
         self._enrollment_events = enrollment_events
+        self._welcome_notifier = welcome_notifier
+        self._roster_notifier = roster_notifier
         self._now = clock
 
+    def _resolve_academy_id(self) -> str:
+        return self._academy_id() if callable(self._academy_id) else self._academy_id
+
     async def execute(self, cmd: EditRosterAddCommand) -> Enrollment:
+        academy_id = self._resolve_academy_id()
+
+        # Pre-check BEFORE reserving, so the common duplicate case costs no
+        # seat and gets a message naming the student. This is a TOCTOU read,
+        # not a lock — there is no unique (session, student) index — so the
+        # DuplicateKeyError arm below stays as the correctness backstop.
+        existing = await self._enrollments.find_for_session_student(cmd.session_id, cmd.student_id)
+        if existing is not None and existing.status in self._BLOCKING_STATUSES:
+            raise StudentAlreadyOnRoster(
+                f"{cmd.full_name} is already on this roster "
+                f"({existing.status}). Remove the existing enrollment first.",
+                session_id=cmd.session_id,
+                student_id=cmd.student_id,
+                enrollment_id=existing.enrollment_id,
+                status=existing.status,
+            )
+
         reserved = await self._sessions.try_reserve_seat(cmd.session_id)
         if not reserved:
-            from backend.v2.contexts.enrollment.domain.errors import CapacityExceeded
+            await self._raise_reserve_failure(cmd)
 
-            raise CapacityExceeded("session full", session_id=cmd.session_id)
-        await self._students.upsert(
-            Student(
-                student_id=cmd.student_id,
-                academy_id=self._academy_id,
-                parent_id=cmd.parent_id,
-                full_name=cmd.full_name,
+        try:
+            # Insert-only: this use case owns no fields on a student that
+            # already exists, and a full-model write here nulled their
+            # profile and login link (#610).
+            await self._students.ensure_exists(
+                Student(
+                    student_id=cmd.student_id,
+                    academy_id=academy_id,
+                    parent_id=cmd.parent_id,
+                    full_name=cmd.full_name,
+                )
             )
-        )
-        enrollment = Enrollment(
-            enrollment_id=str(new_ulid()),
-            academy_id=self._academy_id,
+            enrollment = Enrollment(
+                enrollment_id=str(new_ulid()),
+                academy_id=academy_id,
+                session_id=cmd.session_id,
+                student_id=cmd.student_id,
+                status="active",
+            )
+            await self._enrollments.create(enrollment)
+        except DuplicateKeyError as exc:
+            await self._release_quietly(cmd.session_id)
+            raise StudentAlreadyOnRoster(
+                f"Could not add {cmd.full_name} — a conflicting record already "
+                f"exists for this student. If they are already on the roster, "
+                f"remove that enrollment first; otherwise quote student "
+                f"{cmd.student_id} to support.",
+                session_id=cmd.session_id,
+                student_id=cmd.student_id,
+            ) from exc
+        except BaseException:
+            await self._release_quietly(cmd.session_id)
+            raise
+        await self._record_created_event(cmd, enrollment, academy_id=academy_id)
+        await self._notify_welcome(cmd)
+        await _notify_roster_change(
+            self._roster_notifier,
+            change="added",
             session_id=cmd.session_id,
             student_id=cmd.student_id,
-            status="active",
-        )
-        await self._enrollments.create(enrollment)
-        now = self._now()
-        await _record_lifecycle_event(
-            self._enrollment_events,
-            academy_id=self._academy_id,
-            event_type="created",
+            student_name=cmd.full_name,
             enrollment_id=enrollment.enrollment_id,
-            session_id=cmd.session_id,
-            student_id=cmd.student_id,
             actor_id=cmd.actor_id,
-            reason=cmd.reason,
-            effective_at=now,
-            occurred_at=now,
+            parent_user_id=cmd.parent_id,
         )
         return enrollment
+
+    async def _record_created_event(
+        self,
+        cmd: EditRosterAddCommand,
+        enrollment: Enrollment,
+        *,
+        academy_id: str,
+    ) -> None:
+        """Best-effort lifecycle event, outside the compensating block.
+
+        `enrollments.create` is the point of no return: once the row exists,
+        releasing the seat would leave capacity-10 sessions with 10 active
+        rows and `reserved_seats == 9`, and nothing reconciles that — the next
+        add or parent checkout then admits an eleventh student. The audit
+        event is a second write that can fail on its own, so it must not be
+        able to trigger the compensation. It is logged and swallowed for the
+        same reason the welcome email is: the add really did succeed, and a
+        reported failure would send the admin into a retry that the duplicate
+        guard rejects.
+        """
+        now = self._now()
+        try:
+            await _record_lifecycle_event(
+                self._enrollment_events,
+                academy_id=academy_id,
+                event_type="created",
+                enrollment_id=enrollment.enrollment_id,
+                session_id=cmd.session_id,
+                student_id=cmd.student_id,
+                actor_id=cmd.actor_id,
+                reason=cmd.reason,
+                effective_at=now,
+                occurred_at=now,
+            )
+        except Exception:
+            log.exception(
+                "enrollment.roster_add_lifecycle_event_failed",
+                extra={
+                    "session_id": cmd.session_id,
+                    "student_id": cmd.student_id,
+                    "enrollment_id": enrollment.enrollment_id,
+                },
+            )
+
+    async def _notify_welcome(self, cmd: EditRosterAddCommand) -> None:
+        """Best-effort welcome email (#613).
+
+        Deliberately *after* the compensating block and deliberately
+        swallowing: the seat is reserved and the roster row exists, so an
+        exception here would leave the admin looking at a failure for an add
+        that succeeded — and the retry would then trip the duplicate guard.
+        A missed email is recoverable by re-sending; a phantom failure is not.
+        """
+        if self._welcome_notifier is None:
+            return
+        try:
+            await self._welcome_notifier.send_welcome(
+                session_id=cmd.session_id,
+                student_name=cmd.full_name,
+                parent_user_id=cmd.parent_id,
+            )
+        except Exception:
+            log.exception(
+                "enrollment.roster_add_welcome_email_failed",
+                extra={"session_id": cmd.session_id, "student_id": cmd.student_id},
+            )
+
+    async def _release_quietly(self, session_id: str) -> None:
+        """Give the seat back without ever masking the error being handled.
+
+        `release_seat` is idempotent at zero (its Mongo predicate refuses to
+        decrement below zero), so calling it on every failure path is safe.
+        """
+        try:
+            await self._sessions.release_seat(session_id)
+        except Exception:  # pragma: no cover - defensive
+            log.exception(
+                "enrollment.roster_add_seat_release_failed",
+                extra={"session_id": session_id},
+            )
+
+    async def _raise_reserve_failure(self, cmd: EditRosterAddCommand) -> NoReturn:
+        """Turn a bare `matched_count == 0` into the error that actually fits.
+
+        The atomic reserve returns False for four different reasons and the
+        old code called all of them "session full". Never returns.
+        """
+        session = await self._sessions.get(cmd.session_id)
+        if session is None:
+            raise SessionNotFound("session not found", session_id=cmd.session_id)
+        if session.status not in self._ENROLLABLE_STATUSES:
+            raise SessionNotEnrollable(
+                f"This session is {session.status} and cannot take new enrollments.",
+                session_id=cmd.session_id,
+                status=session.status,
+            )
+        active_count = await self._enrollments.count_active_for_session(cmd.session_id)
+        if active_count >= session.capacity:
+            raise CapacityExceeded(
+                f"This session is full — {active_count} of {session.capacity} seats are taken.",
+                session_id=cmd.session_id,
+                capacity=session.capacity,
+                active_enrollments=active_count,
+            )
+        # Reserve refused while the roster is under capacity. Report it with
+        # the numbers; do NOT reconcile (see SeatCounterDrift).
+        raise SeatCounterDrift(
+            f"This session's seat count is out of step with its roster "
+            f"({active_count} of {session.capacity} seats enrolled, but the "
+            f"seat counter reports it full). It may clear on its own if a "
+            f"checkout is in progress; otherwise ask support to reconcile "
+            f"session {cmd.session_id}.",
+            session_id=cmd.session_id,
+            capacity=session.capacity,
+            active_enrollments=active_count,
+        )
 
 
 class CancelEnrollmentCommand(BaseModel):
@@ -500,6 +772,7 @@ class CancelEnrollment:
         outbox: Outbox,
         academy_id: str,
         enrollment_events: EnrollmentEventRepository | None = None,
+        roster_notifier: RosterChangeNotifier | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._enrollments = enrollments
@@ -507,6 +780,7 @@ class CancelEnrollment:
         self._outbox = outbox
         self._academy_id = academy_id
         self._enrollment_events = enrollment_events
+        self._roster_notifier = roster_notifier
         self._now = clock
 
     async def execute(self, cmd: CancelEnrollmentCommand) -> None:
@@ -547,6 +821,14 @@ class CancelEnrollment:
                 ),
             )
         )
+        await _notify_roster_change(
+            self._roster_notifier,
+            change="cancelled",
+            session_id=e.session_id,
+            student_id=e.student_id,
+            enrollment_id=e.enrollment_id,
+            actor_id=cmd.actor_id,
+        )
 
 
 class TransferEnrollmentCommand(BaseModel):
@@ -572,12 +854,14 @@ class TransferEnrollment:
         sessions: SessionWriter,
         enrollment_events: EnrollmentEventRepository | None = None,
         billing: EnrollmentLifecycleBillingPort | None = None,
+        roster_notifier: RosterChangeNotifier | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._enrollments = enrollments
         self._sessions = sessions
         self._enrollment_events = enrollment_events
         self._billing = billing
+        self._roster_notifier = roster_notifier
         self._now = clock
 
     async def execute(self, cmd: TransferEnrollmentCommand) -> Enrollment:
@@ -626,6 +910,19 @@ class TransferEnrollment:
             metadata=billing_decision.get("metadata", {}),
         )
         await self._sessions.release_seat(enrollment.session_id)
+        await _notify_roster_change(
+            self._roster_notifier,
+            change="moved",
+            # `session_id` is the destination — the roster the student is on
+            # now — while both sides ride along so the adapter can tell the
+            # coach who lost the student as well as the one who gained them.
+            session_id=cmd.target_session_id,
+            student_id=enrollment.student_id,
+            enrollment_id=enrollment.enrollment_id,
+            from_session_id=enrollment.session_id,
+            to_session_id=cmd.target_session_id,
+            actor_id=cmd.actor_id,
+        )
         return enrollment.model_copy(update={"session_id": cmd.target_session_id})
 
 
@@ -812,11 +1109,13 @@ class WithdrawEnrollment:
         enrollments: EnrollmentWriter,
         enrollment_events: EnrollmentEventRepository | None = None,
         billing: EnrollmentLifecycleBillingPort | None = None,
+        roster_notifier: RosterChangeNotifier | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._enrollments = enrollments
         self._enrollment_events = enrollment_events
         self._billing = billing
+        self._roster_notifier = roster_notifier
         self._now = clock
 
     async def execute(self, cmd: WithdrawEnrollmentCommand) -> None:
@@ -856,6 +1155,14 @@ class WithdrawEnrollment:
             credit_id=billing_decision.get("credit_id"),
             refund_id=billing_decision.get("refund_id"),
             metadata=billing_decision.get("metadata", {"outcome": cmd.outcome}),
+        )
+        await _notify_roster_change(
+            self._roster_notifier,
+            change="withdrawn",
+            session_id=e.session_id,
+            student_id=e.student_id,
+            enrollment_id=e.enrollment_id,
+            actor_id=cmd.actor_id,
         )
 
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from backend.v2.contexts.enrollment.domain.events import EnrollmentLifecycleEvent
 from backend.v2.contexts.enrollment.domain.models import (
@@ -134,9 +134,31 @@ class EnrollmentWriter(Protocol):
         self, session_id: str, student_id: str
     ) -> Enrollment | None: ...
 
+    async def count_active_for_session(self, session_id: str) -> int:
+        """How many active enrollment rows this session actually has.
+
+        Needed on the write port so a refused `try_reserve_seat` can be
+        explained: `reserved_seats` at capacity with a roster well under it is
+        counter drift, not a full session, and the two need different
+        admin-facing messages (issue #610).
+        """
+
 
 class StudentWriter(Protocol):
     async def upsert(self, student: Student) -> None: ...
+
+    async def ensure_exists(self, student: Student) -> bool:
+        """Insert the student if absent; never modify an existing row.
+
+        `upsert` writes the whole model, which is right for the registration
+        approval path (it owns the full profile) and catastrophic for the
+        roster path: adding an already-known student re-sent every optional
+        field as `None`, wiping date_of_birth, emergency contacts, medical
+        notes and — worst — `student_user_id`, silently breaking that
+        student's login (issue #610).
+
+        Returns True when a row was created, False when one already existed.
+        """
 
 
 class WaitlistRepository(Protocol):
@@ -182,3 +204,70 @@ class EnrollmentLifecycleBillingPort(Protocol):
         actor_id: str,
         reason: str,
     ) -> dict[str, Any]: ...
+
+
+class EnrollmentWelcomeNotifier(Protocol):
+    """Tells a family they are on a roster (issue #613).
+
+    The enrollment context must never import communications, so this Protocol
+    is the seam: the adapter that renders and sends the welcome email lives in
+    ``composition/enrollment_welcome_email.py``.
+
+    Implementations are called on a best-effort basis — an approval or a
+    roster add must never fail because a mail provider is down — so the call
+    sites wrap this in catch/log/continue.
+    """
+
+    async def send_welcome(
+        self,
+        *,
+        session_id: str,
+        student_name: str,
+        parent_user_id: str,
+        parent_email: str | None = None,
+    ) -> None: ...
+
+
+#: What changed on a roster (issue #612). One vocabulary for every trigger, so
+#: a new lifecycle path has to pick a value rather than invent an alert.
+RosterChangeKind = Literal[
+    "approved",  # a registration was approved into a session
+    "added",  # an admin or coach put a student on the roster directly
+    "promoted",  # a waitlisted student took an opened seat
+    "moved",  # transferred between sessions (both rosters changed)
+    "cancelled",  # enrollment cancelled/removed (admin or parent self-serve)
+    "withdrawn",  # enrollment withdrawn mid-term
+]
+
+
+class RosterChangeNotifier(Protocol):
+    """Tells the people who run a session that its roster changed (#612).
+
+    Sibling of :class:`EnrollmentWelcomeNotifier`, and deliberately the same
+    shape: a one-method Protocol here, the adapter that resolves recipients
+    and sends in ``composition/roster_notifications.py``, because the
+    enrollment context may never import communications.
+
+    Implementations are best-effort and MUST NOT be allowed to fail the
+    enrollment write — every call site wraps this in catch/log/continue. A
+    missed alert is recoverable; a cancellation that reports failure because a
+    mail provider blipped is not.
+
+    ``moved`` is a single call carrying both ``from_session_id`` and
+    ``to_session_id``: one roster change, two rosters, and the adapter is what
+    knows both coaches need telling.
+    """
+
+    async def roster_changed(
+        self,
+        *,
+        change: RosterChangeKind,
+        session_id: str,
+        student_id: str,
+        student_name: str | None = None,
+        enrollment_id: str | None = None,
+        from_session_id: str | None = None,
+        to_session_id: str | None = None,
+        actor_id: str | None = None,
+        parent_user_id: str | None = None,
+    ) -> None: ...

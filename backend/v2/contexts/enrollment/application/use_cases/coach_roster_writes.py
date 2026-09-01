@@ -62,13 +62,13 @@ class CoachAddStudentToRoster:
     async def execute(self, cmd: CoachAddStudentToRosterCommand) -> Enrollment:
         if not await self._assigned_sessions.is_coach_assigned(cmd.coach_id, cmd.session_id):
             raise SessionNotAssigned("session not assigned to coach", session_id=cmd.session_id)
-        # Delegate is built per-execute so the tenant is resolved at request
-        # time; EditRosterAdd itself still takes a plain string (admin scope).
+        # EditRosterAdd resolves the provider at execute time, so the request
+        # tenant wins over anything frozen at composition time.
         delegate = EditRosterAdd(
             sessions=self._sessions,
             enrollments=self._enrollments,
             students=self._students,
-            academy_id=self._academy_id(),
+            academy_id=self._academy_id,
         )
         return await delegate.execute(
             EditRosterAddCommand(

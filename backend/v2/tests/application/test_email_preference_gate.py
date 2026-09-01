@@ -350,3 +350,95 @@ async def test_a_recipient_can_opt_back_in(db: Any) -> None:
 
     assert outcome.ok
     assert len(stub.sent) == 1
+
+
+# ---------------------------------------------------------------------------
+# Roster-alert notifications (#612)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_notification_opt_out_actually_blocks_a_roster_alert(db: Any) -> None:
+    """The failure mode this test exists for is a *silent* no-op.
+
+    Adding NOTIFICATION to ``UNSUBSCRIBABLE_CATEGORIES`` without the matching
+    ``EmailPreferences.blocks()`` branch would leave the gate doing a database
+    read and allowing every time: the emailed footer link would appear to work
+    and change nothing.
+    """
+    gate = MongoEmailPreferenceGate(db)
+    with tenant_scope(ACADEMY):
+        await MongoEmailPreferenceRepository(db).set_opt_outs(
+            user_id="coach-1",
+            email="coach-1@example.test",
+            campaigns_opted_out=False,
+            digests_opted_out=False,
+            notifications_opted_out=True,
+            source="link",
+        )
+
+        blocked = await gate.check(
+            recipient_user_id="coach-1",
+            email="coach-1@example.test",
+            category=EmailCategory.NOTIFICATION,
+        )
+        # The same person still gets their digest and their invoice.
+        digest = await gate.check(
+            recipient_user_id="coach-1",
+            email="coach-1@example.test",
+            category=EmailCategory.DIGEST,
+        )
+        invoice = await gate.check(
+            recipient_user_id="coach-1",
+            email="coach-1@example.test",
+            category=EmailCategory.TRANSACTIONAL,
+        )
+
+    assert blocked.allowed is False
+    assert blocked.reason == "unsubscribed:notification"
+    assert digest.allowed is True
+    assert invoice.allowed is True
+
+
+@pytest.mark.asyncio
+async def test_a_recipient_with_no_row_still_receives_roster_alerts(db: Any) -> None:
+    """An absent document means opted in, so #612 needs no backfill."""
+    gate = MongoEmailPreferenceGate(db)
+    with tenant_scope(ACADEMY):
+        verdict = await gate.check(
+            recipient_user_id="never-touched",
+            email="never@example.test",
+            category=EmailCategory.NOTIFICATION,
+        )
+    assert verdict.allowed is True
+
+
+@pytest.mark.asyncio
+async def test_omitting_the_notification_flag_leaves_it_alone(db: Any) -> None:
+    """The deploy-order case.
+
+    A client build that predates the roster-alert switch sends no
+    ``notifications`` field. That must mean "leave unchanged" — a ``False``
+    default here would silently re-subscribe a coach who had switched roster
+    alerts off, every time they saved anything else.
+    """
+    repo = MongoEmailPreferenceRepository(db)
+    with tenant_scope(ACADEMY):
+        await repo.set_opt_outs(
+            user_id="coach-2",
+            email="coach-2@example.test",
+            campaigns_opted_out=False,
+            digests_opted_out=False,
+            notifications_opted_out=True,
+            source="link",
+        )
+        saved = await repo.set_opt_outs(
+            user_id="coach-2",
+            email="coach-2@example.test",
+            campaigns_opted_out=True,
+            digests_opted_out=False,
+            source="link",
+        )
+
+    assert saved.notifications_opted_out is True
+    assert saved.campaigns_opted_out is True

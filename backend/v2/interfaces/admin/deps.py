@@ -11,6 +11,7 @@ from backend.v2.composition.admin_registration_review import (
     AdminRegistrationReview,
 )
 from backend.v2.composition.pathway import CurriculumComposition, StudentProgressComposition
+from backend.v2.composition.session_announcements import SessionAnnouncementService
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     ApplyPaymentDiscount,
     GenerateMonthlyPayments,
@@ -260,6 +261,10 @@ class AdminUseCases:
     update_academy_notifications_use_case: UpdateAcademyNotificationsUseCase
     get_academy_gateway_use_case: GetAcademyGatewayUseCase
     change_user_role: ChangeUserRole
+    # Session announcements (#614). Optional so admin test fixtures that
+    # predate it keep constructing AdminUseCases; real admin composition
+    # always sets it, and the routes 503 rather than 500 when it is absent.
+    session_announcements: SessionAnnouncementService | None = None
     # recurring tuition discounts (#244)
     set_tuition_discount: object | None = None  # SetTuitionDiscount
     remove_tuition_discount: object | None = None  # RemoveTuitionDiscount

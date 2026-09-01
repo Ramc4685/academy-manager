@@ -8,7 +8,10 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, EmailStr, Field, model_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
+
+from backend.v2.shared.comms import MAX_ANNOUNCEMENT_BODY
+from backend.v2.shared.security.external_url import InvalidExternalUrl, validate_external_url
 
 # --- Directory ---
 
@@ -355,6 +358,14 @@ class AdminSessionView(BaseModel):
     start_time: str | None = None
     end_time: str | None = None
     timezone: str | None = None
+    # Communication pack (#613)
+    whatsapp_group_link: str | None = None
+    venue_address: str | None = None
+    parking_notes: str | None = None
+    what_to_bring: str | None = None
+    arrival_minutes_before: int | None = None
+    coach_contact_policy: str | None = None
+    absence_policy: str | None = None
 
 
 class AdminSessionList(BaseModel):
@@ -423,7 +434,41 @@ class AdminStudentAttendanceView(BaseModel):
     corrected_at: datetime | None = None
 
 
-class CreateSessionRequest(BaseModel):
+def _validated_group_link(value: str | None) -> str | None:
+    """422 at the boundary instead of a 400 out of the domain (#613).
+
+    Same policy object as the domain validator on purpose — one scheme
+    allowlist, enforced twice. This copy exists only so a bad paste reads as a
+    field error on the form rather than a generic API failure.
+    """
+    try:
+        return validate_external_url(value, field_label="WhatsApp group link")
+    except InvalidExternalUrl as exc:
+        raise ValueError(str(exc)) from exc
+
+
+class CommunicationPackFields(BaseModel):
+    """The optional per-session onboarding facts (#613).
+
+    Shared by the create and edit request models so the two cannot drift; the
+    email renders each block only when its field is populated.
+    """
+
+    whatsapp_group_link: str | None = Field(default=None, max_length=2048)
+    venue_address: str | None = Field(default=None, max_length=500)
+    parking_notes: str | None = Field(default=None, max_length=500)
+    what_to_bring: str | None = Field(default=None, max_length=500)
+    arrival_minutes_before: int | None = Field(default=None, ge=0, le=120)
+    coach_contact_policy: str | None = Field(default=None, max_length=500)
+    absence_policy: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("whatsapp_group_link")
+    @classmethod
+    def _check_group_link(cls, value: str | None) -> str | None:
+        return _validated_group_link(value)
+
+
+class CreateSessionRequest(CommunicationPackFields):
     coach_id: str
     title: str
     location: str
@@ -437,7 +482,7 @@ class CreateSessionRequest(BaseModel):
     timezone: str | None = None
 
 
-class EditSessionRequest(BaseModel):
+class EditSessionRequest(CommunicationPackFields):
     coach_id: str | None = None
     title: str | None = None
     location: str | None = None
@@ -1519,6 +1564,67 @@ class BroadcastRequest(BaseModel):
     body: str
     scope_type: str = "academy"
     scope_label: str | None = None
+
+    @field_validator("scope_type")
+    @classmethod
+    def _reject_session_scope(cls, value: str) -> str:
+        """A session announcement cannot be minted through the broadcast endpoint.
+
+        ``scope_type`` is free-form here, so ``"session"`` was already
+        storable — and since #614 a session-scoped announcement is only visible
+        to viewers whose session ids include its ``scope_id``. A broadcast has
+        no ``scope_id``, so such a document would be visible to *nobody*: an
+        academy-wide announcement silently delivered to no one. Session
+        announcements have their own endpoints.
+        """
+        if value.strip().lower() == "session":
+            raise ValueError(
+                "session-scoped announcements are posted via "
+                "/admin/sessions/{session_id}/announcements"
+            )
+        return value
+
+
+class SessionAnnouncementPostRequest(BaseModel):
+    body: str = Field(min_length=1, max_length=MAX_ANNOUNCEMENT_BODY)
+    #: Urgent also emails the session roster immediately (TRANSACTIONAL).
+    urgent: bool = False
+
+    @field_validator("body")
+    @classmethod
+    def _non_blank(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("announcement body must not be blank")
+        return stripped
+
+
+class SessionAnnouncementView(BaseModel):
+    message_id: str
+    session_id: str
+    body: str
+    urgency: Literal["routine", "urgent"]
+    author_id: str
+    author_display_name: str | None = None
+    author_persona: Literal["admin", "coach", "parent"]
+    created_at: datetime
+    #: Whether THIS viewer may delete it. Computed server-side (admin: always;
+    #: coach: only their own posts) so the client never has to re-derive an
+    #: authorization rule the API is the authority on.
+    can_delete: bool = False
+
+
+class SessionAnnouncementList(BaseModel):
+    announcements: list[SessionAnnouncementView]
+
+
+class SessionAnnouncementPostResponse(BaseModel):
+    announcement: SessionAnnouncementView
+    #: ``skipped`` (routine), ``sent``, ``no_recipients`` or ``failed``. A
+    #: ``failed`` fan-out still means the announcement was posted.
+    email_status: Literal["skipped", "sent", "no_recipients", "failed"]
+    sent_count: int = 0
+    failed_count: int = 0
 
 
 class DMRequest(BaseModel):

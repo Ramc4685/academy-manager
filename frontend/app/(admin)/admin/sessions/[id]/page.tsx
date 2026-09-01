@@ -8,7 +8,7 @@
  * cancel session.
  */
 
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -27,6 +27,7 @@ import {
   type AdminEnrollmentView,
   type AdminSessionList,
   type AdminSessionOccurrenceView,
+  type AdminSessionView,
 } from "@/lib/api/admin";
 import { getFullPathway, placeStudentInLevel } from "@/lib/api/curriculum";
 import { queryKeys } from "@/lib/query/keys";
@@ -37,9 +38,15 @@ import { Icon } from "@/components/ds/icons";
 import { LaneHeader } from "@/components/ds/lane";
 import { TableSkeleton } from "@/components/ds/skeleton";
 import { AdminTeachingPlan } from "@/components/teaching/admin-teaching-plan";
+import { AnnouncementsPanel } from "@/components/announcements/AnnouncementsPanel";
 
 import { AddToRosterDialog, PauseEnrollmentDialog, RemoveEnrollmentDialog, TransferEnrollmentDialog, WithdrawalCreditDialog } from "./dialogs";
-import { formatCurrencyCents, sessionTimeRange } from "./format";
+import {
+  formatArrivalMinutes,
+  formatCurrencyCents,
+  hasCommunicationPack,
+  sessionTimeRange,
+} from "./format";
 import { RosterMetrics, RosterTable } from "./RosterPanel";
 import { OccurrenceReplacementDialog, ReplacementCoachTable, SessionEditDialog } from "./SessionEditing";
 import { WaitlistTable } from "./WaitlistTable";
@@ -305,6 +312,20 @@ export default function AdminSessionDetailPage() {
         )}
       </Card>
 
+      {/* Communication pack (#613) */}
+      <Card p={20} className="min-w-0">
+        <LaneHeader
+          index="02"
+          title="Communication pack"
+          action={
+            <Button variant="secondary" size="sm" onClick={() => setEditOpen(true)}>
+              Edit session
+            </Button>
+          }
+        />
+        {session ? <CommunicationPackCard session={session} /> : <TableSkeleton />}
+      </Card>
+
       <div className="flex flex-wrap gap-2 border-b border-rally-line">
         {DETAIL_TABS.map((tab) => (
           <button
@@ -325,7 +346,7 @@ export default function AdminSessionDetailPage() {
       {activeTab === "roster" && (
         <Card p={20} className="min-w-0">
           <LaneHeader
-            index="02"
+            index="03"
             title="Roster"
             action={
               session && (
@@ -367,10 +388,17 @@ export default function AdminSessionDetailPage() {
         </Card>
       )}
 
+      {activeTab === "roster" && (
+        <Card p={20} className="min-w-0">
+          <LaneHeader index="04" title="Announcements" />
+          <AnnouncementsPanel persona="admin" sessionId={sessionId} />
+        </Card>
+      )}
+
       {activeTab === "waitlist" && (
         <Card p={20} className="min-w-0">
           <LaneHeader
-            index="03"
+            index="05"
             title="Waitlist"
             action={
               <Button
@@ -403,7 +431,7 @@ export default function AdminSessionDetailPage() {
 
       {activeTab === "teaching-plan" && (
         <Card p={20} className="min-w-0">
-          <LaneHeader index="04" title="Teaching plan" />
+          <LaneHeader index="06" title="Teaching plan" />
           <AdminTeachingPlan sessionId={sessionId} programId={rosterProgramId || null} />
         </Card>
       )}
@@ -498,5 +526,56 @@ export default function AdminSessionDetailPage() {
         }}
       />
     </section>
+  );
+}
+
+/**
+ * Read-only view of the per-session communication pack (#613).
+ *
+ * Only populated rows render — an empty definition list row would read as
+ * "configured but blank", which is exactly the thing the welcome email must
+ * never do either.
+ */
+function CommunicationPackCard({ session }: { session: AdminSessionView }) {
+  if (!hasCommunicationPack(session)) {
+    return (
+      <p className="text-sm text-rally-subtle" data-testid="communication-pack-empty">
+        No communication pack configured. Add venue, arrival and group details from Edit session.
+      </p>
+    );
+  }
+
+  const rows: Array<[string, string]> = [
+    ["Venue address", session.venue_address ?? ""],
+    ["Parking", session.parking_notes ?? ""],
+    ["What to bring", session.what_to_bring ?? ""],
+    ["Arrival", formatArrivalMinutes(session.arrival_minutes_before)],
+    ["Coach contact", session.coach_contact_policy ?? ""],
+    ["Absences & make-ups", session.absence_policy ?? ""],
+  ].filter(([, value]) => value.trim() !== "") as Array<[string, string]>;
+
+  return (
+    <div className="space-y-4" data-testid="communication-pack">
+      {session.whatsapp_group_link ? (
+        <a
+          href={session.whatsapp_group_link}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex min-h-10 items-center rounded-md bg-rally-cobalt-600 px-4 text-sm font-semibold text-white hover:bg-rally-cobalt-700"
+        >
+          Open WhatsApp group
+        </a>
+      ) : null}
+      {rows.length > 0 ? (
+        <dl className="grid gap-3 sm:grid-cols-[200px_minmax(0,1fr)]">
+          {rows.map(([label, value]) => (
+            <Fragment key={label}>
+              <dt className="text-sm font-medium text-rally-muted">{label}</dt>
+              <dd className="whitespace-pre-line text-sm text-rally-ink">{value}</dd>
+            </Fragment>
+          ))}
+        </dl>
+      ) : null}
+    </div>
   );
 }

@@ -141,9 +141,14 @@ class FakeEnrollmentWriter:
 class FakeStudentWriter:
     def __init__(self) -> None:
         self.upserted: list[Any] = []
+        self.ensured: list[Any] = []
 
     async def upsert(self, student) -> None:
         self.upserted.append(student)
+
+    async def ensure_exists(self, student) -> bool:
+        self.ensured.append(student)
+        return True
 
 
 class FakeEnrollmentQuery:
@@ -253,7 +258,7 @@ async def test_coach_add_student_to_roster_writes_land_in_request_tenant() -> No
     with tenant_scope(REQUEST):
         enrollment = await uc.execute(cmd)
     assert enrollment.academy_id == REQUEST
-    assert students.upserted[0].academy_id == REQUEST
+    assert students.ensured[0].academy_id == REQUEST
     assert enrollments.created[0].academy_id == REQUEST
 
 

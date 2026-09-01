@@ -15,6 +15,7 @@ from backend.v2.composition.pathway import (
     compose_curriculum,
     compose_student_progress,
 )
+from backend.v2.composition.session_announcements import compose_announcements
 from backend.v2.contexts.billing.application.ports import StripeGateway
 from backend.v2.contexts.billing.application.use_cases.session_type_ops import (
     ListSessionTypes,
@@ -114,7 +115,7 @@ from backend.v2.contexts.identity.application.use_cases.admin_directory import (
 )
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
 from backend.v2.interfaces.coach.views import CoachProfileResponse, UpdateCoachProfileRequest
-from backend.v2.shared.comms import MongoMessageRepository
+from backend.v2.shared.comms import CommsService, Message, MongoMessageRepository
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore
@@ -180,6 +181,8 @@ class CoachComposition:
     get_academy_timezone: object = None
     # Attendance correction (#517)
     correct_attendance: CorrectAttendance | None = None
+    # Session announcements (#614) — SessionAnnouncementService
+    session_announcements: object = None
 
 
 class CoachAssignedSessionLookup:
@@ -251,6 +254,33 @@ def compose_coach(
     skill_note_repo = MongoSkillNoteRepository(db)
     # Messages inbox (UIM13) — shared comms store, per-recipient read routes.
     messages_repo = MongoMessageRepository(db)
+
+    async def _visible_session_ids(coach_id: str) -> list[str]:
+        """Sessions assigned to this coach (#614).
+
+        Mirrors ``CoachAssignedSessionLookup``: assignment is the session's
+        primary ``coach_id``, with no date window. ``for_coach`` is the wrong
+        source here — it filters ``start_at >= now``, and a recurring series
+        keeps the single ``start_at`` stamped when it was created, so a class
+        that has been running for months would drop out of the coach's inbox
+        while the route still lets that same coach *post* to it. A replacement
+        coach covering one occurrence is still not an audience, consistent
+        with every other coach session route.
+
+        Read at execution time; the tenant comes from ``current_academy_id()``
+        inside the closure, never from a composition-time capture.
+        """
+        return await sessions_repo.assigned_session_ids_for_coach(coach_id)
+
+    async def list_messages(coach_id: str) -> list[Message]:
+        return await messages_repo.for_recipient(
+            coach_id, visible_session_ids=await _visible_session_ids(coach_id)
+        )
+
+    async def mark_message_read(message_id: str, user_id: str) -> None:
+        await messages_repo.mark_read(
+            message_id, user_id, visible_session_ids=await _visible_session_ids(user_id)
+        )
 
     def request_academy_id() -> str:
         try:
@@ -440,8 +470,21 @@ def compose_coach(
         student_progress=student_progress_comp,
         curriculum=compose_curriculum(db),
         generate_daily_teaching_plan=generate_daily_teaching_plan,
-        list_messages=messages_repo.for_recipient,
-        mark_message_read=messages_repo.mark_read,
+        list_messages=list_messages,
+        mark_message_read=mark_message_read,
+        session_announcements=compose_announcements(
+            db,
+            settings,
+            # Same construction as admin.py. `academy_id` here only labels the
+            # returned domain object; every write is scoped by the tenant-aware
+            # repository, and `post_session_announcement` reads the live tenant.
+            comms=CommsService(
+                messages=messages_repo,
+                academy_id=settings.primary_academy_id or settings.default_academy_id,
+            ),
+            users=user_repo,
+            sessions=sessions_repo,
+        ),
         get_academy_timezone=_academy_timezone_lookup(db),
     )
 

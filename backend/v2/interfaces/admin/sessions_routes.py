@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, date, datetime, time
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from backend.v2.composition.session_announcements import (
+    AnnouncementNotFound,
+    SessionAnnouncementService,
+    SessionNotFound,
+)
 from backend.v2.contexts.coaching.application.use_cases.correct_attendance import (
     CorrectAttendanceCommand,
 )
@@ -44,6 +50,10 @@ from backend.v2.interfaces.admin.views import (
     OverrideEnrollmentFeeRequest,
     PauseEnrollmentRequest,
     RemoveEnrollmentRequest,
+    SessionAnnouncementList,
+    SessionAnnouncementPostRequest,
+    SessionAnnouncementPostResponse,
+    SessionAnnouncementView,
     TransferEnrollmentRequest,
     UpdateOccurrenceCoachAttendanceRequest,
     UpdateOccurrenceReplacementRequest,
@@ -52,6 +62,10 @@ from backend.v2.interfaces.admin.views import (
 )
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
+from backend.v2.shared.http.errors import DomainError
+from backend.v2.shared.tenancy.context import current_academy_id
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["admin.sessions"])
 
@@ -388,9 +402,41 @@ async def add_to_roster(
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminEnrollmentView:
-    enrollment = await use_cases.edit_roster_add.execute(
-        EditRosterAddCommand(**body.model_dump(), actor_id=claims.user_id)
-    )
+    try:
+        enrollment = await use_cases.edit_roster_add.execute(
+            EditRosterAddCommand(**body.model_dump(), actor_id=claims.user_id)
+        )
+    except DomainError:
+        # 404/409 semantics and the machine-readable `error.code` the frontend
+        # reads belong to the single global handler; never convert them here.
+        raise
+    except Exception as exc:
+        # #610: an uncaught exception here rendered Starlette's plain-text
+        # "Internal Server Error" body, which the API client surfaces verbatim
+        # as the banner text — no code, no context, nothing to quote to
+        # support. The use case has already released the reserved seat.
+        try:
+            academy_id: str | None = current_academy_id()
+        except Exception:  # pragma: no cover - defensive
+            academy_id = None
+        log.exception(
+            "admin.roster_add_failed",
+            extra={
+                "academy_id": academy_id,
+                "session_id": body.session_id,
+                "student_id": body.student_id,
+                "actor_id": claims.user_id,
+            },
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Could not add this student to the roster. The seat was "
+                "released; please retry, and if it keeps failing quote "
+                f"session {body.session_id} / student {body.student_id} "
+                "to support."
+            ),
+        ) from exc
     return AdminEnrollmentView(
         enrollment_id=enrollment.enrollment_id,
         session_id=enrollment.session_id,
@@ -541,3 +587,95 @@ async def resume_enrollment(
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> None:
     await use_cases.resume_enrollment.execute(enrollment_id, actor_id=claims.user_id)
+
+
+# --- Session announcements (#614) ---------------------------------------
+#
+# Admin may post to any session in the academy. Wrong persona is a 404 via
+# `require_persona("admin")`, per the repo's persona rule.
+
+
+def _announcement_view(message: object) -> SessionAnnouncementView:
+    return SessionAnnouncementView(
+        message_id=message.message_id,  # type: ignore[attr-defined]
+        session_id=str(message.scope_id or ""),  # type: ignore[attr-defined]
+        body=message.body,  # type: ignore[attr-defined]
+        urgency=message.urgency,  # type: ignore[attr-defined]
+        author_id=message.sender_id,  # type: ignore[attr-defined]
+        author_display_name=message.author_display_name,  # type: ignore[attr-defined]
+        author_persona=message.sender_persona,  # type: ignore[attr-defined]
+        created_at=message.created_at,  # type: ignore[attr-defined]
+        # Admin may delete any announcement in the academy.
+        can_delete=True,
+    )
+
+
+def _announcements(use_cases: AdminUseCases) -> SessionAnnouncementService:
+    service = use_cases.session_announcements
+    if service is None:
+        raise HTTPException(status_code=503, detail="Announcements are not configured")
+    return service
+
+
+@router.get("/sessions/{session_id}/announcements", response_model=SessionAnnouncementList)
+async def list_session_announcements(
+    session_id: str,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> SessionAnnouncementList:
+    try:
+        messages = await _announcements(use_cases).list_for_session(session_id)
+    except SessionNotFound as exc:
+        raise HTTPException(status_code=404, detail="session not found") from exc
+    return SessionAnnouncementList(announcements=[_announcement_view(m) for m in messages])
+
+
+@router.post(
+    "/sessions/{session_id}/announcements",
+    response_model=SessionAnnouncementPostResponse,
+    status_code=201,
+)
+async def post_session_announcement(
+    session_id: str,
+    body: SessionAnnouncementPostRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> SessionAnnouncementPostResponse:
+    try:
+        result = await _announcements(use_cases).post(
+            session_id=session_id,
+            author_id=claims.user_id,
+            author_persona="admin",
+            body=body.body,
+            urgent=body.urgent,
+        )
+    except SessionNotFound as exc:
+        raise HTTPException(status_code=404, detail="session not found") from exc
+    return SessionAnnouncementPostResponse(
+        announcement=_announcement_view(result.message),
+        email_status=result.email_status,
+        sent_count=result.sent_count,
+        failed_count=result.failed_count,
+    )
+
+
+@router.delete(
+    "/sessions/{session_id}/announcements/{message_id}",
+    status_code=204,
+    response_model=None,
+)
+async def delete_session_announcement(
+    session_id: str,
+    message_id: str,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> None:
+    try:
+        await _announcements(use_cases).delete(
+            session_id=session_id,
+            message_id=message_id,
+            actor_id=claims.user_id,
+            actor_is_admin=True,
+        )
+    except AnnouncementNotFound as exc:
+        raise HTTPException(status_code=404, detail="announcement not found") from exc

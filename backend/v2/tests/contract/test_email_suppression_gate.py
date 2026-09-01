@@ -68,7 +68,12 @@ async def _gated(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "category",
-    [EmailCategory.TRANSACTIONAL, EmailCategory.DIGEST, EmailCategory.CAMPAIGN],
+    [
+        EmailCategory.TRANSACTIONAL,
+        EmailCategory.DIGEST,
+        EmailCategory.CAMPAIGN,
+        EmailCategory.NOTIFICATION,
+    ],
 )
 async def test_hard_bounced_address_is_not_sent_any_category(db, category) -> None:
     """A hard bounce stops transactional mail too.
@@ -100,7 +105,10 @@ async def test_complaint_blocks_marketing_but_not_transactional(db) -> None:
     await repo.record(email=BOUNCED, reason=SuppressionReason.COMPLAINT)
     recipient = ResolvedRecipient(user_id="u1", email=BOUNCED)
 
-    for blocked in (EmailCategory.DIGEST, EmailCategory.CAMPAIGN):
+    # NOTIFICATION (#612) is blocked with no production change beyond joining
+    # UNSUBSCRIBABLE_CATEGORIES: `email_suppression.blocks()` is written as
+    # `category in UNSUBSCRIBABLE_CATEGORIES`.
+    for blocked in (EmailCategory.DIGEST, EmailCategory.CAMPAIGN, EmailCategory.NOTIFICATION):
         outcome = await gated.send(recipient=recipient, subject="s", body="b", category=blocked)
         assert outcome.suppressed is True, blocked
         assert outcome.failed_reason == "suppressed:complaint"

@@ -35,6 +35,11 @@ class EmailPreferences:
     email: str | None
     campaigns_opted_out: bool = False
     digests_opted_out: bool = False
+    #: Staff roster alerts (#612). Adding the category to
+    #: ``UNSUBSCRIBABLE_CATEGORIES`` without this field would make the opt-out a
+    #: silent no-op: ``blocks()`` would fall through to ``False`` and the gate
+    #: would read the database only to allow every time.
+    notifications_opted_out: bool = False
     opted_out_at: datetime | None = None
     source: str | None = None  # "link" | "portal" | "admin"
     updated_at: datetime | None = None
@@ -48,8 +53,10 @@ class EmailPreferences:
             return self.campaigns_opted_out
         if category is EmailCategory.DIGEST:
             return self.digests_opted_out
+        if category is EmailCategory.NOTIFICATION:
+            return self.notifications_opted_out
         return False
 
     @property
     def opted_out_of_everything(self) -> bool:
-        return self.campaigns_opted_out and self.digests_opted_out
+        return self.campaigns_opted_out and self.digests_opted_out and self.notifications_opted_out
