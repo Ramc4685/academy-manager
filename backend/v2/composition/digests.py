@@ -40,8 +40,14 @@ from backend.v2.contexts.communications.application.parent_digest_view import (
     DuesView,
     ParentDigestView,
 )
+from backend.v2.contexts.communications.application.unsubscribe_token import (
+    UnsubscribeLinkBuilder,
+)
 from backend.v2.contexts.communications.application.use_cases.get_digest_delivery_log import (
     GetDigestDeliveryLog,
+)
+from backend.v2.contexts.communications.application.use_cases.send_campaign import (
+    SendCampaign,
 )
 from backend.v2.contexts.communications.application.use_cases.send_coach_daily_digest import (
     SendCoachDailyDigest,
@@ -52,11 +58,23 @@ from backend.v2.contexts.communications.application.use_cases.send_coach_digest_
 from backend.v2.contexts.communications.application.use_cases.send_parent_daily_digest import (
     SendParentDailyDigest,
 )
+from backend.v2.contexts.communications.infrastructure.gated_send_port import (
+    GatedEmailSendPort,
+)
 from backend.v2.contexts.communications.infrastructure.mongo_audience_resolver import (
     MongoAudienceResolver,
 )
+from backend.v2.contexts.communications.infrastructure.mongo_campaign_repo import (
+    MongoCampaignRepository,
+)
+from backend.v2.contexts.communications.infrastructure.mongo_delivery_repo import (
+    MongoDeliveryRepository,
+)
 from backend.v2.contexts.communications.infrastructure.mongo_digest_send_repo import (
     MongoDigestSendRepository,
+)
+from backend.v2.contexts.communications.infrastructure.mongo_email_preference_repo import (
+    MongoEmailPreferenceGate,
 )
 from backend.v2.contexts.communications.infrastructure.mongo_parent_digest_send_repo import (
     MongoParentDigestSendRepository,
@@ -266,7 +284,7 @@ def _build_digest_parts(db: AsyncIOMotorDatabase[Any]) -> _DigestParts:
         # Shared env-gated factory (defined below): the coach daily digest and
         # the admin-triggered digest test must not be the paths that mail real
         # coaches from a dev stack that inherited delivery flags and a key.
-        sender=_build_email_sender(settings),
+        sender=_build_email_sender(settings, db),
         plan_provider=plan_provider,
     )
 
@@ -278,6 +296,8 @@ def compose_send_coach_daily_digest(db: AsyncIOMotorDatabase[Any]) -> SendCoachD
         resolver=parts.resolver,
         sender=parts.sender,
         plan_provider=parts.plan_provider,
+        unsubscribe_links=compose_unsubscribe_link_builder(get_settings()),
+        academy_slugs=_AcademySlugLookup(MongoAcademyRepository(db)),
     )
 
 
@@ -288,6 +308,8 @@ def compose_send_coach_digest_test(db: AsyncIOMotorDatabase[Any]) -> SendCoachDi
         resolver=parts.resolver,
         sender=parts.sender,
         plan_provider=parts.plan_provider,
+        unsubscribe_links=compose_unsubscribe_link_builder(get_settings()),
+        academy_slugs=_AcademySlugLookup(MongoAcademyRepository(db)),
     )
 
 
@@ -739,8 +761,8 @@ class _ParentDigestProvider:
 _REAL_EMAIL_ENVS = frozenset({"staging", "prod"})
 
 
-def _build_email_sender(settings: Any) -> Any:
-    """Resend/Stub gating for every digest send path.
+def _build_email_sender(settings: Any, db: AsyncIOMotorDatabase[Any] | None = None) -> Any:
+    """Resend/Stub gating — and send-time recipient gates — for every send path.
 
     The single construction site for any adapter that *sends* (enforced by
     ``v2/tests/structural/test_email_sender_construction.py``): parent digest,
@@ -763,9 +785,38 @@ def _build_email_sender(settings: Any) -> Any:
         else "noreply@academy.app"
     )
     env = str(getattr(settings, "env", "") or "").lower()
+    inner: Any
     if settings.email_delivery_enabled and settings.resend_api_key and env in _REAL_EMAIL_ENVS:
-        return ResendEmailSendPort(api_key=settings.resend_api_key, from_address=from_address)
-    return StubEmailSendPort()
+        inner = ResendEmailSendPort(api_key=settings.resend_api_key, from_address=from_address)
+    else:
+        inner = StubEmailSendPort()
+    if db is None:
+        return inner
+    return GatedEmailSendPort(
+        inner=inner,
+        preferences=MongoEmailPreferenceGate(db),
+    )
+
+
+def unwrap_send_port(sender: Any) -> Any:
+    """The adapter that would actually contact a provider.
+
+    ``_build_email_sender`` returns a ``GatedEmailSendPort`` decorator, so an
+    ``isinstance(sender, StubEmailSendPort)`` check on the *wrapper* is always
+    False — which would silently disarm the local/test "email is not enabled"
+    safety block in ``composition/admin.py`` and the env-gate tests. Callers
+    asking "is this a real sender?" must ask the inner port.
+    """
+    return getattr(sender, "inner", sender)
+
+
+def is_real_email_sender(sender: Any) -> bool:
+    """True when this port would actually contact a provider.
+
+    The one place the wrapper/inner distinction is interpreted, so no caller
+    has to remember to unwrap before an ``isinstance`` check.
+    """
+    return not isinstance(unwrap_send_port(sender), StubEmailSendPort)
 
 
 def compose_email_credential_probe() -> Any | None:
@@ -793,6 +844,12 @@ def compose_ops_digest_sender() -> Any:
 
     Reuses the parent/coach digest gating verbatim so the ops digest cannot be
     the one path that sends real email from a dev or test deployment.
+
+    Deliberately ungated by the send-time recipient gates (no ``db`` passed).
+    Its recipient is ``ResolvedRecipient(user_id="ops-alert", ...)`` — not a
+    tenant user, with no academy in scope — and it is the channel that reports
+    *that email is broken*. Silently suppressing it would hide the very failure
+    it exists to surface.
     """
     return _build_email_sender(get_settings())
 
@@ -819,6 +876,60 @@ def compose_send_parent_daily_digest(
     return SendParentDailyDigest(
         digests=MongoParentDigestSendRepository(db),
         resolver=MongoAudienceResolver(db=db),
-        sender=_build_email_sender(settings),
+        sender=_build_email_sender(settings, db),
         provider=provider,
+        unsubscribe_links=compose_unsubscribe_link_builder(settings),
+        academy_slugs=_AcademySlugLookup(MongoAcademyRepository(db)),
+    )
+
+
+class _AcademySlugLookup:
+    """``AcademySlugLookup`` over the academy directory (#555).
+
+    Every emailed link has to be built on the academy's own subdomain, because
+    ``TenantResolver`` reads the tenant from the host's first label. The parent
+    digest already resolves the slug this way for its portal links; this makes
+    the same host available to the coach digest and the campaign loop, which
+    have no academy repository of their own.
+    """
+
+    def __init__(self, academies: Any) -> None:
+        self._academies = academies
+
+    async def slug_for(self, academy_id: str) -> str | None:
+        doc = await self._academies.find_by_id(academy_id)
+        if not doc:
+            return None
+        return str(doc.get("slug") or "") or None
+
+
+def compose_unsubscribe_link_builder(settings: Any) -> UnsubscribeLinkBuilder:
+    """The footer link minter for digests and campaigns (#555).
+
+    Fail-closed: with no ``unsubscribe_token_secret`` it mints nothing and the
+    footer degrades to a portal pointer. There is deliberately no ``or ""``
+    fallback onto some other secret — signing with an empty HMAC key would let
+    anyone forge a link that unsubscribes an arbitrary family.
+    """
+    return UnsubscribeLinkBuilder(
+        frontend_url=getattr(settings, "frontend_url", None),
+        secret=getattr(settings, "unsubscribe_token_secret", None),
+    )
+
+
+def compose_send_campaign(
+    db: AsyncIOMotorDatabase[Any], sender: Any, settings: Any
+) -> SendCampaign:
+    """Admin bulk campaigns, with a CAN-SPAM footer on every body (#555).
+
+    ``sender`` is passed in rather than rebuilt so the admin composition keeps
+    one shared, already-gated port for campaigns, invoices and reminders alike.
+    """
+    return SendCampaign(
+        campaigns=MongoCampaignRepository(db),
+        deliveries=MongoDeliveryRepository(db),
+        resolver=MongoAudienceResolver(db=db),
+        sender=sender,
+        unsubscribe_links=compose_unsubscribe_link_builder(settings),
+        academy_slugs=_AcademySlugLookup(MongoAcademyRepository(db)),
     )

@@ -24,6 +24,7 @@ from backend.v2.contexts.communications.application.use_cases.send_coach_daily_d
     SendCoachDailyDigest,
     SendCoachDailyDigestCommand,
 )
+from backend.v2.contexts.communications.domain.email_category import EmailCategory
 from backend.v2.contexts.communications.domain.models import (
     AcademyAudience,
     DigestSend,
@@ -121,6 +122,8 @@ class StubSendPort:
         body: str,
         cc: list[str] | None = None,
         bcc: list[str] | None = None,
+        reply_to: str | None = None,
+        category: EmailCategory = EmailCategory.TRANSACTIONAL,
     ) -> SendOutcome:
         self.sent.append(
             {
@@ -129,6 +132,7 @@ class StubSendPort:
                 "body": body,
                 "cc": cc or [],
                 "bcc": bcc or [],
+                "category": category,
             }
         )
         return SendOutcome(

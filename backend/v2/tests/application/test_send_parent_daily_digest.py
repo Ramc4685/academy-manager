@@ -21,6 +21,7 @@ from backend.v2.contexts.communications.application.use_cases.send_parent_daily_
     SendParentDailyDigest,
     SendParentDailyDigestCommand,
 )
+from backend.v2.contexts.communications.domain.email_category import EmailCategory
 from backend.v2.contexts.communications.domain.models import (
     AcademyAudience,
     DigestSend,
@@ -101,10 +102,18 @@ class StubSendPort:
         subject: str,
         body: str,
         cc: list[str] | None = None,
+        bcc: list[str] | None = None,
         reply_to: str | None = None,
+        category: EmailCategory = EmailCategory.TRANSACTIONAL,
     ) -> SendOutcome:
         self.sent.append(
-            {"email": recipient.email, "subject": subject, "body": body, "reply_to": reply_to}
+            {
+                "email": recipient.email,
+                "subject": subject,
+                "body": body,
+                "reply_to": reply_to,
+                "category": category,
+            }
         )
         return SendOutcome(
             ok=True, provider_message_id=f"stub-{len(self.sent)}", failed_reason=None

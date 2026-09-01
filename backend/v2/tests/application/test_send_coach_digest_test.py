@@ -25,6 +25,7 @@ from backend.v2.contexts.communications.application.use_cases.send_coach_digest_
     SendCoachDigestTest,
     SendCoachDigestTestCommand,
 )
+from backend.v2.contexts.communications.domain.email_category import EmailCategory
 from backend.v2.contexts.communications.domain.models import DigestSend, DigestSendStatus
 
 ACADEMY_ID = "acad-1"
@@ -97,8 +98,18 @@ class FakeSelectedResolver(AudienceResolver):
 class StubSendPort:
     sent: list[dict[str, Any]] = field(default_factory=list)
 
-    async def send(self, *, recipient, subject, body):
-        self.sent.append({"email": recipient.email, "subject": subject})
+    async def send(
+        self,
+        *,
+        recipient,
+        subject,
+        body,
+        cc=None,
+        bcc=None,
+        reply_to=None,
+        category: EmailCategory = EmailCategory.TRANSACTIONAL,
+    ):
+        self.sent.append({"email": recipient.email, "subject": subject, "body": body})
         return SendOutcome(
             ok=True, provider_message_id=f"stub-{len(self.sent)}", failed_reason=None
         )
@@ -190,3 +201,53 @@ async def test_test_send_no_email_marks_failed() -> None:
     assert result.status == "failed"
     assert sender.sent == []
     assert next(iter(digests.by_id.values())).status == DigestSendStatus.FAILED
+
+
+# --- the admin test send is bulk mail too -----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_test_send_carries_the_same_unsubscribe_link_as_the_real_digest() -> None:
+    """An admin-triggered "send me a test" is a real DIGEST-category email to a
+    real coach's inbox, so it needs the same working opt-out as the 7am run.
+    Without an `unsubscribe_links` builder it was the one digest path that shipped
+    the "no link configured" fallback sentence even on a fully configured
+    deployment — a footer that promises an opt-out the recipient cannot take.
+    """
+    from backend.v2.contexts.communications.application.unsubscribe_token import (
+        UnsubscribeLinkBuilder,
+    )
+
+    class _Slugs:
+        async def slug_for(self, academy_id: str) -> str:
+            return "blno"
+
+    digests = FakeDigestSendRepository()
+    resolver = FakeSelectedResolver(
+        users={
+            "coach-1": ResolvedRecipient(
+                user_id="coach-1", email="c1@example.test", display_name="Coach"
+            )
+        }
+    )
+    sender = StubSendPort()
+    use_case = SendCoachDigestTest(
+        digests=digests,
+        resolver=resolver,
+        sender=sender,
+        plan_provider=FakePlanProvider(plan=_populated_plan()),
+        unsubscribe_links=UnsubscribeLinkBuilder(
+            frontend_url="https://app.courtmastr.com", secret="s3cret"
+        ),
+        academy_slugs=_Slugs(),
+    )
+
+    await use_case.execute(
+        SendCoachDigestTestCommand(academy_id=ACADEMY_ID, target_user_id="coach-1", on_date=ON_DATE)
+    )
+
+    body = sender.sent[0]["body"]
+    assert "Unsubscribe from these emails" in body, (
+        "the admin test send shipped the no-link fallback footer"
+    )
+    assert "https://blno.courtmastr.com/unsubscribe?t=" in body, body[-400:]

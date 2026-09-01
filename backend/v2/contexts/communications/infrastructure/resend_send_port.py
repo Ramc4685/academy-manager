@@ -38,6 +38,7 @@ from backend.v2.contexts.communications.application.ports import (
     ResolvedRecipient,
     SendOutcome,
 )
+from backend.v2.contexts.communications.domain.email_category import EmailCategory
 
 log = logging.getLogger(__name__)
 
@@ -108,7 +109,11 @@ class ResendEmailSendPort(EmailSendPort):
         cc: list[str] | None = None,
         bcc: list[str] | None = None,
         reply_to: str | None = None,
+        category: EmailCategory = EmailCategory.TRANSACTIONAL,
     ) -> SendOutcome:
+        # ``category`` is consumed by ``GatedEmailSendPort`` before we are
+        # reached; Resend has no field for it, so it is deliberately not put
+        # into ``SendParams``.
         if not recipient.email:
             return SendOutcome(ok=False, provider_message_id=None, failed_reason="no email address")
         try:

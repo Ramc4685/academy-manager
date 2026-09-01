@@ -20,6 +20,10 @@ from __future__ import annotations
 import html
 from typing import Any
 
+from backend.v2.contexts.communications.application.unsubscribe_footer import (
+    render_unsubscribe_footer,
+)
+
 # Maps a lesson card's ``source`` code to a human reference label.
 _SOURCE_LABELS = {"BWF_SHUTTLE_TIME": "Shuttle Time"}
 
@@ -40,8 +44,14 @@ _STATUS_CHIPS = {
 _DEFAULT_CHIP = ("#f3f4f6", "#374151")
 
 
-def render_coach_digest(plan: Any, *, playlist_url: str | None = None) -> tuple[str, str]:
-    """Return ``(subject, body)`` for one coach's daily plan. ``body`` is HTML."""
+def render_coach_digest(
+    plan: Any, *, playlist_url: str | None = None, unsubscribe_url: str | None = None
+) -> tuple[str, str]:
+    """Return ``(subject, body)`` for one coach's daily plan. ``body`` is HTML.
+
+    Ends with the same opt-out notice as the parent digest (#555): a daily
+    recurring email is not transactional, whoever receives it.
+    """
 
     date_str = str(getattr(plan, "date", "") or "")
     program_name = str(getattr(plan, "program_name", "") or "")
@@ -63,7 +73,7 @@ def render_coach_digest(plan: Any, *, playlist_url: str | None = None) -> tuple[
 
     body = (
         f'<div style="font-family:{_FONT_STACK};max-width:600px;margin:0 auto;color:{_TEXT_PRIMARY};">'
-        f"{sessions_html}{footer_html}"
+        f"{sessions_html}{footer_html}{render_unsubscribe_footer(unsubscribe_url)}"
         "</div>"
     )
 
