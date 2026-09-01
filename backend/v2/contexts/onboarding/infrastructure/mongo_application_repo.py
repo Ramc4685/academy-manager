@@ -20,6 +20,7 @@ class MongoApplicationRepository(TenantScopedRepository):
     @staticmethod
     def _to_domain(doc: dict[str, object]) -> Application:
         wa = doc.get("waiver_acceptance")
+        superseded = doc.get("superseded_payment_ids")
         return Application(
             application_id=str(doc["application_id"]),
             academy_id=str(doc["academy_id"]),
@@ -32,6 +33,9 @@ class MongoApplicationRepository(TenantScopedRepository):
             waiver_acceptance=WaiverAcceptance.model_validate(wa) if wa else None,
             stripe_checkout_session_id=doc.get("stripe_checkout_session_id"),
             payment_id=doc.get("payment_id"),
+            superseded_payment_ids=(
+                [str(pid) for pid in superseded] if isinstance(superseded, list) else []
+            ),
             student_id=doc.get("student_id"),
             enrollment_id=doc.get("enrollment_id"),
             waitlist_id=doc.get("waitlist_id"),
@@ -69,7 +73,33 @@ class MongoApplicationRepository(TenantScopedRepository):
         return None
 
     async def get_by_payment_id(self, payment_id: str) -> Application | None:
+        """Resolve an application from the payment attempt it CURRENTLY owns.
+
+        Deliberately narrow. A superseded attempt resolves through
+        `get_by_superseded_payment_id` instead, and only the advance path is
+        allowed to use it — see `TransitionApplication.execute_for_payment`.
+        """
         doc = await self._find_one({"payment_id": payment_id})
+        return self._to_domain(doc) if doc else None
+
+    async def get_by_superseded_payment_id(self, payment_id: str) -> Application | None:
+        """Resolve an application from an attempt a re-stamp REPLACED.
+
+        A re-stamp re-points `payment_id` at the newest checkout attempt, and
+        the parent may have completed the attempt it replaced moments earlier
+        (charge accepted, webhook not yet landed). The archived id is the only
+        handle that late `checkout.session.completed` has back to the
+        application, so without this the charge orphans the registration
+        (#549).
+
+        Kept SEPARATE from `get_by_payment_id` on purpose. Folding both into
+        one `$or` widened every caller, and the destructive ones —
+        `CHECKOUT_EXPIRED`, `CAPACITY_FAILED_REFUNDING` — then let a stale
+        event for a replaced attempt drive the application's LIVE attempt into
+        a terminal state it has no transition out of. Payment ids are unique
+        per attempt, so this can never match two different applications.
+        """
+        doc = await self._find_one({"superseded_payment_ids": payment_id})
         return self._to_domain(doc) if doc else None
 
     async def list_by_status(self, statuses: list[str]) -> list[Application]:
@@ -134,7 +164,19 @@ class MongoApplicationRepository(TenantScopedRepository):
             updates["stripe_checkout_session_id"] = stripe_checkout_session_id
         if payment_id is not None:
             updates["payment_id"] = payment_id
-        doc = await self._find_one_and_update(filter_, {"$set": updates})
+        update: dict[str, Any] = {"$set": updates}
+        if (
+            expected_payment_id is not None
+            and payment_id is not None
+            and payment_id != expected_payment_id
+        ):
+            # Archive the id we are overwriting, in the SAME atomic write as
+            # the overwrite. A separate follow-up write could be lost to a
+            # crash, and the window it opens is exactly the dangerous one: the
+            # parent has already paid the superseded session and the webhook
+            # lands with nothing pointing back at the application (#549).
+            update["$addToSet"] = {"superseded_payment_ids": expected_payment_id}
+        doc = await self._find_one_and_update(filter_, update)
         return self._to_domain(doc) if doc else None
 
     async def claim_for_review(

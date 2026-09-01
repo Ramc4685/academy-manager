@@ -41,3 +41,18 @@ class ApplicationOwnedByAnotherParent(DomainError):
 
     code = "Onboarding.ApplicationNotFound"
     status_code = 404
+
+
+class ApplicationForPaymentNotFound(DomainError):
+    """No onboarding application claims this payment id.
+
+    Raised (never returned as ``None``) by ``TransitionApplication`` so the miss
+    can never be mistaken for "handled". For a registration checkout it means a
+    parent may have been charged with nothing left to advance, which is an alert
+    path; for a payment that never had an onboarding context — an invoice, a
+    subscription, an admin-recorded payment — it is the expected benign case and
+    the cross-context handler says so explicitly (#549).
+    """
+
+    code = "Onboarding.ApplicationForPaymentNotFound"
+    status_code = 404

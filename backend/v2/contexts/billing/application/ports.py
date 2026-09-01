@@ -359,6 +359,29 @@ class StripeResourceNotFound(Exception):
     auth failures so callers can map it to a 404 rather than a 500."""
 
 
+class StripeCheckoutSessionNotExpirable(ValueError):
+    """Stripe refused the expiry because the session is already in a terminal
+    state — complete, or already expired.
+
+    This is the ONLY benign expiry failure, and it is the race a supersede
+    exists to survive: the parent paid on the old tab. Callers may swallow it.
+
+    Subclasses ``ValueError`` so callers written against the gateway's older
+    blanket ``ValueError`` contract keep working.
+    """
+
+
+class StripeTransientFailure(ValueError):
+    """Stripe could not be reached, or failed in a way that may succeed on a
+    retry — connection errors, timeouts, rate limits, 5xx.
+
+    Indistinguishable from the terminal case before #549, which meant a network
+    blip while retiring a superseded Checkout Session left that session PAYABLE
+    with an INFO log and no reconciliation handle. Callers must never treat this
+    as "already paid, nothing to do".
+    """
+
+
 class StripeGateway(Protocol):
     async def create_checkout_session(
         self,

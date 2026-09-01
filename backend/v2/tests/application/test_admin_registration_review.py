@@ -59,6 +59,12 @@ class InMemoryApplications:
             None,
         )
 
+    async def get_by_superseded_payment_id(self, payment_id: str) -> Application | None:
+        return next(
+            (app for app in self.apps.values() if payment_id in app.superseded_payment_ids),
+            None,
+        )
+
     async def list_by_status(self, statuses: list[str]) -> list[Application]:
         return [app for app in self.apps.values() if app.status in statuses]
 
