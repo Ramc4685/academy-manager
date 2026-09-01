@@ -6,9 +6,8 @@ import hashlib
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime
 from typing import Any, Protocol, TypeVar
-from zoneinfo import ZoneInfo
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import OperationFailure
@@ -19,7 +18,10 @@ from backend.v2.composition.pathway import (
     compose_curriculum,
     compose_student_progress,
 )
-from backend.v2.contexts.billing.application.ports import StripeGateway
+from backend.v2.contexts.billing.application.ports import (
+    StripeCheckoutSessionNotExpirable,
+    StripeGateway,
+)
 from backend.v2.contexts.billing.application.use_cases.add_invoice_line import (
     AddInvoiceLine,
     AddInvoiceLineCommand,
@@ -96,6 +98,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_student_billing_enrollment
 )
 from backend.v2.contexts.billing.infrastructure.mongo_subscription_repo import (
     MongoSubscriptionRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_unretired_checkout_repo import (
+    MongoUnretiredCheckoutSessionRepository,
 )
 from backend.v2.contexts.enrollment.application.use_cases.absence_notices import (
     ListParentAbsences,
@@ -349,16 +354,21 @@ class _StripeCheckoutAttemptRetirement:
         stripe: StripeGateway,
         payments: Any,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        unretired: Any = None,
     ) -> None:
         self._stripe = stripe
         self._payments = payments
         self._now = clock
+        # Worklist for sessions that stayed payable because Stripe could not be
+        # reached. Optional so the older two-argument construction in tests
+        # keeps working; when it is None the failure is still logged loudly.
+        self._unretired = unretired
 
     async def retire_checkout_attempt(
         self, *, checkout_session_id: str | None, payment_id: str | None
     ) -> None:
         if checkout_session_id:
-            await self._expire_session(checkout_session_id)
+            await self._expire_session(checkout_session_id, payment_id)
         if not payment_id:
             return
         payment = await self._payments.get(payment_id)
@@ -373,19 +383,72 @@ class _StripeCheckoutAttemptRetirement:
             payment.model_copy(update={"status": "expired", "updated_at": self._now()})
         )
 
-    async def _expire_session(self, checkout_session_id: str) -> None:
+    async def _expire_session(self, checkout_session_id: str, payment_id: str | None) -> None:
         # Resolved OUTSIDE the try on purpose: a gateway that does not
         # implement the port is a wiring bug and must blow up, not be filed
         # away as another benign "already paid" expiry failure.
         expire = self._stripe.expire_checkout_session
         try:
             await expire(checkout_session_id)
-        except Exception as exc:
+        except StripeCheckoutSessionNotExpirable as exc:
+            # The ONLY benign failure: Stripe will not expire a session that is
+            # already complete or expired, which is precisely the race this call
+            # has to survive (the parent paid on the old tab). Nothing is left
+            # payable, so INFO is honest here.
             log.info(
-                "checkout retirement: could not expire session %s "
-                "(already complete or expired?) err=%s",
+                "checkout retirement: session %s is already terminal at Stripe err=%s",
                 checkout_session_id,
                 exc,
+            )
+        except Exception as exc:
+            # Everything else — connection dropped, timeout, 5xx, rate limit,
+            # or an error type we do not recognise — leaves the session OPEN and
+            # PAYABLE. Before #549 this shared the INFO log above and vanished.
+            # It must not unpick the state the caller just committed, so it is
+            # still swallowed, but it is recorded where a reconciliation pass
+            # can find it and logged at a level that can page someone.
+            log.warning(
+                "checkout retirement: session %s could NOT be expired and may still be "
+                "payable (payment %s) err=%s",
+                checkout_session_id,
+                payment_id,
+                exc,
+            )
+            await self._record_unretired(checkout_session_id, payment_id, exc)
+            return
+        await self._clear_unretired(checkout_session_id)
+
+    async def _record_unretired(
+        self, checkout_session_id: str, payment_id: str | None, exc: Exception
+    ) -> None:
+        if self._unretired is None:
+            return
+        try:
+            await self._unretired.record(
+                checkout_session_id=checkout_session_id,
+                payment_id=payment_id,
+                reason=type(exc).__name__,
+                error=str(exc),
+                occurred_at=self._now(),
+            )
+        except Exception:
+            # The worklist write is the last line of defence; if it fails there
+            # is nothing further to fall back on, but it must not take down the
+            # caller's already-committed state.
+            log.exception(
+                "checkout retirement: failed to record un-retired session %s",
+                checkout_session_id,
+            )
+
+    async def _clear_unretired(self, checkout_session_id: str) -> None:
+        if self._unretired is None:
+            return
+        try:
+            await self._unretired.clear(checkout_session_id)
+        except Exception:
+            log.exception(
+                "checkout retirement: failed to clear un-retired session %s",
+                checkout_session_id,
             )
 
 
@@ -838,6 +901,7 @@ def compose_parent(
         stripe=stripe,
         payments=payments_repo,
         clock=clock,
+        unretired=MongoUnretiredCheckoutSessionRepository(db),
     )
     start_app = StartApplication(
         apps=apps_repo,
@@ -1643,11 +1707,11 @@ def compose_parent(
             owned = {str(s.get("student_id") or s["_id"]) for s in students}
             if student_id not in owned:
                 raise SessionNotFound("student not found", student_id=student_id)
-        billing_start = _start_date_to_datetime(start_date)
         return await quote_enrollment_uc.execute(
             QuoteEnrollmentCommand(
                 session_id=session_id,
-                billing_start_at=billing_start,
+                billing_start_at=datetime.now(UTC),
+                billing_start_date=_parse_start_date(start_date),
                 calculated_by=parent_id,
                 parent_id=parent_id,
                 student_id=student_id,
@@ -1733,7 +1797,12 @@ def compose_parent(
             # generator has no proration signal at all (enrollment docs never
             # carry billing_start_at/created_at) and would charge full tuition
             # for this period once the enrollment exists.
-            zero_quote_period = clock().strftime("%Y-%m")
+            # Reuse the quote's own label instead of re-deriving one from a
+            # fresh UTC now(): the quote's period is built in the session's
+            # timezone, so a UTC label disagrees with it (and with the monthly
+            # generator's skip_periods comparison) for the several evening
+            # hours before local month-end (#541).
+            zero_quote_period = quote.billing_period_label
             await apps_repo.save(app.model_copy(update={"zero_quote_period": zero_quote_period}))
             if quote.snapshot_id:
                 consumed = await payments_repo.consume_quote_snapshot(quote.snapshot_id)
@@ -2170,12 +2239,19 @@ def _session_amount_cents(doc: dict[str, object]) -> int:
     return 2500
 
 
-def _start_date_to_datetime(value: str | None) -> datetime:
+def _parse_start_date(value: str | None) -> date | None:
+    """Parse a caller-supplied start date, leaving the timezone to the caller.
+
+    This used to pin the date to ``America/Chicago`` midnight and hand the
+    resulting instant down as ``billing_start_at``. That hardcoded zone is
+    wrong for any session that is not in Chicago, and once QuoteEnrollment
+    began reading the billing start in the *session's* timezone it became
+    actively harmful: Chicago midnight on the 1st is 22:00 on the last day of
+    the previous month in Los Angeles, so the quote would be labelled, priced
+    and persisted against the wrong month (#541). The calendar date now
+    travels down as a date and QuoteEnrollment resolves it against the
+    session's own clock.
+    """
     if not value:
-        return datetime.now(UTC)
-    local = datetime.combine(
-        datetime.fromisoformat(value).date(),
-        time.min,
-        tzinfo=ZoneInfo("America/Chicago"),
-    )
-    return local.astimezone(UTC)
+        return None
+    return datetime.fromisoformat(value).date()

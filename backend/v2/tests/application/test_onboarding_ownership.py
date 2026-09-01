@@ -16,6 +16,7 @@ from backend.v2.contexts.onboarding.application.use_cases.manage_application imp
     TransitionApplication,
 )
 from backend.v2.contexts.onboarding.domain.errors import (
+    ApplicationForPaymentNotFound,
     ApplicationNotEditable,
     ApplicationNotFound,
 )
@@ -45,9 +46,17 @@ class FakeAppRepo:
         return self._app
 
     async def get_by_payment_id(self, payment_id):
-        if self._app is not None and self._app.payment_id == payment_id:
-            return self._app
-        return None
+        # Mirrors the adapter: the LIVE attempt only.
+        if self._app is None or payment_id != self._app.payment_id:
+            return None
+        return self._app
+
+    async def get_by_superseded_payment_id(self, payment_id):
+        # Mirrors the adapter: an attempt a re-stamp replaced. Kept separate so
+        # only the advance path can resolve through it (#549).
+        if self._app is None or payment_id not in self._app.superseded_payment_ids:
+            return None
+        return self._app
 
     async def reopen_for_edit(self, application_id, *, expected_status, updated_at):
         app = await self.get(application_id)
@@ -77,6 +86,16 @@ class FakeAppRepo:
             updates["stripe_checkout_session_id"] = stripe_checkout_session_id
         if payment_id is not None:
             updates["payment_id"] = payment_id
+        if (
+            expected_payment_id is not None
+            and payment_id is not None
+            and payment_id != expected_payment_id
+            and expected_payment_id not in app.superseded_payment_ids
+        ):
+            updates["superseded_payment_ids"] = [
+                *app.superseded_payment_ids,
+                expected_payment_id,
+            ]
         self._app = app.model_copy(update=updates)
         return self._app
 
@@ -542,11 +561,44 @@ async def test_payment_webhook_still_reaches_pending_approval_after_a_resume() -
 async def test_a_draft_that_never_checked_out_cannot_be_reached_by_a_payment() -> None:
     """DRAFT -> PENDING_APPROVAL is only safe because execute_for_payment
     resolves through payment_id, which a never-checked-out draft does not
-    carry. Guard the assumption the transition table now leans on."""
+    carry. Guard the assumption the transition table now leans on.
+
+    The miss RAISES rather than returning None: the two things the old None
+    stood for — "not an onboarding payment at all" and "an onboarding payment
+    whose application we lost" — are wildly different, and collapsing them is
+    what let a paid-but-orphaned registration pass unnoticed (#549)."""
     repo = FakeAppRepo(_app())
     uc = TransitionApplication(apps=repo)
 
-    assert await uc.execute_for_payment("pay-anything", "PENDING_APPROVAL") is None
+    with pytest.raises(ApplicationForPaymentNotFound) as excinfo:
+        await uc.execute_for_payment("pay-anything", "PENDING_APPROVAL")
+
+    assert excinfo.value.details["payment_id"] == "pay-anything"
+
+
+@pytest.mark.asyncio
+async def test_a_restamp_archives_the_payment_id_it_overwrites() -> None:
+    """The re-stamp is what creates the orphan window: the parent may have
+    completed the FIRST session at Stripe moments before the second start won
+    the CAS. `get_by_payment_id` is the only handle the webhook has, so the id
+    being overwritten has to remain resolvable (#549)."""
+    repo = FakeAppRepo(_checkout_pending())
+    uc = TransitionApplication(apps=repo)
+
+    await uc.execute(
+        "app-1",
+        "CHECKOUT_PENDING",
+        stripe_checkout_session_id="cs_second",
+        payment_id="pay-second",
+    )
+
+    assert repo._app is not None
+    assert repo._app.payment_id == "pay-second"
+    assert repo._app.superseded_payment_ids == ["pay-first"]
+
+    updated = await uc.execute_for_payment("pay-first", "PENDING_APPROVAL")
+
+    assert updated.status == "PENDING_APPROVAL"
 
 
 # ---------------------------------------------------------------------------
@@ -717,3 +769,62 @@ async def test_losing_the_entry_race_from_draft_leaves_one_payable_session() -> 
     assert current.payment_id == "pay-winner"
     # ...and the loser killed its OWN session, not the winner's.
     assert retirement.calls == [("cs_loser", "pay-loser")]
+
+
+# ---------------------------------------------------------------------------
+# The archive is a ONE-WAY DOOR: it may advance an application, never retire it.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("destructive", ["CHECKOUT_EXPIRED", "CAPACITY_FAILED_REFUNDING"])
+async def test_a_stale_event_for_a_superseded_attempt_cannot_retire_the_live_one(
+    destructive: str,
+) -> None:
+    """Archiving the superseded payment id must not widen the DESTRUCTIVE paths.
+
+    Retirement expires the old Stripe session, which is what MAKES Stripe emit
+    `checkout.session.expired` for it. The webhook's own
+    `payment.status == "pending"` guard is supposed to absorb that, but the
+    write arming it is neither atomic with the CAS nor exception-guarded — so
+    the stale event does reach here.
+
+    If the archive answered that event, the application would be parked in
+    CHECKOUT_PENDING -> CHECKOUT_EXPIRED, which has NO outgoing transition and
+    is not a status checkout can be restarted from, while the parent is paying
+    the live attempt. Charged, unadvanced and unrecoverable — strictly worse
+    than the orphan the archive repairs.
+    """
+    repo = FakeAppRepo(_checkout_pending())
+    uc = TransitionApplication(apps=repo)
+
+    await uc.execute(
+        "app-1",
+        "CHECKOUT_PENDING",
+        stripe_checkout_session_id="cs_second",
+        payment_id="pay-second",
+    )
+    assert repo._app is not None
+    assert repo._app.superseded_payment_ids == ["pay-first"]
+
+    # The superseded attempt's own expiry / capacity event lands late.
+    with pytest.raises(ApplicationForPaymentNotFound):
+        await uc.execute_for_payment("pay-first", destructive)
+
+    # The live attempt is untouched and can still be paid.
+    assert repo._app.status == "CHECKOUT_PENDING"
+    assert repo._app.payment_id == "pay-second"
+
+    advanced = await uc.execute_for_payment("pay-second", "PENDING_APPROVAL")
+    assert advanced.status == "PENDING_APPROVAL"
+
+
+@pytest.mark.asyncio
+async def test_the_live_attempt_still_reaches_its_own_destructive_targets() -> None:
+    """The narrowing above must not disarm the normal expiry path."""
+    repo = FakeAppRepo(_checkout_pending())
+    uc = TransitionApplication(apps=repo)
+
+    expired = await uc.execute_for_payment("pay-first", "CHECKOUT_EXPIRED")
+
+    assert expired.status == "CHECKOUT_EXPIRED"

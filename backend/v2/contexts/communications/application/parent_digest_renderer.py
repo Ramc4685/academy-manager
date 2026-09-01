@@ -17,6 +17,9 @@ from backend.v2.contexts.communications.application.parent_digest_view import (
     ChildDigestView,
     ParentDigestView,
 )
+from backend.v2.contexts.communications.application.unsubscribe_footer import (
+    render_unsubscribe_footer,
+)
 
 _FONT_STACK = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
 _TEXT_PRIMARY = "#1a1a1a"
@@ -44,15 +47,23 @@ _DANGER_BORDER = "#fecaca"
 _DANGER_FILL = "#dc2626"
 
 
-def render_parent_digest(view: ParentDigestView) -> tuple[str, str]:
-    """Return ``(subject, body)`` for one family's morning digest. ``body`` is HTML."""
+def render_parent_digest(
+    view: ParentDigestView, *, unsubscribe_url: str | None = None
+) -> tuple[str, str]:
+    """Return ``(subject, body)`` for one family's morning digest. ``body`` is HTML.
+
+    The digest is a recurring non-transactional message, so it always ends
+    with an opt-out notice (#555). ``unsubscribe_url`` is ``None`` when no
+    signing secret is configured; the footer then points at the portal
+    instead of rendering a link that would go nowhere.
+    """
 
     subject = _subject(view)
 
     greeting = _greeting(view)
     cards = "".join(_child_card(c, on_portal=view.on_portal) for c in view.children)
     billing = _billing_block(view) if view.on_portal else _activation_block(view)
-    footer = _footer(view)
+    footer = _footer(view) + render_unsubscribe_footer(unsubscribe_url)
 
     body = (
         f'<div style="font-family:{_FONT_STACK};max-width:560px;margin:0 auto;'

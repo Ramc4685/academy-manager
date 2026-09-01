@@ -127,6 +127,15 @@ class Settings(BaseSettings):
     frontend_url: str | None = Field(default=None)
     scheduler_tz: str = Field(default="UTC")
     resend_api_key: str | None = Field(default=None)
+    unsubscribe_token_secret: str | None = Field(
+        default=None,
+        description=(
+            "HMAC key for recipient unsubscribe links (#555). Unset ⇒ no one-click "
+            "unsubscribe link is rendered (the footer falls back to a portal pointer) "
+            "and the unsubscribe endpoints 404. Deliberately has no empty-string "
+            "fallback: signing with an empty key would let anyone forge a link."
+        ),
+    )
     resend_webhook_secret: str | None = Field(
         default=None,
         description=(
@@ -246,6 +255,10 @@ class Settings(BaseSettings):
             self.frontend_url = os.environ.get("FRONTEND_URL", self.frontend_url)
         if "V2_SCHEDULER_TZ" not in os.environ:
             self.scheduler_tz = os.environ.get("SCHEDULER_TZ", self.scheduler_tz)
+        if "V2_UNSUBSCRIBE_TOKEN_SECRET" not in os.environ:
+            self.unsubscribe_token_secret = os.environ.get(
+                "UNSUBSCRIBE_TOKEN_SECRET", self.unsubscribe_token_secret
+            )
         if "V2_RESEND_WEBHOOK_SECRET" not in os.environ:
             self.resend_webhook_secret = os.environ.get(
                 "RESEND_WEBHOOK_SECRET", self.resend_webhook_secret

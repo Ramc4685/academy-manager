@@ -13,8 +13,10 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from backend.v2.contexts.billing.application.ports import (
+    StripeCheckoutSessionNotExpirable,
     StripeGateway,
     StripeResourceNotFound,
+    StripeTransientFailure,
 )
 
 log = logging.getLogger(__name__)
@@ -29,6 +31,19 @@ _STRIPE_METADATA_VALUE_LIMIT = 500
 # 30 minutes from creation; 31 keeps a margin for clock skew so Stripe
 # never rejects the create call.
 _CHECKOUT_SESSION_TTL_SECONDS = 31 * 60
+
+
+# Substrings that identify Stripe's deterministic refusal to expire a Checkout
+# Session that is no longer open ("You may only expire a Checkout Session that
+# is in the `open` state."). Matching the message is a heuristic, but it is a
+# heuristic that fails SAFE: an unrecognised message is treated as transient and
+# lands on the reconciliation worklist rather than being swallowed (#549).
+_TERMINAL_EXPIRY_MARKERS = (
+    "you may only expire",
+    "not in the open state",
+    "already expired",
+    "already been completed",
+)
 
 
 def _autopay_enrollment_ids_value(enrollment_ids: list[str] | None) -> str:
@@ -339,9 +354,49 @@ class RealStripeGateway(StripeGateway):
             await asyncio.to_thread(_expire)
         except self._stripe.StripeError as exc:
             # Stripe refuses to expire a session that is already complete or
-            # expired. That is the exact race a supersede has to survive, so we
-            # only make the failure typed — the caller decides it is benign.
-            raise ValueError(f"Stripe Checkout Session expiry failed: {exc}") from exc
+            # expired. That is the exact race a supersede has to survive and the
+            # only failure a caller may swallow. Everything else — a connection
+            # drop, a timeout, a rate limit, a 5xx — leaves the session PAYABLE,
+            # and collapsing both into one ValueError is what made the swallow
+            # unsafe (#549). Classify here, where the Stripe exception types are
+            # actually visible; this is the only file allowed to import stripe.
+            if self._is_terminal_expiry_refusal(exc):
+                raise StripeCheckoutSessionNotExpirable(
+                    f"Stripe Checkout Session expiry refused: {exc}"
+                ) from exc
+            raise StripeTransientFailure(
+                f"Stripe Checkout Session expiry could not be completed: {exc}"
+            ) from exc
+
+    def _is_terminal_expiry_refusal(self, exc: Exception) -> bool:
+        """True ONLY for the one failure that proves the session is not payable.
+
+        Stripe answers an expiry on a session that is no longer open with a 400
+        `InvalidRequestError` naming that state. That — and nothing else — means
+        the session cannot be paid, which is the "parent paid on the old tab"
+        race a supersede has to survive.
+
+        The polarity matters and it is the inverse of the obvious one. Asking
+        "is this transient?" and defaulting to terminal quietly files a whole
+        family of real production failures — a rotated or wrong-mode API key
+        (401), a restricted key without checkout write scope (403), a
+        platform/connected-account id mismatch (404 `resource_missing`) — as
+        "already paid" while the session is still wide open and payable. That is
+        the exact swallow #549 exists to remove. Asking "is this the terminal
+        refusal?" and defaulting to transient costs at most a spurious
+        reconciliation row.
+        """
+        invalid_request = getattr(self._stripe, "InvalidRequestError", None)
+        if not isinstance(invalid_request, type) or not isinstance(exc, invalid_request):
+            return False
+        status = getattr(exc, "http_status", None)
+        if status is None or int(status) != 400:
+            # A 404 `resource_missing` is an InvalidRequestError too, and it
+            # says nothing about whether a session we minted is payable — it
+            # usually says we are talking to the wrong Stripe account or mode.
+            return False
+        message = str(getattr(exc, "user_message", None) or exc).replace("`", "").lower()
+        return any(marker in message for marker in _TERMINAL_EXPIRY_MARKERS)
 
     async def retrieve_invoice(self, stripe_invoice_id: str) -> dict[str, Any]:
         def _retrieve() -> Any:

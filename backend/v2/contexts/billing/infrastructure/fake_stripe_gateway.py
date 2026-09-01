@@ -9,7 +9,10 @@ import json
 from datetime import datetime
 from typing import Any
 
-from backend.v2.contexts.billing.application.ports import StripeGateway
+from backend.v2.contexts.billing.application.ports import (
+    StripeCheckoutSessionNotExpirable,
+    StripeGateway,
+)
 from backend.v2.shared.ids import new_ulid
 
 
@@ -191,7 +194,12 @@ class FakeStripeGateway(StripeGateway):
 
     async def expire_checkout_session(self, checkout_session_id: str) -> None:
         if checkout_session_id in self.unexpirable_checkouts:
-            raise ValueError(f"checkout session is not expirable: {checkout_session_id}")
+            # Mirrors the real gateway: "unexpirable" means already complete or
+            # expired, which is the TERMINAL case callers may swallow. A generic
+            # ValueError here would fake the transient case instead (#549).
+            raise StripeCheckoutSessionNotExpirable(
+                f"checkout session is not expirable: {checkout_session_id}"
+            )
         self.expired_checkouts.append(checkout_session_id)
 
     async def retrieve_invoice(self, stripe_invoice_id: str) -> dict[str, Any]:

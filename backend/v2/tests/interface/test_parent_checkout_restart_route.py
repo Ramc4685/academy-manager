@@ -15,6 +15,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi import FastAPI
@@ -62,14 +63,20 @@ class _RecordingStripe:
 
 
 def _pinned_quote_clock() -> datetime:
-    """First instant of the real current month.
+    """First instant of the real current month, in the SESSION's timezone.
 
     The quote is "what is left of this month", so pricing against the wall
     clock makes the fixture's amount depend on when the suite runs — late
     enough and the quote drops to $0 and checkout skips Stripe entirely.
+
+    The month has to be the session-local one (#541): quotes are periodised in
+    the session timezone, so the first UTC instant of the month is the evening
+    of the 31st in Chicago and would quote the PREVIOUS local month, in which
+    this fixture's session has no classes at all.
     """
-    now = datetime.now(UTC)
-    return datetime(now.year, now.month, 1, tzinfo=UTC)
+    tz = ZoneInfo("America/Chicago")
+    now = datetime.now(tz)
+    return datetime(now.year, now.month, 1, tzinfo=tz)
 
 
 def _application_doc(status: str, **extra: Any) -> dict[str, Any]:

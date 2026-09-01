@@ -109,8 +109,20 @@ def test_coach_daily_digest_uses_resend_in_approved_env(
     use_case = compose_send_coach_daily_digest(db)
 
     assert isinstance(unwrap_send_port(use_case.sender), ResendEmailSendPort)
-    # ...and the real adapter is still behind the suppression gate.
+    # ...and the real adapter is still behind BOTH send-time recipient gates.
+    # Asserted on the attached gates, not merely on the wrapper type: a
+    # mis-resolved merge that dropped `preferences=` (#555) or `suppressions=`
+    # (#556) would still leave a GatedEmailSendPort here and silently un-gate
+    # every bulk send.
     assert isinstance(use_case.sender, GatedEmailSendPort)
+    assert use_case.sender.preferences is not None, (
+        "the composed sender is a gate with no preference gate attached; "
+        "unsubscribed recipients would be e-mailed anyway"
+    )
+    assert use_case.sender.suppressions is not None, (
+        "the composed sender is a gate with no suppression gate attached; "
+        "hard-bounced and complaining addresses would be e-mailed anyway"
+    )
 
 
 def test_coach_daily_digest_uses_stub_without_credentials(db, monkeypatch) -> None:
