@@ -6,9 +6,8 @@ import hashlib
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime
 from typing import Any, Protocol, TypeVar
-from zoneinfo import ZoneInfo
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import OperationFailure
@@ -1643,11 +1642,11 @@ def compose_parent(
             owned = {str(s.get("student_id") or s["_id"]) for s in students}
             if student_id not in owned:
                 raise SessionNotFound("student not found", student_id=student_id)
-        billing_start = _start_date_to_datetime(start_date)
         return await quote_enrollment_uc.execute(
             QuoteEnrollmentCommand(
                 session_id=session_id,
-                billing_start_at=billing_start,
+                billing_start_at=datetime.now(UTC),
+                billing_start_date=_parse_start_date(start_date),
                 calculated_by=parent_id,
                 parent_id=parent_id,
                 student_id=student_id,
@@ -1733,7 +1732,12 @@ def compose_parent(
             # generator has no proration signal at all (enrollment docs never
             # carry billing_start_at/created_at) and would charge full tuition
             # for this period once the enrollment exists.
-            zero_quote_period = clock().strftime("%Y-%m")
+            # Reuse the quote's own label instead of re-deriving one from a
+            # fresh UTC now(): the quote's period is built in the session's
+            # timezone, so a UTC label disagrees with it (and with the monthly
+            # generator's skip_periods comparison) for the several evening
+            # hours before local month-end (#541).
+            zero_quote_period = quote.billing_period_label
             await apps_repo.save(app.model_copy(update={"zero_quote_period": zero_quote_period}))
             if quote.snapshot_id:
                 consumed = await payments_repo.consume_quote_snapshot(quote.snapshot_id)
@@ -2170,12 +2174,19 @@ def _session_amount_cents(doc: dict[str, object]) -> int:
     return 2500
 
 
-def _start_date_to_datetime(value: str | None) -> datetime:
+def _parse_start_date(value: str | None) -> date | None:
+    """Parse a caller-supplied start date, leaving the timezone to the caller.
+
+    This used to pin the date to ``America/Chicago`` midnight and hand the
+    resulting instant down as ``billing_start_at``. That hardcoded zone is
+    wrong for any session that is not in Chicago, and once QuoteEnrollment
+    began reading the billing start in the *session's* timezone it became
+    actively harmful: Chicago midnight on the 1st is 22:00 on the last day of
+    the previous month in Los Angeles, so the quote would be labelled, priced
+    and persisted against the wrong month (#541). The calendar date now
+    travels down as a date and QuoteEnrollment resolves it against the
+    session's own clock.
+    """
     if not value:
-        return datetime.now(UTC)
-    local = datetime.combine(
-        datetime.fromisoformat(value).date(),
-        time.min,
-        tzinfo=ZoneInfo("America/Chicago"),
-    )
-    return local.astimezone(UTC)
+        return None
+    return datetime.fromisoformat(value).date()
