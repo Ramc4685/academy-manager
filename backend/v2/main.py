@@ -41,6 +41,7 @@ from backend.v2.composition.digests import (
     compose_send_coach_daily_digest,
     compose_send_parent_daily_digest,
     digest_window_open,
+    missing_digest_claim_indexes,
     resolve_digest_schedule,
 )
 from backend.v2.composition.email_adapters import build_user_facing_invite_sender
@@ -814,10 +815,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             # hour lost the whole day's digest and the retry ladder added by
             # #435/PR #489 could never fire — there was no later tick to fire
             # on (issue #542). Later ticks are cheap: `try_claim` runs BEFORE
-            # plan generation, so an already-sent recipient costs one
-            # duplicate-key insert and one indexed no-op re-claim, and a `sent`
-            # row can never be re-claimed. The window closes on its own at
-            # midnight, when `digest_date` rolls over.
+            # plan generation, so an already-sent recipient costs one lookup.
+            # The claim is guarded by that pre-insert lookup
+            # (`digest_claim.claim_digest_send`) as well as by the unique index,
+            # so a `sent` row can never be re-claimed even when the index is
+            # missing — which it was on 2026-09-02, when this `>=` window
+            # re-sent every digest hourly (migrations 0125/0148 never ran in
+            # prod). The window closes on its own at midnight, when
+            # `digest_date` rolls over.
             if not digest_window_open(schedule, current_hour):
                 continue
             with tenant_scope(academy_id):
@@ -885,10 +890,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             # hour lost the whole day's digest and the retry ladder added by
             # #435/PR #489 could never fire — there was no later tick to fire
             # on (issue #542). Later ticks are cheap: `try_claim` runs BEFORE
-            # plan generation, so an already-sent recipient costs one
-            # duplicate-key insert and one indexed no-op re-claim, and a `sent`
-            # row can never be re-claimed. The window closes on its own at
-            # midnight, when `digest_date` rolls over.
+            # plan generation, so an already-sent recipient costs one lookup.
+            # The claim is guarded by that pre-insert lookup
+            # (`digest_claim.claim_digest_send`) as well as by the unique index,
+            # so a `sent` row can never be re-claimed even when the index is
+            # missing — which it was on 2026-09-02, when this `>=` window
+            # re-sent every digest hourly (migrations 0125/0148 never ran in
+            # prod). The window closes on its own at midnight, when
+            # `digest_date` rolls over.
             if not digest_window_open(schedule, current_hour):
                 continue
             with tenant_scope(academy_id):
@@ -1009,6 +1018,22 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         replace_existing=True,
         max_instances=1,
     )
+    # The digest claim no longer depends on the unique indexes (see
+    # digest_claim.claim_digest_send: it verifies after inserting), but with
+    # them a claim is one indexed round trip and a concurrent collision is a
+    # duplicate-key error rather than a withdraw-and-wait — and their absence
+    # went unnoticed until the 2026-09-02 hourly-resend incident. Surface the
+    # drift; never block boot on it.
+    try:
+        missing_claim_indexes = await missing_digest_claim_indexes(db)
+    except Exception:
+        log.warning("digest_claim_index_check_failed", exc_info=True)
+    else:
+        if missing_claim_indexes:
+            log.error("digest_claim_indexes_missing", extra={"missing": missing_claim_indexes})
+            capture_message(
+                "Digest claim unique indexes missing: " + ", ".join(missing_claim_indexes)
+            )
     # Daily owner ops digest (issue #428) — the counterpart to the scheduler
     # error listener below: the listener reports failures as they happen, this
     # reports the state that accumulates silently. Fixed daily cron in

@@ -1,15 +1,19 @@
 """Mongo-backed coach digest-send repository.
 
-``try_claim`` is an insert-first lock: it writes a QUEUED row against the unique
-``(academy_id, coach_id, digest_date)`` index. A duplicate-key error means a row
-already exists for that coach/day, so the claim is refused (returns ``None``).
-That single guard makes the daily digest idempotent across scheduler retries.
+``try_claim`` is a lookup-then-insert lock (``digest_claim.claim_digest_send``):
+it looks for today's ``(academy_id, coach_id, digest_date)`` row first and only
+inserts a QUEUED row when none exists, so the daily digest stays idempotent
+across scheduler retries even when the unique index from migration 0125 has
+not been built (the 2026-09-02 hourly-resend incident). Concurrent claims are
+settled by ``claim_digest_send`` itself — a duplicate-key error when the index
+is present, a post-insert verify when it is not — so no caller may assume the
+index makes the claim safe.
 
 A row already in ``failed`` is the one case where refusing is wrong: before #435
 a transient Resend outage cost that coach the whole day's digest, because the
-claim stayed held by a row nothing would ever retry. The duplicate-key branch
-now attempts a conditional re-claim (``digest_claim.reclaim_retryable_send``) that
-can only ever match a failed row with attempts left.
+claim stayed held by a row nothing would ever retry. An existing row now goes
+through a conditional re-claim (``digest_claim.reclaim_retryable_send``) that can
+only ever match a failed or abandoned row with attempts left.
 """
 
 from __future__ import annotations
@@ -17,11 +21,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from pymongo.errors import DuplicateKeyError
-
 from backend.v2.contexts.communications.application.ports import DigestSendRepository
 from backend.v2.contexts.communications.domain.models import DigestSend, DigestSendStatus
-from backend.v2.contexts.communications.infrastructure.digest_claim import reclaim_retryable_send
+from backend.v2.contexts.communications.infrastructure.digest_claim import claim_digest_send
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import TenantScopedRepository
 
@@ -40,18 +42,15 @@ class MongoDigestSendRepository(TenantScopedRepository, DigestSendRepository):
             digest_date=digest_date,
             created_at=datetime.now(UTC),
         )
-        try:
-            await self.collection.insert_one(self._to_doc(digest))
-        except DuplicateKeyError:
-            doc = await reclaim_retryable_send(
-                self.collection,
-                academy_id=academy_id,
-                recipient_field="coach_id",
-                recipient_id=coach_id,
-                digest_date=digest_date,
-            )
-            return self._from_doc(doc) if doc is not None else None
-        return digest
+        doc = await claim_digest_send(
+            self.collection,
+            doc=self._to_doc(digest),
+            academy_id=academy_id,
+            recipient_field="coach_id",
+            recipient_id=coach_id,
+            digest_date=digest_date,
+        )
+        return self._from_doc(doc) if doc is not None else None
 
     async def record_test_send(
         self, academy_id: str, coach_id: str, digest_date: str

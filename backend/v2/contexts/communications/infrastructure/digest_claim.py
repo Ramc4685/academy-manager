@@ -1,10 +1,31 @@
-"""Shared retry-claim rule for the coach and parent digest repositories.
+"""Shared claim rule for the coach and parent digest repositories.
 
 The two digest collections are deliberate near-duplicates (different recipient
-field, different collection), but the rule that decides *when a failed send may
-be tried again* is a correctness invariant, not per-collection detail — it is
-what keeps "retry a failure" from becoming "send twice". It lives here once so
-neither repository can drift from it (issue #435).
+field, different collection), but the rule that decides *whether a recipient
+may be sent to at all today* and *when a failed send may be tried again* is a
+correctness invariant, not per-collection detail — it is what keeps "retry a
+failure" from becoming "send twice". It lives here once so neither repository
+can drift from it (issue #435).
+
+``claim_digest_send`` is the entry point. It looks the existing row up BEFORE
+inserting, so the no-duplicate-email invariant does not depend on the unique
+``(academy_id, recipient, digest_date)`` index existing. Until 2026-09-02 the
+claim was insert-first and relied on ``DuplicateKeyError`` alone; production
+had never built the indexes from migrations 0125/0148, so every hourly tick
+after the digest hour (``>=`` since PR #558) inserted a fresh QUEUED row and
+every coach and parent was e-mailed once an hour for the rest of the day.
+
+The lookup alone is not a claim under concurrency: two callers that interleave
+between the lookup and the insert both miss and both insert. With the unique
+index present the second insert raises ``DuplicateKeyError`` and loses. Without
+it, ``claim_digest_send`` verifies AFTER inserting that its row is the only one
+for the key, and withdraws its own row when it is not. A caller therefore holds
+the claim only if it observed itself alone after its own insert, and two callers
+can never both observe that — so at most one sends. The cost when both observe
+the collision is that both withdraw and nobody sends on that tick; the next
+hourly tick finds no row and claims normally. In practice the scheduler's
+``job_lease`` (``main.py``) already keeps two digest runs from overlapping; the
+verify step is what makes the claim itself safe for any caller, index or not.
 
 The re-claim is a single conditional ``find_one_and_update``:
 
@@ -46,6 +67,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.communications.domain.models import (
     MAX_DIGEST_SEND_ATTEMPTS,
@@ -104,3 +126,62 @@ async def reclaim_retryable_send(
         return_document=ReturnDocument.AFTER,
     )
     return doc
+
+
+async def claim_digest_send(
+    collection: Any,
+    *,
+    doc: dict[str, Any],
+    academy_id: str,
+    recipient_field: str,
+    recipient_id: str,
+    digest_date: str,
+) -> dict[str, Any] | None:
+    """Claim today's send for one recipient; return the row that holds the claim.
+
+    ``doc`` is the fully built QUEUED row to insert if no row exists yet. The
+    lookup is an exact match on ``digest_date``: admin test sends are stored
+    under a synthetic ``"<date>#test:<ulid>"`` and must not block (or be
+    mistaken for) the day's real claim.
+
+    Returns the inserted row, the re-queued row from
+    :func:`reclaim_retryable_send`, or ``None`` when the recipient is already
+    sent, skipped, in flight, non-retryable or out of attempts — or when this
+    caller lost a concurrent claim for the same key.
+
+    Safe without the unique index: after a successful insert the caller checks
+    that its row is the only one for ``key`` and withdraws it otherwise (see the
+    module docstring for why that is sufficient). With the index present the
+    losing insert raises ``DuplicateKeyError`` instead and the check is a
+    one-row indexed count.
+    """
+    key = {
+        "academy_id": academy_id,
+        recipient_field: recipient_id,
+        "digest_date": digest_date,
+    }
+    existing = await collection.find_one(key, projection={"_id": 1})
+    if existing is None:
+        try:
+            inserted = await collection.insert_one(doc)
+        except DuplicateKeyError:
+            # Lost the race to a concurrent claim (unique index present); fall
+            # through and let the conditional re-claim decide, exactly as if
+            # the lookup had found the row.
+            pass
+        else:
+            if await collection.count_documents(key) == 1:
+                return doc
+            # A concurrent claim also missed on the lookup and inserted (no
+            # unique index to stop it). Only a caller that saw itself alone
+            # may send; this one did not, so it withdraws its own row — never
+            # the other's — and falls through to the re-claim, which will
+            # refuse the survivor's fresh QUEUED row.
+            await collection.delete_one({"_id": inserted.inserted_id})
+    return await reclaim_retryable_send(
+        collection,
+        academy_id=academy_id,
+        recipient_field=recipient_field,
+        recipient_id=recipient_id,
+        digest_date=digest_date,
+    )

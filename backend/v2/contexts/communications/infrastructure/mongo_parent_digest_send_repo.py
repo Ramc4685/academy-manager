@@ -1,12 +1,15 @@
 """Mongo-backed parent digest-send repository.
 
 Idempotency works exactly like the coach digest (``mongo_digest_send_repo``):
-``try_claim`` is an insert-first lock against the unique
-``(academy_id, parent_id, digest_date)`` index (migration 0148). A duplicate-key
-error means the family was already claimed for that day, so the claim is refused
-(returns ``None``) and the hourly scheduler sends nothing on a re-run — unless
-the existing row is a retryable ``failed`` one, which is re-claimed rather than
-refused (see ``digest_claim`` and issue #435).
+``try_claim`` is a lookup-then-insert lock (``digest_claim.claim_digest_send``)
+on ``(academy_id, parent_id, digest_date)``. An existing row means the family
+was already claimed for that day, so the claim is refused (returns ``None``)
+and the hourly scheduler sends nothing on a re-run — unless the existing row is
+a retryable ``failed`` one, which is re-claimed rather than refused (see
+``digest_claim`` and issue #435). The unique index from migration 0148 is not
+what makes the claim safe: production ran without it and re-sent hourly on
+2026-09-02, and ``claim_digest_send`` now settles concurrent claims itself with
+or without it.
 
 The shared :class:`DigestSend` domain model has a coach-oriented ``coach_id``
 field; here it carries the *parent's* user id. The mapping is contained to this
@@ -19,11 +22,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from pymongo.errors import DuplicateKeyError
-
 from backend.v2.contexts.communications.application.ports import DigestSendRepository
 from backend.v2.contexts.communications.domain.models import DigestSend, DigestSendStatus
-from backend.v2.contexts.communications.infrastructure.digest_claim import reclaim_retryable_send
+from backend.v2.contexts.communications.infrastructure.digest_claim import claim_digest_send
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import TenantScopedRepository
 
@@ -43,18 +44,15 @@ class MongoParentDigestSendRepository(TenantScopedRepository, DigestSendReposito
             digest_date=digest_date,
             created_at=datetime.now(UTC),
         )
-        try:
-            await self.collection.insert_one(self._to_doc(digest))
-        except DuplicateKeyError:
-            doc = await reclaim_retryable_send(
-                self.collection,
-                academy_id=academy_id,
-                recipient_field="parent_id",
-                recipient_id=coach_id,
-                digest_date=digest_date,
-            )
-            return self._from_doc(doc) if doc is not None else None
-        return digest
+        doc = await claim_digest_send(
+            self.collection,
+            doc=self._to_doc(digest),
+            academy_id=academy_id,
+            recipient_field="parent_id",
+            recipient_id=coach_id,
+            digest_date=digest_date,
+        )
+        return self._from_doc(doc) if doc is not None else None
 
     async def record_test_send(
         self, academy_id: str, coach_id: str, digest_date: str
