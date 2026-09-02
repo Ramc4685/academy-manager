@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -27,6 +29,7 @@ from backend.v2.contexts.communications.domain.models import (
     DigestSend,
     DigestSendStatus,
 )
+from backend.v2.shared.comms.email_theme import EmailBrand
 
 ACADEMY_ID = "acad-1"
 DIGEST_DATE = date(2026, 7, 16)
@@ -245,3 +248,31 @@ async def test_reply_to_is_forwarded_for_variant_b() -> None:
     )
 
     assert sender.sent[0]["reply_to"] == "academy@example.test"
+
+
+@pytest.mark.asyncio
+async def test_brand_lookup_reaches_the_shell() -> None:
+    use_case, _digests, sender, _ = _build(
+        parents=[ResolvedRecipient(user_id="p1", email="p1@example.test")],
+        views={"p1": _view()},
+    )
+    use_case.brands = SimpleNamespace(
+        brand_for=AsyncMock(return_value=EmailBrand(academy_name="Brand Co"))
+    )
+    await use_case.execute(
+        SendParentDailyDigestCommand(academy_id=ACADEMY_ID, digest_date=DIGEST_DATE)
+    )
+    assert "Brand Co" in sender.sent[0]["body"]
+
+
+@pytest.mark.asyncio
+async def test_brand_lookup_failure_does_not_block_send() -> None:
+    use_case, _digests, _sender, _ = _build(
+        parents=[ResolvedRecipient(user_id="p1", email="p1@example.test")],
+        views={"p1": _view()},
+    )
+    use_case.brands = SimpleNamespace(brand_for=AsyncMock(side_effect=RuntimeError("x")))
+    result = await use_case.execute(
+        SendParentDailyDigestCommand(academy_id=ACADEMY_ID, digest_date=DIGEST_DATE)
+    )
+    assert result.sent == 1

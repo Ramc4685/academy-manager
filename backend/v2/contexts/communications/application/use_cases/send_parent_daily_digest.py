@@ -26,6 +26,7 @@ from backend.v2.contexts.communications.application.parent_digest_renderer impor
 )
 from backend.v2.contexts.communications.application.parent_digest_view import ParentDigestView
 from backend.v2.contexts.communications.application.ports import (
+    AcademyBrandLookup,
     AcademySlugLookup,
     AudienceResolver,
     DigestSendRepository,
@@ -37,6 +38,7 @@ from backend.v2.contexts.communications.application.unsubscribe_token import (
 )
 from backend.v2.contexts.communications.domain.email_category import EmailCategory
 from backend.v2.contexts.communications.domain.models import AcademyAudience
+from backend.v2.shared.comms.email_theme import EmailBrand
 
 
 class ParentDigestProvider(Protocol):
@@ -77,6 +79,17 @@ class SendParentDailyDigest:
     # link falls back to the generic frontend host, which the unsubscribe route
     # refuses in SaaS mode rather than accepting on a weakened tenant check.
     academy_slugs: AcademySlugLookup | None = None
+    # Academy name/colour/logo for the shell. Optional: without it the shell
+    # falls back to the program name and the cobalt accent.
+    brands: AcademyBrandLookup | None = None
+
+    async def _brand(self, academy_id: str) -> EmailBrand | None:
+        if self.brands is None:
+            return None
+        try:
+            return await self.brands.brand_for(academy_id)
+        except Exception:
+            return None
 
     async def _academy_slug(self, academy_id: str) -> str | None:
         """Resolved once per run, never per recipient. A lookup failure degrades
@@ -91,6 +104,7 @@ class SendParentDailyDigest:
     async def execute(self, command: SendParentDailyDigestCommand) -> SendParentDailyDigestResult:
         digest_date = command.digest_date.isoformat()
         academy_slug = await self._academy_slug(command.academy_id)
+        brand = await self._brand(command.academy_id)
         parents = await self.resolver.resolve_academy_audience(AcademyAudience(role="parent"))
 
         claimed = already_claimed = sent = skipped_empty = failed = 0
@@ -122,6 +136,7 @@ class SendParentDailyDigest:
 
             subject, body = render_parent_digest(
                 view,
+                brand=brand,
                 unsubscribe_url=self.unsubscribe_links.build(
                     academy_id=command.academy_id,
                     user_id=parent.user_id,

@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -410,3 +411,41 @@ async def test_coach_without_email_is_marked_failed_not_sent() -> None:
     assert result.sent == 0
     assert sender.sent == []
     assert digests.by_id["dg-0001"].status == DigestSendStatus.FAILED
+
+
+@pytest.mark.asyncio
+async def test_group_links_and_brand_reach_the_email() -> None:
+    use_case, _digests, sender, _ = _build(
+        coaches=[ResolvedRecipient(user_id="coach-1", email="c1@example.test")],
+        plans={"coach-1": _populated_plan()},
+    )
+    use_case.group_links = SimpleNamespace(
+        for_coach=AsyncMock(
+            return_value=[
+                WhatsAppGroupLink(label="Tuesday Juniors", url="https://chat.whatsapp.com/AAA")
+            ]
+        )
+    )
+    use_case.brands = SimpleNamespace(
+        brand_for=AsyncMock(return_value=EmailBrand(academy_name="Brand Co"))
+    )
+    await use_case.execute(
+        SendCoachDailyDigestCommand(academy_id=ACADEMY_ID, digest_date=DIGEST_DATE)
+    )
+    body = sender.sent[0]["body"]
+    assert GROUP_BLOCK_HEADING in body and "Brand Co" in body
+    use_case.group_links.for_coach.assert_awaited_once_with("coach-1")
+
+
+@pytest.mark.asyncio
+async def test_group_link_provider_failure_does_not_block_send() -> None:
+    use_case, _digests, sender, _ = _build(
+        coaches=[ResolvedRecipient(user_id="coach-1", email="c1@example.test")],
+        plans={"coach-1": _populated_plan()},
+    )
+    use_case.group_links = SimpleNamespace(for_coach=AsyncMock(side_effect=RuntimeError("x")))
+    result = await use_case.execute(
+        SendCoachDailyDigestCommand(academy_id=ACADEMY_ID, digest_date=DIGEST_DATE)
+    )
+    assert result.sent == 1
+    assert GROUP_BLOCK_HEADING not in sender.sent[0]["body"]
