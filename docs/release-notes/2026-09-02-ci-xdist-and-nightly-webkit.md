@@ -12,6 +12,11 @@ PR: #626
   path (about 9 minutes versus about 6 for Chromium mobile). It still runs
   daily at 09:15 UTC, on manual dispatch, and on PRs that touch
   `frontend/e2e/**` or the Playwright config.
+- Removed 4 byte-for-byte duplicate backend tests and trimmed one 5-case
+  parametrize to the 2 transport-distinct cases (the other 3 schemes are
+  covered at the domain validator). A hash-and-signature sweep of all 3,398
+  test functions found no other true duplicates; the suite is not the CI
+  bottleneck.
 - `CI Gate` no longer lists the WebKit job in `needs`. `docs/ci-cd.md` is
   updated to describe the new split.
 

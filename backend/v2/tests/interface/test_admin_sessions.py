@@ -2703,11 +2703,12 @@ async def test_communication_pack_survives_the_list_route(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "bad_link",
+    # The full scheme allowlist (8 cases) is covered at the domain validator
+    # in unit/test_session_communication_pack.py; this HTTP-level test only
+    # needs to prove the 422 + nothing-persisted contract, so it keeps the
+    # two shapes that differ at the transport layer.
     [
         "javascript:alert(1)",
-        "data:text/html,<script>alert(1)</script>",
-        "//evil.host/group",
-        "chat.whatsapp.com/AbCd1234",
         "https://\nchat.whatsapp.com/AbCd1234",
     ],
 )

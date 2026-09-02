@@ -503,26 +503,6 @@ def test_401_reason_never_leaks_the_underlying_message() -> None:
     assert "u-coach" not in r.text
 
 
-def test_middleware_does_not_set_claims_when_tenant_unresolved() -> None:
-    """Unknown host → no tenant → no claims attached and no fallback used."""
-    loader = _RecordingLoader(
-        memberships={
-            # Even if a default academy *did* have a membership, the middleware
-            # must never reach this row because the host did not resolve.
-            ("u-coach", "default-academy"): {
-                "membership_id": "m-default",
-                "roles": ("admin",),
-            }
-        },
-    )
-    app = _make_middleware_app(loader=loader)
-    client = TestClient(app, base_url="http://ghost.example.com")
-    r = client.get("/whoami", headers={"Authorization": "Bearer u-coach"})
-    assert r.status_code == 401
-    # Loader must NOT have been called — tenant resolution failed first.
-    assert loader.calls == []
-
-
 def test_middleware_lets_public_routes_pass_without_tenant() -> None:
     """Unauthenticated public routes still flow even when tenant is unknown."""
     loader = _RecordingLoader(memberships={})

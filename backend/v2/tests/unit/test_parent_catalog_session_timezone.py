@@ -15,7 +15,6 @@ and both are guarded here:
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from zoneinfo import ZoneInfo
 
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import (
     LEGACY_FALLBACK_TIMEZONE,
@@ -26,16 +25,6 @@ from backend.v2.shared.time import ensure_utc
 
 RANGE_START = datetime(2026, 9, 1, 0, 0, tzinfo=UTC)
 RANGE_END = datetime(2026, 9, 30, 23, 59, tzinfo=UTC)
-
-
-def test_ensure_utc_stamps_naive_mongo_datetime() -> None:
-    naive = datetime(2026, 9, 3, 23, 0)
-    assert ensure_utc(naive) == datetime(2026, 9, 3, 23, 0, tzinfo=UTC)
-
-
-def test_ensure_utc_normalizes_an_offset_aware_datetime() -> None:
-    chicago = datetime(2026, 9, 3, 23, 0, tzinfo=UTC).astimezone(ZoneInfo("America/Chicago"))
-    assert ensure_utc(chicago) == datetime(2026, 9, 3, 23, 0, tzinfo=UTC)
 
 
 def test_catalog_view_serializes_utc_instants_with_a_z_suffix() -> None:
