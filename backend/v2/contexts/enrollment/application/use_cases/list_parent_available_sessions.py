@@ -20,6 +20,14 @@ class ParentAvailableSession(BaseModel):
     location: str
     start_at: datetime
     end_at: datetime
+    # The IANA zone the class is actually scheduled in. `start_at`/`end_at` are
+    # UTC instants, so a client that renders them in the viewer's browser zone
+    # shows the wrong hour for anyone outside the academy's zone. Carrying the
+    # session's own zone lets the parent catalog render "6:00 PM CDT" rather
+    # than whatever local time that instant happens to be. `None` means the
+    # session document never recorded one; clients should fall back to the
+    # academy timezone from GET /parent/academy.
+    timezone: str | None = None
     capacity: int = Field(ge=1)
     enrolled_count: int = Field(ge=0)
     available_seats: int = Field(ge=0)

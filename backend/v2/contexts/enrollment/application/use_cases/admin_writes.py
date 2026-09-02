@@ -11,10 +11,10 @@ promotion on cancellation, comms notifications, etc.) react.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Literal, NoReturn, Protocol
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, Field
 from pymongo.errors import DuplicateKeyError
@@ -35,6 +35,11 @@ from backend.v2.contexts.enrollment.application.ports import (
 from backend.v2.contexts.enrollment.application.use_cases.billing_deferrals import (
     BillingDeferral,
     BillingDeferralRepository,
+)
+from backend.v2.contexts.enrollment.domain.errors import (
+    # Explicitly re-exported: the interface layer raises 422 on this but may not
+    # import domain modules directly (import-linter rule 4).
+    AcademyTimezoneUnset as AcademyTimezoneUnset,
 )
 from backend.v2.contexts.enrollment.domain.errors import (
     CapacityExceeded,
@@ -153,6 +158,39 @@ def _normalize_days(days_of_week: list[str]) -> list[str]:
     return [reverse_dow[_DOW_MAP[day]] for day in days_of_week if day in _DOW_MAP]
 
 
+AcademyTimezoneReader = Callable[[str], Awaitable[str | None]]
+
+_TIMEZONE_UNSET_MESSAGE = (
+    "This academy has no timezone set, so session times cannot be interpreted. "
+    "Set your academy's timezone in Settings -> Academy before creating sessions."
+)
+
+
+async def _resolve_session_timezone(
+    explicit: str | None,
+    *,
+    academy_id: str,
+    reader: AcademyTimezoneReader,
+) -> str:
+    """The zone a session's wall-clock times are interpreted in.
+
+    Precedence is explicit-on-the-command -> the tenant's own
+    ``academies.timezone``. There is deliberately no third rung: a hardcoded
+    default is only ever right for one tenant, and being silently wrong here is
+    what showed a 6:00 PM class as 1:00 PM on the parent's payment screen.
+    """
+    chosen = (explicit or "").strip()
+    if not chosen:
+        chosen = (await reader(academy_id) or "").strip()
+    if not chosen:
+        raise AcademyTimezoneUnset(_TIMEZONE_UNSET_MESSAGE)
+    try:
+        ZoneInfo(chosen)
+    except (KeyError, ValueError, ZoneInfoNotFoundError) as exc:
+        raise AcademyTimezoneUnset(f"'{chosen}' is not a known IANA timezone name.") from exc
+    return chosen
+
+
 def _duplicate_series_message(existing: Session) -> str:
     return (
         "A recurring session already exists for this coach, class, location, "
@@ -251,13 +289,27 @@ class CreateSessionCommand(BaseModel):
 
 
 class CreateSession:
-    def __init__(self, *, sessions: SessionWriter, academy_id: str) -> None:
+    def __init__(
+        self,
+        *,
+        sessions: SessionWriter,
+        academy_id: str,
+        get_academy_timezone: AcademyTimezoneReader,
+    ) -> None:
         self._sessions = sessions
         self._academy_id = academy_id
+        self._get_academy_timezone = get_academy_timezone
 
     async def execute(self, cmd: CreateSessionCommand) -> Session:
         start_at = cmd.start_at
         end_at = cmd.end_at
+        # Resolve ONCE: the duplicate check, the instant arithmetic and the
+        # persisted field must all agree on the same zone.
+        timezone_name = await _resolve_session_timezone(
+            cmd.timezone,
+            academy_id=self._academy_id,
+            reader=self._get_academy_timezone,
+        )
         if _has_recurring_schedule(cmd):
             await self._ensure_no_duplicate_series(
                 title=cmd.title,
@@ -266,14 +318,14 @@ class CreateSession:
                 days_of_week=cmd.days_of_week,
                 start_time=cmd.start_time or "00:00",
                 end_time=cmd.end_time or cmd.start_time or "00:00",
-                timezone=cmd.timezone or "America/Chicago",
+                timezone=timezone_name,
             )
         if (start_at is None or end_at is None) and _has_recurring_schedule(cmd):
             start_at, end_at = _representative_series_datetimes(
                 days_of_week=cmd.days_of_week,
                 start_time=cmd.start_time or "00:00",
                 end_time=cmd.end_time or cmd.start_time or "00:00",
-                timezone_name=cmd.timezone or "America/Chicago",
+                timezone_name=timezone_name,
             )
         if start_at is None or end_at is None:
             raise ValueError("start_at/end_at or recurring schedule fields are required")
@@ -291,7 +343,12 @@ class CreateSession:
             days_of_week=cmd.days_of_week,
             start_time=cmd.start_time,
             end_time=cmd.end_time,
-            timezone=cmd.timezone,
+            # Persist the EFFECTIVE zone, never None. `start_at`/`end_at` above
+            # were already computed with this zone, and every downstream reader
+            # (occurrence synthesis, monthly billing, payroll) re-derives
+            # occurrences from `timezone` — leaving it null makes the document
+            # depend on each reader's own default agreeing forever.
+            timezone=timezone_name,
             **{field: getattr(cmd, field) for field in COMMUNICATION_PACK_FIELDS},
         )
         await self._sessions.create(session)
@@ -351,8 +408,14 @@ _CLEARABLE_SESSION_FIELDS: frozenset[str] = frozenset({"amount_cents", *COMMUNIC
 
 
 class EditSession:
-    def __init__(self, *, sessions: SessionWriter) -> None:
+    def __init__(
+        self,
+        *,
+        sessions: SessionWriter,
+        get_academy_timezone: AcademyTimezoneReader,
+    ) -> None:
         self._sessions = sessions
+        self._get_academy_timezone = get_academy_timezone
 
     async def execute(self, cmd: EditSessionCommand) -> Session:
         current = await self._sessions.get(cmd.session_id)
@@ -413,6 +476,11 @@ class EditSession:
             "location",
             "coach_id",
         }.intersection(update):
+            timezone_name = await _resolve_session_timezone(
+                recurring_values["timezone"],  # type: ignore[arg-type]
+                academy_id=current.academy_id,
+                reader=self._get_academy_timezone,
+            )
             existing = await self._sessions.find_duplicate_recurring_series(
                 title=_normalize_series_text(title),
                 location=_normalize_series_text(location),
@@ -422,7 +490,7 @@ class EditSession:
                 end_time=str(
                     recurring_values["end_time"] or recurring_values["start_time"] or "00:00"
                 ),
-                timezone=str(recurring_values["timezone"] or "America/Chicago"),
+                timezone=timezone_name,
                 exclude_session_id=current.session_id,
             )
             if existing is not None:
@@ -433,10 +501,14 @@ class EditSession:
                 end_time=str(
                     recurring_values["end_time"] or recurring_values["start_time"] or "00:00"
                 ),
-                timezone_name=str(recurring_values["timezone"] or "America/Chicago"),
+                timezone_name=timezone_name,
             )
             update["start_at"] = start_at
             update["end_at"] = end_at
+            # Write the resolved zone back too. Recomputing instants with a
+            # resolved zone while leaving the field null is the split that let
+            # a legacy row keep lying to every downstream reader.
+            update["timezone"] = timezone_name
 
         updated = current.model_copy(update=update)
         await self._sessions.update(updated)

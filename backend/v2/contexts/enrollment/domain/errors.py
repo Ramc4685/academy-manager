@@ -20,6 +20,19 @@ class DuplicateSessionSeries(DomainError):
     status_code = 409
 
 
+class AcademyTimezoneUnset(DomainError):
+    """No timezone could be resolved for the tenant, so we refuse to guess.
+
+    Session instants are computed from a wall-clock start_time plus a zone, and
+    occurrence synthesis, monthly invoices and payroll all re-derive from the
+    persisted zone. A wrong guess silently corrupts all three, so writes fail
+    closed rather than defaulting.
+    """
+
+    code = "Enrollment.AcademyTimezoneUnset"
+    status_code = 422
+
+
 class SessionNotAssigned(DomainError):
     """The session exists but is not assigned to the requesting coach for the requested date."""
 

@@ -2786,3 +2786,74 @@ async def test_admin_session_projection_emits_every_view_field(
     assert row is not None
     missing = set(AdminSessionView.model_fields) - set(row)
     assert not missing, f"admin session projection drops: {sorted(missing)}"
+
+
+@pytest.mark.asyncio
+async def test_create_session_422s_when_the_academy_has_no_timezone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Writes fail closed rather than guessing a zone.
+
+    A guessed zone silently corrupts occurrence synthesis, monthly invoices and
+    payroll at once, and produced the reported defect where a 6:00 PM class was
+    shown to a paying parent as 1:00 PM.
+    """
+    monkeypatch.setattr(admin_composition, "datetime", _FrozenAdminDateTime)
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["admin-create-session-no-tz"]
+
+    with TestClient(_mongo_admin_app(db)) as client:
+        response = client.post(
+            "/api/v2/admin/sessions",
+            json={
+                "coach_id": "coach-kishore",
+                "title": "Thursday 6:00 PM Intermediate",
+                "location": "Court 1",
+                "days_of_week": ["Thu"],
+                "start_time": "18:00",
+                "end_time": "18:45",
+                "capacity": 15,
+            },
+        )
+
+    assert response.status_code == 422, response.text
+    assert "timezone" in response.text.lower()
+    assert await db.sessions.count_documents({}) == 0
+
+
+@pytest.mark.asyncio
+async def test_create_session_resolves_the_zone_from_the_academy_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The operator's ask: read the tenant's zone and use it.
+
+    18:00 local on a Chicago tenant must be stored as 23:00Z, and the document
+    must record the zone it was derived in.
+    """
+    monkeypatch.setattr(admin_composition, "datetime", _FrozenAdminDateTime)
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["admin-create-session-tenant-tz"]
+    await db.academies.insert_one(
+        {"academy_id": "academy-b", "timezone": "America/Chicago"},
+    )
+
+    with TestClient(_mongo_admin_app(db)) as client:
+        response = client.post(
+            "/api/v2/admin/sessions",
+            json={
+                "coach_id": "coach-kishore",
+                "title": "Thursday 6:00 PM Intermediate",
+                "location": "Court 1",
+                "days_of_week": ["Thu"],
+                "start_time": "18:00",
+                "end_time": "18:45",
+                "capacity": 15,
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["timezone"] == "America/Chicago"
+    row = await db.sessions.find_one({"title": "Thursday 6:00 PM Intermediate"})
+    assert row is not None
+    assert row["timezone"] == "America/Chicago"
+    assert row["start_at"].hour == 23

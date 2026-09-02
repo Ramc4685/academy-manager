@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -12,7 +13,8 @@ from backend.v2.contexts.enrollment.application.use_cases.list_parent_available_
     ParentAvailableSession,
 )
 from backend.v2.contexts.enrollment.domain.models import Session
-from backend.v2.shared.tenancy import TenantScopedRepository
+from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
+from backend.v2.shared.time import academy_timezone_lookup, ensure_utc
 
 
 def _day_bounds_utc(on_date: date) -> tuple[datetime, datetime]:
@@ -21,14 +23,154 @@ def _day_bounds_utc(on_date: date) -> tuple[datetime, datetime]:
     return start, end
 
 
+log = logging.getLogger(__name__)
+
+# Last-resort zone for LEGACY rows that carry neither their own `timezone` nor
+# a resolvable tenant zone. Reads must never raise, so this rung stays — but it
+# is a single-tenant guess, so reaching it is logged rather than silent. Writes
+# fail closed instead (see admin_writes._resolve_session_timezone).
+LEGACY_FALLBACK_TIMEZONE = "America/Chicago"
+
+
+def _template_timezone(template: dict[str, Any], fallback: str | None) -> str:
+    explicit = str(template.get("timezone") or "").strip()
+    if explicit:
+        return explicit
+    resolved = str(fallback or "").strip()
+    if resolved:
+        return resolved
+    log.warning(
+        "Session template %s has no timezone and no academy timezone; "
+        "falling back to %s. Occurrence times may be wrong.",
+        template.get("session_id") or template.get("_id"),
+        LEGACY_FALLBACK_TIMEZONE,
+    )
+    return LEGACY_FALLBACK_TIMEZONE
+
+
 def session_start_sort_key(doc: dict[str, Any]) -> datetime:
-    value = doc["start_at"]
-    if getattr(value, "tzinfo", None) is None:
-        return value.replace(tzinfo=UTC)
-    return value
+    return ensure_utc(doc["start_at"])
 
 
 _DOW_MAP = {"Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3, "Fri": 4, "Sat": 5, "Sun": 6}
+
+
+WEEKDAY_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+WEEKDAY_INDEX = {
+    "mon": 0,
+    "monday": 0,
+    "tue": 1,
+    "tuesday": 1,
+    "wed": 2,
+    "wednesday": 2,
+    "thu": 3,
+    "thursday": 3,
+    "fri": 4,
+    "friday": 4,
+    "sat": 5,
+    "saturday": 5,
+    "sun": 6,
+    "sunday": 6,
+}
+
+
+def _normalized_series_text(value: object) -> str:
+    return " ".join(str(value or "").strip().casefold().split())
+
+
+def _canonical_weekdays(days: object) -> tuple[str, ...]:
+    values = list(days or []) if isinstance(days, list) else []
+    canonical: set[str] = set()
+    passthrough: set[str] = set()
+    for day in values:
+        raw = str(day).strip()
+        index = WEEKDAY_INDEX.get(raw.casefold())
+        if index is None:
+            if raw:
+                passthrough.add(raw)
+            continue
+        canonical.add(WEEKDAY_NAMES[index])
+    return tuple(sorted(canonical, key=lambda day: WEEKDAY_NAMES.index(day)) + sorted(passthrough))
+
+
+def _series_local_clock_signature(
+    row: dict[str, Any], fallback_timezone: str | None
+) -> tuple[tuple[str, ...], str, str, str] | None:
+    # Two rows only describe the same series if they share a wall clock, so the
+    # zone is part of the signature. It used to default to a hardcoded
+    # "America/Chicago", which silently merged two genuinely different series
+    # for any tenant not in that zone; resolve the tenant's own zone instead.
+    timezone_name = _template_timezone(row, fallback_timezone)
+    days = list(row.get("days_of_week") or [])
+    if days and row.get("start_time") and row.get("end_time"):
+        return (
+            _canonical_weekdays(days),
+            str(row.get("start_time") or ""),
+            str(row.get("end_time") or ""),
+            timezone_name,
+        )
+
+    start_at = row.get("start_at")
+    end_at = row.get("end_at")
+    if not start_at or not end_at:
+        return None
+    tz = ZoneInfo(timezone_name)
+    local_start = ensure_utc(start_at).astimezone(tz)
+    local_end = ensure_utc(end_at).astimezone(tz)
+    weekday = WEEKDAY_NAMES[local_start.weekday()]
+    return (
+        (weekday,),
+        local_start.strftime("%H:%M"),
+        local_end.strftime("%H:%M"),
+        timezone_name,
+    )
+
+
+def session_series_signature(
+    row: dict[str, Any], fallback_timezone: str | None
+) -> tuple[object, ...] | None:
+    clock_signature = _series_local_clock_signature(row, fallback_timezone)
+    if clock_signature is None:
+        return None
+    days, start_time_value, end_time_value, timezone_name = clock_signature
+    return (
+        _normalized_series_text(row.get("location")),
+        str(row.get("coach_id") or ""),
+        days,
+        start_time_value,
+        end_time_value,
+        timezone_name,
+    )
+
+
+def _recurring_row_rank(row: dict[str, Any]) -> tuple[int, int, float]:
+    return (
+        int(row.get("enrolled_count") or 0),
+        int(row.get("waitlist_count") or 0),
+        -ensure_utc(row["start_at"]).timestamp(),
+    )
+
+
+def dedupe_session_series_rows(
+    rows: list[dict[str, Any]], *, fallback_timezone: str | None = None
+) -> list[dict[str, Any]]:
+    """Collapse rows that describe the same recurring series to the best one."""
+    deduped: list[dict[str, Any]] = []
+    index_by_signature: dict[tuple[object, ...], int] = {}
+    for row in rows:
+        signature = session_series_signature(row, fallback_timezone)
+        if signature is None:
+            deduped.append(row)
+            continue
+        existing_index = index_by_signature.get(signature)
+        if existing_index is None:
+            index_by_signature[signature] = len(deduped)
+            deduped.append(row)
+            continue
+        existing = deduped[existing_index]
+        if _recurring_row_rank(row) > _recurring_row_rank(existing):
+            deduped[existing_index] = row
+    return deduped
 
 
 def synthesize_recurring_session_docs(
@@ -40,6 +182,7 @@ def synthesize_recurring_session_docs(
     local_start_date: date | None = None,
     local_end_date: date | None = None,
     filter_by_utc_range: bool = True,
+    fallback_timezone: str | None = None,
 ) -> list[dict[str, Any]]:
     """Expand legacy recurring templates into dated read-model rows."""
     rows: list[dict[str, Any]] = []
@@ -48,7 +191,7 @@ def synthesize_recurring_session_docs(
         # (status="cancelled", doc retained), so never synthesize rows for it.
         if str(template.get("status") or "scheduled") == "cancelled":
             continue
-        timezone_name = str(template.get("timezone") or "America/Chicago")
+        timezone_name = _template_timezone(template, fallback_timezone)
         tz = ZoneInfo(timezone_name)
         active_start = _coerce_template_date(template.get("start_date"))
         active_end = _coerce_template_date(template.get("end_date"))
@@ -77,6 +220,10 @@ def synthesize_recurring_session_docs(
             doc = dict(template)
             doc["start_at"] = start_at
             doc["end_at"] = end_at
+            # Record the zone the instants were actually computed in, so a
+            # template with no `timezone` still tells consumers which zone its
+            # wall-clock start_time was interpreted as.
+            doc["timezone"] = timezone_name
             doc.setdefault("session_id", str(doc["_id"]))
             doc.setdefault("title", str(doc.get("name") or "Session"))
             doc.setdefault("capacity", doc.get("max_students", 15))
@@ -206,12 +353,14 @@ class MongoSessionRepository(TenantScopedRepository):
             },
         )
         template_docs = [doc async for doc in template_cursor]
+        academy_timezone = await academy_timezone_lookup(self._db)(current_academy_id())
         seen_template_sessions: set[str] = set()
         for doc in synthesize_recurring_session_docs(
             template_docs,
             range_start=now,
             range_end=end,
             first_per_template=True,
+            fallback_timezone=academy_timezone,
         ):
             session_id = str(doc.get("session_id") or doc.get("_id"))
             if session_id in seen_template_sessions:
@@ -238,8 +387,11 @@ class MongoSessionRepository(TenantScopedRepository):
                     session_id=session_id,
                     title=str(doc.get("title") or doc.get("name") or "Academy session"),
                     location=str(doc.get("location") or ""),
-                    start_at=doc["start_at"],
-                    end_at=doc["end_at"],
+                    start_at=ensure_utc(doc["start_at"]),
+                    end_at=ensure_utc(doc["end_at"]),
+                    timezone=(str(doc["timezone"]).strip() or None)
+                    if doc.get("timezone")
+                    else None,
                     capacity=capacity,
                     enrolled_count=enrolled_count,
                     available_seats=available_seats,

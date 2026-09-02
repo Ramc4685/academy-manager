@@ -307,6 +307,7 @@ export default function AdminSessionDetailPage() {
           <ReplacementCoachTable
             occurrences={replacementOccurrences}
             userNameById={userNameById}
+            timezone={session?.timezone ?? null}
             onEdit={setOccurrenceTarget}
           />
         )}

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import {
+  getParentAcademy,
   getRegistrationWaiver,
   listAvailableParentSessions,
   patchOnboarding,
@@ -16,6 +17,10 @@ import {
   type RegistrationWaiver,
 } from "@/lib/api/parent";
 import type { ApiError } from "@/lib/api/client";
+import {
+  formatAcademyMoment,
+  formatSessionOccurrence,
+} from "@/lib/format/session-display";
 
 /**
  * Parent onboarding stepper.
@@ -54,6 +59,16 @@ export default function OnboardingStepperPage() {
     queryFn: listAvailableParentSessions,
     staleTime: 60_000,
   });
+  // Session times are UTC instants. Rendering them in the VIEWER's browser
+  // timezone showed a 6:00 PM Chicago class as "1:00 PM" to the parent — the
+  // wrong hour, on the screen where they commit to paying. Sessions carry
+  // their own zone; the academy zone is the fallback when they do not.
+  const academyQuery = useQuery({
+    queryKey: ["parent", "academy"],
+    queryFn: getParentAcademy,
+    staleTime: 10 * 60 * 1000,
+  });
+  const academyTimezone = academyQuery.data?.timezone ?? null;
   const selectedSessionId = app?.selected_session_id;
   const quoteQuery = useQuery({
     queryKey: ["parent", "enrollment-quote", selectedSessionId],
@@ -207,6 +222,7 @@ export default function OnboardingStepperPage() {
           <SessionStep
             selected={app.selected_session_id}
             sessions={sessions}
+            academyTimezone={academyTimezone}
             loading={sessionsQuery.isLoading}
             error={sessionsQuery.isError}
             onRetry={() => void sessionsQuery.refetch()}
@@ -220,6 +236,7 @@ export default function OnboardingStepperPage() {
           <ReviewStep
             app={app}
             selectedSession={selectedSession}
+            academyTimezone={academyTimezone}
             quote={quoteQuery.data}
             quoteLoading={quoteQuery.isLoading}
             onCheckout={() => void goToCheckout()}
@@ -519,6 +536,7 @@ function WaiverStep({
 function SessionStep({
   selected,
   sessions,
+  academyTimezone,
   loading,
   error,
   onRetry,
@@ -527,6 +545,7 @@ function SessionStep({
 }: {
   selected: string | null;
   sessions: ParentAvailableSession[];
+  academyTimezone: string | null;
   loading: boolean;
   error: boolean;
   onRetry: () => void;
@@ -592,7 +611,7 @@ function SessionStep({
                         {session.title}
                       </span>
                       <span className="mt-1 block text-sm" style={{ color: "var(--rally-muted)" }}>
-                        {session.location} · {formatSessionTime(session)}
+                        {session.location} · {formatSessionTime(session, academyTimezone)}
                       </span>
                     </span>
                     <span className="shrink-0 text-sm font-semibold" style={{ color: "var(--rally-ink)" }}>
@@ -615,6 +634,7 @@ function SessionStep({
 function ReviewStep({
   app,
   selectedSession,
+  academyTimezone,
   quote,
   quoteLoading,
   onCheckout,
@@ -623,6 +643,7 @@ function ReviewStep({
 }: {
   app: OnboardingApplication;
   selectedSession?: ParentAvailableSession;
+  academyTimezone: string | null;
   quote?: EnrollmentQuote;
   quoteLoading: boolean;
   onCheckout: () => void;
@@ -641,7 +662,7 @@ function ReviewStep({
         <li>
           Session:{" "}
           {selectedSession
-            ? `${selectedSession.title} · ${formatSessionTime(selectedSession)}`
+            ? `${selectedSession.title} · ${formatSessionTime(selectedSession, academyTimezone)}`
             : app.selected_session_id ?? "—"}
         </li>
         <li>
@@ -655,7 +676,9 @@ function ReviewStep({
                 : "—"}
         </li>
         {quote && <li>Starting next month: {formatCents(quote.next_billing_amount_cents)}</li>}
-        {quote?.quote_expires_at && <li>Quote expires: {formatShortDateTime(quote.quote_expires_at)}</li>}
+        {quote?.quote_expires_at && (
+          <li>Quote expires: {formatShortDateTime(quote.quote_expires_at, academyTimezone)}</li>
+        )}
         <li>Waiver: {app.waiver_accepted ? "Accepted" : "Not accepted"}</li>
       </ul>
       <div className="flex gap-2">
@@ -675,32 +698,26 @@ function ReviewStep({
   );
 }
 
-function formatSessionTime(session: Pick<ParentAvailableSession, "start_at" | "end_at">): string {
-  const start = new Date(session.start_at);
-  const end = new Date(session.end_at);
-  const date = start.toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-  });
-  const startTime = start.toLocaleTimeString(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  });
-  const endTime = end.toLocaleTimeString(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  });
-
-  return `${date}, ${startTime} - ${endTime}`;
+/**
+ * "Thu, Sep 3 · 6:00 PM – 6:45 PM CDT".
+ *
+ * Renders in the session's own timezone, falling back to the academy's. The
+ * previous implementation used `toLocaleTimeString(undefined, ...)` with no
+ * `timeZone`, i.e. the browser's — which displayed a real 6:00 PM CDT class as
+ * "1:00 PM" and told the parent the wrong hour at the point of payment. The
+ * helper always appends a zone label, so a fallback is visible rather than
+ * silent, and it parses offset-less timestamps as UTC (the backend emits some
+ * rows naive) instead of as browser-local wall clock.
+ */
+function formatSessionTime(
+  session: Pick<ParentAvailableSession, "start_at" | "end_at" | "timezone">,
+  academyTimezone: string | null,
+): string {
+  return formatSessionOccurrence(session, academyTimezone);
 }
 
-function formatShortDateTime(value: string): string {
-  return new Date(value).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
+function formatShortDateTime(value: string, academyTimezone: string | null): string {
+  return formatAcademyMoment(value, academyTimezone);
 }
 
 function formatCents(cents: number): string {

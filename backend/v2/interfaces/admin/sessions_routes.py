@@ -19,6 +19,7 @@ from backend.v2.contexts.coaching.application.use_cases.mark_coach_attendance im
     MarkCoachAttendanceCommand,
 )
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
+    AcademyTimezoneUnset,
     CancelEnrollmentCommand,
     CancelSessionCommand,
     CreateSessionCommand,
@@ -142,6 +143,8 @@ async def create_session(
         session = await use_cases.create_session.execute(CreateSessionCommand(**body.model_dump()))
     except DuplicateSessionSeries as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except AcademyTimezoneUnset as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     if use_cases.maintain_session_occurrences is not None:
         await use_cases.maintain_session_occurrences(session)
     return AdminSessionView(**session.model_dump(exclude={"academy_id"}))
@@ -182,6 +185,8 @@ async def edit_session(
         )
     except DuplicateSessionSeries as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except AcademyTimezoneUnset as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     if use_cases.maintain_session_occurrences is not None:
         await use_cases.maintain_session_occurrences(session)
     return AdminSessionView(**session.model_dump(exclude={"academy_id"}))

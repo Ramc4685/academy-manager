@@ -44,7 +44,6 @@ class MongoAcademyRepository:
         default_doc = {
             "academy_id": academy_id,
             "display_name": academy_id,
-            "timezone": "UTC",
             "fees": {
                 "default_monthly_cents": None,
                 "late_fee_cents": None,

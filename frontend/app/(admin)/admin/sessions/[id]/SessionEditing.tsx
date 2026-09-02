@@ -33,16 +33,24 @@ import {
   toDateInputValue,
   todayDateInput,
 } from "./format";
+import { parseAcademyInstant, resolveAcademyTimeZone } from "@/lib/format/academy-time";
 
 export function ReplacementCoachTable({
   occurrences,
   userNameById,
+  timezone,
   onEdit,
 }: {
   occurrences: AdminSessionOccurrenceView[];
   userNameById: Map<string, string>;
+  /** The parent session's IANA zone; occurrence instants render in it. */
+  timezone: string | null;
   onEdit: (occurrence: AdminSessionOccurrenceView) => void;
 }) {
+  // Occurrence start/end are UTC instants. Formatting them without an explicit
+  // timeZone renders the viewer's browser zone, which shows the wrong hour for
+  // anyone outside the academy's zone.
+  const { timeZone } = resolveAcademyTimeZone(timezone);
   const coachLabel = (coachId: string | null | undefined, fallback: string) =>
     coachId ? userNameById.get(coachId) ?? fallback : "-";
 
@@ -63,21 +71,24 @@ export function ReplacementCoachTable({
             <tr key={occurrence.occurrence_id} className="border-b border-rally-line/60">
               <td className="py-3 pr-4">
                 <p className="font-medium text-rally-ink">
-                  {new Date(occurrence.start_at).toLocaleDateString(undefined, {
+                  {parseAcademyInstant(occurrence.start_at).toLocaleDateString("en-US", {
                     month: "short",
                     day: "numeric",
+                    timeZone,
                   })}
                 </p>
               </td>
               <td className="py-3 pr-4 font-mono text-rally-muted">
-                {new Date(occurrence.start_at).toLocaleTimeString(undefined, {
+                {parseAcademyInstant(occurrence.start_at).toLocaleTimeString("en-US", {
                   hour: "numeric",
                   minute: "2-digit",
+                  timeZone,
                 })}
                 {" - "}
-                {new Date(occurrence.end_at).toLocaleTimeString(undefined, {
+                {parseAcademyInstant(occurrence.end_at).toLocaleTimeString("en-US", {
                   hour: "numeric",
                   minute: "2-digit",
+                  timeZone,
                 })}
               </td>
               <td className="py-3 pr-4 text-rally-muted">
