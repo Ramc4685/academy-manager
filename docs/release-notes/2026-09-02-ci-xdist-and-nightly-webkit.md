@@ -17,6 +17,11 @@ PR: #626
   covered at the domain validator). A hash-and-signature sweep of all 3,398
   test functions found no other true duplicates; the suite is not the CI
   bottleneck.
+- The Chromium browser download is now cached (`actions/cache` keyed on the
+  pnpm lockfile) in all three Chromium jobs instead of being fetched fresh
+  each run; system packages are still installed via `install-deps`.
+- Playwright runs with 2 workers in CI instead of 1. Each CI job still runs a
+  single browser project against its own fresh `next dev` server.
 - `CI Gate` no longer lists the WebKit job in `needs`. `docs/ci-cd.md` is
   updated to describe the new split.
 
@@ -27,7 +32,10 @@ an email from GitHub Actions, not a deploy blocker, and should be triaged
 like any other e2e regression.
 
 ## Risk / rollback
-Low. A WebKit-only regression can now merge and deploy before the nightly
+Low to moderate. Two Playwright workers share one `next dev` server per
+job; if that reintroduces timing flakes, `failOnFlakyTests` surfaces them
+as red runs rather than silent passes, and the fix is a one-line revert to
+`workers: 1`. A WebKit-only regression can now merge and deploy before the nightly
 run catches it; the last 30 days of runs show no WebKit-only failures, and
 Chromium mobile still runs on every PR. Rollback is reverting this PR, which
 restores the WebKit job to the gate and the single-process pytest command.
