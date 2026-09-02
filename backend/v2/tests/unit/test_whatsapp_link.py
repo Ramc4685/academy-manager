@@ -71,7 +71,7 @@ def test_dues_reminder_text_carries_amount_count_and_pay_url() -> None:
     )
 
     assert "Hi Sample Parent," in text
-    assert "USD 160.00" in text
+    assert "$160.00" in text
     assert "2 open invoices" in text
     assert "BLNO Academy" in text
     assert "https://blno-academy.courtmastr.com/parent/payments" in text
@@ -88,7 +88,7 @@ def test_dues_reminder_text_singular_invoice_and_missing_name() -> None:
 
     assert "Hi there," in text
     assert "1 open invoice " in text
-    assert "USD 50.00" in text
+    assert "$50.00" in text
 
 
 def test_dues_reminder_text_falls_back_to_portal_wording_without_pay_url() -> None:

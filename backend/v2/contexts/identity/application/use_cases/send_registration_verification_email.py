@@ -33,6 +33,7 @@ from backend.v2.contexts.identity.domain.errors import (
     LoginInviteSendFailed,
     VerificationEmailThrottled,
 )
+from backend.v2.shared.comms.email_theme import INK, MUTED, EmailBrand, button, shell
 from backend.v2.shared.http.errors import DomainError
 
 
@@ -52,23 +53,16 @@ class VerificationEmailCooldownPort(Protocol):
 
 def _verification_body(*, academy_name: str, verify_link: str) -> str:
     safe_academy_name = escape(academy_name)
-    safe_verify_link = escape(verify_link, quote=True)
-    return f"""
-<div style="font-family: -apple-system, 'Segoe UI', sans-serif; max-width: 520px; margin: 0 auto;">
-  <h2 style="color: #0a0f1c;">Confirm your email for {safe_academy_name}</h2>
-  <p>Thanks for registering. Confirm your email address to finish setting up
-  your account and enroll your child.</p>
-  <p style="margin: 24px 0;">
-    <a href="{safe_verify_link}"
-       style="background: #2545d3; color: #ffffff; padding: 12px 20px;
-              border-radius: 8px; text-decoration: none; font-weight: 600;">
-      Verify email address
-    </a>
-  </p>
-  <p style="color: #64748b; font-size: 13px;">If you didn't request this,
-  you can ignore this email.</p>
-</div>
-"""
+    inner = (
+        f'<h2 style="color:{INK};font-size:20px;margin:0 0 12px;">'
+        f"Confirm your email for {safe_academy_name}</h2>"
+        f"<p>Thanks for registering. Confirm your email address to finish setting up "
+        f"your account and enroll your child.</p>"
+        f'<p style="margin:24px 0;">{button("Verify email address", verify_link)}</p>'
+        f'<p style="color:{MUTED};font-size:13px;">If you didn&rsquo;t request this, '
+        f"you can ignore this email.</p>"
+    )
+    return shell(brand=EmailBrand(academy_name=academy_name), inner_html=inner)
 
 
 class SendRegistrationVerificationEmail:

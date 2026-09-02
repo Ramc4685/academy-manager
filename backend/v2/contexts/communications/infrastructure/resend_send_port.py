@@ -41,6 +41,7 @@ from backend.v2.contexts.communications.application.ports import (
     SendOutcome,
 )
 from backend.v2.contexts.communications.domain.email_category import EmailCategory
+from backend.v2.shared.comms.email_theme import html_to_text
 
 log = logging.getLogger(__name__)
 
@@ -125,6 +126,10 @@ class ResendEmailSendPort(EmailSendPort):
                 "subject": subject,
                 "html": body,
             }
+            try:
+                params["text"] = html_to_text(body)
+            except Exception:  # a text twin is a bonus, never a blocker
+                log.warning("plain-text twin generation failed", exc_info=True)
             if cc:
                 params["cc"] = cc
             if bcc:

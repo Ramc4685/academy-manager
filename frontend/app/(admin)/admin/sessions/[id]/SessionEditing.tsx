@@ -15,7 +15,13 @@ import {
 import { queryKeys } from "@/lib/query/keys";
 
 import { Button } from "@/components/ds/button";
-import { DialogActions, DialogError, Field, RallyModal as RallyDialog, Th } from "@/components/ds/dialog-chrome";
+import {
+  DialogActions,
+  DialogError,
+  Field,
+  RallyModal as RallyDialog,
+  Th,
+} from "@/components/ds/dialog-chrome";
 
 import { CoachSelect, DaySelect } from "./dialogs";
 import {
@@ -29,11 +35,15 @@ import {
   hasRecurringSchedule,
   inputClass,
   looksLikeWebUrl,
+  looksLikeWhatsAppGroupInvite,
   sessionDateLabel,
   toDateInputValue,
   todayDateInput,
 } from "./format";
-import { parseAcademyInstant, resolveAcademyTimeZone } from "@/lib/format/academy-time";
+import {
+  parseAcademyInstant,
+  resolveAcademyTimeZone,
+} from "@/lib/format/academy-time";
 
 export function ReplacementCoachTable({
   occurrences,
@@ -52,7 +62,7 @@ export function ReplacementCoachTable({
   // anyone outside the academy's zone.
   const { timeZone } = resolveAcademyTimeZone(timezone);
   const coachLabel = (coachId: string | null | undefined, fallback: string) =>
-    coachId ? userNameById.get(coachId) ?? fallback : "-";
+    coachId ? (userNameById.get(coachId) ?? fallback) : "-";
 
   return (
     <div className="overflow-x-auto">
@@ -68,28 +78,40 @@ export function ReplacementCoachTable({
         </thead>
         <tbody>
           {occurrences.map((occurrence) => (
-            <tr key={occurrence.occurrence_id} className="border-b border-rally-line/60">
+            <tr
+              key={occurrence.occurrence_id}
+              className="border-b border-rally-line/60"
+            >
               <td className="py-3 pr-4">
                 <p className="font-medium text-rally-ink">
-                  {parseAcademyInstant(occurrence.start_at).toLocaleDateString("en-US", {
-                    month: "short",
-                    day: "numeric",
-                    timeZone,
-                  })}
+                  {parseAcademyInstant(occurrence.start_at).toLocaleDateString(
+                    "en-US",
+                    {
+                      month: "short",
+                      day: "numeric",
+                      timeZone,
+                    },
+                  )}
                 </p>
               </td>
               <td className="py-3 pr-4 font-mono text-rally-muted">
-                {parseAcademyInstant(occurrence.start_at).toLocaleTimeString("en-US", {
-                  hour: "numeric",
-                  minute: "2-digit",
-                  timeZone,
-                })}
+                {parseAcademyInstant(occurrence.start_at).toLocaleTimeString(
+                  "en-US",
+                  {
+                    hour: "numeric",
+                    minute: "2-digit",
+                    timeZone,
+                  },
+                )}
                 {" - "}
-                {parseAcademyInstant(occurrence.end_at).toLocaleTimeString("en-US", {
-                  hour: "numeric",
-                  minute: "2-digit",
-                  timeZone,
-                })}
+                {parseAcademyInstant(occurrence.end_at).toLocaleTimeString(
+                  "en-US",
+                  {
+                    hour: "numeric",
+                    minute: "2-digit",
+                    timeZone,
+                  },
+                )}
               </td>
               <td className="py-3 pr-4 text-rally-muted">
                 {coachLabel(occurrence.scheduled_coach_id, "Scheduled coach")}
@@ -98,7 +120,11 @@ export function ReplacementCoachTable({
                 {coachLabel(occurrence.actual_coach_id, "Replacement coach")}
               </td>
               <td className={actionCellClass}>
-                <Button variant="secondary" size="sm" onClick={() => onEdit(occurrence)}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => onEdit(occurrence)}
+                >
                   Change replacement
                 </Button>
               </td>
@@ -160,7 +186,8 @@ export function OccurrenceReplacementDialog({
       });
     },
     onSuccess: onSaved,
-    onError: (err: Error) => setError(err.message ?? "Failed to update replacement coach."),
+    onError: (err: Error) =>
+      setError(err.message ?? "Failed to update replacement coach."),
   });
 
   const canSave = isEditing
@@ -210,7 +237,11 @@ export function OccurrenceReplacementDialog({
               value={coachId}
               onChange={(event) => setCoachId(event.target.value)}
               className={inputClass}
-              placeholder={coachesQuery.isLoading ? "Loading coaches..." : "Coach reference"}
+              placeholder={
+                coachesQuery.isLoading
+                  ? "Loading coaches..."
+                  : "Coach reference"
+              }
             />
           )}
         </Field>
@@ -268,12 +299,14 @@ export function SessionEditDialog({
   const selectedDays = form.days_of_week ?? [];
 
   const mutation = useMutation({
-    mutationFn: (payload: EditSessionRequest) => updateAdminSession(session!.session_id, payload),
+    mutationFn: (payload: EditSessionRequest) =>
+      updateAdminSession(session!.session_id, payload),
     onSuccess: (savedSession) => {
       setError(null);
       onSaved(savedSession);
     },
-    onError: (err: Error) => setError(err.message ?? "Failed to update session."),
+    onError: (err: Error) =>
+      setError(err.message ?? "Failed to update session."),
   });
 
   return (
@@ -303,28 +336,40 @@ export function SessionEditDialog({
             <CoachSelect
               coaches={coaches}
               value={form.coach_id ?? ""}
-              onChange={(coachId) => setForm((f) => ({ ...f, coach_id: coachId }))}
+              onChange={(coachId) =>
+                setForm((f) => ({ ...f, coach_id: coachId }))
+              }
             />
           ) : (
             <input
               value={form.coach_id ?? ""}
-              onChange={(event) => setForm((f) => ({ ...f, coach_id: event.target.value }))}
+              onChange={(event) =>
+                setForm((f) => ({ ...f, coach_id: event.target.value }))
+              }
               className={inputClass}
-              placeholder={coachesQuery.isLoading ? "Loading coaches..." : "Coach reference"}
+              placeholder={
+                coachesQuery.isLoading
+                  ? "Loading coaches..."
+                  : "Coach reference"
+              }
             />
           )}
         </Field>
         <Field label="Name">
           <input
             value={form.title ?? ""}
-            onChange={(event) => setForm((f) => ({ ...f, title: event.target.value }))}
+            onChange={(event) =>
+              setForm((f) => ({ ...f, title: event.target.value }))
+            }
             className={inputClass}
           />
         </Field>
         <Field label="Location">
           <input
             value={form.location ?? ""}
-            onChange={(event) => setForm((f) => ({ ...f, location: event.target.value }))}
+            onChange={(event) =>
+              setForm((f) => ({ ...f, location: event.target.value }))
+            }
             className={inputClass}
           />
         </Field>
@@ -334,20 +379,32 @@ export function SessionEditDialog({
               selectedDays.length <= 1 ? (
                 <DaySelect
                   value={selectedDays[0] ?? "Wed"}
-                  onChange={(day) => setForm((f) => ({ ...f, days_of_week: [day] }))}
+                  onChange={(day) =>
+                    setForm((f) => ({ ...f, days_of_week: [day] }))
+                  }
                 />
               ) : (
-                <input value={selectedDays.join(", ")} readOnly className={inputClass} />
+                <input
+                  value={selectedDays.join(", ")}
+                  readOnly
+                  className={inputClass}
+                />
               )
             ) : (
-              <input value={session ? sessionDateLabel(session) : ""} readOnly className={inputClass} />
+              <input
+                value={session ? sessionDateLabel(session) : ""}
+                readOnly
+                className={inputClass}
+              />
             )}
           </Field>
           <Field label="Start time">
             <input
               type="time"
               value={form.start_time ?? ""}
-              onChange={(event) => setForm((f) => ({ ...f, start_time: event.target.value }))}
+              onChange={(event) =>
+                setForm((f) => ({ ...f, start_time: event.target.value }))
+              }
               className={inputClass}
               disabled={!recurring}
             />
@@ -358,7 +415,9 @@ export function SessionEditDialog({
             <input
               type="time"
               value={form.end_time ?? ""}
-              onChange={(event) => setForm((f) => ({ ...f, end_time: event.target.value }))}
+              onChange={(event) =>
+                setForm((f) => ({ ...f, end_time: event.target.value }))
+              }
               className={inputClass}
               disabled={!recurring}
             />
@@ -369,7 +428,10 @@ export function SessionEditDialog({
               min={1}
               value={form.capacity ?? 1}
               onChange={(event) =>
-                setForm((f) => ({ ...f, capacity: parseInt(event.target.value, 10) || 1 }))
+                setForm((f) => ({
+                  ...f,
+                  capacity: parseInt(event.target.value, 10) || 1,
+                }))
               }
               className={inputClass}
             />
@@ -390,24 +452,37 @@ export function SessionEditDialog({
             className={inputClass}
           />
           <p className="text-xs text-amber-700">
-            Percent-paid coaches require a session price for payroll. Leave blank only when
-            pricing is not configured; enter 0 for an explicitly free session.
+            Percent-paid coaches require a session price for payroll. Leave
+            blank only when pricing is not configured; enter 0 for an explicitly
+            free session.
           </p>
         </Field>
         <CommunicationPackSection form={form} setForm={setForm} />
         <Field label="Reason">
           <input
             value={form.reason ?? ""}
-            onChange={(event) => setForm((f) => ({ ...f, reason: event.target.value }))}
+            onChange={(event) =>
+              setForm((f) => ({ ...f, reason: event.target.value }))
+            }
             className={inputClass}
             placeholder="Optional"
           />
         </Field>
         <DialogActions>
-          <Button variant="secondary" size="sm" type="button" onClick={() => onOpenChange(false)}>
+          <Button
+            variant="secondary"
+            size="sm"
+            type="button"
+            onClick={() => onOpenChange(false)}
+          >
             Cancel
           </Button>
-          <Button variant="primary" size="sm" type="submit" disabled={mutation.isPending}>
+          <Button
+            variant="primary"
+            size="sm"
+            type="submit"
+            disabled={mutation.isPending}
+          >
             {mutation.isPending ? "Saving..." : "Save"}
           </Button>
         </DialogActions>
@@ -433,6 +508,10 @@ function CommunicationPackSection({
   const [open, setOpen] = useState(false);
   const link = form.whatsapp_group_link ?? "";
   const linkLooksWrong = !looksLikeWebUrl(link);
+  const linkIsNotAGroupInvite =
+    link.trim() !== "" &&
+    !linkLooksWrong &&
+    !looksLikeWhatsAppGroupInvite(link);
 
   const setText = (key: keyof EditSessionRequest) => (value: string) =>
     // Empty string must become null, or clearing a box would leave the old
@@ -448,26 +527,42 @@ function CommunicationPackSection({
         className="flex w-full items-center justify-between px-3 py-2 text-left text-sm font-medium text-rally-ink"
       >
         <span>Communication pack (optional)</span>
-        <span aria-hidden className="text-rally-muted">{open ? "−" : "+"}</span>
+        <span aria-hidden className="text-rally-muted">
+          {open ? "−" : "+"}
+        </span>
       </button>
       {open ? (
         <div className="space-y-3 border-t border-rally-line px-3 py-3">
           <p className="text-xs text-rally-muted">
-            These details are emailed to a family when they join this session. Leave anything
-            blank to keep it out of the email.
+            These details are emailed to a family when they join this session.
+            Leave anything blank to keep it out of the email.
           </p>
           <Field label="WhatsApp group link">
             <input
               type="url"
               inputMode="url"
               value={link}
-              onChange={(event) => setText("whatsapp_group_link")(event.target.value)}
+              onChange={(event) =>
+                setText("whatsapp_group_link")(event.target.value)
+              }
               className={inputClass}
               placeholder="https://chat.whatsapp.com/..."
             />
+            <p className="text-xs text-rally-muted">
+              In WhatsApp open the group, then Group info › Invite link › Copy
+              link. It starts with https://chat.whatsapp.com/ and goes into the
+              welcome email and every daily digest for this class.
+            </p>
             {linkLooksWrong ? (
               <p className="text-xs text-amber-700">
                 Paste the full invite link, starting with https://
+              </p>
+            ) : null}
+            {linkIsNotAGroupInvite ? (
+              <p className="text-xs text-amber-700">
+                This does not look like a WhatsApp group invite
+                (chat.whatsapp.com/…). A wa.me link opens a personal chat, not
+                the class group.
               </p>
             ) : null}
           </Field>
@@ -507,7 +602,10 @@ function CommunicationPackSection({
                   arrival_minutes_before:
                     event.target.value.trim() === ""
                       ? null
-                      : Math.max(0, Math.min(120, parseInt(event.target.value, 10) || 0)),
+                      : Math.max(
+                          0,
+                          Math.min(120, parseInt(event.target.value, 10) || 0),
+                        ),
                 }))
               }
               className={inputClass}
@@ -517,7 +615,9 @@ function CommunicationPackSection({
             <textarea
               rows={2}
               value={form.coach_contact_policy ?? ""}
-              onChange={(event) => setText("coach_contact_policy")(event.target.value)}
+              onChange={(event) =>
+                setText("coach_contact_policy")(event.target.value)
+              }
               className={inputClass}
             />
           </Field>
@@ -525,7 +625,9 @@ function CommunicationPackSection({
             <textarea
               rows={3}
               value={form.absence_policy ?? ""}
-              onChange={(event) => setText("absence_policy")(event.target.value)}
+              onChange={(event) =>
+                setText("absence_policy")(event.target.value)
+              }
               className={inputClass}
             />
           </Field>

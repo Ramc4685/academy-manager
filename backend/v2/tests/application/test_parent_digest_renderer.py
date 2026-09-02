@@ -10,6 +10,12 @@ from backend.v2.contexts.communications.application.parent_digest_view import (
     DuesView,
     ParentDigestView,
 )
+from backend.v2.contexts.communications.application.whatsapp_groups_block import (
+    GROUP_BLOCK_HEADING,
+    PARENT_GROUP_NOTE,
+    WhatsAppGroupLink,
+)
+from backend.v2.shared.comms.email_theme import COBALT_SOFT, RED_BG, EmailBrand
 
 
 def _child(name: str = "Maithri", **overrides: object) -> ChildDigestView:
@@ -90,7 +96,9 @@ def test_variant_b_is_dues_forward_with_single_activation_cta() -> None:
         program_name="Badminton",
         children=(child,),
         on_portal=False,
-        dues=DuesView(amount="$60.00", due_date="July 10", pay_url="https://portal.test/pay"),
+        dues=DuesView(
+            amount="$60.00", due_date="July 10", pay_url="https://portal.test/pay", is_overdue=True
+        ),
         activate_url="https://portal.test/set-password?continue=/parent/payments",
         reply_to="academy@example.test",
     )
@@ -140,7 +148,7 @@ def test_subject_lists_multiple_children() -> None:
     subject, body = render_parent_digest(view)
 
     assert subject == "Practice today for Maithri & Riaan"
-    assert "your kids have practice today" in body
+    assert "Your kids have practice today" in body
 
 
 def test_html_is_escaped() -> None:
@@ -156,3 +164,72 @@ def test_html_is_escaped() -> None:
 
     assert "<script>alert(1)</script>" not in body
     assert "&lt;script&gt;" in body
+
+
+def _view(**overrides: object) -> ParentDigestView:
+    base: dict[str, object] = dict(
+        parent_name="Priya",
+        date_label="Thursday, September 3",
+        program_name="Badminton",
+        children=(_child(),),
+        on_portal=True,
+        portal_url="https://portal.test/parent/dashboard",
+    )
+    base.update(overrides)
+    return ParentDigestView(**base)  # type: ignore[arg-type]
+
+
+def test_multi_child_greeting_is_capitalised() -> None:
+    _, body = render_parent_digest(_view(children=(_child("A"), _child("B"))))
+    assert "Good morning! Your kids have practice today" in body
+
+
+def test_upcoming_dues_are_not_red_and_overdue_are() -> None:
+    upcoming = DuesView(amount="$60.00", due_date="September 10", pay_url="https://p/pay")
+    _, body = render_parent_digest(_view(dues=upcoming))
+    assert COBALT_SOFT in body and RED_BG not in body
+    assert "due September 10" in body
+    overdue = DuesView(
+        amount="$60.00", due_date="August 10", pay_url="https://p/pay", is_overdue=True
+    )
+    _, body = render_parent_digest(_view(dues=overdue))
+    assert RED_BG in body
+    assert "overdue since August 10" in body
+
+
+def test_variant_b_dues_wording_follows_overdue_flag() -> None:
+    upcoming = DuesView(amount="$60.00", due_date="September 10", pay_url="https://p/pay")
+    _, body = render_parent_digest(
+        _view(on_portal=False, dues=upcoming, activate_url="https://p/activate")
+    )
+    assert "is due September 10" in body
+    overdue = DuesView(
+        amount="$60.00", due_date="August 10", pay_url="https://p/pay", is_overdue=True
+    )
+    _, body = render_parent_digest(
+        _view(on_portal=False, dues=overdue, activate_url="https://p/activate")
+    )
+    assert "was due August 10" in body
+
+
+def test_whatsapp_block_rendered_between_cards_and_billing() -> None:
+    link = WhatsAppGroupLink(
+        label="Beginner @ YWCA", url="https://chat.whatsapp.com/AAA", child_names=("Maithri",)
+    )
+    dues = DuesView(amount="$60.00", due_date="September 10", pay_url="https://p/pay")
+    _, body = render_parent_digest(_view(whatsapp_groups=(link,), dues=dues))
+    assert GROUP_BLOCK_HEADING in body and PARENT_GROUP_NOTE in body
+    assert body.index("Thumb grip") < body.index(GROUP_BLOCK_HEADING) < body.index("Pay now")
+
+
+def test_no_links_means_no_block() -> None:
+    _, body = render_parent_digest(_view())
+    assert GROUP_BLOCK_HEADING not in body
+
+
+def test_shell_shows_academy_and_date() -> None:
+    brand = EmailBrand(academy_name="BLNO Badminton", brand_color="#112233")
+    _, body = render_parent_digest(_view(), brand=brand)
+    assert "BLNO Badminton" in body
+    assert "Thursday, September 3" in body
+    assert "#112233" in body

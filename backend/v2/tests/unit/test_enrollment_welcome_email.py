@@ -325,3 +325,15 @@ def test_body_has_no_unescaped_raw_interpolation_markers() -> None:
     """Cheap smoke test that the template is fully rendered."""
     _, body = _render(_session(whatsapp_group_link="https://chat.whatsapp.com/AbCd1234"))
     assert not re.search(r"\{[a-z_]+\}", body)
+
+
+def test_group_chat_sits_right_after_where_and_no_reminder_footer() -> None:
+    _, body = _render(
+        _session(
+            whatsapp_group_link="https://chat.whatsapp.com/AbCd1234",
+            venue_address="123 Main",
+            parking_notes="Lot B",
+        )
+    )
+    assert body.index("Where") < body.index("Group chat") < body.index("Parking")
+    assert "please disregard" not in body

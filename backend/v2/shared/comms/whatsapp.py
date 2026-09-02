@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from urllib.parse import quote
 
+from backend.v2.shared.comms.email_theme import format_money
+
 # wa.me rejects '+', spaces and punctuation -- it wants bare international
 # digits (country code first). Numbers are stored as free text, so anything we
 # cannot confidently resolve to an international number yields no link at all
@@ -79,7 +81,7 @@ def dues_reminder_text(
     facts and the same call to action on either channel.
     """
     name = (display_name or "").strip() or "there"
-    amount = f"{currency.upper()} {total_due_cents / 100:.2f}"
+    amount = format_money(total_due_cents, currency)
     invoice_word = "invoice" if pending_count == 1 else "invoices"
     sender = (academy_name or "").strip()
 

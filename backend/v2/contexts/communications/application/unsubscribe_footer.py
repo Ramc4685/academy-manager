@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import html
 
-_MUTED = "#6b7280"
-_LINK = "#2563eb"
+from backend.v2.shared.comms.email_theme import COBALT, LINE, MUTED
+
+_MUTED = MUTED
+_LINK = COBALT
 
 _FALLBACK_TEXT = (
     "Do not want these emails? You can turn them off in your account's email preferences."
@@ -30,7 +32,7 @@ def render_unsubscribe_footer(unsubscribe_url: str | None) -> str:
         inner = html.escape(_FALLBACK_TEXT)
     return (
         f'<p style="font-size:12px;color:{_MUTED};margin:20px 0 0;'
-        f'border-top:1px solid #e5e7eb;padding-top:10px;">{inner}</p>'
+        f'border-top:1px solid {LINE};padding-top:10px;">{inner}</p>'
     )
 
 
