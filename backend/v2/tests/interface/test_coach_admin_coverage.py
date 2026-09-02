@@ -8,7 +8,6 @@ Coaches keep their personal scope; parents still get 404 everywhere.
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -140,9 +139,11 @@ def test_admin_marks_attendance_on_unassigned_session(coach_admin_client):
     body = r.json()
     assert body["occurrence_id"] == OTHER_OCC
     assert body["status"] == "present"
-    # Attributed to the admin, not to the assigned coach.
-    marks = coach_admin_client.coach_use_cases.list_attendance_for_occurrence  # type: ignore[attr-defined]
-    rows = asyncio.run(marks(OTHER_OCC))
+    # Attributed to the admin, not to the assigned coach. Read the fake
+    # store directly: `asyncio.run` here would unset the worker's event loop
+    # and break later tests that rely on `asyncio.get_event_loop()`.
+    repo = coach_admin_client.coach_use_cases.mark_attendance._attendance  # type: ignore[attr-defined]
+    rows = [m for m in repo.saved if m.occurrence_id == OTHER_OCC]
     assert [m.marked_by for m in rows] == ["adm"]
 
 
