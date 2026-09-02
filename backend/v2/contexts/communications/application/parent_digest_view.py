@@ -23,6 +23,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from backend.v2.contexts.communications.application.whatsapp_groups_block import (
+    WhatsAppGroupLink,
+)
+
 
 @dataclass(frozen=True, slots=True)
 class ChildDigestView:
@@ -50,6 +54,9 @@ class DuesView:
     amount: str  # formatted, e.g. "$60.00"
     due_date: str  # formatted, e.g. "July 10"
     pay_url: str
+    # True when the earliest open invoice's due date is before today. Drives
+    # colour and wording: red + "overdue since" vs neutral + "due".
+    is_overdue: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +85,9 @@ class ParentDigestView:
     # Variant B absence fallback ("reply to this email and we'll tell the
     # coach"). When set, shown as a reply-to hint.
     reply_to: str | None = None
+    # Groups for every ACTIVE enrollment in the family (not only today's
+    # sessions), deduplicated by URL. Empty when no session has a link.
+    whatsapp_groups: tuple[WhatsAppGroupLink, ...] = ()
 
     def has_children(self) -> bool:
         return bool(self.children)
