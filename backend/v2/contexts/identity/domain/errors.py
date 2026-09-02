@@ -42,6 +42,22 @@ class LoginInviteSendFailed(DomainError):
     status_code = 502
 
 
+class VerificationEmailThrottled(DomainError):
+    """Too many verification emails were requested for one address.
+
+    The public ``/register/parent/verification-email`` endpoint mails whatever
+    address the caller's Firebase token carries. Anyone can mint a Firebase
+    account for an address they do not own using the public web API key, so
+    without a per-address cooldown the endpoint is a mail-bomb gun pointed at
+    an arbitrary victim — and it fires from the same Resend domain our invoices
+    depend on, so the reputational damage lands on billing mail. The IP rate
+    limit is not enough: the attacker controls the address, not just the IP.
+    """
+
+    code = "Identity.VerificationEmailThrottled"
+    status_code = 429
+
+
 class MembershipNotFound(DomainError):
     """No active `academy_memberships` row for this (user, academy) pair.
 

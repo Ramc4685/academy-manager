@@ -16,6 +16,7 @@ Every user-supplied value interpolated into an HTML body goes through
 from __future__ import annotations
 
 import html
+import logging
 
 from backend.v2.contexts.billing.application.ports import (
     InviteEmailOutcome as AddCardReminderEmailOutcome,
@@ -23,6 +24,9 @@ from backend.v2.contexts.billing.application.ports import (
 from backend.v2.contexts.communications.application.ports import (
     EmailSendPort,
     ResolvedRecipient,
+)
+from backend.v2.contexts.communications.infrastructure.stub_send_port import (
+    StubEmailSendPort,
 )
 from backend.v2.contexts.identity.application.use_cases.send_login_invite import (
     InviteEmailOutcome,
@@ -35,6 +39,8 @@ from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
 )
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
 from backend.v2.shared.tenancy import current_academy_id
+
+log = logging.getLogger(__name__)
 
 _BRAND_HEADING = "#0a0f1c"
 _BRAND_ACCENT = "#2545d3"
@@ -102,6 +108,64 @@ class LoginInviteEmailAdapter:
             body=body,
         )
         return InviteEmailOutcome(ok=outcome.ok, failed_reason=outcome.failed_reason)
+
+
+class UndeliverableInviteEmailAdapter:
+    """Stands in for `LoginInviteEmailAdapter` when the composed port cannot send.
+
+    ``_build_email_sender`` falls back to ``StubEmailSendPort`` whenever
+    ``email_delivery_enabled``/``resend_api_key``/``env`` do not all line up —
+    and the stub reports ``ok=True``. For the digests that is correct: local and
+    CI runs must not mail anyone. For a *user-visible, user-triggered* message it
+    is a lie with consequences: a mistyped ``RESEND_API_KEY`` in prod would show
+    every registering parent "Verification email sent", send nothing, log
+    nothing, and strand them at a login they can never verify.
+
+    So in an environment that is supposed to deliver real mail, a stub port is
+    swapped for this adapter, which logs at ERROR and reports failure. The
+    parent gets an honest "could not send, try again" and the misconfiguration
+    shows up in the logs on the first attempt instead of in a support ticket
+    weeks later.
+    """
+
+    def __init__(self, *, reason: str) -> None:
+        self._reason = reason
+
+    async def send_invite_email(
+        self,
+        *,
+        user_id: str,
+        email: str,
+        display_name: str,
+        subject: str,
+        body: str,
+    ) -> InviteEmailOutcome:
+        log.error(
+            "email delivery is not configured (%s); refusing to report a "
+            "successful send of %r to user %s",
+            self._reason,
+            subject,
+            user_id,
+        )
+        return InviteEmailOutcome(ok=False, failed_reason=self._reason)
+
+
+def build_user_facing_invite_sender(
+    *, sender: EmailSendPort, env: str, real_email_envs: frozenset[str]
+) -> LoginInviteEmailAdapter | UndeliverableInviteEmailAdapter:
+    """Wrap `sender` for a message a *user* is waiting on.
+
+    Outside a real-email environment the stub's silent success is the desired
+    behaviour and is preserved. Inside one, a stub means the deployment is
+    misconfigured — see `UndeliverableInviteEmailAdapter`.
+    """
+    from backend.v2.composition.digests import unwrap_send_port
+
+    if env.lower() in real_email_envs and isinstance(unwrap_send_port(sender), StubEmailSendPort):
+        return UndeliverableInviteEmailAdapter(
+            reason="email delivery is not configured for this environment"
+        )
+    return LoginInviteEmailAdapter(sender=sender)
 
 
 class InvoiceEmailAdapter:

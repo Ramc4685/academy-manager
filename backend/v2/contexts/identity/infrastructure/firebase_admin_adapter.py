@@ -354,6 +354,20 @@ class FirebaseAdminAdapter:
             link = await asyncio.to_thread(firebase_admin_auth.generate_password_reset_link, email)
         return str(link)
 
+    async def generate_email_verification_link(self, email: str) -> str:
+        """Generate a Firebase email-verification link for `email`.
+
+        Used to send the verification email ourselves (branded, via our own
+        Resend domain) instead of Firebase's client-side ``sendEmailVerification``,
+        which delivers from Firebase's shared, unbranded mailer and lands in
+        spam far more often than mail sent from our own established domain.
+        """
+        if firebase_admin_auth is None:
+            raise RuntimeError("firebase-admin is required for Firebase auth")
+        _ensure_firebase_app()
+        link = await asyncio.to_thread(firebase_admin_auth.generate_email_verification_link, email)
+        return str(link)
+
     async def update_user_email(self, uid: str, email: str) -> None:
         if firebase_admin_auth is None:
             raise RuntimeError("firebase-admin is required for Firebase auth")

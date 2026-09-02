@@ -6,6 +6,22 @@ test.describe("parent email registration verification", () => {
   }) => {
     test.slow();
     let parentRegistrationCalls = 0;
+    // The verification email is sent by OUR backend (branded, our Resend
+    // domain), not by Firebase's client SDK. Counting the calls is what keeps
+    // this spec honest: a regression that skips the request entirely would
+    // otherwise still show "Verification email sent" and pass.
+    const verificationEmailCalls: { authorization: string | undefined }[] = [];
+
+    await page.route(
+      "**/api/v2/register/parent/verification-email",
+      (route) => {
+        if (route.request().method() !== "POST") return route.fallback();
+        verificationEmailCalls.push({
+          authorization: route.request().headers()["authorization"],
+        });
+        return route.fulfill({ status: 204, body: "" });
+      },
+    );
 
     await page.addInitScript(() => {
       window.__E2E_FIREBASE__ = { verificationFailuresRemaining: 1 };
@@ -90,6 +106,9 @@ test.describe("parent email registration verification", () => {
       page.getByRole("button", { name: "Send verification email" }),
     ).toBeVisible();
     expect(parentRegistrationCalls).toBe(0);
+    // The first attempt failed before a token existed, so nothing should have
+    // reached the backend — the failure notice is not a swallowed send.
+    expect(verificationEmailCalls).toHaveLength(0);
     await expect
       .poll(() =>
         page.evaluate(
@@ -103,6 +122,10 @@ test.describe("parent email registration verification", () => {
     await expect(page.getByRole("status")).toContainText(
       "Verification email sent",
     );
+    // "Verification email sent" is only true if the backend was actually asked
+    // to send it, with the user's bearer token attached.
+    await expect.poll(() => verificationEmailCalls.length).toBe(1);
+    expect(verificationEmailCalls[0].authorization).toMatch(/^Bearer .+/);
     await expect(
       page.getByRole("button", { name: "Send verification email" }),
     ).toBeHidden();
