@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -120,6 +119,7 @@ from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore
 from backend.v2.shared.tenancy import TenantContextUnset, current_academy_id
+from backend.v2.shared.time import academy_timezone_lookup
 
 from .coaching_lookups import (
     EnrollmentLookupAdapter,
@@ -485,21 +485,5 @@ def compose_coach(
             users=user_repo,
             sessions=sessions_repo,
         ),
-        get_academy_timezone=_academy_timezone_lookup(db),
+        get_academy_timezone=academy_timezone_lookup(db),
     )
-
-
-def _academy_timezone_lookup(
-    db: AsyncIOMotorDatabase[Any],
-) -> Callable[[str], Awaitable[str | None]]:
-    """Timezone name for an academy, or None when unset (#510)."""
-    academies = db["academies"]
-
-    async def get_academy_timezone(academy_id: str) -> str | None:
-        doc = await academies.find_one({"academy_id": academy_id}, {"timezone": 1})
-        if not doc:
-            return None
-        timezone_name = doc.get("timezone")
-        return str(timezone_name) if timezone_name else None
-
-    return get_academy_timezone

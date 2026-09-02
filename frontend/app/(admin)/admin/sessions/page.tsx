@@ -34,6 +34,10 @@ import {
 // to the error boundary. One implementation now, so the two cannot drift again.
 import { buildEditSessionForm, hasRecurringSchedule } from "./[id]/format";
 import { queryKeys } from "@/lib/query/keys";
+import {
+  formatAcademyTimeRange,
+  resolveAcademyTimeZone,
+} from "@/lib/format/academy-time";
 
 import { Avatar } from "@/components/ds/avatar";
 import { Button } from "@/components/ds/button";
@@ -47,13 +51,25 @@ const AdminCalendarView = dynamic(() => import("@/components/admin/AdminCalendar
   loading: () => <div className="h-96 animate-pulse rounded-xl bg-rally-line/40" />,
 });
 
-function formatTimeRange(start: string, end: string): string {
-  const fmt = (s: string) =>
-    new Date(s).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-  return `${fmt(start)} – ${fmt(end)}`;
+function formatTimeRange(start: string, end: string, timezone: string | null): string {
+  return formatAcademyTimeRange(start, end, timezone);
 }
 
-const DEFAULT_TIMEZONE = "UTC";
+/**
+ * Seed for the create-session form's timezone.
+ *
+ * This used to be the literal "UTC". A 6:00 PM Chicago class saved with
+ * timezone "UTC" is stored as 18:00Z and then read back — by the parent
+ * catalog, by monthly billing, and by payroll — as 1:00 PM Chicago: the class
+ * silently moves five hours. Never guess UTC; prefer the academy's own zone,
+ * and fall back to the admin's browser zone (they are almost always sitting in
+ * the academy's city) rather than to a zone nobody chose. The value is shown
+ * in a labelled, editable field so whatever we resolved is visible and
+ * correctable before it is written.
+ */
+function seedTimezone(academyTimezone: string | null | undefined): string {
+  return resolveAcademyTimeZone(academyTimezone).timeZone;
+}
 const DAYS_OF_WEEK = [
   { value: "Mon", label: "Monday" },
   { value: "Tue", label: "Tuesday" },
@@ -78,7 +94,7 @@ function formatSessionTimeRange(session: AdminSessionView): string {
   if (session.start_time && session.end_time) {
     return `${formatClock(session.start_time)} – ${formatClock(session.end_time)}`;
   }
-  return formatTimeRange(session.start_at, session.end_at);
+  return formatTimeRange(session.start_at, session.end_at, session.timezone);
 }
 
 function formatCurrencyCents(cents: number | null | undefined): string {
@@ -643,7 +659,7 @@ const EMPTY_FORM: CreateSessionRequest = {
   days_of_week: ["Wed"],
   start_time: "18:00",
   end_time: "18:45",
-  timezone: DEFAULT_TIMEZONE,
+  timezone: null,
   capacity: 10,
   amount_cents: null,
 };
@@ -672,20 +688,20 @@ function CreateSessionDialog({
   // Issue #148: this used to replace the whole form object whenever the academy
   // timezone resolved, so a slow query wiped whatever the admin had already
   // typed into an open dialog. Seed defaults on open; afterwards patch only the
-  // timezone field, and only while it still holds the untouched default.
+  // timezone field, and only while the admin has not touched it.
+  const [timezoneTouched, setTimezoneTouched] = useState(false);
   useEffect(() => {
     if (open && !wasOpen.current) {
-      setForm({ ...EMPTY_FORM, timezone: academyTimezone ?? DEFAULT_TIMEZONE });
+      setForm({ ...EMPTY_FORM, timezone: seedTimezone(academyTimezone) });
+      setTimezoneTouched(false);
       setError(null);
-    } else if (open && academyTimezone) {
-      setForm((current) =>
-        current.timezone === DEFAULT_TIMEZONE
-          ? { ...current, timezone: academyTimezone }
-          : current,
-      );
+    } else if (open && academyTimezone && !timezoneTouched) {
+      // The academy query resolved after the dialog opened, so the seed was the
+      // browser-zone fallback. Adopt the academy's real zone.
+      setForm((current) => ({ ...current, timezone: academyTimezone }));
     }
     wasOpen.current = open;
-  }, [open, academyTimezone]);
+  }, [open, academyTimezone, timezoneTouched]);
 
   const coachesQuery = useQuery({
     queryKey: queryKeys.admin.users("coach"),
@@ -814,6 +830,29 @@ function CreateSessionDialog({
                 />
               </Field>
             </div>
+            {/* Visible and editable: the start/end times above are wall-clock
+                times in THIS zone, and the zone is what billing and payroll
+                re-derive every occurrence from. A hidden default here moves a
+                real class by hours. */}
+            <Field label="Timezone" required>
+              <input
+                type="text"
+                required
+                value={form.timezone ?? ""}
+                onChange={(e) => {
+                  setTimezoneTouched(true);
+                  setForm((f) => ({ ...f, timezone: e.target.value }));
+                }}
+                className={inputClass}
+                aria-describedby="create-session-tz-hint"
+                data-testid="create-session-timezone"
+              />
+              <p id="create-session-tz-hint" className="mt-1 text-xs text-rally-muted">
+                {academyTimezone
+                  ? "From your academy settings."
+                  : "Your academy has no timezone set — this defaulted to your browser's zone. Confirm it before saving."}
+              </p>
+            </Field>
             <Field label="Monthly fee" required>
               <input
                 type="number"

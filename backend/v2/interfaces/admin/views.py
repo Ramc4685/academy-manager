@@ -1638,7 +1638,7 @@ class DMRequest(BaseModel):
 class AdminAcademyView(BaseModel):
     academy_id: str
     display_name: str
-    timezone: str
+    timezone: str | None = None
     contact_email: str | None = None
     contact_phone: str | None = None
     hours_text: str | None = None

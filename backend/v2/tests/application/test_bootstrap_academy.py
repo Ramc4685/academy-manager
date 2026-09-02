@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from backend.v2.contexts.identity.application.use_cases.bootstrap_academy import (
     BootstrapAcademy,
@@ -186,3 +187,25 @@ def test_bootstrap_source_does_not_reference_default_academy_id() -> None:
         encoding="utf-8"
     )
     assert "default_academy_id" not in source
+
+
+def test_bootstrap_requires_a_timezone() -> None:
+    """No "UTC" default.
+
+    A tenant created with a placeholder zone makes every downstream
+    "resolve the timezone from the tenant" lookup faithfully return the wrong
+    answer, which is indistinguishable from the bug it is meant to fix.
+    """
+    with pytest.raises(ValidationError):
+        BootstrapAcademyCommand(
+            display_name="North Shore Badminton",
+            slug="north-shore",
+            primary_domain="north.example.com",
+            owner_email="owner@example.com",
+            owner_display_name="Owner One",
+        )  # type: ignore[call-arg]
+
+
+def test_bootstrap_rejects_a_non_iana_timezone() -> None:
+    with pytest.raises(ValidationError):
+        _command(timezone="Central Time")

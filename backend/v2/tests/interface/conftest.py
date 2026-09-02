@@ -1770,8 +1770,15 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
     waivers = seed["waivers"]
     comms = CommsService(messages=messages, academy_id="acad")  # type: ignore[arg-type]
 
-    create_session = CreateSession(sessions=sessions, academy_id="acad")
-    edit_session = EditSession(sessions=sessions)
+    async def _stub_academy_timezone(_academy_id: str) -> str | None:
+        return "America/Chicago"
+
+    create_session = CreateSession(
+        sessions=sessions,
+        academy_id="acad",
+        get_academy_timezone=_stub_academy_timezone,
+    )
+    edit_session = EditSession(sessions=sessions, get_academy_timezone=_stub_academy_timezone)
     cancel_session = CancelSession(
         sessions=sessions,
         enrollments_query=enrollments_q,

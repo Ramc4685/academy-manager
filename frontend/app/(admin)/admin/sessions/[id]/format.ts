@@ -1,6 +1,21 @@
 import { type AdminSessionView, type EditSessionRequest } from "@/lib/api/admin";
+import {
+  formatAcademyTimeRange,
+  parseAcademyInstant,
+  resolveAcademyTimeZone,
+} from "@/lib/format/academy-time";
 
-const DEFAULT_TIMEZONE = "UTC";
+/**
+ * Fallback zone when a session document carries no `timezone`.
+ *
+ * This was "UTC", which meant EDITING a session that had a null timezone
+ * silently stamped it as UTC — moving a 6:00 PM Chicago class to 18:00Z, i.e.
+ * 1:00 PM Chicago, for the parent catalog, monthly billing and payroll alike.
+ * `null` instead leaves the field for the caller to resolve (the edit form
+ * seeds it from the academy) and lets the backend apply its own default rather
+ * than having the browser assert a zone nobody chose.
+ */
+const DEFAULT_TIMEZONE: string | null = null;
 
 // Shared sticky-action-column classes used by ReplacementCoachTable, RosterTable,
 // and WaitlistTable. Not a "pure format helper" in the strictest sense, but kept
@@ -29,13 +44,10 @@ export function sessionTimeRange(session: AdminSessionView): string {
   if (session.start_time && session.end_time) {
     return `${formatClock(session.start_time)} – ${formatClock(session.end_time)}`;
   }
-  return `${new Date(session.start_at).toLocaleTimeString(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  })} – ${new Date(session.end_at).toLocaleTimeString(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  })}`;
+  // Render in the SESSION's zone, not the viewer's browser zone: an admin
+  // travelling (or a session stored with a non-local zone) otherwise sees a
+  // different hour than the class actually runs at.
+  return formatAcademyTimeRange(session.start_at, session.end_at, session.timezone);
 }
 
 export function formatCurrencyCents(cents: number | null | undefined): string {
@@ -66,10 +78,12 @@ export function hasRecurringSchedule(session: AdminSessionView): boolean {
 }
 
 export function sessionDateLabel(session: AdminSessionView): string {
-  return new Date(session.start_at).toLocaleDateString(undefined, {
+  const { timeZone } = resolveAcademyTimeZone(session.timezone);
+  return parseAcademyInstant(session.start_at).toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
     year: "numeric",
+    timeZone,
   });
 }
 

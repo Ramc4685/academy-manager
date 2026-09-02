@@ -422,6 +422,10 @@ class ParentAvailableSessionView(BaseModel):
     location: str
     start_at: datetime
     end_at: datetime
+    # IANA zone the class is scheduled in; clients must render start_at/end_at
+    # in this zone, not the viewer's browser zone. Null => fall back to the
+    # academy timezone from GET /parent/academy.
+    timezone: str | None = None
     capacity: int
     enrolled_count: int
     available_seats: int

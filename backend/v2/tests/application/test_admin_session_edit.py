@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 import pytest
 
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
+    AcademyTimezoneUnset,
     EditSession,
     EditSessionCommand,
 )
@@ -27,6 +28,16 @@ class FakeSessionStore:
         self.rows[session.session_id] = session
         self.updated.append(session)
 
+    async def find_duplicate_recurring_series(self, **_: object) -> Session | None:
+        return None
+
+
+def _reader(value: str | None = "America/Chicago"):
+    async def get_academy_timezone(_academy_id: str) -> str | None:
+        return value
+
+    return get_academy_timezone
+
 
 def _session() -> Session:
     return Session(
@@ -45,7 +56,7 @@ def _session() -> Session:
 @pytest.mark.asyncio
 async def test_admin_can_edit_session_metadata_without_touching_pricing() -> None:
     store = FakeSessionStore(rows={"sess-1": _session()})
-    use_case = EditSession(sessions=store)
+    use_case = EditSession(sessions=store, get_academy_timezone=_reader())
 
     updated = await use_case.execute(
         EditSessionCommand(
@@ -74,7 +85,7 @@ async def test_admin_can_edit_session_metadata_without_touching_pricing() -> Non
 @pytest.mark.asyncio
 async def test_session_edit_raises_not_found_for_missing_or_cross_tenant_session() -> None:
     store = FakeSessionStore(rows={})
-    use_case = EditSession(sessions=store)
+    use_case = EditSession(sessions=store, get_academy_timezone=_reader())
 
     with pytest.raises(SessionNotFound):
         await use_case.execute(
@@ -109,7 +120,7 @@ async def test_mongo_session_edit_does_not_cross_tenant_boundary() -> None:
     )
 
     with tenant_scope("academy-a"):
-        use_case = EditSession(sessions=MongoSessionWriter(db))
+        use_case = EditSession(sessions=MongoSessionWriter(db), get_academy_timezone=_reader())
         with pytest.raises(SessionNotFound):
             await use_case.execute(
                 EditSessionCommand(
@@ -122,3 +133,68 @@ async def test_mongo_session_edit_does_not_cross_tenant_boundary() -> None:
 
     row = await db["sessions"].find_one({"session_id": "sess-shared"})
     assert row["title"] == "Other Tenant"
+
+
+@pytest.mark.asyncio
+async def test_editing_a_recurring_series_persists_the_resolved_academy_zone() -> None:
+    """A null `timezone` must not survive an edit that recomputes instants.
+
+    The recurring branch derives `start_at`/`end_at` from a resolved zone; if it
+    left the field null, the row would keep depending on each downstream
+    reader's private default agreeing forever.
+    """
+    row = _session().model_copy(update={"timezone": None})
+    store = FakeSessionStore(rows={"sess-1": row})
+    use_case = EditSession(sessions=store, get_academy_timezone=_reader("America/Chicago"))
+
+    updated = await use_case.execute(
+        EditSessionCommand(
+            session_id="sess-1",
+            days_of_week=["Thu"],
+            start_time="18:00",
+            end_time="18:45",
+            actor_id="admin-1",
+        )
+    )
+
+    assert updated.timezone == "America/Chicago"
+    assert updated.start_at.astimezone(UTC).hour == 23
+
+
+@pytest.mark.asyncio
+async def test_editing_does_not_override_a_session_that_already_has_a_zone() -> None:
+    row = _session().model_copy(update={"timezone": "Asia/Kolkata"})
+    store = FakeSessionStore(rows={"sess-1": row})
+    use_case = EditSession(sessions=store, get_academy_timezone=_reader("America/Chicago"))
+
+    updated = await use_case.execute(
+        EditSessionCommand(
+            session_id="sess-1",
+            days_of_week=["Thu"],
+            start_time="18:00",
+            end_time="18:45",
+            actor_id="admin-1",
+        )
+    )
+
+    assert updated.timezone == "Asia/Kolkata"
+
+
+@pytest.mark.asyncio
+async def test_editing_a_series_for_a_tenant_with_no_timezone_fails_closed() -> None:
+    row = _session().model_copy(update={"timezone": None})
+    store = FakeSessionStore(rows={"sess-1": row})
+    use_case = EditSession(sessions=store, get_academy_timezone=_reader(None))
+
+    with pytest.raises(AcademyTimezoneUnset):
+        await use_case.execute(
+            EditSessionCommand(
+                session_id="sess-1",
+                days_of_week=["Thu"],
+                start_time="18:00",
+                end_time="18:45",
+                actor_id="admin-1",
+            )
+        )
+
+    assert store.updated == []

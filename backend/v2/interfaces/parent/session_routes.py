@@ -38,6 +38,7 @@ async def list_available_sessions(
                 location=s.location,
                 start_at=s.start_at,
                 end_at=s.end_at,
+                timezone=s.timezone,
                 capacity=s.capacity,
                 enrolled_count=s.enrolled_count,
                 available_seats=s.available_seats,

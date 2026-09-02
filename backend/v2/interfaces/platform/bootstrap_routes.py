@@ -26,7 +26,7 @@ class BootstrapAcademyRequest(BaseModel):
     primary_domain: str = Field(min_length=1)
     owner_email: EmailStr
     owner_display_name: str = Field(min_length=1)
-    timezone: str = Field(default="UTC", min_length=1)
+    timezone: str = Field(min_length=1)
 
 
 class BootstrapAcademyResponse(BaseModel):

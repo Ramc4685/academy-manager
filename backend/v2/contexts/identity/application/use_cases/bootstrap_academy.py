@@ -12,6 +12,7 @@ import hashlib
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, Protocol
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
@@ -70,12 +71,25 @@ class BootstrapAcademyCommand(BaseModel):
     primary_domain: str = Field(min_length=1)
     owner_email: EmailStr
     owner_display_name: str = Field(min_length=1)
-    timezone: str = Field(default="UTC", min_length=1)
+    # Required, not defaulted. A tenant created with a placeholder zone
+    # makes every downstream 'resolve the timezone from the tenant' lookup
+    # faithfully return the wrong answer.
+    timezone: str = Field(min_length=1)
 
     @field_validator("display_name", "owner_display_name", "timezone")
     @classmethod
     def _strip_required_text(cls, value: str) -> str:
         return value.strip()
+
+    @field_validator("timezone")
+    @classmethod
+    def _validate_iana_timezone(cls, value: str) -> str:
+        name = value.strip()
+        try:
+            ZoneInfo(name)
+        except (KeyError, ValueError, ZoneInfoNotFoundError) as exc:
+            raise ValueError(f"'{name}' is not a known IANA timezone name") from exc
+        return name
 
     @field_validator("slug")
     @classmethod
