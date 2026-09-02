@@ -319,8 +319,11 @@ export default function AdminSessionDetailPage() {
           index="02"
           title="Communication pack"
           action={
+            // Distinct accessible name from the header's "Edit session": both
+            // open the same dialog, but two identically-named buttons on one
+            // page are ambiguous for screen readers and for role locators (#630).
             <Button variant="secondary" size="sm" onClick={() => setEditOpen(true)}>
-              Edit session
+              Edit communication pack
             </Button>
           }
         />
@@ -541,7 +544,8 @@ function CommunicationPackCard({ session }: { session: AdminSessionView }) {
   if (!hasCommunicationPack(session)) {
     return (
       <p className="text-sm text-rally-subtle" data-testid="communication-pack-empty">
-        No communication pack configured. Add venue, arrival and group details from Edit session.
+        No communication pack configured. Add venue, arrival and group details from Edit
+        communication pack.
       </p>
     );
   }
