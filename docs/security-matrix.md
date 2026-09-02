@@ -17,6 +17,8 @@ Negative tests are mandatory: for every row, a test must assert that the *wrong*
 
 A request returning **404** means "the route does not exist for you," regardless of whether the resource exists.
 
+**Coach supervision (#632).** The coach BFF (`interfaces/coach/`) is a *surface*, not a role: it admits `coach` **and** the academy-scoped supervisor roles `admin` / `owner` via `require_coach_surface()`. A supervisor on that surface sees every session in the academy and passes every "assigned to session" check (`CoachAssignedSessionLookup`), so the Admin column's "Yes" cells for attendance and coaching are exercised through the coach routes. Writes stay attributed to the supervisor's own user id; attendance corrections take the admin path (no 48h window). Parents and students still get 404 on every coach route, and platform roles never grant coach-surface access. Design: `docs/superpowers/specs/2026-09-02-admin-coach-coverage-design.md`.
+
 ## Matrix
 
 | Action | Admin | Coach | Parent |

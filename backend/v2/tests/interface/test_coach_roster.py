@@ -10,7 +10,8 @@ Scenarios:
 - assigned coach cannot remove an enrolled student for launch
 - unassigned coach gets 403
 - parent persona gets 404 (wrong persona, route invisible)
-- admin persona gets 404 (wrong persona, route invisible)
+- admin persona is a coach supervisor (#632): roster reads succeed for any
+  session; roster mutations stay disabled (403) for everyone
 - anonymous gets 401
 """
 
@@ -48,9 +49,12 @@ def test_get_roster_parent_persona_returns_404(parent_client):
     assert r.status_code == 404
 
 
-def test_get_roster_admin_persona_returns_404(admin_client):
-    r = admin_client.get(f"/api/v2/coach/sessions/{SESSION_ID}/roster")
-    assert r.status_code == 404
+def test_get_roster_admin_persona_reads_any_session(coach_admin_client):
+    r = coach_admin_client.get(f"/api/v2/coach/sessions/{SESSION_ID}/roster")
+    assert r.status_code == 200, r.text
+    assert {e["student_id"] for e in r.json()["roster"]} == {"st1", "st2"}
+    other = coach_admin_client.get("/api/v2/coach/sessions/s-other-coach/roster")
+    assert other.status_code == 200, other.text
 
 
 def test_get_roster_unauthenticated_returns_401(anon_client):
@@ -79,10 +83,10 @@ def test_add_student_parent_persona_returns_404(parent_client):
     assert r.status_code == 404
 
 
-def test_add_student_admin_persona_returns_404(admin_client):
+def test_add_student_admin_persona_still_disabled(coach_admin_client):
     body = {"student_id": "st-new", "parent_id": "p3", "full_name": "Charlie"}
-    r = admin_client.post(f"/api/v2/coach/sessions/{SESSION_ID}/roster", json=body)
-    assert r.status_code == 404
+    r = coach_admin_client.post(f"/api/v2/coach/sessions/{SESSION_ID}/roster", json=body)
+    assert r.status_code == 403
 
 
 def test_add_student_unauthenticated_returns_401(anon_client):
@@ -114,9 +118,9 @@ def test_remove_student_parent_persona_returns_404(parent_client):
     assert r.status_code == 404
 
 
-def test_remove_student_admin_persona_returns_404(admin_client):
-    r = admin_client.delete(f"/api/v2/coach/sessions/{SESSION_ID}/roster/st1")
-    assert r.status_code == 404
+def test_remove_student_admin_persona_still_disabled(coach_admin_client):
+    r = coach_admin_client.delete(f"/api/v2/coach/sessions/{SESSION_ID}/roster/st1")
+    assert r.status_code == 403
 
 
 def test_remove_student_unauthenticated_returns_401(anon_client):

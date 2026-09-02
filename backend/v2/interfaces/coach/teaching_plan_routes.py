@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from backend.v2.interfaces.coach.deps import CoachUseCases, get_coach_use_cases
 from backend.v2.interfaces.coach.views import CoachSessionTeachingPlanResponse
 from backend.v2.shared.auth.claims import AuthClaims
-from backend.v2.shared.http import require_persona
+from backend.v2.shared.http import require_coach_surface
 
 log = logging.getLogger(__name__)
 
@@ -81,7 +81,7 @@ async def get_today_plan(
         default=None, alias="date", description="YYYY-MM-DD; default = today UTC"
     ),
     program_id: str | None = Query(default=None),
-    claims: AuthClaims = Depends(require_persona("coach")),
+    claims: AuthClaims = Depends(require_coach_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> dict[str, Any]:
     if use_cases.generate_daily_teaching_plan is None:
@@ -105,7 +105,7 @@ async def get_today_plan(
 async def get_session_teaching_plan(
     session_id: str,
     program_id: str | None = Query(default=None),
-    claims: AuthClaims = Depends(require_persona("coach")),
+    claims: AuthClaims = Depends(require_coach_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> dict[str, Any]:
     if use_cases.generate_daily_teaching_plan is None:

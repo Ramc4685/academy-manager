@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 
 import { usePersonaAuth } from "@/lib/auth/use-persona-auth";
+import { COACH_SUPERVISOR_ROLES, canSuperviseCoaching } from "@/lib/api/me";
 import { useOnline } from "@/lib/pwa/online";
 import { useServiceWorkerUpdate } from "@/lib/pwa/update-flow";
 import { startAutoSync } from "@/lib/offline/sync";
@@ -22,7 +23,9 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
   const pathname = usePathname();
   const online = useOnline();
   const { hasUpdate, applyUpdate } = useServiceWorkerUpdate();
-  const auth = usePersonaAuth("coach");
+  // Academy admins/owners may open the coach shell to cover any session (#632).
+  const auth = usePersonaAuth("coach", { alsoAllow: COACH_SUPERVISOR_ROLES });
+  const supervising = auth.authorized && canSuperviseCoaching(auth.user.roles);
 
   const { data: messagesData } = useQuery({
     queryKey: queryKeys.coach.messages(),
@@ -114,6 +117,20 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
 
       <main className="mx-auto w-full max-w-md flex-1 px-4 py-4 pb-[calc(var(--coach-bottom-nav-height)+max(2rem,env(safe-area-inset-bottom)))]">
         <AccessDeniedNotice />
+        {supervising && (
+          <p
+            data-testid="coach-supervisor-banner"
+            className="mb-4 rounded-md border px-3 py-2 text-[13px]"
+            style={{
+              background: "rgba(250,204,21,0.12)",
+              borderColor: "rgba(250,204,21,0.5)",
+              color: "var(--rally-ink)",
+            }}
+          >
+            <span className="font-semibold">Admin coverage.</span> You can see every session in
+            the academy and mark attendance for any of them. Marks are recorded under your name.
+          </p>
+        )}
         <CoachInstallCard />
         {children}
       </main>

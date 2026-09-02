@@ -255,6 +255,15 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
             {session.location} ·{" "}
             {formatSessionTimeRange(session.start_at, session.end_at, session.timezone)}
           </p>
+          {session.coach_name && (
+            <p
+              className="text-sm"
+              style={{ color: "var(--rally-muted)" }}
+              data-testid="session-coach-name"
+            >
+              Coach: {session.coach_name}
+            </p>
+          )}
         </div>
       </header>
 

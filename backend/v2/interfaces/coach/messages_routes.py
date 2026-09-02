@@ -18,14 +18,14 @@ from backend.v2.interfaces.coach.views import (
 )
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.comms import Message
-from backend.v2.shared.http import require_persona
+from backend.v2.shared.http import require_coach_surface
 
 router = APIRouter(tags=["coach.messages"])
 
 
 @router.get("/messages", response_model=CoachMessagesResponse)
 async def list_messages(
-    claims: AuthClaims = Depends(require_persona("coach")),
+    claims: AuthClaims = Depends(require_coach_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> CoachMessagesResponse:
     if use_cases.list_messages is None:
@@ -39,7 +39,7 @@ async def list_messages(
 @router.post("/messages/{message_id}/read", response_model=CoachMarkMessageReadResponse)
 async def mark_message_read(
     message_id: str,
-    claims: AuthClaims = Depends(require_persona("coach")),
+    claims: AuthClaims = Depends(require_coach_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> CoachMarkMessageReadResponse:
     if use_cases.mark_message_read is None:

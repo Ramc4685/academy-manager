@@ -33,7 +33,7 @@ from backend.v2.contexts.student_progress.application.use_cases.update_skill_sta
 )
 from backend.v2.interfaces.coach.deps import CoachUseCases, get_coach_use_cases
 from backend.v2.shared.auth.claims import AuthClaims
-from backend.v2.shared.http import require_persona
+from backend.v2.shared.http import require_coach_surface
 
 log = logging.getLogger(__name__)
 
@@ -309,7 +309,7 @@ async def _build_session_skills(
 @router.get("/day-hub")
 async def get_day_hub(
     on_date: str | None = Query(None, alias="date"),
-    claims: AuthClaims = Depends(require_persona("coach")),
+    claims: AuthClaims = Depends(require_coach_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> object:
     target_date = _parse_date(on_date)
@@ -347,7 +347,7 @@ async def get_session_skills(
     session_id: str,
     on_date: str | None = Query(None, alias="date"),
     program_id: str | None = Query(None),
-    claims: AuthClaims = Depends(require_persona("coach")),
+    claims: AuthClaims = Depends(require_coach_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> object:
     target_date = _parse_date(on_date) if on_date else None
@@ -368,7 +368,7 @@ async def bulk_update_skill_status(
     session_id: str,
     body: BulkStatusBody,
     on_date: str | None = Query(None, alias="date"),
-    claims: AuthClaims = Depends(require_persona("coach")),
+    claims: AuthClaims = Depends(require_coach_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> object:
     if use_cases.student_progress is None:
@@ -406,7 +406,7 @@ async def bulk_update_skill_status(
 async def get_passport(
     student_id: str,
     program_id: str | None = Query(None),
-    claims: AuthClaims = Depends(require_persona("coach")),
+    claims: AuthClaims = Depends(require_coach_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> object:
     await _require_assigned_to_student(use_cases, claims.user_id, student_id)
@@ -427,7 +427,7 @@ async def update_skill_status(
     student_id: str,
     skill_id: str,
     body: UpdateStatusBody,
-    claims: AuthClaims = Depends(require_persona("coach")),
+    claims: AuthClaims = Depends(require_coach_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> object:
     await _require_assigned_to_student(use_cases, claims.user_id, student_id)
@@ -454,7 +454,7 @@ async def record_test(
     student_id: str,
     skill_id: str,
     body: RecordTestBody,
-    claims: AuthClaims = Depends(require_persona("coach")),
+    claims: AuthClaims = Depends(require_coach_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> object:
     await _require_assigned_to_student(
@@ -488,7 +488,7 @@ async def record_test(
 async def recommend_level_up(
     student_id: str,
     body: RecommendLevelUpBody,
-    claims: AuthClaims = Depends(require_persona("coach")),
+    claims: AuthClaims = Depends(require_coach_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> object:
     await _require_assigned_to_student(use_cases, claims.user_id, student_id)
@@ -512,7 +512,7 @@ async def recommend_level_up(
 async def create_skill_note(
     student_id: str,
     body: CreateSkillNoteBody,
-    claims: AuthClaims = Depends(require_persona("coach")),
+    claims: AuthClaims = Depends(require_coach_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> object:
     session_id = await _require_assigned_to_student(use_cases, claims.user_id, student_id)
@@ -535,7 +535,7 @@ async def create_skill_note(
 async def list_skill_notes(
     student_id: str,
     skill_id: str = Query(...),
-    claims: AuthClaims = Depends(require_persona("coach")),
+    claims: AuthClaims = Depends(require_coach_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> object:
     await _require_assigned_to_student(use_cases, claims.user_id, student_id)
@@ -554,7 +554,7 @@ async def list_skill_notes(
 async def get_session_students_progress(
     session_id: str,
     program_id: str | None = Query(None),
-    claims: AuthClaims = Depends(require_persona("coach")),
+    claims: AuthClaims = Depends(require_coach_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> object:
     if use_cases.student_progress is None:
@@ -584,7 +584,7 @@ async def get_session_students_progress(
 async def get_session_skill_board(
     session_id: str,
     program_id: str | None = Query(None),
-    claims: AuthClaims = Depends(require_persona("coach")),
+    claims: AuthClaims = Depends(require_coach_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> object:
     if use_cases.student_progress is None:

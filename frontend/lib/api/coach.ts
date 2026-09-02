@@ -38,6 +38,9 @@ export interface CoachSession {
   start_at: string;
   end_at: string;
   roster: CoachRosterEntry[];
+  /** Primary coach of the session. Name is resolved only for admin/owner supervisors (#632). */
+  coach_id?: string | null;
+  coach_name?: string | null;
 }
 
 export interface CoachTodayResponse {
@@ -206,6 +209,8 @@ export interface CoachScheduleEntry {
   timezone?: string | null;
   start_at: string;
   end_at: string;
+  coach_id?: string | null;
+  coach_name?: string | null;
 }
 
 export interface CoachScheduleResponse {

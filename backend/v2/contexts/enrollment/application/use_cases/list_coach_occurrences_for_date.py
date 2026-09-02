@@ -26,6 +26,9 @@ class CoachOccurrenceForDate(BaseModel):
     timezone: str | None = None
     start_at: datetime
     end_at: datetime
+    # Primary coach of the roster session, so a supervisor's academy-wide
+    # list can say whose class each row is. None when the session is gone.
+    coach_id: str | None = None
 
 
 class ListCoachOccurrencesForDate:
@@ -44,6 +47,16 @@ class ListCoachOccurrencesForDate:
             on_date=on_date,
         )
 
+        return await self._narrow(occurrences, on_date)
+
+    async def execute_for_academy(self, on_date: date) -> list[CoachOccurrenceForDate]:
+        """Every occurrence in the academy on ``on_date`` (coach supervisors)."""
+        occurrences = await self._occurrences.list_on_date(on_date=on_date)
+        return await self._narrow(occurrences, on_date)
+
+    async def _narrow(
+        self, occurrences: Sequence[SessionOccurrence], on_date: date
+    ) -> list[CoachOccurrenceForDate]:
         rows = await _hydrate_occurrences(occurrences, sessions=self._sessions)
         # The repository returns a widened UTC candidate window (#510); keep
         # only occurrences that fall on ``on_date`` in the session's own
@@ -73,6 +86,16 @@ class ListCoachUpcomingOccurrences:
             now=now,
             limit=limit,
         )
+        return await _hydrate_occurrences(occurrences, sessions=self._sessions)
+
+    async def execute_for_academy(
+        self,
+        *,
+        now: datetime | None = None,
+        limit: int = 100,
+    ) -> list[CoachOccurrenceForDate]:
+        """Upcoming occurrences across the academy (coach supervisors)."""
+        occurrences = await self._occurrences.list_upcoming(now=now, limit=limit)
         return await _hydrate_occurrences(occurrences, sessions=self._sessions)
 
 
@@ -115,6 +138,7 @@ async def _hydrate_occurrences(
                 timezone=session.timezone if session else None,
                 start_at=occurrence.start_at,
                 end_at=occurrence.end_at,
+                coach_id=getattr(session, "coach_id", None) if session else None,
             )
         )
     return rows

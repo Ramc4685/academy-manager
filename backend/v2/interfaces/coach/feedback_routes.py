@@ -14,7 +14,7 @@ from backend.v2.interfaces.coach.views import (
     FeedbackView,
 )
 from backend.v2.shared.auth.claims import AuthClaims
-from backend.v2.shared.http import require_persona
+from backend.v2.shared.http import require_coach_surface
 
 router = APIRouter(tags=["coach.feedback"])
 
@@ -36,7 +36,7 @@ async def _require_assigned(use_cases: CoachUseCases, coach_id: str, session_id:
 async def create_feedback(
     session_id: str,
     body: CreateFeedbackRequest,
-    claims: AuthClaims = Depends(require_persona("coach")),
+    claims: AuthClaims = Depends(require_coach_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> FeedbackView:
     row = await use_cases.create_feedback.execute(
@@ -64,7 +64,7 @@ async def create_feedback(
 @router.get("/sessions/{session_id}/feedback", response_model=FeedbackListResponse)
 async def list_feedback(
     session_id: str,
-    claims: AuthClaims = Depends(require_persona("coach")),
+    claims: AuthClaims = Depends(require_coach_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> FeedbackListResponse:
     await _require_assigned(use_cases, claims.user_id, session_id)

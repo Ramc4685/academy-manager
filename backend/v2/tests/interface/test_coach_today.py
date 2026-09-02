@@ -96,9 +96,14 @@ def test_coach_today_parent_persona_returns_404(parent_client):
     assert "/coach/" not in r.text.lower() or r.json().get("detail") == "Not found"
 
 
-def test_coach_today_admin_persona_returns_404(admin_client):
-    r = admin_client.get("/api/v2/coach/today")
-    assert r.status_code == 404
+def test_coach_today_admin_persona_sees_every_session(coach_admin_client):
+    # Admins are coach supervisors (#632): same route, academy-wide scope,
+    # each session labelled with its coach.
+    r = coach_admin_client.get("/api/v2/coach/today?date=2026-05-16")
+    assert r.status_code == 200, r.text
+    sessions = r.json()["sessions"]
+    assert [s["session_id"] for s in sessions] == ["s-today-1", "s-other-coach", "s-today-2"]
+    assert {s["coach_name"] for s in sessions} == {"Coach One", "Coach Two"}
 
 
 def test_coach_today_unauthenticated_returns_401(anon_client):

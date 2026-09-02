@@ -97,6 +97,41 @@ class MongoSessionOccurrenceRepository(TenantScopedRepository):
         )
         return [self._to_domain(doc) async for doc in cursor]
 
+    async def list_on_date(self, *, on_date: date) -> list[SessionOccurrence]:
+        """Every non-cancelled occurrence in the academy on ``on_date``.
+
+        Coach-supervisor counterpart of ``list_for_coach_on_date``: same
+        widened UTC candidate window (#510), no coach filter. Tenant scope
+        comes from ``_find_many`` like every other read here.
+        """
+        start, end = _candidate_day_bounds_utc(on_date)
+        cursor = self._find_many(
+            {
+                "start_at": {"$gte": start, "$lte": end},
+                "status": {"$ne": "cancelled"},
+            },
+            sort=[("start_at", 1)],
+        )
+        return [self._to_domain(doc) async for doc in cursor]
+
+    async def list_upcoming(
+        self,
+        *,
+        now: datetime | None = None,
+        limit: int = 100,
+    ) -> list[SessionOccurrence]:
+        """Upcoming non-cancelled occurrences across the academy."""
+        start_at = now or datetime.now(UTC)
+        cursor = self._find_many(
+            {
+                "start_at": {"$gte": start_at},
+                "status": {"$ne": "cancelled"},
+            },
+            sort=[("start_at", 1)],
+            limit=limit,
+        )
+        return [self._to_domain(doc) async for doc in cursor]
+
     async def list_for_session_between(
         self,
         *,
