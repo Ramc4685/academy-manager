@@ -29,6 +29,12 @@ overrides:
   brace-expansion@5: ^5.0.9
   js-yaml@3: ^3.15.1
   js-yaml@4: ^4.3.1
+  # GHSA-c83g-rgw3-j3cx (unbounded memory growth: no cache eviction on
+  # distinct query results) / GHSA-73wf-gq98-2v4g (uncaught crash and
+  # prototype write via untrusted browserslist-stats.json in normalizeStats).
+  # Both patched in >=4.28.7. Transitive via @serwist/next; every other
+  # consumer already resolved 4.28.7 before this pin.
+  browserslist: '>=4.28.7'
 
 # pnpm audit evaluates upstream declared ranges even when the lockfile applies
 # the patched override. Each entry below is pinned above to a patched release.
