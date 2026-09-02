@@ -571,7 +571,7 @@ class _ParentDigestProvider:
             links = [
                 WhatsAppGroupLink(
                     label=_session_group_label(session),
-                    url=session.whatsapp_group_link,
+                    url=str(session.whatsapp_group_link),
                     child_names=tuple(by_session.get(session.session_id, ())),
                 )
                 for session in sessions
