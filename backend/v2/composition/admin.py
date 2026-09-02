@@ -343,8 +343,11 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_self_service_policy_rep
     MongoSelfServicePolicyRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import (
+    WEEKDAY_INDEX,
     MongoSessionRepository,
     admin_session_projection_fields,
+    dedupe_session_series_rows,
+    session_series_signature,
     session_start_sort_key,
     synthesize_recurring_session_docs,
 )
@@ -501,6 +504,7 @@ from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.occurrences import occurrence_session_id
 from backend.v2.shared.tenancy import TenantContextUnset, current_academy_id
 from backend.v2.shared.tenancy.academy_url import academy_frontend_url
+from backend.v2.shared.time import ensure_utc, request_scoped_academy_timezone
 
 
 class _StudentLoginProvisionerAdapter:
@@ -679,8 +683,11 @@ def compose_admin(
         skill_progress=MongoStudentSkillProgressRepository(db)
     )
 
-    create_session = CreateSession(sessions=sessions_w, academy_id=academy_id)
-    edit_session = EditSession(sessions=sessions_w)
+    session_tz = request_scoped_academy_timezone(db, request_academy_id)
+    create_session = CreateSession(
+        sessions=sessions_w, academy_id=academy_id, get_academy_timezone=session_tz
+    )
+    edit_session = EditSession(sessions=sessions_w, get_academy_timezone=session_tz)
     cancel_session = CancelSession(
         sessions=sessions_w,
         enrollments_query=enrollments_r,
@@ -2166,43 +2173,6 @@ def compose_admin(
         rows = await _build_admin_session_rows([session.model_dump(mode="python")])
         return rows[0] if rows else None
 
-    def _normalized_series_text(value: object) -> str:
-        return " ".join(str(value or "").strip().casefold().split())
-
-    _WEEKDAY_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
-    _WEEKDAY_INDEX = {
-        "mon": 0,
-        "monday": 0,
-        "tue": 1,
-        "tuesday": 1,
-        "wed": 2,
-        "wednesday": 2,
-        "thu": 3,
-        "thursday": 3,
-        "fri": 4,
-        "friday": 4,
-        "sat": 5,
-        "saturday": 5,
-        "sun": 6,
-        "sunday": 6,
-    }
-
-    def _canonical_weekdays(days: object) -> tuple[str, ...]:
-        values = list(days or []) if isinstance(days, list) else []
-        canonical: set[str] = set()
-        passthrough: set[str] = set()
-        for day in values:
-            raw = str(day).strip()
-            index = _WEEKDAY_INDEX.get(raw.casefold())
-            if index is None:
-                if raw:
-                    passthrough.add(raw)
-                continue
-            canonical.add(_WEEKDAY_NAMES[index])
-        return tuple(
-            sorted(canonical, key=lambda day: _WEEKDAY_NAMES.index(day)) + sorted(passthrough)
-        )
-
     def _local_interval_utc(
         occurrence_date: date,
         start_time: time,
@@ -2235,76 +2205,6 @@ def compose_admin(
     def _recurring_template_filter() -> dict[str, Any]:
         return {"days_of_week": {"$exists": True}, **_NOT_CANCELLED_SESSION}
 
-    def _series_local_clock_signature(
-        row: dict[str, Any],
-    ) -> tuple[tuple[str, ...], str, str, str] | None:
-        timezone_name = str(row.get("timezone") or "America/Chicago")
-        days = list(row.get("days_of_week") or [])
-        if days and row.get("start_time") and row.get("end_time"):
-            return (
-                _canonical_weekdays(days),
-                str(row.get("start_time") or ""),
-                str(row.get("end_time") or ""),
-                timezone_name,
-            )
-
-        start_at = row.get("start_at")
-        end_at = row.get("end_at")
-        if not start_at or not end_at:
-            return None
-        tz = ZoneInfo(timezone_name)
-        local_start = _as_utc_datetime(start_at).astimezone(tz)
-        local_end = _as_utc_datetime(end_at).astimezone(tz)
-        weekday = _WEEKDAY_NAMES[local_start.weekday()]
-        return (
-            (weekday,),
-            local_start.strftime("%H:%M"),
-            local_end.strftime("%H:%M"),
-            timezone_name,
-        )
-
-    def _session_series_signature(row: dict[str, Any]) -> tuple[object, ...] | None:
-        clock_signature = _series_local_clock_signature(row)
-        if clock_signature is None:
-            return None
-        days, start_time_value, end_time_value, timezone_name = clock_signature
-        return (
-            _normalized_series_text(row.get("location")),
-            str(row.get("coach_id") or ""),
-            days,
-            start_time_value,
-            end_time_value,
-            timezone_name,
-        )
-
-    def _recurring_row_rank(row: dict[str, Any]) -> tuple[int, int, datetime]:
-        start_at = row["start_at"]
-        if getattr(start_at, "tzinfo", None) is None:
-            start_at = start_at.replace(tzinfo=UTC)
-        return (
-            int(row.get("enrolled_count") or 0),
-            int(row.get("waitlist_count") or 0),
-            -start_at.timestamp(),
-        )
-
-    def _dedupe_session_series_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        deduped: list[dict[str, Any]] = []
-        index_by_signature: dict[tuple[object, ...], int] = {}
-        for row in rows:
-            signature = _session_series_signature(row)
-            if signature is None:
-                deduped.append(row)
-                continue
-            existing_index = index_by_signature.get(signature)
-            if existing_index is None:
-                index_by_signature[signature] = len(deduped)
-                deduped.append(row)
-                continue
-            existing = deduped[existing_index]
-            if _recurring_row_rank(row) > _recurring_row_rank(existing):
-                deduped[existing_index] = row
-        return deduped
-
     def _series_occurrence_candidates(session) -> list[dict[str, Any]]:
         if not session.days_of_week or not session.start_time or not session.end_time:
             return []
@@ -2313,9 +2213,9 @@ def compose_admin(
         timezone_name = session.timezone or "America/Chicago"
         tz = ZoneInfo(timezone_name)
         target_days = {
-            _WEEKDAY_INDEX[str(day).casefold()]
+            WEEKDAY_INDEX[str(day).casefold()]
             for day in session.days_of_week
-            if str(day).casefold() in _WEEKDAY_INDEX
+            if str(day).casefold() in WEEKDAY_INDEX
         }
         if not target_days:
             return []
@@ -2359,9 +2259,9 @@ def compose_admin(
         timezone_name = session.timezone or "America/Chicago"
         tz = ZoneInfo(timezone_name)
         target_days = {
-            _WEEKDAY_INDEX[str(day).casefold()]
+            WEEKDAY_INDEX[str(day).casefold()]
             for day in session.days_of_week
-            if str(day).casefold() in _WEEKDAY_INDEX
+            if str(day).casefold() in WEEKDAY_INDEX
         }
         if not target_days:
             raise ValueError("Session does not have a supported recurring weekday")
@@ -2404,8 +2304,8 @@ def compose_admin(
             raise ValueError("Replacement cannot be added to a cancelled session")
         timezone_name = session.timezone or "America/Chicago"
         tz = ZoneInfo(timezone_name)
-        starts_at = _as_utc_datetime(session.start_at)
-        ends_at = _as_utc_datetime(session.end_at)
+        starts_at = ensure_utc(session.start_at)
+        ends_at = ensure_utc(session.end_at)
         local_start = starts_at.astimezone(tz)
         local_end = ends_at.astimezone(tz)
         now = datetime.now(UTC)
@@ -2419,8 +2319,8 @@ def compose_admin(
             session_id = str(
                 matched_session_doc.get("session_id") or matched_session_doc.get("_id")
             )
-            starts_at = _as_utc_datetime(matched_session_doc["start_at"])
-            ends_at = _as_utc_datetime(matched_session_doc["end_at"])
+            starts_at = ensure_utc(matched_session_doc["start_at"])
+            ends_at = ensure_utc(matched_session_doc["end_at"])
             return {
                 "occurrence_id": session_id,
                 "academy_id": session.academy_id,
@@ -2466,7 +2366,7 @@ def compose_admin(
         session,
         occurrence_date: date,
     ) -> dict[str, Any] | None:
-        target_signature = _session_series_signature(_session_domain_row(session))
+        target_signature = session_series_signature(_session_domain_row(session), session.timezone)
         if target_signature is None:
             return None
         timezone_name = session.timezone or "America/Chicago"
@@ -2486,17 +2386,17 @@ def compose_admin(
         async for doc in cursor:
             if str(doc.get("status") or "scheduled") == "cancelled":
                 continue
-            if _session_series_signature(doc) != target_signature:
+            if session_series_signature(doc, session.timezone) != target_signature:
                 continue
             starts_at = doc.get("start_at")
             if starts_at is None:
                 continue
-            if _as_utc_datetime(starts_at).astimezone(tz).date() == occurrence_date:
+            if ensure_utc(starts_at).astimezone(tz).date() == occurrence_date:
                 return doc
         return None
 
     async def _dated_series_session_ids(session) -> list[str]:
-        target_signature = _session_series_signature(_session_domain_row(session))
+        target_signature = session_series_signature(_session_domain_row(session), session.timezone)
         if target_signature is None:
             return [session.session_id]
         cursor = sessions_r._find_many(
@@ -2515,7 +2415,7 @@ def compose_admin(
         async for doc in cursor:
             if str(doc.get("status") or "scheduled") == "cancelled":
                 continue
-            if _session_series_signature(doc) != target_signature:
+            if session_series_signature(doc, session.timezone) != target_signature:
                 continue
             session_id = str(doc.get("session_id") or doc.get("_id") or "")
             if session_id and session_id not in ids:
@@ -2539,12 +2439,9 @@ def compose_admin(
             matched_session_doc=matched_doc,
         )
 
-    def _as_utc_datetime(value: datetime) -> datetime:
-        return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
-
     async def _is_clean_future_occurrence(doc: dict[str, Any], *, now: datetime) -> bool:
         starts_at = doc.get("start_at")
-        if starts_at is None or _as_utc_datetime(starts_at) < now:
+        if starts_at is None or ensure_utc(starts_at) < now:
             return False
         if str(doc.get("status") or "scheduled") != "scheduled":
             return False
@@ -2654,6 +2551,8 @@ def compose_admin(
         # window="upcoming" returns all dated sessions from now through +30d.
         # Used by the transfer-enrollment dropdown so the user can pick any
         # upcoming session, not just today's.
+        # Legacy templates may carry no `timezone`; expand in the tenant's zone.
+        fallback_timezone = await session_tz(request_academy_id())
         if window == "upcoming":
             now = datetime.now(UTC)
             start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -2679,11 +2578,12 @@ def compose_admin(
                     range_start=start,
                     range_end=end,
                     first_per_template=True,
+                    fallback_timezone=fallback_timezone,
                 )
             )
             upcoming_docs.sort(key=session_start_sort_key)
             rows = await _build_admin_session_rows(upcoming_docs)
-            rows = _dedupe_session_series_rows(rows)
+            rows = dedupe_session_series_rows(rows, fallback_timezone=fallback_timezone)
             if coach_id:
                 rows = [
                     r
@@ -2722,12 +2622,13 @@ def compose_admin(
                 local_start_date=on_date,
                 local_end_date=on_date,
                 filter_by_utc_range=False,
+                fallback_timezone=fallback_timezone,
             )
         )
         all_docs.sort(key=session_start_sort_key)
 
         rows = await _build_admin_session_rows(all_docs)
-        rows = _dedupe_session_series_rows(rows)
+        rows = dedupe_session_series_rows(rows, fallback_timezone=fallback_timezone)
         if coach_id:
             rows = [
                 r

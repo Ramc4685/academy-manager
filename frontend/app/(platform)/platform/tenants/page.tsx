@@ -12,6 +12,7 @@ import {
   type PlatformTenant,
 } from "@/lib/api/platform";
 import { usePlatformAuth } from "@/lib/auth/use-persona-auth";
+import { TIMEZONE_OPTIONS } from "@/lib/format/timezone-options";
 import { queryKeys } from "@/lib/query/keys";
 
 import { TenantStatusChip } from "./status-chip";
@@ -302,7 +303,11 @@ function BootstrapAcademyDialog({ onClose }: { onClose: () => void }) {
   const [primaryDomain, setPrimaryDomain] = useState("");
   const [ownerEmail, setOwnerEmail] = useState("");
   const [ownerName, setOwnerName] = useState("");
-  const [timezone, setTimezone] = useState("UTC");
+  // Deliberately empty, not "UTC". Bootstrapping every academy as UTC is the
+  // upstream half of the reported defect: sessions resolve their zone from the
+  // academy record, so an academy stamped UTC at creation makes a real 6:00 PM
+  // Chicago class read back to the parent as 1:00 PM. The operator must pick.
+  const [timezone, setTimezone] = useState("");
 
   const mutation = useMutation({
     mutationFn: () =>

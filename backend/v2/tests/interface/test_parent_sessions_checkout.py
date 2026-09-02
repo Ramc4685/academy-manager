@@ -55,6 +55,7 @@ class _ListAvailableSessions:
                 location="Court 1",
                 start_at=now + timedelta(days=1),
                 end_at=now + timedelta(days=1, hours=1),
+                timezone="America/Chicago",
                 capacity=8,
                 enrolled_count=3,
                 available_seats=5,
@@ -180,6 +181,10 @@ def test_parent_lists_available_sessions() -> None:
             "location": "Court 1",
             "start_at": response.json()["sessions"][0]["start_at"],
             "end_at": response.json()["sessions"][0]["end_at"],
+            # The zone the class runs in. Without it the client can only render
+            # start_at in the VIEWER's timezone, which showed a 6:00 PM Chicago
+            # class as "1:00 PM" on the parent's Review & pay screen.
+            "timezone": "America/Chicago",
             "capacity": 8,
             "enrolled_count": 3,
             "available_seats": 5,

@@ -15,7 +15,7 @@ class AcademyRepo(Protocol):
 class GetAcademyOutput:
     academy_id: str
     display_name: str
-    timezone: str
+    timezone: str | None
     contact_email: str | None = None
     contact_phone: str | None = None
     hours_text: str | None = None
@@ -36,7 +36,9 @@ class GetAcademyUseCase:
         return GetAcademyOutput(
             academy_id=str(doc.get("academy_id") or doc.get("_id", academy_id)),
             display_name=doc.get("display_name") or academy_id,
-            timezone=doc.get("timezone") or "UTC",
+            # None, never "UTC": callers must be able to tell "unset" from
+            # "genuinely UTC" so they can prompt instead of silently shifting.
+            timezone=(str(doc.get("timezone")).strip() or None) if doc.get("timezone") else None,
             contact_email=doc.get("contact_email"),
             contact_phone=doc.get("contact_phone"),
             hours_text=doc.get("hours_text"),

@@ -1289,7 +1289,15 @@ export interface SendDuesRemindersResponse {
 export interface AdminAcademyView {
   academy_id: string;
   display_name: string;
-  timezone: string;
+  /**
+   * IANA zone, or null when the academy has never had one chosen.
+   *
+   * Nullable on purpose: the API used to coerce a missing value to "UTC",
+   * which is indistinguishable from an academy that deliberately runs on UTC.
+   * Callers must render the unset case as unset (and resolve a real zone) —
+   * never silently format schedule times as UTC.
+   */
+  timezone: string | null;
   contact_email: string | null;
   contact_phone: string | null;
   hours_text: string | null;

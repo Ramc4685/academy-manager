@@ -72,6 +72,12 @@ export interface ParentAvailableSession {
   location: string;
   start_at: string;
   end_at: string;
+  /**
+   * IANA zone the class runs in. `start_at`/`end_at` are UTC instants, so they
+   * MUST be rendered in this zone (fall back to the academy timezone when
+   * null) — never in the viewer's browser zone.
+   */
+  timezone: string | null;
   capacity: number;
   enrolled_count: number;
   available_seats: number;
