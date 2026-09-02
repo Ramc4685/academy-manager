@@ -14,11 +14,6 @@ def test_calculate_skill_pass_basic():
     assert calculate_skill_pass(10, 7, 70.0) is True
 
 
-def test_calculate_skill_pass_boundary():
-    # exactly at threshold: 7/10 = 70% → True
-    assert calculate_skill_pass(10, 7, 70.0) is True
-
-
 def test_calculate_skill_pass_above_threshold():
     # 9/10 = 90% at 70% threshold → True
     assert calculate_skill_pass(10, 9, 70.0) is True

@@ -13,14 +13,18 @@ Production deployment is handled by one GitHub Actions workflow:
 ## Validation Jobs
 
 - **Backend** installs Python dependencies, runs `pip-audit`, compiles backend
-  code, checks v2 import-linter boundaries, and runs `backend/v2/tests` with
-  shared coverage.
+  code, checks v2 import-linter boundaries, and runs `backend/v2/tests` in
+  parallel (`pytest -n auto`) with an 86% coverage floor over `v2`.
 - **Backend Lint** runs `ruff check v2`, `ruff format --check v2`, and advisory
   `mypy --config-file pyproject.toml v2`.
 - **Frontend** installs `frontend/` with pnpm, runs
   `pnpm audit --audit-level=high`, then runs typecheck, lint, build, OpenAPI
   drift check, size budget reporting, Lighthouse when configured, and
-  Playwright E2E in Chromium and WebKit mobile projects.
+  Playwright E2E in the Chromium mobile project (Chromium desktop on main and
+  on PRs that touch `frontend/e2e/**`). The WebKit mobile project runs in
+  `.github/workflows/nightly-e2e.yml` on a daily schedule, on manual dispatch,
+  and on PRs that touch `frontend/e2e/**` or the Playwright config; it is not
+  on the pre-deploy critical path.
 
 When a PR run fails, summarize the failing job and local reproduction command
 before patching:

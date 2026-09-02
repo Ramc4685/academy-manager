@@ -30,7 +30,10 @@ export default defineConfig({
   // post-merge debrief: the admin/students webkit crash flaked through
   // PR review then hard-failed on main). Available since Playwright 1.49.
   failOnFlakyTests: !!process.env.CI,
-  workers: process.env.CI ? 1 : undefined,
+  // Two workers in CI: each CI job runs one browser project against its own
+  // fresh `next dev` server, and the mobile project (~109 tests) took ~6 min
+  // on one worker. Local runs keep Playwright's default (half the cores).
+  workers: process.env.CI ? 2 : undefined,
   reporter: [["list"], ["html", { open: "never" }]],
   use: {
     baseURL: `http://localhost:${PORT}`,
@@ -71,7 +74,7 @@ export default defineConfig({
     // Desktop viewport so the admin lg: sidebar branch (the primary admin
     // navigation on real screens) is exercised end-to-end. Scoped via
     // testMatch to a few admin specs so CI wall-time grows by minutes,
-    // not double (workers=1 in CI).
+    // not double (workers=2 in CI).
     {
       name: "chromium-desktop",
       use: {

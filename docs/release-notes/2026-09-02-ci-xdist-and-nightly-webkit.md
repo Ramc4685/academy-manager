@@ -1,0 +1,41 @@
+# ci-xdist-and-nightly-webkit
+
+PR: #626
+
+## What changed
+- The backend test job now runs `pytest -n auto`. The ~3,600-test v2 suite
+  ran single-process in CI (about 174 seconds) even though pytest-xdist was
+  already a dev dependency; in parallel it takes about 60 seconds and
+  pytest-cov still combines worker coverage against the 86% floor.
+- The WebKit mobile Playwright project moved out of `production.yml` into a
+  new `nightly-e2e.yml`. It was the longest job on the pre-deploy critical
+  path (about 9 minutes versus about 6 for Chromium mobile). It still runs
+  daily at 09:15 UTC, on manual dispatch, and on PRs that touch
+  `frontend/e2e/**` or the Playwright config.
+- Removed 4 byte-for-byte duplicate backend tests and trimmed one 5-case
+  parametrize to the 2 transport-distinct cases (the other 3 schemes are
+  covered at the domain validator). A hash-and-signature sweep of all 3,398
+  test functions found no other true duplicates; the suite is not the CI
+  bottleneck.
+- The Chromium browser download is now cached (`actions/cache` keyed on the
+  pnpm lockfile) in all three Chromium jobs instead of being fetched fresh
+  each run; system packages are still installed via `install-deps`.
+- Playwright runs with 2 workers in CI instead of 1. Each CI job still runs a
+  single browser project against its own fresh `next dev` server.
+- `CI Gate` no longer lists the WebKit job in `needs`. `docs/ci-cd.md` is
+  updated to describe the new split.
+
+## Deploy notes
+No application code changes; nothing to deploy. The first scheduled
+`Nightly E2E` run happens the morning after merge. A WebKit failure there is
+an email from GitHub Actions, not a deploy blocker, and should be triaged
+like any other e2e regression.
+
+## Risk / rollback
+Low to moderate. Two Playwright workers share one `next dev` server per
+job; if that reintroduces timing flakes, `failOnFlakyTests` surfaces them
+as red runs rather than silent passes, and the fix is a one-line revert to
+`workers: 1`. A WebKit-only regression can now merge and deploy before the nightly
+run catches it; the last 30 days of runs show no WebKit-only failures, and
+Chromium mobile still runs on every PR. Rollback is reverting this PR, which
+restores the WebKit job to the gate and the single-process pytest command.
