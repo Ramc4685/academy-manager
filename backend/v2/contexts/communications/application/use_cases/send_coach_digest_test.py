@@ -17,14 +17,17 @@ single-id selection), so the same tenant scoping and Resend/Stub gating apply.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import Any, Protocol
 
 from backend.v2.contexts.communications.application.digest_renderer import render_coach_digest
 from backend.v2.contexts.communications.application.ports import (
+    AcademyBrandLookup,
     AcademySlugLookup,
     AudienceResolver,
+    CoachGroupLinkProvider,
     DigestSendRepository,
     EmailSendPort,
     ResolvedRecipient,
@@ -36,8 +39,12 @@ from backend.v2.contexts.communications.application.use_cases.send_coach_daily_d
     PlanProvider,
     plan_is_empty,
 )
+from backend.v2.contexts.communications.application.whatsapp_groups_block import (
+    WhatsAppGroupLink,
+)
 from backend.v2.contexts.communications.domain.email_category import EmailCategory
 from backend.v2.contexts.communications.domain.models import SelectedRecipientsAudience
+from backend.v2.shared.comms.email_theme import EmailBrand
 
 
 class _Clock(Protocol):
@@ -79,6 +86,26 @@ class SendCoachDigestTest:
     # fallback sentence even with a signing secret configured.
     unsubscribe_links: UnsubscribeLinkBuilder = field(default_factory=UnsubscribeLinkBuilder)
     academy_slugs: AcademySlugLookup | None = None
+    brands: AcademyBrandLookup | None = None
+    group_links: CoachGroupLinkProvider | None = None
+
+    async def _brand(self, academy_id: str) -> EmailBrand | None:
+        if self.brands is None:
+            return None
+        try:
+            return await self.brands.brand_for(academy_id)
+        except Exception:
+            return None
+
+    async def _groups(self, coach_id: str) -> Sequence[WhatsAppGroupLink]:
+        """Never lets a group lookup cost a coach their plan."""
+        if self.group_links is None:
+            return ()
+        try:
+            return await self.group_links.for_coach(coach_id)
+        except Exception:
+            return ()
+
     now: _Clock = field(default=_utcnow)
 
     async def _academy_slug(self, academy_id: str) -> str | None:
@@ -133,6 +160,8 @@ class SendCoachDigestTest:
 
         subject, body = render_coach_digest(
             plan,
+            brand=await self._brand(command.academy_id),
+            whatsapp_groups=await self._groups(recipient.user_id),
             unsubscribe_url=self.unsubscribe_links.build(
                 academy_id=command.academy_id,
                 user_id=recipient.user_id,

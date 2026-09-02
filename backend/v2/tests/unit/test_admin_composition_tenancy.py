@@ -430,7 +430,7 @@ async def test_admin_dues_followup_uses_open_ledger_invoices_without_legacy_paym
     whatsapp_url = rows[0]["whatsapp_url"]
     assert whatsapp_url is not None
     assert whatsapp_url.startswith("https://wa.me/15550100100?text=")
-    assert "USD%20160.00" in whatsapp_url
+    assert "%24160.00" in whatsapp_url
 
 
 @pytest.mark.asyncio

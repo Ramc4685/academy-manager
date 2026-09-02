@@ -13,6 +13,7 @@ otherwise a stub records sends without contacting a provider.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from typing import Any
@@ -64,6 +65,10 @@ from backend.v2.contexts.communications.application.use_cases.send_coach_digest_
 )
 from backend.v2.contexts.communications.application.use_cases.send_parent_daily_digest import (
     SendParentDailyDigest,
+)
+from backend.v2.contexts.communications.application.whatsapp_groups_block import (
+    WhatsAppGroupLink,
+    dedupe_group_links,
 )
 from backend.v2.contexts.communications.infrastructure.gated_send_port import (
     GatedEmailSendPort,
@@ -142,9 +147,12 @@ from backend.v2.contexts.student_progress.application.use_cases.get_pathway_plac
 from backend.v2.contexts.student_progress.application.use_cases.get_teaching_focus import (
     GetTeachingFocus,
 )
+from backend.v2.shared.comms.email_theme import EmailBrand, format_money
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.tenancy import current_academy_id
 from backend.v2.shared.tenancy.academy_url import academy_frontend_url
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,6 +271,56 @@ class _CoachDigestPlanProvider:
         return program_id, name
 
 
+class _AcademyBrandLookup:
+    """``AcademyBrandLookup`` over the academy document (fields set on the
+    admin Settings → Academy page). Validation of ``brand_color`` happens in
+    ``EmailBrand.accent`` so junk never reaches a style attribute."""
+
+    def __init__(self, academies: Any) -> None:
+        self._academies = academies
+
+    async def brand_for(self, academy_id: str) -> EmailBrand | None:
+        doc = await self._academies.find_by_id(academy_id)
+        if not doc:
+            return None
+        return EmailBrand(
+            academy_name=str(doc.get("display_name") or academy_id),
+            brand_color=doc.get("brand_color") or None,
+            logo_url=doc.get("logo_url") or None,
+            contact_email=doc.get("contact_email") or None,
+            contact_phone=doc.get("contact_phone") or None,
+        )
+
+
+def _session_group_label(session: Any) -> str:
+    title = str(getattr(session, "title", "") or "Session")
+    location = str(getattr(session, "location", "") or "")
+    return f"{title} @ {location}" if location else title
+
+
+class _CoachGroupLinkProvider:
+    """``CoachGroupLinkProvider`` over the enrollment session repo: every
+    session assigned to the coach (no date window — a running Tue/Thu series
+    has a ``start_at`` months in the past), minus cancelled ones and ones with
+    no link."""
+
+    def __init__(self, *, sessions: Any) -> None:
+        self._sessions = sessions
+
+    async def for_coach(self, coach_id: str) -> tuple[WhatsAppGroupLink, ...]:
+        ids = await self._sessions.assigned_session_ids_for_coach(coach_id)
+        if not ids:
+            return ()
+        sessions = await self._sessions.get_many(list(ids))
+        links = [
+            WhatsAppGroupLink(label=_session_group_label(s), url=s.whatsapp_group_link)
+            for s in sessions
+            if getattr(s, "whatsapp_group_link", None)
+            and str(getattr(s, "status", "")) != "cancelled"
+        ]
+        return dedupe_group_links(links)
+
+
 @dataclass(frozen=True, slots=True)
 class _DigestParts:
     """Shared collaborators for the daily + test coach-digest use cases."""
@@ -271,6 +329,8 @@ class _DigestParts:
     resolver: MongoAudienceResolver
     sender: Any
     plan_provider: _CoachDigestPlanProvider
+    brands: _AcademyBrandLookup
+    group_links: _CoachGroupLinkProvider
 
 
 def _build_digest_parts(db: AsyncIOMotorDatabase[Any]) -> _DigestParts:
@@ -303,6 +363,8 @@ def _build_digest_parts(db: AsyncIOMotorDatabase[Any]) -> _DigestParts:
         # coaches from a dev stack that inherited delivery flags and a key.
         sender=_build_email_sender(settings, db),
         plan_provider=plan_provider,
+        brands=_AcademyBrandLookup(MongoAcademyRepository(db)),
+        group_links=_CoachGroupLinkProvider(sessions=sessions_repo),
     )
 
 
@@ -315,6 +377,8 @@ def compose_send_coach_daily_digest(db: AsyncIOMotorDatabase[Any]) -> SendCoachD
         plan_provider=parts.plan_provider,
         unsubscribe_links=compose_unsubscribe_link_builder(get_settings()),
         academy_slugs=_AcademySlugLookup(MongoAcademyRepository(db)),
+        brands=parts.brands,
+        group_links=parts.group_links,
     )
 
 
@@ -327,6 +391,8 @@ def compose_send_coach_digest_test(db: AsyncIOMotorDatabase[Any]) -> SendCoachDi
         plan_provider=parts.plan_provider,
         unsubscribe_links=compose_unsubscribe_link_builder(get_settings()),
         academy_slugs=_AcademySlugLookup(MongoAcademyRepository(db)),
+        brands=parts.brands,
+        group_links=parts.group_links,
     )
 
 
@@ -458,6 +524,7 @@ class _ParentDigestProvider:
             return None
 
         dues = await self._dues(parent_id, frontend)
+        whatsapp_groups = await self._whatsapp_groups(children_students)
         autopay_enabled = await self._autopay_enabled(parent_id)
         reply_to = await self._reply_to(settings.sender_email)
         activate_url = await self._activate_url(
@@ -486,7 +553,34 @@ class _ParentDigestProvider:
             # crashes on this. See `_activate_url` for the fallback contract.
             activate_url=activate_url,
             reply_to=reply_to,
+            whatsapp_groups=whatsapp_groups,
         )
+
+    async def _whatsapp_groups(self, children_students: list[Any]) -> tuple[WhatsAppGroupLink, ...]:
+        """Every ACTIVE enrollment's session link, across all children, deduped
+        by URL. Any failure logs and yields no block: this must never cost a
+        family its digest."""
+        try:
+            by_session: dict[str, list[str]] = {}
+            for student in children_students:
+                for enrollment in await self._enrollments.active_for_student(student.student_id):
+                    by_session.setdefault(enrollment.session_id, []).append(student.full_name)
+            if not by_session:
+                return ()
+            sessions = await self._sessions.get_many(list(by_session))
+            links = [
+                WhatsAppGroupLink(
+                    label=_session_group_label(session),
+                    url=str(session.whatsapp_group_link),
+                    child_names=tuple(by_session.get(session.session_id, ())),
+                )
+                for session in sessions
+                if getattr(session, "whatsapp_group_link", None)
+            ]
+            return dedupe_group_links(links)
+        except Exception:
+            log.warning("parent digest: whatsapp group lookup failed", exc_info=True)
+            return ()
 
     async def _list_children(self, parent_id: str) -> list[Any]:
         try:
@@ -645,10 +739,13 @@ class _ParentDigestProvider:
         total_cents = sum(int(invoice.balance_due_cents) for invoice in owed)
         due_dates = [invoice.due_date for invoice in owed if invoice.due_date is not None]
         earliest = min(due_dates) if due_dates else None
+        earliest_day = earliest.date() if isinstance(earliest, datetime) else earliest
+        is_overdue = earliest_day is not None and earliest_day < datetime.now(UTC).date()
         return DuesView(
-            amount=f"${total_cents / 100:,.2f}",
+            amount=format_money(total_cents, "usd"),
             due_date=self._format_due_date(earliest) if earliest is not None else "",
             pay_url=(f"{frontend}/parent/payments" if frontend else ""),
+            is_overdue=is_overdue,
         )
 
     @staticmethod
@@ -906,6 +1003,7 @@ def compose_send_parent_daily_digest(
         provider=provider,
         unsubscribe_links=compose_unsubscribe_link_builder(settings),
         academy_slugs=_AcademySlugLookup(MongoAcademyRepository(db)),
+        brands=_AcademyBrandLookup(MongoAcademyRepository(db)),
     )
 
 

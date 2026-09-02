@@ -212,3 +212,13 @@ async def test_escapes_display_name_in_login_invite_html():
     body = sender.send_invite_email.await_args.kwargs["body"]
     assert "<img" not in body
     assert "&lt;img" in body
+
+
+def test_invite_body_uses_shared_shell() -> None:
+    from backend.v2.contexts.identity.application.use_cases.send_login_invite import _invite_body
+    from backend.v2.shared.comms.email_theme import FONT_STACK
+
+    body = _invite_body(display_name="P", academy_name="A", reset_link="https://x.test")
+    assert FONT_STACK in body
+    assert "Sent by A" in body
+    assert 'href="https://x.test"' in body

@@ -187,6 +187,20 @@ def render_welcome_email(
         where_lines.append(_multiline(session.venue_address))
     if where_lines:
         parts.append(_block("Where", _para("<br />".join(where_lines))))
+    if session.whatsapp_group_link:
+        # The href is escaped here; the *scheme* was allowlisted on the way in
+        # (shared/security/external_url.py). Those are different controls —
+        # escaping stops attribute breakout, it does not stop `javascript:`.
+        parts.append(
+            _block(
+                "Group chat",
+                _branded_button(label="Open WhatsApp group", url=session.whatsapp_group_link)
+                + f"<p style='color: {_BRAND_MUTED}; font-size: 13px; margin: 0;'>"
+                + _ETIQUETTE_TEMPLATE.format(session=safe_session_title)
+                + "</p>",
+            )
+        )
+
     if session.parking_notes:
         parts.append(_block("Parking", _para(_multiline(session.parking_notes))))
     if session.arrival_minutes_before is not None:
@@ -212,20 +226,6 @@ def render_welcome_email(
 
     if session.absence_policy:
         parts.append(_block("Absences and make-ups", _para(_multiline(session.absence_policy))))
-
-    if session.whatsapp_group_link:
-        # The href is escaped here; the *scheme* was allowlisted on the way in
-        # (shared/security/external_url.py). Those are different controls —
-        # escaping stops attribute breakout, it does not stop `javascript:`.
-        parts.append(
-            _block(
-                "Group chat",
-                _branded_button(label="Open WhatsApp group", url=session.whatsapp_group_link)
-                + f"<p style='color: {_BRAND_MUTED}; font-size: 13px; margin: 0;'>"
-                + _ETIQUETTE_TEMPLATE.format(session=safe_session_title)
-                + "</p>",
-            )
-        )
 
     body = _branded_shell(academy_name=academy_name, inner_html="".join(parts))
     return f"Welcome to {session.title}", body

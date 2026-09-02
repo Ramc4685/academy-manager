@@ -18,15 +18,17 @@ composition root, so communications imports nothing from the coaching context
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import Any, Protocol
 
 from backend.v2.contexts.communications.application.digest_renderer import render_coach_digest
 from backend.v2.contexts.communications.application.ports import (
+    AcademyBrandLookup,
     AcademySlugLookup,
     AudienceResolver,
+    CoachGroupLinkProvider,
     DigestSendRepository,
     EmailSendPort,
     ResolvedRecipient,
@@ -34,8 +36,12 @@ from backend.v2.contexts.communications.application.ports import (
 from backend.v2.contexts.communications.application.unsubscribe_token import (
     UnsubscribeLinkBuilder,
 )
+from backend.v2.contexts.communications.application.whatsapp_groups_block import (
+    WhatsAppGroupLink,
+)
 from backend.v2.contexts.communications.domain.email_category import EmailCategory
 from backend.v2.contexts.communications.domain.models import AcademyAudience
+from backend.v2.shared.comms.email_theme import EmailBrand
 
 
 class PlanProvider(Protocol):
@@ -94,6 +100,26 @@ class SendCoachDailyDigest:
     # link falls back to the generic frontend host, which the unsubscribe route
     # refuses in SaaS mode rather than accepting on a weakened tenant check.
     academy_slugs: AcademySlugLookup | None = None
+    brands: AcademyBrandLookup | None = None
+    group_links: CoachGroupLinkProvider | None = None
+
+    async def _brand(self, academy_id: str) -> EmailBrand | None:
+        if self.brands is None:
+            return None
+        try:
+            return await self.brands.brand_for(academy_id)
+        except Exception:
+            return None
+
+    async def _groups(self, coach_id: str) -> Sequence[WhatsAppGroupLink]:
+        """Never lets a group lookup cost a coach their plan."""
+        if self.group_links is None:
+            return ()
+        try:
+            return await self.group_links.for_coach(coach_id)
+        except Exception:
+            return ()
+
     now: Callable[[], datetime] = field(default=_utcnow)
 
     async def _academy_slug(self, academy_id: str) -> str | None:
@@ -109,6 +135,7 @@ class SendCoachDailyDigest:
     async def execute(self, command: SendCoachDailyDigestCommand) -> SendCoachDailyDigestResult:
         digest_date = command.digest_date.isoformat()
         academy_slug = await self._academy_slug(command.academy_id)
+        brand = await self._brand(command.academy_id)
         coaches = await self.resolver.resolve_academy_audience(AcademyAudience(role="coach"))
         admin_emails: list[str] = []
         if command.admin_cc_enabled:
@@ -145,6 +172,8 @@ class SendCoachDailyDigest:
 
             subject, body = render_coach_digest(
                 plan,
+                brand=brand,
+                whatsapp_groups=await self._groups(coach.user_id),
                 unsubscribe_url=self.unsubscribe_links.build(
                     academy_id=command.academy_id,
                     user_id=coach.user_id,

@@ -23,28 +23,21 @@ from backend.v2.contexts.billing.application.ports import (
     InviteEmailPort,
     ParentContactLookup,
 )
+from backend.v2.shared.comms.email_theme import INK, EmailBrand, button, shell
 
 
 def _reminder_body(*, display_name: str, academy_name: str, setup_link: str) -> str:
     safe_display_name = escape(display_name)
     safe_academy_name = escape(academy_name)
-    safe_setup_link = escape(setup_link, quote=True)
-    return f"""
-<div style="font-family: -apple-system, 'Segoe UI', sans-serif; max-width: 520px; margin: 0 auto;">
-  <h2 style="color: #0a0f1c;">Add a payment method for {safe_academy_name}</h2>
-  <p>Hi {safe_display_name},</p>
-  <p>Your account at <strong>{safe_academy_name}</strong> is set up, but we don't have
-  a payment method on file yet. Add one to keep your children's enrollment
-  current.</p>
-  <p style="margin: 24px 0;">
-    <a href="{safe_setup_link}"
-       style="background: #2545d3; color: #ffffff; padding: 12px 20px;
-              border-radius: 8px; text-decoration: none; font-weight: 600;">
-      Add payment method
-    </a>
-  </p>
-</div>
-"""
+    inner = (
+        f'<h2 style="color:{INK};font-size:20px;margin:0 0 12px;">'
+        f"Add a payment method for {safe_academy_name}</h2>"
+        f"<p>Hi {safe_display_name},</p>"
+        f"<p>Your account at <strong>{safe_academy_name}</strong> is set up, but we don't have "
+        f"a payment method on file yet. Add one to keep your children's enrollment current.</p>"
+        f'<p style="margin:24px 0;">{button("Add payment method", setup_link)}</p>'
+    )
+    return shell(brand=EmailBrand(academy_name=academy_name), inner_html=inner)
 
 
 class SendAddCardReminder:

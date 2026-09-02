@@ -16,6 +16,9 @@ from unittest.mock import AsyncMock
 import pytest
 from backend.v2.composition import digests as digests_module
 from backend.v2.composition.digests import _ParentDigestProvider
+from backend.v2.contexts.communications.application.whatsapp_groups_block import (
+    WhatsAppGroupLink,
+)
 from backend.v2.shared.tenancy.context import tenant_scope
 
 ACADEMY_ID = "acad-1"
@@ -311,3 +314,74 @@ async def test_build_view_degrades_when_progress_lookup_fails() -> None:
     assert view is not None
     assert view.children[0].skills_total == 0
     assert view.children[0].session_time == "6:00 - 6:45 PM"  # unrelated data intact
+
+
+def _linked_session(session_id: str, title: str, location: str, link: str | None):
+    return SimpleNamespace(
+        session_id=session_id,
+        title=title,
+        location=location,
+        timezone="America/Chicago",
+        whatsapp_group_link=link,
+    )
+
+
+@pytest.mark.asyncio
+async def test_groups_cover_every_active_enrollment_not_just_today() -> None:
+    today = _linked_session("sess-1", "Beginner", "YWCA", "https://chat.whatsapp.com/AAA")
+    saturday = _linked_session("sess-2", "Saturday Open", "Gym", "https://chat.whatsapp.com/BBB")
+    no_link = _linked_session("sess-3", "Camp", "", None)
+    provider = _full_family_provider(
+        enrollments=[
+            SimpleNamespace(session_id="sess-1"),
+            SimpleNamespace(session_id="sess-2"),
+            SimpleNamespace(session_id="sess-3"),
+        ],
+        session=today,
+    )
+    provider._sessions.get_many = AsyncMock(return_value=[today, saturday, no_link])
+
+    with tenant_scope(ACADEMY_ID):
+        view = await provider.build_view("p1", ON_DATE)
+
+    assert view is not None
+    assert view.whatsapp_groups == (
+        WhatsAppGroupLink(
+            label="Beginner @ YWCA", url="https://chat.whatsapp.com/AAA", child_names=("Maithri",)
+        ),
+        WhatsAppGroupLink(
+            label="Saturday Open @ Gym",
+            url="https://chat.whatsapp.com/BBB",
+            child_names=("Maithri",),
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_group_lookup_failure_yields_no_block_not_a_crash() -> None:
+    provider = _full_family_provider()
+    provider._sessions.get_many = AsyncMock(side_effect=RuntimeError("mongo down"))
+
+    with tenant_scope(ACADEMY_ID):
+        view = await provider.build_view("p1", ON_DATE)
+
+    assert view is not None
+    assert view.whatsapp_groups == ()
+
+
+@pytest.mark.asyncio
+async def test_dues_overdue_flag_follows_the_earliest_due_date() -> None:
+    past = SimpleNamespace(balance_due_cents=6000, status="open", due_date=date(2000, 1, 10))
+    provider = _full_family_provider(invoices=[past])
+    with tenant_scope(ACADEMY_ID):
+        view = await provider.build_view("p1", ON_DATE)
+    assert view is not None and view.dues is not None
+    assert view.dues.is_overdue is True
+
+    future = SimpleNamespace(balance_due_cents=6000, status="open", due_date=date(2999, 1, 10))
+    provider = _full_family_provider(invoices=[future])
+    with tenant_scope(ACADEMY_ID):
+        view = await provider.build_view("p1", ON_DATE)
+    assert view is not None and view.dues is not None
+    assert view.dues.is_overdue is False
+    assert view.dues.amount == "$60.00"

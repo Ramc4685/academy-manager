@@ -9,10 +9,13 @@ provider.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from backend.v2.contexts.communications.application.whatsapp_groups_block import (
+    WhatsAppGroupLink,
+)
 from backend.v2.contexts.communications.domain.email_category import EmailCategory
 from backend.v2.contexts.communications.domain.email_preferences import EmailPreferences
 from backend.v2.contexts.communications.domain.email_suppression import (
@@ -29,6 +32,7 @@ from backend.v2.contexts.communications.domain.models import (
     SelectedRecipientsAudience,
     SessionAudience,
 )
+from backend.v2.shared.comms.email_theme import EmailBrand
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +109,22 @@ class EmailSendPort(Protocol):
         reply_to: str | None = None,
         category: EmailCategory = EmailCategory.TRANSACTIONAL,
     ) -> SendOutcome: ...
+
+
+class AcademyBrandLookup(Protocol):
+    """Academy name / colour / logo / contact for the email shell.
+
+    ``None`` means "use the defaults"; the send loops resolve it once per run
+    and never let a lookup failure cost a send.
+    """
+
+    async def brand_for(self, academy_id: str) -> EmailBrand | None: ...
+
+
+class CoachGroupLinkProvider(Protocol):
+    """WhatsApp group links for every session a coach is assigned to."""
+
+    async def for_coach(self, coach_id: str) -> Sequence[WhatsAppGroupLink]: ...
 
 
 class AcademySlugLookup(Protocol):

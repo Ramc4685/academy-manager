@@ -1,4 +1,7 @@
-import { type AdminSessionView, type EditSessionRequest } from "@/lib/api/admin";
+import {
+  type AdminSessionView,
+  type EditSessionRequest,
+} from "@/lib/api/admin";
 import {
   formatAcademyTimeRange,
   parseAcademyInstant,
@@ -47,7 +50,11 @@ export function sessionTimeRange(session: AdminSessionView): string {
   // Render in the SESSION's zone, not the viewer's browser zone: an admin
   // travelling (or a session stored with a non-local zone) otherwise sees a
   // different hour than the class actually runs at.
-  return formatAcademyTimeRange(session.start_at, session.end_at, session.timezone);
+  return formatAcademyTimeRange(
+    session.start_at,
+    session.end_at,
+    session.timezone,
+  );
 }
 
 export function formatCurrencyCents(cents: number | null | undefined): string {
@@ -74,7 +81,9 @@ export function dollarsInputToCents(value: string): number | null {
 export function hasRecurringSchedule(session: AdminSessionView): boolean {
   // Defensive `?.`: a payload without `days_of_week` used to throw here and take
   // the whole session-detail page down to the error boundary (same class as #503).
-  return Boolean(session.days_of_week?.length && session.start_time && session.end_time);
+  return Boolean(
+    session.days_of_week?.length && session.start_time && session.end_time,
+  );
 }
 
 export function sessionDateLabel(session: AdminSessionView): string {
@@ -99,7 +108,9 @@ export interface CommunicationPack {
   absence_policy: string | null;
 }
 
-export function communicationPackFields(session: AdminSessionView): CommunicationPack {
+export function communicationPackFields(
+  session: AdminSessionView,
+): CommunicationPack {
   return {
     whatsapp_group_link: session.whatsapp_group_link ?? null,
     venue_address: session.venue_address ?? null,
@@ -117,7 +128,9 @@ export function hasCommunicationPack(session: AdminSessionView): boolean {
   );
 }
 
-export function formatArrivalMinutes(minutes: number | null | undefined): string {
+export function formatArrivalMinutes(
+  minutes: number | null | undefined,
+): string {
   if (minutes == null) return "";
   return `${minutes} minute${minutes === 1 ? "" : "s"} before start`;
 }
@@ -139,7 +152,20 @@ export function looksLikeWebUrl(value: string): boolean {
   return /^https?:\/\/\S+$/i.test(trimmed);
 }
 
-export function buildEditSessionForm(session: AdminSessionView): EditSessionRequest {
+/**
+ * True when the link is a WhatsApp *group invite* (chat.whatsapp.com/<code>).
+ * Other chat apps are allowed by the server; this only powers a soft hint so
+ * an admin who pasted a personal wa.me link notices before families do.
+ */
+export function looksLikeWhatsAppGroupInvite(value: string): boolean {
+  return /^https:\/\/chat\.whatsapp\.com\/[A-Za-z0-9_-]+\/?$/i.test(
+    value.trim(),
+  );
+}
+
+export function buildEditSessionForm(
+  session: AdminSessionView,
+): EditSessionRequest {
   const common = {
     coach_id: session.coach_id,
     title: session.title,
@@ -195,7 +221,10 @@ export function toDateInputValue(value: string): string {
 }
 
 export function formatCents(cents: number): string {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+  }).format(cents / 100);
 }
 
 export function formatShortDateTime(value: string): string {
@@ -219,7 +248,9 @@ export function formatDateOnly(value: string): string {
 export function formatEnrollmentDate(value: string | null | undefined): string {
   if (!value) return "Not recorded";
   const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? "Not recorded" : parsed.toLocaleDateString();
+  return Number.isNaN(parsed.getTime())
+    ? "Not recorded"
+    : parsed.toLocaleDateString();
 }
 
 export function formatLifecycleType(value: string): string {
