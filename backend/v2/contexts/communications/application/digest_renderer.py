@@ -18,34 +18,56 @@ values.
 from __future__ import annotations
 
 import html
+from collections.abc import Sequence
 from typing import Any
 
 from backend.v2.contexts.communications.application.unsubscribe_footer import (
     render_unsubscribe_footer,
 )
+from backend.v2.contexts.communications.application.whatsapp_groups_block import (
+    WhatsAppGroupLink,
+    render_whatsapp_groups_block,
+)
+from backend.v2.shared.comms.email_theme import (
+    AMBER_BG,
+    AMBER_FG,
+    COBALT,
+    COBALT_SOFT,
+    GREEN_BG,
+    GREEN_FG,
+    INK,
+    LINE,
+    MUTED,
+    EmailBrand,
+    shell,
+)
 
 # Maps a lesson card's ``source`` code to a human reference label.
 _SOURCE_LABELS = {"BWF_SHUTTLE_TIME": "Shuttle Time"}
 
-_FONT_STACK = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
-_TEXT_PRIMARY = "#1a1a1a"
-_TEXT_SECONDARY = "#6b7280"
-_TEXT_MUTED = "#9ca3af"
-_BORDER = "#e5e7eb"
-_LINK = "#1d4ed8"
+_TEXT_PRIMARY = INK
+_TEXT_SECONDARY = MUTED
+_TEXT_MUTED = MUTED
+_BORDER = LINE
+_LINK = COBALT
 
 # status text (lowercased, underscores replaced with spaces) -> (bg, fg)
 _STATUS_CHIPS = {
-    "not started": ("#f3f4f6", "#6b7280"),
-    "introduced": ("#fef3c7", "#92400e"),
-    "learning": ("#dbeafe", "#1e40af"),
-    "practicing": ("#dcfce7", "#166534"),
+    "not started": ("#f1f5f9", MUTED),
+    "introduced": (AMBER_BG, AMBER_FG),
+    "learning": (COBALT_SOFT, "#1e40af"),
+    "practicing": (GREEN_BG, GREEN_FG),
 }
-_DEFAULT_CHIP = ("#f3f4f6", "#374151")
+_DEFAULT_CHIP = ("#f1f5f9", "#334155")
 
 
 def render_coach_digest(
-    plan: Any, *, playlist_url: str | None = None, unsubscribe_url: str | None = None
+    plan: Any,
+    *,
+    brand: EmailBrand | None = None,
+    whatsapp_groups: Sequence[WhatsAppGroupLink] = (),
+    playlist_url: str | None = None,
+    unsubscribe_url: str | None = None,
 ) -> tuple[str, str]:
     """Return ``(subject, body)`` for one coach's daily plan. ``body`` is HTML.
 
@@ -60,21 +82,31 @@ def render_coach_digest(
     if program_name:
         subject = f"{subject} — {program_name}"
 
+    resolved_brand = brand or EmailBrand(academy_name=program_name or "Your academy")
+    for_program = f" for {html.escape(program_name)}" if program_name else ""
+    greeting = (
+        f'<p style="font-size:15px;margin:0 0 16px;">'
+        f"Good morning! Here is your teaching plan{for_program}.</p>"
+    )
     sessions_html = "".join(_render_session(s) for s in (getattr(plan, "sessions", None) or []))
+    groups_html = render_whatsapp_groups_block(
+        whatsapp_groups, persona="coach", accent=resolved_brand.accent()
+    )
 
     footer_html = ""
     if playlist_url:
         footer_html = (
-            f'<p style="font-size:12px;color:{_TEXT_MUTED};margin:16px 0 0;'
-            f'border-top:1px solid {_BORDER};padding-top:10px;">'
-            f'<a href="{html.escape(playlist_url, quote=True)}" style="color:{_LINK};text-decoration:none;">Full video playlist</a>'
+            f'<p style="font-size:12px;color:{_TEXT_MUTED};margin:16px 0 0;">'
+            f'<a href="{html.escape(playlist_url, quote=True)}" '
+            f'style="color:{_LINK};text-decoration:none;">Full video playlist</a>'
             "</p>"
         )
 
-    body = (
-        f'<div style="font-family:{_FONT_STACK};max-width:600px;margin:0 auto;color:{_TEXT_PRIMARY};">'
-        f"{sessions_html}{footer_html}{render_unsubscribe_footer(unsubscribe_url)}"
-        "</div>"
+    body = shell(
+        brand=resolved_brand,
+        inner_html=f"{greeting}{sessions_html}{groups_html}",
+        date_label=date_str or None,
+        footer_html=footer_html + render_unsubscribe_footer(unsubscribe_url),
     )
 
     return subject, body
@@ -100,7 +132,8 @@ def _render_session(session: Any) -> str:
         unplaced_html = f'<p style="font-size:12px;color:{_TEXT_MUTED};margin:12px 0 0;">Not yet placed: {names}</p>'
 
     return (
-        f'<div style="margin-bottom:24px;padding-bottom:16px;border-bottom:1px solid {_BORDER};">'
+        f'<div style="margin-bottom:12px;padding:14px 16px;border:1px solid {_BORDER};'
+        f'border-radius:10px;">'
         f'<p style="font-size:15px;font-weight:600;margin:0 0 2px;">{html.escape(heading)}</p>'
         f"{location_html}{groups_html}{unplaced_html}"
         "</div>"

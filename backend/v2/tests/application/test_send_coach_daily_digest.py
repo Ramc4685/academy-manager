@@ -24,12 +24,18 @@ from backend.v2.contexts.communications.application.use_cases.send_coach_daily_d
     SendCoachDailyDigest,
     SendCoachDailyDigestCommand,
 )
+from backend.v2.contexts.communications.application.whatsapp_groups_block import (
+    COACH_GROUP_NOTE,
+    GROUP_BLOCK_HEADING,
+    WhatsAppGroupLink,
+)
 from backend.v2.contexts.communications.domain.email_category import EmailCategory
 from backend.v2.contexts.communications.domain.models import (
     AcademyAudience,
     DigestSend,
     DigestSendStatus,
 )
+from backend.v2.shared.comms.email_theme import EmailBrand
 
 ACADEMY_ID = "acad-1"
 DIGEST_DATE = date(2026, 6, 12)
@@ -225,6 +231,37 @@ def test_renderer_includes_sessions_students_skills_youtube_and_pdf_citation() -
     # PDF is citation text only — present as a reference, never as a link.
     assert f"Shuttle Time, Starter Lessons, Lessons 3{_EN}6, p.16{_EN}30" in body
     assert "Shuttle Time PDF" not in body  # PDF resource link title not rendered
+
+
+def test_coach_digest_has_greeting_date_and_academy() -> None:
+    plan = _populated_plan()
+    _, body = render_coach_digest(plan, brand=EmailBrand(academy_name="BLNO Badminton"))
+    assert "BLNO Badminton" in body
+    assert "Good morning" in body
+    assert str(plan.date) in body
+
+
+def test_coach_digest_renders_groups_after_sessions() -> None:
+    link = WhatsAppGroupLink(label="Tuesday Juniors", url="https://chat.whatsapp.com/AAA")
+    _, body = render_coach_digest(
+        _populated_plan(), whatsapp_groups=[link], playlist_url="https://yt/pl"
+    )
+    assert GROUP_BLOCK_HEADING in body and COACH_GROUP_NOTE in body
+    assert (
+        body.index("Not yet placed")
+        < body.index(GROUP_BLOCK_HEADING)
+        < body.index("Full video playlist")
+    )
+
+
+def test_coach_digest_without_playlist_has_no_empty_rule() -> None:
+    _, body = render_coach_digest(_populated_plan())
+    assert "Full video playlist" not in body
+    # Only the shell footer and the unsubscribe footer draw a top rule on a
+    # paragraph (student table rows have their own).
+    assert body.count("margin:20px 0 0;border-top:1px solid") == 1  # unsubscribe
+    assert body.count("margin:28px 0 0;border-top:1px solid") == 1  # shell footer
+    assert "margin:16px 0 0;border-top:1px solid" not in body  # old empty rule
 
 
 # ---------------------------------------------------------------------------
