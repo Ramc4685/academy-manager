@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import html
 from collections.abc import Sequence
+from datetime import date
 from typing import Any
 
 from backend.v2.contexts.communications.application.unsubscribe_footer import (
@@ -105,11 +106,21 @@ def render_coach_digest(
     body = shell(
         brand=resolved_brand,
         inner_html=f"{greeting}{sessions_html}{groups_html}",
-        date_label=date_str or None,
+        date_label=_pretty_date(date_str),
         footer_html=footer_html + render_unsubscribe_footer(unsubscribe_url),
     )
 
     return subject, body
+
+
+def _pretty_date(value: str) -> str | None:
+    """``2026-06-12`` → ``Friday, June 12``; anything else is shown as given."""
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value).strftime("%A, %B %-d")
+    except ValueError:
+        return value
 
 
 def _render_session(session: Any) -> str:
