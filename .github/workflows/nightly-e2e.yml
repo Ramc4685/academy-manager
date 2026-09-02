@@ -1,0 +1,84 @@
+name: Nightly E2E
+
+# WebKit was moved off the production workflow's pre-deploy critical path:
+# it was the longest job (~9 min vs ~6 min for Chromium mobile) and no
+# WebKit-only regression has ever blocked a deploy. It still runs daily
+# against main, on demand, and on PRs that change the e2e suite itself so
+# browser-specific spec changes are verified before merge.
+
+on:
+  schedule:
+    # 09:15 UTC = 04:15 America/Chicago, after any late-evening merges.
+    - cron: "15 9 * * *"
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "frontend/e2e/**"
+      - "frontend/playwright.config.ts"
+      - ".github/workflows/nightly-e2e.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-e2e-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  frontend-e2e-webkit:
+    name: Frontend E2E WebKit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-webkit-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+
+      - name: Install Playwright system dependencies
+        run: pnpm exec playwright install-deps webkit
+
+      - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: pnpm exec playwright install webkit
+
+      - name: Playwright E2E WebKit
+        env:
+          CI: "1"
+        run: pnpm exec playwright test --project=webkit-mobile
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-webkit
+          path: frontend/playwright-report
+          retention-days: 7

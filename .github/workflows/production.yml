@@ -129,7 +129,7 @@ jobs:
         working-directory: backend
         # Ratchet: raise fail-under toward measured coverage whenever it grows; never lower without a tracker note.
         # Measured v2 TOTAL = 87.2% (2429 tests, 2026-07-20); floor set to measured−1 for platform variance.
-        run: pytest v2/tests --override-ini="testpaths=v2/tests" --cov=v2 --cov-report=term-missing:skip-covered --cov-fail-under=86
+        run: pytest v2/tests -n auto --override-ini="testpaths=v2/tests" --cov=v2 --cov-report=term-missing:skip-covered --cov-fail-under=86
 
   backend-advisory:
     name: Backend Lint
@@ -310,10 +310,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     needs: [changes]
-    # Tiered browser matrix (#476): secondary browsers skip on PRs unless
-    # frontend/e2e/** changed, but always run on push to main — a regression
+    # Tiered browser matrix (#476): the desktop project skips on PRs unless
+    # frontend/e2e/** changed, but always runs on push to main — a regression
     # can merge but never deploy (production-approval requires ci-gate
     # success on the main run). CI Gate treats the PR skip as pass.
+    # WebKit no longer runs here: it was the longest job on the pre-deploy
+    # critical path (~9 min) and lives in nightly-e2e.yml instead.
     if: >
       (
         github.event_name != 'pull_request' &&
@@ -362,74 +364,6 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: playwright-report-chromium-desktop
-          path: frontend/playwright-report
-          retention-days: 7
-
-  frontend-e2e-webkit:
-    name: Frontend E2E WebKit
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    needs: [changes]
-    # Tiered browser matrix (#476): see frontend-e2e-chromium-desktop.
-    if: >
-      (
-        github.event_name != 'pull_request' &&
-        (
-          needs.changes.outputs.frontend == 'true' ||
-          needs.changes.outputs.ci == 'true' ||
-          github.event_name == 'workflow_dispatch'
-        )
-      ) ||
-      (
-        github.event_name == 'pull_request' &&
-        needs.changes.outputs.e2e == 'true'
-      )
-    defaults:
-      run:
-        working-directory: frontend
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v6
-        with:
-          version: 11
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: "22"
-          cache: pnpm
-          cache-dependency-path: frontend/pnpm-lock.yaml
-
-      - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Cache Playwright browsers
-        id: playwright-cache
-        uses: actions/cache@v6
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-webkit-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
-
-      - name: Install Playwright system dependencies
-        run: pnpm exec playwright install-deps webkit
-
-      - name: Install Playwright browsers
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: pnpm exec playwright install webkit
-
-      - name: Playwright E2E WebKit
-        env:
-          CI: "1"
-        run: pnpm exec playwright test --project=webkit-mobile
-
-      - name: Upload Playwright report on failure
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: playwright-report-webkit
           path: frontend/playwright-report
           retention-days: 7
 
@@ -587,7 +521,6 @@ jobs:
         frontend-static,
         frontend-e2e-chromium,
         frontend-e2e-chromium-desktop,
-        frontend-e2e-webkit,
         frontend-e2e-real-auth,
         hook-tests,
       ]
