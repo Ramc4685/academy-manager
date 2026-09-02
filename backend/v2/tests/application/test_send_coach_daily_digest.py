@@ -238,7 +238,7 @@ def test_coach_digest_has_greeting_date_and_academy() -> None:
     _, body = render_coach_digest(plan, brand=EmailBrand(academy_name="BLNO Badminton"))
     assert "BLNO Badminton" in body
     assert "Good morning" in body
-    assert str(plan.date) in body
+    assert "Friday, June 12" in body
 
 
 def test_coach_digest_renders_groups_after_sessions() -> None:
