@@ -29,6 +29,10 @@ from starlette.middleware.cors import CORSMiddleware
 from backend.v2.composition.admin import compose_admin
 from backend.v2.composition.coach import compose_coach
 from backend.v2.composition.digests import (
+    _REAL_EMAIL_ENVS as REAL_EMAIL_ENVS,
+)
+from backend.v2.composition.digests import (
+    _build_email_sender,
     compose_email_credential_probe,
     compose_ingest_email_provider_event,
     compose_list_email_suppressions,
@@ -39,6 +43,7 @@ from backend.v2.composition.digests import (
     digest_window_open,
     resolve_digest_schedule,
 )
+from backend.v2.composition.email_adapters import build_user_facing_invite_sender
 from backend.v2.composition.owner import compose_owner
 from backend.v2.composition.parent import compose_parent, compose_parent_webhook_handler
 from backend.v2.composition.student import compose_student
@@ -99,6 +104,9 @@ from backend.v2.contexts.identity.application.use_cases.magic_link import (
 from backend.v2.contexts.identity.application.use_cases.register_public_parent import (
     RegisterPublicParent,
 )
+from backend.v2.contexts.identity.application.use_cases.send_registration_verification_email import (
+    SendRegistrationVerificationEmail,
+)
 from backend.v2.contexts.identity.domain.models import (
     AcademyMembership,
     PlatformRole,
@@ -124,6 +132,9 @@ from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
 )
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import (
     MongoUserRepository,
+)
+from backend.v2.contexts.identity.infrastructure.mongo_verification_email_cooldown import (
+    MongoVerificationEmailCooldown,
 )
 from backend.v2.contexts.platform.application.use_cases.tenant_lifecycle import (
     TenantLifecycleService,
@@ -294,6 +305,20 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         outbox=outbox,
         default_academy_id=runtime_academy_id,
         saas_mode=settings.saas_mode,
+    )
+    app.state.send_registration_verification_email = SendRegistrationVerificationEmail(
+        verifier=verifier,
+        links=get_firebase_admin_adapter(),
+        # `build_user_facing_invite_sender`, not the plain adapter: a parent is
+        # watching this send, so a stub port in a real environment must fail
+        # loudly rather than report the stub's `ok=True`.
+        sender=build_user_facing_invite_sender(
+            sender=_build_email_sender(settings, db),
+            env=str(getattr(settings, "env", "") or ""),
+            real_email_envs=REAL_EMAIL_ENVS,
+        ),
+        academies=MongoAcademyRepository(db),
+        cooldown=MongoVerificationEmailCooldown(db),
     )
     app.state.bootstrap_academy = BootstrapAcademy(
         store=MongoTenantBootstrapStore(db),

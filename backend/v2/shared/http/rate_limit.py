@@ -22,6 +22,7 @@ Clock = Callable[[], float]
 
 _PUBLIC_WRITE_PATHS = {
     ("POST", "/api/v2/register/parent"),
+    ("POST", "/api/v2/register/parent/verification-email"),
     ("POST", "/api/v2/parent/onboarding/start"),
     # Unauthenticated one-time-token consume: token entropy makes brute force
     # infeasible, but unlimited anonymous POSTs would let one client hammer

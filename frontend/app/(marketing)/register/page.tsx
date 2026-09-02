@@ -4,14 +4,17 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
-import { registerPublicParent } from "@/lib/api/registration";
+import {
+  registerPublicParent,
+  sendParentVerificationEmail,
+} from "@/lib/api/registration";
 import { rememberPendingParentRegistration } from "@/lib/auth/parent-registration-continuation";
 import {
   completeGoogleRedirectSignIn,
   registerWithEmail,
-  sendVerificationEmail,
   signInWithGoogle,
   signOutCurrent,
+  verificationRequestToken,
 } from "@/lib/auth/firebase";
 import type { User } from "@/lib/auth/firebase";
 import {
@@ -121,7 +124,10 @@ export default function RegisterPage() {
 
   async function sendVerificationAndSignOut(user: User) {
     try {
-      await sendVerificationEmail(user);
+      // No `if (token)` guard: a missing token is a failure, not a reason to
+      // skip the send and still show "Verification email sent".
+      const token = await verificationRequestToken(user);
+      await sendParentVerificationEmail(token);
     } catch {
       setPendingVerificationUser(user);
       setNotice(

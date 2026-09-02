@@ -16,7 +16,6 @@ import {
   getAuth,
   getRedirectResult,
   onAuthStateChanged,
-  sendEmailVerification,
   sendPasswordResetEmail,
   signInWithCustomToken,
   signInWithEmailAndPassword,
@@ -117,7 +116,21 @@ export async function registerWithEmail(email: string, password: string): Promis
   return user;
 }
 
-export async function sendVerificationEmail(user: User): Promise<void> {
+/**
+ * Verification email is sent by the backend (Admin SDK generates the Firebase
+ * link, our Resend domain delivers it), not by Firebase's client-side
+ * `sendEmailVerification` — that shared unbranded sender was confirmed landing
+ * in spam in production. This helper only yields the token the caller needs to
+ * authenticate that backend call; see `sendParentVerificationEmail`. It lives
+ * here rather than calling the API directly because `lib/api/client` imports
+ * this module, so the reverse import would be circular.
+ *
+ * Always resolves to a usable token or throws. It must never resolve to null:
+ * the caller's only signal that the send failed is an exception, so a nullish
+ * return would let a "no token" case fall straight through to the success
+ * branch and tell the parent an email was sent that nothing ever attempted.
+ */
+export async function verificationRequestToken(user: User): Promise<string> {
   if (E2E_BYPASS) {
     const failuresRemaining =
       typeof window === "undefined"
@@ -127,9 +140,14 @@ export async function sendVerificationEmail(user: User): Promise<void> {
       window.__E2E_FIREBASE__.verificationFailuresRemaining = failuresRemaining - 1;
       throw new Error("E2E verification email failure");
     }
-    return;
+    // Same placeholder `getIdToken` hands out under the bypass. Returning a
+    // token (rather than null) is what keeps the e2e run on the real code
+    // path: the API call is still made, so the spec can assert it happened.
+    return "e2e-fake-token";
   }
-  await sendEmailVerification(user);
+  const token = await user.getIdToken();
+  if (!token) throw new Error("Could not obtain an auth token for the verification email");
+  return token;
 }
 
 function googleProvider(): GoogleAuthProvider {
