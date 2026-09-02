@@ -36,8 +36,12 @@ def _normalize(origin: str) -> str:
 def validate_redirect_url(url: str, *, allowed_origins: Iterable[str]) -> str:
     """Return ``url`` unchanged if its origin is allowlisted, else raise InvalidRedirectUrl.
 
-    ``allowed_origins`` is an iterable of ``scheme://host[:port]`` origins (e.g. the value
-    of ``settings.cors_allowed_origins()``). Matching is exact on scheme + host + port.
+    ``allowed_origins`` is an iterable of ``scheme://host[:port]`` origins. Callers supply
+    the static configured origins (``settings.cors_allowed_origins()``) *plus* the request's
+    resolved tenant origins (``shared.tenancy.current_tenant_origins()``), so a dynamically
+    onboarded academy can check out on its own host. Those tenant origins are rebuilt from
+    stored records + server config — a raw Host/Origin header is NEVER passed in here.
+    Matching is exact on scheme + host + port.
     """
     if not isinstance(url, str) or not url.strip():
         raise InvalidRedirectUrl("redirect url is required")

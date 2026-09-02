@@ -225,8 +225,13 @@ from backend.v2.shared.profile.completeness import (
     ParentFacts,
     evaluate,
 )
-from backend.v2.shared.security.redirect import validate_redirect_url
-from backend.v2.shared.tenancy import TenantContextUnset, current_academy_id, tenant_scope
+from backend.v2.shared.security.redirect import InvalidRedirectUrl, validate_redirect_url
+from backend.v2.shared.tenancy import (
+    TenantContextUnset,
+    current_academy_id,
+    current_tenant_origins,
+    tenant_scope,
+)
 
 from .event_handlers import HandlerDeps, install_handlers
 
@@ -1504,9 +1509,25 @@ def compose_parent(
         return {"invoice": invoice, "lines": lines}
 
     def _validate_checkout_redirect_urls(*urls: str) -> None:
-        _allowed = settings.cors_allowed_origins()
+        # Static env-var origins PLUS the request's resolved tenant origins
+        # (rebuilt from stored slug/verified domains, never the raw Host), so a
+        # newly onboarded academy can check out on its own host without a
+        # CORS_ORIGINS edit.
+        _tenant_origins = current_tenant_origins()
+        _allowed = (*settings.cors_allowed_origins(), *_tenant_origins)
         for url in urls:
-            validate_redirect_url(url, allowed_origins=_allowed)
+            try:
+                validate_redirect_url(url, allowed_origins=_allowed)
+            except InvalidRedirectUrl:
+                if not _tenant_origins:
+                    # Resolvable host but no derivable origins — typically an
+                    # unverified custom_domain. Ops needs to see this: the
+                    # tenant is browsable but cannot pay.
+                    log.info(
+                        "checkout_redirect_rejected_without_tenant_origins url=%s",
+                        url,
+                    )
+                raise
 
     async def start_invoice_payment_for_parent(
         *,

@@ -50,3 +50,20 @@ def test_rejects_http_when_only_https_allowlisted() -> None:
         validate_redirect_url(
             "http://app.example.com/x", allowed_origins=["https://app.example.com"]
         )
+
+
+def test_accepts_a_tenant_origin_supplied_alongside_the_static_list() -> None:
+    """The tenant-aware allowlist (defect: newly onboarded academies could not
+    check out) simply extends the iterable — the matcher itself is unchanged."""
+    tenant_origin = "https://blno-badminton.courtmastr.com"
+    url = f"{tenant_origin}/parent/checkout/return"
+    assert validate_redirect_url(url, allowed_origins=[*ALLOWED, tenant_origin]) == url
+
+
+def test_sibling_host_on_the_same_apex_is_still_rejected() -> None:
+    """Widening for one tenant must not widen for its neighbours."""
+    with pytest.raises(InvalidRedirectUrl):
+        validate_redirect_url(
+            "https://other-academy.courtmastr.com/pay",
+            allowed_origins=[*ALLOWED, "https://blno-badminton.courtmastr.com"],
+        )

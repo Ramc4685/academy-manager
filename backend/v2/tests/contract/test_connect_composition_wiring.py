@@ -30,6 +30,7 @@ from backend.v2.contexts.billing.infrastructure.mongo_connected_account_repo imp
     MongoConnectedAccountRepository,
 )
 from backend.v2.shared.security.redirect import InvalidRedirectUrl
+from backend.v2.shared.tenancy import current_tenant_origins, tenant_origins_scope
 
 
 class _SubscriptionRepo:
@@ -212,3 +213,44 @@ async def test_autopay_setup_checkout_drives_real_connected_account_repo(db, aca
     )
 
     assert stripe.autopay_setup_checkouts[0]["connected_account_id"] == "acct_ready"
+
+
+async def test_allowed_origins_callable_is_evaluated_per_call(db, acad) -> None:
+    """Composition passes a CALLABLE so the request's resolved tenant origins
+    (absent from the static env-var list) are picked up per call rather than
+    frozen at construction — an admin onboarding Stripe from their own academy
+    host must not be rejected."""
+    stripe = FakeStripeGateway()
+    repo = MongoConnectedAccountRepository(db)
+    use_case = StartConnectOnboarding(
+        stripe=stripe,
+        connected_accounts=repo,
+        allowed_redirect_origins=lambda: (*_ALLOWED_ORIGINS, *current_tenant_origins()),
+        academy_id=acad,
+    )
+
+    tenant_origin = "https://blno-badminton.courtmastr.com"
+
+    # Outside a tenant scope the dynamic host is NOT allowlisted.
+    with pytest.raises(InvalidRedirectUrl):
+        await use_case.start(
+            academy_id=acad,
+            refresh_url=f"{tenant_origin}/refresh",
+            return_url=f"{tenant_origin}/return",
+        )
+
+    with tenant_origins_scope((tenant_origin,)):
+        result = await use_case.start(
+            academy_id=acad,
+            refresh_url=f"{tenant_origin}/refresh",
+            return_url=f"{tenant_origin}/return",
+        )
+        assert result["academy_id"] == acad
+
+        # Widening for this tenant does not widen for anyone else.
+        with pytest.raises(InvalidRedirectUrl):
+            await use_case.start(
+                academy_id=acad,
+                refresh_url="https://evil.example/refresh",
+                return_url=f"{tenant_origin}/return",
+            )

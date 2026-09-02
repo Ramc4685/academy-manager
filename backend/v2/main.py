@@ -170,7 +170,7 @@ from backend.v2.interfaces.registration_routes import router as registration_rou
 from backend.v2.interfaces.student.router import router as student_router
 from backend.v2.interfaces.unsubscribe_routes import router as unsubscribe_router
 from backend.v2.migrations import run_pending_migrations
-from backend.v2.shared.auth.middleware import TenancyMiddleware
+from backend.v2.shared.auth.middleware import LoadTenantOriginsCallable, TenancyMiddleware
 from backend.v2.shared.caching import TTLCache
 from backend.v2.shared.config import Settings, get_settings
 from backend.v2.shared.events import EventDispatcher, MongoOutbox
@@ -198,8 +198,9 @@ from backend.v2.shared.observability.ops_digest import (
     render_ops_digest,
 )
 from backend.v2.shared.scheduling import job_lease
-from backend.v2.shared.tenancy.context import tenant_scope
+from backend.v2.shared.tenancy.context import current_tenant_origins, tenant_scope
 from backend.v2.shared.tenancy.lookup_cache import CachingAcademyLookup
+from backend.v2.shared.tenancy.origins import TenantOriginsResolver
 from backend.v2.shared.tenancy.resolver import (
     TenantResolutionError,
     TenantResolver,
@@ -364,6 +365,19 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         if settings.saas_mode
         else None
     )
+    # Per-tenant redirect origins. Rebuilt from the academy's stored slug +
+    # verified domains (never the request Host) so a dynamically onboarded
+    # academy can pass the Stripe redirect allowlist on its own host without
+    # an env-var edit. SaaS mode only: single-tenant deployments already have
+    # their one host in CORS_ORIGINS/FRONTEND_URL.
+    app.state.tenant_origins_resolver = (
+        TenantOriginsResolver(
+            _AcademyOriginLookupAdapter(MongoAcademyRepository(db)),
+            frontend_url=settings.frontend_url,
+        )
+        if settings.saas_mode
+        else None
+    )
     app.state.saas_mode = settings.saas_mode
     app.state.tenancy_mode = settings.tenancy_mode
     app.state.primary_academy_id = settings.primary_academy_id
@@ -426,7 +440,13 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.platform_connect_onboarding = StartConnectOnboarding(
         stripe=stripe_gw,
         connected_accounts=MongoConnectedAccountRepository(db),
-        allowed_redirect_origins=settings.cors_allowed_origins(),
+        # Callable, not a frozen list: an admin onboarding Stripe from their own
+        # tenant host needs that host allowlisted too (same defect as parent
+        # checkout). Tenant origins come from stored records, never the Host.
+        allowed_redirect_origins=lambda: (
+            *settings.cors_allowed_origins(),
+            *current_tenant_origins(),
+        ),
     )
 
     # Admin BFF wiring (Wave 3).
@@ -1577,6 +1597,8 @@ class _LazyTenancyMiddleware(TenancyMiddleware):
             self._resolve_tenant = _build_request_tenant_resolver(request.app)
         if self._check_tenant_servable is None:
             self._check_tenant_servable = _build_tenant_servability_checker(request.app)
+        if self._load_tenant_origins is None:
+            self._load_tenant_origins = _build_tenant_origins_loader(request.app)
         return await super().dispatch(request, call_next)
 
 
@@ -1612,6 +1634,23 @@ def _build_request_tenant_resolver(app: FastAPI):
         return default_academy_id
 
     return _resolve
+
+
+def _build_tenant_origins_loader(app: FastAPI) -> LoadTenantOriginsCallable:
+    """Build the per-request tenant-origins loader used by the middleware.
+
+    Returns ``()`` outside SaaS mode (or before the lifespan has run), which
+    leaves the redirect allowlist exactly as it was: static origins only.
+    """
+
+    resolver: TenantOriginsResolver | None = getattr(app.state, "tenant_origins_resolver", None)
+
+    async def _load(academy_id: str) -> tuple[str, ...]:
+        if resolver is None:
+            return ()
+        return await resolver.for_academy(academy_id)
+
+    return _load
 
 
 def _build_tenant_servability_checker(app: FastAPI):
@@ -1741,6 +1780,31 @@ class _AcademyLookupAdapter:
     async def exists(self, academy_id: str) -> bool:
         doc = await self._collection.find_one({"academy_id": academy_id})
         return doc is not None
+
+
+class _AcademyOriginLookupAdapter:
+    """Adapt ``MongoAcademyRepository`` to ``AcademyOriginLookupPort``.
+
+    Deliberately STRICTER than ``_AcademyLookupAdapter.find_by_domain``, which
+    also matches an unverified ``custom_domain`` field on the academy row. Only
+    ``academy_domains`` rows with ``status == "verified"`` are returned here: a
+    domain nobody has proven ownership of must never be allowlisted as a Stripe
+    redirect target. ``primary_domain`` is included only when it *also* appears
+    as a verified row (tenant creation writes it there).
+    """
+
+    def __init__(self, academies: MongoAcademyRepository) -> None:
+        self._collection = academies.collection
+        self._domains = academies.collection.database["academy_domains"]
+
+    async def routing_identity(self, academy_id: str) -> tuple[str | None, tuple[str, ...]]:
+        doc = await self._collection.find_one({"academy_id": academy_id}, {"slug": 1, "_id": 0})
+        slug = (doc or {}).get("slug")
+        cursor = self._domains.find(
+            {"academy_id": academy_id, "status": "verified"}, {"domain": 1, "_id": 0}
+        )
+        domains = [row["domain"] async for row in cursor if row.get("domain")]
+        return slug, tuple(domains)
 
 
 app = create_app()

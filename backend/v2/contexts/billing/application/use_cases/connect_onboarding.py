@@ -8,7 +8,7 @@ just refreshes the link.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 from backend.v2.contexts.billing.application.ports import (
@@ -38,14 +38,25 @@ class StartConnectOnboarding:
         *,
         stripe: StripeGateway,
         connected_accounts: ConnectedAccountRepository,
-        allowed_redirect_origins: Iterable[str],
+        allowed_redirect_origins: Iterable[str] | Callable[[], Iterable[str]],
         academy_id: str | None = None,
     ) -> None:
         self._stripe = stripe
         self._connected_accounts = connected_accounts
-        # Materialize once: the allowlist is read on every start() call.
-        self._allowed_redirect_origins = tuple(allowed_redirect_origins)
+        # A callable is evaluated per call so the allowlist can include the
+        # REQUEST's resolved tenant origins (dynamically onboarded academies
+        # are not in the static env-var list). A plain iterable is materialized
+        # once, as before, for the static/test case.
+        self._allowed_redirect_origins: tuple[str, ...] | Callable[[], Iterable[str]] = (
+            allowed_redirect_origins
+            if callable(allowed_redirect_origins)
+            else tuple(allowed_redirect_origins)
+        )
         self._academy_id = academy_id
+
+    def _current_allowed_origins(self) -> tuple[str, ...]:
+        source = self._allowed_redirect_origins
+        return tuple(source()) if callable(source) else source
 
     async def start(
         self,
@@ -62,8 +73,9 @@ class StartConnectOnboarding:
         # Same allowlist as parent checkout redirects: these URLs become browser
         # redirects via Stripe's hosted onboarding, so an unvalidated value is an
         # open-redirect vector (raises InvalidRedirectUrl on a bad origin).
+        allowed_origins = self._current_allowed_origins()
         for url in (refresh_url, return_url):
-            validate_redirect_url(url, allowed_origins=self._allowed_redirect_origins)
+            validate_redirect_url(url, allowed_origins=allowed_origins)
 
         with tenant_scope(academy_id):
             existing = await self._connected_accounts.get_for_academy()
