@@ -57,6 +57,46 @@ class CapacityExceeded(DomainError):
     status_code = 409
 
 
+class SessionNotEnrollable(DomainError):
+    """The session exists but its status does not accept new enrollments.
+
+    Distinct from `CapacityExceeded` on purpose: a cancelled or completed
+    session also fails the atomic `try_reserve_seat` predicate, and reporting
+    that as "session full" sent admins hunting for a capacity problem that
+    was not there (issue #610).
+    """
+
+    code = "Enrollment.SessionNotEnrollable"
+    status_code = 409
+
+
+class SeatCounterDrift(DomainError):
+    """`reserved_seats` says full while the roster is under capacity.
+
+    Reported, never auto-reconciled. `reserved_seats` is a shared counter that
+    every enrollment path increments *before* writing its row, so being ahead
+    of the active-enrollment count is a legitimate transient state during an
+    in-flight parent checkout. A repair write here would clobber a live
+    reservation and oversell the session; reconciliation is an explicit ops
+    action.
+    """
+
+    code = "Enrollment.SeatCounterDrift"
+    status_code = 409
+
+
+class StudentAlreadyOnRoster(DomainError):
+    """This student already holds an active or paused enrollment here.
+
+    There is no unique (session, student) index — prod already carries
+    duplicate active rows — so this is enforced by an application pre-check
+    plus a `DuplicateKeyError` backstop, not by the database.
+    """
+
+    code = "Enrollment.StudentAlreadyOnRoster"
+    status_code = 409
+
+
 class EnrollmentAlreadyConfirmed(DomainError):
     code = "Enrollment.AlreadyConfirmed"
     status_code = 409

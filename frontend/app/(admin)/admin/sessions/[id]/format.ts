@@ -73,6 +73,58 @@ export function sessionDateLabel(session: AdminSessionView): string {
   });
 }
 
+// --- Communication pack (#613) ---------------------------------------------
+
+export interface CommunicationPack {
+  whatsapp_group_link: string | null;
+  venue_address: string | null;
+  parking_notes: string | null;
+  what_to_bring: string | null;
+  arrival_minutes_before: number | null;
+  coach_contact_policy: string | null;
+  absence_policy: string | null;
+}
+
+export function communicationPackFields(session: AdminSessionView): CommunicationPack {
+  return {
+    whatsapp_group_link: session.whatsapp_group_link ?? null,
+    venue_address: session.venue_address ?? null,
+    parking_notes: session.parking_notes ?? null,
+    what_to_bring: session.what_to_bring ?? null,
+    arrival_minutes_before: session.arrival_minutes_before ?? null,
+    coach_contact_policy: session.coach_contact_policy ?? null,
+    absence_policy: session.absence_policy ?? null,
+  };
+}
+
+export function hasCommunicationPack(session: AdminSessionView): boolean {
+  return Object.values(communicationPackFields(session)).some(
+    (value) => value !== null && String(value).trim() !== "",
+  );
+}
+
+export function formatArrivalMinutes(minutes: number | null | undefined): string {
+  if (minutes == null) return "";
+  return `${minutes} minute${minutes === 1 ? "" : "s"} before start`;
+}
+
+/** Empty string is how the form clears a field; send null so the API clears it. */
+export function blankToNull(value: string): string | null {
+  const trimmed = value.trim();
+  return trimmed === "" ? null : trimmed;
+}
+
+/**
+ * Client-side hint only. The server is the authority (it enforces a scheme
+ * allowlist twice), so this never blocks a submit — it just stops the obvious
+ * paste mistake before a round trip.
+ */
+export function looksLikeWebUrl(value: string): boolean {
+  const trimmed = value.trim();
+  if (trimmed === "") return true;
+  return /^https?:\/\/\S+$/i.test(trimmed);
+}
+
 export function buildEditSessionForm(session: AdminSessionView): EditSessionRequest {
   const common = {
     coach_id: session.coach_id,
@@ -80,6 +132,11 @@ export function buildEditSessionForm(session: AdminSessionView): EditSessionRequ
     location: session.location,
     capacity: session.capacity,
     amount_cents: session.amount_cents,
+    // Communication pack (#613). A field missing from this seed shows the
+    // admin an empty box for a value that IS set, and because the PATCH body
+    // is built with exclude_unset the stored value quietly survives — so the
+    // form looks broken while the data is fine.
+    ...communicationPackFields(session),
     reason: "",
   };
   if (hasRecurringSchedule(session)) {

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Literal
 
 from pymongo.errors import DuplicateKeyError
@@ -20,12 +21,60 @@ class MongoStudentWriter(TenantScopedRepository):
     collection_name = "students"
 
     async def upsert(self, student: Student) -> None:
+        """Write the WHOLE student model.
+
+        Only safe for callers that legitimately own the full profile — today
+        that is registration approval (which carries date_of_birth and the
+        emergency contacts off the approved application) and the checkout
+        confirm path (which always mints a fresh id, so its upsert is always
+        an insert). Everything else must use `ensure_exists`: this `$set`
+        re-sends every unsupplied optional field as `None`, and on an existing
+        student that erases date_of_birth, emergency_contact_name,
+        emergency_contact_phone, medical_notes and `student_user_id` — the
+        last of which silently drops the partial index entry from migration
+        0150 and locks the student out of their own login (issue #610).
+        """
         doc = student.model_dump(mode="python")
         await self._update_one(
             {"student_id": student.student_id},
             {"$set": {k: v for k, v in doc.items() if k != "academy_id"}},
             upsert=True,
         )
+
+    async def ensure_exists(self, student: Student) -> bool:
+        """Insert the student if absent; leave an existing row untouched.
+
+        `$setOnInsert` only, and deliberately naming just the identity fields
+        — no profile field appears in the update document at all, so there is
+        no way for this path to clobber one.
+
+        Returns True when a row was created.
+
+        `DuplicateKeyError` is deliberately NOT swallowed. Migration 0010 built
+        `student_id_unique` on the bare `student_id` field — globally unique,
+        not per-academy — while this filter is tenant-scoped, so a students doc
+        owned by another academy (or a legacy pre-tenancy row) makes the filter
+        miss, the upsert degrade to an insert, and Mongo reject it with E11000.
+        That was the actual production 500 in #610. Returning False there would
+        be worse than raising: the caller would go on to create an enrollment
+        pointing at a student that does not exist in this tenant. Migration
+        0160 scopes the index; until then the caller releases its seat and
+        surfaces a 409.
+        """
+        result = await self._update_one(
+            {"student_id": student.student_id},
+            {
+                "$setOnInsert": {
+                    "student_id": student.student_id,
+                    "parent_id": student.parent_id,
+                    "full_name": student.full_name,
+                    "status": "active",
+                    "created_at": datetime.now(UTC),
+                }
+            },
+            upsert=True,
+        )
+        return bool(getattr(result, "upserted_id", None))
 
     async def link_student_user(self, student_id: str, user_id: str) -> StudentUserLinkOutcome:
         """Atomically link a student to their own login `user_id` (UIM12).

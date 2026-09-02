@@ -1323,3 +1323,70 @@ async def test_approve_without_payment_id_never_calls_paid_period_resolver() -> 
 
     assert resolver.calls == []
     assert enrollments.skip_periods == {}
+
+
+# --- #613 welcome email on approval -----------------------------------------
+
+
+class _RecordingWelcomeNotifier:
+    def __init__(self, *, raises: BaseException | None = None) -> None:
+        self.calls: list[dict] = []
+        self._raises = raises
+
+    async def send_welcome(self, **kwargs) -> None:
+        self.calls.append(kwargs)
+        if self._raises is not None:
+            raise self._raises
+
+
+@pytest.mark.asyncio
+async def test_approve_sends_the_parent_welcome_email() -> None:
+    notifier = _RecordingWelcomeNotifier()
+    review = AdminRegistrationReview(
+        apps=InMemoryApplications(_application(student_id=None)),
+        sessions=InMemorySessions([_session()]),
+        students=InMemoryStudents(),
+        enrollments=InMemoryEnrollments(),
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        welcome_notifier=notifier,  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    )
+
+    await review.approve(ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1"))
+
+    assert len(notifier.calls) == 1
+    call = notifier.calls[0]
+    assert call["session_id"] == "sess-1"
+    assert call["parent_user_id"] == "parent-1"
+    assert call["parent_email"] == "parent@example.com"
+    assert call["student_name"]
+
+
+@pytest.mark.asyncio
+async def test_approval_survives_a_failing_welcome_email() -> None:
+    """A Resend outage must never fail a registration approval.
+
+    The send runs after `_complete_review`, so the approval is already
+    durable; raising here would report failure for work that is committed and
+    invite a retry against an already-decided application.
+    """
+    notifier = _RecordingWelcomeNotifier(raises=RuntimeError("resend is down"))
+    apps = InMemoryApplications(_application(student_id=None))
+    review = AdminRegistrationReview(
+        apps=apps,
+        sessions=InMemorySessions([_session()]),
+        students=InMemoryStudents(),
+        enrollments=InMemoryEnrollments(),
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        welcome_notifier=notifier,  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    )
+
+    detail = await review.approve(
+        ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1")
+    )
+
+    assert detail.status == "APPROVED"
+    assert apps.saved[-1].status == "APPROVED"

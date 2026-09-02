@@ -16,6 +16,9 @@ from backend.v2.contexts.communications.domain.email_preferences import EmailPre
 class EmailPreferencesResult:
     campaigns_opted_out: bool
     digests_opted_out: bool
+    #: Staff roster alerts (#612). Defaults False so a caller reading a
+    #: recipient with no stored row still gets "opted in to everything".
+    notifications_opted_out: bool = False
 
 
 @dataclass
@@ -29,4 +32,5 @@ class GetEmailPreferences:
         return EmailPreferencesResult(
             campaigns_opted_out=stored.campaigns_opted_out,
             digests_opted_out=stored.digests_opted_out,
+            notifications_opted_out=stored.notifications_opted_out,
         )

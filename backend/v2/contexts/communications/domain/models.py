@@ -30,7 +30,9 @@ from backend.v2.contexts.communications.domain.errors import InvalidAudienceErro
 # ---------------------------------------------------------------------------
 
 
-AudienceRole = Literal["parent", "coach", "admin"]
+# "owner" joins the vocabulary for #612: roster alerts go to the people who run
+# the academy, and an owner-only academy would otherwise have no staff audience.
+AudienceRole = Literal["parent", "coach", "admin", "owner"]
 
 
 @dataclass(frozen=True, slots=True)

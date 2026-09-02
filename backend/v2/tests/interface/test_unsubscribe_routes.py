@@ -90,17 +90,31 @@ def test_preview_then_confirm_flips_the_flags(client: Any, db: Any) -> None:
 
     before = client.post("/api/v2/unsubscribe/preview", json={"token": token})
     assert before.status_code == 200
-    assert before.json() == {"campaigns_opted_out": False, "digests_opted_out": False}
+    assert before.json() == {
+        "campaigns_opted_out": False,
+        "digests_opted_out": False,
+        "notifications_opted_out": False,
+    }
 
     confirmed = client.post(
         "/api/v2/unsubscribe/confirm",
         json={"token": token, "campaigns": True, "digests": True},
     )
     assert confirmed.status_code == 200
-    assert confirmed.json() == {"campaigns_opted_out": True, "digests_opted_out": True}
+    assert confirmed.json() == {
+        "campaigns_opted_out": True,
+        "digests_opted_out": True,
+        # Omitted from the confirm body: "leave unchanged", not "re-subscribe" (#612).
+        "notifications_opted_out": False,
+    }
 
     after = client.post("/api/v2/unsubscribe/preview", json={"token": token})
-    assert after.json() == {"campaigns_opted_out": True, "digests_opted_out": True}
+    assert after.json() == {
+        "campaigns_opted_out": True,
+        "digests_opted_out": True,
+        # Omitted from the confirm body: "leave unchanged", not "re-subscribe" (#612).
+        "notifications_opted_out": False,
+    }
 
 
 def test_confirm_is_idempotent(client: Any) -> None:
@@ -185,4 +199,53 @@ def test_a_single_academy_deployment_still_works_without_a_resolved_tenant(db: A
         response = client.post("/api/v2/unsubscribe/preview", json={"token": _token()})
 
     assert response.status_code == 200
-    assert response.json() == {"campaigns_opted_out": False, "digests_opted_out": False}
+    assert response.json() == {
+        "campaigns_opted_out": False,
+        "digests_opted_out": False,
+        "notifications_opted_out": False,
+    }
+
+
+def test_notifications_round_trip_and_omission_preserves_them(client: Any) -> None:
+    """Both halves of the #612 deploy trap, in one flow.
+
+    The model forbids unknown keys, so ``notifications`` could not be made
+    required without 422-ing every request from the deployed unsubscribe page;
+    and it could not default to ``False`` without re-subscribing whoever saved
+    from that page. It is optional and means "leave unchanged".
+    """
+    token = _token(user_id="coach-9")
+
+    first = client.post(
+        "/api/v2/unsubscribe/confirm",
+        json={"token": token, "campaigns": False, "digests": False, "notifications": True},
+    )
+    assert first.status_code == 200
+    assert first.json()["notifications_opted_out"] is True
+
+    # An older client saves campaigns only, omitting the new field.
+    second = client.post(
+        "/api/v2/unsubscribe/confirm",
+        json={"token": token, "campaigns": True, "digests": False},
+    )
+    assert second.status_code == 200
+    assert second.json() == {
+        "campaigns_opted_out": True,
+        "digests_opted_out": False,
+        "notifications_opted_out": True,
+    }
+
+
+def test_transactional_is_still_rejected_outright(client: Any) -> None:
+    """Adding a third switchable category must not open a fourth."""
+    response = client.post(
+        "/api/v2/unsubscribe/confirm",
+        json={
+            "token": _token(),
+            "campaigns": True,
+            "digests": True,
+            "notifications": True,
+            "transactional": True,
+        },
+    )
+    assert response.status_code == 422

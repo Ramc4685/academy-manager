@@ -9,7 +9,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from backend.v2.shared.security.external_url import validate_external_url
 
 EnrollmentStatus = Literal["active", "paused", "cancelled", "withdrawn"]
 SessionStatus = Literal["scheduled", "cancelled", "completed"]
@@ -39,6 +41,32 @@ class Session(BaseModel):
     start_time: str | None = None
     end_time: str | None = None
     timezone: str | None = None
+
+    # --- Communication pack (issue #613) ---
+    # Optional, per-session onboarding facts a family needs on day one. Every
+    # field defaults to None and *nothing* here gets a stand-in default: a
+    # blank value must read as "not configured" so the welcome email can omit
+    # the section rather than emailing a placeholder.
+    whatsapp_group_link: str | None = Field(default=None, max_length=2048)
+    venue_address: str | None = Field(default=None, max_length=500)
+    parking_notes: str | None = Field(default=None, max_length=500)
+    what_to_bring: str | None = Field(default=None, max_length=500)
+    arrival_minutes_before: int | None = Field(default=None, ge=0, le=120)
+    coach_contact_policy: str | None = Field(default=None, max_length=500)
+    absence_policy: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("whatsapp_group_link")
+    @classmethod
+    def _validate_group_link(cls, value: str | None) -> str | None:
+        """The invariant, not the UX check.
+
+        The interface request models run the same validator so a bad paste is
+        a 422; this one makes "only an http(s) link is ever persisted" true
+        for every writer, including migrations and scripts. The link is
+        rendered as an email ``href``, where escaping alone would not stop a
+        ``javascript:`` scheme.
+        """
+        return validate_external_url(value, field_label="WhatsApp group link")
 
 
 class SessionOccurrence(BaseModel):

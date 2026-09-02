@@ -41,6 +41,8 @@ from backend.v2.composition.pathway import (
     compose_curriculum,
     compose_student_progress,
 )
+from backend.v2.composition.roster_notifications import compose_enrollment_notifiers
+from backend.v2.composition.session_announcements import compose_announcements
 from backend.v2.contexts.billing.application.admin_money import (
     coerce_report_datetime,
     invoice_outstanding_cents,
@@ -342,6 +344,7 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_self_service_policy_rep
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import (
     MongoSessionRepository,
+    admin_session_projection_fields,
     session_start_sort_key,
     synthesize_recurring_session_docs,
 )
@@ -685,24 +688,34 @@ def compose_admin(
         outbox=outbox,
         academy_id=academy_id,
     )
+    # #613 welcome email + #612 roster alerts, built together so this file
+    # stays wiring (see composition/roster_notifications.py).
+    notifiers = compose_enrollment_notifiers(db, settings, users=users_r)
     edit_roster_add = EditRosterAdd(
         sessions=sessions_w,
         enrollments=enrollments_w,
         students=students_w,
         enrollment_events=enrollment_events,
-        academy_id=academy_id,
+        welcome_notifier=notifiers.welcome,
+        roster_notifier=notifiers.roster,
+        # Request-time tenant, same shape as PromoteFromWaitlist below. The
+        # boot-frozen value only ever reached the lifecycle event and the
+        # returned object (the Mongo writers re-stamp from the ContextVar).
+        academy_id=request_academy_id,
     )
     cancel_enrollment = CancelEnrollment(
         enrollments=enrollments_w,
         sessions=sessions_w,
         outbox=outbox,
         enrollment_events=enrollment_events,
+        roster_notifier=notifiers.roster,
         academy_id=academy_id,
     )
     transfer_enrollment = TransferEnrollment(
         enrollments=enrollments_w,
         sessions=sessions_w,
         enrollment_events=enrollment_events,
+        roster_notifier=notifiers.roster,
     )
     override_enrollment_fee = OverrideEnrollmentFee(enrollments=enrollments_w)
     pause_enrollment = PauseEnrollment(
@@ -726,6 +739,7 @@ def compose_admin(
     withdraw_enrollment = WithdrawEnrollment(
         enrollments=enrollments_w,
         enrollment_events=enrollment_events,
+        roster_notifier=notifiers.roster,
     )
     join_waitlist = JoinWaitlist(
         waitlist=waitlist,
@@ -738,6 +752,7 @@ def compose_admin(
         enrollments=enrollments_w,
         outbox=outbox,
         enrollment_events=enrollment_events,
+        roster_notifier=notifiers.roster,
         academy_id=request_academy_id,
     )
     skip = SkipFromWaitlist(waitlist=waitlist)
@@ -952,17 +967,15 @@ def compose_admin(
     tuition_discount_summary = MongoTuitionDiscountSummaryQuery(db)
 
     # Comms
-    messages_repo = MongoMessageRepository(db)
-    comms = CommsService(messages=messages_repo, academy_id=academy_id)
+    comms = CommsService(messages=MongoMessageRepository(db), academy_id=academy_id)
 
-    _s = settings
     # Real delivery needs email_delivery_enabled + resend_api_key AND an
     # approved environment (staging/prod). The gate lives in exactly one place,
     # digests.py::_build_email_sender, so a dev or test stack that has inherited
     # delivery flags and Resend credentials cannot mail real families through
     # any composition (AGENTS.md: "Do not send real email from local/test
     # environments").
-    _email_sender = _build_email_sender(_s, db)
+    _email_sender = _build_email_sender(settings, db)
     _email_sender_is_real = is_real_email_sender(_email_sender)
 
     product_repo = MongoProductRepository(db)
@@ -1677,7 +1690,7 @@ def compose_admin(
         )
         return created.model_dump(mode="json")
 
-    send_campaign = compose_send_campaign(db, _email_sender, _s)
+    send_campaign = compose_send_campaign(db, _email_sender, settings)
     waivers_repo = MongoAdminWaiverRepository(db)
     list_admin_waivers = ListAdminWaivers(waivers_repo)
     waiver_templates_repo = MongoWaiverTemplateRepository(db)
@@ -1698,6 +1711,8 @@ def compose_admin(
             refunds=_RegistrationRefundExecutor(issue_refund),
         ),
         paid_period_resolver=CheckoutPaidPeriodResolver(payments_repo),
+        welcome_notifier=notifiers.welcome,
+        roster_notifier=notifiers.roster,
         academy_id=None,
     )
     # Identity / Settings
@@ -2105,6 +2120,11 @@ def compose_admin(
                     "start_time": doc.get("start_time"),
                     "end_time": doc.get("end_time"),
                     "timezone": doc.get("timezone"),
+                    # amount_cents (#609) + the communication pack (#613).
+                    # GET/LIST render from THIS dict while POST/PATCH render
+                    # from the aggregate, so anything missing here reverts on
+                    # reload without an error.
+                    **admin_session_projection_fields(doc),
                 }
             )
 
@@ -4598,6 +4618,7 @@ def compose_admin(
         get_projected_income=make_projected_income_report(db),
         list_enrollment_events=make_list_enrollment_events(db),
         comms=comms,
+        session_announcements=compose_announcements(db, settings, comms=comms, users=users_r),
         send_campaign=send_campaign,
         list_admin_waivers=list_admin_waivers,
         admin_registration_review=admin_registration_review,

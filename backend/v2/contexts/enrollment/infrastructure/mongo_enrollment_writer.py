@@ -185,6 +185,11 @@ class MongoEnrollmentWriter(TenantScopedRepository):
         cursor = self._find_many({"cancelled_by": "parent"}, sort=[("cancelled_at", -1)])
         return [self._to_domain(doc) async for doc in cursor]
 
+    async def count_active_for_session(self, session_id: str) -> int:
+        return await self.collection.count_documents(
+            self._scoped({"session_id": session_id, "status": "active"})
+        )
+
     async def find_for_session_student(self, session_id: str, student_id: str) -> Enrollment | None:
         base_filter = {"session_id": session_id, "student_id": student_id}
         doc = await self._find_one({**base_filter, "status": "active"})

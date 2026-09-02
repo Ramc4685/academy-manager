@@ -40,6 +40,8 @@ def _to_preferences(doc: dict[str, Any]) -> EmailPreferences:
         email=doc.get("email"),
         campaigns_opted_out=bool(doc.get("campaigns_opted_out", False)),
         digests_opted_out=bool(doc.get("digests_opted_out", False)),
+        # Absent field == opted in, so #612 needs no backfill migration.
+        notifications_opted_out=bool(doc.get("notifications_opted_out", False)),
         opted_out_at=doc.get("opted_out_at"),
         source=doc.get("source"),
         updated_at=doc.get("updated_at"),
@@ -67,13 +69,22 @@ class MongoEmailPreferenceRepository(TenantScopedRepository, EmailPreferenceRepo
         campaigns_opted_out: bool,
         digests_opted_out: bool,
         source: str,
+        notifications_opted_out: bool | None = None,
     ) -> EmailPreferences:
         now = datetime.now(UTC)
-        opted_out_any = campaigns_opted_out or digests_opted_out
+        if notifications_opted_out is None:
+            # "Leave unchanged" (#612): a caller that does not know about the
+            # roster-alert category must not flip it. Read-then-write is a
+            # benign race here — the loser of two concurrent saves is a
+            # preference write the recipient made themselves, seconds apart.
+            existing = await self.get(user_id)
+            notifications_opted_out = bool(existing and existing.notifications_opted_out)
+        opted_out_any = campaigns_opted_out or digests_opted_out or notifications_opted_out
         update: dict[str, Any] = {
             "$set": {
                 "campaigns_opted_out": campaigns_opted_out,
                 "digests_opted_out": digests_opted_out,
+                "notifications_opted_out": notifications_opted_out,
                 "source": source,
                 "updated_at": now,
                 # Cleared when the recipient opts back in, so the field always

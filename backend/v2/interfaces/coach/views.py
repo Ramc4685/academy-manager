@@ -9,13 +9,14 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from backend.v2.contexts.coaching.application.use_cases.generate_daily_teaching_plan import (
     DailyTeachingPlan,
     LevelTeachingGroup,
     UnplacedStudent,
 )
+from backend.v2.shared.comms import MAX_ANNOUNCEMENT_BODY
 
 # Client-generated ULID (Crockford base32, 26 chars). Constrained because it is
 # used as an idempotency-key component and becomes the attendance primary key —
@@ -293,6 +294,48 @@ class CoachMessageView(BaseModel):
     body: str
     created_at: datetime
     read: bool
+    scope_label: str | None = None
+    urgency: Literal["routine", "urgent"] = "routine"
+    author_display_name: str | None = None
+
+
+class CoachSessionAnnouncementPostRequest(BaseModel):
+    body: str = Field(min_length=1, max_length=MAX_ANNOUNCEMENT_BODY)
+    urgent: bool = False
+
+    @field_validator("body")
+    @classmethod
+    def _non_blank(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("announcement body must not be blank")
+        return stripped
+
+
+class CoachSessionAnnouncementView(BaseModel):
+    message_id: str
+    session_id: str
+    body: str
+    urgency: Literal["routine", "urgent"]
+    author_id: str
+    author_display_name: str | None = None
+    author_persona: Literal["admin", "coach", "parent"]
+    created_at: datetime
+    #: Whether THIS viewer may delete it. Computed server-side (admin: always;
+    #: coach: only their own posts) so the client never has to re-derive an
+    #: authorization rule the API is the authority on.
+    can_delete: bool = False
+
+
+class CoachSessionAnnouncementList(BaseModel):
+    announcements: list[CoachSessionAnnouncementView]
+
+
+class CoachSessionAnnouncementPostResponse(BaseModel):
+    announcement: CoachSessionAnnouncementView
+    email_status: Literal["skipped", "sent", "no_recipients", "failed"]
+    sent_count: int = 0
+    failed_count: int = 0
 
 
 class CoachMessagesResponse(BaseModel):

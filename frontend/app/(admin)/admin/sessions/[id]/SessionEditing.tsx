@@ -21,12 +21,14 @@ import { CoachSelect, DaySelect } from "./dialogs";
 import {
   actionCellClass,
   actionHeaderClass,
+  blankToNull,
   buildEditSessionForm,
   centsToDollarsInput,
   dateInputValueFromOffset,
   dollarsInputToCents,
   hasRecurringSchedule,
   inputClass,
+  looksLikeWebUrl,
   sessionDateLabel,
   toDateInputValue,
   todayDateInput,
@@ -381,6 +383,7 @@ export function SessionEditDialog({
             pricing is not configured; enter 0 for an explicitly free session.
           </p>
         </Field>
+        <CommunicationPackSection form={form} setForm={setForm} />
         <Field label="Reason">
           <input
             value={form.reason ?? ""}
@@ -399,5 +402,124 @@ export function SessionEditDialog({
         </DialogActions>
       </form>
     </RallyDialog>
+  );
+}
+
+/**
+ * Optional per-session onboarding facts (#613). Collapsed by default: it is a
+ * long, rarely-edited block and the dialog's common job is a time or capacity
+ * change. Plain controlled state and a plain button rather than a new ds
+ * primitive — the design system has no accordion, and one dialog is not a
+ * reason to add one.
+ */
+function CommunicationPackSection({
+  form,
+  setForm,
+}: {
+  form: EditSessionRequest;
+  setForm: React.Dispatch<React.SetStateAction<EditSessionRequest>>;
+}) {
+  const [open, setOpen] = useState(false);
+  const link = form.whatsapp_group_link ?? "";
+  const linkLooksWrong = !looksLikeWebUrl(link);
+
+  const setText = (key: keyof EditSessionRequest) => (value: string) =>
+    // Empty string must become null, or clearing a box would leave the old
+    // value in place (the API only clears on an explicit null).
+    setForm((f) => ({ ...f, [key]: blankToNull(value) }));
+
+  return (
+    <div className="rounded-md border border-rally-line">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between px-3 py-2 text-left text-sm font-medium text-rally-ink"
+      >
+        <span>Communication pack (optional)</span>
+        <span aria-hidden className="text-rally-muted">{open ? "−" : "+"}</span>
+      </button>
+      {open ? (
+        <div className="space-y-3 border-t border-rally-line px-3 py-3">
+          <p className="text-xs text-rally-muted">
+            These details are emailed to a family when they join this session. Leave anything
+            blank to keep it out of the email.
+          </p>
+          <Field label="WhatsApp group link">
+            <input
+              type="url"
+              inputMode="url"
+              value={link}
+              onChange={(event) => setText("whatsapp_group_link")(event.target.value)}
+              className={inputClass}
+              placeholder="https://chat.whatsapp.com/..."
+            />
+            {linkLooksWrong ? (
+              <p className="text-xs text-amber-700">
+                Paste the full invite link, starting with https://
+              </p>
+            ) : null}
+          </Field>
+          <Field label="Venue address">
+            <textarea
+              rows={2}
+              value={form.venue_address ?? ""}
+              onChange={(event) => setText("venue_address")(event.target.value)}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Parking notes">
+            <textarea
+              rows={2}
+              value={form.parking_notes ?? ""}
+              onChange={(event) => setText("parking_notes")(event.target.value)}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="What to bring">
+            <textarea
+              rows={2}
+              value={form.what_to_bring ?? ""}
+              onChange={(event) => setText("what_to_bring")(event.target.value)}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Arrive N minutes before class">
+            <input
+              type="number"
+              min={0}
+              max={120}
+              value={form.arrival_minutes_before ?? ""}
+              onChange={(event) =>
+                setForm((f) => ({
+                  ...f,
+                  arrival_minutes_before:
+                    event.target.value.trim() === ""
+                      ? null
+                      : Math.max(0, Math.min(120, parseInt(event.target.value, 10) || 0)),
+                }))
+              }
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Coach contact policy">
+            <textarea
+              rows={2}
+              value={form.coach_contact_policy ?? ""}
+              onChange={(event) => setText("coach_contact_policy")(event.target.value)}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Absence & make-up policy">
+            <textarea
+              rows={3}
+              value={form.absence_policy ?? ""}
+              onChange={(event) => setText("absence_policy")(event.target.value)}
+              className={inputClass}
+            />
+          </Field>
+        </div>
+      ) : null}
+    </div>
   );
 }

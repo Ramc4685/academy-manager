@@ -131,6 +131,17 @@ class MongoSessionRepository(TenantScopedRepository):
             start_time=None if doc.get("start_time") is None else str(doc.get("start_time")),
             end_time=None if doc.get("end_time") is None else str(doc.get("end_time")),
             timezone=None if doc.get("timezone") is None else str(doc.get("timezone")),
+            # Communication pack (#613). This constructor is explicit, so a
+            # field missing here is dropped on EVERY domain read — the admin
+            # detail route, the coach views, and the welcome email's own
+            # session lookup.
+            whatsapp_group_link=_optional_str(doc.get("whatsapp_group_link")),
+            venue_address=_optional_str(doc.get("venue_address")),
+            parking_notes=_optional_str(doc.get("parking_notes")),
+            what_to_bring=_optional_str(doc.get("what_to_bring")),
+            arrival_minutes_before=_optional_int(doc.get("arrival_minutes_before")),
+            coach_contact_policy=_optional_str(doc.get("coach_contact_policy")),
+            absence_policy=_optional_str(doc.get("absence_policy")),
         )
 
     async def for_coach_on_date(self, coach_id: str, on_date: date) -> list[Session]:
@@ -140,6 +151,23 @@ class MongoSessionRepository(TenantScopedRepository):
             sort=[("start_at", 1)],
         )
         return [self._to_domain(doc) async for doc in cursor]
+
+    async def assigned_session_ids_for_coach(self, coach_id: str) -> list[str]:
+        """Every session assigned to this coach, with no date window at all.
+
+        `for_coach` answers "what is coming up" (`start_at >= now`) and is the
+        wrong question for anything about *assignment*: a recurring template
+        stores one `start_at` computed when the series was created, so a
+        Tue/Thu class started two months ago is permanently in the past by
+        that filter while still running. Announcement visibility must agree
+        with `CoachAssignedSessionLookup.is_coach_assigned`, which gates on
+        `coach_id` alone — otherwise a coach can post to a session whose
+        announcements they can never read.
+        """
+        cursor = self._find_many_in_collection(
+            self.collection_name, {"coach_id": coach_id}, {"session_id": 1}
+        )
+        return sorted({str(doc["session_id"]) async for doc in cursor if doc.get("session_id")})
 
     async def for_coach(self, coach_id: str) -> list[Session]:
         now = datetime.now(UTC)
@@ -231,6 +259,57 @@ def _amount_cents(doc: dict[str, object], default_amount_cents: int) -> int:
     if doc.get("monthly_price") is not None:
         return round(float(doc["monthly_price"]) * 100)  # type: ignore[arg-type]
     return default_amount_cents
+
+
+def _optional_str(value: object) -> str | None:
+    """Communication-pack text as stored, with blank treated as unset.
+
+    A legacy or hand-edited doc can carry `""`; the whole feature keys off
+    "populated means render this section", so an empty string must read the
+    same as a missing key.
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _optional_int(value: object) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, (float, str)):
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def admin_session_projection_fields(doc: dict[str, object]) -> dict[str, object | None]:
+    """The read-model fields the admin session projection cannot hand-write safely.
+
+    ``composition/admin.py::_build_admin_session_rows`` builds its row dict by
+    hand, and a field left out of it is invisible: the view defaults it to
+    None, so the value looks correct in the POST/PATCH response (rendered from
+    the aggregate) and silently reverts on the next GET. That is exactly bug
+    #609 for ``amount_cents``. Keeping these here — beside ``_to_domain``, the
+    other doc->model mapper — means one place to add a field to.
+    """
+    return {
+        # Legacy docs carry monthly_price_cents / monthly_price, so a bare
+        # doc.get("amount_cents") is NOT equivalent (#609).
+        "amount_cents": _optional_amount_cents(doc),
+        # Communication pack (#613).
+        "whatsapp_group_link": _optional_str(doc.get("whatsapp_group_link")),
+        "venue_address": _optional_str(doc.get("venue_address")),
+        "parking_notes": _optional_str(doc.get("parking_notes")),
+        "what_to_bring": _optional_str(doc.get("what_to_bring")),
+        "arrival_minutes_before": _optional_int(doc.get("arrival_minutes_before")),
+        "coach_contact_policy": _optional_str(doc.get("coach_contact_policy")),
+        "absence_policy": _optional_str(doc.get("absence_policy")),
+    }
 
 
 def _optional_amount_cents(doc: dict[str, object]) -> int | None:

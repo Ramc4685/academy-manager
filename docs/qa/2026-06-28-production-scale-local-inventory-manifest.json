@@ -1289,7 +1289,8 @@
         "Pause/resume",
         "Transfer/withdrawal",
         "Waitlist actions",
-        "Teaching plan"
+        "Teaching plan",
+        "Post session announcement"
       ],
       "controls": {
         "buttons": [
@@ -1305,7 +1306,9 @@
           "Edit session",
           "Edit occurrence",
           "Save roster action",
-          "Close roster action"
+          "Close roster action",
+          "Post announcement",
+          "Delete announcement"
         ],
         "inputs": [
           "Student search",
@@ -1313,7 +1316,9 @@
           "Effective date",
           "Schedule days",
           "Schedule date",
-          "Replacement coach"
+          "Replacement coach",
+          "Announcement body",
+          "Urgent"
         ],
         "modals": [
           "Roster action",
@@ -1332,7 +1337,9 @@
       "risk_edges": [
         "Seat/waitlist race",
         "Withdrawal credit preview failure",
-        "Stale session id"
+        "Stale session id",
+        "Announcement leaks to non-enrolled family",
+        "Urgent announcement emailed twice"
       ],
       "acceptance": [
         "Roster actions preserve tenant scope and show conflict states",
@@ -1343,7 +1350,11 @@
         "Workflow evidence: \"Teaching plan\" completes for the admin route /admin/sessions/[id] with real-user evidence and no framework or runtime errors.",
         "Risk evidence: \"Seat/waitlist race\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"Withdrawal credit preview failure\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Stale session id\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+        "Risk evidence: \"Stale session id\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Workflow evidence: \"Post session announcement\" completes for the admin route /admin/sessions/[id] with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Announcement leaks to non-enrolled family\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Urgent announcement emailed twice\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Announcements cannot be edited: the UI offers delete-and-repost only, and the copy says an already-emailed announcement cannot be recalled."
       ]
     },
     {
@@ -1746,10 +1757,10 @@
         "submitting",
         "validation error",
         "create failed (email exists)",
-        "created → redirect to user detail"
+        "created \u2192 redirect to user detail"
       ],
       "risk_edges": [
-        "duplicate email → creation fails, surfaced inline",
+        "duplicate email \u2192 creation fails, surfaced inline",
         "parent auto-invite send failure is best-effort (user created, invite re-sendable)"
       ],
       "acceptance": [
@@ -2238,7 +2249,8 @@
         "Mark attendance",
         "Add note",
         "Open skills/passport",
-        "Preview billing move"
+        "Preview billing move",
+        "Post session announcement"
       ],
       "controls": {
         "buttons": [
@@ -2248,11 +2260,15 @@
           "Save note",
           "Skills",
           "Progress",
-          "Billing"
+          "Billing",
+          "Post announcement",
+          "Delete announcement"
         ],
         "inputs": [
           "Progress note",
-          "Preview target session type"
+          "Preview target session type",
+          "Announcement body",
+          "Urgent"
         ],
         "modals": []
       },
@@ -2268,7 +2284,9 @@
         "Optimistic mutation rollback",
         "Late status unsupported in UI",
         "Offline write conflict",
-        "Coach applies a billing change"
+        "Coach applies a billing change",
+        "Unassigned coach posts announcement",
+        "Announcement leaks to non-enrolled family"
       ],
       "acceptance": [
         "Attendance mutation success/failure is visible and idempotent",
@@ -2280,7 +2298,10 @@
         "Risk evidence: \"Offline write conflict\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Workflow evidence: \"Preview billing move\" completes for the coach route /coach/sessions/[id] with real-user evidence and no framework or runtime errors.",
         "Risk evidence: \"Coach applies a billing change\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Coach billing preview is read-only: no apply affordance is rendered and a 403 renders an access-denied state"
+        "Coach billing preview is read-only: no apply affordance is rendered and a 403 renders an access-denied state",
+        "Workflow evidence: \"Post session announcement\" completes for the coach route /coach/sessions/[id] with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Unassigned coach posts announcement\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Announcement leaks to non-enrolled family\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     },
     {
@@ -3215,7 +3236,7 @@
         "error"
       ],
       "risk_edges": [
-        "Nothing may change on page load — a mail scanner's link prefetch must not unsubscribe anyone",
+        "Nothing may change on page load \u2014 a mail scanner's link prefetch must not unsubscribe anyone",
         "Transactional email must not be offered as something to switch off",
         "A token from another academy must be refused, not silently applied"
       ],
@@ -3229,7 +3250,7 @@
         "Workflow evidence: \"Open the emailed unsubscribe link\" completes for the public route /unsubscribe with real-user evidence and no framework or runtime errors.",
         "Workflow evidence: \"Save opt-out choices\" completes for the public route /unsubscribe with real-user evidence and no framework or runtime errors.",
         "Workflow evidence: \"Re-open the link and opt back in\" completes for the public route /unsubscribe with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Nothing may change on page load — a mail scanner's link prefetch must not unsubscribe anyone\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Nothing may change on page load \u2014 a mail scanner's link prefetch must not unsubscribe anyone\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"Transactional email must not be offered as something to switch off\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"A token from another academy must be refused, not silently applied\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]

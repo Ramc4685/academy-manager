@@ -457,6 +457,13 @@ class ParentMessageView(BaseModel):
     body: str
     created_at: datetime
     read: bool
+    #: The session title for a session announcement (#614). Not cosmetic: a
+    #: family with three children in three classes cannot tell WHICH class was
+    #: cancelled without it. The field has existed on ``Message`` all along and
+    #: was simply dropped at this boundary.
+    scope_label: str | None = None
+    urgency: Literal["routine", "urgent"] = "routine"
+    author_display_name: str | None = None
 
 
 class ParentMessagesResponse(BaseModel):

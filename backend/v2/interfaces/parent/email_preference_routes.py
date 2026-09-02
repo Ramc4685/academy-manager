@@ -25,6 +25,7 @@ router = APIRouter(tags=["parent.email-preferences"])
 class EmailPreferencesResponse(BaseModel):
     campaigns_opted_out: bool
     digests_opted_out: bool
+    notifications_opted_out: bool = False
 
 
 class UpdateEmailPreferencesRequest(BaseModel):
@@ -32,6 +33,9 @@ class UpdateEmailPreferencesRequest(BaseModel):
 
     campaigns_opted_out: bool
     digests_opted_out: bool
+    # Optional for the same deploy-order reason as the emailed link's model
+    # (#612): omitted means "leave the roster-alert choice as it is".
+    notifications_opted_out: bool | None = None
 
 
 @router.get(
@@ -47,6 +51,7 @@ async def get_email_preferences(
     return EmailPreferencesResponse(
         campaigns_opted_out=current.campaigns_opted_out,
         digests_opted_out=current.digests_opted_out,
+        notifications_opted_out=current.notifications_opted_out,
     )
 
 
@@ -65,6 +70,7 @@ async def set_email_preferences(
             user_id=claims.user_id,
             campaigns_opted_out=body.campaigns_opted_out,
             digests_opted_out=body.digests_opted_out,
+            notifications_opted_out=body.notifications_opted_out,
             email=getattr(claims, "email", None),
             source="portal",
         )
@@ -72,4 +78,5 @@ async def set_email_preferences(
     return EmailPreferencesResponse(
         campaigns_opted_out=saved.campaigns_opted_out,
         digests_opted_out=saved.digests_opted_out,
+        notifications_opted_out=saved.notifications_opted_out,
     )

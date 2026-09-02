@@ -138,8 +138,15 @@ class EmailPreferenceRepository(Protocol):
         campaigns_opted_out: bool,
         digests_opted_out: bool,
         source: str,
+        notifications_opted_out: bool | None = None,
     ) -> EmailPreferences:
-        """Idempotently record this recipient's choices and return them."""
+        """Idempotently record this recipient's choices and return them.
+
+        ``notifications_opted_out`` (#612) is tri-state on purpose. ``None``
+        means *leave unchanged*, so a client that predates the roster-alert
+        category — the deployed unsubscribe page, until it ships — cannot
+        silently re-subscribe someone by omitting the field.
+        """
         ...
 
 

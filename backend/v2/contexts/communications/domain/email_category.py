@@ -29,6 +29,13 @@ class EmailCategory(StrEnum):
     TRANSACTIONAL = "transactional"  # invoice, dunning, login invite, add-card, dues reminder
     DIGEST = "digest"  # parent daily digest, coach daily digest, coach digest test
     CAMPAIGN = "campaign"  # admin bulk campaigns (SendCampaign)
+    #: Staff roster alerts (#612): "a student joined / left / moved" pings sent
+    #: to the session's coach and to the academy's admins and owners. Operational
+    #: rather than commercial, but it is *unsolicited-by-event* mail a coach may
+    #: reasonably want to stop, so it is unsubscribable. The family-facing side
+    #: of the same events (welcome, waitlist seat opened) stays TRANSACTIONAL:
+    #: those are the record of that family's own enrollment.
+    NOTIFICATION = "notification"
 
 
 #: Categories a recipient may switch off. ``TRANSACTIONAL`` is deliberately
@@ -38,5 +45,5 @@ class EmailCategory(StrEnum):
 #: spam complaint suppresses every category, transactional included, because
 #: the mailbox itself is gone or hostile.
 UNSUBSCRIBABLE_CATEGORIES: frozenset[EmailCategory] = frozenset(
-    {EmailCategory.DIGEST, EmailCategory.CAMPAIGN}
+    {EmailCategory.DIGEST, EmailCategory.CAMPAIGN, EmailCategory.NOTIFICATION}
 )

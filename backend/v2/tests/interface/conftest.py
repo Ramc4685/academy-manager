@@ -87,6 +87,12 @@ class FakeSessionQuery:
                 return s
         return None
 
+    async def for_coach(self, coach_id: str) -> list[Session]:
+        return [s for s in self._sessions if s.coach_id == coach_id]
+
+    async def assigned_session_ids_for_coach(self, coach_id: str) -> list[str]:
+        return sorted({s.session_id for s in self._sessions if s.coach_id == coach_id})
+
 
 class FakeEnrollmentQuery:
     def __init__(self, enrollments: list[Enrollment]) -> None:
@@ -338,6 +344,12 @@ class FakeCoachStudentWriter:
     async def upsert(self, student: Student) -> None:
         self._students[student.student_id] = student
 
+    async def ensure_exists(self, student: Student) -> bool:
+        if student.student_id in self._students:
+            return False
+        self._students[student.student_id] = student
+        return True
+
 
 class FakeAbsenceNoticeQuery:
     """In-memory AbsenceNotice reads for coach-today's expected_absence flag."""
@@ -516,6 +528,27 @@ def _build_use_cases(seed_data) -> CoachUseCases:
     absence_notices = FakeAbsenceNoticeQuery(seed_data.get("absence_notices"))
     occurrence_roster = FakeOccurrenceRosterQuery(seed_data.get("occurrence_roster_entries"))
     _coach_messages_repo = FakeMessageRepo()
+
+    class _CoachMessagesVisibility:
+        """Mirrors composition/coach.py: sessions assigned to this coach (#614)."""
+
+        async def _visible_session_ids(self, coach_id):
+            # Assignment, not the upcoming window: `for_coach` filters
+            # `start_at >= now`, which hides every recurring series whose
+            # stored `start_at` has passed.
+            return await sessions.assigned_session_ids_for_coach(coach_id)
+
+        async def list_messages(self, coach_id):
+            return await _coach_messages_repo.for_recipient(
+                coach_id, visible_session_ids=await self._visible_session_ids(coach_id)
+            )
+
+        async def mark_message_read(self, message_id, user_id):
+            await _coach_messages_repo.mark_read(
+                message_id, user_id, visible_session_ids=await self._visible_session_ids(user_id)
+            )
+
+    _coach_messages_visible = _CoachMessagesVisibility()
 
     # Adapters wiring coach lookups to enrollment queries.
     class _SL:
@@ -711,8 +744,8 @@ def _build_use_cases(seed_data) -> CoachUseCases:
         ).execute,
         get_profile=_async_none,
         update_profile=_async_none,
-        list_messages=_coach_messages_repo.for_recipient,
-        mark_message_read=_coach_messages_repo.mark_read,
+        list_messages=_coach_messages_visible.list_messages,
+        mark_message_read=_coach_messages_visible.mark_message_read,
     )
     use_cases._messages_repo = _coach_messages_repo  # type: ignore[attr-defined]
     return use_cases
@@ -1064,6 +1097,9 @@ class FakeEnrollmentWriter:
             if enrollment.session_id == session_id and enrollment.status == "active"
         ]
 
+    async def count_active_for_session(self, session_id):
+        return len(await self.active_for_session(session_id))
+
     async def is_active(self, session_id, student_id):
         return any(
             enrollment.session_id == session_id
@@ -1144,6 +1180,13 @@ class FakeStudentWriter:
 
     async def upsert(self, student):
         self.students[student.student_id] = student
+
+    async def ensure_exists(self, student) -> bool:
+        """Insert-only, mirroring MongoStudentWriter.ensure_exists."""
+        if student.student_id in self.students:
+            return False
+        self.students[student.student_id] = student
+        return True
 
     async def by_ids(self, student_ids):
         return [
@@ -1504,27 +1547,69 @@ class FakeMessageRepo:
     async def insert(self, m):
         self.rows[m.message_id] = m
 
-    async def for_recipient(self, recipient_id):
+    def _visible(self, m, recipient_id, visible_session_ids) -> bool:
+        """Mirrors MongoMessageRepository._visibility_filter (#614)."""
+        if m.deleted_at is not None:
+            return False
+        if m.recipient_id == recipient_id:
+            return True
+        if m.kind != "announcement":
+            return False
+        if m.scope_type != "session":
+            return True
+        return m.scope_id in set(visible_session_ids)
+
+    async def for_recipient(self, recipient_id, *, visible_session_ids):
+        return sorted(
+            (m for m in self.rows.values() if self._visible(m, recipient_id, visible_session_ids)),
+            key=lambda m: m.created_at,
+            reverse=True,
+        )
+
+    async def for_admin(self, user_id):
         return sorted(
             (
                 m
                 for m in self.rows.values()
-                if m.recipient_id == recipient_id or m.kind == "announcement"
+                if m.deleted_at is None and (m.recipient_id == user_id or m.kind == "announcement")
             ),
             key=lambda m: m.created_at,
             reverse=True,
         )
 
-    async def list_announcements(self):
-        return [m for m in self.rows.values() if m.kind == "announcement"]
+    async def for_session(self, session_id):
+        return sorted(
+            (
+                m
+                for m in self.rows.values()
+                if m.kind == "announcement"
+                and m.scope_type == "session"
+                and m.scope_id == session_id
+                and m.deleted_at is None
+            ),
+            key=lambda m: m.created_at,
+            reverse=True,
+        )
 
-    async def mark_read(self, message_id, user_id):
-        # Mirrors MongoMessageRepository.mark_read: only messages the caller
-        # can actually read (own DM or an announcement) are markable.
+    async def get(self, message_id):
         m = self.rows.get(message_id)
-        if m is None:
-            return
-        if m.recipient_id != user_id and m.kind != "announcement":
+        return m if m is not None and m.deleted_at is None else None
+
+    async def soft_delete(self, message_id, deleted_by):
+        m = self.rows.get(message_id)
+        if m is not None:
+            self.rows[message_id] = m.model_copy(
+                update={"deleted_at": datetime.now(UTC), "deleted_by": deleted_by}
+            )
+
+    async def list_announcements(self):
+        return [m for m in self.rows.values() if m.kind == "announcement" and m.deleted_at is None]
+
+    async def mark_read(self, message_id, user_id, *, visible_session_ids):
+        # Mirrors MongoMessageRepository.mark_read: only messages the caller
+        # can actually read are markable.
+        m = self.rows.get(message_id)
+        if m is None or not self._visible(m, user_id, visible_session_ids):
             return
         if user_id not in m.read_by:
             m.read_by.append(user_id)

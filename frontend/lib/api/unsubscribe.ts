@@ -3,6 +3,8 @@ import { apiFetch } from "./client";
 export interface EmailPreferenceState {
   campaigns_opted_out: boolean;
   digests_opted_out: boolean;
+  /** Roster-change alerts for coaches and academy staff (#612). */
+  notifications_opted_out: boolean;
 }
 
 /**
@@ -36,11 +38,16 @@ export function previewUnsubscribe(token: string): Promise<EmailPreferenceState>
  */
 export function confirmUnsubscribe(
   token: string,
-  choices: { campaigns: boolean; digests: boolean },
+  choices: { campaigns: boolean; digests: boolean; notifications: boolean },
 ): Promise<EmailPreferenceState> {
   return apiFetch<EmailPreferenceState>("/unsubscribe/confirm", {
     method: "POST",
-    body: JSON.stringify({ token, campaigns: choices.campaigns, digests: choices.digests }),
+    body: JSON.stringify({
+      token,
+      campaigns: choices.campaigns,
+      digests: choices.digests,
+      notifications: choices.notifications,
+    }),
     dedup: false,
   });
 }

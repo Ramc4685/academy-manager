@@ -112,6 +112,10 @@ class CoachUseCases:
     # Attendance correction (#517). Optional for fixtures that predate it;
     # real coach composition always sets it.
     correct_attendance: CorrectAttendance | None = None
+    # Session announcements (#614) — SessionAnnouncementService. Typed loosely
+    # so this module keeps importing only what routes need; the announcement
+    # routes hold the concrete type.
+    session_announcements: object | None = None
 
 
 def get_coach_use_cases(request: Request) -> CoachUseCases:

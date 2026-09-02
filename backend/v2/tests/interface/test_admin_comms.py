@@ -27,6 +27,25 @@ def test_broadcast_creates_announcement(admin_client):
     assert "Tournament" in body["body"]
 
 
+def test_broadcast_rejects_a_session_scope(admin_client):
+    """A session-typed broadcast would be an announcement visible to NOBODY.
+
+    ``scope_type`` is a free-form string on this legacy endpoint, so
+    ``"session"`` has always been storable. Since #614 a session-scoped
+    announcement is matched by ``scope_id``, and a broadcast has none — the
+    document would pass the write and then fail every read. Rejecting it at the
+    boundary turns a silently-swallowed academy announcement into a 422.
+    """
+    r = admin_client.post(
+        "/api/v2/admin/messages/broadcast",
+        json={"body": "Tournament", "scope_type": "session"},
+    )
+    assert r.status_code == 422, r.text
+
+    listed = admin_client.get("/api/v2/admin/messages")
+    assert all("Tournament" not in m["body"] for m in listed.json()["messages"])
+
+
 def test_dm_creates_targeted_message(admin_client):
     r = admin_client.post(
         "/api/v2/admin/messages/dm",

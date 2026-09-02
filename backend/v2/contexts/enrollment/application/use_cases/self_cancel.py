@@ -106,6 +106,7 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
 
+from backend.v2.contexts.enrollment.application.ports import RosterChangeNotifier
 from backend.v2.contexts.enrollment.domain.errors import EnrollmentNotFound
 from backend.v2.contexts.enrollment.domain.events import (
     EnrollmentCancelled,
@@ -342,6 +343,7 @@ class SelfCancelEnrollment:
         outbox: Outbox,
         billing: SelfCancelBillingPort | None = None,
         enrollment_events: SelfCancelLifecycleEventRecorder | None = None,
+        roster_notifier: RosterChangeNotifier | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._enrollments = enrollments
@@ -352,6 +354,7 @@ class SelfCancelEnrollment:
         self._outbox = outbox
         self._billing = billing
         self._enrollment_events = enrollment_events
+        self._roster_notifier = roster_notifier
         self._now = clock
 
     async def execute(self, cmd: SelfCancelEnrollmentCommand) -> SelfCancelEnrollmentResult:
@@ -524,6 +527,27 @@ class SelfCancelEnrollment:
                 ),
             )
         )
+        # #612 staff alert. Last, after the append that drives promotion, and
+        # swallowed: a parent's cancel is already committed, and this is the
+        # least load-bearing write in the group.
+        if self._roster_notifier is not None:
+            try:
+                await self._roster_notifier.roster_changed(
+                    change="cancelled",
+                    session_id=enrollment.session_id,
+                    student_id=enrollment.student_id,
+                    enrollment_id=enrollment.enrollment_id,
+                    actor_id=actor_id,
+                )
+            except Exception:
+                log.warning(
+                    "enrollment.roster_notification_failed",
+                    extra={
+                        "change": "cancelled",
+                        "enrollment_id": enrollment.enrollment_id,
+                        "session_id": enrollment.session_id,
+                    },
+                )
 
 
 # --- Admin audit list -------------------------------------------------

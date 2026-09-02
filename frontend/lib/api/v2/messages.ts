@@ -17,6 +17,14 @@ export interface InboxMessage {
   body: string;
   created_at: string;
   read: boolean;
+  /**
+   * Session title for a session-scoped announcement (#614). A family with
+   * three children in three classes cannot tell which class an announcement
+   * is about without it. Null for DMs and academy-wide announcements.
+   */
+  scope_label?: string | null;
+  urgency?: "routine" | "urgent";
+  author_display_name?: string | null;
 }
 
 export interface InboxMessagesResponse {

@@ -26,6 +26,10 @@ class SetEmailPreferencesCommand:
     user_id: str
     campaigns_opted_out: bool
     digests_opted_out: bool
+    #: Tri-state (#612): ``None`` leaves the stored roster-alert choice alone.
+    #: A plain ``False`` default would re-subscribe anyone who saved from a
+    #: client build that does not yet know the field exists.
+    notifications_opted_out: bool | None = None
     email: str | None = None
     source: str = "portal"
 
@@ -41,9 +45,11 @@ class SetEmailPreferences:
             email=command.email,
             campaigns_opted_out=command.campaigns_opted_out,
             digests_opted_out=command.digests_opted_out,
+            notifications_opted_out=command.notifications_opted_out,
             source=source,
         )
         return EmailPreferencesResult(
             campaigns_opted_out=saved.campaigns_opted_out,
             digests_opted_out=saved.digests_opted_out,
+            notifications_opted_out=saved.notifications_opted_out,
         )

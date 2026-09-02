@@ -17,6 +17,8 @@ export const queryKeys = {
     schedule: () => ["coach", "schedule"] as const,
     profile: () => ["coach", "profile"] as const,
     session: (sessionId: string) => ["coach", "session", sessionId] as const,
+    sessionAnnouncements: (sessionId: string) =>
+      ["coach", "session", sessionId, "announcements"] as const,
     sessionSkills: (sessionId: string, date: string, programId?: string) =>
       ["coach", "session", sessionId, "skills", date, programId ?? "default"] as const,
     skillNotes: (studentId: string, skillId: string) =>
@@ -51,6 +53,8 @@ export const queryKeys = {
       ["admin", "session", sessionId] as const,
     sessionOccurrences: (sessionId: string) =>
       ["admin", "session", sessionId, "occurrences"] as const,
+    sessionAnnouncements: (sessionId: string) =>
+      ["admin", "session", sessionId, "announcements"] as const,
     teachingPlan: (occurrenceId: string, programId?: string | null) =>
       ["admin", "teaching-plan", occurrenceId, programId ?? "default"] as const,
     coachEngagement: (startDate: string, endDate: string) =>

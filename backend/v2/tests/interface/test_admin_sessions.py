@@ -33,6 +33,7 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_repo import 
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import MongoSessionRepository
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_writer import MongoSessionWriter
 from backend.v2.interfaces.admin.router import router as admin_router
+from backend.v2.interfaces.admin.views import AdminSessionView
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 from backend.v2.shared.tenancy.context import set_academy_id, tenant_scope
 
@@ -2499,3 +2500,289 @@ async def test_cancelled_session_occurrences_leave_payroll_and_coach_day_view(
     assert after_payable["occ-future-clean"].status == "cancelled"
     # The already-acted-on occurrence keeps its payable status.
     assert after_payable["occ-future-attended"].status != "cancelled"
+
+
+# --- issue #610: add-to-roster error surfacing -----------------------------
+
+
+def test_add_to_roster_duplicate_returns_409_with_student_name(admin_client) -> None:
+    """A repeat add is a 409 the admin can act on, not a 500 and not a dupe row."""
+    payload = {
+        "session_id": "sess-1",
+        "student_id": "st-1",
+        "parent_id": "p-1",
+        "full_name": "Alice",
+    }
+    first = admin_client.post("/api/v2/admin/enrollments", json=payload)
+    assert first.status_code == 200, first.text
+    seats_after_first = dict(admin_client.seed["sessions"].reserved)
+
+    second = admin_client.post("/api/v2/admin/enrollments", json=payload)
+
+    assert second.status_code == 409, second.text
+    body = second.json()
+    # The global DomainError handler owns this shape — the route's except arm
+    # must not have converted it into a 500.
+    assert body["error"]["code"] == "Enrollment.StudentAlreadyOnRoster"
+    assert "Alice" in body["error"]["message"]
+    # No second enrollment row, and no second seat burned.
+    assert len(admin_client.seed["enrollments"].rows) == 1
+    assert dict(admin_client.seed["sessions"].reserved) == seats_after_first
+
+
+def test_add_to_roster_unexpected_error_returns_actionable_500(admin_client, caplog) -> None:
+    """A genuinely unexpected failure is logged with context and named clearly."""
+
+    class _Boom:
+        async def execute(self, cmd):
+            raise RuntimeError("motor exploded")
+
+    admin_client.use_cases.edit_roster_add = _Boom()
+
+    with caplog.at_level("ERROR"):
+        r = admin_client.post(
+            "/api/v2/admin/enrollments",
+            json={
+                "session_id": "sess-1",
+                "student_id": "st-1",
+                "parent_id": "p-1",
+                "full_name": "Alice",
+            },
+        )
+
+    assert r.status_code == 500
+    detail = r.json()["detail"]
+    assert detail != "Internal Server Error"
+    assert "sess-1" in detail and "st-1" in detail
+    records = [rec for rec in caplog.records if rec.message == "admin.roster_add_failed"]
+    assert records, "expected the stable admin.roster_add_failed marker"
+    assert records[0].session_id == "sess-1"  # type: ignore[attr-defined]
+    assert records[0].student_id == "st-1"  # type: ignore[attr-defined]
+
+
+def test_add_to_roster_full_session_reports_the_real_numbers(admin_client) -> None:
+    sessions = admin_client.seed["sessions"]
+    session = sessions.sessions["sess-1"]
+    sessions.sessions["sess-1"] = session.model_copy(update={"capacity": 1})
+
+    first = admin_client.post(
+        "/api/v2/admin/enrollments",
+        json={
+            "session_id": "sess-1",
+            "student_id": "st-1",
+            "parent_id": "p-1",
+            "full_name": "Alice",
+        },
+    )
+    assert first.status_code == 200, first.text
+
+    second = admin_client.post(
+        "/api/v2/admin/enrollments",
+        json={
+            "session_id": "sess-1",
+            "student_id": "st-2",
+            "parent_id": "p-1",
+            "full_name": "Bob",
+        },
+    )
+
+    assert second.status_code == 409, second.text
+    error = second.json()["error"]
+    assert error["code"] == "Enrollment.CapacityExceeded"
+    assert error["details"]["capacity"] == 1
+    assert error["details"]["active_enrollments"] == 1
+    # The seat counter did not move on the refused add.
+    assert sessions.reserved["sess-1"] == 1
+
+
+# --- #613 communication pack ------------------------------------------------
+
+_PACK_PAYLOAD = {
+    "whatsapp_group_link": "https://chat.whatsapp.com/AbCd1234",
+    "venue_address": "12 Court Lane\nAustin, TX 78701",
+    "parking_notes": "Free lot behind the building.",
+    "what_to_bring": "Racquet, water bottle, indoor shoes.",
+    "arrival_minutes_before": 15,
+    "coach_contact_policy": "Message the coach through the app, not on WhatsApp.",
+    "absence_policy": "Tell us 24 hours ahead to book a make-up.",
+}
+
+
+async def _create_pack_session(db, client, **overrides) -> dict:
+    body = {
+        "coach_id": "coach-pack",
+        "title": "Pack Session",
+        "location": "Court 1",
+        "days_of_week": ["Wed"],
+        "start_time": "18:00",
+        "end_time": "18:45",
+        "timezone": "America/Chicago",
+        "capacity": 15,
+        **overrides,
+    }
+    response = client.post("/api/v2/admin/sessions", json=body)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+@pytest.mark.asyncio
+async def test_communication_pack_survives_the_round_trip_to_the_get_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The regression guard for the #609 class of bug.
+
+    POST/PATCH render the view from the domain aggregate while GET/LIST render
+    it from the hand-written projection in composition/admin.py, so a field
+    dropped from the projection looks perfectly correct on save and comes back
+    blank on reload. Asserting on the GET route is the whole point.
+    """
+    monkeypatch.setattr(admin_composition, "datetime", _FrozenAdminDateTime)
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["admin-session-pack-round-trip"]
+
+    with TestClient(_mongo_admin_app(db)) as client:
+        created = await _create_pack_session(db, client, amount_cents=6000, **_PACK_PAYLOAD)
+        session_id = created["session_id"]
+
+        # 1. The create response (aggregate-rendered) carries the pack.
+        for field, value in _PACK_PAYLOAD.items():
+            assert created[field] == value, field
+
+        # 2. The detail route (projection-rendered) carries the same values.
+        detail = client.get(f"/api/v2/admin/sessions/{session_id}")
+        assert detail.status_code == 200, detail.text
+        for field, value in _PACK_PAYLOAD.items():
+            assert detail.json()[field] == value, f"{field} dropped by the admin projection"
+        # #609 drive-by, verified through the route that was actually broken.
+        assert detail.json()["amount_cents"] == 6000
+
+        # 3. An edit persists and reloads.
+        edited = client.patch(
+            f"/api/v2/admin/sessions/{session_id}",
+            json={"parking_notes": "Street parking only.", "arrival_minutes_before": 20},
+        )
+        assert edited.status_code == 200, edited.text
+        reloaded = client.get(f"/api/v2/admin/sessions/{session_id}").json()
+        assert reloaded["parking_notes"] == "Street parking only."
+        assert reloaded["arrival_minutes_before"] == 20
+        # Untouched fields are not collateral damage of a partial PATCH.
+        assert reloaded["whatsapp_group_link"] == _PACK_PAYLOAD["whatsapp_group_link"]
+
+        # 4. An explicit null clears — an admin who can set a link can remove it.
+        cleared = client.patch(
+            f"/api/v2/admin/sessions/{session_id}",
+            json={"whatsapp_group_link": None},
+        )
+        assert cleared.status_code == 200, cleared.text
+        assert (
+            client.get(f"/api/v2/admin/sessions/{session_id}").json()["whatsapp_group_link"] is None
+        )
+
+
+@pytest.mark.asyncio
+async def test_communication_pack_survives_the_list_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The list route synthesizes recurring rows from template docs; the pack
+    has to ride along through that expansion and the series de-dupe."""
+    monkeypatch.setattr(admin_composition, "datetime", _FrozenAdminDateTime)
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["admin-session-pack-list"]
+
+    with TestClient(_mongo_admin_app(db)) as client:
+        created = await _create_pack_session(db, client, **_PACK_PAYLOAD)
+        listing = client.get("/api/v2/admin/sessions?window=upcoming")
+        assert listing.status_code == 200, listing.text
+
+    rows = [s for s in listing.json()["sessions"] if s["session_id"] == created["session_id"]]
+    assert rows, "created session missing from the upcoming listing"
+    for field, value in _PACK_PAYLOAD.items():
+        assert rows[0][field] == value, f"{field} dropped between the template doc and the list row"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad_link",
+    [
+        "javascript:alert(1)",
+        "data:text/html,<script>alert(1)</script>",
+        "//evil.host/group",
+        "chat.whatsapp.com/AbCd1234",
+        "https://\nchat.whatsapp.com/AbCd1234",
+    ],
+)
+async def test_communication_pack_rejects_non_http_group_links(
+    monkeypatch: pytest.MonkeyPatch, bad_link: str
+) -> None:
+    """The link is rendered as an email href. Escaping stops attribute
+    breakout; only this scheme allowlist stops `javascript:`."""
+    monkeypatch.setattr(admin_composition, "datetime", _FrozenAdminDateTime)
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["admin-session-pack-bad-link"]
+
+    with TestClient(_mongo_admin_app(db)) as client:
+        created = await _create_pack_session(db, client)
+        response = client.patch(
+            f"/api/v2/admin/sessions/{created['session_id']}",
+            json={"whatsapp_group_link": bad_link},
+        )
+
+    assert response.status_code == 422, response.text
+    stored = await db.sessions.find_one(
+        {"academy_id": "academy-b", "session_id": created["session_id"]}
+    )
+    assert stored is not None
+    assert stored.get("whatsapp_group_link") is None
+
+
+@pytest.mark.asyncio
+async def test_communication_pack_blank_group_link_clears_rather_than_storing_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(admin_composition, "datetime", _FrozenAdminDateTime)
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["admin-session-pack-blank-link"]
+
+    with TestClient(_mongo_admin_app(db)) as client:
+        created = await _create_pack_session(
+            db, client, whatsapp_group_link="https://chat.whatsapp.com/AbCd1234"
+        )
+        response = client.patch(
+            f"/api/v2/admin/sessions/{created['session_id']}",
+            json={"whatsapp_group_link": "   "},
+        )
+        assert response.status_code == 200, response.text
+        assert (
+            client.get(f"/api/v2/admin/sessions/{created['session_id']}").json()[
+                "whatsapp_group_link"
+            ]
+            is None
+        )
+
+
+@pytest.mark.asyncio
+async def test_admin_session_projection_emits_every_view_field(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Structural guard against the #609 class of bug recurring.
+
+    `_build_admin_session_rows` is a hand-written dict and `AdminSessionView`
+    defaults every optional field to None, so a field left out of the
+    projection is invisible: no exception, no validation error, just a value
+    that silently reverts on reload. This asserts the two stay in step for
+    EVERY field, not only today's.
+    """
+    monkeypatch.setattr(admin_composition, "datetime", _FrozenAdminDateTime)
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["admin-session-projection-fields"]
+
+    app = _mongo_admin_app(db)
+    with TestClient(app) as client:
+        created = await _create_pack_session(db, client, amount_cents=6000, **_PACK_PAYLOAD)
+
+    with tenant_scope("academy-b"):
+        row = await app.state.admin.get_admin_session(created["session_id"])
+
+    assert row is not None
+    missing = set(AdminSessionView.model_fields) - set(row)
+    assert not missing, f"admin session projection drops: {sorted(missing)}"

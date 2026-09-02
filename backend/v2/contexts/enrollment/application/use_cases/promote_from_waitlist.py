@@ -8,12 +8,14 @@ notification handlers.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
 
 from backend.v2.contexts.enrollment.application.ports import (
     EnrollmentEventRepository,
     EnrollmentWriter,
+    RosterChangeNotifier,
     SessionWriter,
     WaitlistRepository,
 )
@@ -25,6 +27,8 @@ from backend.v2.contexts.enrollment.domain.events import (
 from backend.v2.contexts.enrollment.domain.models import Enrollment
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.ids import new_ulid
+
+log = logging.getLogger(__name__)
 
 Clock = Callable[[], datetime]
 
@@ -39,6 +43,7 @@ class PromoteFromWaitlist:
         outbox: Outbox,
         academy_id: Callable[[], str],
         enrollment_events: EnrollmentEventRepository | None = None,
+        roster_notifier: RosterChangeNotifier | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._waitlist = waitlist
@@ -47,6 +52,7 @@ class PromoteFromWaitlist:
         self._outbox = outbox
         self._academy_id = academy_id
         self._enrollment_events = enrollment_events
+        self._roster_notifier = roster_notifier
         self._now = clock
 
     async def execute(
@@ -115,4 +121,24 @@ class PromoteFromWaitlist:
                 ),
             )
         )
+        # #612: staff alert *and* the family's "a seat opened" email, both
+        # behind one best-effort call. Last statement, after the seat, the
+        # enrollment row and the waitlist status have all settled — and
+        # swallowing, because a promotion that reports failure would be
+        # re-run against a waitlist entry that is already `promoted`.
+        if self._roster_notifier is not None:
+            try:
+                await self._roster_notifier.roster_changed(
+                    change="promoted",
+                    session_id=entry.session_id,
+                    student_id=entry.student_id,
+                    enrollment_id=enrollment.enrollment_id,
+                    actor_id=actor_id,
+                    parent_user_id=entry.parent_id or None,
+                )
+            except Exception:
+                log.exception(
+                    "enrollment.roster_notification_failed",
+                    extra={"change": "promoted", "session_id": entry.session_id},
+                )
         return entry.waitlist_id
