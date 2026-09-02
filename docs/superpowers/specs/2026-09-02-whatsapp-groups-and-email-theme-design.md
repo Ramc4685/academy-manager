@@ -51,7 +51,7 @@ were found while reviewing them (see *Style findings*).
 ## Architecture
 
 ```
-admin session form ──► Session.whatsapp_group_url (enrollment context)
+admin session form ──► Session.whatsapp_group_link (enrollment context)
                                    │
                                    ▼
         composition data providers (parent digest, coach digest,
@@ -83,11 +83,12 @@ Already on `main` as `Session.whatsapp_group_link` (max 2048 chars,
 `AdminSessionView`, and editable under "Communication pack (optional)" on the
 admin session edit page. Residual items folded into slice 2:
 
-- Tighten validation to `https://chat.whatsapp.com/<token>`; `wa.me` and
-  phone links are personal chats and would send every family a dead link.
-  Existing stored values that fail the new rule are left in place but
-  reported by a one-off audit script; the form shows the error on next save.
-- Helper text on the form: "WhatsApp › Group info › Invite link".
+- Validation stays scheme-only (http/https). PR #620 documented that the host
+  is deliberately not pinned so Signal/Telegram/Discord group links keep
+  working; slice 2 respects that. Instead the admin form gains a permanent
+  hint ("Group info › Invite link › Copy link, starts with
+  https://chat.whatsapp.com/") and a soft warning when an https link is not a
+  `chat.whatsapp.com` invite (a `wa.me` paste opens a personal chat).
 
 ### Slice 2 — shared theme + WhatsApp block + digest wiring
 
@@ -171,8 +172,9 @@ with both names).
   footer rule when no playlist is removed.
 - All amounts use one formatter: `$60.00` (symbol from currency; fall back
   to `USD 60.00` only for currencies without a symbol map).
-- Invoice heading becomes "Your September 2026 invoice", shows due date, and
-  drops the "disregard" line from the shell footer for non-reminder mails.
+- Invoice heading becomes "Your September 2026 invoice" and the "disregard"
+  line moves out of the shell into an opt-in reminder footer (only the dues
+  reminder uses it). The invoice port carries no due date, so none is shown.
 
 **Mockup gate:** rendered screenshots of every changed template (phone width,
 sample data) are shared with the owner before the PR is opened. The render
@@ -188,9 +190,9 @@ when the link is set. Remaining work, done in slice 2 because it shares the
 shell:
 
 - Switch to the shared theme shell.
-- Move "Group chat" up to directly under "When/Where" and use the WhatsApp
-  block renderer so wording matches the digests.
-- Weekday list renders "tue, thu"; format as "Tue & Thu".
+- Move "Group chat" up to directly under "Where". The etiquette sentence is
+  required verbatim by #613, so the welcome keeps its own wording rather than
+  the digest block's note.
 - Drop the "if you've already taken care of this" footer line (it is the
   reminder footer, not a welcome footer).
 
@@ -233,7 +235,7 @@ No migration. No index. No schema change in slice 2.
 | 5 | All | Three palettes, three widths, four copies of the style block | slice 2 |
 | 6 | Digests | No academy name, logo, or date in body | slice 2 |
 | 7 | Coach digest | No greeting/date; double empty rule | slice 2 |
-| 8 | Invoice | Generic heading, no due date, "disregard" footer on a fresh invoice | slice 2 |
+| 8 | Invoice | Generic heading, "disregard" footer on a fresh invoice | slice 2 |
 | 9 | Footer | Unsubscribe link colour differs from body links | slice 2 |
 
 ## Open items
