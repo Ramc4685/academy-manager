@@ -1,6 +1,6 @@
 # fix-tenant-aware-redirect-allowlist
 
-PR: #TBD
+PR: #628
 
 ## What changed
 Stripe checkout/return URLs are now validated against the static configured
