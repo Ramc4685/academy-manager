@@ -50,6 +50,42 @@ MAX_PER_DAY = 5
 RETENTION = timedelta(days=2)
 
 
+#: Providers that deliver ``user.name@`` and ``username@`` to the same mailbox.
+#: Only these get dots stripped — dots are significant almost everywhere else,
+#: so stripping them globally would merge budgets for genuinely distinct people.
+_DOT_INSENSITIVE_DOMAINS = frozenset({"gmail.com", "googlemail.com"})
+
+#: Google treats these as the same mail domain, so their budgets must be shared.
+_DOMAIN_ALIASES = {"googlemail.com": "gmail.com"}
+
+
+def _mailbox_key(email: str) -> str:
+    """Collapse an address to the *mailbox* it actually reaches.
+
+    The budget has to be per-mailbox, not per-string. Sub-addressing
+    (``victim+1@``, ``victim+2@``) and Gmail's dot-insensitivity
+    (``v.i.c.t.i.m@``) all land in one inbox, and an attacker can mint a
+    separate Firebase account for each alias with the public web API key. Keyed
+    on the raw address, the "5 per 24h" cap would therefore be 5 *per alias* —
+    effectively unbounded at a single victim, which would defeat the one control
+    this whole design rests on (see ``VerificationEmailThrottled``).
+
+    Normalisation applies to the KEY ONLY. The address actually mailed is always
+    the one from the verified token, so a parent who really did register as
+    ``name+academy@gmail.com`` still receives their mail at that address.
+    """
+    local, _, domain = email.strip().lower().rpartition("@")
+    if not local:  # no "@" at all; treat the whole string as opaque
+        return email.strip().lower()
+    domain = _DOMAIN_ALIASES.get(domain, domain)
+    # Sub-address tags are ignored by every provider that supports them, so the
+    # tag can never be what distinguishes two mailboxes.
+    local = local.split("+", 1)[0]
+    if domain in _DOT_INSENSITIVE_DOMAINS:
+        local = local.replace(".", "")
+    return f"{local}@{domain}"
+
+
 def _key(email: str) -> str:
     """Stable id for an address, hashed rather than stored in the clear.
 
@@ -59,7 +95,7 @@ def _key(email: str) -> str:
     hash keeps the collection from becoming an unauthenticated log of "someone
     typed this email address here".
     """
-    return hashlib.sha256(email.strip().lower().encode("utf-8")).hexdigest()
+    return hashlib.sha256(_mailbox_key(email).encode("utf-8")).hexdigest()
 
 
 class MongoVerificationEmailCooldown:

@@ -133,3 +133,45 @@ async def test_the_stored_row_does_not_contain_the_plaintext_address(db) -> None
     doc = await db[COLLECTION].find_one({})
     assert doc is not None
     assert "parent@example.com" not in str(doc)
+
+
+@pytest.mark.asyncio
+async def test_sub_addressed_aliases_share_one_budget(db) -> None:  # type: ignore[no-untyped-def]
+    """``victim+1@`` and ``victim+2@`` are one mailbox, so they are one budget.
+
+    An attacker can mint a separate Firebase account per alias with the public
+    web API key. Keyed on the raw string, the daily cap would be per-alias —
+    unbounded at a single victim — which would defeat the only recipient-side
+    control this endpoint has.
+    """
+    clock = _Clock(datetime(2026, 9, 1, 12, 0, tzinfo=UTC))
+    cooldown = MongoVerificationEmailCooldown(db, now=clock)
+
+    assert await cooldown.claim_send("victim@example.com") is True
+    assert await cooldown.claim_send("victim+signup@example.com") is False
+    assert await cooldown.claim_send("victim+anything.else@example.com") is False
+
+
+@pytest.mark.asyncio
+async def test_gmail_dots_and_googlemail_share_one_budget(db) -> None:  # type: ignore[no-untyped-def]
+    """Gmail ignores dots in the local part and aliases googlemail.com."""
+    clock = _Clock(datetime(2026, 9, 1, 12, 0, tzinfo=UTC))
+    cooldown = MongoVerificationEmailCooldown(db, now=clock)
+
+    assert await cooldown.claim_send("victim@gmail.com") is True
+    assert await cooldown.claim_send("v.i.c.t.i.m@gmail.com") is False
+    assert await cooldown.claim_send("victim@googlemail.com") is False
+
+
+@pytest.mark.asyncio
+async def test_dots_still_separate_mailboxes_outside_gmail(db) -> None:  # type: ignore[no-untyped-def]
+    """Dots are significant almost everywhere, so they must not be stripped globally.
+
+    Two genuinely different parents at the same corporate domain must not end up
+    sharing — and locking each other out of — one send budget.
+    """
+    clock = _Clock(datetime(2026, 9, 1, 12, 0, tzinfo=UTC))
+    cooldown = MongoVerificationEmailCooldown(db, now=clock)
+
+    assert await cooldown.claim_send("jane.doe@example.com") is True
+    assert await cooldown.claim_send("janedoe@example.com") is True

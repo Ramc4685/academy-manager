@@ -35,6 +35,12 @@ router = APIRouter(prefix="/register", tags=["registration"])
 #: must not travel back to them. The detail is logged instead.
 _SEND_FAILED_DETAIL = "Could not send the verification email. Please try again shortly."
 
+#: Same reasoning for the 401. ``InvalidToken`` wraps whatever the verifier
+#: raised, which for a transport failure is the raw exception text — e.g. a
+#: ``Max retries exceeded`` string naming internal hosts. The caller learns only
+#: that the token was not accepted; the cause is logged.
+_INVALID_TOKEN_DETAIL = "Not authenticated"
+
 
 class RegisterParentResponse(BaseModel):
     user_id: str
@@ -87,7 +93,8 @@ async def send_parent_verification_email(request: Request) -> None:
     try:
         await use_case.execute(token, academy_id=academy_id)
     except InvalidToken as exc:
-        raise HTTPException(status_code=401, detail=str(exc)) from exc
+        log.warning("verification email token rejected: %s", exc, exc_info=True)
+        raise HTTPException(status_code=401, detail=_INVALID_TOKEN_DETAIL) from exc
     except VerificationEmailThrottled as exc:
         # The message is deliberately safe to show: it says only that a mail was
         # sent recently to the address the caller already supplied, so it leaks

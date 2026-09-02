@@ -93,6 +93,23 @@ def test_invalid_token_maps_to_401() -> None:
     assert response.status_code == 401
 
 
+def test_the_401_does_not_leak_the_underlying_token_error() -> None:
+    """``InvalidToken`` wraps whatever the verifier raised.
+
+    For a Firebase transport failure that is the raw exception text — a
+    ``Max retries exceeded`` string naming internal hosts — and this caller is
+    unauthenticated. The detail must be the fixed string, with the cause logged.
+    """
+    leaky = "HTTPSConnectionPool(host='www.googleapis.com', port=443): Max retries exceeded"
+    app, _ = _app(raises=InvalidToken(leaky))
+    with TestClient(app) as client:
+        response = client.post(ROUTE, headers={"Authorization": "Bearer firebase-token"})
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Not authenticated"
+    assert "googleapis" not in response.text
+
+
 def test_throttled_address_maps_to_429() -> None:
     app, _ = _app(raises=VerificationEmailThrottled("try again in a few minutes"))
     with TestClient(app) as client:
