@@ -22,6 +22,7 @@ from backend.v2.contexts.identity.domain.errors import (
     LoginInviteSendFailed,
     UserNotFound,
 )
+from backend.v2.shared.comms.email_theme import INK, MUTED, EmailBrand, button, shell
 
 
 class PasswordResetLinkPort(Protocol):
@@ -98,25 +99,18 @@ class LoginInviteResult(BaseModel):
 def _invite_body(*, display_name: str, academy_name: str, reset_link: str) -> str:
     safe_display_name = escape(display_name)
     safe_academy_name = escape(academy_name)
-    safe_reset_link = escape(reset_link, quote=True)
-    return f"""
-<div style="font-family: -apple-system, 'Segoe UI', sans-serif; max-width: 520px; margin: 0 auto;">
-  <h2 style="color: #0a0f1c;">Your {safe_academy_name} account is ready</h2>
-  <p>Hi {safe_display_name},</p>
-  <p>Your account at <strong>{safe_academy_name}</strong> has been set up. Set your
-  password to log in, see your children's enrollment, and make payments.</p>
-  <p style="margin: 24px 0;">
-    <a href="{safe_reset_link}"
-       style="background: #2545d3; color: #ffffff; padding: 12px 20px;
-              border-radius: 8px; text-decoration: none; font-weight: 600;">
-      Set your password
-    </a>
-  </p>
-  <p style="color: #64748b; font-size: 13px;">This link expires after a short
-  time. If it has expired, ask your academy to send a new one, or use
-  &ldquo;Forgot password&rdquo; on the login page with this email address.</p>
-</div>
-"""
+    inner = (
+        f'<h2 style="color:{INK};font-size:20px;margin:0 0 12px;">'
+        f"Your {safe_academy_name} account is ready</h2>"
+        f"<p>Hi {safe_display_name},</p>"
+        f"<p>Your account at <strong>{safe_academy_name}</strong> has been set up. Set your "
+        f"password to log in, see your children's enrollment, and make payments.</p>"
+        f'<p style="margin:24px 0;">{button("Set your password", reset_link)}</p>'
+        f'<p style="color:{MUTED};font-size:13px;">This link expires after a short time. '
+        f"If it has expired, ask your academy to send a new one, or use "
+        f"&ldquo;Forgot password&rdquo; on the login page with this email address.</p>"
+    )
+    return shell(brand=EmailBrand(academy_name=academy_name), inner_html=inner)
 
 
 class SendLoginInvite:

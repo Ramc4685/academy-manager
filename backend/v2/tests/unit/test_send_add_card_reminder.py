@@ -152,3 +152,14 @@ async def test_escapes_parent_and_academy_names_in_html_email():
     body = sender.calls[0]["body"]
     assert "<img" not in body
     assert "&lt;img" in body
+
+
+def test_reminder_body_uses_shared_shell() -> None:
+    from backend.v2.contexts.billing.application.use_cases.send_add_card_reminder import (
+        _reminder_body,
+    )
+    from backend.v2.shared.comms.email_theme import FONT_STACK
+
+    body = _reminder_body(display_name="P", academy_name="A", setup_link="https://x.test")
+    assert FONT_STACK in body
+    assert "Sent by A" in body

@@ -244,3 +244,14 @@ async def test_a_sender_reporting_failure_raises_rather_than_reporting_success()
     with pytest.raises(LoginInviteSendFailed) as excinfo:
         await use_case.execute("token-1", academy_id="acad-1")
     assert "delivery not configured" in str(excinfo.value)
+
+
+def test_verification_body_uses_shared_shell() -> None:
+    from backend.v2.contexts.identity.application.use_cases.send_registration_verification_email import (
+        _verification_body,
+    )
+    from backend.v2.shared.comms.email_theme import FONT_STACK
+
+    body = _verification_body(academy_name="A", verify_link="https://x.test")
+    assert FONT_STACK in body
+    assert "Sent by A" in body
