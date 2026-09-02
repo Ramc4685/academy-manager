@@ -1,16 +1,18 @@
 # WhatsApp class groups in outbound email + unified email theme
 
 **Date:** 2026-09-02
-**Status:** Approved (design interview 2026-09-02), slice 1 in progress
+**Status:** Approved (design interview 2026-09-02). Slices 1 and 3 were found
+already shipped on `main` by PR #620 (#613); work starts at slice 2.
 
 ## Problem
 
 Each class at the academy has its own WhatsApp group. Parents and coaches are
 expected to be in the groups for the classes they attend or teach, and in no
-others. Today nothing in the product knows those groups exist: the only
-WhatsApp support is a `wa.me` click-to-chat link on the admin dues report.
-Admins chase families by hand, and families drift into stale groups when a
-child moves class.
+others. Since PR #620 (#613) a session carries an optional `whatsapp_group_link`
+and the one-time welcome email shows an "Open WhatsApp group" button. The
+recurring emails (parent and coach daily digests) and campaigns still say
+nothing about groups, so a family that skipped the welcome email or moved
+class drifts into the wrong group and admins chase them by hand.
 
 Separately, the outbound emails are built from three different visual systems
 (billing shell, coach digest, parent digest) plus four copy-pasted style
@@ -70,29 +72,22 @@ input list from enrollment data, the same way the digest providers work today.
 
 ## Slices
 
-Each slice is its own PR against `main`, in this order. Slices 4 and 5 may be
-deferred without blocking the others.
+Each slice is its own PR against `main`. Slices 1 and 3 already exist; slice 2
+is the first PR and absorbs their residuals. Slices 4 and 5 may be deferred.
 
-### Slice 1 — session field + admin form
+### Slice 1 — session field + admin form (SHIPPED in PR #620)
 
-- `Session.whatsapp_group_url: str | None = None` in
-  `contexts/enrollment/domain/models.py`.
-- Validation: blank/None allowed; otherwise must match
-  `https://chat.whatsapp.com/<token>` where token is 1–64 URL-safe chars. Any
-  other host is rejected with a domain error (`InvalidWhatsAppGroupUrl`, HTTP
-  422). Rationale: `wa.me` and phone links are personal chats, not groups, and
-  a typo here would send every family a dead link.
-- Mongo repo reads/writes the field; missing field reads as `None` so
-  existing documents need no migration.
-- Admin create-session and edit-session commands, request models, and views
-  carry the field. Parent and coach session views expose it read-only
-  (`whatsapp_group_url`) so the portal can show a join link later.
-- Admin session edit page gets a "WhatsApp group invite link" input with
-  helper text ("Paste the group's invite link from WhatsApp › Group info ›
-  Invite link") and inline validation error.
-- Tests: domain validation unit test, repo round-trip, admin route 422 on bad
-  host, edit-page e2e extended with the new field, route-manifest audit tests
-  updated if a route is added (none expected).
+Already on `main` as `Session.whatsapp_group_link` (max 2048 chars,
+`validate_external_url` on the domain model, the request models and the
+`EditSession` path), read/written by the Mongo repo, exposed on
+`AdminSessionView`, and editable under "Communication pack (optional)" on the
+admin session edit page. Residual items folded into slice 2:
+
+- Tighten validation to `https://chat.whatsapp.com/<token>`; `wa.me` and
+  phone links are personal chats and would send every family a dead link.
+  Existing stored values that fail the new rule are left in place but
+  reported by a one-off audit script; the form shows the error on next save.
+- Helper text on the form: "WhatsApp › Group info › Invite link".
 
 ### Slice 2 — shared theme + WhatsApp block + digest wiring
 
@@ -158,7 +153,7 @@ with both names).
 
 - Parent digest: composition provider gathers every *active* enrollment for
   the family (not just today's), maps session → link where
-  `whatsapp_group_url` is set, and passes `links` on `ParentDigestView`. The
+  `whatsapp_group_link` is set, and passes `links` on `ParentDigestView`. The
   block renders after the child cards and before the dues block.
 - Coach digest: provider gathers every active session where the coach is
   `coach_id`, same mapping, passed to `render_coach_digest`. Block renders
@@ -185,22 +180,19 @@ script from the review session (`render_previews.py` + Playwright) is
 checked in under `backend/v2/tests/fixtures/email_previews/` so it can be
 re-run.
 
-### Slice 3 — enrollment confirmation email (new)
+### Slice 3 — enrollment welcome email (SHIPPED in PR #620; restyle only)
 
-- Trigger: enrollment becomes `active` via admin roster add, checkout
-  approval (`TransitionApplication` → enrolled), or waitlist promotion. Emitted
-  as an `Enrollment.EnrollmentActivated` event handled in
-  `composition/event_handlers.py`, same pattern as `DunningNoticeRequested`.
-- Recipient: the student's parent (active membership, has email).
-- Subject: `{child} is enrolled in {session title}`.
-- Body: shell + greeting, class card (title, schedule in the session
-  timezone, location, coach name), WhatsApp block for that one session
-  (primary-variant "Join the class WhatsApp group" button), portal link.
-- Category `TRANSACTIONAL`; no unsubscribe footer.
-- Idempotent per `enrollment_id` via the existing idempotency store so a
-  replayed event does not double-send.
-- Tests: use-case test for each trigger path, renderer test, event handler
-  contract test.
+`composition/enrollment_welcome_email.py` already sends "Welcome to {session}"
+on approval and add-to-roster, with a "Group chat" section and etiquette line
+when the link is set. Remaining work, done in slice 2 because it shares the
+shell:
+
+- Switch to the shared theme shell.
+- Move "Group chat" up to directly under "When/Where" and use the WhatsApp
+  block renderer so wording matches the digests.
+- Weekday list renders "tue, thu"; format as "Tue & Thu".
+- Drop the "if you've already taken care of this" footer line (it is the
+  reminder footer, not a welcome footer).
 
 ### Slice 4 — campaign merge tag
 
@@ -212,15 +204,15 @@ re-run.
 ### Slice 5 — portal surfaces (optional)
 
 Parent portal enrollment card and coach session page show a "Join WhatsApp
-group" link from `whatsapp_group_url`. Not required for the email goal.
+group" link from `whatsapp_group_link`. Not required for the email goal.
 
 ## Data model change
 
 ```
-sessions.whatsapp_group_url : string | null   (new, optional)
+sessions.whatsapp_group_link : string | null   (exists since #620)
 ```
 
-No migration. No index.
+No migration. No index. No schema change in slice 2.
 
 ## Error handling
 
