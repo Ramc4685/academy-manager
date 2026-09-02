@@ -79,6 +79,11 @@ export default function CoachTodayPage() {
                 <div className="min-w-0">
                   <p className="font-semibold">{s.title}</p>
                   <p className="text-sm text-neutral-500">{s.location}</p>
+                  {s.coach_name && (
+                    <p className="text-sm text-neutral-500" data-testid="session-coach-name">
+                      Coach: {s.coach_name}
+                    </p>
+                  )}
                 </div>
                 <p className="shrink-0 text-sm tabular-nums text-neutral-600 dark:text-neutral-300">
                   {formatSessionTimeRange(s.start_at, s.end_at, s.timezone)}

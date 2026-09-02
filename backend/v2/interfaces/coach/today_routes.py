@@ -1,7 +1,9 @@
 """GET /api/v2/coach/today — coach's sessions for a date with roster.
 
 Security matrix (docs/security-matrix.md): coach has access to "View
-sessions assigned to me." Wrong-persona returns **404** via require_persona.
+sessions assigned to me." Wrong-persona returns **404** via
+require_coach_surface. A coach supervisor (academy admin/owner, #632) gets
+every session in the academy for the date, each labelled with its coach.
 """
 
 from __future__ import annotations
@@ -13,14 +15,14 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query
 
-from backend.v2.interfaces.coach.deps import CoachUseCases, get_coach_use_cases
+from backend.v2.interfaces.coach.deps import CoachUseCases, coach_names_for, get_coach_use_cases
 from backend.v2.interfaces.coach.views import (
     CoachRosterEntry,
     CoachSession,
     CoachTodayResponse,
 )
 from backend.v2.shared.auth.claims import AuthClaims
-from backend.v2.shared.http import require_persona
+from backend.v2.shared.http import is_coach_supervisor, require_coach_surface
 
 log = logging.getLogger(__name__)
 
@@ -61,11 +63,16 @@ async def get_today(
         alias="date",
         description="YYYY-MM-DD; default = today in the academy timezone",
     ),
-    claims: AuthClaims = Depends(require_persona("coach")),
+    claims: AuthClaims = Depends(require_coach_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> CoachTodayResponse:
     target_date = await _resolve_date(on_date, academy_id=claims.academy_id, use_cases=use_cases)
-    sessions = await use_cases.list_today.execute(claims.user_id, target_date)
+    supervisor = is_coach_supervisor(claims)
+    if supervisor:
+        sessions = await use_cases.list_today.execute_for_academy(target_date)
+    else:
+        sessions = await use_cases.list_today.execute(claims.user_id, target_date)
+    coach_names = await coach_names_for(sessions, use_cases=use_cases, supervisor=supervisor)
 
     # Fan-out roster fetches concurrently. Prefer the occurrence-scoped
     # roster (expected-absence flags + one-time makeup/trial entries) when
@@ -107,6 +114,8 @@ async def get_today(
             timezone=s.timezone,
             start_at=s.start_at,
             end_at=s.end_at,
+            coach_id=getattr(s, "coach_id", None),
+            coach_name=coach_names.get(getattr(s, "coach_id", None) or ""),
             roster=[
                 CoachRosterEntry(
                     student_id=r.student_id,

@@ -43,6 +43,18 @@ class SessionOccurrenceRepository(Protocol):
         limit: int = 100,
     ) -> list[SessionOccurrence]: ...
 
+    # Academy-wide variants of the two coach queries above, for coach
+    # supervisors (admin/owner covering any session). Same tenant scope,
+    # same cancelled filter, no coach filter.
+    async def list_on_date(self, *, on_date: date) -> list[SessionOccurrence]: ...
+
+    async def list_upcoming(
+        self,
+        *,
+        now: datetime | None = None,
+        limit: int = 100,
+    ) -> list[SessionOccurrence]: ...
+
     async def list_for_session_between(
         self,
         *,

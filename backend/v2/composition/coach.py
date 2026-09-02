@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -112,11 +114,16 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_student_repo import (
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     UpdateAdminUserCommand,
 )
+from backend.v2.contexts.identity.domain.identity_aliases import identity_aliases
+from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
+    MongoMembershipRepository,
+)
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
 from backend.v2.interfaces.coach.views import CoachProfileResponse, UpdateCoachProfileRequest
 from backend.v2.shared.comms import CommsService, Message, MongoMessageRepository
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
+from backend.v2.shared.http.persona import COACH_SUPERVISOR_ROLES
 from backend.v2.shared.idempotency import IdempotencyStore
 from backend.v2.shared.tenancy import TenantContextUnset, current_academy_id
 from backend.v2.shared.time import academy_timezone_lookup
@@ -183,15 +190,42 @@ class CoachComposition:
     correct_attendance: CorrectAttendance | None = None
     # Session announcements (#614) — SessionAnnouncementService
     session_announcements: object = None
+    # Coach supervision (#632): academy-wide upcoming list and coach-name
+    # resolution for admins/owners covering the coach surface.
+    list_all_sessions_for_academy: object = None  # Callable[[], Awaitable[list[...]]]
+    resolve_user_names: object = None  # Callable[[Sequence[str]], Awaitable[dict[str, str]]]
 
 
 class CoachAssignedSessionLookup:
-    def __init__(self, sessions: MongoSessionRepository) -> None:
+    """Answers "may this user act as the coach of this session?".
+
+    The single choke point for every assignment check on the coach surface
+    (roster, notes, feedback, announcements, skills, teaching plan). A coach
+    supervisor — an academy admin/owner covering any session (#632) — passes
+    for every session *in this tenant*: the tenant-scoped session lookup
+    runs first, so a supervisor still cannot reach another academy's
+    session. ``is_supervisor`` is consulted only after the direct
+    assignment test fails, so the ordinary coach path costs nothing extra.
+    """
+
+    def __init__(
+        self,
+        sessions: MongoSessionRepository,
+        *,
+        is_supervisor: Callable[[str], Awaitable[bool]] | None = None,
+    ) -> None:
         self._sessions = sessions
+        self._is_supervisor = is_supervisor
 
     async def is_coach_assigned(self, coach_id: str, session_id: str) -> bool:
         session = await self._sessions.get(session_id)
-        return bool(session and session.coach_id == coach_id)
+        if session is None:
+            return False
+        if session.coach_id == coach_id:
+            return True
+        if self._is_supervisor is None:
+            return False
+        return await self._is_supervisor(coach_id)
 
 
 class _SessionTypeChangedEventSink:
@@ -244,7 +278,28 @@ def compose_coach(
     occurrences_repo = MongoSessionOccurrenceRepository(db)
     notes_repo = MongoCoachingNotesRepository(db)
     feedback_repo = MongoSessionFeedbackRepository(db)
-    assigned_sessions = CoachAssignedSessionLookup(sessions_repo)
+    membership_repo = MongoMembershipRepository(db)
+
+    async def is_coach_supervisor_user(user_id: str) -> bool:
+        """Does ``user_id`` hold a supervisor role in the request's academy?
+
+        Re-derives the answer from the same ``academy_memberships`` row
+        ``load_auth_claims`` built ``claims.roles`` from (alias-matched the
+        same way), so the coach surface and the auth layer can never
+        disagree about who is an admin here. Tenant comes from the request
+        context at call time, never from composition.
+        """
+        academy_id = request_academy_id()
+        user = await user_repo.get_by_id(user_id)
+        aliases = identity_aliases(user.user_id, user.firebase_uid, user.auth_uid) if user else ()
+        membership = await membership_repo.get_membership(academy_id, user_id, aliases=aliases)
+        if membership is None or not membership.is_active():
+            return False
+        return any(role in membership.roles for role in COACH_SUPERVISOR_ROLES)
+
+    assigned_sessions = CoachAssignedSessionLookup(
+        sessions_repo, is_supervisor=is_coach_supervisor_user
+    )
     absence_notice_repo = MongoAbsenceNoticeRepository(db)
     occurrence_roster_repo = MongoOccurrenceRosterRepository(db)
     # Billing repos for session-type move surface
@@ -281,6 +336,12 @@ def compose_coach(
         await messages_repo.mark_read(
             message_id, user_id, visible_session_ids=await _visible_session_ids(user_id)
         )
+
+    async def resolve_user_names(user_ids: Sequence[str]) -> dict[str, str]:
+        """Display names for a handful of coach ids (supervisor list labels)."""
+        unique = sorted({uid for uid in user_ids if uid})
+        users = await asyncio.gather(*(user_repo.get_by_id(uid) for uid in unique))
+        return {uid: user.display_name for uid, user in zip(unique, users, strict=True) if user}
 
     def request_academy_id() -> str:
         try:
@@ -462,6 +523,11 @@ def compose_coach(
             occurrences=occurrences_repo,
             sessions=sessions_repo,
         ).execute,
+        list_all_sessions_for_academy=ListCoachUpcomingOccurrences(
+            occurrences=occurrences_repo,
+            sessions=sessions_repo,
+        ).execute_for_academy,
+        resolve_user_names=resolve_user_names,
         get_profile=get_profile,
         update_profile=update_profile,
         # Skill pathway

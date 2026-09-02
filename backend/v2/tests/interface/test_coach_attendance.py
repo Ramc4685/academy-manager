@@ -65,9 +65,13 @@ def test_mark_attendance_parent_persona_returns_404(parent_client):
     assert r.status_code == 404
 
 
-def test_mark_attendance_admin_persona_returns_404(admin_client):
-    r = admin_client.post("/api/v2/coach/attendance", json=_payload())
-    assert r.status_code == 404
+def test_mark_attendance_admin_persona_marks_unassigned_session(coach_admin_client):
+    # Admins are coach supervisors (#632): they may mark any session and the
+    # mark is attributed to their own user id.
+    # occ-today-1 is assigned to coach-1; the admin is not on it at all.
+    r = coach_admin_client.post("/api/v2/coach/attendance", json=_payload())
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "present"
 
 
 def test_mark_attendance_unauthenticated(anon_client):

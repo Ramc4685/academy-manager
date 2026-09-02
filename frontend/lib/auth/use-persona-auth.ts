@@ -27,10 +27,25 @@ export type PersonaAuthState =
   | { checked: true; authorized: false; user: null; unavailable: true }
   | { checked: true; authorized: true; user: CurrentUser; unavailable?: false };
 
-export function usePersonaAuth(requiredRole: UserRole): PersonaAuthState & {
+export interface PersonaAuthOptions {
+  /**
+   * Roles that may enter this shell besides `requiredRole`. Used by the coach
+   * shell so academy admins/owners can cover any session (#632). The
+   * access-denied redirect still names `requiredRole`.
+   */
+  alsoAllow?: readonly UserRole[];
+}
+
+export function usePersonaAuth(
+  requiredRole: UserRole,
+  options: PersonaAuthOptions = {},
+): PersonaAuthState & {
   retry: () => void;
 } {
   const router = useRouter();
+  const allowedRoles = [requiredRole, ...(options.alsoAllow ?? [])];
+  // Stable dependency for the effect below; the caller passes a literal.
+  const allowedKey = allowedRoles.join(",");
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<PersonaAuthState>({
     checked: false,
@@ -58,7 +73,7 @@ export function usePersonaAuth(requiredRole: UserRole): PersonaAuthState & {
       void withTransientRetry(getCurrentUser)
         .then((currentUser) => {
           if (cancelled) return;
-          if (currentUser.roles.includes(requiredRole)) {
+          if (allowedKey.split(",").some((role) => currentUser.roles.includes(role as UserRole))) {
             setState({ checked: true, authorized: true, user: currentUser });
             return;
           }
@@ -93,7 +108,7 @@ export function usePersonaAuth(requiredRole: UserRole): PersonaAuthState & {
       cancelled = true;
       unsubscribe();
     };
-  }, [requiredRole, router, attempt]);
+  }, [requiredRole, allowedKey, router, attempt]);
 
   return { ...state, retry };
 }

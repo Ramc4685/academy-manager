@@ -70,6 +70,11 @@ export default function CoachSessionsPage() {
                         <p className="text-sm text-neutral-500">
                           {session.location}
                         </p>
+                        {session.coach_name && (
+                          <p className="text-sm text-neutral-500" data-testid="session-coach-name">
+                            Coach: {session.coach_name}
+                          </p>
+                        )}
                       </div>
                       <p className="shrink-0 text-sm tabular-nums text-neutral-600 dark:text-neutral-300">
                         {formatSessionTimeRange(session.start_at, session.end_at, session.timezone)}

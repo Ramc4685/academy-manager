@@ -174,6 +174,7 @@ if [ "$FRONTEND_CHANGED" = true ] || [ "$BROAD" = true ]; then
     lib/api/proxy-headers.node-test.mjs \
     lib/api/token-readiness.node-test.mjs \
     lib/auth/auth-domain.node-test.mjs \
+    lib/auth/coach-supervisor.node-test.mjs \
     lib/auth/google-sign-in-mode.node-test.mjs \
     lib/auth/token-readiness.node-test.mjs \
     lib/navigation/admin-student-progress-return.node-test.mjs

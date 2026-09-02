@@ -164,6 +164,25 @@ class FakeOccurrenceQuery:
         ]
         return sorted(rows, key=lambda occurrence: occurrence.start_at)[:limit]
 
+    async def list_on_date(self, *, on_date: date) -> list[SessionOccurrence]:
+        rows = [
+            occurrence
+            for occurrence in self._occurrences
+            if occurrence.start_at.date() == on_date and occurrence.status != "cancelled"
+        ]
+        return sorted(rows, key=lambda occurrence: occurrence.start_at)
+
+    async def list_upcoming(
+        self, *, now: datetime | None = None, limit: int = 100
+    ) -> list[SessionOccurrence]:
+        start_at = now or _now()
+        rows = [
+            occurrence
+            for occurrence in self._occurrences
+            if occurrence.start_at >= start_at and occurrence.status != "cancelled"
+        ]
+        return sorted(rows, key=lambda occurrence: occurrence.start_at)[:limit]
+
 
 class FakeAttendanceRepo:
     def __init__(self) -> None:
@@ -520,6 +539,13 @@ async def _async_none(*_args, **_kwargs):
     return None
 
 
+_COACH_NAMES = {"coach-1": "Coach One", "coach-2": "Coach Two"}
+
+
+async def _resolve_coach_names(user_ids):
+    return {uid: _COACH_NAMES[uid] for uid in user_ids if uid in _COACH_NAMES}
+
+
 def _build_use_cases(seed_data) -> CoachUseCases:
     sessions = FakeSessionQuery(seed_data["sessions"])
     enrollments = FakeEnrollmentQuery(seed_data["enrollments"])
@@ -552,9 +578,16 @@ def _build_use_cases(seed_data) -> CoachUseCases:
 
     # Adapters wiring coach lookups to enrollment queries.
     class _SL:
+        # Mirrors composition.coach.CoachAssignedSessionLookup: a coach
+        # supervisor (the admin fixture's user id) passes for any session
+        # that exists; unknown sessions still fail for everyone.
+        supervisor_ids = frozenset({"adm"})
+
         async def is_coach_assigned(self, coach_id, sid, on_date=None):
             s = await sessions.get(sid)
-            if s is None or s.coach_id != coach_id:
+            if s is None:
+                return False
+            if s.coach_id != coach_id and coach_id not in self.supervisor_ids:
                 return False
             return on_date is None or s.start_at.date() == on_date
 
@@ -742,6 +775,11 @@ def _build_use_cases(seed_data) -> CoachUseCases:
             occurrences=occurrences,
             sessions=sessions,
         ).execute,
+        list_all_sessions_for_academy=ListCoachUpcomingOccurrences(
+            occurrences=occurrences,
+            sessions=sessions,
+        ).execute_for_academy,
+        resolve_user_names=_resolve_coach_names,
         get_profile=_async_none,
         update_profile=_async_none,
         list_messages=_coach_messages_visible.list_messages,
@@ -787,10 +825,20 @@ def parent_client(seed) -> Iterator[TestClient]:
 
 
 @pytest.fixture()
-def admin_client(seed) -> Iterator[TestClient]:
+def coach_admin_client(seed) -> Iterator[TestClient]:
+    """Coach routes mounted, token represents an academy admin.
+
+    Admins are coach supervisors (#632): the coach surface admits them with
+    academy-wide scope. (Named ``coach_admin_client`` because the admin BFF
+    section below defines the unrelated ``admin_client`` fixture, which
+    mounts the *admin* router — the earlier same-named fixture here was
+    shadowed, so the old "admin gets 404 on coach routes" tests never
+    exercised the coach guard at all.)
+    """
     use_cases = _build_use_cases(seed)
     app = _make_app(_admin_claims(), use_cases)
     with TestClient(app) as client:
+        client.coach_use_cases = use_cases  # type: ignore[attr-defined]
         yield client
 
 
@@ -2331,7 +2379,7 @@ def _make_admin_app(claims: AuthClaims, use_cases: AdminUseCases) -> FastAPI:
 
 
 @pytest.fixture
-def admin_client(admin_seed) -> Iterator[TestClient]:  # noqa: F811
+def admin_client(admin_seed) -> Iterator[TestClient]:
     uc = _build_admin_use_cases(admin_seed)
     app = _make_admin_app(_claims("admin"), uc)
     with TestClient(app) as client:

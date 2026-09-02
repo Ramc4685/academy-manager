@@ -3,16 +3,17 @@
 /**
  * Persona (view) switcher.
  *
- * Shown only when the current user holds two or more roles. Lists the
- * personas the user holds and navigates to that persona's home route.
- * General across all role combinations (admin/coach/parent).
+ * Shown only when the current user can reach two or more views. Lists the
+ * personas the user holds — plus the Coach view for academy admins/owners,
+ * who may cover any session there (#632) — and navigates to that persona's
+ * home route. General across all role combinations (admin/coach/parent).
  */
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 
-import { getCurrentUser, type PersonaRole } from "@/lib/api/me";
+import { availablePersonaViews, getCurrentUser, type PersonaRole } from "@/lib/api/me";
 
 const PERSONA_HOME: Record<PersonaRole, string> = {
   admin: "/admin",
@@ -27,8 +28,6 @@ const PERSONA_LABEL: Record<PersonaRole, string> = {
   parent: "Parent view",
   student: "Student view",
 };
-
-const PERSONA_ORDER: PersonaRole[] = ["admin", "coach", "parent", "student"];
 
 export function PersonaSwitcher({
   current,
@@ -60,7 +59,7 @@ export function PersonaSwitcher({
     };
   }, [open]);
 
-  const roles = PERSONA_ORDER.filter((r) => meQuery.data?.roles.includes(r));
+  const roles = availablePersonaViews(meQuery.data?.roles ?? []);
   if (roles.length < 2) return null;
 
   const buttonClasses =

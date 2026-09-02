@@ -90,15 +90,21 @@ class BulkMarkAttendance:
         # Server-derived scope prefix (tenant + coach): a client-supplied
         # mutation_id can never collide with — or pre-claim / read back — a key
         # cached for another academy or another coach (#544).
-        key_from=lambda self, cmd, coach_id: (
+        key_from=lambda self, cmd, coach_id, supervisor=False: (
             f"bulk_mark_attendance:{self._academy_id()}:{coach_id}:{cmd.mutation_id}"
         ),
         result_type=BulkMarkAttendanceResult,
     )
     async def execute(
-        self, cmd: BulkMarkAttendanceCommand, coach_id: str
+        self,
+        cmd: BulkMarkAttendanceCommand,
+        coach_id: str,
+        *,
+        supervisor: bool = False,
     ) -> BulkMarkAttendanceResult:
-        # 1. Validate occurrence exists and coach is assigned.
+        # 1. Validate occurrence exists and coach is assigned. A supervisor
+        # (academy admin/owner covering the session) skips only the
+        # assignment membership test; see MarkAttendance.execute.
         occurrence = await self._occurrences.get(cmd.occurrence_id)
         session_id_matches = occurrence is not None and (
             occurrence.session_id == cmd.session_id
@@ -111,7 +117,7 @@ class BulkMarkAttendance:
                 occurrence_id=cmd.occurrence_id,
                 coach_id=coach_id,
             )
-        if coach_id not in {
+        if not supervisor and coach_id not in {
             occurrence.scheduled_coach_id,
             occurrence.actual_coach_id,
             occurrence.substitute_coach_id,

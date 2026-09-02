@@ -24,6 +24,12 @@ export interface CurrentUser {
   platform_roles?: PlatformRole[];
 }
 
+export {
+  COACH_SUPERVISOR_ROLES,
+  availablePersonaViews,
+  canSuperviseCoaching,
+} from "@/lib/auth/coach-supervisor";
+
 export function isPlatformAdmin(user: CurrentUser): boolean {
   return (user.platform_roles ?? []).includes("platform_admin");
 }

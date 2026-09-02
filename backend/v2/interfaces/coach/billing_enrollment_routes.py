@@ -26,7 +26,7 @@ from backend.v2.interfaces.coach.views import (
     ProrationPreviewView,
 )
 from backend.v2.shared.auth.claims import AuthClaims
-from backend.v2.shared.http import require_persona
+from backend.v2.shared.http import require_coach_surface
 
 router = APIRouter(tags=["coach.billing"])
 
@@ -101,7 +101,7 @@ async def _verify_coach_owns_enrollment(
 )
 async def list_billing_enrollments(
     session_id: str = Query(...),
-    claims: AuthClaims = Depends(require_persona("coach")),
+    claims: AuthClaims = Depends(require_coach_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> list[CoachBillingEnrollmentView]:
     # Verify coach is assigned to the session before returning data.
@@ -155,7 +155,7 @@ async def move_preview(
     enrollment_id: str,
     to_session_type_id: str = Query(...),
     move_date: datetime | None = Query(default=None),
-    claims: AuthClaims = Depends(require_persona("coach")),
+    claims: AuthClaims = Depends(require_coach_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> ProrationPreviewView:
     enrollment = await use_cases.get_billing_enrollment(enrollment_id)
@@ -203,7 +203,7 @@ async def move_preview(
 async def move_enrollment(
     enrollment_id: str,
     body: MoveEnrollmentRequest,
-    claims: AuthClaims = Depends(require_persona("coach")),
+    claims: AuthClaims = Depends(require_coach_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> MoveEnrollmentResponse:
     _ = enrollment_id, body, claims, use_cases

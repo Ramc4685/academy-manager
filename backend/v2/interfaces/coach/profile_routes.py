@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from backend.v2.interfaces.coach.deps import CoachUseCases, get_coach_use_cases
 from backend.v2.interfaces.coach.views import CoachProfileResponse, UpdateCoachProfileRequest
 from backend.v2.shared.auth.claims import AuthClaims
-from backend.v2.shared.http import require_persona
+from backend.v2.shared.http import require_coach_surface
 
 router = APIRouter(tags=["coach"])
 
@@ -18,7 +18,7 @@ router = APIRouter(tags=["coach"])
     summary="Get the current coach's profile",
 )
 async def get_profile(
-    claims: AuthClaims = Depends(require_persona("coach")),
+    claims: AuthClaims = Depends(require_coach_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> CoachProfileResponse:
     profile = await use_cases.get_profile(claims.user_id)  # type: ignore[operator]
@@ -34,7 +34,7 @@ async def get_profile(
 )
 async def update_profile(
     body: UpdateCoachProfileRequest,
-    claims: AuthClaims = Depends(require_persona("coach")),
+    claims: AuthClaims = Depends(require_coach_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> CoachProfileResponse:
     profile = await use_cases.update_profile(  # type: ignore[operator]

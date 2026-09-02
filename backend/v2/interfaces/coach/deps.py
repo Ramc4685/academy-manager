@@ -7,7 +7,7 @@ never touch infrastructure directly.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -116,7 +116,37 @@ class CoachUseCases:
     # so this module keeps importing only what routes need; the announcement
     # routes hold the concrete type.
     session_announcements: object | None = None
+    # Coach supervision (#632). ``list_all_sessions_for_academy`` mirrors
+    # ``list_all_sessions`` without the coach filter; ``resolve_user_names``
+    # maps user ids to display names so an admin's academy-wide list can
+    # label each session with its coach. Both optional for fixtures that
+    # predate them; real coach composition always sets them. When
+    # ``list_all_sessions_for_academy`` is None a supervisor falls back to
+    # the coach-scoped list.
+    list_all_sessions_for_academy: Callable[[], Awaitable[list[Any]]] | None = None
+    resolve_user_names: Callable[[Sequence[str]], Awaitable[dict[str, str]]] | None = None
 
 
 def get_coach_use_cases(request: Request) -> CoachUseCases:
     return request.app.state.coach  # type: ignore[no-any-return]
+
+
+async def coach_names_for(
+    sessions: Sequence[Any],
+    *,
+    use_cases: CoachUseCases,
+    supervisor: bool,
+) -> dict[str, str]:
+    """Coach display names keyed by coach id — coach supervisors only (#632).
+
+    Coaches looking at their own list already know who they are, so the
+    lookup is skipped on that path and ``coach_name`` stays null.
+    """
+    resolve = getattr(use_cases, "resolve_user_names", None)
+    if not supervisor or resolve is None:
+        return {}
+    coach_ids = [cid for cid in (getattr(s, "coach_id", None) for s in sessions) if cid]
+    if not coach_ids:
+        return {}
+    names: dict[str, str] = await resolve(coach_ids)
+    return names

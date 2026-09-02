@@ -18,7 +18,7 @@ from backend.v2.interfaces.coach.views import (
     ProgressNoteView,
 )
 from backend.v2.shared.auth.claims import AuthClaims
-from backend.v2.shared.http import require_persona
+from backend.v2.shared.http import require_coach_surface
 
 router = APIRouter(tags=["coach.notes"])
 
@@ -26,7 +26,7 @@ router = APIRouter(tags=["coach.notes"])
 @router.get("/sessions/{session_id}/lesson-plans", response_model=LessonPlanList)
 async def list_lesson_plans(
     session_id: str,
-    claims: AuthClaims = Depends(require_persona("coach")),
+    claims: AuthClaims = Depends(require_coach_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> LessonPlanList:
     rows = await use_cases.list_lesson_plans.execute(claims.user_id, session_id)
@@ -37,7 +37,7 @@ async def list_lesson_plans(
 async def create_lesson_plan(
     session_id: str,
     body: CreateLessonPlanRequest,
-    claims: AuthClaims = Depends(require_persona("coach")),
+    claims: AuthClaims = Depends(require_coach_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> LessonPlanView:
     row = await use_cases.create_lesson_plan.execute(
@@ -54,7 +54,7 @@ async def create_lesson_plan(
 @router.get("/sessions/{session_id}/progress-notes", response_model=ProgressNoteList)
 async def list_progress_notes(
     session_id: str,
-    claims: AuthClaims = Depends(require_persona("coach")),
+    claims: AuthClaims = Depends(require_coach_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> ProgressNoteList:
     rows = await use_cases.list_progress_notes.execute(claims.user_id, session_id)
@@ -65,7 +65,7 @@ async def list_progress_notes(
 async def create_progress_note(
     session_id: str,
     body: CreateProgressNoteRequest,
-    claims: AuthClaims = Depends(require_persona("coach")),
+    claims: AuthClaims = Depends(require_coach_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> ProgressNoteView:
     row = await use_cases.create_progress_note.execute(

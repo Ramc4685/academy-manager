@@ -91,12 +91,25 @@ class MarkAttendance:
         # Server-derived scope prefix (tenant + coach): a client-supplied
         # mutation_id can never collide with — or pre-claim / read back — a key
         # cached for another academy or another coach (#544).
-        key_from=lambda self, cmd, coach_id: (
+        key_from=lambda self, cmd, coach_id, supervisor=False: (
             f"mark_attendance:{self._academy_id()}:{coach_id}:{cmd.mutation_id}"
         ),
         result_type=MarkAttendanceResult,
     )
-    async def execute(self, cmd: MarkAttendanceCommand, coach_id: str) -> MarkAttendanceResult:
+    async def execute(
+        self,
+        cmd: MarkAttendanceCommand,
+        coach_id: str,
+        *,
+        supervisor: bool = False,
+    ) -> MarkAttendanceResult:
+        """Record one mark.
+
+        ``supervisor=True`` (an academy admin/owner covering the session)
+        skips only the "coach is assigned to this occurrence" check. The
+        occurrence, cancellation, enrollment and conflict checks still apply,
+        and the mark is attributed to ``coach_id`` — the supervisor's own id.
+        """
         # 1. Occurrence + cancellation check.
         occurrence = await self._occurrences.get(cmd.occurrence_id)
         session_id_matches = occurrence is not None and (
@@ -116,7 +129,7 @@ class MarkAttendance:
                 session_id=cmd.session_id,
                 occurrence_id=cmd.occurrence_id,
             )
-        if coach_id not in {
+        if not supervisor and coach_id not in {
             occurrence.scheduled_coach_id,
             occurrence.actual_coach_id,
             occurrence.substitute_coach_id,

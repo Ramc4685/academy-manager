@@ -64,6 +64,11 @@ class CoachSession(BaseModel):
     start_at: datetime
     end_at: datetime
     roster: list[CoachRosterEntry]
+    # Primary coach of the session. ``coach_name`` is resolved only for coach
+    # supervisors (admin/owner covering the academy-wide list); coaches see
+    # their own id and a null name.
+    coach_id: str | None = None
+    coach_name: str | None = None
 
 
 class CoachTodayResponse(BaseModel):
@@ -258,6 +263,8 @@ class CoachScheduleEntry(BaseModel):
     timezone: str | None = None
     start_at: datetime
     end_at: datetime
+    coach_id: str | None = None
+    coach_name: str | None = None
 
 
 class CoachScheduleResponse(BaseModel):

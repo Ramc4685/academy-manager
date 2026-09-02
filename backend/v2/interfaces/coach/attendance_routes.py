@@ -33,7 +33,7 @@ from backend.v2.interfaces.coach.views import (
     MarkAttendanceResponse,
 )
 from backend.v2.shared.auth.claims import AuthClaims
-from backend.v2.shared.http import require_persona
+from backend.v2.shared.http import is_coach_supervisor, require_coach_surface
 
 router = APIRouter(tags=["coach"])
 
@@ -46,7 +46,7 @@ router = APIRouter(tags=["coach"])
 )
 async def mark_attendance(
     body: MarkAttendanceRequest,
-    claims: AuthClaims = Depends(require_persona("coach")),
+    claims: AuthClaims = Depends(require_coach_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> MarkAttendanceResponse:
     cmd = MarkAttendanceCommand(
@@ -58,7 +58,9 @@ async def mark_attendance(
         marked_at_client=body.marked_at_client,
         client_app_version=body.client_app_version,
     )
-    result = await use_cases.mark_attendance.execute(cmd, coach_id=claims.user_id)
+    result = await use_cases.mark_attendance.execute(
+        cmd, coach_id=claims.user_id, supervisor=is_coach_supervisor(claims)
+    )
     return MarkAttendanceResponse(
         attendance_id=result.attendance_id,
         occurrence_id=result.occurrence_id,
@@ -79,7 +81,7 @@ async def correct_attendance(
     occurrence_id: str,
     student_id: str,
     body: CorrectAttendanceRequest,
-    claims: AuthClaims = Depends(require_persona("coach")),
+    claims: AuthClaims = Depends(require_coach_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> CorrectAttendanceResponse:
     if use_cases.correct_attendance is None:
@@ -92,7 +94,9 @@ async def correct_attendance(
             reason=body.reason,
         ),
         actor_id=claims.user_id,
-        actor_role="coach",
+        # Supervisors (#632) take the admin path: no assignment check and no
+        # 48h window, attributed to their own id.
+        actor_role="admin" if is_coach_supervisor(claims) else "coach",
     )
     return CorrectAttendanceResponse(**result.model_dump())
 
@@ -106,7 +110,7 @@ async def correct_attendance(
 async def bulk_mark_attendance(
     occurrence_id: str,
     body: BulkMarkAttendanceRequest,
-    claims: AuthClaims = Depends(require_persona("coach")),
+    claims: AuthClaims = Depends(require_coach_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> BulkMarkAttendanceResponse:
     cmd = BulkMarkAttendanceCommand(
@@ -117,7 +121,9 @@ async def bulk_mark_attendance(
             BulkAttendanceEntry(student_id=e.student_id, status=e.status) for e in body.entries
         ],
     )
-    result = await use_cases.bulk_mark_attendance.execute(cmd, coach_id=claims.user_id)
+    result = await use_cases.bulk_mark_attendance.execute(
+        cmd, coach_id=claims.user_id, supervisor=is_coach_supervisor(claims)
+    )
     return BulkMarkAttendanceResponse(
         results=[
             BulkAttendanceEntryResponse(
