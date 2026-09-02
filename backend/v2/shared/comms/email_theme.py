@@ -147,7 +147,7 @@ _BLOCK_TAGS = re.compile(r"</?(?:p|div|h[1-6]|tr|li|br)\b[^>]*>", re.I)
 _CELL_END = re.compile(r"</t[dh]>", re.I)
 _ANCHOR = re.compile(r'<a\b[^>]*href="([^"]*)"[^>]*>(.*?)</a>', re.I | re.S)
 _TAG = re.compile(r"<[^>]+>")
-_WS = re.compile(r"[ \t\r\f\v]+")
+_WS = re.compile(r"[ \r\f\v]+")
 _BLANKS = re.compile(r"\n{3,}")
 
 
