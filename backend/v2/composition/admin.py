@@ -502,7 +502,11 @@ from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.occurrences import occurrence_session_id
-from backend.v2.shared.tenancy import TenantContextUnset, current_academy_id
+from backend.v2.shared.tenancy import (
+    TenantContextUnset,
+    current_academy_id,
+    current_tenant_origins,
+)
 from backend.v2.shared.tenancy.academy_url import academy_frontend_url
 from backend.v2.shared.time import ensure_utc, request_scoped_academy_timezone
 
@@ -1749,7 +1753,13 @@ def compose_admin(
     start_connect_onboarding_use_case = StartConnectOnboarding(
         stripe=stripe,
         connected_accounts=connected_accounts_repo,
-        allowed_redirect_origins=settings.cors_allowed_origins(),
+        # Callable: evaluated per call so an admin onboarding Stripe from their
+        # academy's own host is allowlisted. Tenant origins are rebuilt from
+        # stored slug/verified domains, never from the request Host header.
+        allowed_redirect_origins=lambda: (
+            *settings.cors_allowed_origins(),
+            *current_tenant_origins(),
+        ),
     )
     _connect_callback_uri = settings.stripe_connect_callback_uri or ""
     _state_secret = settings.stripe_connect_state_secret or settings.stripe_webhook_secret or ""

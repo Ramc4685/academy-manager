@@ -34,6 +34,7 @@ from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.http.errors import DomainError
 from backend.v2.shared.tenancy.context import _current as _tenant_var
+from backend.v2.shared.tenancy.context import _current_origins as _tenant_origins_var
 
 log = logging.getLogger(__name__)
 
@@ -66,6 +67,17 @@ routes. This keeps suspended/cancelled tenants from serving business traffic
 while allowing platform routes to inspect and repair tenant state.
 """
 
+LoadTenantOriginsCallable = Callable[[str], Awaitable[tuple[str, ...]]]
+"""``async (academy_id: str) -> origins``.
+
+Returns the ``scheme://host[:port]`` origins that legitimately serve this
+tenant, rebuilt from stored records + server config (see
+``shared/tenancy/origins.py``). Never derived from the raw request Host, which
+is attacker-controlled and may only select *which* academy. Consumed by the
+Stripe redirect allowlist so a dynamically onboarded academy can check out on
+its own host.
+"""
+
 
 class TenancyMiddleware(BaseHTTPMiddleware):
     """Resolve tenant, verify token, set request.state.auth_claims + tenant ContextVar."""
@@ -77,6 +89,7 @@ class TenancyMiddleware(BaseHTTPMiddleware):
         load_auth_claims: LoadAuthClaimsCallable | None = None,
         resolve_tenant: ResolveTenantCallable | None = None,
         check_tenant_servable: CheckTenantServableCallable | None = None,
+        load_tenant_origins: LoadTenantOriginsCallable | None = None,
     ) -> None:
         super().__init__(app)
         # Both ports are optional — main.py wires the real callables at
@@ -85,6 +98,7 @@ class TenancyMiddleware(BaseHTTPMiddleware):
         self._load_claims = load_auth_claims
         self._resolve_tenant = resolve_tenant
         self._check_tenant_servable = check_tenant_servable
+        self._load_tenant_origins = load_tenant_origins
         settings = get_settings()
         self._tenancy_mode = settings.tenancy_mode
         self._primary_academy_id = settings.primary_academy_id
@@ -173,17 +187,31 @@ class TenancyMiddleware(BaseHTTPMiddleware):
         # ``request.state.auth_claims``.
         request.state.resolved_academy_id = resolved_academy_id
 
+        # Origins that legitimately serve THIS tenant, rebuilt from stored
+        # records + server config. The raw Host only selected which academy;
+        # it is never allowlisted verbatim (see shared/tenancy/origins.py).
+        tenant_origins: tuple[str, ...] = ()
+        if resolved_academy_id and self._load_tenant_origins is not None:
+            try:
+                tenant_origins = await self._load_tenant_origins(resolved_academy_id)
+            except Exception as exc:  # defensive: degrade to static allowlist
+                log.info("tenant_origins_failed: %s", exc)
+                tenant_origins = ()
+        request.state.tenant_origins = tenant_origins
+
         # --- 3. Set request.state + tenant ContextVar --------------------
         tenant_token = None
         if claims is not None:
             request.state.auth_claims = claims
             tenant_token = _tenant_var.set(claims.academy_id)
+        origins_token = _tenant_origins_var.set(tenant_origins)
 
         try:
             return await call_next(request)
         finally:
             if tenant_token is not None:
                 _tenant_var.reset(tenant_token)
+            _tenant_origins_var.reset(origins_token)
 
     @staticmethod
     def _extract_bearer(request: Request) -> str | None:
