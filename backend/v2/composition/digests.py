@@ -207,13 +207,45 @@ def digest_window_open(schedule: ResolvedDigestSchedule, current_hour: int) -> b
     precisely because nothing pinned this rule.
 
     Re-running later in the day is safe and cheap by construction: idempotency
-    is the per-(academy, recipient, date) claim, a ``sent`` row can never be
-    re-claimed, and ``try_claim`` runs before plan generation so a
-    nothing-to-do pass costs one duplicate-key insert per recipient. The window
-    needs no upper bound: ``digest_date`` rolls over at midnight, which closes
-    it.
+    is the per-(academy, recipient, date) claim, and ``try_claim`` runs before
+    plan generation so a nothing-to-do pass costs one lookup per recipient. The
+    claim is guarded by the pre-insert lookup in ``try_claim``
+    (``digest_claim.claim_digest_send``) as well as by the unique index — a
+    ``sent`` row can never be re-claimed either way. That lookup exists because
+    the index alone was the guard on 2026-09-02: production had never built it,
+    so this ``>=`` window re-sent every digest once an hour for the rest of the
+    day. ``missing_digest_claim_indexes`` makes that drift visible at boot. The
+    window needs no upper bound: ``digest_date`` rolls over at midnight, which
+    closes it.
     """
     return schedule.enabled and current_hour >= schedule.hour
+
+
+#: The unique claim indexes from migrations 0125 and 0148, by collection.
+#: ``claim_digest_send`` is correct without them (lookup, insert, verify); with
+#: them a claim is one indexed round trip and a concurrent collision is a
+#: duplicate-key error rather than a withdraw-and-wait, so their absence is
+#: still worth an alert.
+REQUIRED_DIGEST_CLAIM_INDEXES: dict[str, str] = {
+    "coach_digest_sends": "coach_digest_sends_academy_coach_date_unique",
+    "parent_digest_sends": "parent_digest_sends_academy_parent_date_unique",
+}
+
+
+async def missing_digest_claim_indexes(db: AsyncIOMotorDatabase) -> list[str]:  # type: ignore[type-arg]
+    """Names of the required digest claim indexes that are absent from ``db``.
+
+    Production ran for months with ``V2_RUN_MIGRATIONS_ON_BOOT=false`` and a
+    registry stopped at 0122, so neither index existed and nothing said so
+    until the 2026-09-02 hourly-resend incident. Read-only; never raises on a
+    missing collection (``list_indexes`` on one is simply empty).
+    """
+    missing: list[str] = []
+    for collection, index_name in REQUIRED_DIGEST_CLAIM_INDEXES.items():
+        present = {str(idx.get("name")) async for idx in db[collection].list_indexes()}
+        if index_name not in present:
+            missing.append(index_name)
+    return missing
 
 
 def _id_of(program: Any) -> str:
