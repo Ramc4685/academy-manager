@@ -1,6 +1,6 @@
 # fix-edit-session-duplicate-button-label
 
-PR: #TBD
+PR: #634
 
 ## What changed
 The session detail page had two buttons both named **Edit session** — one in the
