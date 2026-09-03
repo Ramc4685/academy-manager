@@ -248,3 +248,143 @@ async def test_last_payment_by_family_keeps_latest_per_parent(mongo_db) -> None:
     ]
     assert rows[0]["last_paid_at"] == datetime(2026, 7, 6, tzinfo=UTC)
     assert rows[1]["parent_name"] == "Asha Rao"
+
+
+def _invoice(
+    invoice_id: str, *, parent_id: str, total_cents: int, created_at: datetime
+) -> dict[str, Any]:
+    return {
+        "invoice_id": invoice_id,
+        "invoice_number": invoice_id,
+        "academy_id": ACADEMY,
+        "parent_id": parent_id,
+        "status": "paid",
+        "period": "2026-09",
+        "subtotal_cents": total_cents,
+        "total_cents": total_cents,
+        "balance_due_cents": 0,
+        "currency": "usd",
+        "created_at": created_at,
+    }
+
+
+@pytest.mark.asyncio
+async def test_stripe_settled_invoice_row_carries_paid_at_method_and_stripe_ids(mongo_db) -> None:
+    """A Stripe checkout that paid an invoice must show on the invoice row, not vanish."""
+    await _seed_parents(mongo_db)
+    invoice_created = datetime(2026, 9, 1, 8, 0, tzinfo=UTC)
+    paid_at = datetime(2026, 9, 3, 17, 14, tzinfo=UTC)
+    await mongo_db["invoices"].insert_one(
+        _invoice("inv-sep", parent_id="parent-1", total_cents=13000, created_at=invoice_created)
+    )
+    ledger = _ledger_payment(
+        "pay-stripe",
+        parent_id="parent-1",
+        amount_cents=13000,
+        paid_at=paid_at,
+        stripe_payment_intent_id="pi_123",
+    )
+    ledger["payment_method"] = "stripe_checkout"
+    await mongo_db["ledger_payments"].insert_one(ledger)
+    await mongo_db["payment_allocations"].insert_one(
+        {"academy_id": ACADEMY, "payment_id": "pay-stripe", "invoice_id": "inv-sep"}
+    )
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope(ACADEMY):
+        rows = await admin.list_payments_recent()
+        filtered = await admin.list_payments_filtered(limit=10)
+
+    assert [r["payment_id"] for r in rows] == ["inv-sep"]
+    row = rows[0]
+    assert row["paid_at"].replace(tzinfo=UTC) == paid_at
+    assert row["payment_method"] == "stripe_checkout"
+    assert row["stripe_linked"] is True
+    assert row["stripe_payment_intent_id"] == "pi_123"
+    assert filtered["payments"][0]["paid_at"] == paid_at
+
+
+@pytest.mark.asyncio
+async def test_manual_settlement_keeps_its_method_on_invoice_row(mongo_db) -> None:
+    await _seed_parents(mongo_db)
+    paid_at = datetime(2026, 9, 3, 14, 0, tzinfo=UTC)
+    await mongo_db["invoices"].insert_one(
+        _invoice(
+            "inv-zelle",
+            parent_id="parent-2",
+            total_cents=6000,
+            created_at=datetime(2026, 9, 1, tzinfo=UTC),
+        )
+    )
+    ledger = _ledger_payment("pay-zelle", parent_id="parent-2", amount_cents=6000, paid_at=paid_at)
+    ledger["payment_method"] = "zelle"
+    await mongo_db["ledger_payments"].insert_one(ledger)
+    await mongo_db["payment_allocations"].insert_one(
+        {"academy_id": ACADEMY, "payment_id": "pay-zelle", "invoice_id": "inv-zelle"}
+    )
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope(ACADEMY):
+        rows = await admin.list_payments_recent()
+
+    assert len(rows) == 1
+    assert rows[0]["payment_method"] == "zelle"
+    assert rows[0]["stripe_linked"] is False
+    assert rows[0]["paid_at"].replace(tzinfo=UTC) == paid_at
+
+
+@pytest.mark.asyncio
+async def test_legacy_projection_sharing_payment_id_with_ledger_appears_once(mongo_db) -> None:
+    """An expired checkout mirrored into the legacy collection must not render twice."""
+    created = datetime(2026, 9, 1, 15, 51, tzinfo=UTC)
+    await mongo_db["ledger_payments"].insert_one(
+        {
+            "payment_id": "pay-expired",
+            "academy_id": ACADEMY,
+            "parent_id": "parent-1",
+            "amount_cents": 7000,
+            "currency": "usd",
+            "status": "expired",
+            "created_at": created,
+        }
+    )
+    await mongo_db["payments"].insert_one(
+        {
+            "payment_id": "pay-expired",
+            "academy_id": ACADEMY,
+            "parent_id": "parent-1",
+            "amount_cents": 7000,
+            "currency": "usd",
+            "status": "expired",
+            "stripe_checkout_session_id": "cs_live_expired",
+            "created_at": created,
+        }
+    )
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope(ACADEMY):
+        rows = await admin.list_payments_recent()
+
+    assert [r["payment_id"] for r in rows] == ["pay-expired"]
+
+
+@pytest.mark.asyncio
+async def test_standalone_stripe_ledger_row_is_labelled_stripe(mongo_db) -> None:
+    """Registration checkouts have no invoice and often no method; still label them Stripe."""
+    paid_at = datetime(2026, 9, 1, 20, 19, tzinfo=UTC)
+    ledger = _ledger_payment(
+        "pay-reg",
+        parent_id="parent-1",
+        amount_cents=7000,
+        paid_at=paid_at,
+        stripe_payment_intent_id="pi_reg",
+    )
+    ledger["payment_method"] = None
+    await mongo_db["ledger_payments"].insert_one(ledger)
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope(ACADEMY):
+        rows = await admin.list_payments_recent()
+
+    assert rows[0]["payment_method"] == "stripe_checkout"
+    assert rows[0]["stripe_linked"] is True

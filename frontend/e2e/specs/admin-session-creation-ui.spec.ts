@@ -190,31 +190,32 @@ test.describe("admin session creation and fee settings UI", () => {
       fulfillJson(route, { sessions: [] }),
     );
     await page.route("**/api/v2/admin/payments", (route) =>
+      fulfillJson(route, { payments: [] }),
+    );
+    await page.route("**/api/v2/admin/payments/feed*", (route) =>
       fulfillJson(route, {
         payments: [
           {
             payment_id: "pay_65bd7fae",
             parent_id: "parent-1",
             parent_name: "Abhishek Ajithkumar",
-            student_id: "stu-1",
-            student_name: "Aadhya Abhishek",
-            enrollment_id: "enr-1",
-            session_id: "session-1",
-            period: "2026-06",
             amount_cents: 6000,
-            discount_cents: 0,
-            final_amount_cents: 6000,
-            amount_received_cents: 6000,
-            paid_amount_cents: 6000,
-            balance_due_cents: 0,
-            overpayment_credit_cents: 0,
-            currency: "usd",
-            status: "paid",
             refunded_cents: 0,
-            invoice_number: "INV-2026-06-001",
-            payment_method: "cash",
-            stripe_linked: false,
-            created_at: "2026-06-01T12:00:00Z",
+            currency: "usd",
+            status: "succeeded",
+            payment_method: "stripe_checkout",
+            paid_at: "2026-06-03T12:00:00Z",
+          },
+          {
+            payment_id: "pay_zelle_01",
+            parent_id: "parent-2",
+            parent_name: "Murugesan KP",
+            amount_cents: 6000,
+            refunded_cents: 0,
+            currency: "usd",
+            status: "succeeded",
+            payment_method: "zelle",
+            paid_at: "2026-06-02T12:00:00Z",
           },
         ],
       }),
@@ -229,9 +230,10 @@ test.describe("admin session creation and fee settings UI", () => {
     await page.goto("/admin");
 
     const recentPayments = page.getByTestId("admin-dashboard-recent-payments");
-    await expect(recentPayments).toContainText("Aadhya Abhishek");
     await expect(recentPayments).toContainText("Abhishek Ajithkumar");
-    await expect(recentPayments).toContainText("INV-2026-06-001");
+    await expect(recentPayments).toContainText("STRIPE");
+    await expect(recentPayments).toContainText("Murugesan KP");
+    await expect(recentPayments).toContainText("ZELLE");
     await expect(recentPayments).not.toContainText("pay_65bd");
   });
 

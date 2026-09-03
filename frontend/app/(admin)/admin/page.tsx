@@ -11,9 +11,16 @@
 import dynamic from "next/dynamic";
 import { useQuery } from "@tanstack/react-query";
 
-import { listAdminSessions, listAdminPayments, getRevenue, listAdminAttention } from "@/lib/api/admin";
-import type { AdminAttentionSeverity, AdminPaymentStatus } from "@/lib/api/admin";
+import {
+  listAdminSessions,
+  listAdminPayments,
+  getAdminPaymentFeed,
+  getRevenue,
+  listAdminAttention,
+} from "@/lib/api/admin";
+import type { AdminAttentionSeverity } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
+import { paymentMethodLabel, statusChip } from "@/app/(admin)/admin/payments/format";
 
 import { Card } from "@/components/ds/card";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
@@ -48,29 +55,7 @@ function formatCents(cents: number): string {
   }).format(cents / 100);
 }
 
-const PAYMENT_CHIP: Record<AdminPaymentStatus, ChipVariant> = {
-  succeeded: "paid",
-  paid: "paid",
-  pending: "pending",
-  partially_paid: "partial",
-  refunded: "refunded",
-  partially_refunded: "partial",
-  failed: "failed",
-  expired: "expired",
-  waived: "waived",
-};
-
-const PAYMENT_LABEL: Record<AdminPaymentStatus, string> = {
-  succeeded: "PAID",
-  paid: "PAID",
-  pending: "PENDING",
-  partially_paid: "PARTIAL",
-  refunded: "REFUNDED",
-  partially_refunded: "PARTIAL",
-  failed: "FAILED",
-  expired: "EXPIRED",
-  waived: "WAIVED",
-};
+const RECENT_PAYMENTS_LIMIT = 5;
 
 export default function AdminDashboardPage() {
   const today = todayISO();
@@ -83,6 +68,15 @@ export default function AdminDashboardPage() {
   const paymentsQuery = useQuery({
     queryKey: queryKeys.admin.payments(),
     queryFn: () => listAdminPayments(),
+  });
+
+  // Money actually received (Stripe checkouts, autopay, Zelle, cash ...),
+  // newest settlement first. The invoice-centric list above dates rows by
+  // invoice creation and hides expired/failed attempts poorly, so it only
+  // feeds the "Payments tracked" tile.
+  const paymentFeedQuery = useQuery({
+    queryKey: queryKeys.admin.paymentFeed(RECENT_PAYMENTS_LIMIT),
+    queryFn: () => getAdminPaymentFeed(RECENT_PAYMENTS_LIMIT),
   });
 
   const revenueQuery = useQuery({
@@ -105,10 +99,7 @@ export default function AdminDashboardPage() {
   const paymentsTracked = payments.length;
   const monthRevenue = revenueByMonth[currentMonthKey()] ?? 0;
 
-  const recentPayments = payments
-    .slice()
-    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-    .slice(0, 5);
+  const recentPayments = (paymentFeedQuery.data?.payments ?? []).slice(0, RECENT_PAYMENTS_LIMIT);
 
   const chartData = (Object.entries(revenueByMonth) as Array<[string, number]>)
     .sort(([a], [b]) => a.localeCompare(b))
@@ -190,10 +181,10 @@ export default function AdminDashboardPage() {
       {/* Recent payments */}
       <Card p={20}>
         <LaneHeader index="02" title="Recent payments" />
-        {paymentsQuery.isLoading ? (
+        {paymentFeedQuery.isLoading ? (
           <TableSkeleton rows={3} />
         ) : recentPayments.length === 0 ? (
-          <EmptyState message="No payments yet." />
+          <EmptyState message="No payments received yet." />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm" data-testid="admin-dashboard-recent-payments">
@@ -208,39 +199,46 @@ export default function AdminDashboardPage() {
                   <th className="pb-2 pr-4 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
                     Status
                   </th>
+                  <th className="pb-2 pr-4 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
+                    Method
+                  </th>
                   <th className="pb-2 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
-                    Date
+                    Paid on
                   </th>
                 </tr>
               </thead>
               <tbody>
                 {recentPayments.map((p) => {
-                  const variant = PAYMENT_CHIP[p.status];
-                  const label = PAYMENT_LABEL[p.status];
-                  const primary = p.student_name ?? p.parent_name ?? p.invoice_number ?? "Payment";
-                  const secondary = [
-                    p.invoice_number,
-                    p.student_name ? p.parent_name : null,
-                    p.period,
-                  ].filter(Boolean);
+                  const chip = statusChip(p.status);
+                  const method = paymentMethodLabel(p.payment_method);
+                  const netCents = Math.max(p.amount_cents - p.refunded_cents, 0);
                   return (
                     <tr key={p.payment_id} className="border-b border-rally-line/60 last:border-0">
                       <td className="py-2.5 pr-4">
-                        <div className="font-medium text-rally-ink">{primary}</div>
-                        {secondary.length > 0 && (
+                        <div className="font-medium text-rally-ink">
+                          {p.parent_name ?? "Family on file"}
+                        </div>
+                        {p.refunded_cents > 0 && (
                           <div className="mt-0.5 text-xs text-rally-muted">
-                            {secondary.join(" · ")}
+                            {formatCents(p.refunded_cents)} refunded
                           </div>
                         )}
                       </td>
                       <td className="py-2.5 pr-4 font-mono font-semibold tabular-nums text-rally-ink">
-                        {formatCents(p.amount_cents)}
+                        {formatCents(netCents)}
                       </td>
                       <td className="py-2.5 pr-4">
-                        <Chip variant={variant} label={label} />
+                        <Chip variant={chip.variant} label={chip.label} />
+                      </td>
+                      <td className="py-2.5 pr-4">
+                        {method ? (
+                          <Chip variant={method === "STRIPE" ? "autopayOn" : "manual"} label={method} />
+                        ) : (
+                          <span className="text-rally-subtle">—</span>
+                        )}
                       </td>
                       <td className="py-2.5 text-rally-muted">
-                        {new Date(p.created_at).toLocaleDateString()}
+                        {new Date(p.paid_at).toLocaleDateString()}
                       </td>
                     </tr>
                   );

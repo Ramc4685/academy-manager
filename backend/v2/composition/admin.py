@@ -50,6 +50,10 @@ from backend.v2.contexts.billing.application.admin_money import (
     invoice_to_admin_payment_row,
     payment_provider_keys,
 )
+from backend.v2.contexts.billing.application.admin_payment_settlement import (
+    apply_settlement,
+    settlement_method,
+)
 from backend.v2.contexts.billing.application.checkout_paid_period import (
     CheckoutPaidPeriodResolver,
 )
@@ -2998,12 +3002,28 @@ def compose_admin(
             ):
                 inv_id = str(credit.get("invoice_id") or "")
                 overpay_by_invoice[inv_id] += int(credit.get("amount_cents") or 0)
+        invoice_row_by_key: dict[str, dict[str, Any]] = {}
         for doc in invoice_docs:
-            invoice_keys.update(invoice_provider_keys(doc))
             doc["overpayment_credit_cents"] = overpay_by_invoice.get(
                 str(doc.get("invoice_id") or ""), 0
             )
-            invoice_rows.append(invoice_to_admin_payment_row(doc))
+            invoice_row = invoice_to_admin_payment_row(doc)
+            invoice_rows.append(invoice_row)
+            for key in invoice_provider_keys(doc):
+                invoice_keys.add(key)
+                invoice_row_by_key.setdefault(key, invoice_row)
+
+        def _settle_invoice_rows(keys: set[str], payment_doc: dict[str, Any]) -> bool:
+            """Fold a settling payment into the invoice row(s) it paid. True if any matched."""
+            matched: list[dict[str, Any]] = []
+            for key in keys:
+                invoice_row = invoice_row_by_key.get(key)
+                if invoice_row is not None and not any(r is invoice_row for r in matched):
+                    matched.append(invoice_row)
+            for invoice_row in matched:
+                apply_settlement(invoice_row, payment_doc)
+            return bool(matched)
+
         invoice_student_ids = [
             str(row["student_id"])
             for row in invoice_rows
@@ -3091,10 +3111,13 @@ def compose_admin(
                 allocation_invoice_id = str(allocation.get("invoice_id") or "")
                 if allocation_invoice_id:
                     payment_keys.add(allocation_invoice_id)
-            if payment_keys & invoice_keys:
-                ledger_keys.update(payment_keys)
-                continue
+            stripe_checkout_session_id = doc.get("stripe_checkout_session_id")
+            if stripe_checkout_session_id:
+                payment_keys.add(str(stripe_checkout_session_id))
             ledger_keys.update(payment_keys)
+            if payment_keys & invoice_keys:
+                _settle_invoice_rows(payment_keys, doc)
+                continue
             ledger_rows.append(
                 {
                     "payment_id": str(doc.get("payment_id") or ""),
@@ -3108,7 +3131,11 @@ def compose_admin(
                     "refunded_cents": int(doc.get("refunded_cents") or 0),
                     "stripe_payment_intent_id": stripe_payment_intent_id,
                     "stripe_invoice_id": stripe_invoice_id,
-                    "payment_method": doc.get("payment_method"),
+                    "stripe_checkout_session_id": stripe_checkout_session_id,
+                    "stripe_linked": bool(
+                        stripe_payment_intent_id or stripe_invoice_id or stripe_checkout_session_id
+                    ),
+                    "payment_method": settlement_method(doc),
                     "created_at": doc["created_at"],
                     "paid_at": doc.get("paid_at"),
                 }
@@ -3145,16 +3172,26 @@ def compose_admin(
                     "created_at": doc["created_at"],
                 }
             )
-        deduped_legacy = [
-            row
-            for row in legacy
-            if str(row.get("stripe_payment_intent_id") or "") not in ledger_keys
-            and str(row.get("stripe_invoice_id") or "") not in ledger_keys
-            and str(row.get("invoice_id") or "") not in ledger_keys
-            and str(row.get("payment_id") or "") not in invoice_keys
-            and str(row.get("invoice_id") or "") not in invoice_keys
-            and str(row.get("invoice_number") or "") not in invoice_keys
-        ]
+        deduped_legacy: list[dict[str, Any]] = []
+        for row in legacy:
+            legacy_keys = {
+                str(row.get(key) or "")
+                for key in (
+                    "payment_id",
+                    "invoice_id",
+                    "invoice_number",
+                    "stripe_payment_intent_id",
+                    "stripe_invoice_id",
+                    "stripe_checkout_session_id",
+                )
+                if row.get(key)
+            }
+            if legacy_keys & invoice_keys:
+                _settle_invoice_rows(legacy_keys, row)
+                continue
+            if legacy_keys & ledger_keys:
+                continue
+            deduped_legacy.append(row)
         combined = attempt_rows + invoice_rows + ledger_rows + deduped_legacy
         combined.sort(
             key=lambda r: (

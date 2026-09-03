@@ -60,12 +60,18 @@ export function statusChip(status: string | null | undefined): PaymentStatusChip
   };
 }
 
+/** Human label for a settlement method: every `stripe_*` variant reads as "Stripe". */
+export function paymentMethodLabel(method: string | null | undefined): string | null {
+  if (!method) return null;
+  if (method.startsWith("stripe")) return "STRIPE";
+  return method.replaceAll("_", " ").toUpperCase();
+}
+
 export function methodChip(payment: AdminPaymentView): { variant: ChipVariant; label: string } | null {
-  if (payment.stripe_linked) return { variant: "autopayOn", label: "STRIPE" };
-  if (payment.payment_method) {
-    return { variant: "manual", label: payment.payment_method.toUpperCase() };
-  }
-  return null;
+  const isStripe = payment.stripe_linked || Boolean(payment.payment_method?.startsWith("stripe"));
+  if (isStripe) return { variant: "autopayOn", label: "STRIPE" };
+  const label = paymentMethodLabel(payment.payment_method);
+  return label ? { variant: "manual", label } : null;
 }
 
 export function stripeIdSummary(payment: AdminPaymentView): string | null {
