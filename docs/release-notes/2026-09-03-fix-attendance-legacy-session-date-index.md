@@ -1,6 +1,6 @@
 # fix-attendance-legacy-session-date-index
 
-PR: #TBD
+PR: #643
 
 ## What changed
 Root cause of "coaches can mark some students but not others" (#638), found
