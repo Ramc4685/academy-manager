@@ -1419,29 +1419,31 @@ test.describe("Rally admin shell", () => {
     ).toEqual([]);
   });
 
-  test("admin topbar keeps account controls out of the header on phones", async ({
+  test("admin topbar keeps account controls out of the header at every width", async ({
     page,
     isMobile,
   }) => {
-    test.skip(!isMobile, "desktop mounts the sidebar, which owns the controls");
     // Multi-membership so the tenant switcher is a live button, and an admin
     // user gets the Coach view, so the persona switcher renders too. Both
     // would appear in the topbar if the controls had not moved.
     await stubAdminBff(page, MULTI_MEMBERSHIP);
     await page.goto("/admin");
     await expect(page.getByTestId("admin-dashboard")).toBeVisible();
-    await expect(page.getByTestId("admin-open-drawer")).toBeVisible();
-    // Drawer closed: nothing in the DOM carries the switcher testids.
-    await expect(page.getByTestId("persona-switcher-button")).toHaveCount(0);
-    await expect(page.getByTestId("tenant-switcher-button")).toHaveCount(0);
-    await expect(page.getByTestId("persona-logout-button")).toHaveCount(0);
-    const drawer = await openAdminNav(page);
-    await expect(drawer.getByTestId("persona-switcher-button")).toBeVisible();
-    await expect(drawer.getByTestId("tenant-switcher-button")).toBeVisible({
+    if (isMobile) {
+      await expect(page.getByTestId("admin-open-drawer")).toBeVisible();
+      // Drawer closed: nothing in the DOM carries the switcher testids.
+      await expect(page.getByTestId("persona-switcher-button")).toHaveCount(0);
+      await expect(page.getByTestId("tenant-switcher-button")).toHaveCount(0);
+      await expect(page.getByTestId("persona-logout-button")).toHaveCount(0);
+    }
+    // Sidebar on desktop, drawer on phones: the controls live there.
+    const nav = await openAdminNav(page);
+    await expect(nav.getByTestId("persona-switcher-button")).toBeVisible();
+    await expect(nav.getByTestId("tenant-switcher-button")).toBeVisible({
       timeout: 10_000,
     });
-    await expect(drawer.getByTestId("persona-logout-button")).toBeVisible();
-    // The topbar still has none of them.
+    await expect(nav.getByTestId("persona-logout-button")).toBeVisible();
+    // The topbar has none of them at any width (spec B2).
     const header = page.locator("header");
     await expect(header.getByTestId("persona-switcher-button")).toHaveCount(0);
     await expect(header.getByTestId("tenant-switcher-button")).toHaveCount(0);
