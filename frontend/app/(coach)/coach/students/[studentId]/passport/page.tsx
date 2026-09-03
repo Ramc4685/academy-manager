@@ -26,13 +26,14 @@ const STATUS_LABELS: Record<SkillStatus, string> = {
   NEEDS_REVIEW: "Needs review",
 };
 
-const STATUS_ORDER: SkillStatus[] = [
-  "NOT_STARTED",
+// Statuses a coach may set directly. PASSED is earned only through "Record
+// test" (the backend's CoachSettableStatus rejects it — offering it here
+// produced a 500 in production), and NOT_STARTED is the untouched default.
+const COACH_SETTABLE_STATUSES: SkillStatus[] = [
   "INTRODUCED",
   "LEARNING",
   "PRACTICING",
   "TEST_READY",
-  "PASSED",
   "NEEDS_REVIEW",
 ];
 
@@ -241,14 +242,28 @@ function SkillCard({
           value={entry.status}
           onChange={(e) => statusMutation.mutate(e.target.value as SkillStatus)}
           disabled={statusMutation.isPending}
+          aria-label={`Status for ${entry.skill_name}`}
           className="min-h-[36px] min-w-0 rounded-lg border border-neutral-300 bg-white px-2 py-1.5 text-xs font-medium focus:border-blue-500 focus:outline-none dark:border-neutral-700 dark:bg-neutral-800"
         >
-          {STATUS_ORDER.map((s) => (
+          {/* Keep the current value selectable-but-disabled when it is one a coach
+              cannot set by hand (Not started / Passed), so the select still shows it. */}
+          {!COACH_SETTABLE_STATUSES.includes(entry.status) && (
+            <option value={entry.status} disabled>
+              {STATUS_LABELS[entry.status]}
+            </option>
+          )}
+          {COACH_SETTABLE_STATUSES.map((s) => (
             <option key={s} value={s}>
               {STATUS_LABELS[s]}
             </option>
           ))}
         </select>
+        {statusMutation.isError && (
+          <p role="alert" className="col-span-full text-xs text-red-700">
+            {(statusMutation.error as Error)?.message || "Could not update status."}
+            {" "}Use “Record test” to mark a skill as passed.
+          </p>
+        )}
 
         <button
           onClick={() => setShowTestForm((v) => !v)}

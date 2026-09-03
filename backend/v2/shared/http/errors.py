@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+
+log = logging.getLogger(__name__)
 
 
 class DomainError(Exception):
@@ -25,7 +29,19 @@ class DomainError(Exception):
 
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(DomainError)
-    async def _handle_domain_error(_: Request, exc: DomainError) -> JSONResponse:
+    async def _handle_domain_error(request: Request, exc: DomainError) -> JSONResponse:
+        # Domain rejections (409 attendance conflicts, not-enrolled, etc.) are
+        # expected traffic, not crashes — but they were invisible in production
+        # logs, which made "could not save attendance" reports undiagnosable.
+        # One structured WARNING per rejection carries the code + ids.
+        log.warning(
+            "domain_error %s %s -> %s %s details=%s",
+            request.method,
+            request.url.path,
+            exc.status_code,
+            exc.code,
+            exc.details,
+        )
         return JSONResponse(
             status_code=exc.status_code,
             content={
