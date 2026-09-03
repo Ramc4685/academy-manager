@@ -22,11 +22,14 @@ import { getAdminAcademy } from "@/lib/api/admin";
 import { useTenant } from "@/lib/tenant/tenant-context";
 import type { AcademyMembershipSummary } from "@/lib/api/v2/memberships";
 import { queryKeys } from "@/lib/query/keys";
+import { useClampMenuToViewport } from "@/components/persona/use-clamp-menu";
 
 export function TenantSwitcher() {
   const { status, memberships, activeAcademyId, switchAcademy } = useTenant();
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const menuRef = useRef<HTMLUListElement | null>(null);
+  useClampMenuToViewport(menuRef, open);
   const academyQuery = useQuery({
     queryKey: queryKeys.admin.academy(),
     queryFn: getAdminAcademy,
@@ -118,6 +121,7 @@ export function TenantSwitcher() {
       </button>
       {open && (
         <ul
+          ref={menuRef}
           role="listbox"
           aria-label="Available academies"
           data-testid="tenant-switcher-menu"
