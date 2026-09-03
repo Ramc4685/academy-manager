@@ -39,23 +39,23 @@ Result, observed in screenshots on iOS 26:
 
 ## Design
 
-### 1. Safe-area utilities
+### 1. Safe-area values
 
-Add to `tailwind.config.ts` under `theme.extend.padding`:
+The frontend is Tailwind 4 (CSS-first) loading a legacy `tailwind.config.ts` via
+`@config`. Rather than register named utilities in two places, use arbitrary values,
+which are explicit and greppable:
 
-- `safe-top`: `env(safe-area-inset-top, 0px)`
-- `safe-bottom`: `env(safe-area-inset-bottom, 0px)`
-
-Headers that already carry `py-3` need the inset *added* to their padding, not replacing
-it, so they use an explicit arbitrary value: `pt-[calc(0.75rem+env(safe-area-inset-top,0px))]`
-with `pb-3`. This is intentionally verbose so it is greppable.
+- Headers that already carry `py-3` need the inset *added* to their padding:
+  `pb-3 pt-[calc(0.75rem+env(safe-area-inset-top,0px))]`.
+- Elements with no existing top padding: `pt-[env(safe-area-inset-top,0px)]`.
+- Toast container: `bottom-[max(1rem,env(safe-area-inset-bottom,0px))]`.
 
 ### 2. Elements that get the inset
 
 | File | Element | Change |
 | --- | --- | --- |
 | `app/(admin)/layout.tsx` `RallyTopbar` | sticky header | `py-3` → `pb-3 pt-[calc(0.75rem+env(safe-area-inset-top,0px))]` |
-| `app/(admin)/layout.tsx` `MobileDrawer` | drawer `<aside>` | add `pt-safe-top` |
+| `app/(admin)/layout.tsx` `MobileDrawer` | drawer `<aside>` | add `pt-[env(safe-area-inset-top,0px)]` |
 | `app/(coach)/layout.tsx` | sticky header | same as admin header |
 | `app/(parent)/layout.tsx` | sticky header | same |
 | `app/(student)/layout.tsx` | sticky header | same |
@@ -70,16 +70,18 @@ change.
 ### 3. Dropdown menus stay on screen
 
 Add a hook `useClampMenuToViewport(ref, open)` in `components/persona/use-clamp-menu.ts`.
-On open it reads the menu's bounding rect once (layout effect) and, if the left edge is
-off-screen, flips the anchor to `left: 0; right: auto`; if the right edge is off-screen it
-keeps `right: 0`. It resets inline styles when the menu closes. Used by
+The decision is a pure function `shouldAnchorLeft(rect, margin)` in
+`components/persona/menu-anchor.ts` (unit-testable in the node vitest environment). The
+hook runs a layout effect when the menu opens, reads the menu's bounding rect once and,
+if the left edge is inside the margin, sets inline `left: 0; right: auto`. The menu is
+conditionally rendered, so closing unmounts it and no reset is needed. Used by
 `PersonaSwitcher` and `TenantSwitcher`. No positioning library.
 
 ### 4. Tests
 
-- Vitest: `use-clamp-menu.test.tsx` renders a menu with a mocked
-  `getBoundingClientRect` returning a negative left and asserts the inline style flips;
-  a rect fully on screen leaves styles untouched.
+- Vitest: `menu-anchor.test.ts` covers `shouldAnchorLeft` for an off-screen left edge,
+  an edge inside the margin, and a fully on-screen rect. (The vitest environment is
+  node with no DOM library, so the hook itself is not rendered in tests.)
 - Vitest: a small shell-header test asserts each of the five layout files contains the
   safe-area padding token (string-level guard, since the layouts need auth to render).
   Cheap, and it fails loudly if someone reverts `py-3`.
