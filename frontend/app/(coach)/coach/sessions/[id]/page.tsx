@@ -163,6 +163,12 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
           error: formatApiError(err),
         },
       }));
+      // "Already recorded" means the server HAS a mark for this student.
+      // Re-hydrate from the server so the existing mark is shown next to the
+      // message instead of the row going blank (#638).
+      if ((err as { code?: string }).code === "Coaching.ConflictAttendanceExists") {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.coach.today(date) });
+      }
     },
   });
 
@@ -426,7 +432,10 @@ function RosterRow({
 }) {
   // Optimistic local state wins; otherwise fall back to the server-recorded
   // mark so a reload doesn't render a marked class as unmarked.
-  const marked = local ? local.status : (student.attendance_status ?? null);
+  // A local entry with status=null is a failed attempt; fall through to the
+  // server-hydrated mark so an "already recorded" conflict still shows what
+  // is recorded instead of blanking the row (#638).
+  const marked = local?.status ?? student.attendance_status ?? null;
   const passportParams = new URLSearchParams({
     from_session: sessionId,
     student_name: student.full_name,
