@@ -43,10 +43,32 @@ interface OptimisticEntry {
   error?: string;
 }
 
+// Domain rejections come back as 409 with a machine code (see
+// backend/v2/shared/http/errors.py). Each one is a different coach action —
+// none of them is a connectivity problem, so never describe them as one.
+const ATTENDANCE_ERROR_MESSAGES: Record<string, string> = {
+  "Coaching.ConflictAttendanceExists":
+    "Attendance for this student was already recorded (maybe from another device). Refresh to see it.",
+  "Coaching.StudentNotEnrolled":
+    "This student isn't actively enrolled in this session, so attendance can't be saved. Ask the admin to check their roster status.",
+  "Coaching.SessionNotAssigned":
+    "This session isn't assigned to your coach account for today.",
+  "Coaching.SessionCancelled": "This session occurrence was cancelled.",
+};
+
 function formatApiError(err: unknown): string {
-  const apiError = err as { status?: number };
+  const apiError = err as { status?: number; code?: string; message?: string };
+  if (apiError.code && ATTENDANCE_ERROR_MESSAGES[apiError.code]) {
+    return ATTENDANCE_ERROR_MESSAGES[apiError.code];
+  }
   if (apiError.status === 404) {
     return "This session or student is not available to your coach account.";
+  }
+  if (apiError.status === 409) {
+    return apiError.message || "Attendance could not be saved because of a conflict. Refresh and retry.";
+  }
+  if (typeof apiError.status === "number" && apiError.status >= 500) {
+    return "The server could not save attendance. It has been logged — retry in a moment.";
   }
   return "Could not save attendance. Check your connection and retry.";
 }

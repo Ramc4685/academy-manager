@@ -823,6 +823,30 @@ def test_real_skill_router_returns_404_when_coach_is_not_assigned_to_student(
     _assert_no_skill_spies_called(spies)
 
 
+@pytest.mark.parametrize("bad_status", ["PASSED", "NOT_STARTED", "DONE"])
+def test_real_skill_router_rejects_non_coach_settable_status_with_422(bad_status: str) -> None:
+    """Regression: the passport dropdown offered "Passed"; the body accepted any
+    string and the command's Literal blew up inside the handler as a 500
+    ("Something went wrong — Internal Server Error" in the coach UI). The
+    status must be validated at the request edge so the coach gets a 422 with
+    the allowed values, and the use case is never invoked."""
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids={SESSION_ID},
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        f"/api/v2/coach/students/{STUDENT_ID}/skills/{SKILL_ID}/status",
+        json={"level_id": LEVEL_ID, "program_id": PROGRAM_ID, "status": bad_status},
+    )
+
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert any("TEST_READY" in str(item.get("msg", "")) for item in detail), detail
+    assert spies.update_skill_status.calls == 0
+
+
 def test_real_skill_router_returns_404_when_student_has_no_active_session_enrollments() -> None:
     app, spies = _build_real_router_app(
         student_session_ids=[],

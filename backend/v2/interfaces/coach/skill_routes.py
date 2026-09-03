@@ -29,6 +29,7 @@ from backend.v2.contexts.student_progress.application.use_cases.record_test_atte
     RecordTestAttemptCommand,
 )
 from backend.v2.contexts.student_progress.application.use_cases.update_skill_status import (
+    CoachSettableStatus,
     UpdateSkillStatusCommand,
 )
 from backend.v2.interfaces.coach.deps import CoachUseCases, get_coach_use_cases
@@ -46,9 +47,17 @@ router = APIRouter(tags=["coach-skills"])
 
 
 class UpdateStatusBody(BaseModel):
+    """Coach-settable status change.
+
+    ``status`` is validated at the request edge against ``CoachSettableStatus``
+    so an unsupported value (``PASSED``/``NOT_STARTED`` — which only the
+    record-test flow may produce) is a 422 with the allowed values in the
+    detail, never a 500 raised from inside the handler.
+    """
+
     level_id: str
     program_id: str
-    status: str  # e.g. "IN_PROGRESS", "PASSED", "NOT_STARTED"
+    status: CoachSettableStatus
     introduced_at: str | None = None
 
 
