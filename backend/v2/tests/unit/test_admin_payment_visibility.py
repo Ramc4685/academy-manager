@@ -388,3 +388,45 @@ async def test_standalone_stripe_ledger_row_is_labelled_stripe(mongo_db) -> None
 
     assert rows[0]["payment_method"] == "stripe_checkout"
     assert rows[0]["stripe_linked"] is True
+
+
+@pytest.mark.asyncio
+async def test_pending_attempt_does_not_settle_invoice_row(mongo_db) -> None:
+    """A pending/failed attempt referencing an invoice must not mark it Stripe-linked or paid."""
+    await mongo_db["invoices"].insert_one(
+        {
+            **_invoice(
+                "inv-open",
+                parent_id="parent-1",
+                total_cents=7000,
+                created_at=datetime(2026, 9, 1, tzinfo=UTC),
+            ),
+            "status": "open",
+            "balance_due_cents": 7000,
+        }
+    )
+    await mongo_db["ledger_payments"].insert_one(
+        {
+            "payment_id": "pay-pending",
+            "academy_id": ACADEMY,
+            "parent_id": "parent-1",
+            "amount_cents": 7000,
+            "currency": "usd",
+            "status": "pending",
+            "stripe_payment_intent_id": "pi_pending",
+            "created_at": datetime(2026, 9, 2, tzinfo=UTC),
+        }
+    )
+    await mongo_db["payment_allocations"].insert_one(
+        {"academy_id": ACADEMY, "payment_id": "pay-pending", "invoice_id": "inv-open"}
+    )
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope(ACADEMY):
+        rows = await admin.list_payments_recent()
+
+    assert [r["payment_id"] for r in rows] == ["inv-open"]
+    assert rows[0]["status"] == "pending"
+    assert rows[0]["stripe_linked"] is False
+    assert rows[0]["payment_method"] == "invoice"
+    assert rows[0].get("paid_at") is None

@@ -22,6 +22,13 @@ STRIPE_ID_KEYS: tuple[str, ...] = (
     "stripe_subscription_id",
 )
 
+# Only money actually received settles an invoice. A pending, failed or expired
+# attempt that references an invoice must NOT stamp paid_at / method / Stripe
+# ids onto it, otherwise an unpaid invoice renders as "Stripe linked".
+SETTLED_STATUSES: frozenset[str] = frozenset(
+    {"succeeded", "paid", "partially_refunded", "refunded"}
+)
+
 # Placeholder methods stamped on rows that have not yet learned how they were
 # settled. A real settlement method always replaces these.
 _PLACEHOLDER_METHODS: frozenset[str] = frozenset({"", "invoice", "stripe"})
@@ -46,8 +53,14 @@ def settlement_method(doc: dict[str, Any]) -> str | None:
     return None
 
 
-def apply_settlement(row: dict[str, Any], doc: dict[str, Any]) -> None:
+def is_settled(doc: dict[str, Any]) -> bool:
+    return str(doc.get("status") or "") in SETTLED_STATUSES
+
+
+def apply_settlement(row: dict[str, Any], doc: dict[str, Any]) -> bool:
     """Merge ``doc``'s settlement facts into ``row`` in place.
+
+    Returns False (and touches nothing) unless ``doc`` is money received.
 
     - ``paid_at`` takes the latest settlement timestamp seen.
     - Stripe ids fill in whatever the row lacks; ``stripe_linked`` becomes true
@@ -56,6 +69,8 @@ def apply_settlement(row: dict[str, Any], doc: dict[str, Any]) -> None:
       when this document settled at or after the row's current ``paid_at``.
     """
 
+    if not is_settled(doc):
+        return False
     doc_paid_at = coerce_report_datetime(doc.get("paid_at") or doc.get("payment_date"))
     row_paid_at = coerce_report_datetime(row.get("paid_at") or row.get("payment_date"))
     newer = doc_paid_at is not None and (row_paid_at is None or doc_paid_at >= row_paid_at)
@@ -69,8 +84,8 @@ def apply_settlement(row: dict[str, Any], doc: dict[str, Any]) -> None:
         row["stripe_linked"] = True
 
     method = settlement_method(doc)
-    if method is None:
-        return
-    current = str(row.get("payment_method") or "")
-    if current in _PLACEHOLDER_METHODS or newer:
-        row["payment_method"] = method
+    if method is not None:
+        current = str(row.get("payment_method") or "")
+        if current in _PLACEHOLDER_METHODS or newer:
+            row["payment_method"] = method
+    return True
