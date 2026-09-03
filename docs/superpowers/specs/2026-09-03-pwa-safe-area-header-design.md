@@ -31,6 +31,10 @@ Result, observed in screenshots on iOS 26:
   Refresh, logout) which overflows the phone width and pushes the page title out.
   Target pattern: topbar keeps menu button, title, and one page action; account-level
   controls move to the drawer footer.
+- Back navigation on every non-top-level page (e.g. coach Skill Passport, admin
+  session/student detail). The installed app has no browser chrome and the iOS edge
+  swipe is unreliable in standalone mode, so shell headers need a back chevron on
+  detail routes with a parent-route fallback for deep links. Own PR, next.
 - Per-page mobile layouts (tables to cards, filters, row actions).
 
 ## Design
