@@ -18,7 +18,8 @@ Production deployment is handled by one GitHub Actions workflow:
 - **Backend Lint** runs `ruff check v2`, `ruff format --check v2`, and advisory
   `mypy --config-file pyproject.toml v2`.
 - **Frontend** installs `frontend/` with pnpm, runs
-  `pnpm audit --audit-level=high`, then runs typecheck, lint, build, OpenAPI
+  `pnpm audit --audit-level=high`, then runs typecheck, `pnpm test:unit`
+  (vitest), `pnpm test:node` (node --test), lint, build, OpenAPI
   drift check, size budget reporting, Lighthouse when configured, and
   Playwright E2E in the Chromium mobile project (Chromium desktop on main and
   on PRs that touch `frontend/e2e/**`). The WebKit mobile project runs in

@@ -164,20 +164,11 @@ if [ "$FRONTEND_CHANGED" = true ] || [ "$BROAD" = true ]; then
   case "$NODE_BIN" in
     */bin/node) PATH="$(dirname "$NODE_BIN"):$PATH" ;;
   esac
-  run_check "node unit tests" "$NODE_BIN" --no-warnings --test \
-    lib/canonical-host.node-test.mjs \
-    lib/brand.node-test.mjs \
-    lib/worktree-port.node-test.mjs \
-    lib/parent-home.node-test.mjs \
-    lib/api/auth-bridge-cookie.node-test.mjs \
-    lib/api/auth-token.node-test.mjs \
-    lib/api/proxy-headers.node-test.mjs \
-    lib/api/token-readiness.node-test.mjs \
-    lib/auth/auth-domain.node-test.mjs \
-    lib/auth/coach-supervisor.node-test.mjs \
-    lib/auth/google-sign-in-mode.node-test.mjs \
-    lib/auth/token-readiness.node-test.mjs \
-    lib/navigation/admin-student-progress-return.node-test.mjs
+  # Glob (resolved by node, not the shell) so a new *.node-test.mjs file is
+  # picked up automatically; the previous hand-maintained list silently
+  # skipped 7 of 19 files, three of which had been red for days.
+  run_check "node unit tests" "$NODE_BIN" --no-warnings --test "lib/**/*.node-test.mjs"
+  run_check "vitest unit tests" pnpm exec vitest run
 
   run_check "pnpm typecheck" pnpm typecheck
 
