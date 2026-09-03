@@ -1,6 +1,6 @@
 # fix-paused-enrollment-invisible-and-blocks-roster-add
 
-PR: #TBD
+PR: #641
 
 ## What changed
 Prod, BLNO, 2026-09-03: "Add to roster" for Harshith Bhaskar (Thu 6:45 PM
