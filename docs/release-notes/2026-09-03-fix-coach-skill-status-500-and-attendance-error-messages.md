@@ -49,32 +49,12 @@ fact.
   domain code to an actionable message, keeps the connectivity wording only for
   actual network failures, and distinguishes 5xx.
 
-**3. Root cause of "some students can't be marked" — a v1 unique index left on
-prod.** With the new logging live, the rejections read
-`Coaching.ConflictAttendanceExists` with `existing_attendance_id: None`: the
-unique-index collision was on a key the tenant-scoped lookup never checks.
-Prod still carries the v1 index `session_id_1_student_id_1_date_1`
-(session_id, student_id, date). v2 rows never set `date`, so for a recurring
-session every v2 row collapses to `(session_id, student_id, null)` — **a
-student marked once in a session can never be marked again in it.** Confirmed
-against prod data: all 15 students marked on the 2026-09-02 occurrence had
-zero earlier v2 rows for the session; the single student with an earlier row
-(2026-06-10) was the one the coach could not mark. Left alone, every student
-marked this week would have failed next week.
-
-- `backend/v2/migrations/0164_drop_legacy_attendance_session_date_index.py`
-  drops the v1 index. Integrity stays enforced by `attendance_occurrence_unique`
-  (academy_id, occurrence_id, student_id) from migration 0081.
-- Coach session page: an "already recorded" conflict re-hydrates from the
-  server and no longer blanks the row, so the existing mark stays visible next
-  to the message (the second symptom: Diya/Anjana *were* marked; a re-tap
-  hid the mark).
+Not changed here: the underlying attendance-conflict/not-enrolled data cases
+themselves (see #517 for the correction workflow and the linked incident issue
+for the per-student investigation).
 
 ## Deploy notes
-No config. Migration 0164 drops one legacy index; boot-time migrations are
-OFF in prod (`V2_RUN_MIGRATIONS_ON_BOOT=false`, #629), so apply it by hand
-(or drop `session_id_1_student_id_1_date_1` on `attendance` directly) — the
-attendance fix is not live until that index is gone. Everything else is
+No migration, no config. Safe to deploy immediately; both changes are
 backward-compatible (422 replaces a 500; messages/logging only).
 
 After deploy, if a coach still cannot mark a specific student, run
