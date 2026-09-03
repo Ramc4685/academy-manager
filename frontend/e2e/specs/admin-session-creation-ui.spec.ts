@@ -183,7 +183,7 @@ test.describe("admin session creation and fee settings UI", () => {
     await expect.poll(() => feePatch).toEqual({ late_fee_cents: 1750 });
   });
 
-  test("dashboard recent payments show student and parent context", async ({ page }) => {
+  test("dashboard recent payments show money received with method", async ({ page }) => {
     await stubAdminShell(page);
 
     await page.route("**/api/v2/admin/sessions*", (route) =>

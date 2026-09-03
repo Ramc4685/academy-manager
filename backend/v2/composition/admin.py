@@ -3014,7 +3014,17 @@ def compose_admin(
                 invoice_row_by_key.setdefault(key, invoice_row)
 
         def _settle_invoice_rows(keys: set[str], payment_doc: dict[str, Any]) -> bool:
-            """Fold a settling payment into the invoice row(s) it paid. True if any matched."""
+            """Fold a settling payment into the invoice row(s) it paid. True if any matched.
+
+            INVARIANT (PR #645, do not "simplify" away): the admin list is
+            invoice-centric, so a ledger/legacy payment that paid an invoice is
+            represented by the INVOICE row. That row must still show how and
+            when the money arrived (paid_at, payment_method, Stripe ids,
+            stripe_linked). Dropping the payment without calling this helper
+            makes every Stripe-paid invoice render as "invoice / no paid date",
+            which is the prod defect this fixes. apply_settlement ignores
+            non-money statuses (pending/failed/expired) on purpose.
+            """
             matched: list[dict[str, Any]] = []
             for key in keys:
                 invoice_row = invoice_row_by_key.get(key)
@@ -3116,6 +3126,7 @@ def compose_admin(
                 payment_keys.add(str(stripe_checkout_session_id))
             ledger_keys.update(payment_keys)
             if payment_keys & invoice_keys:
+                # Settled an invoice: keep the invoice row, carry the facts over.
                 _settle_invoice_rows(payment_keys, doc)
                 continue
             ledger_rows.append(
@@ -3172,6 +3183,11 @@ def compose_admin(
                     "created_at": doc["created_at"],
                 }
             )
+        # Legacy `payments` projections: settle the invoice they paid, and drop
+        # any row already represented by a ledger payment (same payment_id,
+        # checkout session, intent, or invoice) — the same money must never
+        # render twice. Keep payment_id in this key set; it is what deduped the
+        # duplicated expired checkout seen on prod (PR #645).
         deduped_legacy: list[dict[str, Any]] = []
         for row in legacy:
             legacy_keys = {

@@ -70,10 +70,13 @@ export default function AdminDashboardPage() {
     queryFn: () => listAdminPayments(),
   });
 
-  // Money actually received (Stripe checkouts, autopay, Zelle, cash ...),
-  // newest settlement first. The invoice-centric list above dates rows by
-  // invoice creation and hides expired/failed attempts poorly, so it only
-  // feeds the "Payments tracked" tile.
+  // INVARIANT (PR #645): "Recent payments" MUST read the paid-only feed, not
+  // listAdminPayments(). The list is invoice-centric — Stripe/Zelle settlements
+  // are folded into invoice rows dated by invoice creation, and expired/failed
+  // attempts sit alongside real money. Sorting that list by created_at hid every
+  // Stripe payment behind registration checkouts (the prod defect). The feed
+  // returns money actually received, newest settlement first. The list query
+  // below only feeds the "Payments tracked" tile.
   const paymentFeedQuery = useQuery({
     queryKey: queryKeys.admin.paymentFeed(RECENT_PAYMENTS_LIMIT),
     queryFn: () => getAdminPaymentFeed(RECENT_PAYMENTS_LIMIT),

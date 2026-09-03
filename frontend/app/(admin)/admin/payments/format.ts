@@ -60,7 +60,12 @@ export function statusChip(status: string | null | undefined): PaymentStatusChip
   };
 }
 
-/** Human label for a settlement method: every `stripe_*` variant reads as "Stripe". */
+/**
+ * Human label for a settlement method. Every `stripe_*` variant
+ * (stripe_checkout, stripe_autopay, stripe_subscription, stripe_legacy) MUST
+ * read as "Stripe" — the backend stamps the specific variant on ledger rows
+ * and the admin UI is expected to show one consistent label (PR #645).
+ */
 export function paymentMethodLabel(method: string | null | undefined): string | null {
   if (!method) return null;
   if (method.startsWith("stripe")) return "STRIPE";
