@@ -798,7 +798,9 @@ class MongoStudentRepository(TenantScopedRepository):
                 {
                     "academy_id": academy_id,
                     "student_id": student_id,
-                    "status": "active",
+                    # Paused enrollments are still the student's sessions;
+                    # the panel renders the status chip.
+                    "status": {"$in": ["active", "paused"]},
                     "is_deleted": {"$ne": True},
                 }
             )

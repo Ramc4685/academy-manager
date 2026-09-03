@@ -1834,13 +1834,6 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         outbox=outbox,
         academy_id="acad",
     )
-    edit_roster_add = EditRosterAdd(
-        sessions=sessions,
-        enrollments=enrollments_w,
-        students=students,
-        enrollment_events=enrollment_events,
-        academy_id="acad",
-    )
     cancel_enrollment = CancelEnrollment(
         enrollments=enrollments_w,
         sessions=sessions,
@@ -1870,6 +1863,14 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         waitlist=waitlist,
         enrollment_events=enrollment_events,
         autopay_status=autopay_status,
+    )
+    edit_roster_add = EditRosterAdd(
+        sessions=sessions,
+        enrollments=enrollments_w,
+        students=students,
+        enrollment_events=enrollment_events,
+        resume=resume_enrollment,
+        academy_id="acad",
     )
     withdraw_enrollment = WithdrawEnrollment(
         enrollments=enrollments_w,
@@ -1929,9 +1930,14 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         return [s for s in live if s.start_at.date() == on_date]
 
     async def list_admin_enrollments_for_session(session_id):
-        active = await enrollments_q.active_for_session(session_id)
+        # Mirrors production: active AND paused rows are listed.
+        listed = [
+            e
+            for e in enrollments_q.rows.values()
+            if e.session_id == session_id and e.status in {"active", "paused"}
+        ]
         out = []
-        for e in active:
+        for e in listed:
             st = students.students.get(e.student_id)
             out.append(
                 {

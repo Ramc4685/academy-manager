@@ -355,7 +355,7 @@ export default function AdminSessionDetailPage() {
             action={
               session && (
                 <span className="font-mono text-sm font-semibold tabular-nums text-rally-muted">
-                  {enrollments.length}/{session.capacity}
+                  {enrollments.filter((e) => e.status === "active").length}/{session.capacity}
                 </span>
               )
             }

@@ -702,18 +702,6 @@ def compose_admin(
     # #613 welcome email + #612 roster alerts, built together so this file
     # stays wiring (see composition/roster_notifications.py).
     notifiers = compose_enrollment_notifiers(db, settings, users=users_r)
-    edit_roster_add = EditRosterAdd(
-        sessions=sessions_w,
-        enrollments=enrollments_w,
-        students=students_w,
-        enrollment_events=enrollment_events,
-        welcome_notifier=notifiers.welcome,
-        roster_notifier=notifiers.roster,
-        # Request-time tenant, same shape as PromoteFromWaitlist below. The
-        # boot-frozen value only ever reached the lifecycle event and the
-        # returned object (the Mongo writers re-stamp from the ContextVar).
-        academy_id=request_academy_id,
-    )
     cancel_enrollment = CancelEnrollment(
         enrollments=enrollments_w,
         sessions=sessions_w,
@@ -751,6 +739,20 @@ def compose_admin(
         enrollments=enrollments_w,
         enrollment_events=enrollment_events,
         roster_notifier=notifiers.roster,
+    )
+    edit_roster_add = EditRosterAdd(
+        sessions=sessions_w,
+        enrollments=enrollments_w,
+        students=students_w,
+        enrollment_events=enrollment_events,
+        welcome_notifier=notifiers.welcome,
+        roster_notifier=notifiers.roster,
+        # Re-adding a paused student resumes the existing row (one code path).
+        resume=resume_enrollment,
+        # Request-time tenant, same shape as PromoteFromWaitlist below. The
+        # boot-frozen value only ever reached the lifecycle event and the
+        # returned object (the Mongo writers re-stamp from the ContextVar).
+        academy_id=request_academy_id,
     )
     join_waitlist = JoinWaitlist(
         waitlist=waitlist,
@@ -2649,8 +2651,10 @@ def compose_admin(
         return rows
 
     async def list_admin_enrollments_for_session(session_id: str):
+        # Paused rows stay on the roster (PAUSED chip + Resume). Hiding them
+        # left a student who blocked "Add to roster" invisible everywhere.
         cursor = enrollments_r._find_many(
-            {"session_id": session_id, "status": "active"},
+            {"session_id": session_id, "status": {"$in": ["active", "paused"]}},
             sort=[("created_at", 1), ("enrollment_id", 1)],
         )
         enrollment_docs = [doc async for doc in cursor]

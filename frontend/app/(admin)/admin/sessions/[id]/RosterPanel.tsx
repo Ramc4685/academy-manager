@@ -32,7 +32,9 @@ export function RosterMetrics({
   enrollments: AdminEnrollmentView[];
   capacity: number;
 }) {
-  const filled = enrollments.length;
+  // Paused rows are listed (so they can be resumed) but hold no seat.
+  const filled = enrollments.filter((e) => e.status === "active").length;
+  const pausedCount = enrollments.filter((e) => e.status === "paused").length;
   const openSpots = Math.max(capacity - filled, 0);
   const dueCount = enrollments.filter((e) => e.dues_status === "due").length;
   const overdueCount = enrollments.filter((e) => e.dues_status === "overdue").length;
@@ -46,7 +48,11 @@ export function RosterMetrics({
 
   return (
     <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-2 2xl:grid-cols-4">
-      <RosterMetric label="In session" value={String(filled)} />
+      <RosterMetric
+        label="In session"
+        value={String(filled)}
+        detail={pausedCount > 0 ? `${pausedCount} paused` : undefined}
+      />
       <RosterMetric
         label="Open spots"
         value={String(openSpots)}

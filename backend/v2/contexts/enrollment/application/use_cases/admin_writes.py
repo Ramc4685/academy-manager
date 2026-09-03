@@ -623,6 +623,7 @@ class EditRosterAdd:
         enrollment_events: EnrollmentEventRepository | None = None,
         welcome_notifier: EnrollmentWelcomeNotifier | None = None,
         roster_notifier: RosterChangeNotifier | None = None,
+        resume: ResumeEnrollment | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._sessions = sessions
@@ -635,6 +636,7 @@ class EditRosterAdd:
         self._enrollment_events = enrollment_events
         self._welcome_notifier = welcome_notifier
         self._roster_notifier = roster_notifier
+        self._resume = resume
         self._now = clock
 
     def _resolve_academy_id(self) -> str:
@@ -648,10 +650,28 @@ class EditRosterAdd:
         # not a lock — there is no unique (session, student) index — so the
         # DuplicateKeyError arm below stays as the correctness backstop.
         existing = await self._enrollments.find_for_session_student(cmd.session_id, cmd.student_id)
+        if existing is not None and existing.status == "paused" and self._resume is not None:
+            # A paused row is the same enrollment, not a duplicate: re-adding
+            # the student means "resume". Delegating keeps one code path for
+            # seat reservation, waitlist cleanup, the lifecycle event, the
+            # billing deferral and autopay — the add must never create a
+            # second row next to a paused one, and it must never dead-end the
+            # admin on a row they cannot see (paused rows used to be hidden
+            # from the roster read while still blocking this add).
+            await self._resume.execute(
+                existing.enrollment_id,
+                actor_id=cmd.actor_id,
+                reason=cmd.reason or "re-added to roster",
+            )
+            return existing.model_copy(update={"status": "active"})
         if existing is not None and existing.status in self._BLOCKING_STATUSES:
+            hint = (
+                "Use Resume on the roster instead."
+                if existing.status == "paused"
+                else "Remove the existing enrollment first."
+            )
             raise StudentAlreadyOnRoster(
-                f"{cmd.full_name} is already on this roster "
-                f"({existing.status}). Remove the existing enrollment first.",
+                f"{cmd.full_name} is already on this roster ({existing.status}). {hint}",
                 session_id=cmd.session_id,
                 student_id=cmd.student_id,
                 enrollment_id=existing.enrollment_id,

@@ -198,7 +198,7 @@ function SessionsPanel({
         <div className="flex items-center justify-between gap-3">
           <Overline>Enrolled sessions</Overline>
           <span className="font-mono text-xs text-rally-muted tabular-nums">
-            {sessions.length} active
+            {sessions.filter((s) => s.status === "active").length} active
           </span>
         </div>
         {sessions.length === 0 ? (
@@ -206,7 +206,7 @@ function SessionsPanel({
             className="mt-3 text-sm text-rally-muted"
             data-testid="admin-student-no-sessions"
           >
-            No active session enrollments.
+            No session enrollments.
           </p>
         ) : (
           <div

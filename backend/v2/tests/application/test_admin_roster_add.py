@@ -29,6 +29,7 @@ from pymongo.errors import DuplicateKeyError
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     EditRosterAdd,
     EditRosterAddCommand,
+    ResumeEnrollment,
 )
 from backend.v2.contexts.enrollment.domain.errors import (
     CapacityExceeded,
@@ -123,6 +124,9 @@ class FakeEnrollments:
             if row.session_id == session_id and row.status == "active"
         )
 
+    async def update_status(self, enrollment_id: str, status: str) -> None:
+        self.rows[enrollment_id] = self.rows[enrollment_id].model_copy(update={"status": status})
+
 
 @dataclass
 class FakeStudents:
@@ -164,12 +168,24 @@ def _use_case(
     enrollments: FakeEnrollments,
     students: FakeStudents,
     events: FakeEvents | None = None,
+    *,
+    with_resume: bool = True,
 ) -> EditRosterAdd:
+    resume = (
+        ResumeEnrollment(
+            enrollments=enrollments,  # type: ignore[arg-type]
+            sessions=sessions,  # type: ignore[arg-type]
+            enrollment_events=events,  # type: ignore[arg-type]
+        )
+        if with_resume
+        else None
+    )
     return EditRosterAdd(
         sessions=sessions,  # type: ignore[arg-type]
         enrollments=enrollments,  # type: ignore[arg-type]
         students=students,  # type: ignore[arg-type]
         enrollment_events=events,  # type: ignore[arg-type]
+        resume=resume,
         academy_id=ACADEMY,
     )
 
@@ -234,9 +250,7 @@ async def test_existing_active_enrollment_is_refused_without_reserving() -> None
     assert len(enrollments.rows) == 1
 
 
-@pytest.mark.asyncio
-async def test_existing_paused_enrollment_is_refused_too() -> None:
-    sessions, enrollments, students = _seeded()
+def _seed_paused(enrollments: FakeEnrollments) -> None:
     enrollments.rows["enr-paused"] = Enrollment(
         enrollment_id="enr-paused",
         academy_id=ACADEMY,
@@ -244,11 +258,43 @@ async def test_existing_paused_enrollment_is_refused_too() -> None:
         student_id="st-1",
         status="paused",
     )
-    uc = _use_case(sessions, enrollments, students)
 
-    with pytest.raises(StudentAlreadyOnRoster):
+
+@pytest.mark.asyncio
+async def test_existing_paused_enrollment_is_resumed_in_place() -> None:
+    """Re-adding a paused student is a resume, not a duplicate and not a 409.
+
+    Prod 2026-09-03: a student paused in July was hidden from the roster read
+    yet blocked "Add to roster" with "already on this roster (paused)" — a
+    dead end with no visible row to act on.
+    """
+    sessions, enrollments, students = _seeded()
+    _seed_paused(enrollments)
+    events = FakeEvents()
+    uc = _use_case(sessions, enrollments, students, events)
+
+    out = await uc.execute(_cmd())
+
+    assert out.enrollment_id == "enr-paused"
+    assert out.status == "active"
+    assert enrollments.rows["enr-paused"].status == "active"
+    assert list(enrollments.rows) == ["enr-paused"], "no second row next to the paused one"
+    assert sessions.reserve_calls == ["sess-1"], "resume re-reserves exactly one seat"
+    assert sessions.reserved["sess-1"] == 1
+    assert [e.event_type for e in events.rows] == ["resumed"]
+    assert students.ensure_calls == [], "no student write on a resume"
+
+
+@pytest.mark.asyncio
+async def test_existing_paused_enrollment_is_refused_when_resume_is_unwired() -> None:
+    sessions, enrollments, students = _seeded()
+    _seed_paused(enrollments)
+    uc = _use_case(sessions, enrollments, students, with_resume=False)
+
+    with pytest.raises(StudentAlreadyOnRoster) as exc:
         await uc.execute(_cmd())
 
+    assert "Use Resume on the roster" in str(exc.value)
     assert sessions.reserve_calls == []
 
 
