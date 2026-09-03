@@ -317,7 +317,7 @@ function MobileDrawer({
         onClick={onClose}
       />
       <aside
-        className="relative z-50 flex flex-col w-64 h-full shadow-xl overflow-y-auto"
+        className="relative z-50 flex flex-col w-64 h-full shadow-xl overflow-y-auto pt-[env(safe-area-inset-top,0px)]"
         style={{ background: "var(--rally-night)", color: "var(--rally-bright)" }}
         aria-label="Admin navigation"
         data-testid="admin-mobile-drawer"
@@ -369,7 +369,7 @@ function RallyTopbar({
 }: TopbarProps) {
   return (
     <header
-      className="sticky top-0 z-30 border-b bg-white/95 backdrop-blur px-4 py-3 md:px-6"
+      className="sticky top-0 z-30 border-b bg-white/95 backdrop-blur px-4 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top,0px))] md:px-6"
       style={{ borderColor: "var(--rally-line)" }}
     >
       <div className="flex items-center justify-between gap-3">

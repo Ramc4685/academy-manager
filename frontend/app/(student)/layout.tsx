@@ -42,7 +42,7 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
       <div className="min-h-screen flex flex-col pb-20" style={{ background: "var(--rally-paper)" }}>
         {/* Header */}
         <header
-          className="sticky top-0 z-10 flex items-center justify-between px-4 py-3"
+          className="sticky top-0 z-10 flex items-center justify-between px-4 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top,0px))]"
           style={{
             background: "linear-gradient(135deg, #0a0f1c 0%, #0f1d38 100%)",
             borderBottom: "1px solid rgba(250,204,21,0.12)",

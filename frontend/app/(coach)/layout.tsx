@@ -61,7 +61,7 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
       }
     >
       <header
-        className="sticky top-0 z-10 flex items-center justify-between px-4 py-3"
+        className="sticky top-0 z-10 flex items-center justify-between px-4 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top,0px))]"
         style={{ background: "#0a0f1c", borderBottom: "1px solid #1e293b" }}
       >
         <Link href="/coach/dashboard" className="flex items-center gap-2">
