@@ -10,6 +10,7 @@ package still boot.
 from __future__ import annotations
 
 import logging
+import os
 from typing import TYPE_CHECKING
 
 from backend.v2.shared.config import Settings
@@ -37,6 +38,7 @@ def configure_error_tracking(settings: Settings) -> None:
     sentry_sdk.init(
         dsn=settings.sentry_dsn,
         environment=settings.env,
+        release=resolve_release(),
         traces_sample_rate=settings.sentry_traces_sample_rate,
         # Events carry ids/tags, never request payloads or user PII.
         send_default_pii=False,
@@ -44,6 +46,20 @@ def configure_error_tracking(settings: Settings) -> None:
         before_send=_tag_event,
     )
     log.info("Sentry error tracking enabled (env=%s).", settings.env)
+
+
+def resolve_release() -> str | None:
+    """Release tag for Sentry: explicit env override, else Fly's image ref.
+
+    Fly stamps ``FLY_IMAGE_REF`` (registry path + deploy tag) on every machine,
+    so each deploy gets its own release without a build-time step. ``None``
+    when nothing is set — Sentry treats that as "unversioned", never an error.
+    """
+    for name in ("V2_SENTRY_RELEASE", "SENTRY_RELEASE", "FLY_IMAGE_REF"):
+        value = os.environ.get(name)
+        if value:
+            return value
+    return None
 
 
 def _tag_event(event: Event, hint: Hint) -> Event | None:

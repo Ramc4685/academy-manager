@@ -22,6 +22,10 @@ primary_region = "ord"
   ENABLE_STUDENT_LOGIN = "false"
   V2_RUN_MIGRATIONS_ON_BOOT = "true"
 
+# In-flight Stripe webhook handlers and outbox work get 30s to finish on
+# deploy/restart instead of the 5s default.
+kill_timeout = "30s"
+
 [http_service]
   internal_port = 8001
   force_https = true
@@ -33,7 +37,9 @@ primary_region = "ord"
   [[http_service.checks]]
     interval = "30s"
     timeout = "5s"
-    grace_period = "20s"
+    # Boot runs pending migrations in-process (V2_RUN_MIGRATIONS_ON_BOOT);
+    # give a slow one room before the first health probe counts.
+    grace_period = "60s"
     method = "GET"
     path = "/api/v2/healthz"
 
