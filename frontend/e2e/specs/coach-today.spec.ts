@@ -101,8 +101,13 @@ test.describe("Coach Today", () => {
     });
     await page.goto("/coach/sessions/s-today-1");
     await page.getByTestId("mark-st1-absent").click();
+    // A 409 domain rejection must NOT be described as a connectivity problem —
+    // the coach needs the specific reason (see #638).
     await expect(page.getByTestId("mark-error-st1")).toContainText(
-      "Could not save attendance. Check your connection and retry."
+      "already recorded"
+    );
+    await expect(page.getByTestId("mark-error-st1")).not.toContainText(
+      "Check your connection"
     );
   });
 });
