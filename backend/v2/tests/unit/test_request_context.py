@@ -337,10 +337,12 @@ def test_sentry_init_receives_release_when_set(monkeypatch) -> None:
     captured: dict[str, Any] = {}
     monkeypatch.setattr(sentry_sdk, "init", lambda **kwargs: captured.update(kwargs))
 
-    configure_error_tracking(Settings(sentry_dsn="https://key@sentry.example/1"))
+    # Pin env explicitly: CI exports V2_ENV=test, local shells default to dev.
+    settings = Settings(sentry_dsn="https://key@sentry.example/1", env="staging")
+    configure_error_tracking(settings)
 
     assert captured["release"] == "registry.fly.io/app:deployment-xyz"
-    assert captured["environment"] == "dev"
+    assert captured["environment"] == "staging"
 
 
 def test_sentry_init_omits_release_when_nothing_is_set(monkeypatch) -> None:
