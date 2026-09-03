@@ -532,7 +532,7 @@ test.describe("Rally admin shell", () => {
     await page.goto("/admin");
     await expect(page.getByTestId("admin-dashboard")).toBeVisible();
 
-    const nav = await openAdminNav(page);
+    let nav = await openAdminNav(page);
     const switcherButton = nav.getByTestId("tenant-switcher-button");
     await expect(switcherButton).toBeVisible({ timeout: 10_000 });
     await expect(nav.getByTestId("tenant-switcher-single")).toHaveCount(0);
@@ -550,14 +550,18 @@ test.describe("Rally admin shell", () => {
 
     await nav.getByTestId("tenant-switcher-option-academy-e2e-2").click();
     await expect(menu).toBeHidden();
-    // Switching academies does not navigate, so the drawer stays open.
-    await expect(nav).toBeVisible();
+    // Switching academies does not navigate, so the layout closes the
+    // mobile drawer on the tenant-changed event instead. On desktop the
+    // sidebar stays mounted and there is no drawer to hide.
+    await expect(page.getByTestId("admin-mobile-drawer")).toBeHidden();
 
-    // Re-open and confirm the ACTIVE marker moved to the newly selected
-    // academy — the switcher pill label itself is driven by a separate
-    // `/admin/academy` query stubbed statically in this spec.
-    await switcherButton.click();
-    await expect(menu).toBeVisible();
+    // Re-open the nav (a no-op on desktop) and confirm the ACTIVE marker
+    // moved to the newly selected academy — the switcher pill label itself
+    // is driven by a separate `/admin/academy` query stubbed statically in
+    // this spec.
+    nav = await openAdminNav(page);
+    await nav.getByTestId("tenant-switcher-button").click();
+    await expect(nav.getByTestId("tenant-switcher-menu")).toBeVisible();
     await expect(
       nav.getByTestId("tenant-switcher-option-academy-e2e-2"),
     ).toContainText("ACTIVE");

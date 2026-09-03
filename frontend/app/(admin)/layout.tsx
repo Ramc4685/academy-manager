@@ -45,11 +45,18 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const auth = usePersonaAuth("admin");
   const isDesktop = useIsDesktop();
   const [drawerOpen, setDrawerOpen] = useState(false);
-  // A tenant or persona switch from the drawer navigates; close it so it
-  // does not hang open over the new page.
+  // A persona switch from the drawer navigates; close it so it does not
+  // hang open over the new page.
   useEffect(() => {
     setDrawerOpen(false);
   }, [pathname]);
+  // A tenant switch does NOT navigate (it only dispatches an event and the
+  // page refetches in place), so close the drawer on that event too.
+  useEffect(() => {
+    const handler = () => setDrawerOpen(false);
+    window.addEventListener("am:tenant-changed", handler);
+    return () => window.removeEventListener("am:tenant-changed", handler);
+  }, []);
   const academyQuery = useQuery({
     queryKey: queryKeys.admin.academy(),
     queryFn: getAdminAcademy,
