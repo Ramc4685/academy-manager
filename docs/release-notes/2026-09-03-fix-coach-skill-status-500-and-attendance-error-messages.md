@@ -1,6 +1,6 @@
 # fix-coach-skill-status-500-and-attendance-error-messages
 
-PR: #TBD
+PR: #639
 
 ## What changed
 Two coach-view failures reported from production on 2026-09-03, minutes before
