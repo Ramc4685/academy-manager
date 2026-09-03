@@ -1,7 +1,9 @@
 # PWA safe-area header fix — design
 
 **Date:** 2026-09-03
-**Scope:** small PR, ships ahead of the wider mobile-usability pass for admin and coach.
+**Scope:** PR #647. Originally the safe-area fix alone; on 2026-09-03 the user asked to pack the
+follow-ups into the same PR. Part A below is merged into the branch already; Part B is the
+expanded scope.
 
 ## Problem
 
@@ -25,7 +27,11 @@ Result, observed in screenshots on iOS 26:
    and 176px wide, anchored to a button that sits near the left edge on phones. The
    tenant switcher menu (256px, same anchoring) has the same defect.
 
-## Non-goals (next PR)
+## Part A — safe-area fix (done on branch)
+
+See sections 1–4 below.
+
+## Originally deferred (now Part B, in this PR)
 
 - Reorganising the admin topbar's right-hand cluster (view switcher, academy switcher,
   Refresh, logout) which overflows the phone width and pushes the page title out.
@@ -94,3 +100,95 @@ conditionally rendered, so closing unmounts it and no reset is needed. Used by
 
 - Desktop browsers resolve `env(safe-area-inset-top)` to 0, so nothing changes there.
 - Android Chrome installed PWAs also honour the inset; the change is correct there too.
+
+
+---
+
+# Part B — back navigation, admin account controls, table overflow
+
+## B1. Back navigation on every non-top-level page
+
+**Why:** the installed app has no browser chrome and the iOS edge-swipe is unreliable in
+standalone mode. A coach on the Skill Passport page has no way back except the bottom tabs.
+
+**Shared pieces** (`frontend/components/persona/`):
+
+- `parent-route.ts` — pure: `parentRoute(pathname: string, known: readonly string[], home: string): string`.
+  Strips trailing path segments one at a time and returns the first prefix found in `known`;
+  returns `home` if none. `isTopLevel(pathname, known)` returns true when `pathname` (trailing
+  slash stripped) is exactly in `known`. Unit-tested in `parent-route.test.ts` (node vitest).
+- `back-button.tsx` — `ShellBackButton({ known, home, variant })`. Uses `usePathname`. Renders
+  nothing when `isTopLevel`. Otherwise renders a `<button type="button" aria-label="Back"
+  data-testid="shell-back-button">` of at least 44×44 (`min-h-touch min-w-touch`) with an inline
+  chevron-left SVG (no icon library). `variant: "light" | "dark"` picks text colour
+  (`text-rally-muted` on light, `text-slate-300` on dark). On click: if
+  `window.history.length > 1` call `router.back()`, else `router.push(parentRoute(...))`.
+  This is the standard PWA heuristic; a deep-linked launch has history length 1.
+
+**Known (top-level) route lists** — exported as `const` arrays next to each shell, passed to
+`ShellBackButton`:
+
+| Shell | known | home |
+| --- | --- | --- |
+| admin | every `href` in `ADMIN_NAV` (export `adminTopLevelRoutes()` from `components/admin/screen-meta.ts`), plus `/admin/dashboard` | `/admin` |
+| coach | `/coach/dashboard`, `/coach/today`, `/coach/sessions`, `/coach/profile`, `/coach/calendar`, `/coach/messages`, `/coach/needs-review` | `/coach/dashboard` |
+| parent | `/parent/dashboard`, `/parent/children`, `/parent/payments`, `/parent/progress`, `/parent/calendar`, `/parent/messages`, `/parent/profile`, `/parent/attendance`, `/parent/requests`, `/parent/waivers`, `/parent/onboarding` | `/parent/dashboard` |
+| student | `/student/dashboard`, `/student/progress`, `/student/schedule` | `/student/dashboard` |
+| platform | `/platform`, `/platform/tenants` | `/platform/tenants` |
+
+Examples: `/coach/students/abc/passport` → known has no `/coach/students` → falls to
+`/coach/dashboard`. `/coach/sessions/abc/skills` → `/coach/sessions`. `/admin/reports/dues` →
+`/admin/reports`. `/admin/sessions/abc/skill-board` → `/admin/sessions`. `/parent/onboarding`
+is top-level on purpose: it is a wizard with its own step navigation.
+
+**Placement:** coach, parent, student, platform headers: the back button is the first child of
+the header's left group, before the brand link. Admin `RallyTopbar`: after the hamburger,
+before the title block, `variant="light"`. Hamburger stays.
+
+## B2. Admin account controls move out of the topbar
+
+**Why:** on a phone the topbar's right cluster (view switcher, academy switcher, Refresh,
+logout) fills the width and pushes the title out (screenshot 1). Standard mobile admin
+pattern: topbar = menu/back, title, one page action; account-level controls live in the
+navigation surface.
+
+- New `SidebarAccountSection` in `app/(admin)/layout.tsx`, rendered in BOTH `DesktopSidebar`
+  and `MobileDrawer` directly above `SidebarUserPill`: `PersonaSwitcher current="admin"
+  variant="dark"`, `TenantSwitcher variant="dark"`, and `PersonaLogoutButton` as a full-width
+  row with its label visible. It sits OUTSIDE the drawer's `<nav onClick={onClose}>` so opening
+  a menu does not close the drawer.
+- `TenantSwitcher` gains `variant?: "light" | "dark"` (default light) mirroring the persona
+  switcher's dark button classes; the single-tenant label and the menu keep their testids.
+- `RallyTopbar` no longer renders `PersonaSwitcher`, `TenantSwitcher`, or
+  `PersonaLogoutButton` at any width. It keeps hamburger, back button, title block,
+  `AdminActionSlotOutlet`, offline pill, Refresh. Its props drop nothing else.
+- To avoid duplicate testids (the desktop sidebar is CSS-hidden on phones but still in the
+  DOM), `AdminLayout` renders exactly one sidebar tree: `useIsDesktop()` (new hook in
+  `lib/use-is-desktop.ts`, `useSyncExternalStore` over `matchMedia("(min-width: 1024px)")`,
+  server snapshot `false`) → `isDesktop ? <DesktopSidebar/> : drawerOpen && <MobileDrawer/>`.
+  The layout already renders "Loading…" until auth resolves, so there is no SSR flash.
+- The drawer closes automatically when `pathname` changes (`useEffect`), so a tenant or
+  persona switch from the drawer does not leave it hanging open.
+
+**e2e updates in `e2e/specs/admin-shell.spec.ts`:** every interaction with
+`tenant-switcher-*`, `persona-switcher-*` or the admin `persona-logout-button` first calls
+`openAdminNav(page)` and scopes the locator to the returned surface (`nav.getByTestId(...)`),
+so the tests pass on both the desktop sidebar and the mobile drawer. `expectShellLogout` gets
+an `openNav` flag used only for `/admin`. Add tests: (a) on a mobile project, the admin topbar
+has no `persona-switcher-button`/`tenant-switcher-button` outside the drawer; (b)
+`/coach/sessions/<id>` shows `shell-back-button` and clicking it lands on `/coach/sessions`
+when the page was opened directly (history length 1 → parent fallback); (c) `/coach/today`
+shows no `shell-back-button`; (d) `/admin/sessions/<id>` shows the back button and `/admin`
+does not.
+
+## B3. Table overflow
+
+Wrap the three tables that lacked a horizontal scroll container in
+`<div className="overflow-x-auto">`: `app/(admin)/admin/billing-setup/page.tsx`,
+`app/(admin)/admin/payouts/page.tsx`, `components/admin/settings/notify-panel.tsx`. (Done
+inline by the orchestrator.)
+
+## Part B non-goals
+
+Per-page card layouts for the 38 table-rendering files wait for screenshots of the specific
+screens. Coach/parent header clusters are small enough to stay in the header.
