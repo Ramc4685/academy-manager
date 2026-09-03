@@ -1909,7 +1909,11 @@ def test_pause_and_resume_enrollment(admin_client):
     assert p.status_code == 204
     assert admin_client.seed["enrollments"].rows[enrollment_id].status == "paused"
     paused_listing = admin_client.get("/api/v2/admin/sessions/sess-1/enrollments").json()
-    assert paused_listing["enrollments"] == []
+    # The paused row stays visible so the admin can Resume it (2026-09-03 prod
+    # dead end: hidden row still blocked "Add to roster").
+    assert [(e["enrollment_id"], e["status"]) for e in paused_listing["enrollments"]] == [
+        (enrollment_id, "paused")
+    ]
     waiting = [
         entry
         for entry in admin_client.seed["waitlist"].entries.values()
