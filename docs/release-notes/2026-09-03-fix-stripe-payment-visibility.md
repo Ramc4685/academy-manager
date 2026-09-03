@@ -22,6 +22,14 @@ below registration checkouts and expired attempts.
   Only money-received statuses (`succeeded`, `paid`, `refunded`,
   `partially_refunded`) settle; pending/failed/expired attempts never touch an
   invoice row.
+- One ledger payment can settle several invoices (balance checkouts write one
+  allocation per invoice): allocations are batch-loaded and every allocated
+  invoice row is settled, not just the first one found.
+- The ledger window is read money-received first, then attempts, so a burst of
+  pending/failed attempts cannot push the payment that actually settled an
+  invoice out of the fold.
+- `payment_method = "stripe"` is a real ledger method (webhook), not a
+  placeholder; an older settlement never overwrites it.
 - Standalone ledger rows with Stripe ids but no method are labelled
   `stripe_checkout` and `stripe_linked`.
 - Legacy rows sharing a `payment_id` or checkout session with a ledger row are
@@ -29,9 +37,12 @@ below registration checkouts and expired attempts.
 - Dashboard "Recent payments" (`frontend/app/(admin)/admin/page.tsx`) now reads
   `/admin/payments/feed` (money received, newest settlement first) and shows a
   Method column. Expired/failed attempts no longer appear there.
+- Payments page: the method chip shows the real settlement method — an invoice
+  with a Stripe invoice id that was paid by Zelle reads "ZELLE", not "STRIPE";
+  invoice-row detection keys off `invoice_id`, not the method string.
 - Payments page and Reports feed label every `stripe_*` method as "Stripe";
   "Paid on" now populates for Stripe-settled invoices.
-- Tests: five new composition tests in
+- Tests: nine new composition/unit tests in
   `backend/v2/tests/unit/test_admin_payment_visibility.py`; dashboard e2e stubs
   the feed.
 

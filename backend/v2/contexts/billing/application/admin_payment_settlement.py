@@ -30,8 +30,11 @@ SETTLED_STATUSES: frozenset[str] = frozenset(
 )
 
 # Placeholder methods stamped on rows that have not yet learned how they were
-# settled. A real settlement method always replaces these.
-_PLACEHOLDER_METHODS: frozenset[str] = frozenset({"", "invoice", "stripe"})
+# settled. A real settlement method always replaces these. NOTE: "stripe" is
+# NOT a placeholder — the Stripe webhook writes it as a real ledger method
+# (alongside stripe_checkout / stripe_autopay / stripe_subscription), so an
+# older settlement must not overwrite it.
+_PLACEHOLDER_METHODS: frozenset[str] = frozenset({"", "invoice"})
 
 
 def has_stripe_ids(doc: dict[str, Any]) -> bool:
@@ -89,3 +92,29 @@ def apply_settlement(row: dict[str, Any], doc: dict[str, Any]) -> bool:
         if current in _PLACEHOLDER_METHODS or newer:
             row["payment_method"] = method
     return True
+
+
+def settle_matching_rows(
+    rows_by_key: dict[str, dict[str, Any]],
+    keys: set[str],
+    doc: dict[str, Any],
+) -> int:
+    """Apply ``doc``'s settlement to every distinct row reachable from ``keys``.
+
+    ``rows_by_key`` maps provider keys (invoice_id, invoice_number, Stripe ids)
+    to invoice rows; one row may be reachable through several keys and one
+    payment may settle several invoices (balance checkouts write one ledger
+    payment with one allocation per invoice). Returns the number of rows
+    settled.
+    """
+
+    matched: list[dict[str, Any]] = []
+    for key in keys:
+        row = rows_by_key.get(key)
+        if row is not None and not any(r is row for r in matched):
+            matched.append(row)
+    settled = 0
+    for row in matched:
+        if apply_settlement(row, doc):
+            settled += 1
+    return settled

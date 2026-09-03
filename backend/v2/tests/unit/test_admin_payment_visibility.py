@@ -430,3 +430,140 @@ async def test_pending_attempt_does_not_settle_invoice_row(mongo_db) -> None:
     assert rows[0]["stripe_linked"] is False
     assert rows[0]["payment_method"] == "invoice"
     assert rows[0].get("paid_at") is None
+
+
+@pytest.mark.asyncio
+async def test_balance_checkout_settles_every_allocated_invoice(mongo_db) -> None:
+    """One ledger payment with two allocations must settle BOTH invoice rows."""
+    await _seed_parents(mongo_db)
+    paid_at = datetime(2026, 9, 3, 17, 14, tzinfo=UTC)
+    await mongo_db["invoices"].insert_many(
+        [
+            _invoice(
+                "inv-a",
+                parent_id="parent-1",
+                total_cents=6000,
+                created_at=datetime(2026, 8, 1, tzinfo=UTC),
+            ),
+            _invoice(
+                "inv-b",
+                parent_id="parent-1",
+                total_cents=7000,
+                created_at=datetime(2026, 9, 1, tzinfo=UTC),
+            ),
+        ]
+    )
+    ledger = _ledger_payment(
+        "pay-balance",
+        parent_id="parent-1",
+        amount_cents=13000,
+        paid_at=paid_at,
+        stripe_payment_intent_id="pi_bal",
+    )
+    ledger["payment_method"] = "stripe_checkout"
+    await mongo_db["ledger_payments"].insert_one(ledger)
+    await mongo_db["payment_allocations"].insert_many(
+        [
+            {"academy_id": ACADEMY, "payment_id": "pay-balance", "invoice_id": "inv-a"},
+            {"academy_id": ACADEMY, "payment_id": "pay-balance", "invoice_id": "inv-b"},
+        ]
+    )
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope(ACADEMY):
+        rows = await admin.list_payments_recent()
+
+    by_id = {r["payment_id"]: r for r in rows}
+    assert set(by_id) == {"inv-a", "inv-b"}
+    for invoice_id in ("inv-a", "inv-b"):
+        row = by_id[invoice_id]
+        assert row["payment_method"] == "stripe_checkout"
+        assert row["stripe_linked"] is True
+        assert row["stripe_payment_intent_id"] == "pi_bal"
+        assert row["paid_at"].replace(tzinfo=UTC) == paid_at
+
+
+@pytest.mark.asyncio
+async def test_settled_payments_are_not_crowded_out_by_newer_attempts(mongo_db) -> None:
+    """Many newer pending attempts must not push the real settlement out of the fold."""
+    paid_at = datetime(2026, 9, 1, tzinfo=UTC)
+    await mongo_db["invoices"].insert_one(
+        _invoice(
+            "inv-old",
+            parent_id="parent-1",
+            total_cents=6000,
+            created_at=datetime(2026, 9, 3, tzinfo=UTC),
+        )
+    )
+    ledger = _ledger_payment("pay-old", parent_id="parent-1", amount_cents=6000, paid_at=paid_at)
+    ledger["payment_method"] = "zelle"
+    await mongo_db["ledger_payments"].insert_one(ledger)
+    await mongo_db["payment_allocations"].insert_one(
+        {"academy_id": ACADEMY, "payment_id": "pay-old", "invoice_id": "inv-old"}
+    )
+    await mongo_db["ledger_payments"].insert_many(
+        [
+            {
+                "payment_id": f"attempt-{n}",
+                "academy_id": ACADEMY,
+                "parent_id": "parent-1",
+                "amount_cents": 100,
+                "currency": "usd",
+                "status": "pending",
+                "created_at": datetime(2026, 9, 2, 0, n, tzinfo=UTC),
+            }
+            for n in range(8)
+        ]
+    )
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope(ACADEMY):
+        rows = await admin.list_payments_recent(fetch_cap=6)
+
+    invoice_row = next(r for r in rows if r["payment_id"] == "inv-old")
+    assert invoice_row["payment_method"] == "zelle"
+    assert invoice_row["paid_at"].replace(tzinfo=UTC) == paid_at
+
+
+@pytest.mark.asyncio
+async def test_feed_labels_stripe_rows_without_method_as_stripe_checkout(mongo_db) -> None:
+    await _seed_parents(mongo_db)
+    ledger = _ledger_payment(
+        "pay-reg-feed",
+        parent_id="parent-1",
+        amount_cents=7000,
+        paid_at=datetime(2026, 9, 1, tzinfo=UTC),
+        stripe_payment_intent_id="pi_reg_feed",
+    )
+    ledger["payment_method"] = None
+    await mongo_db["ledger_payments"].insert_one(ledger)
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope(ACADEMY):
+        feed = await admin.list_payment_feed(limit=5)
+
+    assert feed[0]["payment_method"] == "stripe_checkout"
+
+
+def test_apply_settlement_keeps_real_stripe_method_over_older_settlement() -> None:
+    from backend.v2.contexts.billing.application.admin_payment_settlement import apply_settlement
+
+    row: dict[str, Any] = {"payment_method": "invoice"}
+    apply_settlement(
+        row,
+        {
+            "status": "succeeded",
+            "payment_method": "stripe",
+            "paid_at": datetime(2026, 9, 3, tzinfo=UTC),
+        },
+    )
+    apply_settlement(
+        row,
+        {
+            "status": "succeeded",
+            "payment_method": "zelle",
+            "paid_at": datetime(2026, 9, 1, tzinfo=UTC),
+        },
+    )
+    assert row["payment_method"] == "stripe"
+    assert row["paid_at"] == datetime(2026, 9, 3, tzinfo=UTC)
