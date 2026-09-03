@@ -18,6 +18,7 @@ import { ToastProvider } from "@/components/ds/toast";
 import { ShuttleMark } from "@/components/ds/shuttle";
 import {
   ADMIN_NAV,
+  adminTopLevelRoutes,
   metaForPath,
   type AdminNavItem,
   type AdminNavIconKey,
@@ -31,6 +32,10 @@ import { PersonaSwitcher } from "@/components/persona/persona-switcher";
 import { AccessDeniedNotice } from "@/components/persona/access-denied-notice";
 import { AuthUnavailableScreen } from "@/components/persona/auth-unavailable";
 import { PersonaLogoutButton } from "@/components/persona/logout-button";
+import { ShellBackButton } from "@/components/persona/back-button";
+
+const ADMIN_TOP_LEVEL_ROUTES: readonly string[] = adminTopLevelRoutes();
+const ADMIN_HOME = "/admin";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() ?? "/admin";
@@ -382,6 +387,7 @@ function RallyTopbar({
           >
             ☰
           </button>
+          <ShellBackButton known={ADMIN_TOP_LEVEL_ROUTES} home={ADMIN_HOME} variant="light" />
           <div className="min-w-0">
             {breadcrumbs.length > 0 && (
               <div className="font-mono text-[10px] font-bold tracking-overline uppercase text-rally-muted truncate">
