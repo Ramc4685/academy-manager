@@ -131,6 +131,10 @@ async def _require_assigned_to_student(
     student_id: str,
     session_id: str | None = None,
 ) -> str | None:
+    # issue #651: the read behind this returns active-or-paused enrollments
+    # (paused students keep their roster seat per #641); a coach must be able
+    # to open the passport of any student on a session they are assigned to,
+    # while cancelled / withdrawn students stay a 404.
     enrollments = await use_cases.get_active_session_enrollments_for_student(student_id)
     enrolled_session_ids = [
         str(enrollment.session_id)

@@ -609,3 +609,96 @@ async def test_prepare_due_states_waits_for_the_academy_morning(db, acad) -> Non
     assert (
         await repo.prepare_due_states(now=datetime(2026, 7, 1, 14, 30, tzinfo=UTC), limit=10) == 1
     )
+
+
+@pytest.mark.asyncio
+async def test_suppress_for_invoice_moves_a_dunned_ladder_only_when_voided(db, acad) -> None:
+    """Issue #651: an exhausted (``dunned``) ladder still reads as a failure
+    on billing-health. Voiding the invoice removes the debt, so that reason —
+    and only that reason — may move it to ``suppressed``. ``resolved`` and
+    already-``suppressed`` rows stay untouched."""
+    repo = MongoDunningStateRepository(db)
+    for invoice_id, status in (
+        ("inv-dunned", "dunned"),
+        ("inv-resolved", "resolved"),
+        ("inv-suppressed", "suppressed"),
+    ):
+        await _seed_invoice(
+            db, academy_id=acad, invoice_id=invoice_id, enrollment_id=f"enr-{invoice_id}"
+        )
+        state = open_initial_dunning_state(
+            academy_id=acad,
+            invoice_id=invoice_id,
+            parent_id=f"parent-{invoice_id}",
+            enrollment_id=f"enr-{invoice_id}",
+            due_at=NOW,
+            now=NOW,
+        )
+        await db["dunning_states"].insert_one(
+            {**state.model_dump(mode="python"), "academy_id": acad, "status": status}
+        )
+
+    assert not await repo.suppress_for_invoice(
+        invoice_id="inv-dunned", reason="enrollment_cancelled", now=NOW
+    )
+    assert (await db["dunning_states"].find_one({"academy_id": acad, "invoice_id": "inv-dunned"}))[
+        "status"
+    ] == "dunned"
+
+    assert await repo.suppress_for_invoice(
+        invoice_id="inv-dunned", reason="invoice_voided", now=NOW
+    )
+    doc = await db["dunning_states"].find_one({"academy_id": acad, "invoice_id": "inv-dunned"})
+    assert doc["status"] == "suppressed"
+    assert doc["suppression_reason"] == "invoice_voided"
+
+    assert not await repo.suppress_for_invoice(
+        invoice_id="inv-resolved", reason="invoice_voided", now=NOW
+    )
+    assert not await repo.suppress_for_invoice(
+        invoice_id="inv-suppressed", reason="invoice_voided", now=NOW
+    )
+    statuses = {
+        d["invoice_id"]: d["status"] async for d in db["dunning_states"].find({"academy_id": acad})
+    }
+    assert statuses["inv-resolved"] == "resolved"
+    assert statuses["inv-suppressed"] == "suppressed"
+
+
+@pytest.mark.asyncio
+async def test_list_admin_rows_hides_ladders_whose_invoice_is_void_or_paid(db, acad) -> None:
+    """Issue #651: billing-health must not show a voided or paid invoice as a
+    live autopay failure just because its ladder row was never suppressed."""
+    repo = MongoDunningStateRepository(db)
+    for invoice_id, invoice_status in (
+        ("inv-open", "open"),
+        ("inv-void", "void"),
+        ("inv-paid", "paid"),
+    ):
+        await _seed_invoice(
+            db,
+            academy_id=acad,
+            invoice_id=invoice_id,
+            enrollment_id=f"enr-{invoice_id}",
+            invoice_status=invoice_status,
+        )
+        state = open_initial_dunning_state(
+            academy_id=acad,
+            invoice_id=invoice_id,
+            parent_id=f"parent-{invoice_id}",
+            enrollment_id=f"enr-{invoice_id}",
+            due_at=NOW,
+            now=NOW,
+        )
+        await db["dunning_states"].insert_one(
+            {
+                **state.model_dump(mode="python"),
+                "academy_id": acad,
+                "status": "dunned",
+                "attempt_count": 3,
+            }
+        )
+
+    rows = await repo.list_admin_rows()
+
+    assert [row["invoice_id"] for row in rows] == ["inv-open"]

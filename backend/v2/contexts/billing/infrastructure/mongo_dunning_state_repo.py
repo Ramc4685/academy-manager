@@ -443,6 +443,11 @@ class MongoDunningStateRepository(TenantScopedRepository):
             )
             if invoice is None:
                 continue
+            # issue #651: a voided or paid invoice has nothing left to collect,
+            # so its ladder must not surface as a live autopay failure on
+            # billing-health even if the state row was never suppressed.
+            if str(invoice.get("status") or "") in {"void", "paid"}:
+                continue
             rows.append(
                 {
                     "invoice_id": str(state_doc["invoice_id"]),
@@ -469,6 +474,11 @@ class MongoDunningStateRepository(TenantScopedRepository):
 
         Returns True when an active/processing/parked state was suppressed;
         False when the invoice has no ladder or it is already terminal.
+
+        issue #651: a ``dunned`` (exhausted) ladder may still move to
+        ``suppressed`` when ``reason == "invoice_voided"`` — voiding removes
+        the debt, so the row must stop reading as an outstanding failure.
+        ``resolved`` and already-``suppressed`` states are always left alone.
         """
         doc = await self.collection.find_one(
             {"academy_id": current_academy_id(), "invoice_id": invoice_id}
@@ -476,7 +486,9 @@ class MongoDunningStateRepository(TenantScopedRepository):
         if doc is None:
             return False
         state = self._state_from_doc(doc)
-        if state.status in {"suppressed", "resolved", "dunned"}:
+        if state.status in {"suppressed", "resolved"}:
+            return False
+        if state.status == "dunned" and reason != "invoice_voided":
             return False
         await self._store_state(state.suppress(reason=reason, now=now))
         return True

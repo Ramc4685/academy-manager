@@ -120,6 +120,9 @@ class FakeEnrollmentLookup:
 
 
 class FakeSessionWriter:
+    async def get(self, session_id: str):
+        return None
+
     async def try_reserve_seat(self, session_id: str) -> bool:
         return True
 

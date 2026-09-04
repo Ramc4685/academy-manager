@@ -518,7 +518,9 @@ def compose_coach(
         ),
         list_session_types=ListSessionTypes(session_types=session_type_repo),
         get_billing_enrollment=billing_enrollment_repo.get,
-        get_active_session_enrollments_for_student=enrollments_repo.active_for_student,
+        # issue #651: paused students stay on the roster, so coach
+        # authorisation reads active-or-paused, not active only.
+        get_active_session_enrollments_for_student=enrollments_repo.active_or_paused_for_student,
         list_all_sessions=ListCoachUpcomingOccurrences(
             occurrences=occurrences_repo,
             sessions=sessions_repo,

@@ -139,6 +139,8 @@ export interface ParentInvoice {
   created_at: string;
   /** Enrollment covered by this invoice; null/absent for legacy or non-enrollment invoices. */
   enrollment_id?: string | null;
+  /** Why a "void" invoice was voided (e.g. "enrollment_cancelled"); null for every other status. */
+  void_reason?: string | null;
 }
 
 export interface ParentInvoiceLine {

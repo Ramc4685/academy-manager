@@ -77,6 +77,18 @@ class SessionOccurrenceRepository(Protocol):
 
 class EnrollmentQuery(Protocol):
     async def active_for_session(self, session_id: str) -> list[Enrollment]: ...
+
+    async def for_session_in_statuses(
+        self, session_id: str, statuses: list[str]
+    ) -> list[Enrollment]:
+        """Rows for a session in any of ``statuses`` (issue #651).
+
+        ``CancelSession`` needs active AND paused rows: a paused family still
+        holds a deferral, a scheduled resume and (from the billing side) an
+        expectation of coming back, and cancelling only the active rows
+        orphaned all of that.
+        """
+
     async def is_active(self, session_id: str, student_id: str) -> bool: ...
     async def active_for_student(self, student_id: str) -> list[Enrollment]: ...
 
@@ -215,6 +227,22 @@ class EnrollmentBillingSync(Protocol):
         reason: str,
         actor_id: str | None,
     ) -> dict[str, Any]: ...
+
+
+class OccurrenceRosterCleanup(Protocol):
+    """Drop a student's FUTURE one-time occurrence roster rows (issue #651).
+
+    Make-up and trial approvals write ``occurrence_roster_entries`` that sit
+    outside the enrollment row. When the enrollment is cancelled, withdrawn
+    or the whole session is cancelled those rows would otherwise keep the
+    student on a coach's day sheet for a class they no longer attend.
+    Implementations are best-effort from the caller's point of view: the
+    use cases wrap the call in catch/log/continue.
+    """
+
+    async def remove_future_for_student(
+        self, *, session_id: str, student_id: str, after: datetime
+    ) -> int: ...
 
 
 class EnrollmentLifecycleBillingPort(Protocol):

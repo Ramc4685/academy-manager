@@ -18,7 +18,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     WithdrawEnrollmentCommand,
 )
 from backend.v2.contexts.enrollment.domain.events import EnrollmentLifecycleEvent
-from backend.v2.contexts.enrollment.domain.models import Enrollment, Student
+from backend.v2.contexts.enrollment.domain.models import Enrollment, Session, Student
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 
 
@@ -58,10 +58,24 @@ class FakeEnrollments:
             update={"session_id": session_id}
         )
 
+    async def find_for_session_student(self, session_id: str, student_id: str) -> Enrollment | None:
+        return next(
+            (
+                enrollment
+                for enrollment in self.rows.values()
+                if enrollment.session_id == session_id and enrollment.student_id == student_id
+            ),
+            None,
+        )
+
 
 @dataclass
 class FakeSessions:
     reserved: dict[str, int] = field(default_factory=lambda: {"sess-1": 1})
+    sessions: dict[str, Session] = field(default_factory=dict)
+
+    async def get(self, session_id: str) -> Session | None:
+        return self.sessions.get(session_id)
 
     async def try_reserve_seat(self, session_id: str) -> bool:
         self.reserved[session_id] = self.reserved.get(session_id, 0) + 1
@@ -85,6 +99,22 @@ class FakeWaitlist:
 
     async def add(self, entry: WaitlistEntry) -> None:
         self.entries.append(entry)
+
+    async def next_waiting(self, session_id: str) -> WaitlistEntry | None:
+        waiting = [
+            entry
+            for entry in self.entries
+            if entry.session_id == session_id and entry.status == "waiting"
+        ]
+        return sorted(waiting, key=lambda entry: entry.joined_at)[0] if waiting else None
+
+    async def update_status(self, waitlist_id: str, status: str) -> None:
+        self.entries = [
+            entry.model_copy(update={"status": status})
+            if entry.waitlist_id == waitlist_id
+            else entry
+            for entry in self.entries
+        ]
 
     async def find_waiting_for_session_student(
         self, session_id: str, student_id: str

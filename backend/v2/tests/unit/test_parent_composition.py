@@ -169,6 +169,24 @@ def _invoice_doc(
     ).model_dump(mode="python")
 
 
+def _enrollment_doc(
+    enrollment_id: str,
+    *,
+    status: str | None = "active",
+    student_id: str = "student-1",
+    session_id: str = "sess-1",
+) -> dict[str, Any]:
+    doc: dict[str, Any] = {
+        "academy_id": "acad",
+        "enrollment_id": enrollment_id,
+        "student_id": student_id,
+        "session_id": session_id,
+    }
+    if status is not None:
+        doc["status"] = status
+    return doc
+
+
 def _connected_account_doc(*, ready: bool = True) -> dict[str, Any]:
     account = ConnectedAccount.new(
         academy_id="acad",
@@ -390,6 +408,7 @@ async def test_parent_single_invoice_payment_with_enroll_autopay_forwards_flag(
             "invoices": _FakeCollection(
                 [_invoice_doc(invoice_id="inv-1", enrollment_id="enroll-a")]
             ),
+            "enrollments": _FakeCollection([_enrollment_doc("enroll-a", status="active")]),
             "academy_connected_accounts": _FakeCollection([_connected_account_doc()]),
         }
     )
@@ -421,6 +440,83 @@ async def test_parent_single_invoice_payment_with_enroll_autopay_forwards_flag(
         "https://app.example.com/parent/payments?invoice=paid"
         "&checkout_session_id={CHECKOUT_SESSION_ID}"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["paused", "cancelled", "withdrawn"])
+async def test_parent_single_invoice_payment_ignores_enroll_autopay_for_inactive_enrollment(
+    allow_app_origin, status: str
+) -> None:
+    """Issue #651: the final invoice of a cancelled/paused/withdrawn enrollment
+    is still payable, but the opt-in flag must not re-enrol it in autopay.
+    The payment goes through as a plain one-time payment."""
+    stripe = _InvoiceCheckoutStripe()
+    db = _FakeDb(
+        {
+            "invoices": _FakeCollection(
+                [_invoice_doc(invoice_id="inv-1", enrollment_id="enroll-a")]
+            ),
+            "enrollments": _FakeCollection([_enrollment_doc("enroll-a", status=status)]),
+            "academy_connected_accounts": _FakeCollection([_connected_account_doc()]),
+        }
+    )
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=stripe,  # type: ignore[arg-type]
+        academy_id="acad",
+    )
+
+    with tenant_scope("acad"):
+        result = await parent.start_invoice_payment_for_parent(
+            parent_id="parent-1",
+            invoice_id="inv-1",
+            success_url="https://app.example.com/parent/payments?invoice=paid",
+            cancel_url="https://app.example.com/parent/payments?invoice=cancelled",
+            enroll_autopay=True,
+        )
+
+    assert result is not None
+    call = stripe.invoice_checkout_calls[0]
+    assert "save_payment_method_for_autopay" not in call
+    assert "autopay_enrollment_ids" not in call
+    # No opt-in means the plain redirect: no checkout_session_id placeholder.
+    assert call["success_url"] == "https://app.example.com/parent/payments?invoice=paid"
+
+
+@pytest.mark.asyncio
+async def test_parent_single_invoice_payment_ignores_enroll_autopay_for_missing_enrollment(
+    allow_app_origin,
+) -> None:
+    stripe = _InvoiceCheckoutStripe()
+    db = _FakeDb(
+        {
+            "invoices": _FakeCollection(
+                [_invoice_doc(invoice_id="inv-1", enrollment_id="enroll-gone")]
+            ),
+            "enrollments": _FakeCollection([]),
+            "academy_connected_accounts": _FakeCollection([_connected_account_doc()]),
+        }
+    )
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=stripe,  # type: ignore[arg-type]
+        academy_id="acad",
+    )
+
+    with tenant_scope("acad"):
+        await parent.start_invoice_payment_for_parent(
+            parent_id="parent-1",
+            invoice_id="inv-1",
+            success_url="https://app.example.com/parent/payments?invoice=paid",
+            cancel_url="https://app.example.com/parent/payments?invoice=cancelled",
+            enroll_autopay=True,
+        )
+
+    assert "save_payment_method_for_autopay" not in stripe.invoice_checkout_calls[0]
 
 
 @pytest.mark.asyncio
@@ -990,6 +1086,46 @@ async def test_start_autopay_does_not_stamp_dangling_subscription_fields(
     assert set_fields["payment_mode"] == "monthly"
     assert "subscription_id" not in set_fields
     assert "subscription_status" not in set_fields
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["paused", "cancelled", "withdrawn"])
+async def test_start_autopay_rejects_an_enrollment_that_is_not_active(
+    allow_app_origin, status: str
+) -> None:
+    """Issue #651: after a pause/cancel/withdraw the lifecycle sync moves the
+    enrollment's autopay to paused/disabled. The parent must not be able to
+    re-enable it from the payments page; the route maps ValueError to the
+    same 409 the non-payable-invoice path uses."""
+    stripe = _AutopaySetupStripe()
+    db = _FakeDb(
+        {
+            "enrollments": _FakeCollection([_enrollment_doc("enr-1", status=status)]),
+            "students": _FakeCollection(
+                [{"academy_id": "acad", "student_id": "student-1", "parent_id": "parent-1"}]
+            ),
+            "academy_connected_accounts": _FakeCollection([_connected_account_doc()]),
+        }
+    )
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=stripe,  # type: ignore[arg-type]
+        academy_id="acad",
+    )
+
+    with tenant_scope("acad"), pytest.raises(ValueError, match="enrollment is not active"):
+        await parent.start_autopay_for_enrollment(
+            parent_id="parent-1",
+            enrollment_id="enr-1",
+            success_url="https://app.example.com/parent/autopay?status=success",
+            cancel_url="https://app.example.com/parent/autopay?status=cancelled",
+        )
+
+    # Fail-closed: no Stripe session minted, enrollment untouched.
+    assert stripe.autopay_setup_checkouts == []
+    assert db["enrollments"].updates == []
 
 
 @pytest.mark.asyncio

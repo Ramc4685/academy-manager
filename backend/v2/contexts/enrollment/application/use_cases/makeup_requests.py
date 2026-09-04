@@ -203,6 +203,8 @@ class EnrollmentRepository(Protocol):
 
     async def is_active(self, session_id: str, student_id: str) -> bool: ...
 
+    async def is_active_or_paused(self, session_id: str, student_id: str) -> bool: ...
+
 
 class OccurrenceRosterRepository(Protocol):
     async def list_for_occurrence(self, occurrence_id: str) -> list[OccurrenceRosterEntry]: ...
@@ -476,6 +478,21 @@ class ApproveMakeupRequest:
             raise MakeupWindowExpired(
                 "target occurrence's session no longer exists",
                 occurrence_id=cmd.target_occurrence_id,
+            )
+
+        # Issue #651: re-assert what Submit checked. The family may have
+        # cancelled or withdrawn between submitting and the admin's decision,
+        # and a make-up is a paid-for class being re-taken, not a free one.
+        missed = await self._occurrences.get(request.missed_occurrence_id)
+        missed_session_id = missed.session_id if missed is not None else None
+        if missed_session_id is None or not await self._enrollments.is_active_or_paused(
+            missed_session_id, request.student_id
+        ):
+            raise StudentNotEnrolledInSession(
+                "student no longer has an active or paused enrollment in the missed "
+                "occurrence's session",
+                session_id=missed_session_id or "",
+                student_id=request.student_id,
             )
 
         active_count = len(await self._enrollments.active_for_session(target.session_id))

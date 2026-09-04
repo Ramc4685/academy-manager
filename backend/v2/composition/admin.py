@@ -654,20 +654,17 @@ def compose_admin(
     pause_requests = MongoPauseRequestRepository(db)
     billing_deferrals = MongoBillingDeferralRepository(db)
     scheduled_actions = MongoScheduledEnrollmentActionRepository(db)
+    # Built early: #651 cancel/withdraw/session-cancel drop future make-up rows.
+    occurrence_roster_repo = MongoOccurrenceRosterRepository(db)
     subscriptions_repo = MongoSubscriptionRepository(db)
     parent_customers_repo = MongoParentBillingCustomerRepository(db)
-    # Per-enrollment autopay status lives on student_billing_enrollments — the
-    # single source of truth pause/resume + the charge path share (Slice B).
+    # Per-enrollment autopay status: student_billing_enrollments (Slice B).
     student_billing_enrollment_repo = MongoStudentBillingEnrollmentRepository(db)
 
     class _EnrollmentAutopayStatusGateway:
         """Adapts the billing enrollment repo to the enrollment-context
-        ``EnrollmentAutopayStatusGateway`` port (``set_enrollment_status``),
-        delegating to the single guarded writer ``set_autopay_enrollment_status``
-        (Slice B). Mirrors the ``_EnrollmentAutopayState`` shim in
-        ``composition/parent.py`` — the port name differs from the repo method,
-        so pause/resume/approve must go through this adapter, not the repo
-        directly."""
+        ``EnrollmentAutopayStatusGateway`` port (Slice B); mirrors the
+        ``_EnrollmentAutopayState`` shim in ``composition/parent.py``."""
 
         async def set_enrollment_status(self, *, enrollment_id: str, status: str) -> bool:
             return await student_billing_enrollment_repo.set_autopay_enrollment_status(
@@ -702,8 +699,7 @@ def compose_admin(
         sessions=sessions_w, academy_id=academy_id, get_academy_timezone=session_tz
     )
     edit_session = EditSession(sessions=sessions_w, get_academy_timezone=session_tz)
-    # #613 welcome email + #612 roster alerts, built together so this file
-    # stays wiring (see composition/roster_notifications.py).
+    # #613 welcome email + #612 roster alerts (composition/roster_notifications.py).
     notifiers = compose_enrollment_notifiers(db, settings, users=users_r)
     cancel_session = CancelSession(
         sessions=sessions_w,
@@ -714,6 +710,9 @@ def compose_admin(
         enrollment_events=enrollment_events,
         roster_notifier=notifiers.roster,
         billing_sync=enrollment_billing_sync,
+        billing_deferrals=billing_deferrals,
+        scheduled_actions=scheduled_actions,
+        occurrence_roster=occurrence_roster_repo,
     )
     cancel_enrollment = CancelEnrollment(
         enrollments=enrollments_w,
@@ -722,6 +721,7 @@ def compose_admin(
         enrollment_events=enrollment_events,
         roster_notifier=notifiers.roster,
         billing_sync=enrollment_billing_sync,
+        occurrence_roster=occurrence_roster_repo,
         academy_id=academy_id,
     )
     transfer_enrollment = TransferEnrollment(
@@ -740,6 +740,8 @@ def compose_admin(
         billing_deferrals=billing_deferrals,
         autopay_status=enrollment_autopay_status_gateway,
         billing_sync=enrollment_billing_sync,
+        roster_notifier=notifiers.roster,
+        outbox=outbox,
     )
     resume_enrollment = ResumeEnrollment(
         enrollments=enrollments_w,
@@ -750,12 +752,16 @@ def compose_admin(
         billing_deferrals=billing_deferrals,
         autopay_status=enrollment_autopay_status_gateway,
         billing_sync=enrollment_billing_sync,
+        roster_notifier=notifiers.roster,
     )
     withdraw_enrollment = WithdrawEnrollment(
         enrollments=enrollments_w,
         enrollment_events=enrollment_events,
         roster_notifier=notifiers.roster,
         billing_sync=enrollment_billing_sync,
+        sessions=sessions_w,
+        outbox=outbox,
+        occurrence_roster=occurrence_roster_repo,
     )
     edit_roster_add = EditRosterAdd(
         sessions=sessions_w,
@@ -766,9 +772,8 @@ def compose_admin(
         roster_notifier=notifiers.roster,
         # Re-adding a paused student resumes the existing row (one code path).
         resume=resume_enrollment,
-        # Request-time tenant, same shape as PromoteFromWaitlist below. The
-        # boot-frozen value only ever reached the lifecycle event and the
-        # returned object (the Mongo writers re-stamp from the ContextVar).
+        # Request-time tenant, same shape as PromoteFromWaitlist below (the
+        # Mongo writers re-stamp from the ContextVar anyway).
         academy_id=request_academy_id,
     )
     join_waitlist = JoinWaitlist(
@@ -783,6 +788,8 @@ def compose_admin(
         outbox=outbox,
         enrollment_events=enrollment_events,
         roster_notifier=notifiers.roster,
+        # A paused student at the head of the queue resumes (#651), one path.
+        resume=resume_enrollment,
         academy_id=request_academy_id,
     )
     skip = SkipFromWaitlist(waitlist=waitlist)
@@ -818,7 +825,6 @@ def compose_admin(
     update_self_service_policy = UpdateSelfServicePolicy(policies=self_service_policy_repo)
     makeup_requests_repo = MongoMakeupRequestRepository(db)
     absence_notices_repo = MongoAbsenceNoticeRepository(db)
-    occurrence_roster_repo = MongoOccurrenceRosterRepository(db)
     list_makeup_requests_for_admin = ListMakeupRequestsForAdmin(
         makeups=makeup_requests_repo,
         students=students_r,
