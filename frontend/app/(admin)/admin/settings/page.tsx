@@ -8,6 +8,7 @@ import { AcademyPanel } from "@/components/admin/settings/academy-panel";
 import { BrandingPanel } from "@/components/admin/settings/branding-panel";
 import { DataPanel } from "@/components/admin/settings/data-panel";
 import { FeesPanel } from "@/components/admin/settings/fees-panel";
+import { InvoiceSchedulePanel } from "@/components/admin/settings/invoice-schedule-panel";
 import { GatewayPanel } from "@/components/admin/settings/gateway-panel";
 import { NotifyPanel } from "@/components/admin/settings/notify-panel";
 import { RolesPanel } from "@/components/admin/settings/roles-panel";
@@ -56,7 +57,12 @@ export default function AdminSettingsPage() {
     <section data-testid="admin-settings" className="space-y-6">
       <SettingsTabs active={active} hrefFor={hrefForPanel} />
       {active === "academy" && <AcademyPanel />}
-      {active === "fees" && <FeesPanel />}
+      {active === "fees" && (
+        <>
+          <FeesPanel />
+          <InvoiceSchedulePanel />
+        </>
+      )}
       {active === "gateway" && <GatewayPanel />}
       {active === "notify" && <NotifyPanel />}
       {active === "roles" && <RolesPanel />}

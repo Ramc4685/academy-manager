@@ -37,6 +37,7 @@ from backend.v2.composition.email_adapters import (
     LoginInviteEmailAdapter,
 )
 from backend.v2.composition.event_handlers import install_dunning_notifier
+from backend.v2.composition.lifecycle_billing import compose_enrollment_billing_sync
 from backend.v2.composition.pathway import (
     compose_curriculum,
     compose_student_progress,
@@ -151,7 +152,11 @@ from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import 
     PreviewWithdrawalCredit,
 )
 from backend.v2.contexts.billing.domain.billing_audit import BillingAuditEntry
-from backend.v2.contexts.billing.domain.ledger import LedgerInvoice, void_invoice
+from backend.v2.contexts.billing.domain.ledger import (
+    LedgerInvoice,
+    record_delivery,
+    void_invoice,
+)
 from backend.v2.contexts.billing.domain.product import Product
 from backend.v2.contexts.billing.infrastructure.admin_reports_read_model import (
     AdminEffectiveRevenueQuery,
@@ -509,6 +514,7 @@ from backend.v2.shared.tenancy import (
 )
 from backend.v2.shared.tenancy.academy_url import academy_frontend_url
 from backend.v2.shared.time import ensure_utc, request_scoped_academy_timezone
+from backend.v2.shared.time.academy_timezone import academy_timezone_lookup
 
 
 class _StudentLoginProvisionerAdapter:
@@ -670,6 +676,10 @@ def compose_admin(
             )
 
     enrollment_autopay_status_gateway = _EnrollmentAutopayStatusGateway()
+    # Issue #651: every attendance-stopping transition must reach billing.
+    enrollment_billing_sync = compose_enrollment_billing_sync(
+        db, autopay=student_billing_enrollment_repo
+    )
     curriculum = compose_curriculum(db)
     student_progress = compose_student_progress(db, outbox, idempotency_store=idempotency_store)
     generate_daily_teaching_plan = GenerateDailyTeachingPlan(
@@ -692,22 +702,26 @@ def compose_admin(
         sessions=sessions_w, academy_id=academy_id, get_academy_timezone=session_tz
     )
     edit_session = EditSession(sessions=sessions_w, get_academy_timezone=session_tz)
+    # #613 welcome email + #612 roster alerts, built together so this file
+    # stays wiring (see composition/roster_notifications.py).
+    notifiers = compose_enrollment_notifiers(db, settings, users=users_r)
     cancel_session = CancelSession(
         sessions=sessions_w,
         enrollments_query=enrollments_r,
         enrollments_writer=enrollments_w,
         outbox=outbox,
         academy_id=academy_id,
+        enrollment_events=enrollment_events,
+        roster_notifier=notifiers.roster,
+        billing_sync=enrollment_billing_sync,
     )
-    # #613 welcome email + #612 roster alerts, built together so this file
-    # stays wiring (see composition/roster_notifications.py).
-    notifiers = compose_enrollment_notifiers(db, settings, users=users_r)
     cancel_enrollment = CancelEnrollment(
         enrollments=enrollments_w,
         sessions=sessions_w,
         outbox=outbox,
         enrollment_events=enrollment_events,
         roster_notifier=notifiers.roster,
+        billing_sync=enrollment_billing_sync,
         academy_id=academy_id,
     )
     transfer_enrollment = TransferEnrollment(
@@ -725,6 +739,7 @@ def compose_admin(
         enrollment_events=enrollment_events,
         billing_deferrals=billing_deferrals,
         autopay_status=enrollment_autopay_status_gateway,
+        billing_sync=enrollment_billing_sync,
     )
     resume_enrollment = ResumeEnrollment(
         enrollments=enrollments_w,
@@ -734,11 +749,13 @@ def compose_admin(
         enrollment_events=enrollment_events,
         billing_deferrals=billing_deferrals,
         autopay_status=enrollment_autopay_status_gateway,
+        billing_sync=enrollment_billing_sync,
     )
     withdraw_enrollment = WithdrawEnrollment(
         enrollments=enrollments_w,
         enrollment_events=enrollment_events,
         roster_notifier=notifiers.roster,
+        billing_sync=enrollment_billing_sync,
     )
     edit_roster_add = EditRosterAdd(
         sessions=sessions_w,
@@ -777,9 +794,12 @@ def compose_admin(
         scheduled_actions=scheduled_actions,
         billing_deferrals=billing_deferrals,
         autopay_status=enrollment_autopay_status_gateway,
+        billing_sync=enrollment_billing_sync,
         academy_id=academy_id,
     )
-    decline_pause_request = DeclinePauseRequest(pause_requests=pause_requests)
+    decline_pause_request = DeclinePauseRequest(
+        pause_requests=pause_requests, notifier=notifiers.roster
+    )
     process_scheduled_resume_actions = ProcessScheduledResumeActions(
         scheduled_actions=scheduled_actions,
         resume_enrollment=resume_enrollment,
@@ -788,7 +808,9 @@ def compose_admin(
 
     # Billing
     billing_ledger_repo = MongoBillingLedgerRepository(db)
-    dunning_state_repo = MongoDunningStateRepository(db)
+    dunning_state_repo = MongoDunningStateRepository(
+        db, academy_timezone=academy_timezone_lookup(db)
+    )
     billing_counters_repo = MongoBillingCounterRepository(db)
     billing_settings_repo = MongoBillingSettingsRepository(db)
     self_service_policy_repo = MongoSelfServicePolicyRepository(db)
@@ -1062,6 +1084,37 @@ def compose_admin(
             "checkout_failure_code": result.checkout_failure_code,
         }
 
+    async def send_autopay_notice(invoice_id: str) -> dict[str, Any]:
+        """Pre-charge notice for an autopay invoice (issue #651); marks delivery."""
+        invoice = await billing_ledger_repo.get_invoice(invoice_id)
+        if invoice is None:
+            raise ValueError("invoice not found")
+        email_port = _invoice_email_port()
+        if email_port is None:
+            raise ValueError("email delivery is not enabled")
+        academy_doc = await academy_repo.find_by_id(current_academy_id())
+        academy_slug = str(academy_doc.get("slug") or "") if academy_doc else ""
+        frontend_url = academy_frontend_url(
+            frontend_url=settings.frontend_url or "", academy_slug=academy_slug
+        )
+        provider_message_id = await email_port.send_autopay_notice(
+            parent_id=invoice.parent_id,
+            invoice_id=invoice.invoice_id,
+            period=invoice.period,
+            amount_cents=invoice.balance_due_cents,
+            currency=invoice.currency,
+            charge_on=invoice.due_date,
+            portal_url=f"{frontend_url}/parent/payments" if frontend_url else None,
+        )
+        delivered = record_delivery(
+            invoice,
+            outcome="sent",
+            now=datetime.now(UTC),
+            provider_message_id=provider_message_id,
+        )
+        await billing_ledger_repo.save_invoice(delivered)
+        return {"invoice_id": invoice_id, "delivery_status": delivered.delivery_status}
+
     async def send_generated_invoices(
         period: str, *, limit: int = DEFAULT_SEND_LIMIT
     ) -> dict[str, Any]:
@@ -1075,6 +1128,7 @@ def compose_admin(
             ledger=billing_ledger_repo,
             autopay=student_billing_enrollment_repo,
             send=send_billing_invoice,
+            notify_autopay=send_autopay_notice if _invoice_email_port() else None,
         ).execute(period, limit=limit)
         return result.model_dump()
 
@@ -1480,8 +1534,13 @@ def compose_admin(
             raise ValueError(
                 "cannot void invoice with recorded payments; issue refund or credit first"
             )
-        voided = void_invoice(invoice, reason=reason, now=datetime.now(UTC))
+        now = datetime.now(UTC)
+        voided = void_invoice(invoice, reason=reason or "admin_void", now=now)
         await billing_ledger_repo.save_invoice(voided)
+        # Issue #651: a void invoice must not keep an active dunning ladder.
+        await dunning_state_repo.suppress_for_invoice(
+            invoice_id=invoice_id, reason="invoice_voided", now=now
+        )
 
     async def record_manual_payment(
         *,
@@ -3934,8 +3993,27 @@ def compose_admin(
             .limit(500)
         )
         invoice_keys: set[str] = set()
-        async for invoice in invoice_cursor:
+        # Issue #651: a family whose card is about to be auto-charged must not
+        # get a "pay now" reminder for the same invoice.
+        invoice_docs = [doc async for doc in invoice_cursor]
+        autopay_enrollment_ids: set[str] = set()
+        enrollment_ids = [
+            str(doc.get("enrollment_id")) for doc in invoice_docs if doc.get("enrollment_id")
+        ]
+        if enrollment_ids:
+            async for billing_enrollment in db["student_billing_enrollments"].find(
+                {
+                    "academy_id": request_academy_id,
+                    "enrollment_id": {"$in": enrollment_ids},
+                    "autopay_enrollment_status": "active",
+                },
+                {"enrollment_id": 1},
+            ):
+                autopay_enrollment_ids.add(str(billing_enrollment.get("enrollment_id") or ""))
+        for invoice in invoice_docs:
             invoice_keys.update(invoice_provider_keys(invoice))
+            if str(invoice.get("enrollment_id") or "") in autopay_enrollment_ids:
+                continue
             parent_id = str(invoice.get("parent_id") or invoice.get("parent_user_id") or "")
             if not parent_id:
                 continue

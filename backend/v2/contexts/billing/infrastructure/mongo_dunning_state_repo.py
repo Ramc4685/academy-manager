@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any, ClassVar
+from zoneinfo import ZoneInfo
 
 from pymongo import ASCENDING, ReturnDocument
 
@@ -36,6 +38,31 @@ class MongoDunningStateRepository(TenantScopedRepository):
         "checkout_session_open",
         "stripe_not_configured",
     }
+
+    #: Local hour (academy timezone) before which no NEW ladder is prepared on
+    #: its due date, so the first autopay attempt lands in the morning of the
+    #: due date instead of 00:00 UTC — 7pm the evening before in Chicago (#651).
+    first_attempt_local_hour: ClassVar[int] = 9
+
+    def __init__(
+        self,
+        db: Any,
+        *,
+        academy_timezone: Callable[[str], Awaitable[str | None]] | None = None,
+    ) -> None:
+        super().__init__(db)
+        self._academy_timezone = academy_timezone
+
+    async def _local_now(self, *, academy_id: str, now: datetime) -> datetime:
+        """``now`` on the academy's wall clock (UTC when no zone is configured)."""
+        aware = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
+        if self._academy_timezone is None:
+            return aware
+        try:
+            zone = await self._academy_timezone(academy_id)
+            return aware.astimezone(ZoneInfo(zone)) if zone else aware
+        except Exception:  # pragma: no cover - defensive: never block collection
+            return aware
 
     @staticmethod
     def _state_from_doc(doc: dict[str, object]) -> DunningState:
@@ -76,6 +103,14 @@ class MongoDunningStateRepository(TenantScopedRepository):
     async def prepare_due_states(self, *, now: datetime, limit: int) -> int:
         academy_id = current_academy_id()
         created = 0
+        local_now = await self._local_now(academy_id=academy_id, now=now)
+        if local_now.hour < self.first_attempt_local_hour:
+            # Too early on the academy's clock: leave today's due invoices
+            # for a later tick. Existing ladders still retry on schedule.
+            return 0
+        # due_date is stored as a naive midnight; anything due on or before
+        # the academy's local calendar day is ready.
+        due_cutoff = datetime.combine(local_now.date(), time.max)
         cursor = (
             self._db["invoices"]
             .find(
@@ -83,7 +118,7 @@ class MongoDunningStateRepository(TenantScopedRepository):
                     "academy_id": academy_id,
                     "status": {"$in": ["open", "partially_paid"]},
                     "balance_due_cents": {"$gt": 0},
-                    "due_date": {"$lte": now},
+                    "due_date": {"$lte": due_cutoff},
                     "enrollment_id": {"$exists": True, "$ne": None},
                 },
                 {"invoice_id": 1, "parent_id": 1, "enrollment_id": 1, "due_date": 1},
@@ -428,6 +463,23 @@ class MongoDunningStateRepository(TenantScopedRepository):
                 }
             )
         return rows
+
+    async def suppress_for_invoice(self, *, invoice_id: str, reason: str, now: datetime) -> bool:
+        """Stop the ladder for one invoice (voided / no longer collectable).
+
+        Returns True when an active/processing/parked state was suppressed;
+        False when the invoice has no ladder or it is already terminal.
+        """
+        doc = await self.collection.find_one(
+            {"academy_id": current_academy_id(), "invoice_id": invoice_id}
+        )
+        if doc is None:
+            return False
+        state = self._state_from_doc(doc)
+        if state.status in {"suppressed", "resolved", "dunned"}:
+            return False
+        await self._store_state(state.suppress(reason=reason, now=now))
+        return True
 
     async def _store_state(self, state: DunningState) -> DunningState:
         await self.collection.update_one(

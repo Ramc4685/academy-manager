@@ -84,6 +84,7 @@ export const queryKeys = {
     attention: () => ["admin", "dashboard", "attention"] as const,
     academy: () => ["admin", "academy"] as const,
     fees: () => ["admin", "academy", "fees"] as const,
+    invoiceSchedule: () => ["admin", "billing", "invoice-schedule"] as const,
     notifications: () => ["admin", "academy", "notifications"] as const,
     gateway: () => ["admin", "academy", "gateway"] as const,
     platformFallback: () => ["admin", "billing", "platform-fallback"] as const,

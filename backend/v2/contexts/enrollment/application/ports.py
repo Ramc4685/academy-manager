@@ -195,6 +195,28 @@ class EnrollmentEventRepository(Protocol):
     async def list_for_enrollment(self, enrollment_id: str) -> list[EnrollmentLifecycleEvent]: ...
 
 
+class EnrollmentBillingSync(Protocol):
+    """Cross-context port (issue #651): tell billing that attendance stopped or
+    resumed so it can void unpaid future-period invoices, move the autopay
+    status and stop dunning ladders.
+
+    INVARIANT — every transition that stops attendance (cancel, withdraw,
+    session cancelled, pause) and every resume MUST call this port. A family
+    must never be charged for a class they will not attend. Implementations
+    are idempotent and never raise into the caller's write path.
+    """
+
+    async def apply(
+        self,
+        *,
+        enrollment_id: str,
+        transition: str,
+        effective_at: datetime,
+        reason: str,
+        actor_id: str | None,
+    ) -> dict[str, Any]: ...
+
+
 class EnrollmentLifecycleBillingPort(Protocol):
     async def record_move_proration(
         self,
@@ -249,6 +271,9 @@ RosterChangeKind = Literal[
     "moved",  # transferred between sessions (both rosters changed)
     "cancelled",  # enrollment cancelled/removed (admin or parent self-serve)
     "withdrawn",  # enrollment withdrawn mid-term
+    "paused",  # enrollment paused (seat released, billing stopped)
+    "resumed",  # paused enrollment back on the roster
+    "session_cancelled",  # the whole class was cancelled by the academy
 ]
 
 

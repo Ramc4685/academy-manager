@@ -570,3 +570,42 @@ async def test_migration_0156_indexes_the_dunning_invoice_scan(db) -> None:
 
     info = await db["invoices"].index_information()
     assert "academy_invoice_status_due_date" in info
+
+
+@pytest.mark.asyncio
+async def test_suppress_for_invoice_stops_an_active_ladder(db, acad) -> None:
+    """Issue #651: voiding an invoice must stop its ladder immediately."""
+    repo = MongoDunningStateRepository(db)
+    await _seed_invoice(db, academy_id=acad, invoice_id="inv-void", enrollment_id="enr-void")
+    assert await repo.prepare_due_states(now=NOW, limit=10) == 1
+
+    assert await repo.suppress_for_invoice(invoice_id="inv-void", reason="invoice_voided", now=NOW)
+    doc = await db["dunning_states"].find_one({"academy_id": acad, "invoice_id": "inv-void"})
+    assert doc["status"] == "suppressed"
+    assert doc["suppression_reason"] == "invoice_voided"
+    # Idempotent: a second call finds nothing left to suppress.
+    assert not await repo.suppress_for_invoice(
+        invoice_id="inv-void", reason="invoice_voided", now=NOW
+    )
+    assert not await repo.suppress_for_invoice(invoice_id="no-such", reason="x", now=NOW)
+    assert await repo.claim_next_due(now=NOW, worker_id="w") is None
+
+
+@pytest.mark.asyncio
+async def test_prepare_due_states_waits_for_the_academy_morning(db, acad) -> None:
+    """Issue #651: first attempt lands at 09:00 academy time, not 00:00 UTC."""
+
+    async def chicago(_academy_id: str) -> str | None:
+        return "America/Chicago"
+
+    repo = MongoDunningStateRepository(db, academy_timezone=chicago)
+    await _seed_invoice(db, academy_id=acad, invoice_id="inv-due", enrollment_id="enr-due")
+
+    # 2026-07-01 00:30 UTC is 2026-06-30 19:30 in Chicago: still yesterday evening.
+    assert await repo.prepare_due_states(now=datetime(2026, 7, 1, 0, 30, tzinfo=UTC), limit=10) == 0
+    # 2026-07-01 12:00 UTC is 07:00 in Chicago: too early on the due date.
+    assert await repo.prepare_due_states(now=datetime(2026, 7, 1, 12, 0, tzinfo=UTC), limit=10) == 0
+    # 2026-07-01 14:30 UTC is 09:30 in Chicago: go.
+    assert (
+        await repo.prepare_due_states(now=datetime(2026, 7, 1, 14, 30, tzinfo=UTC), limit=10) == 1
+    )
