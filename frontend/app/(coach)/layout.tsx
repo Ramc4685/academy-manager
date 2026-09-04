@@ -16,8 +16,20 @@ import { PersonaSwitcher } from "@/components/persona/persona-switcher";
 import { AccessDeniedNotice } from "@/components/persona/access-denied-notice";
 import { AuthUnavailableScreen } from "@/components/persona/auth-unavailable";
 import { PersonaLogoutButton } from "@/components/persona/logout-button";
+import { ShellBackButton } from "@/components/persona/back-button";
 import { listCoachMessages } from "@/lib/api/v2/messages";
 import { queryKeys } from "@/lib/query/keys";
+
+const COACH_TOP_LEVEL_ROUTES = [
+  "/coach/dashboard",
+  "/coach/today",
+  "/coach/sessions",
+  "/coach/profile",
+  "/coach/calendar",
+  "/coach/messages",
+  "/coach/needs-review",
+] as const;
+const COACH_HOME = "/coach/dashboard";
 
 export default function CoachLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -61,18 +73,21 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
       }
     >
       <header
-        className="sticky top-0 z-10 flex items-center justify-between px-4 py-3"
+        className="sticky top-0 z-10 flex items-center justify-between px-4 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top,0px))]"
         style={{ background: "#0a0f1c", borderBottom: "1px solid #1e293b" }}
       >
-        <Link href="/coach/dashboard" className="flex items-center gap-2">
-          <div
-            className="h-7 w-7 rounded-md flex items-center justify-center font-bold text-xs"
-            style={{ background: "#facc15", color: "#0a0f1c" }}
-          >
-            C
-          </div>
-          <span className="font-semibold text-white text-[15px] tracking-tight">Academy</span>
-        </Link>
+        <div className="flex items-center gap-2">
+          <ShellBackButton known={COACH_TOP_LEVEL_ROUTES} home={COACH_HOME} variant="dark" />
+          <Link href="/coach/dashboard" className="flex items-center gap-2">
+            <div
+              className="h-7 w-7 rounded-md flex items-center justify-center font-bold text-xs"
+              style={{ background: "#facc15", color: "#0a0f1c" }}
+            >
+              C
+            </div>
+            <span className="font-semibold text-white text-[15px] tracking-tight">Academy</span>
+          </Link>
+        </div>
         <div className="flex items-center gap-2">
           <Link
             href="/coach/calendar"

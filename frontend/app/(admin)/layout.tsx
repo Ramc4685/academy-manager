@@ -11,6 +11,7 @@ import { useOnline } from "@/lib/pwa/online";
 import { useServiceWorkerUpdate } from "@/lib/pwa/update-flow";
 import { queryKeys } from "@/lib/query/keys";
 import { TenantProvider } from "@/lib/tenant/tenant-context";
+import { useIsDesktop } from "@/lib/use-is-desktop";
 
 import { Avatar } from "@/components/ds/avatar";
 import { Icon } from "@/components/ds/icons";
@@ -18,6 +19,7 @@ import { ToastProvider } from "@/components/ds/toast";
 import { ShuttleMark } from "@/components/ds/shuttle";
 import {
   ADMIN_NAV,
+  adminTopLevelRoutes,
   metaForPath,
   type AdminNavItem,
   type AdminNavIconKey,
@@ -31,13 +33,30 @@ import { PersonaSwitcher } from "@/components/persona/persona-switcher";
 import { AccessDeniedNotice } from "@/components/persona/access-denied-notice";
 import { AuthUnavailableScreen } from "@/components/persona/auth-unavailable";
 import { PersonaLogoutButton } from "@/components/persona/logout-button";
+import { ShellBackButton } from "@/components/persona/back-button";
+
+const ADMIN_TOP_LEVEL_ROUTES: readonly string[] = adminTopLevelRoutes();
+const ADMIN_HOME = "/admin";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() ?? "/admin";
   const online = useOnline();
   const { hasUpdate, applyUpdate } = useServiceWorkerUpdate();
   const auth = usePersonaAuth("admin");
+  const isDesktop = useIsDesktop();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // A persona switch from the drawer navigates; close it so it does not
+  // hang open over the new page.
+  useEffect(() => {
+    setDrawerOpen(false);
+  }, [pathname]);
+  // A tenant switch does NOT navigate (it only dispatches an event and the
+  // page refetches in place), so close the drawer on that event too.
+  useEffect(() => {
+    const handler = () => setDrawerOpen(false);
+    window.addEventListener("am:tenant-changed", handler);
+    return () => window.removeEventListener("am:tenant-changed", handler);
+  }, []);
   const academyQuery = useQuery({
     queryKey: queryKeys.admin.academy(),
     queryFn: getAdminAcademy,
@@ -75,23 +94,27 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       <TenantChangeInvalidator />
       <AdminActionSlotProvider>
       <div className="min-h-screen flex bg-rally-paper">
-        {/* Sidebar — desktop only */}
-        <DesktopSidebar
-          pathname={pathname}
-          adminName={adminName}
-          adminRole={adminRole}
-          academyName={academyName}
-        />
-
-        {/* Mobile drawer */}
-        {drawerOpen && (
-          <MobileDrawer
+        {/* Exactly one sidebar tree is mounted at a time. Both carry the
+            account controls (switchers, logout) with the same testids, so
+            CSS-hiding the desktop sidebar on phones would leave duplicates
+            in the DOM. */}
+        {isDesktop ? (
+          <DesktopSidebar
             pathname={pathname}
             adminName={adminName}
             adminRole={adminRole}
             academyName={academyName}
-            onClose={() => setDrawerOpen(false)}
           />
+        ) : (
+          drawerOpen && (
+            <MobileDrawer
+              pathname={pathname}
+              adminName={adminName}
+              adminRole={adminRole}
+              academyName={academyName}
+              onClose={() => setDrawerOpen(false)}
+            />
+          )
         )}
 
         {/* Main column */}
@@ -157,7 +180,7 @@ function DesktopSidebar({
 }) {
   return (
     <aside
-      className="hidden lg:flex lg:flex-col lg:w-60 lg:shrink-0 lg:h-screen lg:sticky lg:top-0 lg:overflow-y-auto"
+      className="hidden lg:flex lg:flex-col lg:w-60 lg:shrink-0 lg:h-screen lg:sticky lg:top-0 lg:overflow-hidden"
       style={{
         background: "var(--rally-night)",
         color: "var(--rally-bright)",
@@ -166,19 +189,23 @@ function DesktopSidebar({
       aria-label="Admin navigation"
     >
       <SidebarBrand academyName={academyName} />
-      <nav className="flex-1 py-2">
+      <nav className="flex-1 min-h-0 overflow-y-auto py-2">
         {ADMIN_NAV.map((group) => (
           <NavGroup key={group.group} group={group.group} items={group.items} pathname={pathname} />
         ))}
       </nav>
+      <SidebarAccountSection />
       <SidebarUserPill name={adminName} role={adminRole} />
     </aside>
   );
 }
 
-function SidebarBrand({ academyName }: { academyName: string }) {
+function SidebarBrand({ academyName, bordered = true }: { academyName: string; bordered?: boolean }) {
   return (
-    <div className="px-5 py-5 border-b" style={{ borderColor: "var(--rally-night-line)" }}>
+    <div
+      className={bordered ? "px-5 py-5 border-b" : "px-5 py-4"}
+      style={bordered ? { borderColor: "var(--rally-night-line)" } : undefined}
+    >
       <div className="flex items-center gap-2.5">
         <div
           className="relative flex h-8 w-8 items-center justify-center overflow-hidden rounded-md"
@@ -270,9 +297,34 @@ function slug(label: string): string {
   return label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
+/**
+ * Account-level controls (view switcher, academy switcher, logout). Lives in
+ * the navigation surface on every width so the topbar keeps only the menu,
+ * back button, title and one page action.
+ *
+ * The section sits at the bottom of a scroll container, so both switcher
+ * menus are flipped to open upward and stretch to the section's width; a
+ * downward, right-anchored menu would be clipped by the aside's overflow.
+ */
+function SidebarAccountSection() {
+  return (
+    <div
+      className="p-3.5 border-t shrink-0 flex flex-col gap-2 [&_[role=listbox]]:bottom-full [&_[role=listbox]]:top-auto [&_[role=listbox]]:mb-1 [&_[role=listbox]]:mt-0 [&_[role=listbox]]:left-0 [&_[role=listbox]]:right-0 [&_[role=listbox]]:w-auto"
+      style={{ borderColor: "var(--rally-night-line)" }}
+      data-testid="admin-sidebar-account"
+    >
+      <PersonaSwitcher current="admin" variant="dark" />
+      <TenantSwitcher variant="dark" />
+      <PersonaLogoutButton
+        className="w-full min-h-touch rounded-md border border-white/20 bg-white/10 px-3 text-[13px] font-semibold text-white hover:bg-white/20 focus:outline-none focus:ring-2 focus:ring-white/40"
+      />
+    </div>
+  );
+}
+
 function SidebarUserPill({ name, role }: { name: string; role: string }) {
   return (
-    <div className="p-3.5 border-t" style={{ borderColor: "var(--rally-night-line)" }}>
+    <div className="p-3.5 border-t shrink-0" style={{ borderColor: "var(--rally-night-line)" }}>
       <div
         className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg"
         style={{ background: "var(--rally-night-panel)" }}
@@ -317,13 +369,13 @@ function MobileDrawer({
         onClick={onClose}
       />
       <aside
-        className="relative z-50 flex flex-col w-64 h-full shadow-xl overflow-y-auto"
+        className="relative z-50 flex flex-col w-64 h-full shadow-xl overflow-hidden pt-[env(safe-area-inset-top,0px)]"
         style={{ background: "var(--rally-night)", color: "var(--rally-bright)" }}
         aria-label="Admin navigation"
         data-testid="admin-mobile-drawer"
       >
-        <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: "var(--rally-night-line)" }}>
-          <SidebarBrand academyName={academyName} />
+        <div className="flex items-center justify-between pr-3 border-b shrink-0" style={{ borderColor: "var(--rally-night-line)" }}>
+          <SidebarBrand academyName={academyName} bordered={false} />
           <button
             aria-label="Close menu"
             onClick={onClose}
@@ -333,11 +385,15 @@ function MobileDrawer({
             ✕
           </button>
         </div>
-        <nav className="flex-1 py-2" onClick={onClose}>
+        <nav className="flex-1 min-h-0 overflow-y-auto py-2" onClick={onClose}>
           {ADMIN_NAV.map((group) => (
             <NavGroup key={group.group} group={group.group} items={group.items} pathname={pathname} />
           ))}
         </nav>
+        {/* Outside the closing <nav>: opening a switcher menu must not close
+            the drawer. Navigation from a menu closes it via the pathname
+            effect in AdminLayout. */}
+        <SidebarAccountSection />
         <SidebarUserPill name={adminName} role={adminRole} />
       </aside>
     </div>
@@ -369,7 +425,7 @@ function RallyTopbar({
 }: TopbarProps) {
   return (
     <header
-      className="sticky top-0 z-30 border-b bg-white/95 backdrop-blur px-4 py-3 md:px-6"
+      className="sticky top-0 z-30 border-b bg-white/95 backdrop-blur px-4 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top,0px))] md:px-6"
       style={{ borderColor: "var(--rally-line)" }}
     >
       <div className="flex items-center justify-between gap-3">
@@ -382,6 +438,7 @@ function RallyTopbar({
           >
             ☰
           </button>
+          <ShellBackButton known={ADMIN_TOP_LEVEL_ROUTES} home={ADMIN_HOME} variant="light" />
           <div className="min-w-0">
             {breadcrumbs.length > 0 && (
               <div className="font-mono text-[10px] font-bold tracking-overline uppercase text-rally-muted truncate">
@@ -397,8 +454,6 @@ function RallyTopbar({
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <PersonaSwitcher current="admin" />
-          <TenantSwitcher />
           <AdminActionSlotOutlet />
           {!online && (
             <span
@@ -418,10 +473,6 @@ function RallyTopbar({
               Refresh
             </button>
           )}
-          <PersonaLogoutButton
-            className="min-h-touch rounded-md border border-slate-200 px-3 text-sm font-medium text-slate-600 hover:bg-slate-50"
-            labelClassName="hidden sm:inline"
-          />
         </div>
       </div>
     </header>

@@ -476,11 +476,16 @@ async function expectShellLogout(
   path: string,
   readyTestId: string,
   stubBff: (page: Page) => Promise<void>,
+  // The admin shell keeps its logout inside the nav surface (sidebar or
+  // drawer), so it has to be revealed first; the other shells keep it in
+  // the header.
+  openNav = false,
 ) {
   await stubBff(page);
   await page.goto(path);
   await expect(page.getByTestId(readyTestId)).toBeVisible();
-  const logout = page.getByTestId("persona-logout-button");
+  const surface = openNav ? await openAdminNav(page) : page;
+  const logout = surface.getByTestId("persona-logout-button");
   await expect(logout).toBeEnabled();
   await logout.scrollIntoViewIfNeeded();
   // WebKit mobile in CI is slow to settle the post-logout redirect; a 10s cap
@@ -499,14 +504,14 @@ test.describe("Rally admin shell", () => {
     await stubAdminBff(page);
     await page.goto("/admin");
     await expect(page.getByTestId("admin-dashboard")).toBeVisible();
-    await expect(page.getByTestId("tenant-switcher-single")).toContainText(
+    const nav = await openAdminNav(page);
+    await expect(nav.getByTestId("tenant-switcher-single")).toContainText(
       "Academy E2E",
       {
         timeout: 10_000,
       },
     );
-    const nav = await openAdminNav(page);
-    await expect(nav.getByText("Academy E2E")).toBeVisible();
+    await expect(nav.getByText("Academy E2E").first()).toBeVisible();
     await expect(nav.getByText("admin@example.com")).toBeVisible();
     await expect(nav.getByText("Admin", { exact: true })).toBeVisible();
     await expect(page.getByText("Rally Academy")).toHaveCount(0);
@@ -527,34 +532,41 @@ test.describe("Rally admin shell", () => {
     await page.goto("/admin");
     await expect(page.getByTestId("admin-dashboard")).toBeVisible();
 
-    const switcherButton = page.getByTestId("tenant-switcher-button");
+    let nav = await openAdminNav(page);
+    const switcherButton = nav.getByTestId("tenant-switcher-button");
     await expect(switcherButton).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByTestId("tenant-switcher-single")).toHaveCount(0);
+    await expect(nav.getByTestId("tenant-switcher-single")).toHaveCount(0);
     await expect(switcherButton).toContainText("Academy E2E");
 
     await switcherButton.click();
-    const menu = page.getByTestId("tenant-switcher-menu");
+    const menu = nav.getByTestId("tenant-switcher-menu");
     await expect(menu).toBeVisible();
     await expect(
-      page.getByTestId("tenant-switcher-option-academy-e2e"),
+      nav.getByTestId("tenant-switcher-option-academy-e2e"),
     ).toContainText("ACTIVE");
     await expect(
-      page.getByTestId("tenant-switcher-option-academy-e2e-2"),
+      nav.getByTestId("tenant-switcher-option-academy-e2e-2"),
     ).toContainText("Academy E2E Two");
 
-    await page.getByTestId("tenant-switcher-option-academy-e2e-2").click();
+    await nav.getByTestId("tenant-switcher-option-academy-e2e-2").click();
     await expect(menu).toBeHidden();
+    // Switching academies does not navigate, so the layout closes the
+    // mobile drawer on the tenant-changed event instead. On desktop the
+    // sidebar stays mounted and there is no drawer to hide.
+    await expect(page.getByTestId("admin-mobile-drawer")).toBeHidden();
 
-    // Re-open and confirm the ACTIVE marker moved to the newly selected
-    // academy — the switcher pill label itself is driven by a separate
-    // `/admin/academy` query stubbed statically in this spec.
-    await switcherButton.click();
-    await expect(menu).toBeVisible();
+    // Re-open the nav (a no-op on desktop) and confirm the ACTIVE marker
+    // moved to the newly selected academy — the switcher pill label itself
+    // is driven by a separate `/admin/academy` query stubbed statically in
+    // this spec.
+    nav = await openAdminNav(page);
+    await nav.getByTestId("tenant-switcher-button").click();
+    await expect(nav.getByTestId("tenant-switcher-menu")).toBeVisible();
     await expect(
-      page.getByTestId("tenant-switcher-option-academy-e2e-2"),
+      nav.getByTestId("tenant-switcher-option-academy-e2e-2"),
     ).toContainText("ACTIVE");
     await expect(
-      page.getByTestId("tenant-switcher-option-academy-e2e"),
+      nav.getByTestId("tenant-switcher-option-academy-e2e"),
     ).not.toContainText("ACTIVE");
 
     expect(
@@ -571,10 +583,11 @@ test.describe("Rally admin shell", () => {
     await expect(page.getByTestId("admin-dashboard")).toBeVisible();
 
     // Admin in both academies, owner in neither — no rollup entry.
-    await page.getByTestId("tenant-switcher-button").click();
-    await expect(page.getByTestId("tenant-switcher-menu")).toBeVisible();
+    const nav = await openAdminNav(page);
+    await nav.getByTestId("tenant-switcher-button").click();
+    await expect(nav.getByTestId("tenant-switcher-menu")).toBeVisible();
     await expect(
-      page.getByTestId("tenant-switcher-all-academies"),
+      nav.getByTestId("tenant-switcher-all-academies"),
     ).toHaveCount(0);
   });
 
@@ -616,8 +629,9 @@ test.describe("Rally admin shell", () => {
     await page.goto("/admin");
     await expect(page.getByTestId("admin-dashboard")).toBeVisible();
 
-    await page.getByTestId("tenant-switcher-button").click();
-    const entry = page.getByTestId("tenant-switcher-all-academies");
+    const nav = await openAdminNav(page);
+    await nav.getByTestId("tenant-switcher-button").click();
+    const entry = nav.getByTestId("tenant-switcher-all-academies");
     await expect(entry).toBeVisible();
     await entry.click();
 
@@ -1405,8 +1419,80 @@ test.describe("Rally admin shell", () => {
     ).toEqual([]);
   });
 
+  test("admin topbar keeps account controls out of the header at every width", async ({
+    page,
+    isMobile,
+  }) => {
+    // Multi-membership so the tenant switcher is a live button, and an admin
+    // user gets the Coach view, so the persona switcher renders too. Both
+    // would appear in the topbar if the controls had not moved.
+    await stubAdminBff(page, MULTI_MEMBERSHIP);
+    await page.goto("/admin");
+    await expect(page.getByTestId("admin-dashboard")).toBeVisible();
+    if (isMobile) {
+      await expect(page.getByTestId("admin-open-drawer")).toBeVisible();
+      // Drawer closed: nothing in the DOM carries the switcher testids.
+      await expect(page.getByTestId("persona-switcher-button")).toHaveCount(0);
+      await expect(page.getByTestId("tenant-switcher-button")).toHaveCount(0);
+      await expect(page.getByTestId("persona-logout-button")).toHaveCount(0);
+    }
+    // Sidebar on desktop, drawer on phones: the controls live there.
+    const nav = await openAdminNav(page);
+    await expect(nav.getByTestId("persona-switcher-button")).toBeVisible();
+    await expect(nav.getByTestId("tenant-switcher-button")).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(nav.getByTestId("persona-logout-button")).toBeVisible();
+    // The topbar has none of them at any width (spec B2).
+    const header = page.locator("header");
+    await expect(header.getByTestId("persona-switcher-button")).toHaveCount(0);
+    await expect(header.getByTestId("tenant-switcher-button")).toHaveCount(0);
+    await expect(header.getByTestId("persona-logout-button")).toHaveCount(0);
+  });
+
+  test("coach session detail shows a back button that falls back to the parent route", async ({
+    page,
+    baseURL,
+  }) => {
+    await stubCoachBff(page);
+    // A deep-linked PWA launch has history depth 1, so the button pushes the
+    // nearest known parent route instead of calling history.back(). A
+    // Playwright tab starts on about:blank and `page.goto` would add a
+    // second entry, so replace that initial entry instead.
+    const target = new URL("/coach/sessions/some-session-id", baseURL).toString();
+    await page.evaluate((url) => window.location.replace(url), target);
+    await page.waitForURL(target);
+    expect(await page.evaluate(() => window.history.length)).toBe(1);
+    await expect(page.getByText("Session not found.")).toBeVisible();
+    const back = page.getByTestId("shell-back-button");
+    await expect(back).toBeVisible();
+    await back.click();
+    await expect(page).toHaveURL(/\/coach\/sessions$/, { timeout: 20_000 });
+  });
+
+  test("coach top-level route shows no back button", async ({ page }) => {
+    await stubCoachBff(page);
+    await page.goto("/coach/today");
+    await expect(page.getByTestId("coach-today")).toBeVisible();
+    await expect(page.getByTestId("shell-back-button")).toHaveCount(0);
+  });
+
+  test("admin session detail shows the back button and the dashboard does not", async ({
+    page,
+  }) => {
+    test.slow();
+    await stubAdminBff(page);
+    await page.goto("/admin/sessions/some-session-id");
+    await expect(page.getByTestId("admin-session-detail")).toBeVisible();
+    await expect(page.getByTestId("shell-back-button")).toBeVisible();
+
+    await page.goto("/admin");
+    await expect(page.getByTestId("admin-dashboard")).toBeVisible();
+    await expect(page.getByTestId("shell-back-button")).toHaveCount(0);
+  });
+
   test("admin, coach, and parent shells expose logout", async ({ page }) => {
-    await expectShellLogout(page, "/admin", "admin-dashboard", stubAdminBff);
+    await expectShellLogout(page, "/admin", "admin-dashboard", stubAdminBff, true);
     await expectShellLogout(page, "/coach/today", "coach-today", stubCoachBff);
     await expectShellLogout(page, "/parent/dashboard", "parent-dashboard", stubParentBff);
   });
