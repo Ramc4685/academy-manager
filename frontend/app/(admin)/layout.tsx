@@ -180,7 +180,7 @@ function DesktopSidebar({
 }) {
   return (
     <aside
-      className="hidden lg:flex lg:flex-col lg:w-60 lg:shrink-0 lg:h-screen lg:sticky lg:top-0 lg:overflow-y-auto"
+      className="hidden lg:flex lg:flex-col lg:w-60 lg:shrink-0 lg:h-screen lg:sticky lg:top-0 lg:overflow-hidden"
       style={{
         background: "var(--rally-night)",
         color: "var(--rally-bright)",
@@ -189,7 +189,7 @@ function DesktopSidebar({
       aria-label="Admin navigation"
     >
       <SidebarBrand academyName={academyName} />
-      <nav className="flex-1 py-2">
+      <nav className="flex-1 min-h-0 overflow-y-auto py-2">
         {ADMIN_NAV.map((group) => (
           <NavGroup key={group.group} group={group.group} items={group.items} pathname={pathname} />
         ))}
@@ -200,9 +200,12 @@ function DesktopSidebar({
   );
 }
 
-function SidebarBrand({ academyName }: { academyName: string }) {
+function SidebarBrand({ academyName, bordered = true }: { academyName: string; bordered?: boolean }) {
   return (
-    <div className="px-5 py-5 border-b" style={{ borderColor: "var(--rally-night-line)" }}>
+    <div
+      className={bordered ? "px-5 py-5 border-b" : "px-5 py-4"}
+      style={bordered ? { borderColor: "var(--rally-night-line)" } : undefined}
+    >
       <div className="flex items-center gap-2.5">
         <div
           className="relative flex h-8 w-8 items-center justify-center overflow-hidden rounded-md"
@@ -306,7 +309,7 @@ function slug(label: string): string {
 function SidebarAccountSection() {
   return (
     <div
-      className="p-3.5 border-t flex flex-col gap-2 [&_[role=listbox]]:bottom-full [&_[role=listbox]]:top-auto [&_[role=listbox]]:mb-1 [&_[role=listbox]]:mt-0 [&_[role=listbox]]:left-0 [&_[role=listbox]]:right-0 [&_[role=listbox]]:w-auto"
+      className="p-3.5 border-t shrink-0 flex flex-col gap-2 [&_[role=listbox]]:bottom-full [&_[role=listbox]]:top-auto [&_[role=listbox]]:mb-1 [&_[role=listbox]]:mt-0 [&_[role=listbox]]:left-0 [&_[role=listbox]]:right-0 [&_[role=listbox]]:w-auto"
       style={{ borderColor: "var(--rally-night-line)" }}
       data-testid="admin-sidebar-account"
     >
@@ -321,7 +324,7 @@ function SidebarAccountSection() {
 
 function SidebarUserPill({ name, role }: { name: string; role: string }) {
   return (
-    <div className="p-3.5 border-t" style={{ borderColor: "var(--rally-night-line)" }}>
+    <div className="p-3.5 border-t shrink-0" style={{ borderColor: "var(--rally-night-line)" }}>
       <div
         className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg"
         style={{ background: "var(--rally-night-panel)" }}
@@ -366,13 +369,13 @@ function MobileDrawer({
         onClick={onClose}
       />
       <aside
-        className="relative z-50 flex flex-col w-64 h-full shadow-xl overflow-y-auto pt-[env(safe-area-inset-top,0px)]"
+        className="relative z-50 flex flex-col w-64 h-full shadow-xl overflow-hidden pt-[env(safe-area-inset-top,0px)]"
         style={{ background: "var(--rally-night)", color: "var(--rally-bright)" }}
         aria-label="Admin navigation"
         data-testid="admin-mobile-drawer"
       >
-        <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: "var(--rally-night-line)" }}>
-          <SidebarBrand academyName={academyName} />
+        <div className="flex items-center justify-between pr-3 border-b shrink-0" style={{ borderColor: "var(--rally-night-line)" }}>
+          <SidebarBrand academyName={academyName} bordered={false} />
           <button
             aria-label="Close menu"
             onClick={onClose}
@@ -382,7 +385,7 @@ function MobileDrawer({
             ✕
           </button>
         </div>
-        <nav className="flex-1 py-2" onClick={onClose}>
+        <nav className="flex-1 min-h-0 overflow-y-auto py-2" onClick={onClose}>
           {ADMIN_NAV.map((group) => (
             <NavGroup key={group.group} group={group.group} items={group.items} pathname={pathname} />
           ))}
