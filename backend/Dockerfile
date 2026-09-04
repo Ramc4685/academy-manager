@@ -11,4 +11,5 @@ COPY . /app/backend
 ENV PYTHONPATH="/app:/app/backend"
 
 EXPOSE 8001
-CMD ["uvicorn", "backend.v2.main:app", "--host", "0.0.0.0", "--port", "8001"]
+# Access lines come from RequestLogMiddleware (JSON, with latency + request_id).
+CMD ["uvicorn", "backend.v2.main:app", "--host", "0.0.0.0", "--port", "8001", "--no-access-log"]

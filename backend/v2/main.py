@@ -183,6 +183,7 @@ from backend.v2.shared.http import (
 from backend.v2.shared.idempotency.mongo_store import MongoIdempotencyStore
 from backend.v2.shared.observability import (
     RequestContextMiddleware,
+    RequestLogMiddleware,
     configure_error_tracking,
     configure_logging,
     configure_tracing,
@@ -1504,6 +1505,9 @@ def create_app() -> FastAPI:
         proxy_shared_secret=settings.proxy_shared_secret,
     )
     _add_cors_middleware(app, settings)
+    # One JSON line per request (method/route/status/latency). Sits just
+    # inside RequestContextMiddleware so the request id is already in context.
+    app.add_middleware(RequestLogMiddleware)
     # Added last ⇒ runs first (outermost): the request id exists before
     # tenancy/rate-limit run and is stamped on their 401/429 responses too.
     app.add_middleware(RequestContextMiddleware)

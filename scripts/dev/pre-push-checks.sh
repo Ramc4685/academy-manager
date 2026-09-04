@@ -3,7 +3,7 @@
 # push, or install once via scripts/dev/install-hooks.sh so git runs it
 # automatically.
 #
-# The FULL 2,719-test backend suite and all frontend suites remain the CI
+# The FULL 3,600-test backend suite and all frontend suites remain the CI
 # merge gate (required "CI Gate" check on main). This script only decides how
 # much of that to mirror locally, based on what actually changed:
 #

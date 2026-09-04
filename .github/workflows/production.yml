@@ -121,7 +121,10 @@ jobs:
         # PYSEC-2026-1325: ecdsa's known side-channel timing issue has no fixed
         # release (0.19.2 is latest on PyPI); the maintainers won't patch it.
         # Re-evaluate if a fixed version ships.
-        run: pip-audit -r requirements.txt --ignore-vuln PYSEC-2026-1325
+        # Wrapped so an unreachable advisory database warns instead of blocking
+        # the deploy path; nightly-e2e.yml re-runs it strictly. Real findings
+        # still fail. See scripts/ci/dependency_audit.sh.
+        run: bash "$GITHUB_WORKSPACE/scripts/ci/dependency_audit.sh" pip-audit -r requirements.txt --ignore-vuln PYSEC-2026-1325
 
       - name: Compile backend
         working-directory: backend
@@ -217,7 +220,8 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Dependency vulnerability scan
-        run: pnpm audit --audit-level=high
+        # See the backend audit step: registry outage -> warning, findings -> fail.
+        run: bash "$GITHUB_WORKSPACE/scripts/ci/dependency_audit.sh" pnpm audit --audit-level=high
 
       - name: Typecheck
         run: pnpm typecheck
@@ -255,21 +259,6 @@ jobs:
             }
           else
             echo "No openapi.snapshot.json yet. Skipping drift check."
-          fi
-
-      - name: Size limit
-        continue-on-error: true
-        run: pnpm size
-
-      - name: Lighthouse CI
-        continue-on-error: true
-        env:
-          LHCI_GITHUB_APP_TOKEN: ${{ secrets.LHCI_GITHUB_APP_TOKEN }}
-        run: |
-          if [ -f .lighthouserc.json ]; then
-            pnpm lhci
-          else
-            echo "No Lighthouse config yet; skipping."
           fi
 
   frontend-e2e-chromium:
@@ -666,46 +655,6 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Retire legacy Pages frontend
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          set -euo pipefail
-          pages_projects="$(npx wrangler@4 pages project list)"
-          printf '%s\n' "$pages_projects"
-          if printf '%s\n' "$pages_projects" | grep -qw 'courtmastr-academy'; then
-            echo "Detaching academy.courtmastr.com from legacy Pages project."
-            detach_response_file="$(mktemp)"
-            detach_status="$(
-              curl -sS -o "$detach_response_file" -w '%{http_code}' \
-                -X DELETE \
-                -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-                -H "Content-Type: application/json" \
-                "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects/courtmastr-academy/domains/academy.courtmastr.com"
-            )"
-            detach_response="$(cat "$detach_response_file")"
-            rm -f "$detach_response_file"
-            printf '%s\n' "$detach_response"
-            detach_success="$(printf '%s\n' "$detach_response" | jq -r '.success // false')"
-            if [ "$detach_status" = "404" ]; then
-              echo "academy.courtmastr.com is already detached from courtmastr-academy."
-            elif [ "$detach_success" != "true" ]; then
-              detach_error="$(printf '%s\n' "$detach_response" | jq -r '.errors[0].message // "unknown Cloudflare error"')"
-              echo "::error::Failed to detach academy.courtmastr.com from courtmastr-academy Pages project. HTTP ${detach_status}: ${detach_error}"
-              exit 1
-            fi
-            npx wrangler@4 pages project delete courtmastr-academy --yes
-          else
-            echo "Legacy Pages project courtmastr-academy is already absent."
-          fi
-
-      - name: Retire legacy edge router route
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npx wrangler@4 delete academy-edge-router --force || true
-
       - name: Deploy frontend to Cloudflare Workers
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -742,6 +691,10 @@ jobs:
           API_URL: ${{ env.API_ORIGIN }}
           FRONTEND_URL: ${{ env.FRONTEND_ORIGIN }}
           EXPECTED_FIREBASE_PROJECT_ID: ${{ env.NEXT_PUBLIC_FIREBASE_PROJECT_ID }}
+          # Per-tenant hosts served by the same Worker + API; each is checked for
+          # HTML, BFF health and CORS (the 2026-09-01 checkout CORS defect was on
+          # this host and the primary-only smoke passed).
+          TENANT_FRONTEND_URLS: https://blno-academy.courtmastr.com
         run: scripts/smoke/production_smoke.sh
 
   publish-release:
