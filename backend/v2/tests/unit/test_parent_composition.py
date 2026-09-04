@@ -542,6 +542,10 @@ async def test_parent_balance_payment_with_enroll_autopay_collects_distinct_enro
                     _invoice_doc(invoice_id="inv-4", balance_due_cents=2_000),
                 ]
             ),
+            # Issue #651: only ACTIVE enrollments are placed on autopay.
+            "enrollments": _FakeCollection(
+                [_enrollment_doc("enroll-a"), _enrollment_doc("enroll-b")]
+            ),
             "academy_connected_accounts": _FakeCollection([_connected_account_doc()]),
         }
     )
