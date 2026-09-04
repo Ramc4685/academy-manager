@@ -84,9 +84,20 @@ def compose_enrollment_billing_sync(
         # an academy id at composition time (see AGENTS.md tenancy rule).
         return await timezone_lookup(current_academy_id())
 
+    autopay_repo = autopay or MongoStudentBillingEnrollmentRepository(db)
+
+    class _AutopayGateway:
+        """Narrow the repo's Literal-typed writer to the use case's str port."""
+
+        async def set_autopay_enrollment_status(self, *, enrollment_id: str, status: str) -> bool:
+            return await autopay_repo.set_autopay_enrollment_status(
+                enrollment_id=enrollment_id,
+                status=status,  # type: ignore[arg-type]
+            )
+
     use_case = ApplyEnrollmentLifecycle(
         ledger=ledger or MongoBillingLedgerRepository(db),
-        autopay=autopay or MongoStudentBillingEnrollmentRepository(db),
+        autopay=_AutopayGateway(),
         dunning=dunning or MongoDunningStateRepository(db),
         academy_timezone=request_academy_timezone,
     )
