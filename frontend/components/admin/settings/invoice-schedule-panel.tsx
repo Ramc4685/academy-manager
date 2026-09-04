@@ -54,7 +54,8 @@ export function InvoiceSchedulePanel() {
     dueDaysNum <= 60;
 
   return (
-    <Card p={24} className="max-w-3xl" data-testid="invoice-schedule-panel">
+    <div data-testid="invoice-schedule-panel">
+    <Card p={24} className="max-w-3xl">
       <Overline>Invoice schedule</Overline>
       <h2 className="mt-1 font-display text-lg font-semibold text-rally-ink">Monthly invoicing and autopay</h2>
       <p className="mt-1 text-sm text-rally-muted">
@@ -121,5 +122,6 @@ export function InvoiceSchedulePanel() {
         )}
       </div>
     </Card>
+    </div>
   );
 }

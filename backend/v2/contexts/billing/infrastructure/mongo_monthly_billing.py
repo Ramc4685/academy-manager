@@ -810,16 +810,6 @@ class MongoMonthlyBillingGenerator:
             student_doc = await self._db["students"].find_one(
                 {"academy_id": academy_id, "student_id": student_id}
             )
-            if str(enrollment.get("status") or "") == "paused":
-                # Issue #651: a paused enrollment is never invoiced, deferral
-                # row or not. The row (when present) only explains the skip.
-                skipped_paused += 1
-                skipped_details.append(
-                    self._paused_status_detail(
-                        enrollment=enrollment, student_doc=student_doc, period=period
-                    )
-                )
-                continue
             deferral_detail = await self._active_billing_deferral_detail(
                 academy_id=academy_id,
                 enrollment=enrollment,
@@ -830,6 +820,17 @@ class MongoMonthlyBillingGenerator:
             if deferral_detail is not None:
                 skipped_paused += 1
                 skipped_details.append(deferral_detail)
+                continue
+            if str(enrollment.get("status") or "") == "paused":
+                # Issue #651: a paused enrollment is never invoiced, deferral
+                # row or not. A deferral (above) explains the skip when present;
+                # otherwise the status itself is the reason.
+                skipped_paused += 1
+                skipped_details.append(
+                    self._paused_status_detail(
+                        enrollment=enrollment, student_doc=student_doc, period=period
+                    )
+                )
                 continue
             if period in set(enrollment.get("skip_periods") or []):
                 skipped_paused += 1

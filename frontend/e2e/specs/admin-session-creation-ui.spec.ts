@@ -183,6 +183,41 @@ test.describe("admin session creation and fee settings UI", () => {
     await expect.poll(() => feePatch).toEqual({ late_fee_cents: 1750 });
   });
 
+  test("invoice schedule panel reads and saves billing day and grace days (#651)", async ({
+    page,
+  }) => {
+    await stubAdminShell(page);
+    await page.route("**/api/v2/admin/academy/fees", (route) =>
+      fulfillJson(route, { default_monthly_cents: 12000, late_fee_cents: 1500, grace_days: 5 }),
+    );
+    let schedulePut: unknown = null;
+    await page.route("**/api/v2/admin/billing/settings/invoice-schedule", (route) => {
+      const request = route.request();
+      if (request.method() === "GET") {
+        return fulfillJson(route, { billing_day: 1, invoice_due_days: 7 });
+      }
+      if (request.method() === "PUT") {
+        schedulePut = request.postDataJSON();
+        return fulfillJson(route, { billing_day: 1, invoice_due_days: 10 });
+      }
+      return route.fallback();
+    });
+
+    await page.goto("/admin/settings?panel=fees");
+
+    const panel = page.getByTestId("invoice-schedule-panel");
+    await expect(panel).toContainText("9:00 AM academy time");
+    await expect(page.getByTestId("invoice-schedule-billing-day")).toHaveValue("1");
+    await expect(page.getByTestId("invoice-schedule-due-days")).toHaveValue("7");
+    await expect(page.getByTestId("invoice-schedule-save")).toBeDisabled();
+
+    await page.getByTestId("invoice-schedule-due-days").fill("10");
+    await page.getByTestId("invoice-schedule-save").click();
+
+    await expect.poll(() => schedulePut).toEqual({ billing_day: 1, invoice_due_days: 10 });
+    await expect(panel).toContainText("Saved.");
+  });
+
   test("dashboard recent payments show student and parent context", async ({ page }) => {
     await stubAdminShell(page);
 
