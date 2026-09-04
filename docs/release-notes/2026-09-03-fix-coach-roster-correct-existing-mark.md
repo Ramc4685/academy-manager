@@ -27,6 +27,12 @@ Frontend only — no backend change:
   the row shows the new status with no error; `mock-api.ts` gains the PATCH
   route + `correctionCalls`.
 
+Also fixes #650 (blocking the local push gate): `admin-shell.spec.ts` "shells
+expose logout" failed deterministically on WebKit because the persona auth
+hook's `replaceLocation` arms a 1s hard `window.location.replace("/login")`
+fallback, and that timer from the previous persona's page interrupted the next
+persona's `page.goto`. Each persona now runs in its own page.
+
 ## Deploy notes
 None. Frontend deploy only; the backend correction endpoint is already live.
 Coaches can change a mark within 48h of it being recorded; admins/owners in

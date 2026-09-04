@@ -1405,9 +1405,22 @@ test.describe("Rally admin shell", () => {
     ).toEqual([]);
   });
 
-  test("admin, coach, and parent shells expose logout", async ({ page }) => {
-    await expectShellLogout(page, "/admin", "admin-dashboard", stubAdminBff);
-    await expectShellLogout(page, "/coach/today", "coach-today", stubCoachBff);
-    await expectShellLogout(page, "/parent/dashboard", "parent-dashboard", stubParentBff);
+  test("admin, coach, and parent shells expose logout", async ({ context }) => {
+    // One page per persona. The persona auth hook's `replaceLocation` arms a
+    // 1s hard `window.location.replace("/login")` fallback; on WebKit that
+    // timer from the previous persona's page interrupted the next persona's
+    // `page.goto` ("interrupted by another navigation to /login", #650).
+    for (const [path, readyTestId, stubBff] of [
+      ["/admin", "admin-dashboard", stubAdminBff],
+      ["/coach/today", "coach-today", stubCoachBff],
+      ["/parent/dashboard", "parent-dashboard", stubParentBff],
+    ] as const) {
+      const personaPage = await context.newPage();
+      try {
+        await expectShellLogout(personaPage, path, readyTestId, stubBff);
+      } finally {
+        await personaPage.close();
+      }
+    }
   });
 });
