@@ -675,12 +675,14 @@ test.describe("Rally admin shell", () => {
       // Even with a 15s budget these mounts intermittently blow their deadline
       // on webkit-mobile during full-suite runs; they pass in isolation in ~3s.
       // Same webkit-under-load pattern as "session detail page mounts" below.
+      // /admin/reports (the heaviest page) still tripped 15s under the local
+      // gate's full shard with failOnFlakyTests — 30s is the mount budget.
       test.slow();
       const errors = collectConsoleErrors(page);
       await stubAdminBff(page);
       await page.goto(route.href);
       await expect(page.getByTestId(route.testid)).toBeVisible({
-        timeout: 15000,
+        timeout: 30000,
       });
       expect(
         errors,
