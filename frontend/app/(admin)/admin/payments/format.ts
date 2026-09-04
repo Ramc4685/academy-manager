@@ -60,11 +60,32 @@ export function statusChip(status: string | null | undefined): PaymentStatusChip
   };
 }
 
+/**
+ * Human label for a settlement method. Every `stripe_*` variant
+ * (stripe_checkout, stripe_autopay, stripe_subscription, stripe_legacy) MUST
+ * read as "Stripe" — the backend stamps the specific variant on ledger rows
+ * and the admin UI is expected to show one consistent label (PR #645).
+ */
+export function paymentMethodLabel(method: string | null | undefined): string | null {
+  if (!method) return null;
+  if (method.startsWith("stripe")) return "STRIPE";
+  return method.replaceAll("_", " ").toUpperCase();
+}
+
+/**
+ * Method chip. The real settlement method wins: an invoice can carry a Stripe
+ * invoice id (stripe_linked) and still have been paid by Zelle or cash, and
+ * that manual method must not be relabelled "Stripe". stripe_linked is only a
+ * fallback when the row has no method beyond the "invoice" placeholder.
+ */
 export function methodChip(payment: AdminPaymentView): { variant: ChipVariant; label: string } | null {
-  if (payment.stripe_linked) return { variant: "autopayOn", label: "STRIPE" };
-  if (payment.payment_method) {
-    return { variant: "manual", label: payment.payment_method.toUpperCase() };
+  const method = payment.payment_method && payment.payment_method !== "invoice" ? payment.payment_method : null;
+  if (method) {
+    const label = paymentMethodLabel(method);
+    if (!label) return null;
+    return label === "STRIPE" ? { variant: "autopayOn", label } : { variant: "manual", label };
   }
+  if (payment.stripe_linked) return { variant: "autopayOn", label: "STRIPE" };
   return null;
 }
 
@@ -92,8 +113,14 @@ export function reconciliationLabel(payment: AdminPaymentView): string | null {
   return null;
 }
 
+/**
+ * Invoice rows are keyed by their invoice id (payment_id === invoice_id). Do
+ * NOT key this off payment_method: since PR #645 an invoice row carries the
+ * method it was settled with (stripe_checkout, zelle, ...), so a method check
+ * would hide invoice actions on every paid invoice.
+ */
 export function isLedgerInvoiceRow(payment: AdminPaymentView): boolean {
-  return payment.payment_method === "invoice" || payment.payment_method === "stripe";
+  return Boolean(payment.invoice_id) && payment.payment_id === payment.invoice_id;
 }
 
 export function invoiceActionId(payment: AdminPaymentView | null): string {

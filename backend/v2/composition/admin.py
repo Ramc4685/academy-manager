@@ -50,6 +50,11 @@ from backend.v2.contexts.billing.application.admin_money import (
     invoice_to_admin_payment_row,
     payment_provider_keys,
 )
+from backend.v2.contexts.billing.application.admin_payment_settlement import (
+    SETTLED_STATUSES,
+    settle_matching_rows,
+    settlement_method,
+)
 from backend.v2.contexts.billing.application.checkout_paid_period import (
     CheckoutPaidPeriodResolver,
 )
@@ -2998,12 +3003,29 @@ def compose_admin(
             ):
                 inv_id = str(credit.get("invoice_id") or "")
                 overpay_by_invoice[inv_id] += int(credit.get("amount_cents") or 0)
+        invoice_row_by_key: dict[str, dict[str, Any]] = {}
         for doc in invoice_docs:
-            invoice_keys.update(invoice_provider_keys(doc))
             doc["overpayment_credit_cents"] = overpay_by_invoice.get(
                 str(doc.get("invoice_id") or ""), 0
             )
-            invoice_rows.append(invoice_to_admin_payment_row(doc))
+            invoice_row = invoice_to_admin_payment_row(doc)
+            invoice_rows.append(invoice_row)
+            for key in invoice_provider_keys(doc):
+                invoice_keys.add(key)
+                invoice_row_by_key.setdefault(key, invoice_row)
+
+        # INVARIANT (PR #645, do not "simplify" away): the admin list is
+        # invoice-centric, so a ledger/legacy payment that paid an invoice is
+        # represented by the INVOICE row. That row must still show how and
+        # when the money arrived (paid_at, payment_method, Stripe ids,
+        # stripe_linked) — settle_matching_rows carries those facts over and
+        # ignores non-money statuses (pending/failed/expired) on purpose.
+        # Dropping the payment without settling makes every Stripe-paid invoice
+        # render as "invoice / no paid date", which is the prod defect this
+        # fixes.
+        def _settle_invoice_rows(keys: set[str], payment_doc: dict[str, Any]) -> bool:
+            return settle_matching_rows(invoice_row_by_key, keys, payment_doc) > 0
+
         invoice_student_ids = [
             str(row["student_id"])
             for row in invoice_rows
@@ -3063,11 +3085,42 @@ def compose_admin(
                         row[key] = raw.get(key)
         ledger_rows: list[dict[str, Any]] = []
         ledger_keys: set[str] = set()
-        async for doc in db["ledger_payments"].find(
-            {"academy_id": request_academy_id},
-            sort=[("created_at", -1)],
-            limit=fetch_cap,
+        # Money received first, then attempts: a status-agnostic window of the
+        # newest ledger docs can fill up with pending/failed attempts and push
+        # the payment that actually settled an invoice out of the fold.
+        ledger_docs: list[dict[str, Any]] = []
+        seen_ledger_ids: set[str] = set()
+        for status_filter in (
+            {"$in": sorted(SETTLED_STATUSES)},
+            {"$nin": sorted(SETTLED_STATUSES)},
         ):
+            async for doc in db["ledger_payments"].find(
+                {"academy_id": request_academy_id, "status": status_filter},
+                sort=[("created_at", -1)],
+                limit=fetch_cap,
+            ):
+                ledger_id = str(doc.get("payment_id") or doc.get("_id") or "")
+                if ledger_id in seen_ledger_ids:
+                    continue
+                seen_ledger_ids.add(ledger_id)
+                ledger_docs.append(doc)
+        # One ledger payment may settle several invoices (balance checkouts
+        # write one allocation per invoice); load ALL allocations in one query.
+        allocations_by_payment: dict[str, list[str]] = collections.defaultdict(list)
+        if ledger_docs:
+            async for allocation in db["payment_allocations"].find(
+                {
+                    "academy_id": request_academy_id,
+                    "payment_id": {"$in": [d.get("payment_id") for d in ledger_docs]},
+                },
+                {"payment_id": 1, "invoice_id": 1},
+            ):
+                allocation_invoice = str(allocation.get("invoice_id") or "")
+                if allocation_invoice:
+                    allocations_by_payment[str(allocation.get("payment_id") or "")].append(
+                        allocation_invoice
+                    )
+        for doc in ledger_docs:
             stripe_payment_intent_id = doc.get("stripe_payment_intent_id")
             stripe_invoice_id = doc.get("stripe_invoice_id")
             payment_keys = {
@@ -3079,22 +3132,19 @@ def compose_admin(
                 )
                 if value
             }
-            allocation = await db["payment_allocations"].find_one(
-                {
-                    "academy_id": request_academy_id,
-                    "payment_id": doc.get("payment_id"),
-                },
-                {"invoice_id": 1},
+            allocation_invoice_ids = allocations_by_payment.get(
+                str(doc.get("payment_id") or ""), []
             )
-            allocation_invoice_id = None
-            if allocation is not None:
-                allocation_invoice_id = str(allocation.get("invoice_id") or "")
-                if allocation_invoice_id:
-                    payment_keys.add(allocation_invoice_id)
-            if payment_keys & invoice_keys:
-                ledger_keys.update(payment_keys)
-                continue
+            payment_keys.update(allocation_invoice_ids)
+            allocation_invoice_id = allocation_invoice_ids[0] if allocation_invoice_ids else None
+            stripe_checkout_session_id = doc.get("stripe_checkout_session_id")
+            if stripe_checkout_session_id:
+                payment_keys.add(str(stripe_checkout_session_id))
             ledger_keys.update(payment_keys)
+            if payment_keys & invoice_keys:
+                # Settled an invoice: keep the invoice row, carry the facts over.
+                _settle_invoice_rows(payment_keys, doc)
+                continue
             ledger_rows.append(
                 {
                     "payment_id": str(doc.get("payment_id") or ""),
@@ -3108,7 +3158,11 @@ def compose_admin(
                     "refunded_cents": int(doc.get("refunded_cents") or 0),
                     "stripe_payment_intent_id": stripe_payment_intent_id,
                     "stripe_invoice_id": stripe_invoice_id,
-                    "payment_method": doc.get("payment_method"),
+                    "stripe_checkout_session_id": stripe_checkout_session_id,
+                    "stripe_linked": bool(
+                        stripe_payment_intent_id or stripe_invoice_id or stripe_checkout_session_id
+                    ),
+                    "payment_method": settlement_method(doc),
                     "created_at": doc["created_at"],
                     "paid_at": doc.get("paid_at"),
                 }
@@ -3145,16 +3199,31 @@ def compose_admin(
                     "created_at": doc["created_at"],
                 }
             )
-        deduped_legacy = [
-            row
-            for row in legacy
-            if str(row.get("stripe_payment_intent_id") or "") not in ledger_keys
-            and str(row.get("stripe_invoice_id") or "") not in ledger_keys
-            and str(row.get("invoice_id") or "") not in ledger_keys
-            and str(row.get("payment_id") or "") not in invoice_keys
-            and str(row.get("invoice_id") or "") not in invoice_keys
-            and str(row.get("invoice_number") or "") not in invoice_keys
-        ]
+        # Legacy `payments` projections: settle the invoice they paid, and drop
+        # any row already represented by a ledger payment (same payment_id,
+        # checkout session, intent, or invoice) — the same money must never
+        # render twice. Keep payment_id in this key set; it is what deduped the
+        # duplicated expired checkout seen on prod (PR #645).
+        deduped_legacy: list[dict[str, Any]] = []
+        for row in legacy:
+            legacy_keys = {
+                str(row.get(key) or "")
+                for key in (
+                    "payment_id",
+                    "invoice_id",
+                    "invoice_number",
+                    "stripe_payment_intent_id",
+                    "stripe_invoice_id",
+                    "stripe_checkout_session_id",
+                )
+                if row.get(key)
+            }
+            if legacy_keys & invoice_keys:
+                _settle_invoice_rows(legacy_keys, row)
+                continue
+            if legacy_keys & ledger_keys:
+                continue
+            deduped_legacy.append(row)
         combined = attempt_rows + invoice_rows + ledger_rows + deduped_legacy
         combined.sort(
             key=lambda r: (
@@ -3253,7 +3322,7 @@ def compose_admin(
                 "refunded_cents": int(doc.get("refunded_cents") or 0),
                 "currency": str(doc.get("currency") or "usd"),
                 "status": str(doc.get("status") or ""),
-                "payment_method": doc.get("payment_method"),
+                "payment_method": settlement_method(doc),
                 "paid_at": coerce_report_datetime(
                     doc.get("paid_at") or doc.get("payment_date") or doc.get("created_at")
                 ),
@@ -3305,7 +3374,7 @@ def compose_admin(
                     "parent_id": parent_id,
                     "last_paid_at": paid_at,
                     "amount_cents": int(doc.get("amount_cents") or 0),
-                    "payment_method": doc.get("payment_method"),
+                    "payment_method": settlement_method(doc),
                     "status": str(doc.get("status") or ""),
                 }
 
