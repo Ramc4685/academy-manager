@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from backend.v2.shared.config import Settings
 from backend.v2.shared.http import register_exception_handlers
 from backend.v2.shared.observability.errors import (
+    _keep_log,
     _tag_event,
     configure_error_tracking,
     resolve_release,
@@ -394,3 +395,70 @@ def test_tag_event_reads_contextvars_at_event_time() -> None:
 def test_tag_event_without_context_leaves_tags_empty() -> None:
     event = _tag_event({}, {})
     assert event["tags"] == {}
+
+
+def test_sentry_init_enables_logs_with_volume_guard(monkeypatch) -> None:
+    import sentry_sdk
+
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(sentry_sdk, "init", lambda **kwargs: captured.update(kwargs))
+
+    configure_error_tracking(Settings(sentry_dsn="https://key@sentry.example/1", env="staging"))
+
+    assert captured["enable_logs"] is True
+    assert captured["before_send_log"] is _keep_log
+    logging_integrations = [
+        i for i in captured["integrations"] if type(i).__name__ == "LoggingIntegration"
+    ]
+    assert len(logging_integrations) == 1
+    assert logging_integrations[0]._sentry_logs_handler is not None
+    assert logging_integrations[0]._handler is not None  # ERROR events unchanged
+
+
+def test_sentry_logs_can_be_switched_off(monkeypatch) -> None:
+    import sentry_sdk
+
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(sentry_sdk, "init", lambda **kwargs: captured.update(kwargs))
+
+    configure_error_tracking(
+        Settings(
+            sentry_dsn="https://key@sentry.example/1", env="staging", sentry_logs_enabled=False
+        )
+    )
+
+    assert captured["enable_logs"] is False
+    (integration,) = [
+        i for i in captured["integrations"] if type(i).__name__ == "LoggingIntegration"
+    ]
+    assert integration._sentry_logs_handler is None
+
+
+def test_sentry_logs_env_fallback(monkeypatch) -> None:
+    monkeypatch.delenv("V2_SENTRY_LOGS_ENABLED", raising=False)
+    monkeypatch.setenv("SENTRY_LOGS_ENABLED", "false")
+    assert Settings().sentry_logs_enabled is False
+    monkeypatch.setenv("SENTRY_LOGS_ENABLED", "true")
+    assert Settings().sentry_logs_enabled is True
+
+
+def _log(body: str, logger: str = "backend.v2.app", severity_number: int = 9) -> dict[str, Any]:
+    return {
+        "severity_text": "info",
+        "severity_number": severity_number,
+        "body": body,
+        "attributes": {"logger.name": logger},
+        "time_unix_nano": 0,
+        "trace_id": None,
+    }
+
+
+def test_keep_log_drops_noise_and_debug_but_keeps_app_lines() -> None:
+    assert _keep_log(_log("boot ok"), {}) is not None
+    assert (
+        _keep_log(_log("GET /api/v2/healthz -> 200", logger="backend.v2.http.request"), {}) is None
+    )
+    assert _keep_log(_log("anything", logger="uvicorn.access"), {}) is None
+    assert _keep_log(_log("verbose", severity_number=5), {}) is None
+    kept = _keep_log(_log("GET /api/v2/me -> 200", logger="backend.v2.http.request"), {})
+    assert kept is not None and kept["body"] == "GET /api/v2/me -> 200"

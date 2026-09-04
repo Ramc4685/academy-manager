@@ -108,6 +108,13 @@ class Settings(BaseSettings):
         le=1.0,
         description="Sentry performance-tracing sample rate. Errors-first: 0.0 by default.",
     )
+    sentry_logs_enabled: bool = Field(
+        default=True,
+        description=(
+            "Forward INFO+ application logs to Sentry Logs when a DSN is set. "
+            "Free plan: 5 GB/month, 30-day retention; excess is dropped, never billed."
+        ),
+    )
 
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = Field(default="INFO")
     log_format: Literal["json", "console"] = Field(default="json")
@@ -249,6 +256,12 @@ class Settings(BaseSettings):
             )
         if "V2_SENTRY_DSN" not in os.environ:
             self.sentry_dsn = os.environ.get("SENTRY_DSN", self.sentry_dsn)
+        if "V2_SENTRY_LOGS_ENABLED" not in os.environ and "SENTRY_LOGS_ENABLED" in os.environ:
+            self.sentry_logs_enabled = os.environ["SENTRY_LOGS_ENABLED"].strip().lower() in {
+                "1",
+                "true",
+                "yes",
+            }
         if "V2_CORS_ORIGINS" not in os.environ:
             self.cors_origins = os.environ.get("CORS_ORIGINS", self.cors_origins)
         if "V2_FRONTEND_URL" not in os.environ:
