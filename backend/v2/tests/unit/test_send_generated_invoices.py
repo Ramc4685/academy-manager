@@ -184,3 +184,41 @@ async def test_nothing_to_send_is_a_clean_no_op() -> None:
 
     assert sender.sent == []
     assert (result.considered, result.emailed, result.truncated) == (0, 0, False)
+
+
+@pytest.mark.asyncio
+async def test_autopay_parents_get_a_pre_charge_notice_when_wired() -> None:
+    """Issue #651: an autopay parent is told what will be charged and when."""
+    ledger = _FakeLedger(
+        [
+            _invoice("inv-autopay", enrollment_id="enr-auto"),
+            _invoice("inv-manual", enrollment_id="enr-manual"),
+        ]
+    )
+    autopay = _FakeAutopay({"enr-auto": "active", "enr-manual": "paused"})
+    sender = _RecordingSender()
+    notices = _RecordingSender()
+
+    result = await SendGeneratedInvoices(
+        ledger=ledger, autopay=autopay, send=sender, notify_autopay=notices
+    ).execute("2026-09")
+
+    assert sender.sent == ["inv-manual"]
+    assert notices.sent == ["inv-autopay"]
+    assert (result.emailed, result.autopay_notified, result.skipped_autopay) == (1, 1, 0)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_notice_is_counted_and_does_not_stop_the_run() -> None:
+    ledger = _FakeLedger(
+        [_invoice("inv-a", enrollment_id="enr-a"), _invoice("inv-b", enrollment_id="enr-b")]
+    )
+    autopay = _FakeAutopay({"enr-a": "active", "enr-b": "active"})
+    notices = _RecordingSender(fail_for={"inv-a"})
+
+    result = await SendGeneratedInvoices(
+        ledger=ledger, autopay=autopay, send=_RecordingSender(), notify_autopay=notices
+    ).execute("2026-09")
+
+    assert notices.sent == ["inv-a", "inv-b"]
+    assert (result.autopay_notified, result.email_failed) == (1, 1)

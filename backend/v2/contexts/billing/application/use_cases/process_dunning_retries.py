@@ -114,6 +114,16 @@ class DunningNotificationPort(Protocol):
         terminal: bool,
     ) -> None: ...
 
+    async def send_autopay_receipt(
+        self,
+        *,
+        parent_id: str,
+        invoice_id: str,
+        period: str,
+        amount_cents: int,
+        currency: str,
+    ) -> None: ...
+
 
 class DunningEnrollmentAutopayPort(Protocol):
     async def set_autopay_enrollment_status(self, *, enrollment_id: str, status: str) -> bool: ...
@@ -265,6 +275,7 @@ class ProcessDunningRetries:
             )
             if succeeded:
                 counts["succeeded"] += 1
+                await self._send_receipt(invoice=invoice, result=result)
                 continue
 
             counts["failed"] += 1
@@ -288,6 +299,28 @@ class ProcessDunningRetries:
     ) -> None:
         for state in await self._dunning.list_terminal_disable_pending(limit=limit):
             await self._disable_autopay(state, counts=counts, now=now)
+
+    async def _send_receipt(self, *, invoice: LedgerInvoice, result: dict[str, Any]) -> None:
+        """Best-effort receipt after a successful autopay charge (issue #651).
+
+        Direct send, not via the outbox: a lost receipt is recoverable (the
+        parent portal shows the payment), a duplicate receipt is annoying, so
+        at-most-once is the right trade here.
+        """
+        send = getattr(self._notifier, "send_autopay_receipt", None)
+        if send is None:
+            return
+        amount = result.get("amount_cents")
+        try:
+            await send(
+                parent_id=invoice.parent_id,
+                invoice_id=invoice.invoice_id,
+                period=invoice.period,
+                amount_cents=int(amount) if amount is not None else invoice.balance_due_cents,
+                currency=invoice.currency,
+            )
+        except Exception:
+            log.exception("autopay_receipt_failed", extra={"invoice_id": invoice.invoice_id})
 
     async def _notify_parent(self, *, invoice: LedgerInvoice, state: DunningState) -> bool:
         """Tell the parent this attempt failed. Returns True once the notice is

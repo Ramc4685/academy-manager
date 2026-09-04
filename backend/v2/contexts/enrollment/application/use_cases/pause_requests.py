@@ -9,12 +9,14 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, model_validator
 
+from backend.v2.contexts.enrollment.application.ports import EnrollmentBillingSync
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     PauseEnrollmentCommand,
 )
 from backend.v2.contexts.enrollment.application.use_cases.billing_deferrals import (
     BillingDeferral,
     BillingDeferralRepository,
+    paused_billing_periods,
 )
 from backend.v2.contexts.enrollment.application.use_cases.scheduled_actions import (
     ScheduledEnrollmentAction,
@@ -157,6 +159,7 @@ class DecidePauseRequestCommand(BaseModel):
 
     pause_request_id: str
     admin_id: str
+    reason: str | None = None
 
 
 class RequestEnrollmentPause:
@@ -209,6 +212,7 @@ class ApprovePauseRequest:
         scheduled_actions: ScheduledEnrollmentActionRepository | None = None,
         billing_deferrals: BillingDeferralRepository | None = None,
         autopay_status: EnrollmentAutopayStatusGateway | None = None,
+        billing_sync: EnrollmentBillingSync | None = None,
         academy_id: str | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
@@ -217,6 +221,7 @@ class ApprovePauseRequest:
         self._scheduled_actions = scheduled_actions
         self._billing_deferrals = billing_deferrals
         self._autopay_status = autopay_status
+        self._billing_sync = billing_sync
         self._academy_id = academy_id
         self._now = clock
 
@@ -243,25 +248,48 @@ class ApprovePauseRequest:
             )
         if self._billing_deferrals is not None:
             now = self._now()
-            await self._billing_deferrals.add(
-                BillingDeferral(
-                    deferral_id=str(new_ulid()),
-                    enrollment_id=request.enrollment_id,
-                    student_id=request.student_id or "",
-                    deferral_type="fixed_pause" if request.pause_kind == "fixed" else "admin_pause",
-                    reason=request.reason or "parent pause request",
-                    source="pause_request",
-                    source_id=request.pause_request_id,
-                    actor_id=cmd.admin_id,
-                    actor_type="admin",
-                    billing_period=request.period,
-                    resume_on=request.resume_on,
-                    review_on=request.review_on,
-                    created_at=now,
-                    updated_at=now,
-                    metadata={"pause_kind": request.pause_kind},
+            # Issue #651: one deferral per PAUSED month (the old single row
+            # named the resume month, which the generator never matched).
+            for billing_period in paused_billing_periods(
+                effective_at=now, resume_on=request.resume_on, review_on=request.review_on
+            ):
+                await self._billing_deferrals.add(
+                    BillingDeferral(
+                        deferral_id=str(new_ulid()),
+                        enrollment_id=request.enrollment_id,
+                        student_id=request.student_id or "",
+                        deferral_type=(
+                            "fixed_pause" if request.pause_kind == "fixed" else "admin_pause"
+                        ),
+                        reason=request.reason or "parent pause request",
+                        source="pause_request",
+                        source_id=request.pause_request_id,
+                        actor_id=cmd.admin_id,
+                        actor_type="admin",
+                        billing_period=billing_period,
+                        resume_on=request.resume_on,
+                        review_on=request.review_on,
+                        created_at=now,
+                        updated_at=now,
+                        metadata={"pause_kind": request.pause_kind},
+                    )
                 )
-            )
+        if self._billing_sync is not None:
+            # Issue #651: void unpaid invoices for the paused months and stop
+            # their ladders. Best-effort — the approval has already committed.
+            try:
+                await self._billing_sync.apply(
+                    enrollment_id=request.enrollment_id,
+                    transition="paused",
+                    effective_at=self._now(),
+                    reason=request.reason or "parent pause request",
+                    actor_id=cmd.admin_id,
+                )
+            except Exception:
+                log.exception(
+                    "pause_request_billing_sync_failed",
+                    extra={"enrollment_id": request.enrollment_id},
+                )
         if self._autopay_status is not None:
             # App-owned autopay (Slice B): pause toggles THIS enrollment's
             # autopay_enrollment_status directly (per-enrollment — siblings
@@ -302,12 +330,40 @@ class ApprovePauseRequest:
         return request
 
 
+class PauseRequestDeclinedNotifier(Protocol):
+    """Tell the parent their pause request was declined (issue #651)."""
+
+    async def pause_request_declined(
+        self, *, parent_id: str, enrollment_id: str, session_id: str | None, reason: str | None
+    ) -> None: ...
+
+
 class DeclinePauseRequest:
-    def __init__(self, *, pause_requests: PauseRequestRepository) -> None:
+    def __init__(
+        self,
+        *,
+        pause_requests: PauseRequestRepository,
+        notifier: PauseRequestDeclinedNotifier | None = None,
+    ) -> None:
         self._pause_requests = pause_requests
+        self._notifier = notifier
 
     async def execute(self, cmd: DecidePauseRequestCommand) -> PauseRequest:
-        return await self._pause_requests.decline(
+        request = await self._pause_requests.decline(
             cmd.pause_request_id,
             admin_id=cmd.admin_id,
         )
+        if self._notifier is not None:
+            try:
+                await self._notifier.pause_request_declined(
+                    parent_id=request.parent_id,
+                    enrollment_id=request.enrollment_id,
+                    session_id=request.session_id,
+                    reason=cmd.reason,
+                )
+            except Exception:
+                log.exception(
+                    "pause_request_declined_notify_failed",
+                    extra={"pause_request_id": cmd.pause_request_id},
+                )
+        return request

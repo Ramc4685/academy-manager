@@ -22,7 +22,7 @@ from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist 
     PromoteFromWaitlist,
 )
 from backend.v2.contexts.enrollment.domain.events import EnrollmentLifecycleEvent
-from backend.v2.contexts.enrollment.domain.models import Enrollment, Student
+from backend.v2.contexts.enrollment.domain.models import Enrollment, Session, Student
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 
 
@@ -30,6 +30,10 @@ from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 class FakeSessions:
     reserved: list[str] = field(default_factory=list)
     released: list[str] = field(default_factory=list)
+    sessions: dict[str, Session] = field(default_factory=dict)
+
+    async def get(self, session_id: str) -> Session | None:
+        return self.sessions.get(session_id)
 
     async def try_reserve_seat(self, session_id: str) -> bool:
         self.reserved.append(session_id)

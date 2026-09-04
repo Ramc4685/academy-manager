@@ -464,7 +464,9 @@ async def test_generate_monthly_returns_row_level_skip_for_active_billing_deferr
 
 
 @pytest.mark.asyncio
-async def test_generate_monthly_bills_paused_enrollment_when_deferral_expired(db, acad) -> None:
+async def test_generate_monthly_skips_paused_enrollment_even_when_deferral_expired(
+    db, acad
+) -> None:
     ledger_repo = MongoBillingLedgerRepository(db)
     repo = MongoPaymentRepository(
         db,
@@ -500,15 +502,18 @@ async def test_generate_monthly_bills_paused_enrollment_when_deferral_expired(db
 
     result = await repo.generate_monthly_payments("2026-06")
 
-    assert result.created == 1
-    assert result.skipped_paused == 0
-    assert result.skipped_details == []
-    invoice = await db["invoices"].find_one({"academy_id": acad, "enrollment_id": "enroll-stale"})
-    assert invoice is not None
+    # Issue #651 policy: a paused enrollment is never invoiced, even when its
+    # deferral has expired or its review date is stale — that shows up as an
+    # admin warning, not as a surprise invoice.
+    assert result.created == 0
+    assert result.skipped_paused == 1
+    assert result.skipped_details[0].reason_code == "enrollment_paused"
 
 
 @pytest.mark.asyncio
-async def test_generate_monthly_bills_paused_enrollment_when_review_date_is_stale(db, acad) -> None:
+async def test_generate_monthly_skips_paused_enrollment_even_when_review_date_is_stale(
+    db, acad
+) -> None:
     ledger_repo = MongoBillingLedgerRepository(db)
     repo = MongoPaymentRepository(
         db,
@@ -544,13 +549,12 @@ async def test_generate_monthly_bills_paused_enrollment_when_review_date_is_stal
 
     result = await repo.generate_monthly_payments("2026-06")
 
-    assert result.created == 1
-    assert result.skipped_paused == 0
-    assert result.skipped_details == []
-    invoice = await db["invoices"].find_one(
-        {"academy_id": acad, "enrollment_id": "enroll-stale-review"}
-    )
-    assert invoice is not None
+    # Issue #651 policy: a paused enrollment is never invoiced, even when its
+    # deferral has expired or its review date is stale — that shows up as an
+    # admin warning, not as a surprise invoice.
+    assert result.created == 0
+    assert result.skipped_paused == 1
+    assert result.skipped_details[0].reason_code == "enrollment_paused"
 
 
 @pytest.mark.asyncio

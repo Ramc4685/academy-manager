@@ -30,6 +30,7 @@ from backend.v2.contexts.enrollment.domain.self_service import (
     MakeupWindowExpired,
     OccurrenceFull,
     OccurrenceRosterEntry,
+    StudentNotEnrolledInSession,
 )
 
 
@@ -74,6 +75,26 @@ def _occurrence(
         end_at=start_at + timedelta(hours=1),
         status=status,  # type: ignore[arg-type]
         scheduled_coach_id="coach-1",
+    )
+
+
+def _missed_occurrence() -> SessionOccurrence:
+    return _occurrence(
+        occurrence_id="occ-missed",
+        session_id="session-missed",
+        start_at=_now() - timedelta(days=2),
+    )
+
+
+def _missed_session_enrollment(
+    *, student_id: str = "student-1", status: str = "active"
+) -> Enrollment:
+    return Enrollment(
+        enrollment_id=f"enr-{student_id}",
+        academy_id="acad",
+        session_id="session-missed",
+        student_id=student_id,
+        status=status,  # type: ignore[arg-type]
     )
 
 
@@ -130,6 +151,14 @@ class _FakeEnrollments:
     async def is_active(self, session_id: str, student_id: str) -> bool:
         return any(
             e.session_id == session_id and e.student_id == student_id for e in self._enrollments
+        )
+
+    async def is_active_or_paused(self, session_id: str, student_id: str) -> bool:
+        return any(
+            e.session_id == session_id
+            and e.student_id == student_id
+            and e.status in {"active", "paused"}
+            for e in self._enrollments
         )
 
 
@@ -207,8 +236,10 @@ def _build_approve(
     clock=_now,
 ) -> tuple[ApproveMakeupRequest, _FakeMakeups, _FakeOccurrenceRoster]:
     makeups = makeups or _FakeMakeups([_pending_request()])
-    occurrences = occurrences or _FakeOccurrences([_occurrence()])
-    enrollments = enrollments or _FakeEnrollments([])
+    occurrences = occurrences or _FakeOccurrences([_occurrence(), _missed_occurrence()])
+    # Issue #651: approval re-asserts the student is still enrolled in the
+    # missed occurrence's session, so the default world has that enrollment.
+    enrollments = enrollments or _FakeEnrollments([_missed_session_enrollment()])
     sessions = sessions or _FakeSessions([_session()])
     occurrence_roster = occurrence_roster or _FakeOccurrenceRoster()
     use_case = ApproveMakeupRequest(
@@ -337,6 +368,7 @@ async def test_approve_makeup_request_rejects_capacity_full() -> None:
             )
         ]
     )
+    enrollments._enrollments.append(_missed_session_enrollment())
     use_case, _, _ = _build_approve(sessions=_FakeSessions([session]), enrollments=enrollments)
 
     with pytest.raises(OccurrenceFull):
@@ -371,6 +403,40 @@ async def test_approve_makeup_request_counts_existing_roster_entries_toward_capa
                 request_id="req-1", actor_id="admin-1", target_occurrence_id="occ-target"
             )
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["cancelled", "withdrawn"])
+async def test_approve_makeup_request_rejects_student_no_longer_enrolled(status: str) -> None:
+    """Issue #651: the family cancelled/withdrew after submitting — the
+    same rejection Submit gives, and no roster row is written."""
+    use_case, makeups, roster = _build_approve(
+        enrollments=_FakeEnrollments([_missed_session_enrollment(status=status)])
+    )
+
+    with pytest.raises(StudentNotEnrolledInSession):
+        await use_case.execute(
+            ApproveMakeupRequestCommand(
+                request_id="req-1", actor_id="admin-1", target_occurrence_id="occ-target"
+            )
+        )
+    assert roster.entries == []
+    assert makeups.updated == []
+
+
+@pytest.mark.asyncio
+async def test_approve_makeup_request_accepts_a_paused_student() -> None:
+    """Paused families keep their make-up rights (they paid for the missed class)."""
+    use_case, _, roster = _build_approve(
+        enrollments=_FakeEnrollments([_missed_session_enrollment(status="paused")])
+    )
+    result = await use_case.execute(
+        ApproveMakeupRequestCommand(
+            request_id="req-1", actor_id="admin-1", target_occurrence_id="occ-target"
+        )
+    )
+    assert result.status == "approved"
+    assert len(roster.entries) == 1
 
 
 # --- DenyMakeupRequest -------------------------------------------------------

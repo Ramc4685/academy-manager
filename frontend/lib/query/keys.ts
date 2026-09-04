@@ -67,6 +67,7 @@ export const queryKeys = {
     registrationDetail: (applicationId: string) =>
       ["admin", "registrations", applicationId] as const,
     payments: () => ["admin", "payments"] as const,
+    paymentFeed: (limit: number) => ["admin", "payments", "feed", limit] as const,
     invoiceDetail: (invoiceId: string) =>
       ["admin", "billing", "invoice", invoiceId] as const,
     payouts: () => ["admin", "finance", "payouts"] as const,
@@ -84,6 +85,7 @@ export const queryKeys = {
     attention: () => ["admin", "dashboard", "attention"] as const,
     academy: () => ["admin", "academy"] as const,
     fees: () => ["admin", "academy", "fees"] as const,
+    invoiceSchedule: () => ["admin", "billing", "invoice-schedule"] as const,
     notifications: () => ["admin", "academy", "notifications"] as const,
     gateway: () => ["admin", "academy", "gateway"] as const,
     platformFallback: () => ["admin", "billing", "platform-fallback"] as const,

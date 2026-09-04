@@ -183,38 +183,74 @@ test.describe("admin session creation and fee settings UI", () => {
     await expect.poll(() => feePatch).toEqual({ late_fee_cents: 1750 });
   });
 
-  test("dashboard recent payments show student and parent context", async ({ page }) => {
+  test("invoice schedule panel reads and saves billing day and grace days (#651)", async ({
+    page,
+  }) => {
+    await stubAdminShell(page);
+    await page.route("**/api/v2/admin/academy/fees", (route) =>
+      fulfillJson(route, { default_monthly_cents: 12000, late_fee_cents: 1500, grace_days: 5 }),
+    );
+    let schedulePut: unknown = null;
+    await page.route("**/api/v2/admin/billing/settings/invoice-schedule", (route) => {
+      const request = route.request();
+      if (request.method() === "GET") {
+        return fulfillJson(route, { billing_day: 1, invoice_due_days: 7 });
+      }
+      if (request.method() === "PUT") {
+        schedulePut = request.postDataJSON();
+        return fulfillJson(route, { billing_day: 1, invoice_due_days: 10 });
+      }
+      return route.fallback();
+    });
+
+    await page.goto("/admin/settings?panel=fees");
+
+    const panel = page.getByTestId("invoice-schedule-panel");
+    await expect(panel).toContainText("9:00 AM academy time");
+    await expect(page.getByTestId("invoice-schedule-billing-day")).toHaveValue("1");
+    await expect(page.getByTestId("invoice-schedule-due-days")).toHaveValue("7");
+    await expect(page.getByTestId("invoice-schedule-save")).toBeDisabled();
+
+    await page.getByTestId("invoice-schedule-due-days").fill("10");
+    await page.getByTestId("invoice-schedule-save").click();
+
+    await expect.poll(() => schedulePut).toEqual({ billing_day: 1, invoice_due_days: 10 });
+    await expect(panel).toContainText("Saved.");
+  });
+
+  test("dashboard recent payments show money received with method", async ({ page }) => {
     await stubAdminShell(page);
 
     await page.route("**/api/v2/admin/sessions*", (route) =>
       fulfillJson(route, { sessions: [] }),
     );
     await page.route("**/api/v2/admin/payments", (route) =>
+      fulfillJson(route, { payments: [] }),
+    );
+    await page.route("**/api/v2/admin/payments/feed*", (route) =>
       fulfillJson(route, {
         payments: [
           {
             payment_id: "pay_65bd7fae",
             parent_id: "parent-1",
             parent_name: "Abhishek Ajithkumar",
-            student_id: "stu-1",
-            student_name: "Aadhya Abhishek",
-            enrollment_id: "enr-1",
-            session_id: "session-1",
-            period: "2026-06",
             amount_cents: 6000,
-            discount_cents: 0,
-            final_amount_cents: 6000,
-            amount_received_cents: 6000,
-            paid_amount_cents: 6000,
-            balance_due_cents: 0,
-            overpayment_credit_cents: 0,
-            currency: "usd",
-            status: "paid",
             refunded_cents: 0,
-            invoice_number: "INV-2026-06-001",
-            payment_method: "cash",
-            stripe_linked: false,
-            created_at: "2026-06-01T12:00:00Z",
+            currency: "usd",
+            status: "succeeded",
+            payment_method: "stripe_checkout",
+            paid_at: "2026-06-03T12:00:00Z",
+          },
+          {
+            payment_id: "pay_zelle_01",
+            parent_id: "parent-2",
+            parent_name: "Murugesan KP",
+            amount_cents: 6000,
+            refunded_cents: 0,
+            currency: "usd",
+            status: "succeeded",
+            payment_method: "zelle",
+            paid_at: "2026-06-02T12:00:00Z",
           },
         ],
       }),
@@ -229,9 +265,10 @@ test.describe("admin session creation and fee settings UI", () => {
     await page.goto("/admin");
 
     const recentPayments = page.getByTestId("admin-dashboard-recent-payments");
-    await expect(recentPayments).toContainText("Aadhya Abhishek");
     await expect(recentPayments).toContainText("Abhishek Ajithkumar");
-    await expect(recentPayments).toContainText("INV-2026-06-001");
+    await expect(recentPayments).toContainText("STRIPE");
+    await expect(recentPayments).toContainText("Murugesan KP");
+    await expect(recentPayments).toContainText("ZELLE");
     await expect(recentPayments).not.toContainText("pay_65bd");
   });
 

@@ -25,6 +25,8 @@ import {
   getRevenue,
   sendDuesReminders,
 } from "@/lib/api/admin";
+import { queryKeys } from "@/lib/query/keys";
+import { paymentMethodLabel } from "@/app/(admin)/admin/payments/format";
 import { Card } from "@/components/ds/card";
 import { Button } from "@/components/ds/button";
 import { BigNum, Overline } from "@/components/ds/typography";
@@ -98,7 +100,7 @@ export default function AdminReportsPage() {
   });
 
   const paymentFeedQuery = useQuery({
-    queryKey: ["admin", "payments", "feed"],
+    queryKey: queryKeys.admin.paymentFeed(10),
     queryFn: () => getAdminPaymentFeed(10),
   });
 
@@ -386,7 +388,7 @@ export default function AdminReportsPage() {
                       {item.parent_name || "Family on file"}
                     </span>
                     <span className="ml-2 text-xs text-rally-subtle">
-                      {item.payment_method || "—"}
+                      {paymentMethodLabel(item.payment_method) || "—"}
                       {item.refunded_cents > 0 ? " · partially refunded" : ""}
                     </span>
                   </div>

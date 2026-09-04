@@ -14,6 +14,7 @@ import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 
 import { availablePersonaViews, getCurrentUser, type PersonaRole } from "@/lib/api/me";
+import { useClampMenuToViewport } from "./use-clamp-menu";
 
 const PERSONA_HOME: Record<PersonaRole, string> = {
   admin: "/admin",
@@ -39,6 +40,8 @@ export function PersonaSwitcher({
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const menuRef = useRef<HTMLUListElement | null>(null);
+  useClampMenuToViewport(menuRef, open);
   const meQuery = useQuery({ queryKey: ["me", "persona-switcher"], queryFn: getCurrentUser });
 
   useEffect(() => {
@@ -83,6 +86,7 @@ export function PersonaSwitcher({
       </button>
       {open && (
         <ul
+          ref={menuRef}
           role="listbox"
           aria-label="Available views"
           data-testid="persona-switcher-menu"

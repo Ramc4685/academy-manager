@@ -77,6 +77,18 @@ class SessionOccurrenceRepository(Protocol):
 
 class EnrollmentQuery(Protocol):
     async def active_for_session(self, session_id: str) -> list[Enrollment]: ...
+
+    async def for_session_in_statuses(
+        self, session_id: str, statuses: list[str]
+    ) -> list[Enrollment]:
+        """Rows for a session in any of ``statuses`` (issue #651).
+
+        ``CancelSession`` needs active AND paused rows: a paused family still
+        holds a deferral, a scheduled resume and (from the billing side) an
+        expectation of coming back, and cancelling only the active rows
+        orphaned all of that.
+        """
+
     async def is_active(self, session_id: str, student_id: str) -> bool: ...
     async def active_for_student(self, student_id: str) -> list[Enrollment]: ...
 
@@ -195,6 +207,44 @@ class EnrollmentEventRepository(Protocol):
     async def list_for_enrollment(self, enrollment_id: str) -> list[EnrollmentLifecycleEvent]: ...
 
 
+class EnrollmentBillingSync(Protocol):
+    """Cross-context port (issue #651): tell billing that attendance stopped or
+    resumed so it can void unpaid future-period invoices, move the autopay
+    status and stop dunning ladders.
+
+    INVARIANT — every transition that stops attendance (cancel, withdraw,
+    session cancelled, pause) and every resume MUST call this port. A family
+    must never be charged for a class they will not attend. Implementations
+    are idempotent and never raise into the caller's write path.
+    """
+
+    async def apply(
+        self,
+        *,
+        enrollment_id: str,
+        transition: str,
+        effective_at: datetime,
+        reason: str,
+        actor_id: str | None,
+    ) -> dict[str, Any]: ...
+
+
+class OccurrenceRosterCleanup(Protocol):
+    """Drop a student's FUTURE one-time occurrence roster rows (issue #651).
+
+    Make-up and trial approvals write ``occurrence_roster_entries`` that sit
+    outside the enrollment row. When the enrollment is cancelled, withdrawn
+    or the whole session is cancelled those rows would otherwise keep the
+    student on a coach's day sheet for a class they no longer attend.
+    Implementations are best-effort from the caller's point of view: the
+    use cases wrap the call in catch/log/continue.
+    """
+
+    async def remove_future_for_student(
+        self, *, session_id: str, student_id: str, after: datetime
+    ) -> int: ...
+
+
 class EnrollmentLifecycleBillingPort(Protocol):
     async def record_move_proration(
         self,
@@ -249,6 +299,9 @@ RosterChangeKind = Literal[
     "moved",  # transferred between sessions (both rosters changed)
     "cancelled",  # enrollment cancelled/removed (admin or parent self-serve)
     "withdrawn",  # enrollment withdrawn mid-term
+    "paused",  # enrollment paused (seat released, billing stopped)
+    "resumed",  # paused enrollment back on the roster
+    "session_cancelled",  # the whole class was cancelled by the academy
 ]
 
 

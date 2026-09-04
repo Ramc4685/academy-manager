@@ -11,7 +11,7 @@ from backend.v2.contexts.enrollment.application.use_cases.process_scheduled_resu
 from backend.v2.contexts.enrollment.application.use_cases.scheduled_actions import (
     ScheduledEnrollmentAction,
 )
-from backend.v2.contexts.enrollment.domain.errors import CapacityExceeded
+from backend.v2.contexts.enrollment.domain.errors import CapacityExceeded, SessionNotEnrollable
 
 
 def _now() -> datetime:
@@ -74,6 +74,29 @@ async def test_full_class_marks_action_blocked_capacity() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cancelled_session_marks_action_failed_with_session_cancelled_reason() -> None:
+    """Issue #651: the class was cancelled during the pause. Terminal, and
+    recorded under its own reason — never as "blocked_capacity"."""
+    actions = _FakeScheduledActions([_action()])
+    deferrals = _FakeBillingDeferrals()
+    use_case = ProcessScheduledResumeActions(
+        scheduled_actions=actions,
+        resume_enrollment=_FakeResumeEnrollment(session_cancelled=True),
+        billing_deferrals=deferrals,
+        clock=_now,
+    )
+
+    result = await use_case.execute()
+
+    assert result.blocked_session_cancelled == 1
+    assert result.blocked_capacity == 0
+    assert result.failed == 0
+    assert actions.statuses == [("action-1", "failed")]
+    assert actions.last_error == "session_cancelled"
+    assert deferrals.closed == []
+
+
+@pytest.mark.asyncio
 async def test_deferral_close_failure_marks_action_failed() -> None:
     actions = _FakeScheduledActions([_action()])
     deferrals = _FakeBillingDeferrals(fail=True)
@@ -114,6 +137,7 @@ class _FakeScheduledActions:
 @dataclass
 class _FakeResumeEnrollment:
     capacity_blocked: bool = False
+    session_cancelled: bool = False
     enrollment_ids: list[str] = field(default_factory=list)
 
     async def execute(
@@ -126,6 +150,8 @@ class _FakeResumeEnrollment:
     ) -> None:
         if self.capacity_blocked:
             raise CapacityExceeded("session full", session_id="sess-1")
+        if self.session_cancelled:
+            raise SessionNotEnrollable("cancelled", session_id="sess-1", status="cancelled")
         self.enrollment_ids.append(enrollment_id)
 
 

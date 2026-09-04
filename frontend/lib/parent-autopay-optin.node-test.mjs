@@ -63,15 +63,45 @@ test("single-invoice checkbox shown for enrollments not yet on autopay", () => {
   }
 });
 
-test("single-invoice checkbox defaults to shown when enrollment data is unavailable", () => {
-  // Invoice has no enrollment linkage (legacy backend / non-enrollment invoice).
+test("single-invoice checkbox defaults to shown when the invoice has no enrollment linkage", () => {
+  // Legacy backend / non-enrollment invoice: nothing to compare against.
   assert.equal(showAutopayOptinForInvoice(invoice({ enrollment_id: null }), []), true);
   assert.equal(showAutopayOptinForInvoice(invoice({ enrollment_id: undefined }), []), true);
-  // Invoice references an enrollment the page did not load.
+});
+
+test("single-invoice checkbox hidden for the final invoice of a cancelled enrollment (#651)", () => {
+  // The invoice names an enrollment that is no longer in the parent's list:
+  // it was cancelled/withdrawn, so there is nothing to enrol in autopay.
   assert.equal(
-    showAutopayOptinForInvoice(invoice({ enrollment_id: "missing" }), [enrollment("e1", "active")]),
-    true,
+    showAutopayOptinForInvoice(invoice({ enrollment_id: "gone" }), [enrollment("e1", "offered")]),
+    false,
   );
+  assert.equal(showAutopayOptinForInvoice(invoice({ enrollment_id: "gone" }), []), false);
+  // Present in the list but lifecycle-inactive: same outcome.
+  for (const status of ["cancelled", "withdrawn"]) {
+    assert.equal(
+      showAutopayOptinForInvoice(invoice(), [
+        { enrollment_id: "e1", status, autopay_enrollment_status: "disabled" },
+      ]),
+      false,
+      status,
+    );
+  }
+  // Active and paused enrollments still get the checkbox when not enrolled.
+  for (const status of ["active", "paused", undefined]) {
+    assert.equal(
+      showAutopayOptinForInvoice(invoice(), [
+        { enrollment_id: "e1", status, autopay_enrollment_status: "offered" },
+      ]),
+      true,
+      String(status),
+    );
+  }
+});
+
+test("pay-all checkbox hidden when every covered invoice belongs to a cancelled enrollment", () => {
+  const invoices = [invoice({ enrollment_id: "gone-1" }), invoice({ enrollment_id: "gone-2" })];
+  assert.equal(showAutopayOptinForBalance(invoices, [enrollment("e1", "offered")]), false);
 });
 
 test("pay-all checkbox hidden when all covered enrollments are enrolled", () => {

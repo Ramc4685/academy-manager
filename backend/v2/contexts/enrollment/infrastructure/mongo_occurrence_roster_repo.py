@@ -7,6 +7,8 @@ student attends exactly one occurrence without a standing enrollment. Task
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from backend.v2.contexts.enrollment.domain.self_service import OccurrenceRosterEntry
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 
@@ -48,3 +50,41 @@ class MongoOccurrenceRosterRepository(TenantScopedRepository):
     async def exists(self, occurrence_id: str, student_id: str) -> bool:
         doc = await self._find_one({"occurrence_id": occurrence_id, "student_id": student_id})
         return doc is not None
+
+    async def remove_future_for_student(
+        self, *, session_id: str, student_id: str, after: datetime
+    ) -> int:
+        """Drop this student's one-time (make-up / trial) rows for occurrences
+        of ``session_id`` that start after ``after``. Returns the deleted count.
+
+        issue #651 invariant: when an enrollment is cancelled / withdrawn /
+        paused the student must vanish from every future roster of that
+        session, including occurrence-level entries that have no standing
+        enrollment behind them. Past occurrences keep their rows (attendance
+        history). Entries only carry ``occurrence_id``, so the start time is
+        resolved through ``session_occurrences`` (which matches both direct and
+        template-derived occurrences, like ``list_for_session``). Tenant-scoped
+        on both the lookup and the delete.
+        """
+        academy_id = current_academy_id()
+        occurrence_ids = [
+            str(doc["occurrence_id"])
+            async for doc in self._db["session_occurrences"].find(
+                {
+                    "academy_id": academy_id,
+                    "$or": [{"session_id": session_id}, {"template_session_id": session_id}],
+                    "start_at": {"$gt": after},
+                },
+                {"occurrence_id": 1},
+            )
+        ]
+        if not occurrence_ids:
+            return 0
+        result = await self.collection.delete_many(
+            {
+                "academy_id": academy_id,
+                "student_id": student_id,
+                "occurrence_id": {"$in": occurrence_ids},
+            }
+        )
+        return int(result.deleted_count)

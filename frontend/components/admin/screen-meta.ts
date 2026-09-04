@@ -85,6 +85,14 @@ export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
   },
 ];
 
+/**
+ * Every nav `href` plus the `/admin/dashboard` alias — the routes the shell
+ * back button treats as top-level (it renders nothing on them).
+ */
+export function adminTopLevelRoutes(): string[] {
+  return [...ADMIN_NAV.flatMap((group) => group.items.map((item) => item.href)), "/admin/dashboard"];
+}
+
 export interface AdminScreenMeta {
   title: string;
   subtitle: string;

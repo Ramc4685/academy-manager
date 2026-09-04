@@ -101,6 +101,11 @@ class FakeEnrollmentQuery:
     async def active_for_session(self, session_id: str) -> list[Enrollment]:
         return [e for e in self._enrollments if e.session_id == session_id and e.status == "active"]
 
+    async def for_session_in_statuses(
+        self, session_id: str, statuses: list[str]
+    ) -> list[Enrollment]:
+        return [e for e in self._enrollments if e.session_id == session_id and e.status in statuses]
+
     async def is_active(self, session_id: str, student_id: str) -> bool:
         return any(
             e.session_id == session_id and e.student_id == student_id and e.status == "active"
@@ -1145,6 +1150,13 @@ class FakeEnrollmentWriter:
             if enrollment.session_id == session_id and enrollment.status == "active"
         ]
 
+    async def for_session_in_statuses(self, session_id, statuses):
+        return [
+            enrollment
+            for enrollment in self.rows.values()
+            if enrollment.session_id == session_id and enrollment.status in statuses
+        ]
+
     async def count_active_for_session(self, session_id):
         return len(await self.active_for_session(session_id))
 
@@ -1185,6 +1197,11 @@ class _AdminFakeEnrollmentQuery:
     async def active_for_session(self, session_id):
         return [
             e for e in self.rows.values() if e.session_id == session_id and e.status == "active"
+        ]
+
+    async def for_session_in_statuses(self, session_id, statuses):
+        return [
+            e for e in self.rows.values() if e.session_id == session_id and e.status in statuses
         ]
 
     async def is_active(self, session_id, student_id):

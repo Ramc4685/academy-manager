@@ -1,81 +1,71 @@
-# Observability — Wave 1A
+# Observability
 
-**Status:** Authoritative. Implemented across `backend/v2/shared/observability/`, `frontend/lib/pwa/vitals.ts`, and the dashboards described below.
-**Ticket:** W1A-19
-**Last reviewed:** 2026-05-16
+**Status:** Authoritative as of 2026-09-03. Describes what is implemented in
+`backend/v2/shared/observability/` and what is switched on in production.
+Replaces the Wave 1A document, which described OpenTelemetry, PostHog and
+Honeycomb integrations that were never built (see
+`docs/audit/plans/C2-observability.md`, which chose Sentry over OTel).
 
-## What we measure
-
-### Backend (FastAPI v2)
+## What exists in code
 
 | Signal | Where | Notes |
 |---|---|---|
-| Request traces | OpenTelemetry FastAPI auto-instrumentation | Head-based sampling at 10% (errors at 100%). |
-| Mongo span | OpenTelemetry Motor instrumentation (lazy import) | Captures `db.collection`, `db.operation`, latency. |
-| Structured JSON logs | `shared/observability/logging.py` | Every log carries `trace_id`, `span_id`, `academy_id` if set, `request_id`. |
-| Trace-id response header | FastAPI middleware → `x-trace-id` | Frontend logs this in Sentry breadcrumbs and PostHog. |
-| RED metrics per BFF route | OTel → OTLP → Grafana/Honeycomb (deploy-env specific) | p50/p95/p99 latency, error rate. |
-| Domain event audit | `event_audit` collection (90d TTL) | Dispatcher writes one row per attempted handler call. |
+| JSON logs | `observability/logging.py` | `timestamp, level, logger, message` plus `request_id`, `academy_id`, `trace_id`/`span_id` when present, and every `extra=` field the caller passes. Default level INFO, format `json` (`LOG_LEVEL` / `LOG_FORMAT`). |
+| Request correlation | `observability/request_context.py` | Accepts `X-Request-ID` or `Fly-Request-Id`, else mints a UUID; echoes it on the response; stamps `request_id` and `academy_id` on every log record in the request. |
+| Per-request access line | `observability/request_context.py` | One JSON line per request with method, path, status, `duration_ms`, `request_id`, `academy_id`. `/api/v2/healthz` is logged at DEBUG so the 30s Fly probe does not flood INFO. |
+| Unhandled 500s | `shared/http/errors.py` | A catch-all handler logs one JSON error line with the traceback and `request_id`, then re-raises so Starlette still returns 500 and Sentry still captures it. `DomainError` keeps its own 4xx mapping. |
+| Error tracking | `observability/errors.py`, `ops_alerts.py` | Sentry SDK with `send_default_pii=False`, tagged with `request_id` and `academy_id`, `environment` from settings and `release` from `SENTRY_RELEASE` or Fly's `FLY_IMAGE_REF`. Captures request exceptions, APScheduler job errors/misses, outbox dispatcher loop failures (throttled 1/10/every-100), and Resend credential rejection at boot. **No-op until `SENTRY_DSN` is set.** |
+| Health | `observability/health.py`, `GET /api/v2/healthz` | Mongo ping (2s), scheduler running + job count, outbox dispatcher running. Returns 503 only for restart-fixable faults. Reports per-job `last_tick_age_seconds` / `last_run_age_seconds` from `ops_job_runs` as informational. Nested results use `ok:` not `status:` so the smoke grep cannot be spoofed. |
+| Job heartbeats | `observability/ops_digest.py` `record_job_run` | Every leased scheduler job writes `last_tick_at` and totals to `ops_job_runs`. Surfaced on healthz; nothing external consumes them yet. |
+| Daily ops digest | `ops_digest.py`, `main.py` (07:00 scheduler TZ) | Emails the owner quarantined Stripe webhooks, dead-letter events, dunning terminals, failed digest sends, last invoice run. **Skipped until `OPS_ALERT_EMAIL` is set.** |
+| Email bounces / complaints | `interfaces/email_webhook_routes.py` | Resend webhook ingestion feeding the suppression list. **404s until `RESEND_WEBHOOK_SECRET` is set and the webhook is created in Resend.** |
+| Forensic stores | `event_audit` (90-day TTL), `dead_letter_events`, `stripe_webhook_events`, platform audit log | Pull-only. Visible through the admin billing-health page. |
+| Frontend | `app/error.tsx`, `app/global-error.tsx`, `lib/query/mutation-errors.ts` | `console.error` and a toast only. `lib/pwa/vitals.ts` posts Web Vitals to `window.posthog` if present; PostHog is not installed, so vitals go nowhere. Cloudflare Workers Logs are enabled in `wrangler.jsonc` (free plan: 3-day retention). |
+| Tracing | `observability/tracing.py` | Permanent no-op: the OpenTelemetry packages are not installed. Deliberate at this scale. |
 
-**SLO (Wave 1A):**
+## What is switched on in production
 
-- `GET /api/v2/coach/today` p95 < 300 ms.
-- `POST /api/v2/coach/attendance` p95 < 800 ms.
-- Error rate ≤ 0.5% over a 10-minute rolling window.
+As of 2026-09-03: JSON logs to Fly's stdout (about 7 days retention, not
+shipped anywhere), the Fly health probe (restarts the machine on 503), and the
+post-deploy smoke in CI. Fly's built-in machine and HTTP metrics are collected
+and viewable on fly-metrics.net with no alert rules configured.
 
-Breach pages oncall via the OTLP-vendor's alerting config (Grafana / Honeycomb).
+Not switched on, each a single Fly secret away:
 
-### Frontend (Next.js v2)
-
-| Signal | Where | Sink |
-|---|---|---|
-| LCP, FCP, CLS, INP, TTFB | `lib/pwa/vitals.ts` via `web-vitals` package | `posthog.capture("web_vital", { metric, value, rating, route, id })` |
-| Install prompt shown | `useInstallPrompt` in `components/coach/install-card.tsx` | `posthog.capture("install_prompt_shown", { platform })` (added in Wave-1A post-baseline) |
-| Install accepted | `appinstalled` event | `posthog.capture("install_accepted", { platform })` |
-| Mutation queue stats (Wave 1B) | n/a today | Deferred. |
-| Service-worker update applied | `useServiceWorkerUpdate` | `posthog.capture("sw_update_applied")` |
-
-## Dashboards
-
-Each persona route gets one dashboard. Wave 1A ships:
-
-**Coach dashboard** (Grafana or PostHog):
-
-- Card: `coach.today` p50/p95/p99 latency (last 1h, last 24h, last 7d).
-- Card: error rate by code (`Coaching.*`, `Identity.*`, `Enrollment.*`).
-- Card: web-vitals histogram — LCP, INP, CLS — segmented by `route`.
-- Card: install-prompt-shown vs install-accepted ratio (per platform: Android / iOS-instructions).
-- Card: SW-update-applied events (proves update flow works in the field).
-- Card: dead-letter event count (should be 0).
-
-## Trace-ID propagation
-
-The backend middleware adds `x-trace-id` to every response. The frontend
-records it as a Sentry breadcrumb and a PostHog event property:
-
-```ts
-// lib/api/client.ts (planned for Wave 1A polish — landed inline today)
-const traceId = res.headers.get("x-trace-id");
-if (traceId && window.posthog) window.posthog.register({ last_trace_id: traceId });
+```bash
+fly secrets set -a courtmastr-academy-api \
+  SENTRY_DSN=... \
+  OPS_ALERT_EMAIL=... \
+  RESEND_WEBHOOK_SECRET=...
 ```
 
-Operators clicking through a Sentry error see the trace ID and can pivot to
-the OTel UI for the matching server span.
+There is no external uptime monitor and no dead-man switch on the scheduled
+jobs. See the 2026-09-02 delivery audit for the recommended free stack
+(Sentry Developer, Better Stack uptime + heartbeats, Fly log shipper to Axiom).
 
-## What we don't measure (yet)
+## Log field reference
 
-- Per-user RUM beyond Web Vitals. Add only when there's a question we
-  can't answer from existing signals.
-- Mutation queue length (Wave 1B).
-- Service-worker cache hit rate (deferred; useful but not load-bearing).
-- Per-tenant SLO breakdown (single-tenant today per ADR-0006).
+Every line: `timestamp`, `level`, `logger`, `message`. When in a request:
+`request_id`, `academy_id`. On errors: `exception` (formatted traceback).
+Caller-supplied `extra=` keys are merged as-is; reserved keys are never
+overwritten. Non-JSON values are stringified.
 
-## Operator runbook
+Do not log recipient email addresses; log ids. The two remaining call sites
+that log an email (`interfaces/admin/directory_routes.py`, login-invite
+failures) are the known exception.
 
-- **SLO breach (latency or error rate):** Check `event_audit` for handler
-  failures, check `dead_letter_events`, then OTel traces for the slow
-  spans. The Mongo span typically tells you the culprit.
-- **Stale install metrics:** Confirm PostHog snippet loaded on
-  `frontend` (Wave 1A initially loads it from `app/layout.tsx`).
-- **Dead-letter accumulating:** `python -m backend.v2.scripts.replay_event
-  <event_id>` after the root cause is fixed.
+## Where to look when something is wrong
+
+1. `fly logs -a courtmastr-academy-api` and grep the `request_id` echoed in
+   the response header the user saw.
+2. `GET /api/v2/healthz` for job ages; a job whose `last_tick_age_seconds`
+   exceeds its interval is stalled.
+3. Admin billing-health page for quarantined Stripe events.
+4. `stripe events list --live` for the payment side (needs `stripe login`).
+5. Fly dashboard metrics for 5xx rate and memory.
+
+## Incidents
+
+Write one note per production incident in `docs/incidents/` using the
+template there. Eight incidents from June to September 2026 predate this
+rule and are recorded only in session memory.

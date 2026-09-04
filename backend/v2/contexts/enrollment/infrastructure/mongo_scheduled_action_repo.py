@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from backend.v2.contexts.enrollment.application.use_cases.scheduled_actions import (
     ScheduledActionStatus,
@@ -97,6 +97,16 @@ class MongoScheduledEnrollmentActionRepository(TenantScopedRepository):
             attempted_at=attempted_at,
             last_error=error,
         )
+
+    async def cancel_pending_for_enrollment(self, enrollment_id: str, *, reason: str) -> int:
+        # Issue #651: a cancelled session must not leave a pending resume
+        # behind — it would try to reserve a seat in a class that no longer runs.
+        now = datetime.now(UTC)
+        result = await self.collection.update_many(
+            self._scoped({"enrollment_id": enrollment_id, "status": "pending"}),
+            {"$set": {"status": "cancelled", "last_error": reason, "updated_at": now}},
+        )
+        return int(result.modified_count or 0)
 
     async def _transition(
         self,
