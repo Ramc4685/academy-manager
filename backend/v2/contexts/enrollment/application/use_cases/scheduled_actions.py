@@ -63,3 +63,11 @@ class ScheduledEnrollmentActionRepository(Protocol):
         attempted_at: datetime,
         error: str,
     ) -> None: ...
+
+    async def cancel_pending_for_enrollment(self, enrollment_id: str, *, reason: str) -> int:
+        """Cancel every still-pending action for an enrollment (issue #651).
+
+        When the session a paused family was due to resume into is cancelled,
+        the ``resume_from_pause`` action must not fire later and try to
+        reserve a seat in a cancelled class. Returns the number cancelled.
+        """

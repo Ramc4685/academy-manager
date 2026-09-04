@@ -217,6 +217,9 @@ class ParentInvoiceView(BaseModel):
     # Enrollment covered by this invoice so the UI can decide autopay opt-in
     # visibility; None for legacy/unlinked invoices.
     enrollment_id: str | None = None
+    # Why a "void" invoice was voided (issue #651), e.g. "enrollment_cancelled";
+    # None for every other status.
+    void_reason: str | None = None
 
 
 class ParentInvoicesResponse(BaseModel):

@@ -176,6 +176,24 @@ class MongoMonthlyBillingGenerator:
             ),
         )
 
+    def _paused_status_detail(
+        self,
+        *,
+        enrollment: dict[str, object],
+        student_doc: dict[str, object] | None,
+        period: str,
+    ) -> MonthlyGenerationSkippedDetail:
+        return MonthlyGenerationSkippedDetail(
+            enrollment_id=str(enrollment.get("enrollment_id") or enrollment.get("_id")),
+            student_id=str(enrollment.get("student_id") or ""),
+            student_name=str((student_doc or {}).get("full_name") or "") or None,
+            reason_code="enrollment_paused",
+            source="enrollment.status",
+            billing_period=period,
+            needs_review=False,
+            metadata={"policy": "paused enrollments are not invoiced (#651)"},
+        )
+
     def _legacy_skip_period_detail(
         self,
         *,
@@ -802,6 +820,17 @@ class MongoMonthlyBillingGenerator:
             if deferral_detail is not None:
                 skipped_paused += 1
                 skipped_details.append(deferral_detail)
+                continue
+            if str(enrollment.get("status") or "") == "paused":
+                # Issue #651: a paused enrollment is never invoiced, deferral
+                # row or not. A deferral (above) explains the skip when present;
+                # otherwise the status itself is the reason.
+                skipped_paused += 1
+                skipped_details.append(
+                    self._paused_status_detail(
+                        enrollment=enrollment, student_doc=student_doc, period=period
+                    )
+                )
                 continue
             if period in set(enrollment.get("skip_periods") or []):
                 skipped_paused += 1

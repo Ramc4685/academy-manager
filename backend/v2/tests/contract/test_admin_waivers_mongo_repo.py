@@ -77,6 +77,25 @@ async def _seed_waivers(db, academy_id: str) -> None:
             },
         ]
     )
+    # issue #651: the report only lists students with a live enrollment.
+    await db["enrollments"].insert_many(
+        [
+            {
+                "academy_id": academy_id,
+                "enrollment_id": f"enr-{student_id}",
+                "session_id": "sess-1",
+                "student_id": student_id,
+                "status": status,
+            }
+            for student_id, status in (
+                ("st-current", "active"),
+                ("st-old", "paused"),
+                ("st-direct", "active"),
+                ("st-pending", "active"),
+                ("st-other", "active"),
+            )
+        ]
+    )
     await db["users"].insert_many(
         [
             {
@@ -187,6 +206,15 @@ async def test_load_admin_waiver_data_ignores_other_tenant_signatures_for_same_s
             "status": "active",
         }
     )
+    await db["enrollments"].insert_one(  # issue #651: report needs a live enrollment
+        {
+            "academy_id": acad,
+            "enrollment_id": "enr-shared",
+            "session_id": "sess-1",
+            "student_id": "shared-student-id",
+            "status": "active",
+        }
+    )
     await db["students"].insert_one(
         {
             "academy_id": acad,
@@ -227,6 +255,15 @@ async def test_load_admin_waiver_data_includes_share_link_for_signed_rows(db, ac
             "content_hash": "hash-current",
             "body": "Current waiver text",
             "effective_from": NOW,
+            "status": "active",
+        }
+    )
+    await db["enrollments"].insert_one(  # issue #651: report needs a live enrollment
+        {
+            "academy_id": acad,
+            "enrollment_id": "enr-signed",
+            "session_id": "sess-1",
+            "student_id": "st-signed",
             "status": "active",
         }
     )
@@ -427,3 +464,54 @@ async def test_signature_detail_surfaces_stored_artifact_and_active_share_link(d
     assert detail.artifact_status == "stored"
     assert detail.share_status == "available"
     assert "stored" in detail.gap_note
+
+
+@pytest.mark.asyncio
+async def test_load_admin_waiver_data_skips_students_without_a_live_enrollment(db, acad) -> None:
+    """Issue #651: a withdrawn / cancelled child must not sit on the admin
+    waiver report as "pending signature"; a paused child still does."""
+    await _seed_waivers(db, acad)
+    await db["students"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "student_id": "st-cancelled",
+                "full_name": "Cancelled Student",
+                "parent_id": "p-cancelled",
+                "status": "active",
+            },
+            {
+                "academy_id": acad,
+                "student_id": "st-withdrawn",
+                "full_name": "Withdrawn Student",
+                "parent_id": "p-withdrawn",
+                "status": "active",
+            },
+        ]
+    )
+    await db["enrollments"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "enrollment_id": "enr-cancelled",
+                "session_id": "sess-1",
+                "student_id": "st-cancelled",
+                "status": "cancelled",
+            },
+            {
+                "academy_id": acad,
+                "enrollment_id": "enr-withdrawn",
+                "session_id": "sess-1",
+                "student_id": "st-withdrawn",
+                "status": "withdrawn",
+            },
+        ]
+    )
+    repo = MongoAdminWaiverRepository(db)
+
+    data = await repo.load_admin_waiver_data()
+
+    listed = [student.student_id for student in data.students]
+    assert "st-cancelled" not in listed
+    assert "st-withdrawn" not in listed
+    assert "st-old" in listed  # paused enrollment keeps the child on the report

@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import OperationFailure
 
+from backend.v2.composition.lifecycle_billing import compose_enrollment_billing_sync
 from backend.v2.composition.pathway import (
     CurriculumComposition,
     StudentProgressComposition,
@@ -890,6 +891,8 @@ def compose_parent(
         sessions=sessions_writer,
         outbox=outbox,
         billing=_SelfCancelFeeBillingPort(),
+        # Issue #651: void later-month invoices + disable autopay on self-cancel.
+        billing_sync=compose_enrollment_billing_sync(db),
         enrollment_events=enrollment_events,
         roster_notifier=roster_notifier,
     )
@@ -1529,6 +1532,17 @@ def compose_parent(
                     )
                 raise
 
+    async def _enrollment_is_active(enrollment_id: str) -> bool:
+        # Enrollment lifecycle (issue #651): only "active" enrollments may be
+        # placed on autopay. Documents without a status predate the lifecycle
+        # fields and are treated as active so legacy rows keep working.
+        doc = await db["enrollments"].find_one(
+            {"academy_id": current_academy_id(), "enrollment_id": enrollment_id}
+        )
+        if doc is None:
+            return False
+        return str(doc.get("status") or "active") == "active"
+
     async def start_invoice_payment_for_parent(
         *,
         parent_id: str,
@@ -1543,6 +1557,19 @@ def compose_parent(
             return None
         if invoice.status not in {"open", "partially_paid"} or invoice.balance_due_cents <= 0:
             raise ValueError("invoice is not payable")
+        if enroll_autopay and invoice.enrollment_id:
+            # Server-side backstop for the opt-in checkbox (issue #651): the
+            # final invoice of a cancelled/withdrawn/paused enrollment is still
+            # payable, but there is nothing to enrol in autopay any more.
+            # Silently drop the flag rather than reject the payment.
+            if not await _enrollment_is_active(invoice.enrollment_id):
+                log.info(
+                    "invoice_payment_autopay_optin_ignored invoice=%s enrollment=%s "
+                    "reason=enrollment_not_active",
+                    invoice_id,
+                    invoice.enrollment_id,
+                )
+                enroll_autopay = False
         invoice_stripe = stripe if hasattr(stripe, "create_invoice_checkout_session") else None
         # Opted-in payments must return with a checkout_session_id so the
         # parent app's checkout-status poll can pick up autopay activation
@@ -1676,12 +1703,19 @@ def compose_parent(
         idempotency_key = f"balance-payment:{fingerprint}"
         autopay_kwargs: dict[str, Any] = {}
         if enroll_autopay:
+            # Issue #651: only ACTIVE enrollments may be put on autopay — a
+            # cancelled/paused enrollment's final invoice must not re-arm it.
+            active_ids = sorted(
+                {
+                    inv.enrollment_id
+                    for inv in payable
+                    if inv.enrollment_id and await _enrollment_is_active(inv.enrollment_id)
+                }
+            )
             idempotency_key = f"{idempotency_key}:autopay-optin"
             autopay_kwargs = {
                 "save_payment_method_for_autopay": True,
-                "autopay_enrollment_ids": sorted(
-                    {inv.enrollment_id for inv in payable if inv.enrollment_id}
-                ),
+                "autopay_enrollment_ids": active_ids,
             }
         # Same reasoning as the single-invoice path: opted-in payments need a
         # checkout_session_id on return so the checkout-status poll can pick
@@ -1978,6 +2012,13 @@ def compose_parent(
             or str(student.get("parent_id") or student.get("parent_user_id")) != parent_id
         ):
             raise SessionNotFound("enrollment not found", enrollment_id=enrollment_id)
+        enrollment_status = str(enrollment.get("status") or "active")
+        if enrollment_status != "active":
+            # Same 409 shape as a non-payable invoice (ValueError -> 409 in the
+            # route). A paused/cancelled/withdrawn enrollment has had its
+            # autopay moved to paused/disabled by the lifecycle sync; letting
+            # the parent re-enable it here would silently undo that.
+            raise ValueError(f"enrollment is not active (status={enrollment_status})")
         session = await sessions_query.get(str(enrollment["session_id"]))
         if session is None:
             raise SessionNotFound("session not found", session_id=str(enrollment["session_id"]))

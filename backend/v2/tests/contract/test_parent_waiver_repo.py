@@ -76,3 +76,85 @@ async def test_save_signature_creates_idempotent_artifact_and_share_link(db, aca
     assert link["share_link_id"].startswith("wsl_")
     assert len(link["share_link_id"]) >= 30
     assert link["share_link_id"] != "ws-1"
+
+
+async def _seed_family(db, acad: str) -> None:
+    await db["students"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "student_id": "st-cancelled",
+                "full_name": "Cancelled Child",
+                "parent_id": "parent-1",
+                "status": "active",
+            },
+            {
+                "academy_id": acad,
+                "student_id": "st-paused",
+                "full_name": "Paused Child",
+                "parent_user_id": "parent-1",
+                "status": "active",
+            },
+            {
+                "academy_id": acad,
+                "student_id": "st-active",
+                "full_name": "Active Child",
+                "parent_id": "parent-1",
+                "status": "active",
+            },
+            {
+                "academy_id": acad,
+                "student_id": "st-none",
+                "full_name": "Never Enrolled",
+                "parent_id": "parent-1",
+                "status": "active",
+            },
+        ]
+    )
+    await db["enrollments"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "enrollment_id": "enr-cancelled",
+                "session_id": "sess-1",
+                "student_id": "st-cancelled",
+                "status": "cancelled",
+            },
+            {
+                "academy_id": acad,
+                "enrollment_id": "enr-paused",
+                "session_id": "sess-1",
+                "student_id": "st-paused",
+                "status": "paused",
+            },
+            {
+                "academy_id": acad,
+                "enrollment_id": "enr-active",
+                "session_id": "sess-1",
+                "student_id": "st-active",
+                "status": "active",
+            },
+            # Same student id in another tenant with a live enrollment must
+            # not rescue the cancelled child in this tenant.
+            {
+                "academy_id": "other-academy",
+                "enrollment_id": "enr-other",
+                "session_id": "sess-9",
+                "student_id": "st-cancelled",
+                "status": "active",
+            },
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_active_students_for_parent_requires_a_live_enrollment(db, acad) -> None:
+    """Issue #651: waiver prompts follow live enrollments. A child whose only
+    enrollment is cancelled is not nagged; a paused child (still on the
+    roster) is; a child with no enrollment at all owes nothing yet."""
+    await _seed_family(db, acad)
+    repo = MongoParentWaiverRepository(db)
+
+    students = await repo.list_active_students_for_parent("parent-1")
+
+    assert sorted(s.student_id for s in students) == ["st-active", "st-paused"]

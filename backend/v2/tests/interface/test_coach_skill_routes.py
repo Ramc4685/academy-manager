@@ -1447,3 +1447,28 @@ def test_real_skill_router_rejects_success_count_above_attempts_count() -> None:
 
     assert response.status_code == 422, response.text
     assert spies.record_test_attempt.calls == 0
+
+
+def test_real_skill_router_allows_assigned_coach_to_reach_paused_student() -> None:
+    """Issue #651: the authorisation read returns active-or-paused enrollments
+    (paused students keep their roster seat, #641). The route must not
+    re-filter on status, so a paused student on an assigned session is 200."""
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids={SESSION_ID},
+    )
+
+    async def paused_enrollments(student_id: str) -> list[SimpleNamespace]:
+        if student_id != STUDENT_ID:
+            return []
+        return [SimpleNamespace(session_id=SESSION_ID, status="paused")]
+
+    use_cases = app.dependency_overrides[get_coach_use_cases]()
+    use_cases.get_active_session_enrollments_for_student = paused_enrollments
+    client = TestClient(app)
+
+    response = client.get(f"/api/v2/coach/students/{STUDENT_ID}/passport?program_id={PROGRAM_ID}")
+
+    assert response.status_code == 200, response.text
+    assert spies.get_passport.calls == 1
+    assert spies.assigned_sessions.calls == [(COACH_ID, SESSION_ID)]

@@ -65,6 +65,22 @@ test.describe("billing trust and recovery surfaces", () => {
             pdf_url: null,
             created_at: "2026-06-01T00:00:00Z",
           },
+          {
+            // Final invoice of a cancelled enrollment (#651): the ledger keeps
+            // the historical balance, but the parent owes nothing and must
+            // not be offered a Pay button or an autopay opt-in for it.
+            invoice_id: "inv-void",
+            period: "2026-07",
+            status: "void",
+            total_cents: 9000,
+            balance_due_cents: 9000,
+            currency: "usd",
+            due_date: "2026-07-15",
+            pdf_url: null,
+            created_at: "2026-07-01T00:00:00Z",
+            enrollment_id: "enr-gone",
+            void_reason: "enrollment_cancelled",
+          },
         ],
       });
     });
@@ -139,6 +155,16 @@ test.describe("billing trust and recovery surfaces", () => {
     await expect(page.getByText("open", { exact: true })).toBeVisible();
     await expect(page.getByText("$45.00").first()).toBeVisible();
     await expect(page.getByRole("button", { name: "Pay $45.00", exact: true })).toBeVisible();
+    // Voided invoice renders $0 / Cancelled with its reason, and no Pay button
+    // or autopay opt-in — the stale $90.00 ledger balance never surfaces.
+    await expect(page.getByText("Cancelled", { exact: true })).toBeVisible();
+    await expect(page.getByText("Enrollment cancelled")).toBeVisible();
+    await expect(page.getByText("$0.00").first()).toBeVisible();
+    await expect(page.getByText("$90.00")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /^Pay \$90/ })).toHaveCount(0);
+    await expect(page.getByTestId("invoice-autopay-optin-inv-void")).toHaveCount(0);
+    // Balance hero excludes the voided invoice.
+    await expect(page.getByRole("button", { name: "Pay balance · $45.00" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Billing portal" })).toBeVisible();
     await expect(page.getByText("Autopay active, payment issue")).toBeVisible();
     await expect(
@@ -147,7 +173,7 @@ test.describe("billing trust and recovery surfaces", () => {
     await page.getByRole("button", { name: "Payment history" }).click();
     await expect(page.getByText("Invoice in_test_paid_1")).toBeVisible();
 
-    await page.getByRole("button", { name: "View" }).click();
+    await page.getByRole("button", { name: "View", exact: true }).click();
     await expect(page.getByText("Alice Chen monthly tuition × 1")).toBeVisible();
 
     await page.getByRole("button", { name: "Pay $45.00", exact: true }).click();

@@ -21,6 +21,56 @@ BillingDeferralType = Literal[
 BillingDeferralStatus = Literal["active", "closed"]
 
 
+MAX_DEFERRAL_PERIODS = 12
+
+
+def _next_period(period: str) -> str:
+    year, month = int(period[:4]), int(period[5:7])
+    month += 1
+    if month > 12:
+        year, month = year + 1, 1
+    return f"{year:04d}-{month:02d}"
+
+
+def paused_billing_periods(
+    *,
+    effective_at: datetime | date,
+    resume_on: date | None,
+    review_on: date | None,
+) -> list[str]:
+    """Billing periods a pause suppresses (issue #651).
+
+    The month containing ``effective_at`` stays payable (policy: the current
+    month is owed in full). Suppression starts the following month. A month is
+    suppressed when the enrollment is still paused on its billing day — the
+    same rule the monthly generator applies by status — so a resume on the 1st
+    bills that month and a resume later in the month does not (the family gets
+    the remainder of that month without a catch-up invoice). An indefinite
+    pause bounded only by ``review_on`` suppresses through the review month.
+    Capped at ``MAX_DEFERRAL_PERIODS`` months.
+    """
+
+    start = effective_at.date() if isinstance(effective_at, datetime) else effective_at
+    period = _next_period(start.strftime("%Y-%m"))
+    if resume_on is not None:
+        resume_period = resume_on.strftime("%Y-%m")
+        periods: list[str] = []
+        while len(periods) < MAX_DEFERRAL_PERIODS:
+            if period > resume_period or (period == resume_period and resume_on.day == 1):
+                break
+            periods.append(period)
+            period = _next_period(period)
+        return periods
+    if review_on is not None:
+        last_inclusive = review_on.strftime("%Y-%m")
+        periods = []
+        while period <= last_inclusive and len(periods) < MAX_DEFERRAL_PERIODS:
+            periods.append(period)
+            period = _next_period(period)
+        return periods
+    return []
+
+
 class BillingDeferral(BaseModel):
     model_config = {"frozen": True}
 

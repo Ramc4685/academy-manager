@@ -106,7 +106,10 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
 
-from backend.v2.contexts.enrollment.application.ports import RosterChangeNotifier
+from backend.v2.contexts.enrollment.application.ports import (
+    EnrollmentBillingSync,
+    RosterChangeNotifier,
+)
 from backend.v2.contexts.enrollment.domain.errors import EnrollmentNotFound
 from backend.v2.contexts.enrollment.domain.events import (
     EnrollmentCancelled,
@@ -342,6 +345,7 @@ class SelfCancelEnrollment:
         sessions: SelfCancelSessionWriter,
         outbox: Outbox,
         billing: SelfCancelBillingPort | None = None,
+        billing_sync: EnrollmentBillingSync | None = None,
         enrollment_events: SelfCancelLifecycleEventRecorder | None = None,
         roster_notifier: RosterChangeNotifier | None = None,
         clock: Clock = lambda: datetime.now(UTC),
@@ -353,6 +357,7 @@ class SelfCancelEnrollment:
         self._sessions = sessions
         self._outbox = outbox
         self._billing = billing
+        self._billing_sync = billing_sync
         self._enrollment_events = enrollment_events
         self._roster_notifier = roster_notifier
         self._now = clock
@@ -419,6 +424,30 @@ class SelfCancelEnrollment:
                 now=now,
             )
         )
+
+        # Issue #651: the month of ``cancelled_at`` stays payable; later
+        # invoices are voided and autopay is disabled. Best-effort like the
+        # fee below — the CAS has already committed.
+        if self._billing_sync is not None:
+            try:
+                await self._billing_sync.apply(
+                    enrollment_id=updated.enrollment_id,
+                    transition="cancelled",
+                    effective_at=cancelled_at,
+                    reason=cmd.reason,
+                    actor_id=cmd.parent_id,
+                )
+            except Exception:
+                log.exception(
+                    "self_cancel_billing_sync_failed",
+                    extra={"enrollment_id": cmd.enrollment_id},
+                )
+        else:
+            log.error(
+                "enrollment_billing_sync_unwired: self-cancel for enrollment_id=%s "
+                "reached billing nowhere",
+                cmd.enrollment_id,
+            )
 
         if terms.fee_cents > 0 and self._billing is not None:
             try:

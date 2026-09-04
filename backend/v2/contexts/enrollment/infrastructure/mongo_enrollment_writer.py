@@ -37,6 +37,22 @@ class MongoEnrollmentWriter(TenantScopedRepository):
     async def update_status(self, enrollment_id: str, status: str) -> None:
         await self._update_one({"enrollment_id": enrollment_id}, {"$set": {"status": status}})
 
+    async def set_lifecycle_dates(
+        self,
+        enrollment_id: str,
+        *,
+        cancelled_at: datetime | None = None,
+        withdrawal_date: datetime | None = None,
+    ) -> None:
+        """Persist the effective date of a cancel/withdraw (issue #651)."""
+        fields: dict[str, object] = {"updated_at": datetime.now(UTC)}
+        if cancelled_at is not None:
+            fields["cancelled_at"] = cancelled_at
+            fields["cancelled_by"] = "admin"
+        if withdrawal_date is not None:
+            fields["withdrawal_date"] = withdrawal_date
+        await self._update_one({"enrollment_id": enrollment_id}, {"$set": fields})
+
     async def mark_withdrawn(self, enrollment_id: str, *, withdrawal_date: datetime) -> None:
         await self._update_one(
             {"enrollment_id": enrollment_id},

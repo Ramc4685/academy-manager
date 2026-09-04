@@ -1787,6 +1787,30 @@ export interface SetPlatformChargeFallbackRequest {
   reason?: string | null;
 }
 
+export interface InvoiceScheduleView {
+  billing_day: number;
+  invoice_due_days: number;
+}
+
+export interface SetInvoiceScheduleRequest {
+  billing_day: number;
+  invoice_due_days: number;
+  reason?: string | null;
+}
+
+export function getInvoiceSchedule(): Promise<InvoiceScheduleView> {
+  return apiFetch<InvoiceScheduleView>("/admin/billing/settings/invoice-schedule", {
+    method: "GET",
+  });
+}
+
+export function setInvoiceSchedule(payload: SetInvoiceScheduleRequest): Promise<InvoiceScheduleView> {
+  return apiFetch<InvoiceScheduleView>("/admin/billing/settings/invoice-schedule", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function getPlatformChargeFallback(): Promise<PlatformChargeFallbackView> {
   return apiFetch<PlatformChargeFallbackView>("/admin/billing/settings/platform-fallback", {
     method: "GET",
