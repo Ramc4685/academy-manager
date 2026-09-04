@@ -88,26 +88,26 @@ test.describe("Coach Today", () => {
     await expect(page.getByTestId("mark-st1-present")).toBeDisabled();
   });
 
-  test("server conflict surfaces a structured error", async ({ page, mock }) => {
+  test("server conflict on a plain mark is applied as a correction", async ({ page, mock }) => {
+    // The mark already exists server-side (e.g. another device): the coach's
+    // tap is a change, so the page must PATCH a correction instead of
+    // leaving an error (#646).
     mock.attendanceResponder = () => ({
       status: 409,
       body: {
         error: {
           code: "Coaching.ConflictAttendanceExists",
           message: "another mutation already recorded attendance",
-          details: {},
+          details: { existing_attendance_id: "att-existing" },
         },
       },
     });
     await page.goto("/coach/sessions/s-today-1");
     await page.getByTestId("mark-st1-absent").click();
-    // A 409 domain rejection must NOT be described as a connectivity problem —
-    // the coach needs the specific reason (see #638).
-    await expect(page.getByTestId("mark-error-st1")).toContainText(
-      "already recorded"
-    );
-    await expect(page.getByTestId("mark-error-st1")).not.toContainText(
-      "Check your connection"
-    );
+    await expect(page.getByTestId("mark-st1-absent")).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByTestId("mark-error-st1")).toHaveCount(0);
+    expect(mock.correctionCalls).toEqual([
+      expect.objectContaining({ student_id: "st1", status: "absent" }),
+    ]);
   });
 });
