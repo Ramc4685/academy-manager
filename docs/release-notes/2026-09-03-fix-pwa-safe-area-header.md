@@ -24,8 +24,9 @@ screenshots from an admin phone:
   the left edge; three admin tables that lacked horizontal scroll
   (billing setup, payouts, notify log) now scroll sideways on narrow screens.
 - Dev tooling: the local pre-push gate now skips the `webkit-mobile` Playwright
-  shard by default, matching CI where WebKit runs only nightly (#626). Use
-  `--full` or `PRE_PUSH_E2E_ALL=1` to include it.
+  shard by default. CI runs WebKit nightly and on e2e-touching PRs but does not
+  require it to merge (#626); the local gate now matches. Use `--full` or
+  `PRE_PUSH_E2E_ALL=1` to include it.
 
 ## Deploy notes
 None. Pure frontend; no migration, no env vars. Installed users pick it up on

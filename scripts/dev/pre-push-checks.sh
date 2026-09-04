@@ -214,9 +214,9 @@ if [ "$FRONTEND_CHANGED" = true ] || [ "$BROAD" = true ]; then
       fail "e2e shard list unavailable — refusing to skip the e2e gate"
       exit 1
     }
-    # Nightly-only shards (webkit) mirror CI: skipped on the PR-style gate,
-    # included with --full or PRE_PUSH_E2E_ALL=1. Say so, so a skipped browser
-    # is never mistaken for a covered one.
+    # Advisory shards (webkit) mirror CI, where they never block a merge:
+    # skipped here by default, included with --full or PRE_PUSH_E2E_ALL=1.
+    # Say so, so a skipped browser is never mistaken for a covered one.
     if [ "$FULL" != "--full" ] && [ "${PRE_PUSH_E2E_ALL:-}" != "1" ]; then
       SKIPPED_NIGHTLY="$(e2e_nightly_only_present | paste -sd ' ' -)"
       if [ -n "$SKIPPED_NIGHTLY" ]; then

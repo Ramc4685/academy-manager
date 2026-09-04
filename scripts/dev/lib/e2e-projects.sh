@@ -39,12 +39,13 @@ e2e_shard_list() {
   printf '%s\n' "$projects"
 }
 
-# Projects CI runs only from the nightly workflow
-# (.github/workflows/nightly-e2e.yml), never as a PR check. The local gate
-# mirrors that split: these shards are skipped by default and included with
-# `--full` or PRE_PUSH_E2E_ALL=1. WebKit under local load misses first-load
-# budgets on routes the diff never touched, and failOnFlakyTests then blocks
-# pushes that CI itself would accept.
+# Projects CI treats as advisory: .github/workflows/nightly-e2e.yml runs
+# webkit-mobile on a schedule and on PRs that touch frontend/e2e/** or the
+# Playwright config, but it is not a required check on main (only "CI Gate"
+# and "Release Notes Gate" are). The local gate mirrors that: these shards are
+# skipped by default and included with `--full` or PRE_PUSH_E2E_ALL=1. WebKit
+# under local load misses first-load budgets on routes the diff never touched,
+# and failOnFlakyTests then blocks pushes that CI itself would merge.
 E2E_NIGHTLY_ONLY_PROJECTS="webkit-mobile"
 
 # Echoes the shards the local gate should run: e2e_shard_list minus the
