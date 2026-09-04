@@ -8,7 +8,11 @@ import { PersonaSwitcher } from "@/components/persona/persona-switcher";
 import { AccessDeniedNotice } from "@/components/persona/access-denied-notice";
 import { AuthUnavailableScreen } from "@/components/persona/auth-unavailable";
 import { PersonaLogoutButton } from "@/components/persona/logout-button";
+import { ShellBackButton } from "@/components/persona/back-button";
 import { ToastProvider } from "@/components/ds/toast";
+
+const STUDENT_TOP_LEVEL_ROUTES = ["/student/dashboard", "/student/progress", "/student/schedule"] as const;
+const STUDENT_HOME = "/student/dashboard";
 
 export default function StudentLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -42,21 +46,24 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
       <div className="min-h-screen flex flex-col pb-20" style={{ background: "var(--rally-paper)" }}>
         {/* Header */}
         <header
-          className="sticky top-0 z-10 flex items-center justify-between px-4 py-3"
+          className="sticky top-0 z-10 flex items-center justify-between px-4 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top,0px))]"
           style={{
             background: "linear-gradient(135deg, #0a0f1c 0%, #0f1d38 100%)",
             borderBottom: "1px solid rgba(250,204,21,0.12)",
           }}
         >
-          <Link href="/student/dashboard" className="flex items-center gap-2.5">
-            <div
-              className="h-8 w-8 rounded-lg flex items-center justify-center font-bold text-sm shadow-lg"
-              style={{ background: "linear-gradient(135deg, #facc15 0%, #f59e0b 100%)", color: "#0a0f1c" }}
-            >
-              A
-            </div>
-            <span className="font-semibold text-white text-[15px] tracking-tight">Academy</span>
-          </Link>
+          <div className="flex items-center gap-2">
+            <ShellBackButton known={STUDENT_TOP_LEVEL_ROUTES} home={STUDENT_HOME} variant="dark" />
+            <Link href="/student/dashboard" className="flex items-center gap-2.5">
+              <div
+                className="h-8 w-8 rounded-lg flex items-center justify-center font-bold text-sm shadow-lg"
+                style={{ background: "linear-gradient(135deg, #facc15 0%, #f59e0b 100%)", color: "#0a0f1c" }}
+              >
+                A
+              </div>
+              <span className="font-semibold text-white text-[15px] tracking-tight">Academy</span>
+            </Link>
+          </div>
           <div className="flex items-center gap-2">
             <PersonaSwitcher current="student" variant="dark" />
             <PersonaLogoutButton

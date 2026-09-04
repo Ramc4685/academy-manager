@@ -19,6 +19,11 @@ from backend.v2.composition.admin_registration_review import (
     AdminRegistrationReview,
     RegistrationDeclineRefunds,
 )
+from backend.v2.composition.autopay_comms import (
+    autopay_active_enrollment_ids,
+    build_dunning_worker,
+    build_send_autopay_notice,
+)
 from backend.v2.composition.connected_account_adapters import (
     ConnectedAccountGatewayDisabler,
     ConnectedAccountGatewayReader,
@@ -37,7 +42,11 @@ from backend.v2.composition.email_adapters import (
     LoginInviteEmailAdapter,
 )
 from backend.v2.composition.event_handlers import install_dunning_notifier
-from backend.v2.composition.lifecycle_billing import compose_enrollment_billing_sync
+from backend.v2.composition.lifecycle_billing import (
+    build_autopay_status_gateway,
+    build_void_billing_invoice,
+    compose_enrollment_billing_sync,
+)
 from backend.v2.composition.pathway import (
     compose_curriculum,
     compose_student_progress,
@@ -50,6 +59,11 @@ from backend.v2.contexts.billing.application.admin_money import (
     invoice_provider_keys,
     invoice_to_admin_payment_row,
     payment_provider_keys,
+)
+from backend.v2.contexts.billing.application.admin_payment_settlement import (
+    SETTLED_STATUSES,
+    settle_matching_rows,
+    settlement_method,
 )
 from backend.v2.contexts.billing.application.checkout_paid_period import (
     CheckoutPaidPeriodResolver,
@@ -111,9 +125,6 @@ from backend.v2.contexts.billing.application.use_cases.match_legacy_invoices imp
     ConfirmLegacyMatchCommand,
     ListLegacyMatchQueue,
 )
-from backend.v2.contexts.billing.application.use_cases.process_dunning_retries import (
-    ProcessDunningRetries,
-)
 from backend.v2.contexts.billing.application.use_cases.quote_enrollment import (
     QuoteEnrollment,
     QuoteEnrollmentCommand,
@@ -154,8 +165,6 @@ from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import 
 from backend.v2.contexts.billing.domain.billing_audit import BillingAuditEntry
 from backend.v2.contexts.billing.domain.ledger import (
     LedgerInvoice,
-    record_delivery,
-    void_invoice,
 )
 from backend.v2.contexts.billing.domain.product import Product
 from backend.v2.contexts.billing.infrastructure.admin_reports_read_model import (
@@ -661,18 +670,9 @@ def compose_admin(
     # Per-enrollment autopay status: student_billing_enrollments (Slice B).
     student_billing_enrollment_repo = MongoStudentBillingEnrollmentRepository(db)
 
-    class _EnrollmentAutopayStatusGateway:
-        """Adapts the billing enrollment repo to the enrollment-context
-        ``EnrollmentAutopayStatusGateway`` port (Slice B); mirrors the
-        ``_EnrollmentAutopayState`` shim in ``composition/parent.py``."""
-
-        async def set_enrollment_status(self, *, enrollment_id: str, status: str) -> bool:
-            return await student_billing_enrollment_repo.set_autopay_enrollment_status(
-                enrollment_id=enrollment_id,
-                status=status,  # type: ignore[arg-type]
-            )
-
-    enrollment_autopay_status_gateway = _EnrollmentAutopayStatusGateway()
+    enrollment_autopay_status_gateway = build_autopay_status_gateway(
+        student_billing_enrollment_repo
+    )
     # Issue #651: every attendance-stopping transition must reach billing.
     enrollment_billing_sync = compose_enrollment_billing_sync(
         db, autopay=student_billing_enrollment_repo
@@ -1090,37 +1090,6 @@ def compose_admin(
             "checkout_failure_code": result.checkout_failure_code,
         }
 
-    async def send_autopay_notice(invoice_id: str) -> dict[str, Any]:
-        """Pre-charge notice for an autopay invoice (issue #651); marks delivery."""
-        invoice = await billing_ledger_repo.get_invoice(invoice_id)
-        if invoice is None:
-            raise ValueError("invoice not found")
-        email_port = _invoice_email_port()
-        if email_port is None:
-            raise ValueError("email delivery is not enabled")
-        academy_doc = await academy_repo.find_by_id(current_academy_id())
-        academy_slug = str(academy_doc.get("slug") or "") if academy_doc else ""
-        frontend_url = academy_frontend_url(
-            frontend_url=settings.frontend_url or "", academy_slug=academy_slug
-        )
-        provider_message_id = await email_port.send_autopay_notice(
-            parent_id=invoice.parent_id,
-            invoice_id=invoice.invoice_id,
-            period=invoice.period,
-            amount_cents=invoice.balance_due_cents,
-            currency=invoice.currency,
-            charge_on=invoice.due_date,
-            portal_url=f"{frontend_url}/parent/payments" if frontend_url else None,
-        )
-        delivered = record_delivery(
-            invoice,
-            outcome="sent",
-            now=datetime.now(UTC),
-            provider_message_id=provider_message_id,
-        )
-        await billing_ledger_repo.save_invoice(delivered)
-        return {"invoice_id": invoice_id, "delivery_status": delivered.delivery_status}
-
     async def send_generated_invoices(
         period: str, *, limit: int = DEFAULT_SEND_LIMIT
     ) -> dict[str, Any]:
@@ -1353,26 +1322,16 @@ def compose_admin(
         )
         return sent_at
 
-    def _dunning_worker() -> ProcessDunningRetries:
-        required = ("get_default_payment_method", "create_off_session_payment_intent")
-        if not all(hasattr(stripe, name) for name in required):
-            raise RuntimeError("Stripe autopay not configured")
-        return ProcessDunningRetries(
-            dunning=dunning_state_repo,
-            charge_invoice=ChargeInvoiceViaAutopay(
-                ledger=billing_ledger_repo,
-                stripe=stripe,  # type: ignore[arg-type]
-                enrollment_autopay=student_billing_enrollment_repo,
-                settings=billing_settings_repo,
-                connected_accounts=connected_accounts_repo,
-            ),
-            notifier=_invoice_email_port(),
-            enrollment_autopay=student_billing_enrollment_repo,
-            # Issue #435: the failure notice goes through the outbox, so a
-            # transient Resend error is retried by the dispatcher instead of
-            # being logged once and losing the parent's only warning.
-            outbox=outbox,
-        )
+    _dunning_worker = build_dunning_worker(
+        stripe=stripe,
+        dunning=dunning_state_repo,
+        ledger=billing_ledger_repo,
+        enrollment_autopay=student_billing_enrollment_repo,
+        settings=billing_settings_repo,
+        connected_accounts=connected_accounts_repo,
+        email_port=_invoice_email_port,
+        outbox=outbox,
+    )
 
     # ---- Billing Health (#235): observability + recovery actions ----------- #
     async def list_reconciliation_runs() -> list[dict[str, Any]]:
@@ -1529,24 +1488,9 @@ def compose_admin(
             RemoveInvoiceLineCommand(invoice_id=invoice_id, line_id=line_id)
         )
 
-    async def void_billing_invoice(*, invoice_id: str, reason: str) -> None:
-        invoice = await billing_ledger_repo.get_invoice(invoice_id)
-        if invoice is None:
-            raise ValueError("invoice not found")
-        if (
-            invoice.status in {"partially_paid", "paid"}
-            or invoice.balance_due_cents != invoice.total_cents
-        ):
-            raise ValueError(
-                "cannot void invoice with recorded payments; issue refund or credit first"
-            )
-        now = datetime.now(UTC)
-        voided = void_invoice(invoice, reason=reason or "admin_void", now=now)
-        await billing_ledger_repo.save_invoice(voided)
-        # Issue #651: a void invoice must not keep an active dunning ladder.
-        await dunning_state_repo.suppress_for_invoice(
-            invoice_id=invoice_id, reason="invoice_voided", now=now
-        )
+    void_billing_invoice = build_void_billing_invoice(
+        ledger=billing_ledger_repo, dunning=dunning_state_repo
+    )
 
     async def record_manual_payment(
         *,
@@ -1795,6 +1739,13 @@ def compose_admin(
     )
     # Identity / Settings
     academy_repo = MongoAcademyRepository(db)
+    send_autopay_notice = build_send_autopay_notice(
+        ledger=billing_ledger_repo,
+        email_port=_invoice_email_port,
+        academy_repo=academy_repo,
+        frontend_url=settings.frontend_url or "",
+    )
+
     get_academy_use_case = GetAcademyUseCase(academy_repo)
     update_academy_use_case = UpdateAcademyUseCase(academy_repo)
     get_academy_fees_use_case = GetAcademyFeesUseCase(academy_repo)
@@ -3063,12 +3014,23 @@ def compose_admin(
             ):
                 inv_id = str(credit.get("invoice_id") or "")
                 overpay_by_invoice[inv_id] += int(credit.get("amount_cents") or 0)
+        invoice_row_by_key: dict[str, dict[str, Any]] = {}
         for doc in invoice_docs:
-            invoice_keys.update(invoice_provider_keys(doc))
             doc["overpayment_credit_cents"] = overpay_by_invoice.get(
                 str(doc.get("invoice_id") or ""), 0
             )
-            invoice_rows.append(invoice_to_admin_payment_row(doc))
+            invoice_row = invoice_to_admin_payment_row(doc)
+            invoice_rows.append(invoice_row)
+            for key in invoice_provider_keys(doc):
+                invoice_keys.add(key)
+                invoice_row_by_key.setdefault(key, invoice_row)
+
+        # INVARIANT (PR #645, do not "simplify" away): the list is invoice-centric,
+        # so the INVOICE row must carry how/when the money arrived (paid_at, method,
+        # Stripe ids). settle_matching_rows does that and ignores non-money statuses.
+        def _settle_invoice_rows(keys: set[str], payment_doc: dict[str, Any]) -> bool:
+            return settle_matching_rows(invoice_row_by_key, keys, payment_doc) > 0
+
         invoice_student_ids = [
             str(row["student_id"])
             for row in invoice_rows
@@ -3128,11 +3090,42 @@ def compose_admin(
                         row[key] = raw.get(key)
         ledger_rows: list[dict[str, Any]] = []
         ledger_keys: set[str] = set()
-        async for doc in db["ledger_payments"].find(
-            {"academy_id": request_academy_id},
-            sort=[("created_at", -1)],
-            limit=fetch_cap,
+        # Money received first, then attempts: a status-agnostic window of the
+        # newest ledger docs can fill up with pending/failed attempts and push
+        # the payment that actually settled an invoice out of the fold.
+        ledger_docs: list[dict[str, Any]] = []
+        seen_ledger_ids: set[str] = set()
+        for status_filter in (
+            {"$in": sorted(SETTLED_STATUSES)},
+            {"$nin": sorted(SETTLED_STATUSES)},
         ):
+            async for doc in db["ledger_payments"].find(
+                {"academy_id": request_academy_id, "status": status_filter},
+                sort=[("created_at", -1)],
+                limit=fetch_cap,
+            ):
+                ledger_id = str(doc.get("payment_id") or doc.get("_id") or "")
+                if ledger_id in seen_ledger_ids:
+                    continue
+                seen_ledger_ids.add(ledger_id)
+                ledger_docs.append(doc)
+        # One ledger payment may settle several invoices (balance checkouts
+        # write one allocation per invoice); load ALL allocations in one query.
+        allocations_by_payment: dict[str, list[str]] = collections.defaultdict(list)
+        if ledger_docs:
+            async for allocation in db["payment_allocations"].find(
+                {
+                    "academy_id": request_academy_id,
+                    "payment_id": {"$in": [d.get("payment_id") for d in ledger_docs]},
+                },
+                {"payment_id": 1, "invoice_id": 1},
+            ):
+                allocation_invoice = str(allocation.get("invoice_id") or "")
+                if allocation_invoice:
+                    allocations_by_payment[str(allocation.get("payment_id") or "")].append(
+                        allocation_invoice
+                    )
+        for doc in ledger_docs:
             stripe_payment_intent_id = doc.get("stripe_payment_intent_id")
             stripe_invoice_id = doc.get("stripe_invoice_id")
             payment_keys = {
@@ -3144,22 +3137,19 @@ def compose_admin(
                 )
                 if value
             }
-            allocation = await db["payment_allocations"].find_one(
-                {
-                    "academy_id": request_academy_id,
-                    "payment_id": doc.get("payment_id"),
-                },
-                {"invoice_id": 1},
+            allocation_invoice_ids = allocations_by_payment.get(
+                str(doc.get("payment_id") or ""), []
             )
-            allocation_invoice_id = None
-            if allocation is not None:
-                allocation_invoice_id = str(allocation.get("invoice_id") or "")
-                if allocation_invoice_id:
-                    payment_keys.add(allocation_invoice_id)
-            if payment_keys & invoice_keys:
-                ledger_keys.update(payment_keys)
-                continue
+            payment_keys.update(allocation_invoice_ids)
+            allocation_invoice_id = allocation_invoice_ids[0] if allocation_invoice_ids else None
+            stripe_checkout_session_id = doc.get("stripe_checkout_session_id")
+            if stripe_checkout_session_id:
+                payment_keys.add(str(stripe_checkout_session_id))
             ledger_keys.update(payment_keys)
+            if payment_keys & invoice_keys:
+                # Settled an invoice: keep the invoice row, carry the facts over.
+                _settle_invoice_rows(payment_keys, doc)
+                continue
             ledger_rows.append(
                 {
                     "payment_id": str(doc.get("payment_id") or ""),
@@ -3173,7 +3163,11 @@ def compose_admin(
                     "refunded_cents": int(doc.get("refunded_cents") or 0),
                     "stripe_payment_intent_id": stripe_payment_intent_id,
                     "stripe_invoice_id": stripe_invoice_id,
-                    "payment_method": doc.get("payment_method"),
+                    "stripe_checkout_session_id": stripe_checkout_session_id,
+                    "stripe_linked": bool(
+                        stripe_payment_intent_id or stripe_invoice_id or stripe_checkout_session_id
+                    ),
+                    "payment_method": settlement_method(doc),
                     "created_at": doc["created_at"],
                     "paid_at": doc.get("paid_at"),
                 }
@@ -3210,16 +3204,28 @@ def compose_admin(
                     "created_at": doc["created_at"],
                 }
             )
-        deduped_legacy = [
-            row
-            for row in legacy
-            if str(row.get("stripe_payment_intent_id") or "") not in ledger_keys
-            and str(row.get("stripe_invoice_id") or "") not in ledger_keys
-            and str(row.get("invoice_id") or "") not in ledger_keys
-            and str(row.get("payment_id") or "") not in invoice_keys
-            and str(row.get("invoice_id") or "") not in invoice_keys
-            and str(row.get("invoice_number") or "") not in invoice_keys
-        ]
+        # Legacy `payments` projections: settle the invoice they paid; drop rows a
+        # ledger payment already represents (keep payment_id in the key set, PR #645).
+        deduped_legacy: list[dict[str, Any]] = []
+        for row in legacy:
+            legacy_keys = {
+                str(row.get(key) or "")
+                for key in (
+                    "payment_id",
+                    "invoice_id",
+                    "invoice_number",
+                    "stripe_payment_intent_id",
+                    "stripe_invoice_id",
+                    "stripe_checkout_session_id",
+                )
+                if row.get(key)
+            }
+            if legacy_keys & invoice_keys:
+                _settle_invoice_rows(legacy_keys, row)
+                continue
+            if legacy_keys & ledger_keys:
+                continue
+            deduped_legacy.append(row)
         combined = attempt_rows + invoice_rows + ledger_rows + deduped_legacy
         combined.sort(
             key=lambda r: (
@@ -3318,7 +3324,7 @@ def compose_admin(
                 "refunded_cents": int(doc.get("refunded_cents") or 0),
                 "currency": str(doc.get("currency") or "usd"),
                 "status": str(doc.get("status") or ""),
-                "payment_method": doc.get("payment_method"),
+                "payment_method": settlement_method(doc),
                 "paid_at": coerce_report_datetime(
                     doc.get("paid_at") or doc.get("payment_date") or doc.get("created_at")
                 ),
@@ -3370,7 +3376,7 @@ def compose_admin(
                     "parent_id": parent_id,
                     "last_paid_at": paid_at,
                     "amount_cents": int(doc.get("amount_cents") or 0),
-                    "payment_method": doc.get("payment_method"),
+                    "payment_method": settlement_method(doc),
                     "status": str(doc.get("status") or ""),
                 }
 
@@ -3999,23 +4005,15 @@ def compose_admin(
             .limit(500)
         )
         invoice_keys: set[str] = set()
-        # Issue #651: a family whose card is about to be auto-charged must not
-        # get a "pay now" reminder for the same invoice.
+        # Issue #651: autopay families get no "pay now" reminder for that invoice.
         invoice_docs = [doc async for doc in invoice_cursor]
-        autopay_enrollment_ids: set[str] = set()
-        enrollment_ids = [
-            str(doc.get("enrollment_id")) for doc in invoice_docs if doc.get("enrollment_id")
-        ]
-        if enrollment_ids:
-            async for billing_enrollment in db["student_billing_enrollments"].find(
-                {
-                    "academy_id": request_academy_id,
-                    "enrollment_id": {"$in": enrollment_ids},
-                    "autopay_enrollment_status": "active",
-                },
-                {"enrollment_id": 1},
-            ):
-                autopay_enrollment_ids.add(str(billing_enrollment.get("enrollment_id") or ""))
+        autopay_enrollment_ids = await autopay_active_enrollment_ids(
+            db,
+            academy_id=request_academy_id,
+            enrollment_ids=[
+                str(doc.get("enrollment_id")) for doc in invoice_docs if doc.get("enrollment_id")
+            ],
+        )
         for invoice in invoice_docs:
             invoice_keys.update(invoice_provider_keys(invoice))
             if str(invoice.get("enrollment_id") or "") in autopay_enrollment_ids:

@@ -67,6 +67,7 @@ export const queryKeys = {
     registrationDetail: (applicationId: string) =>
       ["admin", "registrations", applicationId] as const,
     payments: () => ["admin", "payments"] as const,
+    paymentFeed: (limit: number) => ["admin", "payments", "feed", limit] as const,
     invoiceDetail: (invoiceId: string) =>
       ["admin", "billing", "invoice", invoiceId] as const,
     payouts: () => ["admin", "finance", "payouts"] as const,

@@ -12,7 +12,9 @@ Production deployment is handled by one GitHub Actions workflow:
 
 ## Validation Jobs
 
-- **Backend** installs Python dependencies, runs `pip-audit`, compiles backend
+- **Backend** installs Python dependencies, runs `pip-audit` (via
+  `scripts/ci/dependency_audit.sh`: findings block, an unreachable advisory
+  registry only warns; `nightly-e2e.yml` re-runs both audits strictly), compiles backend
   code, checks v2 import-linter boundaries, and runs `backend/v2/tests` in
   parallel (`pytest -n auto`) with an 86% coverage floor over `v2`.
 - **Backend Lint** runs `ruff check v2`, `ruff format --check v2`, and mypy

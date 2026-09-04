@@ -210,58 +210,60 @@ export default function BillingSetupPage() {
         ) : rows.length === 0 ? (
           <div className="p-8 text-center text-sm text-slate-500">No families match this filter.</div>
         ) : (
-          <table className="w-full text-left text-sm">
-            <thead>
-              <tr className="border-b border-slate-200 text-xs uppercase text-slate-500">
-                <th className="px-4 py-3">Parent</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Card</th>
-                <th className="px-4 py-3">Autopay</th>
-                <th className="px-4 py-3">Outstanding</th>
-                <th className="px-4 py-3">Invited</th>
-                <th className="px-4 py-3">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <BillingSetupTableRow
-                  key={row.parent_id}
-                  row={row}
-                  onInvite={() => inviteMutation.mutate(row.parent_id)}
-                  onCharge={() => {
-                    if (!row.charge_invoice_id || row.charge_amount_cents <= 0) return;
-                    if (
-                      !window.confirm(
-                        `Charge up to ${formatCents(row.charge_amount_cents)} to invoice ${row.charge_invoice_id}? Any applicable ACH discount is applied before submission.`,
-                      )
-                    ) {
-                      return;
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 text-xs uppercase text-slate-500">
+                  <th className="px-4 py-3">Parent</th>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3">Card</th>
+                  <th className="px-4 py-3">Autopay</th>
+                  <th className="px-4 py-3">Outstanding</th>
+                  <th className="px-4 py-3">Invited</th>
+                  <th className="px-4 py-3">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <BillingSetupTableRow
+                    key={row.parent_id}
+                    row={row}
+                    onInvite={() => inviteMutation.mutate(row.parent_id)}
+                    onCharge={() => {
+                      if (!row.charge_invoice_id || row.charge_amount_cents <= 0) return;
+                      if (
+                        !window.confirm(
+                          `Charge up to ${formatCents(row.charge_amount_cents)} to invoice ${row.charge_invoice_id}? Any applicable ACH discount is applied before submission.`,
+                        )
+                      ) {
+                        return;
+                      }
+                      chargeMutation.mutate({
+                        parentId: row.parent_id,
+                        invoiceId: row.charge_invoice_id,
+                        amountCents: row.charge_amount_cents,
+                        requestId: crypto.randomUUID(),
+                      });
+                    }}
+                    onEnableAutopay={() =>
+                      autopayMutation.mutate({
+                        parentId: row.parent_id,
+                        requestId: crypto.randomUUID(),
+                      })
                     }
-                    chargeMutation.mutate({
-                      parentId: row.parent_id,
-                      invoiceId: row.charge_invoice_id,
-                      amountCents: row.charge_amount_cents,
-                      requestId: crypto.randomUUID(),
-                    });
-                  }}
-                  onEnableAutopay={() =>
-                    autopayMutation.mutate({
-                      parentId: row.parent_id,
-                      requestId: crypto.randomUUID(),
-                    })
-                  }
-                  isInviting={inviteMutation.isPending && inviteMutation.variables === row.parent_id}
-                  isCharging={
-                    chargeMutation.isPending && chargeMutation.variables?.parentId === row.parent_id
-                  }
-                  isEnablingAutopay={
-                    autopayMutation.isPending &&
-                    autopayMutation.variables?.parentId === row.parent_id
-                  }
-                />
-              ))}
-            </tbody>
-          </table>
+                    isInviting={inviteMutation.isPending && inviteMutation.variables === row.parent_id}
+                    isCharging={
+                      chargeMutation.isPending && chargeMutation.variables?.parentId === row.parent_id
+                    }
+                    isEnablingAutopay={
+                      autopayMutation.isPending &&
+                      autopayMutation.variables?.parentId === row.parent_id
+                    }
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
         {hasNextPage && (
           <div className="border-t border-rally-line p-4 text-center">

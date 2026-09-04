@@ -271,21 +271,23 @@ function CoachDigestTools() {
       </p>
 
       {entries.length > 0 && (
-        <table className="mt-3 w-full text-left text-sm" data-testid="coach-digest-log">
-          <thead>
-            <tr className="text-rally-ink/60">
-              <th className="py-1 pr-4 font-medium">Date</th>
-              <th className="py-1 pr-4 font-medium">Coach</th>
-              <th className="py-1 pr-4 font-medium">Kind</th>
-              <th className="py-1 font-medium">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {entries.map((entry) => (
-              <DigestLogRow key={entry.digest_id} entry={entry} />
-            ))}
-          </tbody>
-        </table>
+        <div className="overflow-x-auto">
+          <table className="mt-3 w-full text-left text-sm" data-testid="coach-digest-log">
+            <thead>
+              <tr className="text-rally-ink/60">
+                <th className="py-1 pr-4 font-medium">Date</th>
+                <th className="py-1 pr-4 font-medium">Coach</th>
+                <th className="py-1 pr-4 font-medium">Kind</th>
+                <th className="py-1 font-medium">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {entries.map((entry) => (
+                <DigestLogRow key={entry.digest_id} entry={entry} />
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

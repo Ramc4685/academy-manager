@@ -14,13 +14,15 @@ error when the port is missing, but nothing else stops the charge.
 
 from __future__ import annotations
 
-from datetime import datetime
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from typing import Any
 
 from backend.v2.contexts.billing.application.use_cases.apply_enrollment_lifecycle import (
     ApplyEnrollmentLifecycle,
     ApplyEnrollmentLifecycleCommand,
 )
+from backend.v2.contexts.billing.domain.ledger import void_invoice
 from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
     MongoBillingLedgerRepository,
 )
@@ -52,7 +54,7 @@ class EnrollmentBillingSyncAdapter:
         result = await self._use_case.execute(
             ApplyEnrollmentLifecycleCommand(
                 enrollment_id=enrollment_id,
-                transition=transition,  # type: ignore[arg-type]
+                transition=transition,
                 effective_at=effective_at,
                 reason=reason[:500],
                 actor_id=actor_id,
@@ -102,3 +104,40 @@ def compose_enrollment_billing_sync(
         academy_timezone=request_academy_timezone,
     )
     return EnrollmentBillingSyncAdapter(use_case)
+
+
+def build_void_billing_invoice(*, ledger: Any, dunning: Any) -> Callable[..., Awaitable[None]]:
+    """Admin void: refuse invoices with money on them, persist the reason and
+    stop the dunning ladder (issue #651)."""
+
+    async def void_billing_invoice(*, invoice_id: str, reason: str) -> None:
+        invoice = await ledger.get_invoice(invoice_id)
+        if invoice is None:
+            raise ValueError("invoice not found")
+        if (
+            invoice.status in {"partially_paid", "paid"}
+            or invoice.balance_due_cents != invoice.total_cents
+        ):
+            raise ValueError(
+                "cannot void invoice with recorded payments; issue refund or credit first"
+            )
+        now = datetime.now(UTC)
+        await ledger.save_invoice(void_invoice(invoice, reason=reason or "admin_void", now=now))
+        # A void invoice must not keep an active dunning ladder.
+        await dunning.suppress_for_invoice(invoice_id=invoice_id, reason="invoice_voided", now=now)
+
+    return void_billing_invoice
+
+
+def build_autopay_status_gateway(repo: MongoStudentBillingEnrollmentRepository) -> Any:
+    """Adapt the billing enrollment repo to the enrollment-context
+    ``EnrollmentAutopayStatusGateway`` port (``set_enrollment_status``)."""
+
+    class _Gateway:
+        async def set_enrollment_status(self, *, enrollment_id: str, status: str) -> bool:
+            return await repo.set_autopay_enrollment_status(
+                enrollment_id=enrollment_id,
+                status=status,  # type: ignore[arg-type]
+            )
+
+    return _Gateway()

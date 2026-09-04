@@ -121,7 +121,10 @@ jobs:
         # PYSEC-2026-1325: ecdsa's known side-channel timing issue has no fixed
         # release (0.19.2 is latest on PyPI); the maintainers won't patch it.
         # Re-evaluate if a fixed version ships.
-        run: pip-audit -r requirements.txt --ignore-vuln PYSEC-2026-1325
+        # Wrapped so an unreachable advisory database warns instead of blocking
+        # the deploy path; nightly-e2e.yml re-runs it strictly. Real findings
+        # still fail. See scripts/ci/dependency_audit.sh.
+        run: bash "$GITHUB_WORKSPACE/scripts/ci/dependency_audit.sh" pip-audit -r requirements.txt --ignore-vuln PYSEC-2026-1325
 
       - name: Compile backend
         working-directory: backend
@@ -217,7 +220,8 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Dependency vulnerability scan
-        run: pnpm audit --audit-level=high
+        # See the backend audit step: registry outage -> warning, findings -> fail.
+        run: bash "$GITHUB_WORKSPACE/scripts/ci/dependency_audit.sh" pnpm audit --audit-level=high
 
       - name: Typecheck
         run: pnpm typecheck

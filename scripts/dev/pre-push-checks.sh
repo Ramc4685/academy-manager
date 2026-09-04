@@ -210,10 +210,19 @@ if [ "$FRONTEND_CHANGED" = true ] || [ "$BROAD" = true ]; then
     # Capture the shard list up front and fail loudly if it is unavailable or
     # empty — `for project in $(e2e_projects)` ignored the exit code, so a
     # broken config path silently ran zero shards and passed the gate.
-    E2E_PROJECTS="$(e2e_shard_list)" || {
+    E2E_PROJECTS="$(e2e_gate_shard_list "" "$FULL")" || {
       fail "e2e shard list unavailable — refusing to skip the e2e gate"
       exit 1
     }
+    # Advisory shards (webkit) mirror CI, where they never block a merge:
+    # skipped here by default, included with --full or PRE_PUSH_E2E_ALL=1.
+    # Say so, so a skipped browser is never mistaken for a covered one.
+    if [ "$FULL" != "--full" ] && [ "${PRE_PUSH_E2E_ALL:-}" != "1" ]; then
+      SKIPPED_NIGHTLY="$(e2e_nightly_only_present | paste -sd ' ' -)"
+      if [ -n "$SKIPPED_NIGHTLY" ]; then
+        info "E2E nightly-only shard(s) skipped, as on CI PR checks: $SKIPPED_NIGHTLY (use --full or PRE_PUSH_E2E_ALL=1 to include)"
+      fi
+    fi
     # Pre-flight the e2e port (#522). CI=true forces reuseExistingServer=false,
     # so an existing listener makes every shard fail as a wall of Playwright
     # errors. The port is now derived per-worktree, so a collision usually
