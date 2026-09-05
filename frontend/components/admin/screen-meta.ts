@@ -113,7 +113,7 @@ export const SCREEN_META: Record<string, AdminScreenMeta> = {
   "/admin/users": { title: "Users", subtitle: "Coaches, parents, and admins", breadcrumbs: ["Admin", "Users"] },
   "/admin/registrations": { title: "Admissions", subtitle: "Registrations, waitlist, level-ups", breadcrumbs: ["Admin", "Admissions"] },
   "/admin/requests": { title: "Requests", subtitle: "Makeups, trials, absences, cancellations, pauses", breadcrumbs: ["Admin", "Requests"] },
-  "/admin/payments": { title: "Payments", subtitle: "Transactions and refunds", breadcrumbs: ["Admin", "Money", "Payments"] },
+  "/admin/payments": { title: "Payments", subtitle: "Who owes, who is charged, who paid", breadcrumbs: ["Admin", "Money", "Payments"] },
   "/admin/billing-health": { title: "Billing Health", subtitle: "Reconciliation, failed payments, webhook recovery", breadcrumbs: ["Admin", "Money", "Billing Health"] },
   "/admin/billing-setup": { title: "Billing Setup", subtitle: "Stripe registration status, invites, and charging", breadcrumbs: ["Admin", "Money", "Billing Setup"] },
   "/admin/expenses": { title: "Expenses", subtitle: "Categorised academy spend", breadcrumbs: ["Admin", "Money", "Expenses"] },
