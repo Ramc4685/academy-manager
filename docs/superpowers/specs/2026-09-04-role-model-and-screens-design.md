@@ -1,6 +1,6 @@
 # Role model and per-role screens — design
 
-**Date:** 2026-09-04 · **Status:** proposed, awaiting owner sign-off · **Builds on:** PR #647 (mobile shells)
+**Date:** 2026-09-04 · **Status:** approved by owner 2026-09-05 (all open decisions resolved as proposed) · **Builds on:** PR #647 (mobile shells)
 
 ## Where the app is today
 Roles: admin, coach, parent, student, owner. `owner` only means franchise scope
@@ -57,7 +57,7 @@ coach notes.
 4. Parent home kid-first — small.
 5. Admin pages as cards on phones (Sessions → Students → Registrations → Payments), each verified on the 10-device matrix — large, sliced.
 
-## Open decisions (proposed answers)
-- Admin may invite other admins? → owner only.
-- Assistants paid via payroll? → never; promote to coach instead.
-- Coach notes default private? → yes.
+## Decisions (owner, 2026-09-05)
+- Admin may NOT invite or grant admin/owner; owner only.
+- Assistants are never paid via payroll; promote to coach instead.
+- Coach notes default to private; explicit share-with-parent flag.
