@@ -24,7 +24,8 @@ export const ADMIN_USER_A: MockUser = {
   user_id: "user-admin-w5",
   email: "admin@example.com",
   academy_id: ACADEMY_A,
-  roles: ["admin"],
+  // Pre-split admin: migration 0165 grants owner to every existing admin.
+  roles: ["admin", "owner"],
 };
 
 export const COACH_USER_B: MockUser = {

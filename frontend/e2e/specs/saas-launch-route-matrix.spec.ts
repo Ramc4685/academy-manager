@@ -24,7 +24,8 @@ const ADMIN_ME = {
   user_id: "user-admin-wave12",
   email: "admin@blno-badminton.dev",
   academy_id: ACADEMY_A,
-  roles: ["admin" as const],
+  // Pre-split admin: migration 0165 grants owner to every existing admin.
+  roles: ["admin" as const, "owner" as const],
 };
 
 const COACH_ME = {
