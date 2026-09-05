@@ -8,7 +8,7 @@
 
 import type { Page, Route } from "@playwright/test";
 
-export type RoleName = "admin" | "coach" | "parent";
+export type RoleName = "admin" | "coach" | "parent" | "owner";
 
 export interface MockUser {
   user_id: string;
