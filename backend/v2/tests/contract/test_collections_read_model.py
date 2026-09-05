@@ -740,3 +740,78 @@ async def test_orphan_invoice_lands_in_unclassified_only_when_debug(db, acad) ->
     assert set(entry) == {"parent_id", "error"}
     assert entry["parent_id"] is None
     assert "inv-orphan" in entry["error"]
+
+
+@pytest.mark.asyncio
+async def test_worker_and_read_model_classify_seeded_invoices_identically(db, acad) -> None:
+    """The dunning worker and the ``autopay_scheduled`` bucket must agree.
+
+    Six invoices due today (2026-09-10) for distinct families, every parent
+    with a card and the academy's connected account ready. Only the three
+    with an ``active`` autopay enrollment may be picked up by the worker's
+    ``prepare_due_states`` — and exactly those must be the read model's
+    ``autopay_scheduled`` bucket.
+    """
+    from backend.v2.contexts.billing.infrastructure.mongo_dunning_state_repo import (
+        MongoDunningStateRepository,
+    )
+
+    await _seed_academy(db, acad)
+    await _seed_session(db, academy_id=acad)
+    await _seed_connect_ready(db, academy_id=acad)
+    due = date(2026, 9, 10)
+
+    seeds: list[tuple[str, str | None, dict[str, Any]]] = [
+        ("a1", "active", {}),
+        ("a2", "active", {}),
+        ("a3", "active", {}),
+        ("paused", "paused", {}),
+        ("noenr", None, {"enrollment_id": None}),
+        ("settled", "active", {"status": "partially_paid", "balance_due_cents": 0}),
+    ]
+    for tag, autopay_status, overrides in seeds:
+        parent_id, student_id, enrollment_id = f"p-{tag}", f"s-{tag}", f"e-{tag}"
+        await _seed_family(
+            db,
+            academy_id=acad,
+            parent_id=parent_id,
+            student_id=student_id,
+            enrollment_id=enrollment_id,
+            autopay_status=autopay_status,
+        )
+        await _seed_card(db, academy_id=acad, parent_id=parent_id)
+        invoice_kwargs: dict[str, Any] = {
+            "enrollment_id": enrollment_id,
+            "status": "open",
+            "balance_due_cents": 10_000,
+        }
+        invoice_kwargs.update(overrides)
+        await _seed_invoice(
+            db,
+            academy_id=acad,
+            invoice_id=f"inv-{tag}",
+            parent_id=parent_id,
+            student_id=student_id,
+            due_date=due,
+            **invoice_kwargs,
+        )
+
+    worker = MongoDunningStateRepository(db, academy_timezone=academy_timezone_lookup(db))
+    created = await worker.prepare_due_states(now=NOW, limit=100)
+    worker_ids = {
+        doc["invoice_id"]
+        async for doc in db["dunning_states"].find({"academy_id": acad}, {"invoice_id": 1})
+    }
+
+    view = await _read_model(db).build(PERIOD)
+    bucket_ids = {
+        inv["invoice_id"]
+        for family in _bucket(view, "autopay_scheduled")["families"]
+        for inv in family["invoices"]
+    }
+
+    expected = {"inv-a1", "inv-a2", "inv-a3"}
+    assert created == 3
+    assert worker_ids == expected
+    assert bucket_ids == expected
+    assert worker_ids == bucket_ids
