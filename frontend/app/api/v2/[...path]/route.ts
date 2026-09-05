@@ -1,5 +1,9 @@
 import type { NextRequest } from "next/server";
-import { buildProxyHeaders, buildProxyResponseHeaders } from "@/lib/api/proxy-headers";
+import {
+  REQUEST_ID_HEADER,
+  buildProxyHeaders,
+  buildProxyResponseHeaders,
+} from "@/lib/api/proxy-headers";
 import { resolveBffApiOrigin } from "@/lib/api/proxy-origin";
 
 const BFF_API_ORIGIN = resolveBffApiOrigin(process.env);
@@ -16,9 +20,10 @@ async function proxy(request: NextRequest, context: RouteContext): Promise<Respo
   target.search = request.nextUrl.search;
 
   const method = request.method.toUpperCase();
+  const headers = buildProxyHeaders(request.headers, request.nextUrl.protocol);
   const init: RequestInit = {
     method,
-    headers: buildProxyHeaders(request.headers, request.nextUrl.protocol),
+    headers,
     redirect: "manual",
   };
   if (method !== "GET" && method !== "HEAD") {
@@ -29,7 +34,7 @@ async function proxy(request: NextRequest, context: RouteContext): Promise<Respo
   return new Response(upstream.body, {
     status: upstream.status,
     statusText: upstream.statusText,
-    headers: buildProxyResponseHeaders(upstream.headers),
+    headers: buildProxyResponseHeaders(upstream.headers, headers.get(REQUEST_ID_HEADER)),
   });
 }
 

@@ -65,6 +65,28 @@ describe("describeMutationError", () => {
     expect(notice.title).toBe("Request timed out");
   });
 
+  it("appends the first 8 chars of the request id as a support reference", () => {
+    const err = makeApiError(500, "boom") as Error & { status: number; requestId?: string };
+    err.requestId = "0f3a9c2e-7b1d-4e55-9a10-abcdef012345";
+    const notice = describeMutationError(err);
+    expect(notice.title).toBe("Something went wrong");
+    expect(notice.description).toBe("boom Reference: 0f3a9c2e");
+  });
+
+  it("shows the reference even when there is no server message", () => {
+    const err = makeApiError(502, "Request failed") as Error & { status: number; requestId?: string };
+    err.requestId = "abcdefghijk";
+    const notice = describeMutationError(err);
+    expect(notice.description).toBe(
+      "The server hit an unexpected error. Please try again. Reference: abcdefgh"
+    );
+  });
+
+  it("omits the reference when no request id reached the client", () => {
+    const notice = describeMutationError(makeApiError(409, "Seat already taken"));
+    expect(notice.description).not.toMatch(/Reference:/);
+  });
+
   it("falls back to a generic description for opaque errors", () => {
     const notice = describeMutationError(new Error("Request failed"));
     expect(notice.title).toBe("Action failed");

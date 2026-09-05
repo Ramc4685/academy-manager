@@ -45,11 +45,22 @@ export interface ApiError extends Error {
   status: number;
   code?: string;
   details?: Record<string, unknown>;
+  /** Backend/BFF `X-Request-ID`, surfaced as a support reference (#observability). */
+  requestId?: string;
 }
 
-function makeError(status: number, body: unknown): ApiError {
+const REQUEST_ID_HEADER = "X-Request-ID";
+
+/** Read the echoed request id off a failed response; null when absent. */
+export function readRequestId(headers: Headers): string | null {
+  const value = headers.get(REQUEST_ID_HEADER)?.trim();
+  return value ? value : null;
+}
+
+function makeError(status: number, body: unknown, requestId?: string | null): ApiError {
   const err = new Error(typeof body === "string" ? body : "Request failed") as ApiError;
   err.status = status;
+  if (requestId) err.requestId = requestId;
   if (typeof body === "object" && body !== null && "error" in body) {
     const e = (body as { error: { code?: string; message?: string; details?: Record<string, unknown> } })
       .error;
@@ -151,7 +162,7 @@ export async function apiFetchBlob(
   if (!res.ok) {
     const contentType = res.headers.get("content-type") ?? "";
     const body = contentType.includes("application/json") ? await res.json() : await res.text();
-    throw makeError(res.status, body);
+    throw makeError(res.status, body, readRequestId(res.headers));
   }
   return res.blob();
 }
@@ -167,6 +178,6 @@ async function parseResponse<T>(res: Response): Promise<T> {
   if (!isEmpty) {
     body = contentType.includes("application/json") ? await res.json() : await res.text();
   }
-  if (!res.ok) throw makeError(res.status, body);
+  if (!res.ok) throw makeError(res.status, body, readRequestId(res.headers));
   return body as T;
 }
