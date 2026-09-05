@@ -29,13 +29,23 @@ Attention-signal design — the subject line must stay actionable:
 
 ``record_job_run`` is the one write: the monthly invoice generator stores its
 totals under ``ops_job_runs`` so the digest can report them even though the
-generator ran on a different tick (and possibly a different machine).
+generator ran on a different tick (and possibly a different machine). Every
+other scheduled job records a heartbeat-only run through the same helper (see
+``_run_leased_job`` in ``main.py``).
+
+Dead-man switch: ``JOB_STALE_AFTER`` is the one table of how long each job may
+go without a heartbeat. A job past its window — or with no heartbeat at all —
+is a stale job, listed in the digest and counted as an attention item, because
+a scheduler job that silently stops firing produces no error for the Sentry
+listener to catch. ``/api/v2/healthz`` reads the same table through
+:func:`stale_jobs` but only reports it (rule 1 in ``health.py``).
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from html import escape
@@ -63,6 +73,60 @@ DIGEST_SEND_COLLECTIONS = ("coach_digest_sends", "parent_digest_sends")
 # ``test_ops_alerts.py::test_digest_attempt_ceiling_matches_the_domain``.
 DIGEST_ATTEMPT_CEILING = 3
 
+# Dead-man thresholds: the longest a job may go without a heartbeat before it
+# is reported stale. Each is the job's own period (see the add_job calls in
+# main.py) plus slack for a slow run, a missed tick, or a deploy restart —
+# roughly 5x for the fast interval jobs, +2h for the daily crons. Keyed by
+# APScheduler job id; ``test_scheduler_job_tables_cover_every_registered_job``
+# pins it to the registered jobs.
+JOB_STALE_AFTER: dict[str, timedelta] = {
+    "process_stripe_webhook_events": timedelta(minutes=5),
+    "reconcile_stripe_payment_intents": timedelta(minutes=30),
+    "process_dunning_retries": timedelta(hours=3),
+    "generate_monthly_invoices": timedelta(hours=26),
+    "send_coach_daily_digests": timedelta(hours=3),
+    "send_parent_daily_digests": timedelta(hours=3),
+    "process_scheduled_resume_actions": timedelta(hours=26),
+    "expire_makeup_requests": timedelta(hours=26),
+    "send_ops_digest": timedelta(hours=26),
+}
+
+
+@dataclass(frozen=True)
+class StaleJob:
+    """A scheduled job whose last heartbeat is older than its threshold."""
+
+    job_id: str
+    expected_within: timedelta
+    last_tick_at: datetime | None
+    #: ``now - last_tick_at``; None when the job never recorded a heartbeat.
+    age: timedelta | None
+
+
+def stale_jobs(last_ticks: Mapping[str, datetime | None], now: datetime) -> list[StaleJob]:
+    """Every job in ``JOB_STALE_AFTER`` whose heartbeat is missing or too old.
+
+    ``last_ticks`` maps job id → ``last_tick_at`` (as stored in
+    ``ops_job_runs``); jobs absent from the mapping are stale. A job with no
+    heartbeat at all is the exact case the switch exists for — a job that was
+    registered but never fired — so it is not given the benefit of the doubt.
+    Naive stamps are read as UTC, the way Mongo hands them back.
+
+    Ordered as the table is, so the digest lists them in a stable order.
+    """
+    stale: list[StaleJob] = []
+    for job_id, threshold in JOB_STALE_AFTER.items():
+        tick = last_ticks.get(job_id)
+        if not isinstance(tick, datetime):
+            stale.append(StaleJob(job_id, threshold, None, None))
+            continue
+        if tick.tzinfo is None:
+            tick = tick.replace(tzinfo=UTC)
+        age = now - tick
+        if age > threshold:
+            stale.append(StaleJob(job_id, threshold, tick, age))
+    return stale
+
 
 @dataclass(frozen=True)
 class OpsDigestSnapshot:
@@ -81,7 +145,13 @@ class OpsDigestSnapshot:
     digest_sends_failed_exhausted: int = 0
     last_invoice_run: dict[str, Any] | None = None
     last_invoice_tick_at: datetime | None = None
+    #: Last heartbeat per scheduled job, straight from ``ops_job_runs``.
+    job_ticks: dict[str, datetime | None] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
+
+    @property
+    def stale_jobs(self) -> list[StaleJob]:
+        return stale_jobs(self.job_ticks, self.generated_at)
 
     @property
     def has_attention_items(self) -> bool:
@@ -92,6 +162,7 @@ class OpsDigestSnapshot:
             or self.dead_letter_recent
             or self.dunning_terminals_recent
             or self.digest_sends_failed_exhausted
+            or self.stale_jobs
             or self.errors
         )
 
@@ -237,6 +308,7 @@ async def collect_ops_digest(
         ("dunning_terminals", _dunning_terminal_count(db, since)),
         ("digest_sends", _digest_send_failure_counts(db, since)),
         ("last_invoice_run", _last_invoice_run(db)),
+        ("job_ticks", _job_ticks(db)),
     ]
     results = await asyncio.gather(*(coro for _, coro in probes), return_exceptions=True)
 
@@ -244,6 +316,7 @@ async def collect_ops_digest(
     errors: list[str] = []
     last_invoice_run: dict[str, Any] | None = None
     last_invoice_tick_at: datetime | None = None
+    job_ticks: dict[str, datetime | None] = {}
     for (label, _), result in zip(probes, results, strict=True):
         if isinstance(result, BaseException):
             errors.append(f"{label}: {result}")
@@ -252,6 +325,9 @@ async def collect_ops_digest(
             last_invoice_run = result.get("run") if result else None
             last_invoice_tick_at = result.get("last_tick_at") if result else None
             continue
+        if label == "job_ticks":
+            job_ticks = result
+            continue
         values.update(result)
 
     return OpsDigestSnapshot(
@@ -259,6 +335,7 @@ async def collect_ops_digest(
         lookback_hours=int(lookback.total_seconds() // 3600),
         last_invoice_run=last_invoice_run,
         last_invoice_tick_at=last_invoice_tick_at,
+        job_ticks=job_ticks,
         errors=errors,
         **values,
     )
@@ -275,6 +352,17 @@ async def _last_invoice_run(db: AsyncIOMotorDatabase[Any]) -> dict[str, Any]:
             "totals": dict(doc.get("totals") or {}),
         }
     return {"run": run, "last_tick_at": doc.get("last_tick_at")}
+
+
+async def _job_ticks(db: AsyncIOMotorDatabase[Any]) -> dict[str, datetime | None]:
+    """``last_tick_at`` per job id — the whole ``ops_job_runs`` collection."""
+    cursor = db[JOB_RUNS_COLLECTION].find({}, {"last_tick_at": 1})
+    ticks: dict[str, datetime | None] = {}
+    async for doc in cursor:
+        name = doc.get("_id")
+        if isinstance(name, str):
+            ticks[name] = doc.get("last_tick_at")
+    return ticks
 
 
 def render_ops_digest(snapshot: OpsDigestSnapshot) -> tuple[str, str]:
@@ -321,6 +409,7 @@ def render_ops_digest(snapshot: OpsDigestSnapshot) -> tuple[str, str]:
         "<th align='left'>Window</th></tr>",
         row_html,
         "</table>",
+        _render_stale_jobs(snapshot),
         _render_invoice_run(snapshot),
     ]
     if snapshot.errors:
@@ -329,6 +418,37 @@ def render_ops_digest(snapshot: OpsDigestSnapshot) -> tuple[str, str]:
     if not snapshot.has_attention_items:
         parts.append("<p>Nothing new needs attention in the last 24 hours.</p>")
     return subject, "".join(parts)
+
+
+def _render_stale_jobs(snapshot: OpsDigestSnapshot) -> str:
+    """The dead-man section: jobs that stopped ticking, or never started.
+
+    Listed by name with the window they were expected inside and the last
+    heartbeat, so the reader can tell "never ran since the deploy" from
+    "ran yesterday and then stopped".
+    """
+    stale = snapshot.stale_jobs
+    if not stale:
+        return (
+            f"<h3>Scheduled jobs</h3><p>All {len(JOB_STALE_AFTER)} scheduled jobs "
+            "reported a heartbeat within their expected window.</p>"
+        )
+    items = "".join(
+        f"<li><strong>{escape(job.job_id)}</strong> — expected within "
+        f"{escape(_window(job.expected_within))}; last heartbeat "
+        f"{escape(_stamp(job.last_tick_at)) if job.last_tick_at else 'never recorded'}"
+        f"{f' ({escape(_window(job.age))} ago)' if job.age is not None else ''}</li>"
+        for job in stale
+    )
+    return f"<h3>Scheduled jobs NOT ticking ({len(stale)})</h3><ul>{items}</ul>"
+
+
+def _window(delta: timedelta) -> str:
+    minutes = int(delta.total_seconds() // 60)
+    if minutes < 60:
+        return f"{minutes}m"
+    hours, rem = divmod(minutes, 60)
+    return f"{hours}h" if not rem else f"{hours}h{rem:02d}m"
 
 
 def _render_invoice_run(snapshot: OpsDigestSnapshot) -> str:

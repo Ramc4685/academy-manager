@@ -17,10 +17,12 @@ from backend.v2.shared.observability import ops_alerts
 from backend.v2.shared.observability.ops_digest import (
     INVOICE_GENERATION_JOB,
     JOB_RUNS_COLLECTION,
+    JOB_STALE_AFTER,
     OpsDigestSnapshot,
     collect_ops_digest,
     record_job_run,
     render_ops_digest,
+    stale_jobs,
 )
 
 
@@ -219,6 +221,19 @@ class _FakeCollection:
             raise RuntimeError("collection unreadable")
         return next((doc for doc in self.docs if _matches(doc, query)), None)
 
+    def find(self, query: dict[str, Any], _projection: dict[str, Any] | None = None) -> Any:
+        docs = self.docs
+        fail = self.fail
+
+        async def _iter() -> Any:
+            if fail:
+                raise RuntimeError("collection unreadable")
+            for doc in docs:
+                if _matches(doc, query):
+                    yield doc
+
+        return _iter()
+
     async def update_one(
         self, query: dict[str, Any], update: dict[str, Any], upsert: bool = False
     ) -> None:
@@ -258,6 +273,8 @@ class _FakeDb:
 NOW = datetime(2026, 8, 27, 7, 0, tzinfo=UTC)
 RECENT = NOW - timedelta(hours=2)
 OLD = NOW - timedelta(days=5)
+# Every scheduled job ticked a minute ago: inside even the tightest threshold.
+FRESH_TICKS = {job_id: NOW - timedelta(minutes=1) for job_id in JOB_STALE_AFTER}
 
 # What the single stripe_webhook_events aggregation returns: 5 quarantined
 # all-time of which 1 arrived in the window, and 4 failed of which 1 is past due.
@@ -287,7 +304,12 @@ def _db(**overrides: _FakeCollection) -> _FakeDb:
                     "recorded_at": RECENT,
                     "last_tick_at": RECENT,
                     "totals": {"created": 12, "skipped_existing": 3, "period": "2026-08"},
-                }
+                },
+                *(
+                    {"_id": job_id, "last_tick_at": tick}
+                    for job_id, tick in FRESH_TICKS.items()
+                    if job_id != INVOICE_GENERATION_JOB
+                ),
             ]
         ),
     }
@@ -465,7 +487,9 @@ def test_render_stamps_the_date_it_is_given_not_utc() -> None:
 
 def test_render_all_clear_when_nothing_needs_attention() -> None:
     subject, body = render_ops_digest(
-        OpsDigestSnapshot(generated_at=NOW, lookback_hours=24, dead_letter_total=7)
+        OpsDigestSnapshot(
+            generated_at=NOW, lookback_hours=24, dead_letter_total=7, job_ticks=FRESH_TICKS
+        )
     )
 
     # A non-zero historical dead-letter total is not itself an alert; only new
@@ -473,6 +497,7 @@ def test_render_all_clear_when_nothing_needs_attention() -> None:
     assert subject == "Ops digest 2026-08-27 — all clear"
     assert "Nothing new needs attention" in body
     assert "No recorded run." in body
+    assert f"All {len(JOB_STALE_AFTER)} scheduled jobs reported a heartbeat" in body
 
 
 def test_render_escapes_collection_errors() -> None:
@@ -616,3 +641,238 @@ async def test_unreachable_recipients_do_not_pin_the_attention_flag() -> None:
     assert snapshot.digest_sends_failed == 1
     assert snapshot.digest_sends_failed_exhausted == 0
     assert not snapshot.has_attention_items
+
+
+# ---------------------------------------------------------------------------
+# Dead-man switch: stale scheduled jobs
+# ---------------------------------------------------------------------------
+
+
+def test_fresh_jobs_are_not_stale() -> None:
+    assert stale_jobs(FRESH_TICKS, NOW) == []
+
+
+def test_a_job_just_inside_its_threshold_is_not_stale_but_past_it_is() -> None:
+    ticks = dict(FRESH_TICKS)
+    ticks["process_stripe_webhook_events"] = NOW - JOB_STALE_AFTER["process_stripe_webhook_events"]
+    assert stale_jobs(ticks, NOW) == []
+
+    ticks["process_stripe_webhook_events"] -= timedelta(seconds=1)
+    (stale,) = stale_jobs(ticks, NOW)
+    assert stale.job_id == "process_stripe_webhook_events"
+    assert stale.expected_within == timedelta(minutes=5)
+    assert stale.last_tick_at == ticks["process_stripe_webhook_events"]
+    assert stale.age == timedelta(minutes=5, seconds=1)
+
+
+def test_each_job_uses_its_own_threshold() -> None:
+    """A 2h-old tick is stale for the 60s webhook drain and fine for a daily cron."""
+    ticks = {job_id: NOW - timedelta(hours=2) for job_id in JOB_STALE_AFTER}
+
+    stale_ids = {job.job_id for job in stale_jobs(ticks, NOW)}
+
+    assert stale_ids == {"process_stripe_webhook_events", "reconcile_stripe_payment_intents"}
+
+
+def test_a_job_with_no_heartbeat_is_stale() -> None:
+    """The job that never fired is the exact case the switch exists for."""
+    ticks = dict(FRESH_TICKS)
+    del ticks["send_ops_digest"]
+
+    (stale,) = stale_jobs(ticks, NOW)
+
+    assert stale.job_id == "send_ops_digest"
+    assert stale.last_tick_at is None
+    assert stale.age is None
+
+
+def test_naive_mongo_ticks_are_read_as_utc() -> None:
+    ticks = dict(FRESH_TICKS)
+    ticks["send_ops_digest"] = (NOW - timedelta(minutes=1)).replace(tzinfo=None)
+    assert stale_jobs(ticks, NOW) == []
+
+
+def test_stale_jobs_are_listed_in_table_order() -> None:
+    assert [job.job_id for job in stale_jobs({}, NOW)] == list(JOB_STALE_AFTER)
+
+
+def test_a_stale_job_alone_raises_the_attention_flag() -> None:
+    ticks = dict(FRESH_TICKS)
+    ticks["generate_monthly_invoices"] = NOW - timedelta(hours=27)
+    snapshot = OpsDigestSnapshot(generated_at=NOW, lookback_hours=24, job_ticks=ticks)
+
+    assert snapshot.has_attention_items is True
+
+    subject, body = render_ops_digest(snapshot)
+    assert subject == "Ops digest 2026-08-27 — attention needed"
+    assert "Scheduled jobs NOT ticking (1)" in body
+    assert "<strong>generate_monthly_invoices</strong>" in body
+    assert "expected within 26h" in body
+    assert "2026-08-26T04:00:00+00:00" in body
+    assert "(27h ago)" in body
+    assert "Nothing new needs attention" not in body
+
+
+def test_a_never_recorded_job_is_rendered_as_such() -> None:
+    ticks = dict(FRESH_TICKS)
+    del ticks["expire_makeup_requests"]
+
+    _subject, body = render_ops_digest(
+        OpsDigestSnapshot(generated_at=NOW, lookback_hours=24, job_ticks=ticks)
+    )
+
+    assert "<strong>expire_makeup_requests</strong>" in body
+    assert "last heartbeat never recorded" in body
+
+
+@pytest.mark.asyncio
+async def test_collect_reads_every_job_heartbeat() -> None:
+    snapshot = await collect_ops_digest(_db(), now=NOW)  # type: ignore[arg-type]
+
+    assert snapshot.errors == []
+    assert set(snapshot.job_ticks) == set(JOB_STALE_AFTER)
+    assert snapshot.job_ticks[INVOICE_GENERATION_JOB] == RECENT
+    assert snapshot.stale_jobs == []
+
+
+@pytest.mark.asyncio
+async def test_collect_flags_a_job_that_stopped_ticking() -> None:
+    docs = [{"_id": job_id, "last_tick_at": tick} for job_id, tick in FRESH_TICKS.items()]
+    docs = [doc for doc in docs if doc["_id"] != "process_dunning_retries"]
+    docs.append({"_id": "process_dunning_retries", "last_tick_at": NOW - timedelta(hours=4)})
+
+    snapshot = await collect_ops_digest(  # type: ignore[arg-type]
+        _db(**{JOB_RUNS_COLLECTION: _FakeCollection(docs)}), now=NOW
+    )
+
+    assert [job.job_id for job in snapshot.stale_jobs] == ["process_dunning_retries"]
+    assert snapshot.has_attention_items is True
+
+
+# ---------------------------------------------------------------------------
+# Sentry Crons check-ins (opt-in per job)
+# ---------------------------------------------------------------------------
+
+
+class _CronsSpy:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.calls: list[dict[str, Any]] = []
+        self.fail = fail
+
+    def capture_checkin(self, **kwargs: Any) -> str:
+        if self.fail:
+            raise RuntimeError("transport down")
+        self.calls.append(kwargs)
+        return kwargs.get("check_in_id") or "chk-1"
+
+
+class _CronSentry:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.crons = _CronsSpy(fail=fail)
+
+
+class _CronSettings:
+    def __init__(self, jobs: tuple[str, ...] = ("generate_monthly_invoices",)) -> None:
+        self.sentry_cron_jobs = jobs
+        self.scheduler_tz = "America/Chicago"
+
+
+SCHEDULE = {"schedule": {"type": "crontab", "value": "0 3 * * *"}, "checkin_margin": 60}
+
+
+@pytest.mark.asyncio
+async def test_cron_checkin_is_a_no_op_without_sentry(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ops_alerts, "_active_sentry", lambda: None)
+    ran = False
+
+    async with ops_alerts.cron_checkin(
+        "generate_monthly_invoices", schedule=SCHEDULE, settings=_CronSettings()
+    ):
+        ran = True
+
+    assert ran
+
+
+@pytest.mark.asyncio
+async def test_cron_checkin_is_a_no_op_for_jobs_outside_the_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentry = _CronSentry()
+    monkeypatch.setattr(ops_alerts, "_active_sentry", lambda: sentry)
+
+    async with ops_alerts.cron_checkin(
+        "send_ops_digest", schedule=SCHEDULE, settings=_CronSettings()
+    ):
+        pass
+
+    assert sentry.crons.calls == []
+
+
+@pytest.mark.asyncio
+async def test_cron_checkin_records_in_progress_then_ok(monkeypatch: pytest.MonkeyPatch) -> None:
+    sentry = _CronSentry()
+    monkeypatch.setattr(ops_alerts, "_active_sentry", lambda: sentry)
+
+    async with ops_alerts.cron_checkin(
+        "generate_monthly_invoices", schedule=SCHEDULE, settings=_CronSettings()
+    ):
+        assert [call["status"] for call in sentry.crons.calls] == ["in_progress"]
+
+    start, done = sentry.crons.calls
+    assert start["monitor_slug"] == "generate_monthly_invoices"
+    assert start["check_in_id"] is None
+    assert start["monitor_config"] == {**SCHEDULE, "timezone": "America/Chicago"}
+    assert done["status"] == "ok"
+    assert done["check_in_id"] == "chk-1"
+    assert done["monitor_slug"] == "generate_monthly_invoices"
+    assert done["duration"] >= 0
+    assert done["monitor_config"] == start["monitor_config"]
+
+
+@pytest.mark.asyncio
+async def test_cron_checkin_records_error_and_re_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    sentry = _CronSentry()
+    monkeypatch.setattr(ops_alerts, "_active_sentry", lambda: sentry)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        async with ops_alerts.cron_checkin(
+            "generate_monthly_invoices", schedule=SCHEDULE, settings=_CronSettings()
+        ):
+            raise RuntimeError("boom")
+
+    assert [call["status"] for call in sentry.crons.calls] == ["in_progress", "error"]
+    assert sentry.crons.calls[1]["check_in_id"] == "chk-1"
+
+
+@pytest.mark.asyncio
+async def test_cron_checkin_failure_never_reaches_the_job(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The switch must not be able to break the job it watches."""
+    monkeypatch.setattr(ops_alerts, "_active_sentry", lambda: _CronSentry(fail=True))
+    ran = False
+
+    with caplog.at_level(logging.WARNING, logger="backend.v2.shared.observability.ops_alerts"):
+        async with ops_alerts.cron_checkin(
+            "generate_monthly_invoices", schedule=SCHEDULE, settings=_CronSettings()
+        ):
+            ran = True
+
+    assert ran
+    assert "sentry_cron_checkin_failed" in caplog.text
+
+
+def test_sentry_cron_jobs_setting_parses_a_comma_separated_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.v2.shared.config.settings import Settings
+
+    monkeypatch.delenv("V2_SENTRY_CRON_JOBS", raising=False)
+    monkeypatch.delenv("SENTRY_CRON_JOBS", raising=False)
+    assert Settings().sentry_cron_jobs == ("generate_monthly_invoices",)
+
+    monkeypatch.setenv("SENTRY_CRON_JOBS", "generate_monthly_invoices, send_ops_digest,")
+    assert Settings().sentry_cron_jobs == ("generate_monthly_invoices", "send_ops_digest")
+
+    monkeypatch.setenv("V2_SENTRY_CRON_JOBS", "")
+    assert Settings().sentry_cron_jobs == ()
