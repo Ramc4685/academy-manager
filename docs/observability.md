@@ -19,7 +19,7 @@ Honeycomb integrations that were never built (see
 | Job heartbeats | `observability/ops_digest.py` `record_job_run` | Every leased scheduler job writes `last_tick_at` and totals to `ops_job_runs`. Surfaced on healthz; nothing external consumes them yet. |
 | Daily ops digest | `ops_digest.py`, `main.py` (07:00 scheduler TZ) | Emails the owner quarantined Stripe webhooks, dead-letter events, dunning terminals, failed digest sends, last invoice run. **Skipped until `OPS_ALERT_EMAIL` is set.** |
 | Email bounces / complaints | `interfaces/email_webhook_routes.py` | Resend webhook ingestion feeding the suppression list. **404s until `RESEND_WEBHOOK_SECRET` is set and the webhook is created in Resend.** |
-| Forensic stores | `event_audit` (90-day TTL), `dead_letter_events`, `stripe_webhook_events`, platform audit log | Pull-only. Visible through the admin billing-health page. |
+| Forensic stores | `event_audit` (400-day TTL since migration 0166; was 90 days), `dead_letter_events`, `stripe_webhook_events`, platform audit log | Pull-only. Visible through the admin billing-health page. |
 | Frontend | `app/error.tsx`, `app/global-error.tsx`, `lib/query/mutation-errors.ts` | `console.error` and a toast only. `lib/pwa/vitals.ts` posts Web Vitals to `window.posthog` if present; PostHog is not installed, so vitals go nowhere. Cloudflare Workers Logs are enabled in `wrangler.jsonc` (free plan: 3-day retention). |
 | Tracing | `observability/tracing.py` | Permanent no-op: the OpenTelemetry packages are not installed. Deliberate at this scale. |
 
