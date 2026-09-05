@@ -87,7 +87,9 @@ class AdminCollectionsPaid(_View):
 
 class AdminCollectionsFamily(_View):
     parent_id: str
-    parent_name: str
+    # Nullable on purpose (spec §6, frontend ``parent_name: string | null``):
+    # a parent with no ``users`` doc must not fail the whole response.
+    parent_name: str | None = None
     parent_email: str | None = None
     students: list[AdminCollectionsStudent] = []
     invoices: list[AdminCollectionsInvoice] = []

@@ -185,3 +185,32 @@ def test_debug_flag_reaches_the_reader_and_unclassified_is_returned(
     assert resp.status_code == 200, resp.text
     assert reader.calls == [{"period": "2026-09", "debug": True}]
     assert resp.json()["unclassified"] == [{"parent_id": None, "error": "orphan inv-x"}]
+
+
+def test_family_with_no_parent_name_still_renders(
+    admin: TestClient, reader: FakeCollectionsReader
+) -> None:
+    """Spec §6: an orphaned parent (no ``users`` doc) must not 500 the page.
+
+    The read model emits ``parent_name=None`` when the parent has no
+    resolvable user record; the view must accept it so one bad family
+    does not take down the whole response. Mirrors the frontend type
+    ``parent_name: string | null``.
+    """
+    orphan_family = {**_FAMILY, "parent_id": "p-orphan", "parent_name": None, "parent_email": None}
+
+    async def build(period: str | None = None, *, debug: bool = False) -> dict[str, Any]:
+        reader.calls.append({"period": period, "debug": debug})
+        view = _view(period or "2026-09")
+        view["buckets"][0]["families"] = [orphan_family]
+        return view
+
+    reader.build = build  # type: ignore[method-assign]
+
+    resp = admin.get("/api/v2/admin/payments/collections?period=2026-09")
+
+    assert resp.status_code == 200, resp.text
+    family = resp.json()["buckets"][0]["families"][0]
+    assert family["parent_id"] == "p-orphan"
+    assert family["parent_name"] is None
+    assert family["parent_email"] is None

@@ -24,6 +24,7 @@ from backend.v2.contexts.billing.infrastructure.mongo_connected_account_repo imp
 from backend.v2.contexts.billing.infrastructure.mongo_parent_billing_customer_repo import (
     MongoParentBillingCustomerRepository,
 )
+from backend.v2.interfaces.admin.collections_views import AdminCollectionsView
 from backend.v2.shared.time.academy_timezone import academy_timezone_lookup
 
 # 2026-09-10 15:00Z is 10:00 America/Chicago → local date 2026-09-10, period 2026-09.
@@ -815,3 +816,50 @@ async def test_worker_and_read_model_classify_seeded_invoices_identically(db, ac
     assert worker_ids == expected
     assert bucket_ids == expected
     assert worker_ids == bucket_ids
+
+
+@pytest.mark.asyncio
+async def test_parent_without_users_doc_renders_with_null_name(db, acad) -> None:
+    """Spec §6: a family whose parent has no ``users`` doc still renders.
+
+    The read model emits ``parent_name=None`` and the response view must
+    accept that shape, otherwise one orphaned parent record turns the whole
+    ``GET /admin/payments/collections`` response into a 500.
+    """
+    await _seed_academy(db, acad)
+    await _seed_connect_ready(db, academy_id=acad)
+    # Same shape as ``_seed_family`` minus the ``users`` doc.
+    await db["students"].insert_one(
+        {"academy_id": acad, "student_id": "s-orphan", "parent_id": "p-orphan", "full_name": "Kid"}
+    )
+    await db["enrollments"].insert_one(
+        {
+            "academy_id": acad,
+            "enrollment_id": "e-orphan",
+            "student_id": "s-orphan",
+            "session_id": "sess-1",
+            "status": "active",
+        }
+    )
+    await _seed_invoice(
+        db,
+        academy_id=acad,
+        invoice_id="inv-orphan",
+        parent_id="p-orphan",
+        student_id="s-orphan",
+        enrollment_id="e-orphan",
+        due_date=date(2026, 9, 20),
+    )
+
+    view = await _read_model(db).build(PERIOD, debug=True)
+
+    assert view["unclassified"] == []
+    families = [f for b in view["buckets"] for f in b["families"]]
+    assert [f["parent_id"] for f in families] == ["p-orphan"]
+    assert families[0]["parent_name"] is None
+    assert families[0]["parent_email"] is None
+
+    rendered = AdminCollectionsView.model_validate(view)
+    family = next(f for b in rendered.buckets for f in b.families)
+    assert family.parent_id == "p-orphan"
+    assert family.parent_name is None
