@@ -185,7 +185,12 @@ VALIDATORS: dict[str, dict[str, Any]] = {
             "effective_at": {"bsonType": "date"},
             "occurred_at": {"bsonType": "date"},
             "billing_policy": {"bsonType": OPT_STRING},
-            "billing_result": {"bsonType": OPT_OBJECT},
+            # The domain model (`EnrollmentLifecycleEvent.billing_result: str | None`)
+            # and every writer emit a short string ("voided=0,autopay=disabled",
+            # "future_billing_stopped", "recorded"). OPT_OBJECT here made every
+            # admin remove/withdraw/pause 500 in prod once the validator was
+            # applied (#657). Migration 0165 re-applies this corrected schema.
+            "billing_result": {"bsonType": ["object", "string", "null"]},
             "credit_id": {"bsonType": OPT_STRING},
             "refund_id": {"bsonType": OPT_STRING},
             "metadata": {"bsonType": OPT_OBJECT},
