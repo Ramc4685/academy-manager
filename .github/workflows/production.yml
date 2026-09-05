@@ -731,11 +731,11 @@ jobs:
       github.ref == 'refs/heads/main' &&
       github.event_name != 'pull_request'
     env:
-      # Flip to "true" once the courtmastr-frontend Sentry project exists and
-      # the NEXT_PUBLIC_SENTRY_DSN repo variable is set. The Worker build
+      # The courtmastr-frontend Sentry project and the NEXT_PUBLIC_SENTRY_DSN
+      # repo variable exist (2026-09-05); set to "false" to pause. The Worker build
       # already stamps NEXT_PUBLIC_SENTRY_RELEASE=courtmastr-frontend@<sha>
       # (workflow-level env), which is the name the browser SDK reports.
-      ENABLE_FRONTEND_SENTRY_RELEASE: "false"
+      ENABLE_FRONTEND_SENTRY_RELEASE: "true"
     steps:
       - name: Check out deployed revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -773,9 +773,8 @@ jobs:
           release: courtmastr-fastapi@${{ github.sha }}
           set_commits: auto
 
-      # Frontend mirror. The courtmastr-frontend Sentry project does not exist
-      # yet (the browser SDK is DSN-gated), so this stays a no-op until the
-      # job-level ENABLE_FRONTEND_SENTRY_RELEASE is flipped to "true". The
+      # Frontend mirror for the courtmastr-frontend Sentry project; a no-op
+      # while the job-level ENABLE_FRONTEND_SENTRY_RELEASE is "false". The
       # Worker build already receives NEXT_PUBLIC_SENTRY_RELEASE with the same
       # name; keep the two in step or events will not join their release.
       - name: Create frontend Sentry release

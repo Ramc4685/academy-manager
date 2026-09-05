@@ -130,9 +130,11 @@ Still not switched on (see `scripts/ops/`):
   recommended, Better Stack as the alternative).
 - No Fly Grafana alert rules for 5xx rate, memory or restarts:
   `scripts/ops/uptime.md`, second half.
-- Only one Sentry issue alert exists and no metric alert;
-  `scripts/ops/sentry_alerts.sh --apply` creates the rest (dry-run by default).
-- The `NEXT_PUBLIC_SENTRY_DSN` repo variable is not set, so browser errors
+- Sentry issue alerts "New issue", "Regression", "High frequency" and the
+  "Error rate spike" metric alert were created on 2026-09-05 (via
+  `scripts/ops/sentry_alerts.sh`; re-running it is a no-op).
+- The Sentry project `courtmastr-frontend` exists and the `NEXT_PUBLIC_SENTRY_DSN`
+  repo variable is set (2026-09-05); until this branch deploys, browser errors
   are not reported. The `deploy-frontend` job forwards it (plus
   `NEXT_PUBLIC_APP_ENV` and `NEXT_PUBLIC_SENTRY_RELEASE`) into the Worker
   build and prints a `::notice::` with the state it built; setting the

@@ -334,9 +334,10 @@ Release names are `<sentry project>@<git sha>`:
   `NEXT_PUBLIC_SENTRY_RELEASE=courtmastr-frontend@<sha>` to the Worker build
   (that is the variable `frontend/lib/observability/sentry.ts` reads, not
   `SENTRY_RELEASE`), so browser events already carry the name. The Sentry
-  project does not exist yet; the `sentry-release` job carries a guarded step
-  that stays a no-op until `ENABLE_FRONTEND_SENTRY_RELEASE` is flipped to
-  `"true"` in `.github/workflows/production.yml`.
+  project `courtmastr-frontend` exists (created 2026-09-05); the
+  `sentry-release` job's frontend step runs once `SENTRY_AUTH_TOKEN` is set and
+  can be paused with `ENABLE_FRONTEND_SENTRY_RELEASE: "false"` in
+  `.github/workflows/production.yml`.
 
 The `sentry-release` job runs after `smoke` succeeds and uses
 `getsentry/action-release` to create the release, associate commits since the
