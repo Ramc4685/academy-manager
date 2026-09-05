@@ -223,7 +223,7 @@ adding a member or a Slack/PagerDuty integration.
 | Daily ops digest | `send_ops_digest` job at 07:00 America/Chicago | always (content varies); quarantined webhooks, dead letters, dunning terminals, failed digests, stale jobs | Email to `OPS_ALERT_EMAIL` via Resend |
 | Machine unhealthy | Fly health check on `/api/v2/healthz` | 503 or timeout | Fly restarts the machine. No notification. |
 | Deploy smoke | CI `scripts/smoke/production_smoke.sh` | healthz body lacks `"status":"ok"` | Failed workflow run; GitHub emails the pusher |
-| Uptime | none yet | see `scripts/ops/uptime.md` | (Sentry Uptime -> "New issue" rule once created) |
+| Uptime | Sentry Uptime monitors `api healthz` (10251264) and `web root` (10251265), project courtmastr-fastapi, env prod, 1-minute interval, 10 s timeout, 3 failures to open (created 2026-09-05) | non-2xx or timeout on `/api/v2/healthz` or `https://academy.courtmastr.com/` | Opens a Sentry issue -> "New issue" rule emails the owner |
 | 5xx rate / memory / restarts | none yet | see `scripts/ops/uptime.md` | (Fly Grafana contact point -> owner email once created) |
 
 Not alerts, but notifications people may mistake for them: Resend bounce

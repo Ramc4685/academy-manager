@@ -1,7 +1,9 @@
 # External uptime monitoring and Fly alert rules
 
-Account-side setup that no deploy can do. As of 2026-09-05 none of this
-exists: if the Fly machine or the Cloudflare route is down, the only signal is
+Account-side setup that no deploy can do. Option A below was DONE on
+2026-09-05 (monitors 10251264 `api healthz` and 10251265 `web root`); the Fly
+Grafana rules in the second half still are not. Before that, none of this
+existed: if the Fly machine or the Cloudflare route is down, the only signal is
 a parent texting the owner. Each section is a checklist of clicks; tick them
 off in the PR that closes the audit item.
 
