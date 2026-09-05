@@ -284,6 +284,41 @@ GET /api/v2/healthz
 
 Monitor this endpoint from the production region. Alert on non-2xx responses, elevated latency, and repeated application errors. Application logs should be shipped to the platform log drain or external logging service.
 
+### Sentry releases
+
+Every production deploy is tagged with a Sentry release so issues resolve per
+deploy and Sentry can raise regression ("resolved issue came back in a newer
+release") alerts. Without releases, every event lands in one unversioned bucket
+and those alerts never fire.
+
+Release names are `<sentry project>@<git sha>`:
+
+- Backend: `courtmastr-fastapi@<sha>`. The `deploy-backend` job passes
+  `--env SENTRY_RELEASE=courtmastr-fastapi@<sha>` to `flyctl deploy`, and
+  `resolve_release()` in `backend/v2/shared/observability/errors.py` reads
+  `V2_SENTRY_RELEASE`, then `SENTRY_RELEASE`, then Fly's `FLY_IMAGE_REF` (the
+  fallback for machines started outside the workflow).
+- Frontend: `courtmastr-frontend@<sha>`, reserved. The Sentry project does not
+  exist yet; the `sentry-release` job carries a guarded step that stays a no-op
+  until `ENABLE_FRONTEND_SENTRY_RELEASE` is flipped to `"true"` in
+  `.github/workflows/production.yml` and the Worker build stamps the same name
+  into the browser SDK.
+
+The `sentry-release` job runs after `smoke` succeeds and uses
+`getsentry/action-release` to create the release, associate commits since the
+previous release (`set_commits: auto`) and mark it deployed to `production`.
+It needs one repository secret:
+
+- `SENTRY_AUTH_TOKEN` - a Sentry organization auth token for org
+  `blno-badmintion` with the `project:releases` and `org:read` scopes
+  (Settings > Developer Settings > Organization Tokens). Add it under GitHub
+  Settings > Secrets and variables > Actions.
+
+Until the secret exists, the job logs a notice and skips release creation
+rather than failing the deploy, so the missing secret shows up as a skipped
+step, not a red workflow. Rerunning the job is safe: creating an existing
+release is idempotent.
+
 ## Production Release Records
 
 The production GitHub Actions workflow publishes a `deploy-YYYY-MM-DD-<sha>`
