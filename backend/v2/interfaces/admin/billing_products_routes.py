@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.shared.auth.claims import AuthClaims
-from backend.v2.shared.http import require_persona
+from backend.v2.shared.http import require_owner, require_persona
 
 router = APIRouter(tags=["admin.billing.products"])
 
@@ -82,7 +82,7 @@ async def list_billing_products(
 )
 async def create_billing_product(
     body: CreateProductRequest,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> ProductView:
     create_product = _required_callable(use_cases.create_billing_product, "Billing products")
@@ -98,7 +98,7 @@ async def create_billing_product(
 async def update_billing_product(
     product_id: str,
     body: UpdateProductRequest,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> ProductView:
     updates = body.model_dump(exclude_unset=True)
@@ -124,7 +124,7 @@ async def update_billing_product(
 @router.delete("/billing/products/{product_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def deactivate_billing_product(
     product_id: str,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> None:
     deactivate_product = _required_callable(

@@ -80,7 +80,7 @@ from backend.v2.interfaces.admin.views import (
     WithdrawalCreditPreviewResponse,
 )
 from backend.v2.shared.auth.claims import AuthClaims
-from backend.v2.shared.http import require_persona
+from backend.v2.shared.http import require_owner, require_persona
 from backend.v2.shared.ids import new_ulid
 
 router = APIRouter(tags=["admin.billing"])
@@ -126,7 +126,7 @@ async def get_platform_charge_fallback(
 )
 async def set_platform_charge_fallback(
     body: SetPlatformChargeFallbackRequest,
-    claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> PlatformChargeFallbackResponse:
     use_case = _required_callable(
@@ -179,7 +179,7 @@ async def get_invoice_schedule(
 )
 async def set_invoice_schedule(
     body: SetInvoiceScheduleRequest,
-    claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> InvoiceScheduleResponse:
     use_case = _required_callable(use_cases.set_invoice_schedule, "set_invoice_schedule")
@@ -392,7 +392,7 @@ async def preview_withdrawal_credit(
 async def approve_withdrawal_credit(
     enrollment_id: str,
     body: WithdrawalCreditApproveRequest,
-    claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> WithdrawalCreditApproveResponse:
     result = await use_cases.approve_withdrawal_credit.execute(
@@ -470,7 +470,7 @@ async def last_payment_by_family(
 @router.post("/payments/refund", summary="Issue a refund")
 async def refund(
     body: IssueRefundRequest,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> dict[str, object]:
     result = await use_cases.issue_refund.execute(
@@ -520,7 +520,7 @@ async def mark_payment_paid(
 async def apply_payment_discount(
     payment_id: str,
     body: ApplyPaymentDiscountRequest,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> dict[str, bool]:
     await use_cases.apply_payment_discount.execute(
@@ -537,7 +537,7 @@ async def apply_payment_discount(
 async def set_tuition_discount(
     enrollment_id: str,
     body: SetTuitionDiscountRequest,
-    claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> dict[str, bool]:
     await use_cases.set_tuition_discount.execute(
@@ -563,7 +563,7 @@ async def set_tuition_discount(
 @router.delete("/enrollments/{enrollment_id}/tuition-discount")
 async def remove_tuition_discount(
     enrollment_id: str,
-    claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> dict[str, bool]:
     await use_cases.remove_tuition_discount.execute(
@@ -575,7 +575,7 @@ async def remove_tuition_discount(
 @router.post("/payments/{payment_id}/undo-paid")
 async def undo_payment_paid(
     payment_id: str,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> dict[str, bool]:
     await use_cases.undo_payment_paid.execute(UndoPaymentPaidCommand(payment_id=payment_id))
@@ -658,7 +658,7 @@ async def list_billing_webhook_events(
 # No UI surface should call this route once Phase 2 is merged.
 @router.get("/finance/payouts", response_model=AdminPayoutList)  # FINANCE
 async def list_payouts(
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminPayoutList:
     payouts = await use_cases.payouts.list_all()
@@ -758,7 +758,7 @@ async def delete_expense(
 
 @router.get("/finance/revenue", response_model=AdminRevenueResponse)  # FINANCE
 async def revenue(
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminRevenueResponse:
     # Wave 3 stub aggregates across all parents — replace with Mongo
@@ -774,7 +774,7 @@ async def revenue(
 )  # FINANCE
 async def tuition_discount_summary(
     period: str,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminTuitionDiscountSummaryResponse:
     query = _required_callable(use_cases.tuition_discount_summary, "Tuition discount summary")
@@ -971,7 +971,7 @@ async def add_invoice_line(
 async def add_invoice_adjustment(
     invoice_id: str,
     body: AddInvoiceAdjustmentRequest,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> InvoiceLineResponse:
     add_line = _required_callable(use_cases.add_invoice_line, "Invoice adjustment management")
@@ -1028,7 +1028,7 @@ async def remove_invoice_line(
 async def void_invoice_route(
     invoice_id: str,
     body: VoidInvoiceRequest,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> dict[str, bool]:
     void_invoice_ = _required_callable(use_cases.void_billing_invoice, "Invoice voiding")
@@ -1127,7 +1127,7 @@ async def record_manual_payment(
 async def refund_invoice(
     invoice_id: str,
     body: InvoiceRefundRequest,
-    claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> InvoiceRefundResponse:
     issue_refund = _required_callable(use_cases.issue_invoice_refund, "Invoice refund")

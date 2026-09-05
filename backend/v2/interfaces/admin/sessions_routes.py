@@ -62,7 +62,7 @@ from backend.v2.interfaces.admin.views import (
     WithdrawEnrollmentRequest,
 )
 from backend.v2.shared.auth.claims import AuthClaims
-from backend.v2.shared.http import require_persona
+from backend.v2.shared.http import require_owner, require_persona
 from backend.v2.shared.http.errors import DomainError
 from backend.v2.shared.tenancy.context import current_academy_id
 
@@ -532,7 +532,7 @@ async def transfer_enrollment(
 async def override_enrollment_fee(
     enrollment_id: str,
     body: OverrideEnrollmentFeeRequest,
-    claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> None:
     try:

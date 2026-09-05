@@ -532,9 +532,21 @@ def _parent_claims() -> AuthClaims:
 
 
 def _admin_claims() -> AuthClaims:
+    # Every admin membership that existed before the owner/admin split also
+    # holds `owner` (migration 0165), so the default admin fixture does too.
     return AuthClaims(
         user_id="adm",
         email="admin@example.com",
+        academy_id="test-academy",
+        roles=("admin", "owner"),
+    )
+
+
+def _admin_only_claims() -> AuthClaims:
+    """An admin invited after the split: operations only, no `owner`."""
+    return AuthClaims(
+        user_id="adm-ops",
+        email="ops@example.com",
         academy_id="test-academy",
         roles=("admin",),
     )
@@ -2384,15 +2396,25 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
 
 
 def _claims(role: str) -> AuthClaims:
+    # "admin" mirrors a pre-split admin membership, which migration 0165 also
+    # grants `owner`; use `_claims("admin-only")` for a post-split admin.
+    if role == "admin-only":
+        roles: tuple[str, ...] = ("admin",)
+    elif role == "admin":
+        roles = ("admin", "owner")
+    else:
+        roles = (role,)
     return AuthClaims(
         user_id=f"u-{role}",
         email=f"{role}@example.com",
         academy_id="acad",
-        roles=(role,),  # type: ignore[arg-type]
+        roles=roles,  # type: ignore[arg-type]
     )
 
 
-def _make_admin_app(claims: AuthClaims, use_cases: AdminUseCases) -> FastAPI:
+def _make_admin_app(claims: AuthClaims | None, use_cases: AdminUseCases) -> FastAPI:
+    if claims is None:
+        claims = _claims("admin")
     app = FastAPI()
     register_exception_handlers(app)
     app.include_router(admin_router, prefix="/api/v2")
@@ -2405,6 +2427,17 @@ def _make_admin_app(claims: AuthClaims, use_cases: AdminUseCases) -> FastAPI:
 def admin_client(admin_seed) -> Iterator[TestClient]:
     uc = _build_admin_use_cases(admin_seed)
     app = _make_admin_app(_claims("admin"), uc)
+    with TestClient(app) as client:
+        client.seed = admin_seed  # type: ignore[attr-defined]
+        client.use_cases = uc  # type: ignore[attr-defined]
+        yield client
+
+
+@pytest.fixture
+def admin_only_client(admin_seed) -> Iterator[TestClient]:
+    """Admin without `owner`: operations work, money governance 404s."""
+    uc = _build_admin_use_cases(admin_seed)
+    app = _make_admin_app(_claims("admin-only"), uc)
     with TestClient(app) as client:
         client.seed = admin_seed  # type: ignore[attr-defined]
         client.use_cases = uc  # type: ignore[attr-defined]
