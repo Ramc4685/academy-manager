@@ -275,6 +275,35 @@ export async function markAttendance(
   });
 }
 
+export interface CorrectAttendanceRequest {
+  status: AttendanceStatus;
+  reason?: string | null;
+}
+
+export interface CorrectAttendanceResponse {
+  attendance_id: string;
+  occurrence_id: string;
+  session_id: string;
+  student_id: string;
+  status: AttendanceStatus;
+  previous_status: AttendanceStatus | null;
+  corrected_by: string | null;
+  corrected_at: string | null;
+}
+
+/** Change an already-recorded mark (#517). Coaches have a 48h window;
+ *  supervisors have none. Keyed by occurrence + student, not attendance_id. */
+export async function correctAttendance(
+  occurrenceId: string,
+  studentId: string,
+  payload: CorrectAttendanceRequest,
+): Promise<CorrectAttendanceResponse> {
+  return apiFetch<CorrectAttendanceResponse>(
+    `/coach/occurrences/${encodeURIComponent(occurrenceId)}/attendance/${encodeURIComponent(studentId)}`,
+    { method: "PATCH", body: JSON.stringify(payload) },
+  );
+}
+
 export async function bulkMarkAttendance(
   occurrenceId: string,
   payload: BulkMarkAttendanceRequest,

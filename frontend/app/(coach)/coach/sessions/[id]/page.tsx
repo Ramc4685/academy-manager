@@ -7,6 +7,7 @@ import { ulid } from "ulid";
 
 import {
   bulkMarkAttendance,
+  correctAttendance,
   createProgressNote,
   getCoachToday,
   markAttendance,
@@ -54,6 +55,10 @@ const ATTENDANCE_ERROR_MESSAGES: Record<string, string> = {
   "Coaching.SessionNotAssigned":
     "This session isn't assigned to your coach account for today.",
   "Coaching.SessionCancelled": "This session occurrence was cancelled.",
+  "Coaching.CorrectionWindowExpired":
+    "This mark is older than 48 hours, so it can only be changed by an admin.",
+  "Coaching.AttendanceNotFound":
+    "No recorded mark was found to change. Refresh and try again.",
 };
 
 function formatApiError(err: unknown): string {
@@ -119,6 +124,44 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
     },
   });
 
+  // Changing an existing mark goes through the correction endpoint (#517):
+  // marks are write-once, so re-POSTing always 409s (#646).
+  const correctionMutation = useMutation({
+    mutationFn: async (vars: { student_id: string; status: AttendanceStatus }) =>
+      correctAttendance(session?.occurrence_id ?? decodedId, vars.student_id, {
+        status: vars.status,
+        reason: "coach correction from roster",
+      }),
+    onMutate: ({ student_id, status }) => {
+      setLocalMarks((m) => ({
+        ...m,
+        [student_id]: { student_id, status: status as MarkStatus, pending: true },
+      }));
+    },
+    onSuccess: (res) => {
+      setLocalMarks((m) => ({
+        ...m,
+        [res.student_id]: {
+          student_id: res.student_id,
+          status: res.status as MarkStatus,
+          pending: false,
+        },
+      }));
+      void queryClient.invalidateQueries({ queryKey: queryKeys.coach.today(date) });
+    },
+    onError: (err: unknown, vars) => {
+      setLocalMarks((m) => ({
+        ...m,
+        [vars.student_id]: {
+          student_id: vars.student_id,
+          status: null,
+          pending: false,
+          error: formatApiError(err),
+        },
+      }));
+    },
+  });
+
   const attendanceMutation = useMutation({
     mutationFn: async (vars: {
       student_id: string;
@@ -163,11 +206,11 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
           error: formatApiError(err),
         },
       }));
-      // "Already recorded" means the server HAS a mark for this student.
-      // Re-hydrate from the server so the existing mark is shown next to the
-      // message instead of the row going blank (#638).
+      // "Already recorded" means the server HAS a mark for this student —
+      // the coach's tap was a change, not a first mark. Apply it as a
+      // correction instead of leaving an error (#646).
       if ((err as { code?: string }).code === "Coaching.ConflictAttendanceExists") {
-        void queryClient.invalidateQueries({ queryKey: queryKeys.coach.today(date) });
+        correctionMutation.mutate({ student_id: vars.student_id, status: vars.status });
       }
     },
   });
@@ -351,12 +394,17 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
                 noteOpen={noteOpen === student.student_id}
                 noteText={noteTexts[student.student_id] ?? ""}
                 disabled={!online}
-                onMark={(status) =>
-                  attendanceMutation.mutate({
-                    student_id: student.student_id,
-                    status,
-                  })
-                }
+                onMark={(status) => {
+                  const existing =
+                    localMarks[student.student_id]?.status ?? student.attendance_status ?? null;
+                  if (existing === status) return; // already recorded as this
+                  if (existing) {
+                    // A mark exists: this tap is a change → correction (#646).
+                    correctionMutation.mutate({ student_id: student.student_id, status });
+                    return;
+                  }
+                  attendanceMutation.mutate({ student_id: student.student_id, status });
+                }}
                 onToggleNote={() =>
                   setNoteOpen((prev) =>
                     prev === student.student_id ? null : student.student_id,

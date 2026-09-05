@@ -689,12 +689,14 @@ test.describe("Rally admin shell", () => {
       // Even with a 15s budget these mounts intermittently blow their deadline
       // on webkit-mobile during full-suite runs; they pass in isolation in ~3s.
       // Same webkit-under-load pattern as "session detail page mounts" below.
+      // /admin/reports (the heaviest page) still tripped 15s under the local
+      // gate's full shard with failOnFlakyTests — 30s is the mount budget.
       test.slow();
       const errors = collectConsoleErrors(page);
       await stubAdminBff(page);
       await page.goto(route.href);
       await expect(page.getByTestId(route.testid)).toBeVisible({
-        timeout: 15000,
+        timeout: 30000,
       });
       expect(
         errors,
@@ -1491,9 +1493,22 @@ test.describe("Rally admin shell", () => {
     await expect(page.getByTestId("shell-back-button")).toHaveCount(0);
   });
 
-  test("admin, coach, and parent shells expose logout", async ({ page }) => {
-    await expectShellLogout(page, "/admin", "admin-dashboard", stubAdminBff, true);
-    await expectShellLogout(page, "/coach/today", "coach-today", stubCoachBff);
-    await expectShellLogout(page, "/parent/dashboard", "parent-dashboard", stubParentBff);
+  test("admin, coach, and parent shells expose logout", async ({ context }) => {
+    // One page per persona. The persona auth hook's `replaceLocation` arms a
+    // 1s hard `window.location.replace("/login")` fallback; on WebKit that
+    // timer from the previous persona's page interrupted the next persona's
+    // `page.goto` ("interrupted by another navigation to /login", #650).
+    for (const [path, readyTestId, stubBff, openNav] of [
+      ["/admin", "admin-dashboard", stubAdminBff, true],
+      ["/coach/today", "coach-today", stubCoachBff, false],
+      ["/parent/dashboard", "parent-dashboard", stubParentBff, false],
+    ] as const) {
+      const personaPage = await context.newPage();
+      try {
+        await expectShellLogout(personaPage, path, readyTestId, stubBff, openNav);
+      } finally {
+        await personaPage.close();
+      }
+    }
   });
 });

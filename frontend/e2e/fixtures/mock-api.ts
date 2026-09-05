@@ -27,6 +27,7 @@ export interface MockState {
     }>;
   };
   attendanceCalls: Array<Record<string, unknown>>;
+  correctionCalls: Array<Record<string, unknown>>;
   bulkAttendanceCalls: Array<Record<string, unknown>>;
   bulkSkillCalls: Array<Record<string, unknown>>;
   skillStatusCalls: Array<Record<string, unknown>>;
@@ -140,6 +141,7 @@ export const test = base.extend<{
         ],
       },
       attendanceCalls: [],
+      correctionCalls: [],
       bulkAttendanceCalls: [],
       bulkSkillCalls: [],
       skillStatusCalls: [],
@@ -419,6 +421,35 @@ export const test = base.extend<{
         }),
       });
     });
+
+    // Correction of an existing mark (#517/#646): PATCH keyed by occurrence +
+    // student. Echoes the requested status back as the corrected mark.
+    await page.route(
+      "**/api/v2/coach/occurrences/*/attendance/*",
+      async (route: Route) => {
+        if (route.request().method() !== "PATCH") return route.fallback();
+        const url = new URL(route.request().url());
+        const parts = url.pathname.split("/");
+        const studentId = decodeURIComponent(parts[parts.length - 1] ?? "");
+        const occurrenceId = decodeURIComponent(parts[parts.length - 3] ?? "");
+        const body = JSON.parse(route.request().postData() ?? "{}");
+        state.correctionCalls.push({ occurrence_id: occurrenceId, student_id: studentId, ...body });
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            attendance_id: `corr-${studentId}`,
+            occurrence_id: occurrenceId,
+            session_id: "s-today-1",
+            student_id: studentId,
+            status: body.status,
+            previous_status: "present",
+            corrected_by: "coach-1",
+            corrected_at: new Date().toISOString(),
+          }),
+        });
+      },
+    );
 
     await page.route(
       "**/api/v2/coach/occurrences/*/attendance/bulk",
