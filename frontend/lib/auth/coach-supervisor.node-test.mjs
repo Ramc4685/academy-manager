@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { availablePersonaViews, canSuperviseCoaching } from "./coach-supervisor.ts";
+import { availablePersonaViews, canSuperviseCoaching, isOwner } from "./coach-supervisor.ts";
 
 test("admins and owners can supervise coaching; others cannot", () => {
   assert.equal(canSuperviseCoaching(["admin"]), true);
@@ -28,4 +28,12 @@ test("views keep switcher order and never duplicate coach", () => {
   ]);
   assert.deepEqual(availablePersonaViews(["coach"]), ["coach"]);
   assert.deepEqual(availablePersonaViews(["student", "parent"]), ["parent", "student"]);
+});
+
+test("isOwner is true only when the owner scope is held", () => {
+  assert.equal(isOwner(["owner"]), true);
+  assert.equal(isOwner(["admin", "owner"]), true);
+  assert.equal(isOwner(["admin"]), false);
+  assert.equal(isOwner(["coach", "parent"]), false);
+  assert.equal(isOwner([]), false);
 });

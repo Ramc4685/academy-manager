@@ -24,7 +24,7 @@ from backend.v2.interfaces.admin.views import (
     UpdateSessionTypeRequest,
 )
 from backend.v2.shared.auth.claims import AuthClaims
-from backend.v2.shared.http import require_persona
+from backend.v2.shared.http import require_owner, require_persona
 
 router = APIRouter(tags=["admin.session-types"])
 
@@ -139,7 +139,7 @@ async def move_billing_enrollment(
 async def override_billing_enrollment_price(
     enrollment_id: str,
     body: OverrideStudentPriceRequest,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> StudentBillingEnrollmentView:
     row = await use_cases.override_student_price.execute(  # type: ignore[union-attr]

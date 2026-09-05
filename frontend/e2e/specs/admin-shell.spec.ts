@@ -6,9 +6,19 @@ import {
   stubParentMessages,
 } from "../fixtures/saas-stubs";
 
+// Every pre-split admin was granted `owner` by migration 0165, so the default
+// admin fixture is an owner: it exercises the full shell (money nav, revenue,
+// governance actions). ADMIN_ONLY_ME is an admin invited after the split.
 const ADMIN_ME = {
   user_id: "user-admin-e2e",
   email: "admin@example.com",
+  academy_id: "academy-e2e",
+  roles: ["admin", "owner"],
+};
+
+const ADMIN_ONLY_ME = {
+  user_id: "user-ops-e2e",
+  email: "ops@example.com",
   academy_id: "academy-e2e",
   roles: ["admin"],
 };
@@ -265,8 +275,12 @@ async function stubMemberships(page: Page, body = SINGLE_MEMBERSHIP) {
   });
 }
 
-async function stubAdminBff(page: Page, memberships = SINGLE_MEMBERSHIP) {
-  await stubMe(page, ADMIN_ME);
+async function stubAdminBff(
+  page: Page,
+  memberships = SINGLE_MEMBERSHIP,
+  me: typeof ADMIN_ME = ADMIN_ME,
+) {
+  await stubMe(page, me);
   await stubMemberships(page, memberships);
   // Catch-all FIRST. Playwright route handlers match in LIFO order
   // (later-registered = higher priority), so registering this first means
@@ -513,7 +527,8 @@ test.describe("Rally admin shell", () => {
     );
     await expect(nav.getByText("Academy E2E").first()).toBeVisible();
     await expect(nav.getByText("admin@example.com")).toBeVisible();
-    await expect(nav.getByText("Admin", { exact: true })).toBeVisible();
+    // The default fixture holds the owner scope, so the pill reads Owner.
+    await expect(nav.getByText("Owner", { exact: true })).toBeVisible();
     await expect(page.getByText("Rally Academy")).toHaveCount(0);
     await expect(page.getByText("COURT 7")).toHaveCount(0);
     await expect(page.getByText("academy-e2e")).toHaveCount(0);
@@ -704,6 +719,122 @@ test.describe("Rally admin shell", () => {
       ).toEqual([]);
     });
   }
+
+
+  test.describe("owner / admin split", () => {
+    test("admin without the owner scope sees no money-governance nav, revenue, or owner-only pages", async ({
+      page,
+    }) => {
+      test.slow();
+      const errors = collectConsoleErrors(page);
+      await stubAdminBff(page, SINGLE_MEMBERSHIP, ADMIN_ONLY_ME);
+      await page.goto("/admin");
+      await expect(page.getByTestId("admin-dashboard")).toBeVisible();
+
+      // Dashboard: operations tiles stay, revenue tile and chart are gone.
+      await expect(page.getByText("Sessions today")).toBeVisible();
+      await expect(page.getByTestId("admin-dashboard-revenue")).toHaveCount(0);
+      await expect(page.getByTestId("admin-dashboard-revenue-chart")).toHaveCount(0);
+      await expect(page.getByText("Revenue (month to date)")).toHaveCount(0);
+
+      // Nav: owner-only items are not rendered; operations items are.
+      const nav = await openAdminNav(page);
+      await expect(nav.getByTestId("admin-nav-payments")).toBeVisible();
+      await expect(nav.getByTestId("admin-nav-expenses")).toBeVisible();
+      await expect(nav.getByTestId("admin-nav-reports")).toHaveCount(0);
+      await expect(nav.getByTestId("admin-nav-coach-payouts")).toHaveCount(0);
+      await expect(nav.getByTestId("admin-nav-audit-logs")).toHaveCount(0);
+      await expect(nav.getByText("Admin", { exact: true })).toBeVisible();
+      await expect(nav.getByText("Owner", { exact: true })).toHaveCount(0);
+
+      // Deep link to an owner-only page shows the panel, not the page.
+      await page.goto("/admin/reports");
+      await expect(page.getByTestId("owner-only-panel")).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByTestId("admin-reports")).toHaveCount(0);
+
+      // Dues follow-up is operations work and stays open.
+      await page.goto("/admin/reports/dues");
+      await expect(page.getByTestId("admin-dues")).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByTestId("owner-only-panel")).toHaveCount(0);
+
+      expect(
+        errors,
+        `App console errors on admin-only shell: ${errors.join("\n")}`,
+      ).toEqual([]);
+    });
+
+    test("owner keeps the money-governance nav, revenue, and reports", async ({
+      page,
+    }) => {
+      test.slow();
+      const errors = collectConsoleErrors(page);
+      await stubAdminBff(page);
+      await page.goto("/admin");
+      await expect(page.getByTestId("admin-dashboard")).toBeVisible();
+      await expect(page.getByTestId("admin-dashboard-revenue")).toBeVisible();
+      await expect(page.getByTestId("admin-dashboard-revenue-chart")).toBeVisible();
+
+      const nav = await openAdminNav(page);
+      await expect(nav.getByTestId("admin-nav-reports")).toBeVisible();
+      await expect(nav.getByTestId("admin-nav-coach-payouts")).toBeVisible();
+      await expect(nav.getByTestId("admin-nav-audit-logs")).toBeVisible();
+
+      await page.goto("/admin/reports");
+      await expect(page.getByTestId("admin-reports")).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByTestId("owner-only-panel")).toHaveCount(0);
+
+      expect(
+        errors,
+        `App console errors on owner shell: ${errors.join("\n")}`,
+      ).toEqual([]);
+    });
+
+    test("admin without the owner scope cannot pick admin or owner when adding a user", async ({
+      page,
+    }) => {
+      const errors = collectConsoleErrors(page);
+      await stubAdminBff(page, SINGLE_MEMBERSHIP, ADMIN_ONLY_ME);
+      await page.goto("/admin/users/new");
+      const roleSelect = page.getByTestId("new-user-role");
+      await expect(roleSelect).toBeVisible();
+      const options = await roleSelect.locator("option").allTextContents();
+      expect(options.sort()).toEqual(["coach", "parent"]);
+      expect(
+        errors,
+        `App console errors on admin-only add user: ${errors.join("\n")}`,
+      ).toEqual([]);
+    });
+
+    test("owner can pick every academy role when adding a user", async ({ page }) => {
+      await stubAdminBff(page);
+      await page.goto("/admin/users/new");
+      const roleSelect = page.getByTestId("new-user-role");
+      await expect(roleSelect).toBeVisible();
+      const options = await roleSelect.locator("option").allTextContents();
+      expect(options.sort()).toEqual(["admin", "coach", "owner", "parent"]);
+    });
+
+    test("admin without the owner scope sees no Fees or Gateway settings", async ({
+      page,
+    }) => {
+      const errors = collectConsoleErrors(page);
+      await stubAdminBff(page, SINGLE_MEMBERSHIP, ADMIN_ONLY_ME);
+      await page.goto("/admin/settings");
+      await expect(page.getByTestId("admin-settings-academy")).toBeVisible();
+      await expect(page.getByRole("link", { name: "Fees", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("link", { name: "Gateway", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("link", { name: "Notify", exact: true })).toBeVisible();
+
+      // A deep link to an owner-only panel shows the notice, not the form.
+      await page.goto("/admin/settings?panel=fees");
+      await expect(page.getByTestId("owner-only-panel")).toBeVisible();
+      await expect(page.getByTestId("admin-settings-fees")).toHaveCount(0);
+      expect(
+        errors,
+        `App console errors on admin-only settings: ${errors.join("\n")}`,
+      ).toEqual([]);
+    });
+  });
 
   test("coach payslip redirects into Payouts → Payslips tab (UIC4)", async ({ page }) => {
     const errors = collectConsoleErrors(page);

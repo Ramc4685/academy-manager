@@ -22,7 +22,7 @@ from backend.v2.interfaces.admin.views import (
     ReportsKpiResponse,
 )
 from backend.v2.shared.auth.claims import AuthClaims
-from backend.v2.shared.http import require_persona
+from backend.v2.shared.http import require_owner, require_persona
 
 _PERIOD_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 _EXPORT_REPORTS = frozenset(
@@ -56,7 +56,7 @@ async def get_reports_dashboard(
 @router.get("/reports/session-economics", response_model=AdminSessionEconomicsResponse)
 async def get_session_economics(
     period: Annotated[str, Query(pattern=r"^\d{4}-\d{2}$")],
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminSessionEconomicsResponse:
     month = int(period[5:7])
@@ -71,7 +71,7 @@ async def get_session_economics(
 @router.get("/reports/projected-income", response_model=AdminProjectedIncomeResponse)
 async def get_projected_income(
     period: Annotated[str, Query(pattern=r"^\d{4}-\d{2}$")],
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminProjectedIncomeResponse:
     month = int(period[5:7])
@@ -85,7 +85,7 @@ async def get_projected_income(
 
 @router.get("/reports/kpis", response_model=ReportsKpiResponse)
 async def get_reports_kpis(
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> ReportsKpiResponse:
     result = await use_cases.get_reports_kpis()  # type: ignore[operator]
@@ -139,7 +139,7 @@ def _validated_month(period: str) -> str:
 @router.get("/reports/refunds", response_model=AdminRefundsReportResponse)
 async def get_refunds_report(
     period: Annotated[str, Query(pattern=r"^\d{4}-\d{2}$")],
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminRefundsReportResponse:
     _validated_month(period)
@@ -152,7 +152,7 @@ async def get_refunds_report(
 @router.get("/reports/revenue-by-category", response_model=AdminRevenueByCategoryResponse)
 async def get_revenue_by_category_report(
     period: Annotated[str, Query(pattern=r"^\d{4}-\d{2}$")],
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminRevenueByCategoryResponse:
     _validated_month(period)
@@ -165,7 +165,7 @@ async def get_revenue_by_category_report(
 @router.get("/reports/deposit-slip", response_model=AdminDepositSlipResponse)
 async def get_deposit_slip_report(
     period: Annotated[str, Query(pattern=r"^\d{4}-\d{2}$")],
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminDepositSlipResponse:
     _validated_month(period)
@@ -179,7 +179,7 @@ async def get_deposit_slip_report(
 async def export_report_csv(
     report_name: str,
     period: Annotated[str | None, Query(pattern=r"^\d{4}-\d{2}$")] = None,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> Response:
     if report_name not in _EXPORT_REPORTS:

@@ -5,6 +5,8 @@
  *
  * Real data only: sessions today + monthly revenue + recent payments +
  * dashboard attention BFF signals.
+ * Revenue (tile + chart) is owner-only: `/finance/revenue` 404s for admins
+ * without the owner scope, so the query is not even issued for them.
  * Recharts is dynamic-imported to keep the admin landing chunk small.
  */
 
@@ -22,6 +24,7 @@ import type { AdminAttentionSeverity } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
 import { paymentMethodLabel, statusChip } from "@/app/(admin)/admin/payments/format";
 
+import { useIsOwner } from "@/components/admin/owner-context";
 import { Card } from "@/components/ds/card";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { LaneHeader } from "@/components/ds/lane";
@@ -59,6 +62,7 @@ const RECENT_PAYMENTS_LIMIT = 5;
 
 export default function AdminDashboardPage() {
   const today = todayISO();
+  const isOwner = useIsOwner();
 
   const sessionsQuery = useQuery({
     queryKey: queryKeys.admin.sessions(today),
@@ -85,6 +89,7 @@ export default function AdminDashboardPage() {
   const revenueQuery = useQuery({
     queryKey: queryKeys.admin.revenue(),
     queryFn: () => getRevenue(),
+    enabled: isOwner,
   });
 
   const attentionQuery = useQuery({
@@ -118,16 +123,19 @@ export default function AdminDashboardPage() {
           value={sessionsQuery.isLoading ? "—" : String(todayCount)}
           loading={sessionsQuery.isLoading}
         />
-        <KpiCard
-          label="Revenue (month to date)"
-          value={revenueQuery.isLoading ? "—" : formatCents(monthRevenue)}
-          loading={revenueQuery.isLoading}
-          hint={
-            revenueQuery.isLoading
-              ? undefined
-              : `Last month ${formatCents(revenueByMonth[prevMonthKey()] ?? 0)}`
-          }
-        />
+        {isOwner && (
+          <KpiCard
+            label="Revenue (month to date)"
+            value={revenueQuery.isLoading ? "—" : formatCents(monthRevenue)}
+            loading={revenueQuery.isLoading}
+            hint={
+              revenueQuery.isLoading
+                ? undefined
+                : `Last month ${formatCents(revenueByMonth[prevMonthKey()] ?? 0)}`
+            }
+            testId="admin-dashboard-revenue"
+          />
+        )}
         <KpiCard
           label="Payments tracked"
           value={paymentsQuery.isLoading ? "—" : String(paymentsTracked)}
@@ -169,21 +177,23 @@ export default function AdminDashboardPage() {
         )}
       </Card>
 
-      {/* Revenue chart */}
-      <Card p={20}>
-        <LaneHeader index="01" title="Monthly revenue (last 6 months)" />
-        {revenueQuery.isLoading ? (
-          <div className="h-48 animate-pulse rounded-xl bg-rally-line/40" />
-        ) : chartData.length > 0 ? (
-          <RevenueChart data={chartData} />
-        ) : (
-          <EmptyState message="No revenue data yet." />
-        )}
-      </Card>
+      {/* Revenue chart (owner only) */}
+      {isOwner && (
+        <Card p={20} data-testid="admin-dashboard-revenue-chart">
+          <LaneHeader index="01" title="Monthly revenue (last 6 months)" />
+          {revenueQuery.isLoading ? (
+            <div className="h-48 animate-pulse rounded-xl bg-rally-line/40" />
+          ) : chartData.length > 0 ? (
+            <RevenueChart data={chartData} />
+          ) : (
+            <EmptyState message="No revenue data yet." />
+          )}
+        </Card>
+      )}
 
       {/* Recent payments */}
       <Card p={20}>
-        <LaneHeader index="02" title="Recent payments" />
+        <LaneHeader index={isOwner ? "02" : "01"} title="Recent payments" />
         {paymentFeedQuery.isLoading ? (
           <TableSkeleton rows={3} />
         ) : recentPayments.length === 0 ? (
@@ -266,14 +276,16 @@ function KpiCard({
   value,
   loading,
   hint,
+  testId,
 }: {
   label: string;
   value: string;
   loading: boolean;
   hint?: string;
+  testId?: string;
 }) {
   return (
-    <Card p={20}>
+    <Card p={20} data-testid={testId}>
       <Overline>{label}</Overline>
       {loading ? (
         <div className="mt-2 h-9 w-28 animate-pulse rounded bg-rally-line/40" />

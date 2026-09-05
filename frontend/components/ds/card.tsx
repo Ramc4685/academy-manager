@@ -8,9 +8,11 @@ interface CardProps {
   accent?: string;
   style?: CSSProperties;
   className?: string;
+  /** Test hook for cards whose presence is itself the assertion. */
+  "data-testid"?: string;
 }
 
-export function Card({ children, p = 24, accent, style, className }: CardProps) {
+export function Card({ children, p = 24, accent, style, className, ...rest }: CardProps) {
   const inline: CSSProperties = {
     padding: p,
     // accent is an arbitrary caller-supplied color, so it stays inline.
@@ -21,6 +23,7 @@ export function Card({ children, p = 24, accent, style, className }: CardProps) 
     <div
       className={`relative overflow-hidden rounded-xl border border-rally-line bg-white ${className ?? ""}`}
       style={inline}
+      data-testid={rest["data-testid"]}
     >
       {children}
     </div>

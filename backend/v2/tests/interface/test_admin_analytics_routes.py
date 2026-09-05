@@ -71,7 +71,7 @@ _UTILIZATION_RESULT = CoachUtilizationResult(
 
 def _make_client(
     *,
-    roles: tuple[str, ...] = ("admin",),
+    roles: tuple[str, ...] = ("admin", "owner"),  # pre-split admin (migration 0165)
     use_cases: object | None = None,
 ) -> TestClient:
     uc = use_cases or SimpleNamespace(
@@ -171,7 +171,7 @@ def test_enrollment_funnel_with_period(analytics_client: TestClient) -> None:
         user_id="admin-1",
         email="admin@example.com",
         academy_id="acad",
-        roles=("admin",),
+        roles=("admin", "owner"),  # pre-split admin: migration 0165 grants owner
     )
     app.dependency_overrides[get_admin_use_cases] = lambda: uc
     with TestClient(app) as client:
@@ -227,7 +227,7 @@ def test_attendance_trends_multiple_periods(analytics_client: TestClient) -> Non
         user_id="admin-1",
         email="admin@example.com",
         academy_id="acad",
-        roles=("admin",),
+        roles=("admin", "owner"),  # pre-split admin: migration 0165 grants owner
     )
     app.dependency_overrides[get_admin_use_cases] = lambda: uc
     with TestClient(app) as client:
@@ -284,7 +284,7 @@ def test_coach_utilization_multiple_periods(analytics_client: TestClient) -> Non
         user_id="admin-1",
         email="admin@example.com",
         academy_id="acad",
-        roles=("admin",),
+        roles=("admin", "owner"),  # pre-split admin: migration 0165 grants owner
     )
     app.dependency_overrides[get_admin_use_cases] = lambda: uc
     with TestClient(app) as client:

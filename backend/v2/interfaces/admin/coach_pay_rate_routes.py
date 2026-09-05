@@ -26,7 +26,7 @@ from backend.v2.interfaces.admin.views import (
     SetCoachPayRateRequest,
 )
 from backend.v2.shared.auth.claims import AuthClaims
-from backend.v2.shared.http import require_persona
+from backend.v2.shared.http import require_owner
 
 router = APIRouter(tags=["admin.coach-pay-rates"])
 
@@ -110,7 +110,7 @@ def _repair_rate(use_cases: AdminUseCases) -> RepairCoachRateWindow:
 @router.get("/coaches/{coach_id}/pay-rates", response_model=AdminCoachPayRateList)
 async def list_coach_pay_rates(
     coach_id: str,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminCoachPayRateList:
     rates = await _list_rates(use_cases).execute(coach_id=coach_id)
@@ -124,7 +124,7 @@ async def list_coach_pay_rates(
 async def set_coach_pay_rate(
     coach_id: str,
     body: SetCoachPayRateRequest,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminCoachPayRateView:
     if body.billing_unit == "percent_of_revenue":
@@ -163,7 +163,7 @@ async def set_coach_pay_rate(
 async def repair_coach_pay_rate_window(
     coach_id: str,
     body: RepairCoachPayRateWindowRequest,
-    claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminCoachPayRateView:
     try:

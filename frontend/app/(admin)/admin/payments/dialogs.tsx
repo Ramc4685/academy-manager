@@ -22,6 +22,7 @@ import {
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
 
+import { OwnerOnlyHint } from "@/components/admin/owner-context";
 import { Button } from "@/components/ds/button";
 import { RallyModal as RallyDialog, DialogActions, Field } from "@/components/ds/dialog-chrome";
 import { TableSkeleton } from "@/components/ds/skeleton";
@@ -39,6 +40,7 @@ import {
 
 export function PaymentActions({
   payment,
+  canGovernMoney,
   onDiscount,
   onInvoice,
   onPaid,
@@ -48,6 +50,12 @@ export function PaymentActions({
   undoPending,
 }: {
   payment: AdminPaymentView;
+  /**
+   * Owner scope. Discount / Refund / Undo-paid are money governance and 404
+   * for anyone else, so they are not rendered; Mark paid (recording a manual
+   * payment) stays an admin action.
+   */
+  canGovernMoney: boolean;
   onDiscount: () => void;
   onInvoice: () => void;
   onPaid: () => void;
@@ -73,31 +81,39 @@ export function PaymentActions({
       <Button variant="secondary" size="sm" onClick={onSync}>Sync</Button>
       {isPending && !invoiceRow && (
         <>
-          <Button variant="secondary" size="sm" onClick={onDiscount}>Discount</Button>
+          {canGovernMoney ? (
+            <Button variant="secondary" size="sm" onClick={onDiscount}>Discount</Button>
+          ) : (
+            <OwnerOnlyHint className="self-center" />
+          )}
           <Button variant="primary" size="sm" onClick={onPaid}>Mark paid</Button>
         </>
       )}
       {isPaid && !invoiceRow && (
-        <>
-          <Button
-            variant="danger"
-            size="sm"
-            onClick={onRefund}
-            disabled={!refundable}
-            title={refundable ? "Issue refund" : "Already fully refunded"}
-          >
-            Refund
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={onUndo}
-            disabled={!undoable || undoPending}
-            title={undoable ? "Undo manual mark-paid" : "Stripe payments must be refunded"}
-          >
-            Undo
-          </Button>
-        </>
+        canGovernMoney ? (
+          <>
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={onRefund}
+              disabled={!refundable}
+              title={refundable ? "Issue refund" : "Already fully refunded"}
+            >
+              Refund
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={onUndo}
+              disabled={!undoable || undoPending}
+              title={undoable ? "Undo manual mark-paid" : "Stripe payments must be refunded"}
+            >
+              Undo
+            </Button>
+          </>
+        ) : (
+          <OwnerOnlyHint className="self-center" />
+        )
       )}
     </div>
   );
@@ -390,9 +406,12 @@ export function MarkPaidDialog({
 
 export function InvoiceDialog({
   payment,
+  canGovernMoney,
   onClose,
 }: {
   payment: AdminPaymentView | null;
+  /** Owner scope: adjustments and invoice refunds render only for owners. */
+  canGovernMoney: boolean;
   onClose: () => void;
 }) {
   const invoiceId = invoiceActionId(payment);
@@ -592,6 +611,12 @@ export function InvoiceDialog({
               </div>
             </form>
           )}
+          {!canGovernMoney && (
+            <p className="text-xs text-rally-muted" data-testid="invoice-owner-only-actions">
+              Adjustments and refunds are <OwnerOnlyHint />
+            </p>
+          )}
+          {canGovernMoney && (
           <form
             className="grid gap-3 rounded-md border border-rally-line p-3"
             onSubmit={(event) => {
@@ -640,7 +665,8 @@ export function InvoiceDialog({
               </Button>
             </div>
           </form>
-          {data.allocations.length > 0 && (
+          )}
+          {canGovernMoney && data.allocations.length > 0 && (
             <form
               className="grid gap-3 rounded-md border border-rally-line p-3"
               onSubmit={(event) => {

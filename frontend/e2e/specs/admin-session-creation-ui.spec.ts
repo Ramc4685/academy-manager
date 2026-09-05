@@ -4,7 +4,8 @@ const ADMIN_ME = {
   user_id: "user-admin-session-ui-e2e",
   email: "admin@example.com",
   academy_id: "academy-e2e",
-  roles: ["admin"],
+  // Pre-split admin: migration 0165 grants owner to every existing admin.
+  roles: ["admin", "owner"],
 };
 
 function fulfillJson(route: Route, body: unknown, status = 200) {
@@ -28,7 +29,7 @@ async function stubAdminShell(page: Page) {
           academy_id: "academy-e2e",
           academy_name: "BLNO Badminton Academy",
           academy_slug: "academy-e2e",
-          roles: ["admin"],
+          roles: ["admin", "owner"],
           status: "active",
           is_default: true,
         },

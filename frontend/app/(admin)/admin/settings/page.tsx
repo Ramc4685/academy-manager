@@ -15,10 +15,12 @@ import { RolesPanel } from "@/components/admin/settings/roles-panel";
 import { SelfServicePanel } from "@/components/admin/settings/self-service-panel";
 import { SessionTypesPanel } from "@/components/admin/settings/session-types-panel";
 import {
+  OWNER_ONLY_SETTINGS_PANELS,
   SETTINGS_TABS,
   SettingsTabs,
   type SettingsPanelKey,
 } from "@/components/admin/settings/settings-tabs";
+import { OwnerOnlyPanel, useIsOwner } from "@/components/admin/owner-context";
 
 const validPanels = new Set<SettingsPanelKey>(SETTINGS_TABS.map((tab) => tab.key));
 
@@ -32,6 +34,13 @@ export default function AdminSettingsPage() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const active = coercePanel(searchParams.get("panel"));
+  const isOwner = useIsOwner();
+  // Fees and Gateway are owner-only: the tabs disappear for admins without
+  // the scope, and a deep link to one shows the owner-only panel instead.
+  const tabs = isOwner
+    ? SETTINGS_TABS
+    : SETTINGS_TABS.filter((tab) => !OWNER_ONLY_SETTINGS_PANELS.has(tab.key));
+  const ownerOnlyHere = !isOwner && OWNER_ONLY_SETTINGS_PANELS.has(active);
 
   const paramsString = searchParams.toString();
   const params = useMemo(() => new URLSearchParams(paramsString), [paramsString]);
@@ -55,15 +64,16 @@ export default function AdminSettingsPage() {
 
   return (
     <section data-testid="admin-settings" className="space-y-6">
-      <SettingsTabs active={active} hrefFor={hrefForPanel} />
+      <SettingsTabs active={active} hrefFor={hrefForPanel} tabs={tabs} />
+      {ownerOnlyHere && <OwnerOnlyPanel />}
       {active === "academy" && <AcademyPanel />}
-      {active === "fees" && (
+      {active === "fees" && isOwner && (
         <>
           <FeesPanel />
           <InvoiceSchedulePanel />
         </>
       )}
-      {active === "gateway" && <GatewayPanel />}
+      {active === "gateway" && isOwner && <GatewayPanel />}
       {active === "notify" && <NotifyPanel />}
       {active === "roles" && <RolesPanel />}
       {active === "branding" && <BrandingPanel />}

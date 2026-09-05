@@ -26,16 +26,27 @@ export const SETTINGS_TABS: Array<{ key: SettingsPanelKey; label: string }> = [
   { key: "session-types", label: "Session types" },
 ];
 
+/**
+ * Panels that change what the academy charges or where the money lands.
+ * Owner-only: the BFF 404s their writes for anyone without the owner scope.
+ */
+export const OWNER_ONLY_SETTINGS_PANELS: ReadonlySet<SettingsPanelKey> = new Set<SettingsPanelKey>([
+  "fees",
+  "gateway",
+]);
+
 interface SettingsTabsProps {
   active: SettingsPanelKey;
   hrefFor: (key: SettingsPanelKey) => UrlObject;
+  /** Tabs to render; defaults to every panel. */
+  tabs?: ReadonlyArray<{ key: SettingsPanelKey; label: string }>;
 }
 
-export function SettingsTabs({ active, hrefFor }: SettingsTabsProps) {
+export function SettingsTabs({ active, hrefFor, tabs = SETTINGS_TABS }: SettingsTabsProps) {
   return (
     <div className="overflow-x-auto">
       <div className="inline-flex min-w-max gap-1 rounded-lg bg-rally-paper p-1">
-        {SETTINGS_TABS.map((tab) => {
+        {tabs.map((tab) => {
           const isActive = tab.key === active;
           return (
             <Link

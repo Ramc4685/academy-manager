@@ -39,10 +39,12 @@ from pydantic import BaseModel, EmailStr, Field, field_validator, model_validato
 # exist while the flag is off (the invite already went out); the BFF just
 # 404s until the flag flips.
 #
-# `owner` is the franchise role: a user holding it in several academies can
-# read a cross-academy financial rollup (UIM11). It is still an academy-scoped
-# role — the rollup unions the user's own `owner` memberships and never widens
-# from the request tenant.
+# `owner` is the academy-level owner role: money and governance (refunds,
+# pricing, payouts, reports, audit, granting `admin`/`owner`) are owner-only,
+# while `admin` is the day-to-day operations role. A user holding `owner` in
+# several academies also gets the cross-academy financial rollup (UIM11). It
+# is still an academy-scoped role — the rollup unions the user's own `owner`
+# memberships and never widens from the request tenant.
 Role = Literal["admin", "coach", "parent", "student", "owner"]
 
 # Platform-wide roles. Granted via `PlatformRole` records and carried on

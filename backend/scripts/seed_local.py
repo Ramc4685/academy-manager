@@ -1566,6 +1566,9 @@ async def main() -> None:
             {
                 "$set": {
                     "academy_id": ACADEMY_ID,
+                    # Owner/admin split: the seeded admin is the academy owner.
+                    "role": "admin",
+                    "roles": ["admin", "owner"],
                     "display_name": admin_doc.get("display_name")
                     or admin_doc.get("name")
                     or "Admin",
@@ -1582,7 +1585,7 @@ async def main() -> None:
             "display_name": "Admin",
             "name": "Admin",
             "role": "admin",
-            "roles": ["admin"],
+            "roles": ["admin", "owner"],
             "status": "active",
             "is_active": True,
             "stripe_customer_id": None,
@@ -1623,6 +1626,43 @@ async def main() -> None:
             upsert=True,
         )
         print(f"  Platform admin: {admin_email} -> platform_roles.platform_admin")
+
+    # ── 1c. Admin-only operations user ─────────────────────────────────────
+    # A post-split admin: holds `admin` but not `owner`, so locally you can
+    # see the operations view (no refunds, pricing, payouts, reports, audit,
+    # or admin/owner grants) next to the owner account above. Step 10 turns
+    # `roles` into the academy_memberships row.
+    ops_email = "ops@blno.academy"
+    if not await db.users.find_one({"email": ops_email}):
+        ops_uid = ""
+        if FIREBASE_MODE and firebase_available():
+            ops_uid = firebase_create_user(ops_email, ADMIN_PASSWORD, "Ops Admin")
+            firebase_uid_map[ops_email] = ops_uid
+        ops_doc: dict = {
+            "academy_id": ACADEMY_ID,
+            "email": ops_email,
+            "display_name": "Ops Admin",
+            "name": "Ops Admin",
+            "role": "admin",
+            "roles": ["admin"],
+            "status": "active",
+            "is_active": True,
+            "stripe_customer_id": None,
+            "created_at": utcnow(),
+            "updated_at": utcnow(),
+        }
+        if ops_uid:
+            ops_doc["user_id"] = ops_uid
+            ops_doc["firebase_uid"] = ops_uid
+        else:
+            ops_doc["password_hash"] = hp(ADMIN_PASSWORD)
+        r = await db.users.insert_one(ops_doc)
+        if not ops_uid:
+            await db.users.update_one(
+                {"_id": r.inserted_id},
+                {"$set": {"user_id": str(r.inserted_id), "firebase_uid": str(r.inserted_id)}},
+            )
+        print(f"  Admin-only user: {ops_email} (roles=['admin'], no owner)")
 
     # ── 2. Coaches ──────────────────────────────────────────────────────────
     coach_info = {
