@@ -26,6 +26,44 @@ export interface CaptureContext {
 
 let sdk: Promise<Sentry | null> | null = null;
 
+/**
+ * Drop the query string (and fragment) from a URL. The app carries live
+ * credentials and PII in query strings — `/auth/magic?t=<login token>`,
+ * `/auth/action?oobCode=<password-reset code>`, `/unsubscribe?t=<token>`,
+ * `/login?email=<address>` — and the SDK's default integrations would ship
+ * them on every event: `httpContextIntegration` stamps `event.request.url`
+ * with `location.href`, and navigation/fetch breadcrumbs keep the full
+ * relative URL. `sendDefaultPii: false` does not touch either, so the scrub
+ * lives here (the backend's request-id validation is the server-side twin).
+ */
+export function stripQuery(url: string): string {
+  const cut = url.search(/[?#]/);
+  return cut === -1 ? url : url.slice(0, cut);
+}
+
+type SentryEvent = Parameters<NonNullable<SentryModule.BrowserOptions["beforeSend"]>>[0];
+type SentryBreadcrumb = Parameters<
+  NonNullable<SentryModule.BrowserOptions["beforeBreadcrumb"]>
+>[0];
+
+/** `beforeSend`: scrub the page URL and the Referer header on every event. */
+export function scrubEventUrls<T extends SentryEvent>(event: T): T {
+  if (event.request?.url) event.request.url = stripQuery(event.request.url);
+  const headers = event.request?.headers;
+  if (headers?.Referer) headers.Referer = stripQuery(headers.Referer);
+  return event;
+}
+
+/** `beforeBreadcrumb`: scrub navigation `from`/`to` and fetch/xhr `url`. */
+export function scrubBreadcrumbUrls<T extends SentryBreadcrumb>(breadcrumb: T): T {
+  const data = breadcrumb.data;
+  if (!data) return breadcrumb;
+  for (const key of ["from", "to", "url"] as const) {
+    if (typeof data[key] === "string") data[key] = stripQuery(data[key]);
+  }
+  return breadcrumb;
+}
+
 export function sentryDsn(): string | null {
   const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN?.trim();
   return dsn ? dsn : null;
@@ -59,6 +97,10 @@ export function initSentry(): Promise<Sentry | null> {
         sampleRate: 1,
         tracesSampleRate: 0,
         sendDefaultPii: false,
+        // Query strings carry magic-link tokens, Firebase oobCodes and parent
+        // emails; strip them before anything leaves the browser.
+        beforeSend: scrubEventUrls,
+        beforeBreadcrumb: scrubBreadcrumbUrls,
       });
       return mod;
     })

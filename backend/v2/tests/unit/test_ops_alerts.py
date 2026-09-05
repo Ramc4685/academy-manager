@@ -22,6 +22,7 @@ from backend.v2.shared.observability.ops_digest import (
     collect_ops_digest,
     record_job_run,
     render_ops_digest,
+    seed_job_heartbeats,
     stale_jobs,
 )
 
@@ -240,10 +241,10 @@ class _FakeCollection:
         self.updates.append((query, update))
         for doc in self.docs:
             if _matches(doc, query):
-                doc.update(update["$set"])
+                doc.update(update.get("$set", {}))
                 return
         if upsert:
-            self.docs.append({**query, **update["$set"]})
+            self.docs.append({**query, **update.get("$set", {}), **update.get("$setOnInsert", {})})
 
 
 def _matches(doc: dict[str, Any], query: dict[str, Any]) -> bool:
@@ -723,6 +724,65 @@ def test_a_never_recorded_job_is_rendered_as_such() -> None:
 
     assert "<strong>expire_makeup_requests</strong>" in body
     assert "last heartbeat never recorded" in body
+
+
+@pytest.mark.asyncio
+async def test_first_digest_after_a_deploy_lists_every_unticked_job_without_the_seed() -> None:
+    """Prod before this branch: only the invoice generator ever wrote a heartbeat."""
+    runs = _FakeCollection([{"_id": INVOICE_GENERATION_JOB, "last_tick_at": RECENT}])
+    snapshot = await collect_ops_digest(_db(**{JOB_RUNS_COLLECTION: runs}), now=NOW)  # type: ignore[arg-type]
+
+    assert {job.job_id for job in snapshot.stale_jobs} == set(JOB_STALE_AFTER) - {
+        INVOICE_GENERATION_JOB
+    }
+    assert "send_ops_digest" in {job.job_id for job in snapshot.stale_jobs}
+    assert snapshot.has_attention_items
+
+
+@pytest.mark.asyncio
+async def test_boot_seed_stops_the_first_digest_flagging_itself() -> None:
+    runs = _FakeCollection([{"_id": INVOICE_GENERATION_JOB, "last_tick_at": RECENT}])
+    db = _db(**{JOB_RUNS_COLLECTION: runs})
+    boot = NOW - timedelta(hours=3)  # deployed at 04:00, digest fires at 07:00
+
+    await seed_job_heartbeats(db, now=boot)  # type: ignore[arg-type]
+    # Only $setOnInsert, so nothing here can move a real heartbeat.
+    assert all(set(update) == {"$setOnInsert"} for _, update in runs.updates)
+    assert len(runs.updates) == len(JOB_STALE_AFTER)
+    # By 07:00 the interval jobs have ticked for real; the dailies (02:00,
+    # 02:30, 03:00 crons) and the digest itself have not fired since boot.
+    for doc in runs.docs:
+        if doc["_id"] in {"process_stripe_webhook_events", "reconcile_stripe_payment_intents"}:
+            doc["last_tick_at"] = NOW - timedelta(minutes=1)
+
+    snapshot = await collect_ops_digest(db, now=NOW)  # type: ignore[arg-type]
+
+    assert snapshot.stale_jobs == []
+
+
+@pytest.mark.asyncio
+async def test_boot_seed_never_moves_an_existing_heartbeat() -> None:
+    """A job that stopped ticking before the restart must stay stale."""
+    runs = _FakeCollection([{"_id": "process_dunning_retries", "last_tick_at": OLD}])
+    db = _db(**{JOB_RUNS_COLLECTION: runs})
+
+    await seed_job_heartbeats(db, now=NOW)  # type: ignore[arg-type]
+    snapshot = await collect_ops_digest(db, now=NOW)  # type: ignore[arg-type]
+
+    assert [job.job_id for job in snapshot.stale_jobs] == ["process_dunning_retries"]
+    assert snapshot.stale_jobs[0].last_tick_at == OLD
+
+
+@pytest.mark.asyncio
+async def test_seeded_jobs_go_stale_once_a_full_window_passes_without_a_tick() -> None:
+    runs = _FakeCollection([])
+    db = _db(**{JOB_RUNS_COLLECTION: runs})
+    await seed_job_heartbeats(db, now=NOW - timedelta(minutes=6))  # type: ignore[arg-type]
+
+    snapshot = await collect_ops_digest(db, now=NOW)  # type: ignore[arg-type]
+
+    # The 60s webhook drain (5 min window) is the only one past its window.
+    assert [job.job_id for job in snapshot.stale_jobs] == ["process_stripe_webhook_events"]
 
 
 @pytest.mark.asyncio

@@ -30,6 +30,13 @@ env:
   NEXT_PUBLIC_FIREBASE_APP_ID: ${{ vars.REACT_APP_FIREBASE_APP_ID }}
   NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID: ${{ vars.REACT_APP_FIREBASE_MEASUREMENT_ID }}
   NEXT_PUBLIC_FIREBASE_AUTH_PROXY: ${{ vars.NEXT_PUBLIC_FIREBASE_AUTH_PROXY || '' }}
+  # Browser Sentry (lib/observability/sentry.ts) is DSN-gated and read at
+  # build time, so the switch is the NEXT_PUBLIC_SENTRY_DSN repo variable.
+  # Empty (current) keeps the SDK unloaded. The release name must match the
+  # sentry-release job's `courtmastr-frontend@<sha>`.
+  NEXT_PUBLIC_SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN || '' }}
+  NEXT_PUBLIC_APP_ENV: production
+  NEXT_PUBLIC_SENTRY_RELEASE: courtmastr-frontend@${{ github.sha }}
 
 jobs:
   # Path filters select validation jobs on pull requests only. On a push to
@@ -247,6 +254,9 @@ jobs:
           NEXT_PUBLIC_FIREBASE_APP_ID: ${{ env.NEXT_PUBLIC_FIREBASE_APP_ID }}
           NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID: ${{ env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID }}
           NEXT_PUBLIC_FIREBASE_AUTH_PROXY: ${{ env.NEXT_PUBLIC_FIREBASE_AUTH_PROXY }}
+          NEXT_PUBLIC_SENTRY_DSN: ${{ env.NEXT_PUBLIC_SENTRY_DSN }}
+          NEXT_PUBLIC_APP_ENV: ${{ env.NEXT_PUBLIC_APP_ENV }}
+          NEXT_PUBLIC_SENTRY_RELEASE: ${{ env.NEXT_PUBLIC_SENTRY_RELEASE }}
         run: pnpm build
 
       - name: OpenAPI drift check
@@ -674,7 +684,16 @@ jobs:
           NEXT_PUBLIC_FIREBASE_APP_ID: ${{ env.NEXT_PUBLIC_FIREBASE_APP_ID }}
           NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID: ${{ env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID }}
           NEXT_PUBLIC_FIREBASE_AUTH_PROXY: ${{ env.NEXT_PUBLIC_FIREBASE_AUTH_PROXY }}
-        run: pnpm deploy:cloudflare
+          NEXT_PUBLIC_SENTRY_DSN: ${{ env.NEXT_PUBLIC_SENTRY_DSN }}
+          NEXT_PUBLIC_APP_ENV: ${{ env.NEXT_PUBLIC_APP_ENV }}
+          NEXT_PUBLIC_SENTRY_RELEASE: ${{ env.NEXT_PUBLIC_SENTRY_RELEASE }}
+        run: |
+          if [ -z "${NEXT_PUBLIC_SENTRY_DSN}" ]; then
+            echo "::notice::NEXT_PUBLIC_SENTRY_DSN is not set; the frontend build ships without browser Sentry."
+          else
+            echo "::notice::Browser Sentry enabled: release ${NEXT_PUBLIC_SENTRY_RELEASE}, environment ${NEXT_PUBLIC_APP_ENV}."
+          fi
+          pnpm deploy:cloudflare
 
   smoke:
     name: Production Smoke
@@ -713,7 +732,9 @@ jobs:
       github.event_name != 'pull_request'
     env:
       # Flip to "true" once the courtmastr-frontend Sentry project exists and
-      # the Worker build stamps SENTRY_RELEASE=courtmastr-frontend@<sha>.
+      # the NEXT_PUBLIC_SENTRY_DSN repo variable is set. The Worker build
+      # already stamps NEXT_PUBLIC_SENTRY_RELEASE=courtmastr-frontend@<sha>
+      # (workflow-level env), which is the name the browser SDK reports.
       ENABLE_FRONTEND_SENTRY_RELEASE: "false"
     steps:
       - name: Check out deployed revision
@@ -753,10 +774,10 @@ jobs:
           set_commits: auto
 
       # Frontend mirror. The courtmastr-frontend Sentry project does not exist
-      # yet (the browser SDK is DSN-gated and unshipped), so this stays a no-op
-      # until the job-level ENABLE_FRONTEND_SENTRY_RELEASE is flipped to "true"
-      # and the Worker deploy passes SENTRY_RELEASE=courtmastr-frontend@<sha> to
-      # the build. Keep the release name in step with the frontend SDK's `release`.
+      # yet (the browser SDK is DSN-gated), so this stays a no-op until the
+      # job-level ENABLE_FRONTEND_SENTRY_RELEASE is flipped to "true". The
+      # Worker build already receives NEXT_PUBLIC_SENTRY_RELEASE with the same
+      # name; keep the two in step or events will not join their release.
       - name: Create frontend Sentry release
         if: >
           steps.sentry.outputs.has_token == 'true' &&

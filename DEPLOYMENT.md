@@ -250,9 +250,11 @@ NEXT_PUBLIC_API_BASE=/api/v2
 # Browser error capture + Web Vitals (optional). Create the Sentry project
 # `courtmastr-frontend` first, then set its DSN; without it the SDK is never
 # loaded. NEXT_PUBLIC_APP_ENV names the Sentry environment (default
-# "production"); NEXT_PUBLIC_SENTRY_RELEASE tags events with a release.
+# "production"); NEXT_PUBLIC_SENTRY_RELEASE tags events with a release. The
+# production workflow forwards all three from the repo variable / github.sha.
 NEXT_PUBLIC_SENTRY_DSN=
 NEXT_PUBLIC_APP_ENV=production
+NEXT_PUBLIC_SENTRY_RELEASE=courtmastr-frontend@<sha>
 ```
 
 `academy.courtmastr.com/*` is a Worker Route on the `academy-next` Cloudflare
@@ -309,7 +311,7 @@ deploy performs lives in `scripts/ops/`:
 | Fly secret | `RESEND_WEBHOOK_SECRET` | Verifies Resend bounce/complaint webhooks at `/api/v2/webhooks/resend`. Set in prod. |
 | Fly env (optional) | `V2_SENTRY_CRON_JOBS` | Comma-separated scheduler job ids that send Sentry Crons check-ins. Default `generate_monthly_invoices`. |
 | GitHub repo secret | `SENTRY_AUTH_TOKEN` | Lets the deploy workflow create the Sentry release `courtmastr-fastapi@<sha>` (org `blno-badmintion`). Token scopes: `project:releases`, `org:read`. Missing token skips the step; events then fall back to `FLY_IMAGE_REF` as the release. |
-| GitHub repo variable / Cloudflare build var | `NEXT_PUBLIC_SENTRY_DSN` | Browser-side Sentry DSN for the Next.js app; baked in at build time. Unset (current) means the frontend only logs to the console. Use a separate Sentry project or the same DSN with `environment` set; either way do not reuse it server-side. |
+| GitHub repo variable | `NEXT_PUBLIC_SENTRY_DSN` | Browser-side Sentry DSN for the Next.js app; the `deploy-frontend` job forwards it (with `NEXT_PUBLIC_APP_ENV=production` and `NEXT_PUBLIC_SENTRY_RELEASE=courtmastr-frontend@<sha>`) into the Worker build, where it is baked in. Unset (current) means the frontend only logs to the console; the deploy step prints a `::notice::` saying which state it built. Use a separate Sentry project or the same DSN with `environment` set; either way do not reuse it server-side. |
 
 The `sentry` CLI on a developer machine authenticates separately
 (`sentry auth login`); it needs no repo secret.
@@ -328,11 +330,13 @@ Release names are `<sentry project>@<git sha>`:
   `resolve_release()` in `backend/v2/shared/observability/errors.py` reads
   `V2_SENTRY_RELEASE`, then `SENTRY_RELEASE`, then Fly's `FLY_IMAGE_REF` (the
   fallback for machines started outside the workflow).
-- Frontend: `courtmastr-frontend@<sha>`, reserved. The Sentry project does not
-  exist yet; the `sentry-release` job carries a guarded step that stays a no-op
-  until `ENABLE_FRONTEND_SENTRY_RELEASE` is flipped to `"true"` in
-  `.github/workflows/production.yml` and the Worker build stamps the same name
-  into the browser SDK.
+- Frontend: `courtmastr-frontend@<sha>`. The `deploy-frontend` job passes
+  `NEXT_PUBLIC_SENTRY_RELEASE=courtmastr-frontend@<sha>` to the Worker build
+  (that is the variable `frontend/lib/observability/sentry.ts` reads, not
+  `SENTRY_RELEASE`), so browser events already carry the name. The Sentry
+  project does not exist yet; the `sentry-release` job carries a guarded step
+  that stays a no-op until `ENABLE_FRONTEND_SENTRY_RELEASE` is flipped to
+  `"true"` in `.github/workflows/production.yml`.
 
 The `sentry-release` job runs after `smoke` succeeds and uses
 `getsentry/action-release` to create the release, associate commits since the

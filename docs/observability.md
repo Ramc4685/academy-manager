@@ -29,7 +29,7 @@ Account-side facts referenced below (verified 2026-09-05):
 | Sentry Logs | `observability/errors.py` `_keep_log` | With a DSN set and `SENTRY_LOGS_ENABLED` (default on), INFO+ records from the JSON pipeline are also forwarded to Sentry Logs. `_keep_log` is the quota guard: DEBUG never leaves the box, `uvicorn.access` and healthz lines are dropped. |
 | Sentry Crons | `main.py` scheduler wiring, `V2_SENTRY_CRON_JOBS` | Opt-in dead-man switch for scheduler jobs. Jobs named in the comma-separated allowlist (default `generate_monthly_invoices`) send Sentry Crons check-ins (`in_progress` -> `ok`/`error`) around each run, so a job that never runs raises a "missed check-in" issue in Sentry. Jobs not in the allowlist are unchanged. See "Cron monitors". |
 | Health | `observability/health.py`, `GET /api/v2/healthz` | Mongo ping (2s), scheduler running + job count, outbox dispatcher running. Returns 503 only for restart-fixable faults. Reports per-job `last_tick_age_seconds` / `last_run_age_seconds` from `ops_job_runs` and a per-job `stale: true` flag when the age exceeds the job's expected interval; stale is informational and never fails the check (a restart cannot make a monthly job run). Nested results use `ok:` not `status:` so the smoke grep cannot be spoofed. |
-| Job heartbeats | `observability/ops_digest.py` `record_job_run` | Every leased scheduler job writes `last_tick_at` and totals to `ops_job_runs`. Surfaced on healthz and in the daily digest's stale-job section. |
+| Job heartbeats | `observability/ops_digest.py` `record_job_run`, `seed_job_heartbeats` | Every leased scheduler job writes `last_tick_at` and totals to `ops_job_runs`. At boot every registered job without a document is seeded with the boot time (`$setOnInsert`, never moves a real heartbeat), so "stale" means "no tick for a full window since boot" and the first digest after a deploy or in a fresh database does not list the jobs whose first tick is still ahead. Surfaced on healthz and in the daily digest's stale-job section. |
 | Daily ops digest | `ops_digest.py`, `main.py` (07:00 scheduler TZ, job `send_ops_digest`) | Emails `OPS_ALERT_EMAIL` quarantined Stripe webhooks, dead-letter events, dunning terminals, failed digest sends, last invoice run, and a "stale jobs" section listing any scheduler job whose heartbeat is older than its interval. Skipped until `OPS_ALERT_EMAIL` is set. |
 | Email bounces / complaints | `interfaces/email_webhook_routes.py` | Resend webhook ingestion feeding the suppression list. 404s until `RESEND_WEBHOOK_SECRET` is set and the webhook is created in Resend. |
 | Forensic stores | `event_audit` (400-day TTL since migration 0166), `dead_letter_events`, `stripe_webhook_events`, platform audit log | Pull-only. Visible through the admin billing-health page. The TTL was raised from 90 to 400 days so a yearly billing dispute still has its trail. |
@@ -132,8 +132,13 @@ Still not switched on (see `scripts/ops/`):
   `scripts/ops/uptime.md`, second half.
 - Only one Sentry issue alert exists and no metric alert;
   `scripts/ops/sentry_alerts.sh --apply` creates the rest (dry-run by default).
-- `NEXT_PUBLIC_SENTRY_DSN` is not set on the frontend build, so browser
-  errors are not reported (the code path is present and gated on the var).
+- The `NEXT_PUBLIC_SENTRY_DSN` repo variable is not set, so browser errors
+  are not reported. The `deploy-frontend` job forwards it (plus
+  `NEXT_PUBLIC_APP_ENV` and `NEXT_PUBLIC_SENTRY_RELEASE`) into the Worker
+  build and prints a `::notice::` with the state it built; setting the
+  variable and redeploying is the whole switch. Query strings are stripped
+  from event URLs, the Referer header and navigation/fetch breadcrumbs before
+  send (magic-link tokens, Firebase `oobCode`s and `?email=` live there).
 - `SENTRY_AUTH_TOKEN` must be present as a repo secret for the release step
   to run; check the deploy workflow's "Sentry release" step is not skipped.
 

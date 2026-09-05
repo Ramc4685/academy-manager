@@ -200,6 +200,7 @@ from backend.v2.shared.observability.ops_digest import (
     collect_ops_digest,
     record_job_run,
     render_ops_digest,
+    seed_job_heartbeats,
 )
 from backend.v2.shared.scheduling import job_lease
 from backend.v2.shared.tenancy.context import current_tenant_origins, tenant_scope
@@ -1133,6 +1134,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Job crashes and misfires previously died in APScheduler's own logger and
     # never reached Sentry (only the request path was instrumented).
     scheduler.add_listener(handle_scheduler_job_event, EVENT_JOB_ERROR | EVENT_JOB_MISSED)
+    # Boot-time heartbeat for every job without one, so the first ops digest
+    # after a deploy (or in a fresh database) does not list every job whose
+    # first tick is still ahead — itself included — as "never recorded".
+    await seed_job_heartbeats(db)
     scheduler.start()
     app.state.scheduler = scheduler
 

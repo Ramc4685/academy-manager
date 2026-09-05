@@ -39,6 +39,16 @@ is a stale job, listed in the digest and counted as an attention item, because
 a scheduler job that silently stops firing produces no error for the Sentry
 listener to catch. ``/api/v2/healthz`` reads the same table through
 :func:`stale_jobs` but only reports it (rule 1 in ``health.py``).
+
+``seed_job_heartbeats`` runs at boot and gives every registered job that has
+no ``ops_job_runs`` document yet a heartbeat stamped with the boot time
+(``$setOnInsert``, so a real heartbeat is never moved). Without it the first
+digest after a deploy — or in any fresh environment — would list every job
+whose first tick had not yet come round, including the digest job itself
+(its own heartbeat is written after the body that reads the table), as
+"never recorded" and flip the subject to "attention needed" for nothing. With
+the seed, "stale" means "has not fired for a full window since boot", which is
+the signal the switch exists for.
 """
 
 from __future__ import annotations
@@ -194,6 +204,29 @@ async def record_job_run(
         await db[JOB_RUNS_COLLECTION].update_one({"_id": name}, {"$set": update}, upsert=True)
     except Exception:  # pragma: no cover - defensive
         log.warning("ops_job_run_record_failed job=%s", name, exc_info=True)
+
+
+async def seed_job_heartbeats(
+    db: AsyncIOMotorDatabase[Any],
+    *,
+    now: datetime | None = None,
+) -> None:
+    """Give every job in ``JOB_STALE_AFTER`` a boot-time heartbeat if it has none.
+
+    ``$setOnInsert`` only: a job that already has a document keeps its real
+    ``last_tick_at`` (a job that stopped ticking before the restart stays
+    stale). Best-effort like ``record_job_run`` — a failure here must never
+    stop the app from booting; the digest then falls back to listing the
+    unseeded jobs, which is noisy but not wrong.
+    """
+    boot = now or datetime.now(UTC)
+    for name in JOB_STALE_AFTER:
+        try:
+            await db[JOB_RUNS_COLLECTION].update_one(
+                {"_id": name}, {"$setOnInsert": {"last_tick_at": boot}}, upsert=True
+            )
+        except Exception:  # pragma: no cover - defensive
+            log.warning("ops_job_heartbeat_seed_failed job=%s", name, exc_info=True)
 
 
 def webhook_status_pipeline(since: datetime, stale_before: datetime) -> list[dict[str, Any]]:
