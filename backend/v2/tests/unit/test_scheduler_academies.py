@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import re
 from datetime import datetime
 
 import pytest
@@ -101,7 +102,42 @@ def test_monthly_invoice_job_holds_a_distributed_lease() -> None:
     invoices; the lease is what keeps exactly one machine generating."""
     source = inspect.getsource(_lifespan)
 
-    assert 'job_lease(\n            db, "generate_monthly_invoices"' in source
+    assert re.search(r'await _run_leased_job\(\s*"generate_monthly_invoices"', source)
+    helper = source.split("async def _run_leased_job(", 1)[1].split("async def ", 1)[0]
+    assert "async with job_lease(db, name, ttl, scheduler_worker_id) as acquired:" in helper
+    assert "if not acquired:" in helper
+
+
+def test_scheduler_job_tables_cover_every_registered_job() -> None:
+    """The dead-man tables are keyed by APScheduler job id. A job registered
+    without a stale threshold would be invisible to the digest, and one without
+    a monitor config would KeyError inside the lease at its first tick."""
+    from backend.v2.main import SCHEDULED_JOB_MONITORS
+    from backend.v2.shared.observability.ops_digest import JOB_STALE_AFTER
+
+    source = inspect.getsource(_lifespan)
+    registered = set(re.findall(r'id="(\w+)"', source))
+
+    assert len(registered) == 9
+    assert registered == set(JOB_STALE_AFTER)
+    assert registered == set(SCHEDULED_JOB_MONITORS)
+    # Every leased wrapper names a registered job, so a typo cannot leave a
+    # job leased under one id and monitored under another.
+    assert set(re.findall(r'_run_leased_job\(\s*"(\w+)"', source)) == registered
+
+
+def test_every_scheduled_job_records_a_heartbeat_after_its_body() -> None:
+    """The stale-job check reads ``ops_job_runs``; a job that never writes a
+    heartbeat is permanently stale, and one that writes it *before* the body
+    would look alive while crashing on every tick."""
+    source = inspect.getsource(_lifespan)
+    helper = source.split("async def _run_leased_job(", 1)[1].split("async def ", 1)[0]
+
+    body_call = helper.index("await body()")
+    heartbeat = helper.index("await record_job_run(db, name, {}, meaningful=False)")
+    assert body_call < heartbeat
+    # Heartbeat-only: it must never clobber the invoice generator's totals.
+    assert "meaningful=False" in helper
 
 
 # --- issue #431: monthly generation catch-up window -------------------------
