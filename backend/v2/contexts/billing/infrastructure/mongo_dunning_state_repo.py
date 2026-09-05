@@ -9,6 +9,11 @@ from zoneinfo import ZoneInfo
 
 from pymongo import ASCENDING, ReturnDocument
 
+from backend.v2.contexts.billing.application.autopay_eligibility import (
+    AUTOPAY_ACTIVE_STATUS,
+    invoice_is_chargeable,
+    ladder_eligibility,
+)
 from backend.v2.contexts.billing.domain.dunning import (
     DunningState,
     open_initial_dunning_state,
@@ -121,7 +126,14 @@ class MongoDunningStateRepository(TenantScopedRepository):
                     "due_date": {"$lte": due_cutoff},
                     "enrollment_id": {"$exists": True, "$ne": None},
                 },
-                {"invoice_id": 1, "parent_id": 1, "enrollment_id": 1, "due_date": 1},
+                {
+                    "invoice_id": 1,
+                    "parent_id": 1,
+                    "enrollment_id": 1,
+                    "due_date": 1,
+                    "status": 1,
+                    "balance_due_cents": 1,
+                },
             )
             .sort([("due_date", ASCENDING), ("invoice_id", ASCENDING)])
         )
@@ -181,7 +193,7 @@ class MongoDunningStateRepository(TenantScopedRepository):
                 {
                     "academy_id": academy_id,
                     "enrollment_id": {"$in": enrollment_ids},
-                    "autopay_enrollment_status": "active",
+                    "autopay_enrollment_status": AUTOPAY_ACTIVE_STATUS,
                 },
                 {"enrollment_id": 1},
             )
@@ -191,7 +203,15 @@ class MongoDunningStateRepository(TenantScopedRepository):
             if created >= remaining:
                 break
             enrollment_id = str(invoice_doc["enrollment_id"])
-            if enrollment_id not in autopay_active:
+            eligibility = ladder_eligibility(
+                invoice_status=invoice_doc.get("status"),
+                balance_due_cents=int(invoice_doc.get("balance_due_cents") or 0),
+                enrollment_id=enrollment_id,
+                autopay_enrollment_status=(
+                    AUTOPAY_ACTIVE_STATUS if enrollment_id in autopay_active else None
+                ),
+            )
+            if not eligibility.eligible:
                 continue
             invoice_id = str(invoice_doc["invoice_id"])
             due_at = _as_datetime(invoice_doc.get("due_date"), now=now)
@@ -271,7 +291,10 @@ class MongoDunningStateRepository(TenantScopedRepository):
                     "enrollment_id": str(invoice_doc.get("enrollment_id") or ""),
                 }
             )
-            if enrollment is None or enrollment.get("autopay_enrollment_status") != "active":
+            if (
+                enrollment is None
+                or enrollment.get("autopay_enrollment_status") != AUTOPAY_ACTIVE_STATUS
+            ):
                 await self._store_state(state.suppress(reason="autopay_not_active", now=now))
                 continue
             latest_status = await self._latest_payment_attempt_status(state.invoice_id)
@@ -555,7 +578,6 @@ def _mongo_doc(model: DunningState) -> dict[str, Any]:
 def _invoice_chargeable(invoice_doc: dict[str, Any] | None) -> bool:
     if invoice_doc is None:
         return False
-    return (
-        invoice_doc.get("status") in {"open", "partially_paid"}
-        and int(invoice_doc.get("balance_due_cents") or 0) > 0
+    return invoice_is_chargeable(
+        invoice_doc.get("status"), int(invoice_doc.get("balance_due_cents") or 0)
     )
