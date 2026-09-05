@@ -31,7 +31,8 @@ type ManifestRole =
 /**
  * Roles this sweep cannot sign in as. `proxy` routes are BFF handlers with no
  * UI; `platform` needs a cross-tenant operator, and the local-auth dataset
- * seeds only admin/coach/parent. Revisit once the seed grows a platform_admin.
+ * seeds admin (who also holds owner), an admin-only ops user, coach and
+ * parent. Revisit once the seed grows a platform_admin.
  */
 const UNSEEDED_ROLES = new Set<ManifestRole>(["proxy", "platform"]);
 

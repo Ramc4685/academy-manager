@@ -11,6 +11,10 @@ from __future__ import annotations
 
 import pytest
 
+from backend.v2.contexts.identity.application.use_cases.admin_directory import (
+    AdminUserSummary,
+)
+
 OWNER_ONLY_GETS = (
     "/api/v2/admin/finance/revenue",
     "/api/v2/admin/audit-logs",
@@ -72,6 +76,33 @@ def test_admin_only_cannot_change_a_role_to_admin(admin_only_client):
         json={"role": "admin", "reason": "promotion"},
     )
     assert r.status_code == 403
+
+
+def test_admin_only_cannot_demote_an_owner_by_replacing_their_role(admin_only_client):
+    """PATCH /role replaces every held role, so setting an owner to "parent"
+    would silently revoke owner. The rule must look at held roles too."""
+    r = admin_only_client.patch(
+        "/api/v2/admin/users/o-1/role",
+        json={"role": "parent", "reason": "demotion"},
+    )
+    assert r.status_code == 403
+
+
+def test_admin_only_may_still_replace_a_coach_role(admin_only_client):
+    # coach-1 holds no governance role; the rule must not block this.
+    admin_only_client.use_cases.change_user_role.execute.return_value = AdminUserSummary(
+        user_id="coach-1",
+        email="coach-1@example.com",
+        display_name="coach-1",
+        role="parent",
+        status="active",
+    )
+    r = admin_only_client.patch(
+        "/api/v2/admin/users/coach-1/role",
+        json={"role": "parent", "reason": "left coaching"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["role"] == "parent"
 
 
 def test_admin_only_still_grants_operations_roles(admin_only_client):

@@ -2218,7 +2218,18 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
             self.roles: dict[str, list[str]] = {
                 "coach-1": ["coach"],
                 "u-admin": ["admin"],
+                # An owner other than the caller, for demotion-rule tests.
+                "o-1": ["owner", "admin"],
             }
+
+        async def execute(self, user_id: str, *, academy_id: str) -> AdminUserDetail:
+            """`GetAdminUser`-shaped lookup so routes can read a target's held roles."""
+            _ = academy_id
+            if user_id not in self.roles:
+                # Unknown target: the route treats "no detail" as "no held
+                # roles" and lets the real use case report the missing user.
+                return None
+            return self._detail(user_id)
 
         def _detail(self, user_id: str) -> AdminUserDetail:
             roles = self.roles[user_id]
@@ -2381,6 +2392,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         update_academy_notifications_use_case=AsyncMock(),
         get_academy_gateway_use_case=AsyncMock(),
         change_user_role=AsyncMock(),
+        get_admin_user=_role_modifier,  # type: ignore[arg-type]
         add_user_role=AddUserRole(_role_modifier),  # type: ignore[arg-type]
         remove_user_role=RemoveUserRole(_role_modifier),  # type: ignore[arg-type]
         set_tuition_discount=set_tuition_discount,

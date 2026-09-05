@@ -279,6 +279,14 @@ async def update_user_role(
 
         raise SelfRoleChangeForbidden("cannot change your own role")
     ensure_can_assign_role(claims, payload.role)
+    # Replacing a role also revokes every role the target holds today, so an
+    # admin-only caller must not be able to demote an owner/admin by setting
+    # their role to "parent". Check the held roles, not just the requested one.
+    detail_use_case = use_cases.get_admin_user
+    if detail_use_case is not None:
+        current = await detail_use_case.execute(user_id, academy_id=claims.academy_id)
+        for held in getattr(current, "roles", None) or ():
+            ensure_can_assign_role(claims, held)
     user = await use_cases.change_user_role.execute(
         user_id,
         ChangeUserRoleCommand(
