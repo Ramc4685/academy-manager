@@ -288,7 +288,31 @@ The backend exposes:
 GET /api/v2/healthz
 ```
 
-Monitor this endpoint from the production region. Alert on non-2xx responses, elevated latency, and repeated application errors. Application logs should be shipped to the platform log drain or external logging service.
+Fly polls it every 30 seconds (`backend/fly.toml`) and restarts the machine on
+a 503; the post-deploy smoke greps the body for `"status":"ok"`. Everything
+else (JSON logs, Sentry errors + logs + crons, the daily ops digest, request
+ids, the alert rules and where each one emails) is documented in
+[`docs/observability.md`](docs/observability.md). Account-side setup that no
+deploy performs lives in `scripts/ops/`:
+
+- `scripts/ops/sentry_alerts.sh` creates the Sentry issue and metric alert
+  rules (dry-run by default, `--apply` to create).
+- `scripts/ops/uptime.md` is the checklist for the external uptime monitor
+  and the Fly Grafana alert rules.
+
+### Monitoring secrets and tokens
+
+| Where | Name | Purpose |
+|---|---|---|
+| Fly secret (`courtmastr-academy-api`) | `SENTRY_DSN` | Enables Sentry error tracking and Sentry Logs in the API. Set in prod. |
+| Fly secret | `OPS_ALERT_EMAIL` | Recipient of the 07:00 daily ops digest. Set in prod. |
+| Fly secret | `RESEND_WEBHOOK_SECRET` | Verifies Resend bounce/complaint webhooks at `/api/v2/webhooks/resend`. Set in prod. |
+| Fly env (optional) | `V2_SENTRY_CRON_JOBS` | Comma-separated scheduler job ids that send Sentry Crons check-ins. Default `generate_monthly_invoices`. |
+| GitHub repo secret | `SENTRY_AUTH_TOKEN` | Lets the deploy workflow create the Sentry release `courtmastr-fastapi@<sha>` (org `blno-badmintion`). Token scopes: `project:releases`, `org:read`. Missing token skips the step; events then fall back to `FLY_IMAGE_REF` as the release. |
+| GitHub repo variable / Cloudflare build var | `NEXT_PUBLIC_SENTRY_DSN` | Browser-side Sentry DSN for the Next.js app; baked in at build time. Unset (current) means the frontend only logs to the console. Use a separate Sentry project or the same DSN with `environment` set; either way do not reuse it server-side. |
+
+The `sentry` CLI on a developer machine authenticates separately
+(`sentry auth login`); it needs no repo secret.
 
 ### Sentry releases
 
