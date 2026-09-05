@@ -1,6 +1,6 @@
 # fix-enrollment-events-billing-result-validator
 
-PR: #TBD
+PR: #658
 
 ## What changed
 Fixes #657. Admin **Remove / Withdraw / Pause / Move** enrollment returned
