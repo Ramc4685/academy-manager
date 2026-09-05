@@ -60,7 +60,7 @@ def require_persona(persona: Persona) -> Callable[..., AuthClaims]:
     return _dep
 
 
-def require_owner() -> Callable[..., AuthClaims]:
+def require_owner() -> Callable[..., Awaitable[AuthClaims]]:
     """Academy owner gate for money-governance routes (refunds, pricing,
     payouts, reports, audit, role grants). Misses are 404, like every persona
     guard, so the route's existence is never leaked.
