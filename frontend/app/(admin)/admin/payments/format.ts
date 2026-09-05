@@ -1,6 +1,6 @@
 import type { AdminPaymentStatus, AdminPaymentView } from "@/lib/api/admin";
 import type { ChipVariant } from "@/components/ds/chip";
-import { invoiceStatusChip } from "@/lib/billing-status";
+import { INVOICE_STATUS_FILTER_OPTIONS, invoiceStatusChip } from "@/lib/billing-status";
 
 export { formatCents } from "@/lib/money";
 
@@ -122,13 +122,11 @@ export function sessionFilterLabel(value: string): string {
 
 export const PAGE_SIZE = 50;
 
-export const STATUS_FILTER_OPTIONS: { value: string; label: string }[] = [
-  { value: "pending", label: "Pending" },
-  { value: "partially_paid", label: "Partially paid" },
-  { value: "paid", label: "Paid" },
-  { value: "failed", label: "Failed" },
-  { value: "refunded", label: "Refunded" },
-  { value: "partially_refunded", label: "Partially refunded" },
-  { value: "expired", label: "Expired" },
-  { value: "waived", label: "Waived" },
-];
+/**
+ * Status filter in the chip vocabulary (draft / open / partially paid / paid /
+ * void). Applied client-side via `matchesInvoiceStatusFilter` because the
+ * backend list filter is an exact raw-status match and the list still emits
+ * raw statuses such as `succeeded` that render as PAID.
+ */
+export const STATUS_FILTER_OPTIONS: readonly { value: string; label: string }[] =
+  INVOICE_STATUS_FILTER_OPTIONS;

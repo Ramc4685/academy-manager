@@ -46,3 +46,33 @@ const STATUS_CHIPS: Record<InvoiceStatus, InvoiceStatusChip> = {
 export function invoiceStatusChip(raw: string | null | undefined): InvoiceStatusChip {
   return { ...STATUS_CHIPS[normalizeInvoiceStatus(raw)] };
 }
+
+/**
+ * Status filter options for invoice/payment lists — the same five words the
+ * chips use, so a filter can never disagree with what the row shows.
+ */
+export const INVOICE_STATUS_FILTER_OPTIONS: readonly { value: InvoiceStatus; label: string }[] = [
+  { value: "draft", label: "Draft" },
+  { value: "open", label: "Open" },
+  { value: "partially_paid", label: "Partially paid" },
+  { value: "paid", label: "Paid" },
+  { value: "void", label: "Void" },
+];
+
+export type InvoiceStatusFilter = InvoiceStatus | "all";
+
+/**
+ * Whether a row with the raw ledger status `raw` belongs under the UI filter.
+ *
+ * The admin list still emits raw statuses (`succeeded`, `refunded`, `pending`,
+ * `waived`, ...) and the backend list filter is an exact raw-string match, so
+ * the UI-vocabulary filter is applied client-side through the same alias map
+ * the chip uses: `paid` reaches succeeded|paid|partially_refunded|refunded.
+ */
+export function matchesInvoiceStatusFilter(
+  raw: string | null | undefined,
+  filter: InvoiceStatusFilter,
+): boolean {
+  if (filter === "all") return true;
+  return normalizeInvoiceStatus(raw) === filter;
+}

@@ -19,6 +19,7 @@ import {
   type AdminPaymentView,
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
+import { matchesInvoiceStatusFilter, type InvoiceStatusFilter } from "@/lib/billing-status";
 
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
@@ -83,13 +84,15 @@ export default function AdminPaymentsPage() {
     () => ({
       date_from: dateFrom ? `${dateFrom}T00:00:00Z` : undefined,
       date_to: dateTo ? `${dateTo}T23:59:59Z` : undefined,
-      status: statusFilter !== "all" ? statusFilter : undefined,
+      // Status is filtered client-side in the chip vocabulary (see
+      // matchesInvoiceStatusFilter): the server filter is an exact raw-status
+      // match and could not reach every row that renders as PAID.
       method: methodFilter !== "all" ? methodFilter : undefined,
       q: search || undefined,
       limit: PAGE_SIZE,
       offset,
     }),
-    [dateFrom, dateTo, statusFilter, methodFilter, search, offset],
+    [dateFrom, dateTo, methodFilter, search, offset],
   );
 
   const { data, isLoading, isError, refetch } = useQuery({
@@ -139,9 +142,12 @@ export default function AdminPaymentsPage() {
       payments.filter((payment) => {
         if (periodFilter !== "all" && payment.period !== periodFilter) return false;
         if (sessionFilter !== "all" && sessionFilterKey(payment) !== sessionFilter) return false;
+        if (!matchesInvoiceStatusFilter(payment.status, statusFilter as InvoiceStatusFilter)) {
+          return false;
+        }
         return true;
       }),
-    [payments, periodFilter, sessionFilter],
+    [payments, periodFilter, sessionFilter, statusFilter],
   );
   const webhookEvents = webhookQueueQuery.data?.events ?? [];
   const pendingCount = payments.filter((p) => {

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { invoiceStatusChip, normalizeInvoiceStatus } from "./billing-status";
+import {
+  INVOICE_STATUS_FILTER_OPTIONS,
+  invoiceStatusChip,
+  matchesInvoiceStatusFilter,
+  normalizeInvoiceStatus,
+} from "./billing-status";
 
 describe("normalizeInvoiceStatus", () => {
   it.each([
@@ -55,5 +60,53 @@ describe("invoiceStatusChip", () => {
   it("falls back to OPEN for unknown values", () => {
     expect(invoiceStatusChip(null)).toEqual({ variant: "pending", label: "OPEN" });
     expect(invoiceStatusChip("mystery")).toEqual({ variant: "pending", label: "OPEN" });
+  });
+});
+
+describe("status filter vocabulary", () => {
+  it("offers exactly the five chip words, in ledger order", () => {
+    expect(INVOICE_STATUS_FILTER_OPTIONS).toEqual([
+      { value: "draft", label: "Draft" },
+      { value: "open", label: "Open" },
+      { value: "partially_paid", label: "Partially paid" },
+      { value: "paid", label: "Paid" },
+      { value: "void", label: "Void" },
+    ]);
+  });
+
+  it("every filter option label matches its chip label, ignoring case", () => {
+    for (const option of INVOICE_STATUS_FILTER_OPTIONS) {
+      expect(invoiceStatusChip(option.value).label.toLowerCase()).toBe(option.label.toLowerCase());
+    }
+  });
+
+  it.each([
+    // The admin list still emits raw ledger statuses (succeeded, refunded, ...):
+    // the Paid filter must reach every row that renders a PAID chip.
+    ["paid", "succeeded", true],
+    ["paid", "paid", true],
+    ["paid", "refunded", true],
+    ["paid", "partially_refunded", true],
+    ["paid", "pending", false],
+    ["open", "pending", true],
+    ["open", "failed", true],
+    ["open", "open", true],
+    ["open", "mystery", true],
+    ["open", "paid", false],
+    ["void", "waived", true],
+    ["void", "cancelled", true],
+    ["void", "expired", true],
+    ["void", "succeeded", false],
+    ["partially_paid", "partially_paid", true],
+    ["partially_paid", "paid", false],
+    ["draft", "draft", true],
+    ["draft", "open", false],
+  ] as const)("filter %s vs raw %s -> %s", (filter, raw, expected) => {
+    expect(matchesInvoiceStatusFilter(raw, filter)).toBe(expected);
+  });
+
+  it("matches everything when the filter is all", () => {
+    expect(matchesInvoiceStatusFilter("succeeded", "all")).toBe(true);
+    expect(matchesInvoiceStatusFilter(null, "all")).toBe(true);
   });
 });
