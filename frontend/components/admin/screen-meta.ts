@@ -24,6 +24,12 @@ export interface AdminNavItem {
   urgent?: boolean;
   /** True if pathname `p` should highlight this item. */
   match: (p: string) => boolean;
+  /**
+   * Money-governance destination: rendered only for academy owners. The
+   * backend 404s the underlying routes for admin-only users, so the nav must
+   * not advertise them (`navForRoles`).
+   */
+  ownerOnly?: true;
 }
 
 export interface AdminNavGroup {
@@ -70,8 +76,8 @@ export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
         icon: "card",
         match: startsWith("/admin/expenses"),
       },
-      { href: "/admin/payouts", label: "Coach payouts", icon: "whistle", match: startsWith("/admin/payouts") },
-      { href: "/admin/reports", label: "Reports", icon: "chart", match: startsWith("/admin/reports") },
+      { href: "/admin/payouts", label: "Coach payouts", icon: "whistle", match: startsWith("/admin/payouts"), ownerOnly: true },
+      { href: "/admin/reports", label: "Reports", icon: "chart", match: startsWith("/admin/reports"), ownerOnly: true },
     ],
   },
   {
@@ -80,7 +86,7 @@ export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
       { href: "/admin/messages", label: "Messages", icon: "msg", match: startsWith("/admin/messages") },
       { href: "/admin/waivers", label: "Waivers", icon: "check", match: startsWith("/admin/waivers") },
       { href: "/admin/settings", label: "Settings", icon: "cog", match: startsWith("/admin/settings") },
-      { href: "/admin/audit-logs", label: "Audit logs", icon: "filter", match: startsWith("/admin/audit-logs") },
+      { href: "/admin/audit-logs", label: "Audit logs", icon: "filter", match: startsWith("/admin/audit-logs"), ownerOnly: true },
     ],
   },
 ];
@@ -91,6 +97,55 @@ export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
  */
 export function adminTopLevelRoutes(): string[] {
   return [...ADMIN_NAV.flatMap((group) => group.items.map((item) => item.href)), "/admin/dashboard"];
+}
+
+/**
+ * Nav as seen by the current user: owner-only items are removed for admins
+ * without the owner scope, and a group left empty disappears with them.
+ * Pure so it can be unit-tested under plain Node.
+ */
+export function navForRoles(
+  nav: ReadonlyArray<AdminNavGroup>,
+  isOwner: boolean,
+): ReadonlyArray<AdminNavGroup> {
+  if (isOwner) return nav;
+  return nav
+    .map((group) => ({ ...group, items: group.items.filter((item) => !item.ownerOnly) }))
+    .filter((group) => group.items.length > 0);
+}
+
+/**
+ * Route prefixes whose pages are owner-only. The layout swaps the page for an
+ * "Owner only" panel when an admin without the owner scope lands here — the
+ * BFF 404s their data anyway, so this is the honest state, not a guard.
+ * `/admin/coach-payslip` and `/admin/session-economics` are legacy redirects
+ * into owner-only destinations and are listed so the redirect frame is not
+ * shown to a non-owner either.
+ */
+export const OWNER_ONLY_ROUTE_PREFIXES: ReadonlyArray<string> = [
+  "/admin/payouts",
+  "/admin/reports",
+  "/admin/audit-logs",
+  "/admin/coach-payslip",
+  "/admin/session-economics",
+];
+
+/**
+ * Exceptions carved out of `OWNER_ONLY_ROUTE_PREFIXES`: dues follow-up is
+ * operations work (chasing balances), so admins keep it even though it lives
+ * under `/admin/reports`.
+ */
+export const OWNER_ONLY_ROUTE_EXCEPTIONS: ReadonlyArray<string> = ["/admin/reports/dues"];
+
+const matchesPrefix = (pathname: string, prefix: string) =>
+  pathname === prefix || pathname.startsWith(prefix + "/");
+
+/** True when `pathname` is an owner-only page (see the prefix list above). */
+export function isOwnerOnlyRoute(pathname: string): boolean {
+  if (OWNER_ONLY_ROUTE_EXCEPTIONS.some((prefix) => matchesPrefix(pathname, prefix))) {
+    return false;
+  }
+  return OWNER_ONLY_ROUTE_PREFIXES.some((prefix) => matchesPrefix(pathname, prefix));
 }
 
 export interface AdminScreenMeta {

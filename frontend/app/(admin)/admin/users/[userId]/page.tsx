@@ -24,8 +24,11 @@ import {
   type CoachPayBillingUnit,
   type LoginInviteOutcome,
 } from "@/lib/api/admin";
+import { assignableRoles } from "@/lib/auth/assignable-roles";
 import { rateTimelineIssueLabel } from "@/lib/payroll-warnings";
 import { queryKeys } from "@/lib/query/keys";
+import { useIsOwner } from "@/components/admin/owner-context";
+import { OwnerOnlyHint } from "@/components/admin/owner-context";
 import { Avatar } from "@/components/ds/avatar";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
@@ -33,7 +36,6 @@ import { Chip } from "@/components/ds/chip";
 import { Overline } from "@/components/ds/typography";
 
 const editableStatuses = ["active", "inactive", "disabled"] as const;
-const academyRoles: AdminUserRole[] = ["admin", "coach", "parent"];
 
 export default function AdminUserDetailPage() {
   const params = useParams<{ userId: string }>();
@@ -664,6 +666,10 @@ function RolesPanel({
   onSaved: () => void;
 }) {
   const initialRoles = user.roles.length > 0 ? user.roles : [user.role];
+  // Owner-only roles the user already holds stay out of the diff below when
+  // the editor is not an owner: they are shown, not toggled.
+  const academyRoles = assignableRoles(useIsOwner());
+  const lockedRoles = initialRoles.filter((role) => !academyRoles.includes(role));
   const [selected, setSelected] = useState<AdminUserRole[]>(initialRoles);
   const [reason, setReason] = useState("Admin role change");
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -739,6 +745,12 @@ function RolesPanel({
           </label>
         ))}
       </div>
+      {lockedRoles.length > 0 && (
+        <p className="text-xs text-rally-muted" data-testid="admin-user-locked-roles">
+          Also holds: <span className="capitalize">{lockedRoles.join(", ")}</span>{" "}
+          <OwnerOnlyHint />
+        </p>
+      )}
 
       <Field label="Reason" htmlFor="user-role-reason">
         <input
