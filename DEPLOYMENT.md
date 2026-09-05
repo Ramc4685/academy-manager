@@ -247,6 +247,12 @@ Production frontend environment:
 ```bash
 BFF_API_ORIGIN=https://api.academy.courtmastr.com
 NEXT_PUBLIC_API_BASE=/api/v2
+# Browser error capture + Web Vitals (optional). Create the Sentry project
+# `courtmastr-frontend` first, then set its DSN; without it the SDK is never
+# loaded. NEXT_PUBLIC_APP_ENV names the Sentry environment (default
+# "production"); NEXT_PUBLIC_SENTRY_RELEASE tags events with a release.
+NEXT_PUBLIC_SENTRY_DSN=
+NEXT_PUBLIC_APP_ENV=production
 ```
 
 `academy.courtmastr.com/*` is a Worker Route on the `academy-next` Cloudflare

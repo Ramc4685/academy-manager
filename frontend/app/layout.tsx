@@ -3,6 +3,7 @@ import { JetBrains_Mono, Manrope, Outfit } from "next/font/google";
 import "./globals.css";
 import { brand } from "@/lib/brand";
 import { Providers } from "@/lib/providers";
+import { SentryInit } from "@/components/observability/sentry-init";
 
 const manrope = Manrope({
   subsets: ["latin"],
@@ -48,6 +49,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body
         className={`${manrope.variable} ${outfit.variable} ${jetbrainsMono.variable} min-h-screen bg-white font-body text-neutral-900 antialiased dark:bg-neutral-950 dark:text-neutral-100`}
       >
+        <SentryInit />
         <Providers>{children}</Providers>
       </body>
     </html>
