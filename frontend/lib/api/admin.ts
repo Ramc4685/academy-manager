@@ -333,6 +333,86 @@ export interface AdminPaymentFeedResponse {
   payments: AdminPaymentFeedItem[];
 }
 
+// ---- Payments buckets (GET /admin/payments/collections) -------------------
+
+export type CollectionsBucketKey =
+  | "failed_autopay"
+  | "past_due"
+  | "awaiting"
+  | "autopay_scheduled"
+  | "paused"
+  | "paid";
+
+export type CollectionsAction =
+  | "send_reminder"
+  | "record_payment"
+  | "message"
+  | "skip_month"
+  | "resume";
+
+export interface AdminCollectionsFamily {
+  parent_id: string;
+  parent_name: string | null;
+  parent_email: string | null;
+  students: { student_id: string; name: string; session_title: string | null }[];
+  invoices: {
+    invoice_id: string;
+    invoice_number: string | null;
+    period: string;
+    status: string;
+    total_cents: number;
+    balance_due_cents: number;
+    due_date: string;
+    delivery_status: string;
+  }[];
+  balance_cents: number;
+  leftover_balance_cents: number;
+  autopay: {
+    status: string;
+    card_last4: string | null;
+    charge_on: string | null;
+    notice_sent_at: string | null;
+  } | null;
+  failure: {
+    reason: string | null;
+    attempt_count: number;
+    max_attempts: number;
+    next_retry_on: string | null;
+    disabled: boolean;
+  } | null;
+  pause: {
+    enrollment_id: string;
+    resume_on: string | null;
+    review_on: string | null;
+    session_title: string | null;
+    student_name: string;
+  } | null;
+  paid: { amount_cents: number; method: string | null; paid_at: string | null } | null;
+  last_reminder_at: string | null;
+  actions: CollectionsAction[];
+}
+
+export interface AdminCollectionsBucket {
+  key: CollectionsBucketKey;
+  count: number;
+  total_cents: number;
+  families: AdminCollectionsFamily[];
+}
+
+export interface AdminCollectionsView {
+  period: string;
+  generated_at: string;
+  timezone: string;
+  totals: {
+    owed_cents: number;
+    autopay_scheduled_cents: number;
+    autopay_scheduled_count: number;
+    needs_action_count: number;
+    collected_cents: number;
+  };
+  buckets: AdminCollectionsBucket[];
+}
+
 export interface AdminFamilyLastPaymentRow {
   parent_id: string;
   parent_name: string | null;
@@ -1722,6 +1802,17 @@ export function listAdminPayments(filters?: AdminPaymentListFilters): Promise<Ad
 
 export function getAdminPaymentFeed(limit = 20): Promise<AdminPaymentFeedResponse> {
   return apiFetch<AdminPaymentFeedResponse>(`/admin/payments/feed?limit=${limit}`, {
+    method: "GET",
+  });
+}
+
+/**
+ * Six-bucket collections view for the Payments page and dashboard tiles.
+ * `period` is YYYY-MM; omitted → the backend picks the current billing month.
+ */
+export function getAdminCollections(period?: string): Promise<AdminCollectionsView> {
+  const query = period ? `?period=${encodeURIComponent(period)}` : "";
+  return apiFetch<AdminCollectionsView>(`/admin/payments/collections${query}`, {
     method: "GET",
   });
 }

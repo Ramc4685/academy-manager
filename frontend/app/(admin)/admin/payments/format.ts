@@ -1,9 +1,8 @@
 import type { AdminPaymentStatus, AdminPaymentView } from "@/lib/api/admin";
 import type { ChipVariant } from "@/components/ds/chip";
+import { invoiceStatusChip } from "@/lib/billing-status";
 
-export function formatCents(cents: number): string {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
-}
+export { formatCents } from "@/lib/money";
 
 export function formatDate(value: string): string {
   return new Date(`${value}T00:00:00`).toLocaleDateString(undefined, {
@@ -38,26 +37,12 @@ export function adminPaymentStatus(payment: AdminPaymentView): string {
 
 export type PaymentStatusChip = { variant: ChipVariant; label: string };
 
-export const STATUS_CHIP: Record<AdminPaymentStatus, PaymentStatusChip> = {
-  succeeded: { variant: "paid", label: "PAID" },
-  paid: { variant: "paid", label: "PAID" },
-  pending: { variant: "pending", label: "PENDING" },
-  partially_paid: { variant: "partial", label: "PARTIAL" },
-  refunded: { variant: "refunded", label: "REFUNDED" },
-  partially_refunded: { variant: "partial", label: "PARTIAL" },
-  failed: { variant: "failed", label: "FAILED" },
-  expired: { variant: "expired", label: "EXPIRED" },
-  waived: { variant: "waived", label: "WAIVED" },
-};
-
+/**
+ * Status chip for an invoice/payment row, in the one UI vocabulary
+ * (draft / open / partially paid / paid / void) — see lib/billing-status.ts.
+ */
 export function statusChip(status: string | null | undefined): PaymentStatusChip {
-  if (status && status in STATUS_CHIP) {
-    return STATUS_CHIP[status as AdminPaymentStatus];
-  }
-  return {
-    variant: "pending",
-    label: (status || "unknown").replaceAll("_", " ").toUpperCase(),
-  };
+  return invoiceStatusChip(status);
 }
 
 /**
@@ -141,7 +126,6 @@ export const STATUS_FILTER_OPTIONS: { value: string; label: string }[] = [
   { value: "pending", label: "Pending" },
   { value: "partially_paid", label: "Partially paid" },
   { value: "paid", label: "Paid" },
-  { value: "succeeded", label: "Succeeded" },
   { value: "failed", label: "Failed" },
   { value: "refunded", label: "Refunded" },
   { value: "partially_refunded", label: "Partially refunded" },
