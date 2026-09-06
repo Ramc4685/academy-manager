@@ -45,7 +45,12 @@ from pydantic import BaseModel, EmailStr, Field, field_validator, model_validato
 # several academies also gets the cross-academy financial rollup (UIM11). It
 # is still an academy-scoped role — the rollup unions the user's own `owner`
 # memberships and never widens from the request tenant.
-Role = Literal["admin", "coach", "parent", "student", "owner"]
+#
+# `assistant_coach` is a per-session helper: the coach shell scoped to the
+# sessions whose `assistant_coach_ids` list them, limited to attendance,
+# skills and notes. Never on payroll, never a coach supervisor. Distinct from
+# the per-occurrence coach-attendance role literal "assistant" (payroll).
+Role = Literal["admin", "coach", "assistant_coach", "parent", "student", "owner"]
 
 # Platform-wide roles. Granted via `PlatformRole` records and carried on
 # `AuthClaims.platform_roles` separately from academy roles.

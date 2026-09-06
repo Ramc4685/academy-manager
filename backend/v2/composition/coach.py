@@ -200,7 +200,9 @@ class CoachAssignedSessionLookup:
     """Answers "may this user act as the coach of this session?".
 
     The single choke point for every assignment check on the coach surface
-    (roster, notes, feedback, announcements, skills, teaching plan). A coach
+    (roster, notes, feedback, announcements, skills, teaching plan). An
+    assistant coach listed in the session's ``assistant_coach_ids`` counts as
+    assigned to that session (and only that session). A coach
     supervisor — an academy admin/owner covering any session (#632) — passes
     for every session *in this tenant*: the tenant-scoped session lookup
     runs first, so a supervisor still cannot reach another academy's
@@ -221,7 +223,7 @@ class CoachAssignedSessionLookup:
         session = await self._sessions.get(session_id)
         if session is None:
             return False
-        if session.coach_id == coach_id:
+        if session.coach_id == coach_id or coach_id in session.assistant_coach_ids:
             return True
         if self._is_supervisor is None:
             return False
@@ -320,12 +322,15 @@ def compose_coach(
         that has been running for months would drop out of the coach's inbox
         while the route still lets that same coach *post* to it. A replacement
         coach covering one occurrence is still not an audience, consistent
-        with every other coach session route.
+        with every other coach session route. Neither is an assistant coach:
+        the sessions that merely list the user in ``assistant_coach_ids`` are
+        excluded (``include_assistant=False``) — assistants never message or
+        receive messages from families.
 
         Read at execution time; the tenant comes from ``current_academy_id()``
         inside the closure, never from a composition-time capture.
         """
-        return await sessions_repo.assigned_session_ids_for_coach(coach_id)
+        return await sessions_repo.assigned_session_ids_for_coach(coach_id, include_assistant=False)
 
     async def list_messages(coach_id: str) -> list[Message]:
         return await messages_repo.for_recipient(

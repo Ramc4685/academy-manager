@@ -108,6 +108,7 @@ class CorrectAttendance:
                 occurrence.scheduled_coach_id,
                 occurrence.actual_coach_id,
                 occurrence.substitute_coach_id,
+                *occurrence.assistant_coach_ids,
             }:
                 raise SessionNotAssigned(
                     "session occurrence not found or not assigned to this coach",

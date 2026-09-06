@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
@@ -30,6 +31,7 @@ class MongoSessionOccurrenceRepository(TenantScopedRepository):
             is_payable=bool(doc.get("is_payable", True)),
             cancellation_reason=_optional_str(doc.get("cancellation_reason")),
             template_session_id=_optional_str(doc.get("template_session_id")),
+            assistant_coach_ids=_string_tuple(doc.get("assistant_coach_ids")),
         )
 
     async def get(self, occurrence_id: str) -> SessionOccurrence | None:
@@ -68,6 +70,7 @@ class MongoSessionOccurrenceRepository(TenantScopedRepository):
                     {"scheduled_coach_id": coach_id},
                     {"actual_coach_id": coach_id},
                     {"substitute_coach_id": coach_id},
+                    {"assistant_coach_ids": coach_id},
                 ],
             },
             sort=[("start_at", 1)],
@@ -90,6 +93,7 @@ class MongoSessionOccurrenceRepository(TenantScopedRepository):
                     {"scheduled_coach_id": coach_id},
                     {"actual_coach_id": coach_id},
                     {"substitute_coach_id": coach_id},
+                    {"assistant_coach_ids": coach_id},
                 ],
             },
             sort=[("start_at", 1)],
@@ -226,6 +230,38 @@ class MongoSessionOccurrenceRepository(TenantScopedRepository):
         )
         return await self.get(occurrence_id)
 
+    async def sync_assistant_coach_ids_for_session(
+        self,
+        *,
+        session_id: str,
+        assistant_coach_ids: Sequence[str],
+        since: datetime,
+    ) -> int:
+        """Re-stamp ``assistant_coach_ids`` on every FUTURE occurrence of a session.
+
+        Past occurrences keep the list they were run with (who actually
+        helped that day is history); the session's current list only shapes
+        classes still to come. Returns the number of documents modified.
+        """
+        result = await self.collection.update_many(
+            self._scoped(
+                {
+                    "$or": [
+                        {"session_id": session_id},
+                        {"template_session_id": session_id},
+                    ],
+                    "start_at": {"$gte": since},
+                }
+            ),
+            {
+                "$set": {
+                    "assistant_coach_ids": list(assistant_coach_ids),
+                    "updated_at": datetime.now(UTC),
+                }
+            },
+        )
+        return int(result.modified_count)
+
 
 def _to_doc(occurrence: SessionOccurrence) -> dict[str, Any]:
     return {
@@ -241,6 +277,7 @@ def _to_doc(occurrence: SessionOccurrence) -> dict[str, Any]:
         "is_payable": occurrence.is_payable,
         "cancellation_reason": occurrence.cancellation_reason,
         "template_session_id": occurrence.template_session_id,
+        "assistant_coach_ids": list(occurrence.assistant_coach_ids),
     }
 
 
@@ -257,3 +294,9 @@ def _candidate_day_bounds_utc(on_date: date) -> tuple[datetime, datetime]:
 
 def _optional_str(value: object | None) -> str | None:
     return None if value is None else str(value)
+
+
+def _string_tuple(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list | tuple):
+        return ()
+    return tuple(str(item) for item in value if item)

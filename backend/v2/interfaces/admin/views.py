@@ -20,13 +20,13 @@ class AdminUserView(BaseModel):
     user_id: str
     email: EmailStr
     display_name: str
-    role: Literal["admin", "coach", "parent", "owner"]
+    role: Literal["admin", "coach", "assistant_coach", "parent", "owner"]
     status: str
 
 
 class AdminUserDetailView(AdminUserView):
     phone: str | None = None
-    roles: list[Literal["admin", "coach", "parent", "owner"]] = []
+    roles: list[Literal["admin", "coach", "assistant_coach", "parent", "owner"]] = []
     linked_student_count: int = 0
     session_count: int = 0
     login_invite_sent_at: datetime | None = None
@@ -55,7 +55,7 @@ class AdminUserList(BaseModel):
 
 
 class ModifyUserRoleRequest(BaseModel):
-    role: Literal["admin", "coach", "parent", "owner"]
+    role: Literal["admin", "coach", "assistant_coach", "parent", "owner"]
     reason: str = Field(default="Admin role change", min_length=1, max_length=500)
 
 
@@ -207,12 +207,12 @@ class UpdateAdminUserRequest(BaseModel):
 
 
 class UpdateAdminUserRoleRequest(BaseModel):
-    role: Literal["admin", "coach", "parent", "owner"]
+    role: Literal["admin", "coach", "assistant_coach", "parent", "owner"]
     reason: str = Field(default="admin role change", min_length=1, max_length=500)
 
 
 class CreateAdminUserRequest(BaseModel):
-    role: Literal["admin", "coach", "parent", "owner"]
+    role: Literal["admin", "coach", "assistant_coach", "parent", "owner"]
     display_name: str = Field(min_length=1, max_length=120)
     email: str = Field(min_length=1, max_length=254)
     phone: str | None = Field(default=None, max_length=40)
@@ -345,6 +345,9 @@ class AdminSessionView(BaseModel):
     session_id: str
     coach_id: str
     coach_name: str | None = None
+    # Assistant coaches (role ``assistant_coach``), resolved like coach_name.
+    assistant_coach_ids: list[str] = Field(default_factory=list)
+    assistant_coach_names: list[str] = Field(default_factory=list)
     title: str
     location: str
     start_at: datetime
@@ -480,6 +483,7 @@ class CreateSessionRequest(CommunicationPackFields):
     start_time: str | None = None
     end_time: str | None = None
     timezone: str | None = None
+    assistant_coach_ids: list[str] = Field(default_factory=list)
 
 
 class EditSessionRequest(CommunicationPackFields):
@@ -494,7 +498,16 @@ class EditSessionRequest(CommunicationPackFields):
     start_time: str | None = None
     end_time: str | None = None
     timezone: str | None = None
+    # None = unchanged; [] = clear every assistant.
+    assistant_coach_ids: list[str] | None = None
     reason: str | None = None
+
+
+class SetSessionAssistantsRequest(BaseModel):
+    """Body of ``PUT /admin/sessions/{id}/assistants`` (dedicated editor)."""
+
+    assistant_coach_ids: list[str] = Field(default_factory=list, max_length=20)
+    reason: str | None = Field(default=None, max_length=500)
 
 
 class UpdateOccurrenceReplacementRequest(BaseModel):
