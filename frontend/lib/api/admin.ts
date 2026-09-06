@@ -1208,7 +1208,12 @@ export interface DmRequest {
   body: string;
 }
 
-export type AdminUserRole = "admin" | "coach" | "parent";
+/**
+ * Roles an academy admin surface can grant. `owner` is the money-governance
+ * scope; granting or revoking `admin`/`owner` is itself owner-only (the BFF
+ * 403s anyone else), so the pages offer those options only to owners.
+ */
+export type AdminUserRole = "admin" | "coach" | "parent" | "owner";
 
 export interface AdminUserView {
   user_id: string;

@@ -11,15 +11,15 @@ import {
   type AdminUserRole,
   type AdminUserView,
 } from "@/lib/api/admin";
+import { assignableRoles } from "@/lib/auth/assignable-roles";
 import { queryKeys } from "@/lib/query/keys";
+import { useIsOwner } from "@/components/admin/owner-context";
 import { Avatar } from "@/components/ds/avatar";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Overline } from "@/components/ds/typography";
 import { ComingNextCard } from "./coming-next-card";
-
-const ROLE_OPTIONS: AdminUserRole[] = ["admin", "coach", "parent"];
 
 export function RolesPanel() {
   const queryClient = useQueryClient();
@@ -130,6 +130,9 @@ function RoleRow({
 }
 
 function RoleEditor({ user, onSaved }: { user: AdminUserView; onSaved: () => void }) {
+  // Admin/owner grants are owner-only (the BFF 403s anyone else), so an
+  // admin without the scope only sees coach and parent here.
+  const ROLE_OPTIONS = assignableRoles(useIsOwner());
   const detailQuery = useQuery({
     queryKey: queryKeys.admin.userDetail(user.user_id),
     queryFn: () => getAdminUser(user.user_id),
@@ -232,7 +235,7 @@ function RoleEditor({ user, onSaved }: { user: AdminUserView; onSaved: () => voi
 }
 
 function roleVariant(role: AdminUserRole) {
-  if (role === "admin") return "enrolled";
+  if (role === "admin" || role === "owner") return "enrolled";
   if (role === "coach") return "autopayOn";
   return "manual";
 }

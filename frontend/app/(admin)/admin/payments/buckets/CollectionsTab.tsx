@@ -26,6 +26,7 @@ import {
 } from "@/lib/api/admin";
 import { formatCents } from "@/lib/money";
 import { queryKeys } from "@/lib/query/keys";
+import { useIsOwner } from "@/components/admin/owner-context";
 
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
@@ -80,6 +81,9 @@ export function CollectionsTab() {
   // "" = let the backend pick the academy's current month (its timezone, not
   // the viewer's); the picker then anchors on the period the backend returned.
   const [period, setPeriod] = useState("");
+  // Voiding an invoice (Skip this month) is owner-only money governance; the
+  // BFF 404s it for plain admins, so do not offer the button to them.
+  const isOwner = useIsOwner();
   const [search, setSearch] = useState("");
   const deferredSearch = useDeferredValue(search);
   const [rowStatus, setRowStatus] = useState<Record<string, RowStatus>>({});
@@ -311,6 +315,7 @@ export function CollectionsTab() {
           today={today}
           rowStatus={rowStatus}
           busyParent={busyParent}
+          canGovernMoney={isOwner}
           onAction={handleAction}
         />
       ))}
@@ -373,6 +378,7 @@ function BucketSection({
   today,
   rowStatus,
   busyParent,
+  canGovernMoney,
   onAction,
 }: {
   bucket: AdminCollectionsBucket;
@@ -381,6 +387,7 @@ function BucketSection({
   today: string;
   rowStatus: Record<string, RowStatus>;
   busyParent: (parentId: string) => boolean;
+  canGovernMoney: boolean;
   onAction: (action: CollectionsAction, family: AdminCollectionsFamily) => void;
 }) {
   const meta = BUCKET_META[bucket.key];
@@ -431,6 +438,7 @@ function BucketSection({
           today={today}
           status={rowStatus[family.parent_id]}
           busy={busyParent(family.parent_id)}
+          canGovernMoney={canGovernMoney}
           onAction={onAction}
         />
       ))}
@@ -488,6 +496,7 @@ function FamilyRow({
   today,
   status,
   busy,
+  canGovernMoney,
   onAction,
 }: {
   bucket: CollectionsBucketKey;
@@ -495,6 +504,7 @@ function FamilyRow({
   today: string;
   status: RowStatus | undefined;
   busy: boolean;
+  canGovernMoney: boolean;
   onAction: (action: CollectionsAction, family: AdminCollectionsFamily) => void;
 }) {
   const chip = familyChip(bucket, family, today);
@@ -543,7 +553,9 @@ function FamilyRow({
           {formatCents(amount)}
         </div>
         <div className="flex flex-wrap gap-2 md:justify-end">
-          {family.actions.map((action) => (
+          {family.actions
+            .filter((action) => action !== "skip_month" || canGovernMoney)
+            .map((action) => (
             <ActionControl
               key={action}
               action={action}

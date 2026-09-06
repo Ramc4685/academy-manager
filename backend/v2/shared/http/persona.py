@@ -60,6 +60,24 @@ def require_persona(persona: Persona) -> Callable[..., AuthClaims]:
     return _dep
 
 
+def require_owner() -> Callable[..., Awaitable[AuthClaims]]:
+    """Academy owner gate for money-governance routes (refunds, pricing,
+    payouts, reports, audit, role grants). Misses are 404, like every persona
+    guard, so the route's existence is never leaked.
+
+    ``owner`` is academy-scoped, so an owner of one academy is an ordinary
+    user everywhere else. The full set of routes behind this guard lives in
+    ``backend.v2.interfaces.admin.owner_gate.OWNER_ONLY_ROUTE_PATHS``.
+    """
+
+    async def _dep(claims: AuthClaims = Depends(get_auth_claims)) -> AuthClaims:
+        if "owner" not in claims.roles:
+            raise HTTPException(status_code=404, detail="Not found")
+        return claims
+
+    return _dep
+
+
 def require_coach_surface() -> Callable[..., Awaitable[AuthClaims]]:
     """Dependency for coach BFF routes: admits coaches and coach supervisors.
 

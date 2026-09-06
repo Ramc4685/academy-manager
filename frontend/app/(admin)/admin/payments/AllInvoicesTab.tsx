@@ -21,6 +21,7 @@ import {
   type AdminPaymentView,
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
+import { useIsOwner } from "@/components/admin/owner-context";
 import { matchesInvoiceStatusFilter, type InvoiceStatusFilter } from "@/lib/billing-status";
 
 import { Button } from "@/components/ds/button";
@@ -58,6 +59,7 @@ import {
 const STATUS_FILTER_WINDOW = 200;
 
 export function AllInvoicesTab() {
+  const isOwner = useIsOwner();
   const [refundTarget, setRefundTarget] = useState<AdminPaymentView | null>(null);
   const [paidTarget, setPaidTarget] = useState<AdminPaymentView | null>(null);
   const [discountTarget, setDiscountTarget] = useState<AdminPaymentView | null>(null);
@@ -438,6 +440,7 @@ export function AllInvoicesTab() {
                       <td className="px-4 py-3">
                         <PaymentActions
                           payment={p}
+                          canGovernMoney={isOwner}
                           onDiscount={() => setDiscountTarget(p)}
                           onInvoice={() => setInvoiceTarget(p)}
                           onPaid={() => setPaidTarget(p)}
@@ -511,7 +514,7 @@ export function AllInvoicesTab() {
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.payments() });
         }}
       />
-      <InvoiceDialog payment={invoiceTarget} onClose={() => setInvoiceTarget(null)} />
+      <InvoiceDialog payment={invoiceTarget} canGovernMoney={isOwner} onClose={() => setInvoiceTarget(null)} />
       <SyncStripeDialog
         open={syncOpen}
         payment={syncTarget}

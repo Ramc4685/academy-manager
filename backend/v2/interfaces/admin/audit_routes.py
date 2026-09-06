@@ -7,14 +7,14 @@ from fastapi import APIRouter, Depends
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import AdminAuditLogList, AdminAuditLogView
 from backend.v2.shared.auth.claims import AuthClaims
-from backend.v2.shared.http import require_persona
+from backend.v2.shared.http import require_owner
 
 router = APIRouter(tags=["admin.audit"])
 
 
 @router.get("/audit-logs", response_model=AdminAuditLogList)
 async def list_audit_logs(
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminAuditLogList:
     rows = await use_cases.list_audit_logs()  # type: ignore[operator]

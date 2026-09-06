@@ -22,6 +22,16 @@ export function canSuperviseCoaching(roles: readonly SupervisableRole[]): boolea
 }
 
 /**
+ * Academy owner: the money-governance scope (refunds, pricing, payouts,
+ * reports, audit, admin/owner role grants). Mirrors `require_owner()` in
+ * `backend/v2/shared/http/persona.py`. `owner` is a scope layered on top of
+ * the admin persona, never a view of its own.
+ */
+export function isOwner(roles: readonly SupervisableRole[]): boolean {
+  return roles.includes("owner");
+}
+
+/**
  * Persona views the user can switch to: every persona role they hold, plus
  * the coach view when they can supervise coaching. Ordered admin → coach →
  * parent → student like the switcher. `owner` is a scope, not a view.

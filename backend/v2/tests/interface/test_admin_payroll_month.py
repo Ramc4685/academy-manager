@@ -148,7 +148,7 @@ def _admin_claims() -> AuthClaims:
         user_id="adm-1",
         email="admin@example.com",
         academy_id="acad",
-        roles=("admin",),
+        roles=("admin", "owner"),  # pre-split admin: migration 0165 grants owner
     )
 
 
