@@ -354,6 +354,7 @@ class AdminUseCases:
     # exposes it — the monthly generation job calls it directly.
     send_generated_invoices: object | None = None
     charge_invoice_via_autopay: object | None = None
+    charge_invoice_as_admin_action: object | None = None
     # Billing Health (#235): observability + recovery actions.
     list_reconciliation_runs: object | None = None  # async () -> list[dict]
     run_reconciliation: object | None = None  # async () -> dict

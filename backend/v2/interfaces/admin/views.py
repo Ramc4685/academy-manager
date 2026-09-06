@@ -1022,6 +1022,8 @@ class ChargeAutopayRequest(BaseModel):
     """
 
     reason: str | None = None
+    # Client-supplied so a retried submit is the same charge, not a second one.
+    request_id: str | None = None
 
 
 class ChargeAutopayResponse(BaseModel):
