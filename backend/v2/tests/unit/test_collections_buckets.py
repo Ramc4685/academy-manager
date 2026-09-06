@@ -577,3 +577,46 @@ def test_build_view_only_includes_unclassified_when_passed() -> None:
         unclassified=[],
     )
     assert view_empty_list["unclassified"] == []
+
+
+def test_next_retry_on_is_read_on_the_academy_clock() -> None:
+    from zoneinfo import ZoneInfo
+
+    # 02:30Z on Sep 19 is still the evening of Sep 18 in Chicago.
+    family = _family(
+        invoices=(
+            _autopay_invoice(
+                dunning_status="active",
+                dunning_attempt_count=1,
+                dunning_next_attempt_at=datetime(2026, 9, 19, 2, 30, tzinfo=UTC),
+                latest_attempt_status="failed",
+                latest_attempt_reason="card_declined",
+            ),
+        )
+    )
+    row = classify_family(family, today=TODAY, zone=ZoneInfo("America/Chicago"))
+    assert row is not None
+    assert row.payload["failure"]["next_retry_on"] == "2026-09-18"
+    assert classify_family(family, today=TODAY).payload["failure"]["next_retry_on"] == "2026-09-19"
+
+
+def test_action_invoice_id_names_the_invoice_the_rule_fired_on() -> None:
+    # A draft due Sep 1 is owing but never autopay-eligible, so rule 2 fires on
+    # it even though the family also has an eligible autopay invoice.
+    draft = _invoice(invoice_id="inv-draft", status="draft", due_date=date(2026, 9, 1))
+    eligible = _autopay_invoice(invoice_id="inv-auto", due_date=date(2026, 9, 20))
+    row = classify_family(_family(invoices=(draft, eligible)), today=TODAY)
+    assert row is not None
+    assert row.bucket == "past_due"
+    assert row.payload["action_invoice_id"] == "inv-draft"
+
+    scheduled = classify_family(_family(invoices=(eligible,)), today=TODAY)
+    assert scheduled is not None
+    assert scheduled.bucket == "autopay_scheduled"
+    assert scheduled.payload["action_invoice_id"] == "inv-auto"
+    assert scheduled.payload["autopay"]["charge_on"] == "2026-09-20"
+
+    paid_only = classify_family(
+        _family(invoices=(_invoice(status="paid", balance_due_cents=0),)), today=TODAY
+    )
+    assert paid_only is not None and paid_only.payload["action_invoice_id"] is None

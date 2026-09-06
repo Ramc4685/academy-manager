@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from collections.abc import Awaitable, Callable, Iterable
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, tzinfo
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -28,10 +28,11 @@ from bson import ObjectId
 
 from backend.v2.contexts.billing.application.collections_buckets import (
     FamilyFacts,
+    FamilyRow,
     InvoiceFacts,
     PauseFacts,
     StudentFacts,
-    build_collections_view,
+    build_collections_view_from_rows,
     classify_family,
 )
 from backend.v2.contexts.billing.domain.payment_attempt_kinds import (
@@ -116,7 +117,7 @@ def _invoice_parent_id(doc: dict[str, Any]) -> str | None:
 
 
 class MongoCollectionsReadModel:
-    """Batched facts → ``build_collections_view`` for the admin Payments page."""
+    """Batched facts → ``build_collections_view_from_rows`` for the admin Payments page."""
 
     def __init__(
         self,
@@ -150,7 +151,6 @@ class MongoCollectionsReadModel:
             {inv["enrollment_id"] for inv in invoices if inv.get("enrollment_id")}
         )
 
-        leftover_by_parent = await self._leftover_by_parent(academy_id, period)
         dunning_by_invoice = await self._dunning_by_invoice(academy_id, invoice_ids)
         attempt_by_invoice = await self._latest_attempt_by_invoice(academy_id, invoice_ids)
         autopay_by_enrollment = await self._autopay_by_enrollment(academy_id, enrollment_ids)
@@ -161,6 +161,7 @@ class MongoCollectionsReadModel:
             academy_id, invoice_parents, set(paused_by_student)
         )
         parent_ids = set(students_by_parent) | invoice_parents
+        leftover_by_parent = await self._leftover_by_parent(academy_id, period, parent_ids)
         session_by_student = await self._session_by_student(academy_id, set(student_docs))
         users = await self._users(parent_ids)
         paid_by_invoice = await self._paid_by_invoice(academy_id, invoice_ids)
@@ -243,7 +244,9 @@ class MongoCollectionsReadModel:
                 }
             )
 
-        classified = self._classify(families, today=today, unclassified=unclassified)
+        rows = self._classify(
+            families, today=today, zone=ZoneInfo(tz_name), unclassified=unclassified
+        )
         if unclassified:
             log.warning(
                 "collections read model: %d unclassified families for %s/%s",
@@ -251,10 +254,9 @@ class MongoCollectionsReadModel:
                 academy_id,
                 period,
             )
-        return build_collections_view(
-            classified,
+        return build_collections_view_from_rows(
+            rows,
             period=period,
-            today=today,
             timezone=tz_name,
             generated_at=now,
             unclassified=unclassified if debug else None,
@@ -267,13 +269,14 @@ class MongoCollectionsReadModel:
         families: Iterable[FamilyFacts],
         *,
         today: date,
+        zone: tzinfo,
         unclassified: list[dict[str, Any]],
-    ) -> list[FamilyFacts]:
-        """Drop families whose classification raises so the view still builds."""
-        kept: list[FamilyFacts] = []
+    ) -> list[FamilyRow]:
+        """Classify once; a family whose classification raises is reported, not fatal."""
+        kept: list[FamilyRow] = []
         for family in families:
             try:
-                classify_family(family, today=today)
+                row = classify_family(family, today=today, zone=zone)
             except Exception as exc:
                 log.warning(
                     "collections read model: family %s unclassifiable: %s",
@@ -283,7 +286,8 @@ class MongoCollectionsReadModel:
                 )
                 unclassified.append({"parent_id": family.parent_id, "error": str(exc)})
                 continue
-            kept.append(family)
+            if row is not None:
+                kept.append(row)
         return kept
 
     async def _resolve_timezone(self, academy_id: str) -> str:
@@ -389,10 +393,16 @@ class MongoCollectionsReadModel:
                 doc["enrollment_id"] = str(doc["enrollment_id"])
         return docs
 
-    async def _leftover_by_parent(self, academy_id: str, period: str) -> dict[str, int]:
+    async def _leftover_by_parent(
+        self, academy_id: str, period: str, parent_ids: set[str]
+    ) -> dict[str, int]:
+        if not parent_ids:
+            return {}
+        ids = sorted(parent_ids)
         cursor = self._db["invoices"].find(
             {
                 "academy_id": academy_id,
+                "$or": [{"parent_id": {"$in": ids}}, {"parent_user_id": {"$in": ids}}],
                 "period": {"$lt": period},
                 "status": {"$in": _LEFTOVER_STATUSES},
                 "balance_due_cents": {"$gt": 0},

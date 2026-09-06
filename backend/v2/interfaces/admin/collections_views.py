@@ -94,6 +94,8 @@ class AdminCollectionsFamily(_View):
     students: list[AdminCollectionsStudent] = []
     invoices: list[AdminCollectionsInvoice] = []
     balance_cents: int
+    # Invoice the bucket rule fired on: the target for Skip this month / Record payment.
+    action_invoice_id: str | None = None
     leftover_balance_cents: int = 0
     autopay: AdminCollectionsAutopay | None = None
     failure: AdminCollectionsFailure | None = None

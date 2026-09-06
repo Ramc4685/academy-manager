@@ -16,15 +16,18 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
-from datetime import date, datetime
+from datetime import date, datetime, tzinfo
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from backend.v2.contexts.billing.application.autopay_eligibility import (
     AUTOPAY_ACTIVE_STATUS,
     CHARGEABLE_INVOICE_STATUSES,
     Eligibility,
     autopay_eligibility,
+    invoice_is_chargeable,
 )
+from backend.v2.contexts.billing.domain.dunning import MAX_DUNNING_ATTEMPTS
 
 BUCKET_ORDER: tuple[str, ...] = (
     "failed_autopay",
@@ -44,7 +47,9 @@ BUCKET_ACTIONS: dict[str, list[str]] = {
     "paid": [],
 }
 
-MAX_AUTOPAY_ATTEMPTS = 4
+# The ladder length is owned by the dunning domain; "attempt N of M" must never drift
+# from what the worker actually does.
+MAX_AUTOPAY_ATTEMPTS = MAX_DUNNING_ATTEMPTS
 
 # A ladder that has actually tried (and failed) at least once, or one that ran
 # out of retries and disabled autopay. ``resolved`` / ``suppressed`` never count.
@@ -127,12 +132,24 @@ def _iso(value: date | datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
 
 
-def _date_iso(value: date | datetime | None) -> str | None:
+def _date_iso(value: date | datetime | None, zone: tzinfo | None = None) -> str | None:
+    """Calendar date of ``value``; datetimes are read on the academy clock (``zone``)."""
     if value is None:
         return None
     if isinstance(value, datetime):
+        if zone is not None and value.tzinfo is not None:
+            value = value.astimezone(zone)
         return value.date().isoformat()
     return value.isoformat()
+
+
+def _zone_for(timezone: str | None) -> tzinfo | None:
+    if not timezone:
+        return None
+    try:
+        return ZoneInfo(timezone)
+    except Exception:
+        return None
 
 
 def _is_owing(invoice: InvoiceFacts) -> bool:
@@ -140,7 +157,7 @@ def _is_owing(invoice: InvoiceFacts) -> bool:
 
 
 def _is_chargeable_owing(invoice: InvoiceFacts) -> bool:
-    return invoice.status in CHARGEABLE_INVOICE_STATUSES and invoice.balance_due_cents > 0
+    return invoice_is_chargeable(invoice.status, invoice.balance_due_cents)
 
 
 def _eligibility(family: FamilyFacts, invoice: InvoiceFacts) -> Eligibility:
@@ -199,16 +216,19 @@ def _autopay_payload(
     bucket: str,
     owing: list[InvoiceFacts],
     eligibility: dict[str, Eligibility],
+    trigger: InvoiceFacts | None = None,
 ) -> dict[str, Any] | None:
     if not owing:
         return None
-    earliest = owing[0]
     if bucket == "autopay_scheduled":
+        # The charge date is the ELIGIBLE invoice's due date (the one the worker
+        # will take), not the earliest owing one, which may be a draft.
+        charged = trigger or owing[0]
         return {
             "status": "eligible",
             "card_last4": family.card_last4,
-            "charge_on": earliest.due_date.isoformat(),
-            "notice_sent_at": _iso(earliest.last_sent_at),
+            "charge_on": charged.due_date.isoformat(),
+            "notice_sent_at": _iso(charged.last_sent_at),
         }
     if bucket not in {"past_due", "awaiting"}:
         return None
@@ -226,12 +246,12 @@ def _autopay_payload(
     return None
 
 
-def _failure_payload(trigger: InvoiceFacts) -> dict[str, Any]:
+def _failure_payload(trigger: InvoiceFacts, zone: tzinfo | None = None) -> dict[str, Any]:
     return {
         "reason": trigger.latest_attempt_reason,
         "attempt_count": trigger.dunning_attempt_count,
         "max_attempts": MAX_AUTOPAY_ATTEMPTS,
-        "next_retry_on": _date_iso(trigger.dunning_next_attempt_at),
+        "next_retry_on": _date_iso(trigger.dunning_next_attempt_at, zone),
         "disabled": trigger.dunning_status == _DUNNED_STATUS,
     }
 
@@ -290,8 +310,14 @@ def _invoice_payload(inv: InvoiceFacts) -> dict[str, Any]:
     }
 
 
-def classify_family(family: FamilyFacts, *, today: date) -> FamilyRow | None:
-    """Place one family in the first matching spec §2 bucket, or ``None``."""
+def classify_family(
+    family: FamilyFacts, *, today: date, zone: tzinfo | None = None
+) -> FamilyRow | None:
+    """Place one family in the first matching spec §2 bucket, or ``None``.
+
+    ``zone`` is the academy timezone used to turn instants (next retry) into
+    calendar dates; ``None`` keeps the instant's own date.
+    """
     invoices = tuple(inv for inv in family.invoices if inv.status != _VOID_STATUS)
     if len(invoices) != len(family.invoices):
         family = replace(family, invoices=invoices)
@@ -317,9 +343,12 @@ def classify_family(family: FamilyFacts, *, today: date) -> FamilyRow | None:
         "invoices": [_invoice_payload(inv) for inv in family.invoices],
         "balance_cents": sum(inv.balance_due_cents for inv in owing),
         "leftover_balance_cents": family.leftover_balance_cents,
-        "autopay": _autopay_payload(family, bucket, owing, eligibility),
+        # The invoice the bucket rule fired on: the target for Skip this month /
+        # Record payment, so the UI never has to guess which invoice the rule meant.
+        "action_invoice_id": trigger.invoice_id if trigger is not None else None,
+        "autopay": _autopay_payload(family, bucket, owing, eligibility, trigger),
         "failure": (
-            _failure_payload(trigger)
+            _failure_payload(trigger, zone)
             if bucket == "failed_autopay" and trigger is not None
             else None
         ),
@@ -352,11 +381,34 @@ def build_collections_view(
     unclassified: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Spec §3 ``AdminCollectionsView`` as a plain dict, buckets in ``BUCKET_ORDER``."""
+    zone = _zone_for(timezone)
+    rows = [
+        row
+        for family in families
+        if (row := classify_family(family, today=today, zone=zone)) is not None
+    ]
+    return build_collections_view_from_rows(
+        rows,
+        period=period,
+        timezone=timezone,
+        generated_at=generated_at,
+        unclassified=unclassified,
+    )
+
+
+def build_collections_view_from_rows(
+    rows: Iterable[FamilyRow],
+    *,
+    period: str,
+    timezone: str,
+    generated_at: datetime,
+    unclassified: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Assemble the view from already-classified rows (callers that classify
+    once themselves, e.g. to trap per-family failures, use this directly)."""
     grouped: dict[str, list[FamilyRow]] = {key: [] for key in BUCKET_ORDER}
-    for family in families:
-        row = classify_family(family, today=today)
-        if row is not None:
-            grouped[row.bucket].append(row)
+    for row in rows:
+        grouped[row.bucket].append(row)
 
     buckets = [
         {
