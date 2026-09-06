@@ -1,6 +1,6 @@
 # fix-e2e-dev-fast-refresh-nav-race
 
-PR: #PRNUM
+PR: #668
 
 ## What changed
 `next dev` now runs under Turbopack (`frontend/package.json`), which fixes a
@@ -27,7 +27,7 @@ navigation before the reload arrived.
 
 Turbopack applies those updates without a full reload. `playwright.config.ts` carries a
 comment recording why the dev server must stay on it. The full `webkit-mobile` shard also
-dropped from ~4m to 2.5m.
+dropped from ~4m to 2.5m, and the two Chromium shards from 5.3m to 1.3m.
 
 ## Deploy notes
 None — nothing ships. This changes the **dev** server only: `next build` and the
@@ -46,7 +46,13 @@ since the local pre-push gate skips WebKit:
   used to mask by aborting the test earlier.
 - `admin-shell.spec.ts` on `webkit-mobile` with `--repeat-each=2`, with #667's app fix
   applied locally: 112/112 passed.
-- full `chromium-mobile` + `chromium-desktop` shards: passed.
+- full `chromium-mobile` + `chromium-desktop` shards: 241 passed, 1 failed — the same
+  #667 crash, which is timing-dependent on Chromium (it passed on a webpack run of the
+  same shards). An earlier Turbopack run of these shards also failed the `UIC3`/`UIC4`
+  redirect assertions on `chromium-desktop` on a cold server; they did not recur on a
+  second cold run and pass under webpack too, so they are the known under-load timing
+  failure, not a Turbopack regression.
+- local pre-push gate (backend ruff + pytest, frontend node/vitest/typecheck/lint): green.
 
 No spec was changed and no wait was added — the app behaviour under test was already
 correct. Rollback is reverting the PR, which restores the webpack dev server and the
