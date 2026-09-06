@@ -187,7 +187,7 @@ test.describe("billing trust and recovery surfaces", () => {
     expect(errors, `Console errors: ${errors.join("\n")}`).toEqual([]);
   });
 
-  test("admin payments expose failed-payment, webhook, Stripe, and reconciliation evidence", async ({
+  test("admin All invoices tab exposes webhook, Stripe, and reconciliation evidence", async ({
     page,
   }) => {
     const guard = installTenantGuard(page);
@@ -287,11 +287,12 @@ test.describe("billing trust and recovery surfaces", () => {
       });
     });
 
-    await page.goto("/admin/payments");
+    // The Collections tab is the default; the table, webhook queue and
+    // reconciliation lookup now live under the All invoices tab.
+    await page.goto("/admin/payments?tab=invoices");
 
     await expect(page.getByTestId("admin-payments")).toBeVisible();
-    await expect(page.getByText("Failed payments")).toBeVisible();
-    await expect(page.getByText("1").first()).toBeVisible();
+    await expect(page.getByTestId("payments-all-invoices")).toBeVisible();
     await expect(page.getByText("Failed webhook queue")).toBeVisible();
     await expect(page.getByText("invoice.payment_failed")).toBeVisible();
     await expect(page.getByText("QUARANTINED")).toBeVisible();
