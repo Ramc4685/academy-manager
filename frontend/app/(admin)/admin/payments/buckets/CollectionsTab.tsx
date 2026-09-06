@@ -509,7 +509,6 @@ function FamilyRow({
 }) {
   const chip = familyChip(bucket, family, today);
   const line = secondaryLine(bucket, family, today);
-  const firstStudent = family.students[0];
   const name = familyName(family);
   const amount = amountFor(bucket, family);
 
@@ -518,16 +517,13 @@ function FamilyRow({
       <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto_auto] md:items-center md:gap-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            {firstStudent ? (
-              <Link
-                href={`/admin/students/${encodeURIComponent(firstStudent.student_id)}`}
-                className="font-display font-semibold text-rally-ink hover:underline"
-              >
-                {name}
-              </Link>
-            ) : (
-              <span className="font-display font-semibold text-rally-ink">{name}</span>
-            )}
+            <Link
+              href={`/admin/families/${encodeURIComponent(family.parent_id)}`}
+              data-testid={`family-link-${family.parent_id}`}
+              className="font-display font-semibold text-rally-ink hover:underline"
+            >
+              {name}
+            </Link>
             <Chip variant={chip.variant} label={chip.label} />
           </div>
           {family.students.length > 0 && (

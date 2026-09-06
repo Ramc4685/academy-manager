@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   ADMIN_NAV,
   isOwnerOnlyRoute,
+  metaForPath,
   navForRoles,
   type AdminNavGroup,
 } from "./screen-meta";
@@ -25,6 +26,9 @@ describe("navForRoles", () => {
     expect(visible).toContain("/admin/expenses");
     expect(visible).toContain("/admin/settings");
     expect(visible).toContain("/admin/users");
+    expect(visible).toContain("/admin/families");
+    // Billing Setup was folded into Families (spec 2026-09-05-family-billing §6).
+    expect(visible).not.toContain("/admin/billing-setup");
   });
 
   it("removes a group whose every item was owner-only", () => {
@@ -86,5 +90,22 @@ describe("isOwnerOnlyRoute", () => {
     ]) {
       expect(isOwnerOnlyRoute(path), path).toBe(false);
     }
+  });
+});
+
+describe("metaForPath", () => {
+  it("titles the Families list", () => {
+    expect(metaForPath("/admin/families").title).toBe("Families");
+    expect(metaForPath("/admin/families").breadcrumbs).toEqual(["Admin", "Money", "Families"]);
+  });
+
+  it("resolves the dynamic family billing route by its [parentId] key", () => {
+    const meta = metaForPath("/admin/families/par_1");
+    expect(meta.title).toBe("Family billing");
+    expect(meta.breadcrumbs).toEqual(["Admin", "Money", "Families", "Family"]);
+  });
+
+  it("still appends Detail for routes without a dynamic key", () => {
+    expect(metaForPath("/admin/sessions/sess_1").breadcrumbs).toEqual(["Admin", "Sessions", "Detail"]);
   });
 });
