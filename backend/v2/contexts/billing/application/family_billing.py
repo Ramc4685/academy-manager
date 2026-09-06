@@ -45,6 +45,10 @@ _EPOCH = datetime.min.replace(tzinfo=UTC)
 # --------------------------------------------------------------------------- facts
 
 
+class FamilyBillingUnavailable(RuntimeError):
+    """A primary source (parent, students, invoices) could not be read."""
+
+
 @dataclass(frozen=True)
 class ParentFacts:
     parent_id: str

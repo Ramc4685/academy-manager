@@ -26,8 +26,7 @@ from backend.v2.contexts.billing.infrastructure.mongo_parent_billing_customer_re
     MongoParentBillingCustomerRepository,
 )
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
-
-# from backend.v2.interfaces.admin.families_views import AdminFamilyBillingView  # re-enabled in Task 5
+from backend.v2.interfaces.admin.families_views import AdminFamilyBillingView
 from backend.v2.shared.time.academy_timezone import academy_timezone_lookup
 
 NOW = datetime(2026, 9, 10, 15, 0, tzinfo=UTC)
@@ -302,7 +301,7 @@ async def test_full_family_view(db, acad) -> None:
     view = await _read_model(db).build("p-1")
 
     assert view is not None
-    # AdminFamilyBillingView.model_validate(view)  # re-enabled in Task 5
+    AdminFamilyBillingView.model_validate(view)
     assert view["parent"] == {
         "parent_id": "p-1",
         "name": "Sahaya Vinodh",

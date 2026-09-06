@@ -46,6 +46,7 @@ from backend.v2.composition.digests import (
     resolve_digest_schedule,
 )
 from backend.v2.composition.email_adapters import build_user_facing_invite_sender
+from backend.v2.composition.families import compose_admin_families
 from backend.v2.composition.owner import compose_owner
 from backend.v2.composition.parent import compose_parent, compose_parent_webhook_handler
 from backend.v2.composition.student import compose_student
@@ -514,6 +515,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.admin = compose_admin(db, outbox, idempotency_store, stripe_gw)
     # Payments bucket view (composition/admin.py is at its line budget).
     app.state.admin_collections = compose_admin_collections(db)
+    app.state.admin_families = compose_admin_families(db)
 
     # Owner (franchise) BFF wiring — UIM11. Left unset when the flag is off so
     # the routes 404 even if something mounts them.

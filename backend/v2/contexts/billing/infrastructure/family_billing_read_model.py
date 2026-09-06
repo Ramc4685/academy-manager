@@ -33,6 +33,7 @@ from backend.v2.contexts.billing.application.family_billing import (
     DunningFacts,
     EnrollmentFacts,
     EventFacts,
+    FamilyBillingUnavailable,
     FamilyFacts,
     InvoiceFacts,
     ParentFacts,
@@ -67,10 +68,6 @@ _WEEKDAY_SHORT = {
     "sunday": "Sun",
     "sun": "Sun",
 }
-
-
-class FamilyBillingUnavailable(RuntimeError):
-    """A primary source (parent, students, invoices) could not be read."""
 
 
 def _as_utc(value: datetime) -> datetime:
