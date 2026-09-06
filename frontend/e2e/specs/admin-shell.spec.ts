@@ -1016,7 +1016,7 @@ test.describe("Rally admin shell", () => {
       }),
     );
 
-    await page.goto("/admin/payments");
+    await page.goto("/admin/payments?tab=invoices");
 
     await expect(page.getByTestId("payment-row-legacy-paid")).toBeVisible();
     await expect(
@@ -1024,7 +1024,7 @@ test.describe("Rally admin shell", () => {
     ).toBeVisible();
     await expect(page.getByTestId("payment-row-legacy-waived")).toBeVisible();
     await expect(
-      page.getByTestId("payment-row-legacy-waived").getByText("WAIVED"),
+      page.getByTestId("payment-row-legacy-waived").getByText("VOID"),
     ).toBeVisible();
     expect(
       errors,

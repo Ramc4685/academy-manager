@@ -3,26 +3,30 @@
 /**
  * Admin dashboard landing — Rally restyle.
  *
- * Real data only: sessions today + monthly revenue + recent payments +
- * dashboard attention BFF signals.
+ * Real data only: sessions today + monthly revenue + collections totals
+ * (owed / autopay scheduled / needs action) + recent payments + dashboard
+ * attention BFF signals.
  * Revenue (tile + chart) is owner-only: `/finance/revenue` 404s for admins
  * without the owner scope, so the query is not even issued for them.
  * Recharts is dynamic-imported to keep the admin landing chunk small.
  */
 
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 
 import {
   listAdminSessions,
-  listAdminPayments,
+  getAdminCollections,
   getAdminPaymentFeed,
   getRevenue,
   listAdminAttention,
 } from "@/lib/api/admin";
 import type { AdminAttentionSeverity } from "@/lib/api/admin";
+import { formatCents } from "@/lib/money";
 import { queryKeys } from "@/lib/query/keys";
 import { paymentMethodLabel, statusChip } from "@/app/(admin)/admin/payments/format";
+import { normalizeCollections } from "@/app/(admin)/admin/payments/buckets/bucket-view";
 
 import { useIsOwner } from "@/components/admin/owner-context";
 import { Card } from "@/components/ds/card";
@@ -50,14 +54,6 @@ function prevMonthKey(): string {
   return d.toISOString().slice(0, 7);
 }
 
-function formatCents(cents: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  }).format(cents / 100);
-}
-
 const RECENT_PAYMENTS_LIMIT = 5;
 
 export default function AdminDashboardPage() {
@@ -69,9 +65,12 @@ export default function AdminDashboardPage() {
     queryFn: () => listAdminSessions(today),
   });
 
-  const paymentsQuery = useQuery({
-    queryKey: queryKeys.admin.payments(),
-    queryFn: () => listAdminPayments(),
+  // Money tiles read the same six-bucket view as the Payments page, so the
+  // dashboard and the bucket list can never disagree about who owes what.
+  // "current" is the key for the unpinned (this month) period.
+  const collectionsQuery = useQuery({
+    queryKey: queryKeys.admin.collections("current"),
+    queryFn: () => getAdminCollections(),
   });
 
   // INVARIANT (PR #645): "Recent payments" MUST read the paid-only feed, not
@@ -79,8 +78,7 @@ export default function AdminDashboardPage() {
   // are folded into invoice rows dated by invoice creation, and expired/failed
   // attempts sit alongside real money. Sorting that list by created_at hid every
   // Stripe payment behind registration checkouts (the prod defect). The feed
-  // returns money actually received, newest settlement first. The list query
-  // below only feeds the "Payments tracked" tile.
+  // returns money actually received, newest settlement first.
   const paymentFeedQuery = useQuery({
     queryKey: queryKeys.admin.paymentFeed(RECENT_PAYMENTS_LIMIT),
     queryFn: () => getAdminPaymentFeed(RECENT_PAYMENTS_LIMIT),
@@ -99,12 +97,13 @@ export default function AdminDashboardPage() {
 
   // Normalize once. Treat absent/partial responses as empty rather than
   // sprinkling optional chains throughout the JSX.
+  // `normalizeCollections` also absorbs e2e stubs that answer every
+  // `/admin/payments*` URL with `{ payments: [] }` — the tiles render zeros.
   const sessions = sessionsQuery.data?.sessions ?? [];
-  const payments = paymentsQuery.data?.payments ?? [];
+  const collectionsTotals = normalizeCollections(collectionsQuery.data).totals;
   const revenueByMonth = revenueQuery.data?.by_month ?? {};
 
   const todayCount = sessions.length;
-  const paymentsTracked = payments.length;
   const monthRevenue = revenueByMonth[currentMonthKey()] ?? 0;
 
   const recentPayments = (paymentFeedQuery.data?.payments ?? []).slice(0, RECENT_PAYMENTS_LIMIT);
@@ -117,7 +116,7 @@ export default function AdminDashboardPage() {
   return (
     <section data-testid="admin-dashboard" className="space-y-6">
       {/* KPI strip */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         <KpiCard
           label="Sessions today"
           value={sessionsQuery.isLoading ? "—" : String(todayCount)}
@@ -126,21 +125,63 @@ export default function AdminDashboardPage() {
         {isOwner && (
           <KpiCard
             label="Revenue (month to date)"
-            value={revenueQuery.isLoading ? "—" : formatCents(monthRevenue)}
+            value={revenueQuery.isLoading ? "—" : formatCents(monthRevenue, { whole: true })}
             loading={revenueQuery.isLoading}
             hint={
               revenueQuery.isLoading
                 ? undefined
-                : `Last month ${formatCents(revenueByMonth[prevMonthKey()] ?? 0)}`
+                : `Last month ${formatCents(revenueByMonth[prevMonthKey()] ?? 0, { whole: true })}`
             }
             testId="admin-dashboard-revenue"
           />
         )}
-        <KpiCard
-          label="Payments tracked"
-          value={paymentsQuery.isLoading ? "—" : String(paymentsTracked)}
-          loading={paymentsQuery.isLoading}
-        />
+        <Link
+          href="/admin/payments#bucket-past_due"
+          className="block rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-rally-cobalt"
+          data-testid="dashboard-tile-owed"
+        >
+          <KpiCard
+            label="Owed this month"
+            value={collectionsQuery.isLoading ? "—" : formatCents(collectionsTotals.owed_cents)}
+            loading={collectionsQuery.isLoading}
+          />
+        </Link>
+        <Link
+          href="/admin/payments#bucket-autopay_scheduled"
+          className="block rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-rally-cobalt"
+          data-testid="dashboard-tile-autopay"
+        >
+          <KpiCard
+            label="Autopay scheduled"
+            value={
+              collectionsQuery.isLoading
+                ? "—"
+                : formatCents(collectionsTotals.autopay_scheduled_cents)
+            }
+            loading={collectionsQuery.isLoading}
+            hint={
+              collectionsQuery.isLoading
+                ? undefined
+                : `${collectionsTotals.autopay_scheduled_count} ${
+                    collectionsTotals.autopay_scheduled_count === 1 ? "family" : "families"
+                  }`
+            }
+          />
+        </Link>
+        <Link
+          href="/admin/payments#bucket-failed_autopay"
+          className="block rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-rally-cobalt"
+          data-testid="dashboard-tile-needs-action"
+        >
+          <KpiCard
+            label="Needs action"
+            value={
+              collectionsQuery.isLoading ? "—" : String(collectionsTotals.needs_action_count)
+            }
+            loading={collectionsQuery.isLoading}
+            hint={collectionsQuery.isLoading ? undefined : "failed autopay · past due"}
+          />
+        </Link>
       </div>
 
       <Card p={20}>

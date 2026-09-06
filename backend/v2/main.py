@@ -28,6 +28,7 @@ from starlette.middleware.cors import CORSMiddleware
 
 from backend.v2.composition.admin import compose_admin
 from backend.v2.composition.coach import compose_coach
+from backend.v2.composition.collections import compose_admin_collections
 from backend.v2.composition.digests import (
     _REAL_EMAIL_ENVS as REAL_EMAIL_ENVS,
 )
@@ -453,6 +454,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Admin BFF wiring (Wave 3).
     app.state.admin = compose_admin(db, outbox, idempotency_store, stripe_gw)
+    # Payments bucket view (composition/admin.py is at its line budget).
+    app.state.admin_collections = compose_admin_collections(db)
 
     # Owner (franchise) BFF wiring — UIM11. Left unset when the flag is off so
     # the routes 404 even if something mounts them.
