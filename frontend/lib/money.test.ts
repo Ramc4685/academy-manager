@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatCents, formatDateOnly } from "./money";
+import { formatCents, formatDateOnly, formatInstantDay, parseDollarsToCents } from "./money";
 
 describe("formatCents", () => {
   it("formats cents as USD with two decimals", () => {
@@ -32,5 +32,29 @@ describe("formatDateOnly", () => {
     expect(formatDateOnly(null)).toBe("—");
     expect(formatDateOnly(undefined)).toBe("—");
     expect(formatDateOnly("")).toBe("—");
+  });
+});
+
+describe("formatInstantDay", () => {
+  it("shows the viewer-local day of a timestamp and dashes for empty", () => {
+    const local = new Date("2026-09-08T02:30:00Z");
+    const expected = local.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+    expect(formatInstantDay("2026-09-08T02:30:00Z")).toBe(expected);
+    expect(formatInstantDay(null)).toBe("—");
+    expect(formatInstantDay("not a date")).toBe("—");
+  });
+});
+
+describe("parseDollarsToCents", () => {
+  it("accepts plain amounts, $ and thousands separators", () => {
+    expect(parseDollarsToCents("70")).toBe(7000);
+    expect(parseDollarsToCents(" 70.50 ")).toBe(7050);
+    expect(parseDollarsToCents("$1,234.5")).toBe(123450);
+  });
+  it("refuses anything ambiguous instead of guessing", () => {
+    expect(parseDollarsToCents("12 34")).toBe(-1);
+    expect(parseDollarsToCents("12.345")).toBe(-1);
+    expect(parseDollarsToCents("abc")).toBe(-1);
+    expect(parseDollarsToCents("")).toBe(-1);
   });
 });

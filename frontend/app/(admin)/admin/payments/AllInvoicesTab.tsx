@@ -54,6 +54,9 @@ import {
   SyncStripeDialog,
 } from "./dialogs";
 
+/** Server cap on one list request; used when the status filter runs client-side. */
+const STATUS_FILTER_WINDOW = 200;
+
 export function AllInvoicesTab() {
   const [refundTarget, setRefundTarget] = useState<AdminPaymentView | null>(null);
   const [paidTarget, setPaidTarget] = useState<AdminPaymentView | null>(null);
@@ -89,10 +92,12 @@ export function AllInvoicesTab() {
       // match and could not reach every row that renders as PAID.
       method: methodFilter !== "all" ? methodFilter : undefined,
       q: search || undefined,
-      limit: PAGE_SIZE,
-      offset,
+      // With a status filter the page is filtered client-side, so fetch the
+      // server's maximum window instead of one page (pagination is hidden).
+      limit: statusFilter !== "all" ? STATUS_FILTER_WINDOW : PAGE_SIZE,
+      offset: statusFilter !== "all" ? 0 : offset,
     }),
-    [dateFrom, dateTo, methodFilter, search, offset],
+    [dateFrom, dateTo, methodFilter, search, offset, statusFilter],
   );
 
   const { data, isLoading, isError, refetch } = useQuery({
@@ -294,9 +299,15 @@ export function AllInvoicesTab() {
           </Field>
           <div className="flex items-end justify-between gap-2">
             <div className="text-sm text-rally-subtle md:pb-2" data-testid="payments-showing">
-              {totalCount === null
-                ? `Showing ${filteredPayments.length} of ${payments.length} records`
-                : `Showing ${totalCount === 0 ? 0 : offset + 1}–${offset + payments.length} of ${totalCount}`}
+              {statusFilter !== "all"
+                ? `Showing ${filteredPayments.length} matching in the latest ${payments.length} records${
+                    totalCount !== null && totalCount > payments.length
+                      ? ` (of ${totalCount}; narrow by date to see older ones)`
+                      : ""
+                  }`
+                : totalCount === null
+                  ? `Showing ${filteredPayments.length} of ${payments.length} records`
+                  : `Showing ${totalCount === 0 ? 0 : offset + 1}–${offset + payments.length} of ${totalCount}`}
             </div>
             <Button
               variant="secondary"
@@ -446,7 +457,7 @@ export function AllInvoicesTab() {
             </table>
           </div>
         )}
-        {totalCount !== null && totalCount > PAGE_SIZE && (
+        {statusFilter === "all" && totalCount !== null && totalCount > PAGE_SIZE && (
           <div className="flex items-center justify-between border-t border-rally-line px-4 py-3">
             <Button
               variant="secondary"

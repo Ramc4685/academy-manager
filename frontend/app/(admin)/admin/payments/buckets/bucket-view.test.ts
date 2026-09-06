@@ -6,11 +6,15 @@ import {
   ACTION_LABEL,
   BUCKET_META,
   BUCKET_ORDER,
+  actionInvoice,
   daysBetween,
   familyChip,
   normalizeCollections,
+  periodOptionsFrom,
   secondaryLine,
   studentLine,
+  todayISO,
+  todayInZone,
 } from "./bucket-view";
 
 const TODAY = "2026-09-10";
@@ -286,5 +290,47 @@ describe("secondaryLine", () => {
     for (const key of BUCKET_ORDER as CollectionsBucketKey[]) {
       expect(() => secondaryLine(key, family({ invoices: [] }), TODAY)).not.toThrow();
     }
+  });
+});
+
+describe("todayInZone / periodOptionsFrom / actionInvoice", () => {
+  it("reads today on the academy clock, not the viewer's", () => {
+    const at = new Date("2026-10-01T02:30:00Z"); // still Sep 30 in Chicago
+    expect(todayInZone("America/Chicago", at)).toBe("2026-09-30");
+    expect(todayInZone("Asia/Kolkata", at)).toBe("2026-10-01");
+    expect(todayInZone("Not/AZone", at)).toBe(todayISO(at));
+    expect(todayInZone("", at)).toBe(todayISO(at));
+  });
+
+  it("anchors the period picker on the period the backend returned", () => {
+    const options = periodOptionsFrom("2026-01");
+    expect(options).toHaveLength(12);
+    expect(options[0]).toEqual({ value: "2026-01", label: "January 2026" });
+    expect(options[1].value).toBe("2025-12");
+    expect(options[11].value).toBe("2025-02");
+  });
+
+  it("targets the invoice the backend rule fired on, then the earliest owing one", () => {
+    const family = {
+      parent_id: "p",
+      parent_name: "P",
+      parent_email: null,
+      students: [],
+      invoices: [
+        { invoice_id: "late", invoice_number: null, period: "2026-09", status: "open", total_cents: 100, balance_due_cents: 100, due_date: "2026-09-01", delivery_status: "sent" },
+        { invoice_id: "named", invoice_number: null, period: "2026-09", status: "open", total_cents: 100, balance_due_cents: 100, due_date: "2026-09-20", delivery_status: "sent" },
+      ],
+      balance_cents: 200,
+      leftover_balance_cents: 0,
+      autopay: null,
+      failure: null,
+      pause: null,
+      paid: null,
+      last_reminder_at: null,
+      actions: [],
+    } as unknown as AdminCollectionsFamily;
+    expect(actionInvoice({ ...family, action_invoice_id: "named" })?.invoice_id).toBe("named");
+    expect(actionInvoice(family)?.invoice_id).toBe("late");
+    expect(actionInvoice({ ...family, action_invoice_id: "missing" })?.invoice_id).toBe("late");
   });
 });

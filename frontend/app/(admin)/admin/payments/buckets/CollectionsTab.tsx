@@ -11,7 +11,7 @@
  */
 
 import Link from "next/link";
-import { useMemo, useState, type ReactNode } from "react";
+import { type ReactNode, useDeferredValue, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -37,15 +37,16 @@ import { BigNum, Overline } from "@/components/ds/typography";
 import {
   ACTION_LABEL,
   BUCKET_META,
-  BUCKET_ORDER,
   familyChip,
   familyMatches,
   familyName,
   normalizeCollections,
+  actionInvoice,
   owingInvoices,
-  periodOptions,
+  periodOptionsFrom,
   secondaryLine,
   studentLine,
+  todayInZone,
   todayISO,
 } from "./bucket-view";
 import { RecordPaymentDialog, type RecordPaymentInvoiceOption } from "./RecordPaymentDialog";
@@ -76,23 +77,28 @@ function invoiceOption(
 }
 
 export function CollectionsTab() {
-  const periods = useMemo(() => periodOptions(), []);
-  const [period, setPeriod] = useState(periods[0]?.value ?? "");
+  // "" = let the backend pick the academy's current month (its timezone, not
+  // the viewer's); the picker then anchors on the period the backend returned.
+  const [period, setPeriod] = useState("");
   const [search, setSearch] = useState("");
+  const deferredSearch = useDeferredValue(search);
   const [rowStatus, setRowStatus] = useState<Record<string, RowStatus>>({});
   const [dialog, setDialog] = useState<DialogState>(null);
   const [dialogNonce, setDialogNonce] = useState(0);
   const queryClient = useQueryClient();
-  const today = todayISO();
-
   const query = useQuery({
-    queryKey: queryKeys.admin.collections(period),
-    queryFn: () => getAdminCollections(period),
+    queryKey: queryKeys.admin.collections(period || "current"),
+    queryFn: () => getAdminCollections(period || undefined),
   });
   const view = useMemo(() => normalizeCollections(query.data), [query.data]);
+  const effectivePeriod = view.period || period || todayISO().slice(0, 7);
+  const periods = useMemo(() => periodOptionsFrom(effectivePeriod), [effectivePeriod]);
+  const today = useMemo(() => todayInZone(view.timezone), [view.timezone]);
 
+  // Every collections view (any period, the dashboard's "current") shares the
+  // same facts, so a row action refreshes all of them.
   const invalidate = () =>
-    void queryClient.invalidateQueries({ queryKey: queryKeys.admin.collections(period) });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.admin.collectionsAll() });
 
   const setStatus = (parentId: string, status: RowStatus) =>
     setRowStatus((prev) => ({ ...prev, [parentId]: status }));
@@ -158,7 +164,7 @@ export function CollectionsTab() {
     const owing = owingInvoices(family);
     openDialog({
       invoices: owing.map((invoice) => invoiceOption(family, invoice)),
-      initialInvoiceId: owing[0]?.invoice_id,
+      initialInvoiceId: actionInvoice(family)?.invoice_id ?? owing[0]?.invoice_id,
       parentId: family.parent_id,
     });
   };
@@ -175,7 +181,7 @@ export function CollectionsTab() {
         openRecordPaymentForFamily(family);
         return;
       case "skip_month": {
-        const invoice = owingInvoices(family)[0] ?? family.invoices[0];
+        const invoice = actionInvoice(family);
         if (!invoice) return;
         const label = invoice.invoice_number ?? invoice.invoice_id;
         if (
@@ -212,7 +218,7 @@ export function CollectionsTab() {
         <div className="grid flex-1 gap-3 sm:grid-cols-2 md:max-w-xl">
           <Field label="Month">
             <select
-              value={period}
+              value={effectivePeriod}
               onChange={(event) => setPeriod(event.target.value)}
               className={inputClass}
               data-testid="collections-period"
@@ -301,7 +307,7 @@ export function CollectionsTab() {
           key={bucket.key}
           bucket={bucket}
           loading={query.isLoading}
-          search={search}
+          search={deferredSearch}
           today={today}
           rowStatus={rowStatus}
           busyParent={busyParent}
@@ -469,10 +475,9 @@ function amountFor(bucket: CollectionsBucketKey, family: AdminCollectionsFamily)
       return family.paid?.amount_cents ?? 0;
     case "paused":
       return family.leftover_balance_cents;
-    case "failed_autopay":
-    case "autopay_scheduled":
-      return owingInvoices(family).reduce((sum, inv) => sum + inv.total_cents, 0) || family.balance_cents;
     default:
+      // What is owed / what the worker will charge — the backend's balance,
+      // which is also what the bucket header sums.
       return family.balance_cents;
   }
 }

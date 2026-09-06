@@ -14,7 +14,7 @@ import type {
   CollectionsAction,
   CollectionsBucketKey,
 } from "@/lib/api/admin";
-import { formatCents, formatDateOnly } from "@/lib/money";
+import { formatCents, formatDateOnly, formatInstantDay } from "@/lib/money";
 import { paymentMethodLabel } from "../format";
 
 export const BUCKET_ORDER: CollectionsBucketKey[] = [
@@ -169,8 +169,21 @@ export function owingInvoices(family: AdminCollectionsFamily): AdminCollectionsF
     .sort((a, b) => (a.due_date < b.due_date ? -1 : a.due_date > b.due_date ? 1 : 0));
 }
 
+/**
+ * The invoice a row action applies to: the one the backend's bucket rule fired
+ * on (`action_invoice_id`), falling back to the earliest owing invoice.
+ */
+export function actionInvoice(
+  family: AdminCollectionsFamily,
+): AdminCollectionsFamily["invoices"][number] | null {
+  const named = family.action_invoice_id
+    ? family.invoices.find((inv) => inv.invoice_id === family.action_invoice_id)
+    : undefined;
+  return named ?? owingInvoices(family)[0] ?? family.invoices[0] ?? null;
+}
+
 function primaryInvoice(family: AdminCollectionsFamily) {
-  return owingInvoices(family)[0] ?? family.invoices[0] ?? null;
+  return actionInvoice(family);
 }
 
 function pluralDays(n: number): string {
@@ -254,7 +267,7 @@ export function secondaryLine(
         `due ${formatDateOnly(inv.due_date)}`,
         `${late} ${late === 1 ? "day" : "days"} late`,
         family.last_reminder_at
-          ? `reminded ${formatDateOnly(family.last_reminder_at)}`
+          ? `reminded ${formatInstantDay(family.last_reminder_at)}`
           : "never reminded",
       ];
       if (family.invoices.length > 1 || family.leftover_balance_cents > 0) {
@@ -276,7 +289,7 @@ export function secondaryLine(
         autopay?.card_last4 ? `card ••${autopay.card_last4}` : "card on file",
         `charges ${formatDateOnly(chargeOn)} 9:00 AM`,
         autopay?.notice_sent_at
-          ? `notice emailed ${formatDateOnly(autopay.notice_sent_at)}`
+          ? `notice emailed ${formatInstantDay(autopay.notice_sent_at)}`
           : "notice not sent",
       ];
       return parts.join(" · ");
@@ -299,7 +312,7 @@ export function secondaryLine(
       const paid = family.paid;
       if (!paid) return "";
       const method = paymentMethodLabel(paid.method);
-      return `${method ? titleCase(method) : "Paid"} · ${formatDateOnly(paid.paid_at)}`;
+      return `${method ? titleCase(method) : "Paid"} · ${formatInstantDay(paid.paid_at)}`;
     }
   }
 }
@@ -310,6 +323,39 @@ export function todayISO(now: Date = new Date()): string {
   const m = String(now.getMonth() + 1).padStart(2, "0");
   const d = String(now.getDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
+}
+
+/**
+ * Today's calendar date (YYYY-MM-DD) on the academy's clock. The backend
+ * classifies "days late" / "due in" against this zone (spec §2.2), so the row
+ * text must not use the viewer's local date. Falls back to the local date when
+ * the zone is empty or unknown.
+ */
+export function todayInZone(timeZone: string | null | undefined, now: Date = new Date()): string {
+  if (!timeZone) return todayISO(now);
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(now);
+  } catch {
+    return todayISO(now);
+  }
+}
+
+/** `anchor` (YYYY-MM) and the 11 months before it, newest first. */
+export function periodOptionsFrom(anchor: string): { value: string; label: string }[] {
+  const match = /^(\d{4})-(\d{2})$/.exec(anchor);
+  if (!match) return periodOptions();
+  const options: { value: string; label: string }[] = [];
+  for (let i = 0; i < 12; i += 1) {
+    const d = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1 - i, 1));
+    const value = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+    options.push({ value, label: periodLabel(value) });
+  }
+  return options;
 }
 
 /** The current month and the 11 before it, newest first, as YYYY-MM. */

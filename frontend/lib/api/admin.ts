@@ -354,6 +354,8 @@ export interface AdminCollectionsFamily {
   parent_id: string;
   parent_name: string | null;
   parent_email: string | null;
+  /** Invoice the bucket rule fired on: the target for Skip this month / Record payment. */
+  action_invoice_id?: string | null;
   students: { student_id: string; name: string; session_title: string | null }[];
   invoices: {
     invoice_id: string;

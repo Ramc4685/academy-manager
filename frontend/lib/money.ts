@@ -39,6 +39,29 @@ const DATE_ONLY_FORMATTER = new Intl.DateTimeFormat("en-US", {
  * formats the date exactly as written and never shifts it by the viewer's
  * timezone. A full ISO datetime is accepted and truncated to its date part.
  */
+/**
+ * "Sep 7, 2026" for an instant (full ISO datetime such as `paid_at`), shown on
+ * the viewer's clock. Use this — not `formatDateOnly` — for timestamps, so an
+ * evening payment is not pushed to the next UTC day.
+ */
+export function formatInstantDay(value: string | null | undefined): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+/**
+ * Strict dollars → cents for money inputs. Returns -1 for anything that is not
+ * a plain amount ("12 34", "12.345", "abc") so a form refuses it instead of
+ * guessing — stripping separators once turned "12 34" into $1,234.00.
+ */
+export function parseDollarsToCents(value: string): number {
+  const trimmed = value.trim().replace(/^\$/, "").replace(/,/g, "");
+  if (!/^\d+(\.\d{1,2})?$/.test(trimmed)) return -1;
+  return Math.round(Number(trimmed) * 100);
+}
+
 export function formatDateOnly(value: string | null | undefined): string {
   if (!value) return "—";
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);

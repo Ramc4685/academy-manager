@@ -8,7 +8,7 @@ import {
   recordAdminInvoicePayment,
   type RecordManualPaymentResponse,
 } from "@/lib/api/admin";
-import { formatCents } from "@/lib/money";
+import { formatCents, parseDollarsToCents } from "@/lib/money";
 
 import { Button } from "@/components/ds/button";
 import { DialogActions, DialogError, Field, RallyModal } from "@/components/ds/dialog-chrome";
@@ -35,11 +35,7 @@ function centsToDollarInput(cents: number): string {
   return (cents / 100).toFixed(2);
 }
 
-function dollarsToCents(value: string): number {
-  const parsed = Number(value.replace(/[^0-9.-]/g, ""));
-  if (!Number.isFinite(parsed)) return 0;
-  return Math.round(parsed * 100);
-}
+const dollarsToCents = parseDollarsToCents;
 
 /**
  * Record a manual payment against one owing invoice.
@@ -151,6 +147,11 @@ export function RecordPaymentDialog({
             data-testid="record-payment-amount"
           />
         </Field>
+        {amount.trim() !== "" && amountCents < 0 && (
+          <p className="text-xs text-red-700" data-testid="record-payment-amount-error">
+            Enter a dollar amount like 70 or 70.50.
+          </p>
+        )}
         {selected && amountCents > 0 && amountCents < selected.balance_due_cents && (
           <p className="text-xs text-rally-subtle">
             Partial payment — {formatCents(selected.balance_due_cents - amountCents)} will stay open.
