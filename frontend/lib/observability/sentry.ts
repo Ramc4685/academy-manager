@@ -81,7 +81,11 @@ export function isSentryEnabled(): boolean {
 export function initSentry(): Promise<Sentry | null> {
   if (sdk) return sdk;
   const dsn = sentryDsn();
-  if (!dsn || typeof window === "undefined") {
+  // Never load under browser automation (Playwright sets navigator.webdriver):
+  // e2e runs must not post envelopes to the real project, and the e2e
+  // tenant-isolation fixture treats any stray network call as a failure.
+  const automated = typeof navigator !== "undefined" && navigator.webdriver === true;
+  if (!dsn || typeof window === "undefined" || automated) {
     sdk = Promise.resolve(null);
     return sdk;
   }

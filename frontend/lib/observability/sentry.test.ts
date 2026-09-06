@@ -46,6 +46,19 @@ describe("lib/observability/sentry", () => {
     expect(sentryMock.metrics.distribution).not.toHaveBeenCalled();
   });
 
+  it("is a no-op under browser automation even when the DSN is set", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SENTRY_DSN", "https://key@o1.ingest.us.sentry.io/1");
+    const original = Object.getOwnPropertyDescriptor(navigator, "webdriver");
+    Object.defineProperty(navigator, "webdriver", { value: true, configurable: true });
+    try {
+      expect(await initSentry()).toBeNull();
+      expect(sentryMock.init).not.toHaveBeenCalled();
+    } finally {
+      if (original) Object.defineProperty(navigator, "webdriver", original);
+      else Reflect.deleteProperty(navigator, "webdriver");
+    }
+  });
+
   it("initialises once with errors-only, PII-off settings when the DSN is set", async () => {
     vi.stubEnv("NEXT_PUBLIC_SENTRY_DSN", "https://key@o1.ingest.us.sentry.io/1");
     vi.stubEnv("NEXT_PUBLIC_APP_ENV", "staging");

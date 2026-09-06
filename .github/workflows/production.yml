@@ -31,10 +31,14 @@ env:
   NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID: ${{ vars.REACT_APP_FIREBASE_MEASUREMENT_ID }}
   NEXT_PUBLIC_FIREBASE_AUTH_PROXY: ${{ vars.NEXT_PUBLIC_FIREBASE_AUTH_PROXY || '' }}
   # Browser Sentry (lib/observability/sentry.ts) is DSN-gated and read at
-  # build time, so the switch is the NEXT_PUBLIC_SENTRY_DSN repo variable.
-  # Empty (current) keeps the SDK unloaded. The release name must match the
-  # sentry-release job's `courtmastr-frontend@<sha>`.
-  NEXT_PUBLIC_SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN || '' }}
+  # build time. The NEXT_PUBLIC_SENTRY_DSN repo variable is deliberately NOT
+  # exported here: a workflow-level value reaches the e2e jobs too, where the
+  # SDK would post envelopes to Sentry from Playwright runs (the
+  # tenant-isolation fixture rejects that as a stray /api/ call, and real
+  # events from tests would pollute the project). Only the production build
+  # steps in frontend-static and deploy-frontend read the variable directly.
+  # The release name must match the sentry-release job's
+  # `courtmastr-frontend@<sha>`.
   NEXT_PUBLIC_APP_ENV: production
   NEXT_PUBLIC_SENTRY_RELEASE: courtmastr-frontend@${{ github.sha }}
 
@@ -254,7 +258,7 @@ jobs:
           NEXT_PUBLIC_FIREBASE_APP_ID: ${{ env.NEXT_PUBLIC_FIREBASE_APP_ID }}
           NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID: ${{ env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID }}
           NEXT_PUBLIC_FIREBASE_AUTH_PROXY: ${{ env.NEXT_PUBLIC_FIREBASE_AUTH_PROXY }}
-          NEXT_PUBLIC_SENTRY_DSN: ${{ env.NEXT_PUBLIC_SENTRY_DSN }}
+          NEXT_PUBLIC_SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN || '' }}
           NEXT_PUBLIC_APP_ENV: ${{ env.NEXT_PUBLIC_APP_ENV }}
           NEXT_PUBLIC_SENTRY_RELEASE: ${{ env.NEXT_PUBLIC_SENTRY_RELEASE }}
         run: pnpm build
@@ -684,7 +688,7 @@ jobs:
           NEXT_PUBLIC_FIREBASE_APP_ID: ${{ env.NEXT_PUBLIC_FIREBASE_APP_ID }}
           NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID: ${{ env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID }}
           NEXT_PUBLIC_FIREBASE_AUTH_PROXY: ${{ env.NEXT_PUBLIC_FIREBASE_AUTH_PROXY }}
-          NEXT_PUBLIC_SENTRY_DSN: ${{ env.NEXT_PUBLIC_SENTRY_DSN }}
+          NEXT_PUBLIC_SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN || '' }}
           NEXT_PUBLIC_APP_ENV: ${{ env.NEXT_PUBLIC_APP_ENV }}
           NEXT_PUBLIC_SENTRY_RELEASE: ${{ env.NEXT_PUBLIC_SENTRY_RELEASE }}
         run: |
