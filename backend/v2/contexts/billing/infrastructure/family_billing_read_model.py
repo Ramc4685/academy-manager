@@ -17,7 +17,7 @@ adds a ``warnings`` entry so the page still renders.
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, date, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -311,7 +311,13 @@ class MongoFamilyBillingReadModel:
     # ------------------------------------------------------------------ shaping
 
     @staticmethod
-    def _enrollment_facts(e, session, billing, deferral, discount) -> EnrollmentFacts:
+    def _enrollment_facts(
+        e: dict[str, Any],
+        session: dict[str, Any] | None,
+        billing: dict[str, Any] | None,
+        deferral: dict[str, Any] | None,
+        discount: dict[str, Any] | None,
+    ) -> EnrollmentFacts:
         billing = billing or {}
         return EnrollmentFacts(
             enrollment_id=e["enrollment_id"],
@@ -329,7 +335,14 @@ class MongoFamilyBillingReadModel:
         )
 
     @staticmethod
-    def _invoice_facts(inv, *, student_name, autopay_status, allocations, credits) -> InvoiceFacts:
+    def _invoice_facts(
+        inv: dict[str, Any],
+        *,
+        student_name: str | None,
+        autopay_status: str | None,
+        allocations: Sequence[AllocationFacts],
+        credits: Sequence[CreditFacts],
+    ) -> InvoiceFacts:
         return InvoiceFacts(
             invoice_id=inv["invoice_id"],
             invoice_number=_opt_str(inv.get("invoice_number")),
