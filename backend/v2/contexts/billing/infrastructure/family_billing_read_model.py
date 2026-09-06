@@ -416,11 +416,36 @@ class MongoFamilyBillingReadModel:
         # user with no student AND no membership in this academy is a 404.
         if not await self._belongs_to_tenant(academy_id, parent_id):
             return None
+        # ...and they must actually BE a parent (spec §3: "a user who is not a
+        # parent" is a 404). Membership alone admits coaches, admins and owners,
+        # whose PII and family actions this page must never expose. A user with
+        # a student in this tenant counts even if the role is missing (legacy
+        # rows), and a coach who is also a parent keeps access via the role.
+        if not await self._is_parent(academy_id, parent_id, doc):
+            return None
         return ParentFacts(
             parent_id=parent_id,
             name=_opt_str(doc.get("display_name")) or _opt_str(doc.get("name")),
             email=_opt_str(doc.get("email")),
             phone=_opt_str(doc.get("phone")),
+        )
+
+    async def _is_parent(self, academy_id: str, parent_id: str, doc: dict[str, Any]) -> bool:
+        roles: list[str] = []
+        raw_roles = doc.get("roles")
+        if isinstance(raw_roles, str):
+            roles.append(raw_roles)
+        elif isinstance(raw_roles, list):
+            roles.extend(str(r) for r in raw_roles)
+        single = _opt_str(doc.get("role"))
+        if single:
+            roles.append(single)
+        if "parent" in roles:
+            return True
+        return bool(
+            await self._db["students"].find_one(
+                {"academy_id": academy_id, "parent_id": parent_id}, {"_id": 1}
+            )
         )
 
     async def _belongs_to_tenant(self, academy_id: str, parent_id: str) -> bool:

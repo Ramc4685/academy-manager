@@ -356,6 +356,45 @@ async def test_unknown_or_foreign_parent_is_none(db, acad) -> None:
 
 
 @pytest.mark.asyncio
+async def test_tenant_member_who_is_not_a_parent_is_none(db, acad) -> None:
+    """Spec §3: "a user who is not a parent" is a 404, not a page showing their PII.
+
+    Membership alone must not admit a coach/admin/owner — they have an
+    ``academy_memberships`` row in this tenant but no student and no parent role.
+    """
+    await db["academies"].insert_one({"academy_id": acad, "timezone": "America/Chicago"})
+    await db["users"].insert_one(
+        {
+            "user_id": "coach-1",
+            "academy_id": acad,
+            "display_name": "Coach Ravi",
+            "email": "ravi@example.com",
+            "roles": ["coach"],
+        }
+    )
+    await db["academy_memberships"].insert_one({"academy_id": acad, "user_id": "coach-1"})
+
+    assert await _read_model(db).build("coach-1") is None
+
+
+@pytest.mark.asyncio
+async def test_parent_without_the_role_but_with_a_student_is_admitted(db, acad) -> None:
+    """Legacy parent rows carry no ``roles``; a student in this tenant is proof enough."""
+    await db["academies"].insert_one({"academy_id": acad, "timezone": "America/Chicago"})
+    await db["users"].insert_one(
+        {"user_id": "p-legacy", "academy_id": acad, "display_name": "Legacy Parent"}
+    )
+    await db["students"].insert_one(
+        {"academy_id": acad, "student_id": "s-1", "parent_id": "p-legacy", "full_name": "Kid"}
+    )
+
+    view = await _read_model(db).build("p-legacy")
+
+    assert view is not None
+    assert view["parent"]["name"] == "Legacy Parent"
+
+
+@pytest.mark.asyncio
 async def test_parent_with_no_students_or_invoices(db, acad) -> None:
     await db["academies"].insert_one({"academy_id": acad, "timezone": "America/Chicago"})
     await db["users"].insert_one(

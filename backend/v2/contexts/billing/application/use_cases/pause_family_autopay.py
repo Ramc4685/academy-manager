@@ -98,27 +98,39 @@ class PauseFamilyAutopay:
         targets = list(plan["target_enrollment_ids"])
         paused: list[str] = []
         warnings: list[str] = []
-        for enrollment_id in targets:
-            ok = await self._enrollments.set_autopay_enrollment_status(
-                enrollment_id=enrollment_id, status=PAUSED_STATUS
-            )
-            if ok:
-                paused.append(enrollment_id)
-            else:
-                warnings.append(f"{enrollment_id}: transition rejected")
-
-        await self._audit.append(
-            BillingAuditEntry(
-                audit_id=f"baud-family-autopay-pause-{academy_id}-{parent_id}-{request_id}",
+        try:
+            for enrollment_id in targets:
+                ok = await self._enrollments.set_autopay_enrollment_status(
+                    enrollment_id=enrollment_id, status=PAUSED_STATUS
+                )
+                if ok:
+                    paused.append(enrollment_id)
+                else:
+                    warnings.append(f"{enrollment_id}: transition rejected")
+        except Exception:
+            # Money-movement rule: anything already flipped must be on the audit
+            # trail before the error escapes, or an enrollment is silently off
+            # autopay with no record of who did it. The deterministic audit_id
+            # makes the retry's append a no-op.
+            await self._append_audit(
                 academy_id=academy_id,
-                action="autopay_paused",
-                actor_id=actor_id,
-                at=self._clock(),
                 parent_id=parent_id,
+                actor_id=actor_id,
                 reason=reason,
-                before={"enrollment_ids": targets, "status": AUTOPAY_ACTIVE_STATUS},
-                after={"enrollment_ids": paused, "status": PAUSED_STATUS},
+                request_id=request_id,
+                targets=targets,
+                paused=paused,
             )
+            raise
+
+        await self._append_audit(
+            academy_id=academy_id,
+            parent_id=parent_id,
+            actor_id=actor_id,
+            reason=reason,
+            request_id=request_id,
+            targets=targets,
+            paused=paused,
         )
         result = PauseFamilyAutopayResult(len(paused), len(targets), warnings)
         try:
@@ -138,3 +150,31 @@ class PauseFamilyAutopay:
             # re-run the (idempotent) guarded writes and the deterministic audit id.
             pass
         return result
+
+    async def _append_audit(
+        self,
+        *,
+        academy_id: str,
+        parent_id: str,
+        actor_id: str,
+        reason: str,
+        request_id: str,
+        targets: list[str],
+        paused: list[str],
+    ) -> None:
+        """One entry per request (spec §5 step 3). The audit_id is derived from
+        ``request_id``, so a replay — or the failure path calling this before
+        re-raising — can never double-log."""
+        await self._audit.append(
+            BillingAuditEntry(
+                audit_id=f"baud-family-autopay-pause-{academy_id}-{parent_id}-{request_id}",
+                academy_id=academy_id,
+                action="autopay_paused",
+                actor_id=actor_id,
+                at=self._clock(),
+                parent_id=parent_id,
+                reason=reason,
+                before={"enrollment_ids": targets, "status": AUTOPAY_ACTIVE_STATUS},
+                after={"enrollment_ids": paused, "status": PAUSED_STATUS},
+            )
+        )

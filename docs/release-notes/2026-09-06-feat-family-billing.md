@@ -28,4 +28,6 @@ Autopay OFF is the only new write; it goes through the existing guarded status
 transition (`active → paused`) and never touches invoices or dunning, so the worst case
 is a family that stops being auto-charged until the toggle is turned back on. Owner-only
 corrections are enforced by the existing owner-gated routes regardless of what the page
-shows. Rollback is reverting the PR; `/admin/billing-setup` bookmarks then work again.
+shows. The family endpoint returns 404 for anyone who is not a parent of this academy, so
+a coach's or admin's user id cannot be used to read their contact details through it.
+Rollback is reverting the PR; `/admin/billing-setup` bookmarks then work again.

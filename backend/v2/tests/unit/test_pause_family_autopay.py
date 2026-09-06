@@ -134,3 +134,34 @@ async def test_rejected_transition_is_reported_not_raised() -> None:
 
     assert result.paused_count == 1
     assert result.warnings == ["e-2: transition rejected"]
+
+
+@pytest.mark.asyncio
+async def test_mid_loop_write_failure_still_audits_what_was_paused() -> None:
+    """Anything already flipped must reach the audit trail before the error escapes."""
+
+    class ExplodingEnrollments(FakeEnrollments):
+        async def set_autopay_enrollment_status(self, *, enrollment_id: str, status: str) -> bool:
+            if enrollment_id == "e-2":
+                raise RuntimeError("mongo down")
+            return await super().set_autopay_enrollment_status(
+                enrollment_id=enrollment_id, status=status
+            )
+
+    enr = ExplodingEnrollments([_sbe("e-1", "active"), _sbe("e-2", "active")])
+    audit = FakeAudit()
+
+    with pytest.raises(RuntimeError):
+        await _uc(enr, audit).execute(
+            academy_id="acad",
+            parent_id="p-1",
+            actor_id="admin-1",
+            reason="parent asked",
+            request_id="req-1",
+        )
+
+    assert len(audit.entries) == 1
+    entry = audit.entries[0]
+    assert entry.action == "autopay_paused"
+    assert entry.after == {"enrollment_ids": ["e-1"], "status": "paused"}
+    assert entry.before == {"enrollment_ids": ["e-1", "e-2"], "status": "active"}
