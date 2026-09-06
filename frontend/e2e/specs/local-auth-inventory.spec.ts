@@ -117,6 +117,9 @@ const DYNAMIC_ROUTE_ENV_CONTRACT: Record<string, DynamicRouteEnvContract> = {
   "/admin/pathway/[programId]": {
     replacements: [["[programId]", "LOCAL_AUTH_ADMIN_PROGRAM_ID"]],
   },
+  "/admin/families/[parentId]": {
+    replacements: [["[parentId]", "LOCAL_AUTH_ADMIN_USER_ID"]],
+  },
   "/coach/sessions/[id]": {
     replacements: [["[id]", "LOCAL_AUTH_COACH_SESSION_ID"]],
     requiresCoachSessionDate: true,

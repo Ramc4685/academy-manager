@@ -15,6 +15,7 @@ from .comms_routes import router as comms_router
 from .dashboard_routes import router as dashboard_router
 from .directory_routes import router as directory_router
 from .dues_routes import router as dues_router
+from .families_routes import router as families_router
 from .pathway_routes import router as pathway_router
 from .pause_routes import router as pause_router
 from .payout_period_routes import router as payout_period_router
@@ -43,6 +44,7 @@ router.include_router(teaching_plan_router)
 router.include_router(session_type_router)
 router.include_router(waitlist_router)
 router.include_router(collections_router)
+router.include_router(families_router)
 router.include_router(billing_router)
 router.include_router(billing_setup_router)
 router.include_router(billing_products_router)

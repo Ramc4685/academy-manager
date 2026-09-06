@@ -2112,6 +2112,17 @@ export function fetchInvoiceAttempts(invoiceId: string): Promise<InvoiceAttempts
   );
 }
 
+export interface InvoiceAuditResponse {
+  entries: Array<Record<string, unknown>>;
+}
+
+export function fetchInvoiceAudit(invoiceId: string): Promise<InvoiceAuditResponse> {
+  return apiFetch<InvoiceAuditResponse>(
+    `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/audit`,
+    { method: "GET" },
+  );
+}
+
 export function replayWebhookEvent(
   eventId: string,
 ): Promise<{ replayed: boolean; event_id: string }> {
@@ -2376,10 +2387,13 @@ export function sendAdminInvoice(invoiceId: string): Promise<SendInvoiceResponse
 
 export function chargeAdminInvoiceAutopay(
   invoiceId: string,
+  reason?: string,
 ): Promise<ChargeAutopayResponse> {
   return apiFetch<ChargeAutopayResponse>(
     `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/charge-autopay`,
-    { method: "POST" },
+    reason
+      ? { method: "POST", body: JSON.stringify({ reason }) }
+      : { method: "POST" },
   );
 }
 

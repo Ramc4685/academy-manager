@@ -378,16 +378,23 @@ test.describe("tuition discounts", () => {
     await expect(coachChildRow).toContainText("Coach child");
     await expect(coachChildRow).toContainText("$96");
 
+    // The invoice ledger moved to the family billing page (spec
+    // 2026-09-05-family-billing §6); the student Billing tab now links to it.
     await page.getByRole("tab", { name: "Billing" }).click();
-    await expect(page.getByTestId("admin-student-selected-invoice")).toContainText("$96");
-    await expect(page.getByTestId("admin-student-invoice-lines")).toContainText(
-      "Scholarship discount",
+    await expect(page.getByTestId("admin-student-family-billing-link")).toBeVisible();
+
+    await page.route("**/api/v2/admin/families/parent-discounts/billing", (route) =>
+      fulfillJson(route, familyBillingWithDiscountedInvoice()),
     );
-    await expect(page.getByTestId("admin-student-invoice-lines")).toContainText(
-      "Coach child discount",
-    );
-    await expect(page.getByTestId("admin-student-invoice-lines")).toContainText("-$100");
-    await expect(page.getByTestId("admin-student-invoice-lines")).toContainText("-$24");
+    await page.goto("/admin/families/parent-discounts");
+    await expect(page.getByTestId("family-invoices")).toBeVisible();
+    await expect(page.getByTestId("invoice-row-inv-discounts")).toContainText("$96");
+    await page.getByTestId("invoice-expand-inv-discounts").click();
+    const lines = page.getByTestId("invoice-lines-inv-discounts");
+    await expect(lines).toContainText("Scholarship discount");
+    await expect(lines).toContainText("Coach child discount");
+    await expect(lines).toContainText("-$100");
+    await expect(lines).toContainText("-$24");
 
     guard.assertNoLegacyApiCalls();
     expect(errors, `Console errors: ${errors.join("\n")}`).toEqual([]);
@@ -421,3 +428,70 @@ test.describe("tuition discounts", () => {
     expect(errors, `Console errors: ${errors.join("\n")}`).toEqual([]);
   });
 });
+
+/**
+ * Minimal family-billing response carrying the discounted invoice, so the
+ * ledger assertions live where the invoice now renders. The line items come
+ * from the existing `/admin/billing/invoices/inv-discounts` stub, which the
+ * expanded row fetches.
+ */
+function familyBillingWithDiscountedInvoice() {
+  return {
+    generated_at: "2026-06-10T12:00:00Z",
+    timezone: "America/Chicago",
+    today: "2026-06-10",
+    parent: {
+      parent_id: "parent-discounts",
+      name: "Discount Parent",
+      email: "discount@example.com",
+      phone: null,
+    },
+    header: {
+      balance_cents: 9600,
+      open_invoice_count: 1,
+      available_credit_cents: 0,
+      last_payment: null,
+      autopay: {
+        state: "needs_consent",
+        active_count: 0,
+        total_count: 1,
+        card_last4: null,
+        card_label: null,
+        next_charge_on: null,
+        next_charge_invoice_id: null,
+        last_failure: null,
+      },
+      registration: { state: "not_invited", card_on_file: false, last_invited_at: null },
+      enrollment_counts: { active: 1, paused: 0, cancelled: 0 },
+    },
+    students: [],
+    invoices: [
+      {
+        invoice_id: "inv-discounts",
+        invoice_number: "INV-DISC-1",
+        period: "2026-06",
+        student_id: "student-discounts",
+        student_name: "Discount Student",
+        enrollment_id: "enr-discounts",
+        status: "open",
+        total_cents: 9600,
+        paid_cents: 0,
+        balance_due_cents: 9600,
+        due_date: "2026-06-08",
+        created_at: "2026-06-01T06:00:00Z",
+        paid_at: null,
+        voided_at: null,
+        void_reason: null,
+        settlement_unlinked: false,
+        delivery: { status: "sent", last_sent_at: "2026-06-01T06:05:00Z", kind: "invoice" },
+        allocations: [],
+        credits: [],
+        chargeable: false,
+        actions: [],
+      },
+    ],
+    timeline: [],
+    actions: ["send_invite"],
+    warnings: [],
+  };
+}
