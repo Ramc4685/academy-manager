@@ -1,6 +1,6 @@
 # coach-phone-attendance-notes
 
-PR: #TBD
+PR: #665
 
 ## What changed
 Coach app on phones (role-model slice 3): attendance is one tap per student
