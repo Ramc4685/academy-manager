@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useMutation } from "@tanstack/react-query";
 
 import { createAdminUser, type AdminUserRole } from "@/lib/api/admin";
+import { roleLabel } from "@/lib/admin/role-label";
 import { assignableRoles } from "@/lib/auth/assignable-roles";
 import { useIsOwner } from "@/components/admin/owner-context";
 import { Button } from "@/components/ds/button";
@@ -93,7 +94,7 @@ export default function NewAdminUserPage() {
           >
             {roleOptions.map((r) => (
               <option key={r} value={r}>
-                {r}
+                {roleLabel(r)}
               </option>
             ))}
           </select>

@@ -1,17 +1,20 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 
 import {
   addSessionReplacement,
   listAdminUsers,
+  setSessionAssistants,
   updateAdminSession,
   updateSessionOccurrenceReplacement,
   type AdminSessionOccurrenceView,
   type AdminSessionView,
+  type AdminUserView,
   type EditSessionRequest,
 } from "@/lib/api/admin";
+import { roleLabel } from "@/lib/admin/role-label";
 import { queryKeys } from "@/lib/query/keys";
 
 import { Button } from "@/components/ds/button";
@@ -262,6 +265,192 @@ export function OccurrenceReplacementDialog({
             size="sm"
             type="submit"
             disabled={mutation.isPending || !canSave}
+          >
+            {mutation.isPending ? "Saving..." : "Save"}
+          </Button>
+        </DialogActions>
+      </form>
+    </RallyDialog>
+  );
+}
+
+/**
+ * Per-session assistant coaches. Candidates are every academy user holding
+ * `coach` or `assistant_coach` (two role-filtered directory reads, merged),
+ * minus the lead coach — a coach cannot assist their own session. Saves
+ * through the dedicated PUT so the edit dialog's PATCH never has to carry the
+ * list (there `undefined` means unchanged and `[]` clears, which is easy to
+ * get wrong from a form).
+ */
+export function SessionAssistantsDialog({
+  open,
+  session,
+  onOpenChange,
+  onSaved,
+}: {
+  open: boolean;
+  session: AdminSessionView | null;
+  onOpenChange: (open: boolean) => void;
+  onSaved: (session: AdminSessionView) => void;
+}) {
+  const [selected, setSelected] = useState<string[]>([]);
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const coachesQuery = useQuery({
+    queryKey: queryKeys.admin.users("coach"),
+    queryFn: () => listAdminUsers("coach"),
+    enabled: open,
+  });
+  const assistantsQuery = useQuery({
+    queryKey: queryKeys.admin.users("assistant_coach"),
+    queryFn: () => listAdminUsers("assistant_coach"),
+    enabled: open,
+  });
+  const loading = coachesQuery.isLoading || assistantsQuery.isLoading;
+
+  useEffect(() => {
+    if (!open || !session) return;
+    setSelected([...(session.assistant_coach_ids ?? [])]);
+    setReason("");
+    setError(null);
+  }, [open, session]);
+
+  const candidates = useMemo(() => {
+    const byId = new Map<string, AdminUserView>();
+    for (const user of [
+      ...(coachesQuery.data?.users ?? []),
+      ...(assistantsQuery.data?.users ?? []),
+    ]) {
+      if (user.user_id === session?.coach_id) continue;
+      if (!byId.has(user.user_id)) byId.set(user.user_id, user);
+    }
+    return [...byId.values()].sort((a, b) =>
+      (a.display_name || a.email).localeCompare(b.display_name || b.email),
+    );
+  }, [coachesQuery.data, assistantsQuery.data, session?.coach_id]);
+
+  // Assistants already on the session whose membership no longer appears in
+  // the directory (role removed, account disabled) stay visible so an admin
+  // can un-tick them instead of silently dropping them on save.
+  const orphaned = useMemo(() => {
+    const known = new Set(candidates.map((user) => user.user_id));
+    const ids = session?.assistant_coach_ids ?? [];
+    const names = session?.assistant_coach_names ?? [];
+    return ids
+      .map((assistantId, index) => ({ user_id: assistantId, label: names[index] ?? assistantId }))
+      .filter((entry) => !known.has(entry.user_id));
+  }, [candidates, session?.assistant_coach_ids, session?.assistant_coach_names]);
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      setSessionAssistants(session!.session_id, selected, reason.trim() || null),
+    onSuccess: (savedSession) => {
+      setError(null);
+      onSaved(savedSession);
+    },
+    onError: (err: Error) =>
+      setError(err.message || "Failed to update assistant coaches."),
+  });
+
+  const toggle = (userId: string) =>
+    setSelected((prev) =>
+      prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId],
+    );
+
+  const optionClass =
+    "flex items-start gap-3 rounded-md border border-rally-line px-3 py-2 text-sm";
+
+  return (
+    <RallyDialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) setError(null);
+        onOpenChange(nextOpen);
+      }}
+      title="Edit assistants"
+      description="Assistants see this session in their coach app and can mark attendance, update skills and add notes. They are never paid by payroll."
+      overline="Coaching staff"
+    >
+      {error && <DialogError message={error} />}
+      <form
+        className="space-y-3"
+        data-testid="session-assistants-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          mutation.mutate();
+        }}
+      >
+        <Field label="Assistant coaches">
+          {loading ? (
+            <p className="text-sm text-rally-subtle">Loading coaches...</p>
+          ) : candidates.length === 0 && orphaned.length === 0 ? (
+            <p className="text-sm text-rally-subtle" data-testid="assistant-options-empty">
+              No coaches or assistant coaches to choose from. Grant the Assistant
+              coach role from a user&apos;s page first.
+            </p>
+          ) : (
+            <div className="max-h-72 space-y-2 overflow-y-auto">
+              {candidates.map((user) => (
+                <label key={user.user_id} className={optionClass}>
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={selected.includes(user.user_id)}
+                    onChange={() => toggle(user.user_id)}
+                    data-testid={`assistant-option-${user.user_id}`}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-medium text-rally-ink">
+                      {user.display_name || user.email}
+                    </span>
+                    <span className="block truncate font-mono text-[11px] text-rally-muted">
+                      {user.email} · {roleLabel(user.role)}
+                    </span>
+                  </span>
+                </label>
+              ))}
+              {orphaned.map((entry) => (
+                <label key={entry.user_id} className={optionClass}>
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={selected.includes(entry.user_id)}
+                    onChange={() => toggle(entry.user_id)}
+                    data-testid={`assistant-option-${entry.user_id}`}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-medium text-rally-ink">{entry.label}</span>
+                    <span className="block text-[11px] text-amber-700">
+                      No longer holds a coaching role — un-tick to remove.
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
+        </Field>
+        <Field label="Reason">
+          <input
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            className={inputClass}
+            placeholder="Optional"
+          />
+        </Field>
+        <DialogActions>
+          <Button
+            variant="secondary"
+            size="sm"
+            type="button"
+            onClick={() => onOpenChange(false)}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            type="submit"
+            disabled={mutation.isPending || !session}
           >
             {mutation.isPending ? "Saving..." : "Save"}
           </Button>

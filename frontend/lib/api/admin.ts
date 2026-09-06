@@ -15,6 +15,13 @@ export interface AdminSessionView {
   session_id: string;
   coach_id: string;
   coach_name: string | null;
+  /**
+   * Per-session assistant coaches (`assistant_coach` role). They get the coach
+   * shell scoped to this session — attendance, skills, notes — and are never
+   * paid by payroll. `assistant_coach_names` is resolved like `coach_name`.
+   */
+  assistant_coach_ids: string[];
+  assistant_coach_names: string[];
   title: string;
   location: string;
   start_at: string; // ISO 8601
@@ -101,6 +108,7 @@ export interface UpdateOccurrenceCoachAttendanceRequest {
 
 export interface CreateSessionRequest {
   coach_id: string;
+  assistant_coach_ids?: string[];
   title: string;
   location: string;
   start_at?: string | null;
@@ -122,6 +130,8 @@ export interface CreateSessionRequest {
 
 export interface EditSessionRequest {
   coach_id?: string;
+  /** Omit (or undefined) to leave unchanged; `[]` clears every assistant. */
+  assistant_coach_ids?: string[] | null;
   title?: string;
   location?: string;
   start_at?: string | null;
@@ -1131,7 +1141,7 @@ export interface DmRequest {
  * scope; granting or revoking `admin`/`owner` is itself owner-only (the BFF
  * 403s anyone else), so the pages offer those options only to owners.
  */
-export type AdminUserRole = "admin" | "coach" | "parent" | "owner";
+export type AdminUserRole = "admin" | "coach" | "assistant_coach" | "parent" | "owner";
 
 export interface AdminUserView {
   user_id: string;
@@ -1511,6 +1521,31 @@ export function updateAdminSession(
     method: "PATCH",
     body: JSON.stringify(payload),
   });
+}
+
+export interface SetSessionAssistantsRequest {
+  assistant_coach_ids: string[];
+  reason?: string | null;
+}
+
+/**
+ * Replace the session's assistant coaches. The BFF validates every id holds an
+ * active `coach` or `assistant_coach` membership (422 otherwise) and re-syncs
+ * the list onto the session's future occurrences.
+ */
+export function setSessionAssistants(
+  sessionId: string,
+  assistantCoachIds: string[],
+  reason?: string | null,
+): Promise<AdminSessionView> {
+  const payload: SetSessionAssistantsRequest = {
+    assistant_coach_ids: assistantCoachIds,
+    reason: reason ?? null,
+  };
+  return apiFetch<AdminSessionView>(
+    `/admin/sessions/${encodeURIComponent(sessionId)}/assistants`,
+    { method: "PUT", body: JSON.stringify(payload) },
+  );
 }
 
 export function deleteAdminSession(sessionId: string): Promise<void> {

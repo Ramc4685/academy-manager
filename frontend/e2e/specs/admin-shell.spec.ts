@@ -798,7 +798,8 @@ test.describe("Rally admin shell", () => {
       const roleSelect = page.getByTestId("new-user-role");
       await expect(roleSelect).toBeVisible();
       const options = await roleSelect.locator("option").allTextContents();
-      expect(options.sort()).toEqual(["coach", "parent"]);
+      // Operations roles only: assistant_coach is grantable by any admin.
+      expect(options.sort()).toEqual(["Assistant coach", "Coach", "Parent"]);
       expect(
         errors,
         `App console errors on admin-only add user: ${errors.join("\n")}`,
@@ -811,7 +812,7 @@ test.describe("Rally admin shell", () => {
       const roleSelect = page.getByTestId("new-user-role");
       await expect(roleSelect).toBeVisible();
       const options = await roleSelect.locator("option").allTextContents();
-      expect(options.sort()).toEqual(["admin", "coach", "owner", "parent"]);
+      expect(options.sort()).toEqual(["Admin", "Assistant coach", "Coach", "Owner", "Parent"]);
     });
 
     test("admin without the owner scope sees no Fees or Gateway settings", async ({
@@ -1259,6 +1260,77 @@ test.describe("Rally admin shell", () => {
     expect(
       errors,
       `Console errors on session detail: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  test("session detail shows coaching staff and the assistants editor saves", async ({
+    page,
+  }) => {
+    test.slow();
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+
+    // The assistants editor merges two role-filtered directory reads
+    // (coach + assistant_coach); mirror the backend's `?role=` filter.
+    const USERS = [
+      { user_id: "coach-e2e", email: "coach@example.com", display_name: "Coach E2E", role: "coach", status: "active" },
+      { user_id: "coach-2-e2e", email: "coach2@example.com", display_name: "Second Coach", role: "coach", status: "active" },
+      { user_id: "asst-e2e", email: "helper@example.com", display_name: "Asha Assistant", role: "assistant_coach", status: "active" },
+    ];
+    await page.route("**/api/v2/admin/users*", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      const role = new URL(route.request().url()).searchParams.get("role");
+      return fulfillJson(route, {
+        users: role ? USERS.filter((user) => user.role === role) : USERS,
+      });
+    });
+
+    let assistantIds = ["asst-e2e"];
+    const nameOf = (id: string) => USERS.find((user) => user.user_id === id)?.display_name ?? id;
+    const sessionBody = () => ({
+      ...SESSION_DETAIL_E2E,
+      assistant_coach_ids: assistantIds,
+      assistant_coach_names: assistantIds.map(nameOf),
+    });
+    const puts: Array<Record<string, unknown>> = [];
+    await page.route("**/api/v2/admin/sessions/*/assistants", (route) => {
+      if (route.request().method() !== "PUT") return route.fallback();
+      const body = JSON.parse(route.request().postData() ?? "{}") as {
+        assistant_coach_ids: string[];
+      };
+      puts.push(body);
+      assistantIds = body.assistant_coach_ids;
+      return fulfillJson(route, sessionBody());
+    });
+    await page.route("**/api/v2/admin/sessions/*", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, sessionBody());
+    });
+
+    await page.goto("/admin/sessions/some-session-id");
+    await expect(page.getByTestId("admin-session-detail")).toBeVisible();
+    await expect(page.getByTestId("session-lead-coach")).toContainText("Coach E2E");
+    await expect(page.getByTestId("session-assistants")).toContainText("Asha Assistant");
+
+    await page.getByTestId("edit-assistants").click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByTestId("assistant-option-asst-e2e")).toBeChecked();
+    // The lead coach is never offered as their own assistant.
+    await expect(dialog.getByTestId("assistant-option-coach-e2e")).toHaveCount(0);
+    await dialog.getByTestId("assistant-option-coach-2-e2e").check();
+    await dialog.getByRole("button", { name: "Save" }).click();
+
+    await expect.poll(() => puts.length).toBe(1);
+    expect(puts[0]).toEqual({
+      assistant_coach_ids: ["asst-e2e", "coach-2-e2e"],
+      reason: null,
+    });
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.getByTestId("session-assistants")).toContainText("Second Coach");
+    await expect(page.getByTestId("admin-session-detail")).toBeVisible();
+    expect(
+      errors,
+      `Console errors on session assistants: ${errors.join("\n")}`,
     ).toEqual([]);
   });
 
