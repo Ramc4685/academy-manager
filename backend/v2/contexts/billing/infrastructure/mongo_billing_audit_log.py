@@ -31,6 +31,7 @@ class MongoBillingAuditLogRepository(TenantScopedRepository):
             at=doc["at"],
             invoice_id=_opt_str(doc.get("invoice_id")),
             payment_id=_opt_str(doc.get("payment_id")),
+            parent_id=_opt_str(doc.get("parent_id")),
             reason=doc.get("reason"),
             before=doc.get("before"),
             after=doc.get("after"),
@@ -52,4 +53,26 @@ class MongoBillingAuditLogRepository(TenantScopedRepository):
             sort=[("at", -1)],
             limit=500,
         )
+        return [self._to_domain(doc) async for doc in cursor]
+
+    async def list_for_family(
+        self,
+        *,
+        parent_id: str,
+        invoice_ids: list[str],
+        payment_ids: list[str],
+        enrollment_ids: list[str],
+    ) -> list[BillingAuditEntry]:
+        """Every entry that touches one family: by invoice, by payment, by parent
+        (family-level actions), or by the enrollment named in ``before``
+        (``autopay_resumed`` rows written by the Billing Setup enable path carry
+        no parent_id)."""
+        clauses: list[dict[str, Any]] = [{"parent_id": parent_id}]
+        if invoice_ids:
+            clauses.append({"invoice_id": {"$in": invoice_ids}})
+        if payment_ids:
+            clauses.append({"payment_id": {"$in": payment_ids}})
+        if enrollment_ids:
+            clauses.append({"before.enrollment_id": {"$in": enrollment_ids}})
+        cursor = self._find_many({"$or": clauses}, sort=[("at", -1)], limit=500)
         return [self._to_domain(doc) async for doc in cursor]
