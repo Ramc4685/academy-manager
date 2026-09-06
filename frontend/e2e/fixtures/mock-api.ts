@@ -10,6 +10,17 @@
 import { test as base, type Page, type Route } from "@playwright/test";
 
 export interface MockState {
+  /**
+   * What `GET /api/v2/me` answers. Mutate before the first navigation to run a
+   * spec as another coach-surface persona — e.g. `mock.me.roles =
+   * ["assistant_coach"]` for the scoped assistant shell.
+   */
+  me: {
+    user_id: string;
+    email: string;
+    academy_id: string;
+    roles: Array<"admin" | "coach" | "assistant_coach" | "parent" | "student" | "owner">;
+  };
   today: {
     date: string;
     sessions: Array<{
@@ -115,6 +126,12 @@ export const test = base.extend<{
 }>({
   mock: async ({ page }, use) => {
     const state: MockState = {
+      me: {
+        user_id: "user-coach-e2e",
+        email: "coach@example.com",
+        academy_id: "academy-e2e",
+        roles: ["coach"],
+      },
       today: {
         date: new Date().toISOString().slice(0, 10),
         sessions: [
@@ -314,15 +331,11 @@ export const test = base.extend<{
 
     await page.route("**/api/v2/me", async (route: Route) => {
       if (route.request().method() !== "GET") return route.fallback();
+      // Read at request time so a spec can swap persona before navigating.
       return route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({
-          user_id: "user-coach-e2e",
-          email: "coach@example.com",
-          academy_id: "academy-e2e",
-          roles: ["coach"],
-        }),
+        body: JSON.stringify(state.me),
       });
     });
 

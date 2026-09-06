@@ -106,11 +106,10 @@ class BulkMarkAttendance:
         # (academy admin/owner covering the session) skips only the
         # assignment membership test; see MarkAttendance.execute.
         occurrence = await self._occurrences.get(cmd.occurrence_id)
-        session_id_matches = occurrence is not None and (
-            occurrence.session_id == cmd.session_id
-            or occurrence.template_session_id == cmd.session_id
-        )
-        if not session_id_matches:
+        if occurrence is None or (
+            occurrence.session_id != cmd.session_id
+            and occurrence.template_session_id != cmd.session_id
+        ):
             raise BulkSessionNotAssigned(
                 "session occurrence not found or not assigned",
                 session_id=cmd.session_id,
@@ -121,6 +120,7 @@ class BulkMarkAttendance:
             occurrence.scheduled_coach_id,
             occurrence.actual_coach_id,
             occurrence.substitute_coach_id,
+            *occurrence.assistant_coach_ids,
         }:
             raise BulkSessionNotAssigned(
                 "session occurrence not assigned to this coach",

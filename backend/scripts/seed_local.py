@@ -228,6 +228,13 @@ def build_session_occurrence_docs(
                     "scheduled_coach_id": str(session_doc["coach_id"]),
                     "is_billable": True,
                     "is_payable": True,
+                    # Assistant coaches ride along only when the template
+                    # names some, so plain templates keep their exact shape.
+                    **(
+                        {"assistant_coach_ids": list(session_doc["assistant_coach_ids"])}
+                        if session_doc.get("assistant_coach_ids")
+                        else {}
+                    ),
                 }
             )
         current += timedelta(days=1)
@@ -1566,6 +1573,9 @@ async def main() -> None:
             {
                 "$set": {
                     "academy_id": ACADEMY_ID,
+                    # Owner/admin split: the seeded admin is the academy owner.
+                    "role": "admin",
+                    "roles": ["admin", "owner"],
                     "display_name": admin_doc.get("display_name")
                     or admin_doc.get("name")
                     or "Admin",
@@ -1582,7 +1592,7 @@ async def main() -> None:
             "display_name": "Admin",
             "name": "Admin",
             "role": "admin",
-            "roles": ["admin"],
+            "roles": ["admin", "owner"],
             "status": "active",
             "is_active": True,
             "stripe_customer_id": None,
@@ -1624,6 +1634,43 @@ async def main() -> None:
         )
         print(f"  Platform admin: {admin_email} -> platform_roles.platform_admin")
 
+    # ── 1c. Admin-only operations user ─────────────────────────────────────
+    # A post-split admin: holds `admin` but not `owner`, so locally you can
+    # see the operations view (no refunds, pricing, payouts, reports, audit,
+    # or admin/owner grants) next to the owner account above. Step 10 turns
+    # `roles` into the academy_memberships row.
+    ops_email = "ops@blno.academy"
+    if not await db.users.find_one({"email": ops_email}):
+        ops_uid = ""
+        if FIREBASE_MODE and firebase_available():
+            ops_uid = firebase_create_user(ops_email, ADMIN_PASSWORD, "Ops Admin")
+            firebase_uid_map[ops_email] = ops_uid
+        ops_doc: dict = {
+            "academy_id": ACADEMY_ID,
+            "email": ops_email,
+            "display_name": "Ops Admin",
+            "name": "Ops Admin",
+            "role": "admin",
+            "roles": ["admin"],
+            "status": "active",
+            "is_active": True,
+            "stripe_customer_id": None,
+            "created_at": utcnow(),
+            "updated_at": utcnow(),
+        }
+        if ops_uid:
+            ops_doc["user_id"] = ops_uid
+            ops_doc["firebase_uid"] = ops_uid
+        else:
+            ops_doc["password_hash"] = hp(ADMIN_PASSWORD)
+        r = await db.users.insert_one(ops_doc)
+        if not ops_uid:
+            await db.users.update_one(
+                {"_id": r.inserted_id},
+                {"$set": {"user_id": str(r.inserted_id), "firebase_uid": str(r.inserted_id)}},
+            )
+        print(f"  Admin-only user: {ops_email} (roles=['admin'], no owner)")
+
     # ── 2. Coaches ──────────────────────────────────────────────────────────
     coach_info = {
         "Gowtham": {"email": "gowtham@blno.academy", "display_name": "Gowtham"},
@@ -1662,6 +1709,42 @@ async def main() -> None:
             )
         coach_ids[cname] = uid
     print(f"Coaches: {list(coach_ids.keys())}")
+
+    # ── 2b. Assistant coach ─────────────────────────────────────────────────
+    # Role `assistant_coach`: per-session helper. Listed on the first seeded
+    # session below; deliberately NO coach_rates / payout_rules row — assistants
+    # are never paid through payroll (promote to coach instead).
+    helper_email = "helper@blno.academy"
+    helper_uid = ""
+    if not await db.users.find_one({"email": helper_email}):
+        if FIREBASE_MODE and firebase_available():
+            helper_uid = firebase_create_user(helper_email, COACH_PASSWORD, "Helper Coach")
+            firebase_uid_map[helper_email] = helper_uid
+        helper_doc: dict = {
+            "academy_id": ACADEMY_ID,
+            "email": helper_email,
+            "display_name": "Helper Coach",
+            "name": "Helper Coach",
+            "role": "assistant_coach",
+            "roles": ["assistant_coach"],
+            "status": "active",
+            "is_active": True,
+            "stripe_customer_id": None,
+            "created_at": utcnow(),
+            "updated_at": utcnow(),
+        }
+        if helper_uid:
+            helper_doc["user_id"] = helper_uid
+            helper_doc["firebase_uid"] = helper_uid
+        else:
+            helper_doc["password_hash"] = hp(COACH_PASSWORD)
+        r = await db.users.insert_one(helper_doc)
+        helper_uid = helper_uid or str(r.inserted_id)
+        if not helper_doc.get("user_id"):
+            await db.users.update_one(
+                {"_id": r.inserted_id}, {"$set": {"user_id": helper_uid, "firebase_uid": helper_uid}}
+            )
+        print(f"  Assistant coach: {helper_email} (roles=['assistant_coach'], no pay rate)")
 
     # ── 3. Payout rules ─────────────────────────────────────────────────────
     for cid in coach_ids.values():
@@ -1719,6 +1802,9 @@ async def main() -> None:
             amount_cents=amount_cents,
             created_at=utcnow(),
         )
+        if helper_uid and not session_ids:
+            # The helper assists on the first seeded session only.
+            doc["assistant_coach_ids"] = [helper_uid]
         await db.sessions.insert_one(doc)
         session_ids[s["name"]] = session_id
 

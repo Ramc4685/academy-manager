@@ -16,6 +16,13 @@ The coach BFF is also a *supervision surface*: an academy ``admin`` or
 ``docs/superpowers/specs/2026-09-02-admin-coach-coverage-design.md``).
 Coach route files use :func:`require_coach_surface` for that; every other
 persona surface keeps the strict :func:`require_persona` guard.
+
+An ``assistant_coach`` (per-session helper) is also admitted to the coach
+surface, scoped by the session ``assistant_coach_ids`` lists at the use-case
+layer. Routes an assistant must never reach — lesson-plan authoring, roster
+edits, billing moves, messages, announcements, feedback — use
+:func:`require_coach_lead_surface` instead, which admits coaches and
+supervisors only.
 """
 
 from __future__ import annotations
@@ -35,6 +42,12 @@ Persona = Literal["coach", "parent", "admin", "student"]
 COACH_SUPERVISOR_ROLES: tuple[Role, ...] = ("admin", "owner")
 
 
+# Roles that may act on the coach surface at all (any of these, or a
+# supervisor role). ``assistant_coach`` is the narrowest: scoped to sessions
+# listing them, never a supervisor, never a "lead".
+COACH_SURFACE_ROLES: tuple[Role, ...] = ("coach", "assistant_coach", *COACH_SUPERVISOR_ROLES)
+
+
 def is_coach_supervisor(claims: AuthClaims) -> bool:
     """True when the caller may cover any session on the coach surface.
 
@@ -43,6 +56,20 @@ def is_coach_supervisor(claims: AuthClaims) -> bool:
     """
 
     return any(role in claims.roles for role in COACH_SUPERVISOR_ROLES)
+
+
+def is_assistant_only(claims: AuthClaims) -> bool:
+    """True when the caller reaches the coach surface *only* as an assistant.
+
+    Someone holding ``assistant_coach`` alongside ``coach``/``admin``/``owner``
+    is a lead (or supervisor) and is not narrowed by the assistant rules.
+    """
+
+    return (
+        "assistant_coach" in claims.roles
+        and "coach" not in claims.roles
+        and not is_coach_supervisor(claims)
+    )
 
 
 def require_persona(persona: Persona) -> Callable[..., AuthClaims]:
@@ -60,13 +87,49 @@ def require_persona(persona: Persona) -> Callable[..., AuthClaims]:
     return _dep
 
 
+def require_owner() -> Callable[..., Awaitable[AuthClaims]]:
+    """Academy owner gate for money-governance routes (refunds, pricing,
+    payouts, reports, audit, role grants). Misses are 404, like every persona
+    guard, so the route's existence is never leaked.
+
+    ``owner`` is academy-scoped, so an owner of one academy is an ordinary
+    user everywhere else. The full set of routes behind this guard lives in
+    ``backend.v2.interfaces.admin.owner_gate.OWNER_ONLY_ROUTE_PATHS``.
+    """
+
+    async def _dep(claims: AuthClaims = Depends(get_auth_claims)) -> AuthClaims:
+        if "owner" not in claims.roles:
+            raise HTTPException(status_code=404, detail="Not found")
+        return claims
+
+    return _dep
+
+
 def require_coach_surface() -> Callable[..., Awaitable[AuthClaims]]:
     """Dependency for coach BFF routes: admits coaches and coach supervisors.
 
-    Parents, students, and anyone without an academy role still get 404,
-    exactly like ``require_persona("coach")``. Routes that need to know
-    whether the caller is covering (rather than assigned) call
-    :func:`is_coach_supervisor` on the returned claims.
+    Also admits ``assistant_coach``; the use cases then scope an assistant to
+    the sessions that list them. Parents, students, and anyone without an
+    academy role still get 404, exactly like ``require_persona("coach")``.
+    Routes that need to know whether the caller is covering (rather than
+    assigned) call :func:`is_coach_supervisor` on the returned claims.
+    """
+
+    async def _dep(claims: AuthClaims = Depends(get_auth_claims)) -> AuthClaims:
+        if not any(role in claims.roles for role in COACH_SURFACE_ROLES):
+            raise HTTPException(status_code=404, detail="Not found")
+        return claims
+
+    return _dep
+
+
+def require_coach_lead_surface() -> Callable[..., Awaitable[AuthClaims]]:
+    """Coach BFF routes an assistant must not reach: coaches and supervisors.
+
+    Same 404-on-miss contract as :func:`require_coach_surface`; the only
+    difference is that a bare ``assistant_coach`` is refused. Used for
+    lesson-plan authoring, roster edits, billing-enrollment moves, messages,
+    announcements and feedback.
     """
 
     async def _dep(claims: AuthClaims = Depends(get_auth_claims)) -> AuthClaims:

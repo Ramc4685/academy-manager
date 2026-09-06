@@ -71,4 +71,5 @@ class EnrollmentOccurrenceLookup(OccurrenceLookup):
             actual_coach_id=occurrence.actual_coach_id,
             substitute_coach_id=occurrence.substitute_coach_id,
             template_session_id=occurrence.template_session_id,
+            assistant_coach_ids=occurrence.assistant_coach_ids,
         )

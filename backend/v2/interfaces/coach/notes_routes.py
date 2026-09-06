@@ -18,7 +18,7 @@ from backend.v2.interfaces.coach.views import (
     ProgressNoteView,
 )
 from backend.v2.shared.auth.claims import AuthClaims
-from backend.v2.shared.http import require_coach_surface
+from backend.v2.shared.http import require_coach_lead_surface, require_coach_surface
 
 router = APIRouter(tags=["coach.notes"])
 
@@ -37,7 +37,7 @@ async def list_lesson_plans(
 async def create_lesson_plan(
     session_id: str,
     body: CreateLessonPlanRequest,
-    claims: AuthClaims = Depends(require_coach_surface()),
+    claims: AuthClaims = Depends(require_coach_lead_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> LessonPlanView:
     row = await use_cases.create_lesson_plan.execute(

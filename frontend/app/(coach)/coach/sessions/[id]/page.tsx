@@ -16,6 +16,7 @@ import {
 } from "@/lib/api/coach";
 import { AnnouncementsPanel } from "@/components/announcements/AnnouncementsPanel";
 import { BillingPreviewDrawer } from "@/components/coach/billing-preview-drawer";
+import { useIsAssistantCoach } from "@/components/coach/coach-surface-context";
 import { SessionDetailTabs } from "@/components/coach/SessionDetailTabs";
 import { Chip } from "@/components/ds/chip";
 import { queryKeys } from "@/lib/query/keys";
@@ -84,6 +85,10 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   const decodedId = decodeURIComponent(id);
   const queryClient = useQueryClient();
   const online = useOnline();
+  // Assistant coaches mark attendance, update skills and write notes here;
+  // announcements and billing previews are lead-coach surfaces (the BFF 404s
+  // them for assistants), so they are not rendered at all.
+  const assistant = useIsAssistantCoach();
 
   const date = dateParam ?? todayISO();
   const { data: today, isLoading, isError } = useQuery({
@@ -417,6 +422,7 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
                   noteMutation.mutate({ studentId: student.student_id, body })
                 }
                 noteSaving={noteMutation.isPending}
+                showBilling={!assistant}
                 billingOpen={billingOpen === student.student_id}
                 onToggleBilling={() =>
                   setBillingOpen((prev) =>
@@ -436,15 +442,17 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
         404 on every recurring session, so the resolved `session.session_id`
         is what goes down.
       */}
-      <section className="mt-6">
-        <h2
-          className="mb-2 text-sm font-semibold uppercase tracking-wide"
-          style={{ color: "var(--rally-muted)" }}
-        >
-          Announcements
-        </h2>
-        <AnnouncementsPanel persona="coach" sessionId={session.session_id} />
-      </section>
+      {!assistant && (
+        <section className="mt-6">
+          <h2
+            className="mb-2 text-sm font-semibold uppercase tracking-wide"
+            style={{ color: "var(--rally-muted)" }}
+          >
+            Announcements
+          </h2>
+          <AnnouncementsPanel persona="coach" sessionId={session.session_id} />
+        </section>
+      )}
     </section>
   );
 }
@@ -461,6 +469,7 @@ function RosterRow({
   onNoteChange,
   onNoteSave,
   noteSaving,
+  showBilling,
   billingOpen,
   onToggleBilling,
 }: {
@@ -475,6 +484,8 @@ function RosterRow({
   onNoteChange: (text: string) => void;
   onNoteSave: (body: string) => void;
   noteSaving: boolean;
+  /** False for assistant coaches: the billing preview is lead-only. */
+  showBilling: boolean;
   billingOpen: boolean;
   onToggleBilling: () => void;
 }) {
@@ -595,18 +606,20 @@ function RosterRow({
             Note
           </button>
           {/* Billing preview toggle */}
-          <button
-            data-testid={`billing-toggle-${student.student_id}`}
-            onClick={onToggleBilling}
-            aria-expanded={billingOpen}
-            className="min-h-[36px] rounded-md border px-2.5 py-1 text-xs font-medium transition-colors"
-            style={{
-              borderColor: "var(--rally-line)",
-              color: "var(--rally-muted)",
-            }}
-          >
-            Billing
-          </button>
+          {showBilling && (
+            <button
+              data-testid={`billing-toggle-${student.student_id}`}
+              onClick={onToggleBilling}
+              aria-expanded={billingOpen}
+              className="min-h-[36px] rounded-md border px-2.5 py-1 text-xs font-medium transition-colors"
+              style={{
+                borderColor: "var(--rally-line)",
+                color: "var(--rally-muted)",
+              }}
+            >
+              Billing
+            </button>
+          )}
         </div>
       </div>
 
@@ -644,7 +657,7 @@ function RosterRow({
         </div>
       )}
 
-      {billingOpen && (
+      {showBilling && billingOpen && (
         <BillingPreviewDrawer
           sessionId={sessionId}
           studentId={student.student_id}

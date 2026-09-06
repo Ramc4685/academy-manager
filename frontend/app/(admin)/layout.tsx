@@ -20,10 +20,14 @@ import { ShuttleMark } from "@/components/ds/shuttle";
 import {
   ADMIN_NAV,
   adminTopLevelRoutes,
+  isOwnerOnlyRoute,
   metaForPath,
+  navForRoles,
+  type AdminNavGroup,
   type AdminNavItem,
   type AdminNavIconKey,
 } from "@/components/admin/screen-meta";
+import { OwnerOnlyPanel, OwnerProvider } from "@/components/admin/owner-context";
 import {
   AdminActionSlotOutlet,
   AdminActionSlotProvider,
@@ -85,11 +89,17 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   const meta = metaForPath(pathname);
   const adminName = auth.user?.email ?? "Admin";
-  const adminRole = auth.user?.roles.includes("admin") ? "Admin" : "Staff";
+  const adminRole = auth.isOwner ? "Owner" : auth.user?.roles.includes("admin") ? "Admin" : "Staff";
   const academyName = displayAcademyName(academyQuery.data?.display_name);
+  // Owner-only destinations are dropped from the nav for admins without the
+  // scope, and landing on one directly shows the owner-only panel instead of a
+  // page whose every request would 404.
+  const nav = navForRoles(ADMIN_NAV, auth.isOwner);
+  const ownerOnlyHere = isOwnerOnlyRoute(pathname) && !auth.isOwner;
 
   return (
     <TenantProvider>
+      <OwnerProvider isOwner={auth.isOwner}>
       <ToastProvider>
       <TenantChangeInvalidator />
       <AdminActionSlotProvider>
@@ -100,6 +110,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             in the DOM. */}
         {isDesktop ? (
           <DesktopSidebar
+            nav={nav}
             pathname={pathname}
             adminName={adminName}
             adminRole={adminRole}
@@ -108,6 +119,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         ) : (
           drawerOpen && (
             <MobileDrawer
+              nav={nav}
               pathname={pathname}
               adminName={adminName}
               adminRole={adminRole}
@@ -130,12 +142,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           />
           <main className="flex-1 p-4 md:p-6 overflow-y-auto">
             <AccessDeniedNotice />
-            {children}
+            {ownerOnlyHere ? <OwnerOnlyPanel /> : children}
           </main>
         </div>
       </div>
       </AdminActionSlotProvider>
       </ToastProvider>
+      </OwnerProvider>
     </TenantProvider>
   );
 }
@@ -168,11 +181,13 @@ function TenantChangeInvalidator() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function DesktopSidebar({
+  nav,
   pathname,
   adminName,
   adminRole,
   academyName,
 }: {
+  nav: ReadonlyArray<AdminNavGroup>;
   pathname: string;
   adminName: string;
   adminRole: string;
@@ -190,7 +205,7 @@ function DesktopSidebar({
     >
       <SidebarBrand academyName={academyName} />
       <nav className="flex-1 min-h-0 overflow-y-auto py-2">
-        {ADMIN_NAV.map((group) => (
+        {nav.map((group) => (
           <NavGroup key={group.group} group={group.group} items={group.items} pathname={pathname} />
         ))}
       </nav>
@@ -349,12 +364,14 @@ function SidebarUserPill({ name, role }: { name: string; role: string }) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function MobileDrawer({
+  nav,
   pathname,
   adminName,
   adminRole,
   academyName,
   onClose,
 }: {
+  nav: ReadonlyArray<AdminNavGroup>;
   pathname: string;
   adminName: string;
   adminRole: string;
@@ -386,7 +403,7 @@ function MobileDrawer({
           </button>
         </div>
         <nav className="flex-1 min-h-0 overflow-y-auto py-2" onClick={onClose}>
-          {ADMIN_NAV.map((group) => (
+          {nav.map((group) => (
             <NavGroup key={group.group} group={group.group} items={group.items} pathname={pathname} />
           ))}
         </nav>
