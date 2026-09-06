@@ -42,7 +42,7 @@ This map prevents that collapse.
 | `outbox_events` | `shared/events` | event dispatcher | Producer context writes; dispatcher reads + marks processed. |
 | `event_handler_runs` | `shared/events` | event dispatcher | Idempotency record for handlers. |
 | `dead_letter_events` | `shared/events` | event dispatcher + replay CLI | |
-| `event_audit` | `shared/events` | observability | 90-day TTL. |
+| `event_audit` | `shared/events` | observability | 400-day TTL (migration 0166; was 90 days). |
 | `v2_migrations` | `shared/config` | migration runner | |
 | `audit_logs` | shared (writer per context) | Admin BFF | Each context emits to a shared collection; no aggregate. |
 

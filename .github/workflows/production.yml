@@ -30,6 +30,17 @@ env:
   NEXT_PUBLIC_FIREBASE_APP_ID: ${{ vars.REACT_APP_FIREBASE_APP_ID }}
   NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID: ${{ vars.REACT_APP_FIREBASE_MEASUREMENT_ID }}
   NEXT_PUBLIC_FIREBASE_AUTH_PROXY: ${{ vars.NEXT_PUBLIC_FIREBASE_AUTH_PROXY || '' }}
+  # Browser Sentry (lib/observability/sentry.ts) is DSN-gated and read at
+  # build time. The NEXT_PUBLIC_SENTRY_DSN repo variable is deliberately NOT
+  # exported here: a workflow-level value reaches the e2e jobs too, where the
+  # SDK would post envelopes to Sentry from Playwright runs (the
+  # tenant-isolation fixture rejects that as a stray /api/ call, and real
+  # events from tests would pollute the project). Only the production build
+  # steps in frontend-static and deploy-frontend read the variable directly.
+  # The release name must match the sentry-release job's
+  # `courtmastr-frontend@<sha>`.
+  NEXT_PUBLIC_APP_ENV: production
+  NEXT_PUBLIC_SENTRY_RELEASE: courtmastr-frontend@${{ github.sha }}
 
 jobs:
   # Path filters select validation jobs on pull requests only. On a push to
@@ -247,6 +258,9 @@ jobs:
           NEXT_PUBLIC_FIREBASE_APP_ID: ${{ env.NEXT_PUBLIC_FIREBASE_APP_ID }}
           NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID: ${{ env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID }}
           NEXT_PUBLIC_FIREBASE_AUTH_PROXY: ${{ env.NEXT_PUBLIC_FIREBASE_AUTH_PROXY }}
+          NEXT_PUBLIC_SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN || '' }}
+          NEXT_PUBLIC_APP_ENV: ${{ env.NEXT_PUBLIC_APP_ENV }}
+          NEXT_PUBLIC_SENTRY_RELEASE: ${{ env.NEXT_PUBLIC_SENTRY_RELEASE }}
         run: pnpm build
 
       - name: OpenAPI drift check
@@ -621,7 +635,12 @@ jobs:
         # --ha=false: this app runs one machine on purpose (in-process scheduler,
         # boot-time migrations). The default --ha would create two machines
         # whenever the group is at zero, doubling the bill and the jobs.
-        run: flyctl deploy --remote-only --ha=false --app courtmastr-academy-api
+        # SENTRY_RELEASE: resolve_release() in backend/v2/shared/observability/
+        # errors.py reads this before FLY_IMAGE_REF, so every deploy reports the
+        # same release name the sentry-release job below creates.
+        run: >
+          flyctl deploy --remote-only --ha=false --app courtmastr-academy-api
+          --env SENTRY_RELEASE=courtmastr-fastapi@${{ github.sha }}
 
   deploy-frontend:
     name: Deploy Frontend
@@ -669,7 +688,16 @@ jobs:
           NEXT_PUBLIC_FIREBASE_APP_ID: ${{ env.NEXT_PUBLIC_FIREBASE_APP_ID }}
           NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID: ${{ env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID }}
           NEXT_PUBLIC_FIREBASE_AUTH_PROXY: ${{ env.NEXT_PUBLIC_FIREBASE_AUTH_PROXY }}
-        run: pnpm deploy:cloudflare
+          NEXT_PUBLIC_SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN || '' }}
+          NEXT_PUBLIC_APP_ENV: ${{ env.NEXT_PUBLIC_APP_ENV }}
+          NEXT_PUBLIC_SENTRY_RELEASE: ${{ env.NEXT_PUBLIC_SENTRY_RELEASE }}
+        run: |
+          if [ -z "${NEXT_PUBLIC_SENTRY_DSN}" ]; then
+            echo "::notice::NEXT_PUBLIC_SENTRY_DSN is not set; the frontend build ships without browser Sentry."
+          else
+            echo "::notice::Browser Sentry enabled: release ${NEXT_PUBLIC_SENTRY_RELEASE}, environment ${NEXT_PUBLIC_APP_ENV}."
+          fi
+          pnpm deploy:cloudflare
 
   smoke:
     name: Production Smoke
@@ -696,6 +724,76 @@ jobs:
           # this host and the primary-only smoke passed).
           TENANT_FRONTEND_URLS: https://blno-academy.courtmastr.com
         run: scripts/smoke/production_smoke.sh
+
+  sentry-release:
+    name: Sentry Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [smoke]
+    if: >
+      needs.smoke.result == 'success' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name != 'pull_request'
+    env:
+      # The courtmastr-frontend Sentry project and the NEXT_PUBLIC_SENTRY_DSN
+      # repo variable exist (2026-09-05); set to "false" to pause. The Worker build
+      # already stamps NEXT_PUBLIC_SENTRY_RELEASE=courtmastr-frontend@<sha>
+      # (workflow-level env), which is the name the browser SDK reports.
+      ENABLE_FRONTEND_SENTRY_RELEASE: "true"
+    steps:
+      - name: Check out deployed revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # set_commits: auto needs the full history to diff against the
+          # previous release.
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Secrets cannot be referenced in `if:`, so the step below decides whether
+      # the SENTRY_AUTH_TOKEN repo secret exists. Until it does, both release
+      # steps skip and the workflow stays green (see DEPLOYMENT.md, "Sentry
+      # releases").
+      - name: Check for Sentry auth token
+        id: sentry
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        run: |
+          if [ -n "${SENTRY_AUTH_TOKEN}" ]; then
+            echo "has_token=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_token=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::SENTRY_AUTH_TOKEN is not set; skipping Sentry release creation."
+          fi
+
+      - name: Create backend Sentry release
+        if: steps.sentry.outputs.has_token == 'true'
+        uses: getsentry/action-release@ff07929a6537bac57790c3451cf4d364aca38528 # v3
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: blno-badmintion
+          SENTRY_PROJECT: courtmastr-fastapi
+        with:
+          environment: production
+          release: courtmastr-fastapi@${{ github.sha }}
+          set_commits: auto
+
+      # Frontend mirror for the courtmastr-frontend Sentry project; a no-op
+      # while the job-level ENABLE_FRONTEND_SENTRY_RELEASE is "false". The
+      # Worker build already receives NEXT_PUBLIC_SENTRY_RELEASE with the same
+      # name; keep the two in step or events will not join their release.
+      - name: Create frontend Sentry release
+        if: >
+          steps.sentry.outputs.has_token == 'true' &&
+          env.ENABLE_FRONTEND_SENTRY_RELEASE == 'true'
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: blno-badmintion
+          SENTRY_PROJECT: courtmastr-frontend
+        uses: getsentry/action-release@ff07929a6537bac57790c3451cf4d364aca38528 # v3
+        with:
+          environment: production
+          release: courtmastr-frontend@${{ github.sha }}
+          set_commits: auto
 
   publish-release:
     name: Publish Production Release

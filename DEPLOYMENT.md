@@ -247,6 +247,14 @@ Production frontend environment:
 ```bash
 BFF_API_ORIGIN=https://api.academy.courtmastr.com
 NEXT_PUBLIC_API_BASE=/api/v2
+# Browser error capture + Web Vitals (optional). Create the Sentry project
+# `courtmastr-frontend` first, then set its DSN; without it the SDK is never
+# loaded. NEXT_PUBLIC_APP_ENV names the Sentry environment (default
+# "production"); NEXT_PUBLIC_SENTRY_RELEASE tags events with a release. The
+# production workflow forwards all three from the repo variable / github.sha.
+NEXT_PUBLIC_SENTRY_DSN=
+NEXT_PUBLIC_APP_ENV=production
+NEXT_PUBLIC_SENTRY_RELEASE=courtmastr-frontend@<sha>
 ```
 
 `academy.courtmastr.com/*` is a Worker Route on the `academy-next` Cloudflare
@@ -282,7 +290,69 @@ The backend exposes:
 GET /api/v2/healthz
 ```
 
-Monitor this endpoint from the production region. Alert on non-2xx responses, elevated latency, and repeated application errors. Application logs should be shipped to the platform log drain or external logging service.
+Fly polls it every 30 seconds (`backend/fly.toml`) and restarts the machine on
+a 503; the post-deploy smoke greps the body for `"status":"ok"`. Everything
+else (JSON logs, Sentry errors + logs + crons, the daily ops digest, request
+ids, the alert rules and where each one emails) is documented in
+[`docs/observability.md`](docs/observability.md). Account-side setup that no
+deploy performs lives in `scripts/ops/`:
+
+- `scripts/ops/sentry_alerts.sh` creates the Sentry issue and metric alert
+  rules (dry-run by default, `--apply` to create).
+- `scripts/ops/uptime.md` is the checklist for the external uptime monitor
+  and the Fly Grafana alert rules.
+
+### Monitoring secrets and tokens
+
+| Where | Name | Purpose |
+|---|---|---|
+| Fly secret (`courtmastr-academy-api`) | `SENTRY_DSN` | Enables Sentry error tracking and Sentry Logs in the API. Set in prod. |
+| Fly secret | `OPS_ALERT_EMAIL` | Recipient of the 07:00 daily ops digest. Set in prod. |
+| Fly secret | `RESEND_WEBHOOK_SECRET` | Verifies Resend bounce/complaint webhooks at `/api/v2/webhooks/resend`. Set in prod. |
+| Fly env (optional) | `V2_SENTRY_CRON_JOBS` | Comma-separated scheduler job ids that send Sentry Crons check-ins. Default `generate_monthly_invoices`. |
+| GitHub repo secret | `SENTRY_AUTH_TOKEN` | Lets the deploy workflow create the Sentry release `courtmastr-fastapi@<sha>` (org `blno-badmintion`). Token scopes: `project:releases`, `org:read`. Missing token skips the step; events then fall back to `FLY_IMAGE_REF` as the release. |
+| GitHub repo variable | `NEXT_PUBLIC_SENTRY_DSN` | Browser-side Sentry DSN for the Next.js app; the `deploy-frontend` job forwards it (with `NEXT_PUBLIC_APP_ENV=production` and `NEXT_PUBLIC_SENTRY_RELEASE=courtmastr-frontend@<sha>`) into the Worker build, where it is baked in. Unset (current) means the frontend only logs to the console; the deploy step prints a `::notice::` saying which state it built. Use a separate Sentry project or the same DSN with `environment` set; either way do not reuse it server-side. |
+
+The `sentry` CLI on a developer machine authenticates separately
+(`sentry auth login`); it needs no repo secret.
+
+### Sentry releases
+
+Every production deploy is tagged with a Sentry release so issues resolve per
+deploy and Sentry can raise regression ("resolved issue came back in a newer
+release") alerts. Without releases, every event lands in one unversioned bucket
+and those alerts never fire.
+
+Release names are `<sentry project>@<git sha>`:
+
+- Backend: `courtmastr-fastapi@<sha>`. The `deploy-backend` job passes
+  `--env SENTRY_RELEASE=courtmastr-fastapi@<sha>` to `flyctl deploy`, and
+  `resolve_release()` in `backend/v2/shared/observability/errors.py` reads
+  `V2_SENTRY_RELEASE`, then `SENTRY_RELEASE`, then Fly's `FLY_IMAGE_REF` (the
+  fallback for machines started outside the workflow).
+- Frontend: `courtmastr-frontend@<sha>`. The `deploy-frontend` job passes
+  `NEXT_PUBLIC_SENTRY_RELEASE=courtmastr-frontend@<sha>` to the Worker build
+  (that is the variable `frontend/lib/observability/sentry.ts` reads, not
+  `SENTRY_RELEASE`), so browser events already carry the name. The Sentry
+  project `courtmastr-frontend` exists (created 2026-09-05); the
+  `sentry-release` job's frontend step runs once `SENTRY_AUTH_TOKEN` is set and
+  can be paused with `ENABLE_FRONTEND_SENTRY_RELEASE: "false"` in
+  `.github/workflows/production.yml`.
+
+The `sentry-release` job runs after `smoke` succeeds and uses
+`getsentry/action-release` to create the release, associate commits since the
+previous release (`set_commits: auto`) and mark it deployed to `production`.
+It needs one repository secret:
+
+- `SENTRY_AUTH_TOKEN` - a Sentry organization auth token for org
+  `blno-badmintion` with the `project:releases` and `org:read` scopes
+  (Settings > Developer Settings > Organization Tokens). Add it under GitHub
+  Settings > Secrets and variables > Actions.
+
+Until the secret exists, the job logs a notice and skips release creation
+rather than failing the deploy, so the missing secret shows up as a skipped
+step, not a red workflow. Rerunning the job is safe: creating an existing
+release is idempotent.
 
 ## Production Release Records
 

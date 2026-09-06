@@ -10,8 +10,9 @@ Two rules shape what is allowed to return 503:
 1. **Only restartable faults fail the check.** Fly's response to a failed
    check is to restart the machine, so a fault a restart cannot fix must not
    be reported as unhealthy — that produces a boot loop instead of a fix.
-   A stale job heartbeat is reported but never fails the check: restarting the
-   process will not make a monthly job run.
+   A stale job heartbeat is reported (``jobs.<id>.stale``, from the same
+   ``JOB_STALE_AFTER`` table the ops digest alerts on) but never fails the
+   check: restarting the process will not make a monthly job run.
 2. **A component that was never wired is not a fault.** In production the
    lifespan wires Mongo, the scheduler, and the dispatcher before Uvicorn
    serves the first request, so "missing" only ever means "this app was
@@ -32,14 +33,14 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
+from backend.v2.shared.observability.ops_digest import JOB_RUNS_COLLECTION, stale_jobs
+
 log = logging.getLogger(__name__)
 
 #: Fly's check timeout is 5s. Ping well inside it so a slow-but-alive Mongo is
 #: reported as a failure by us (with a reason) rather than as a timeout by Fly
 #: (without one).
 MONGO_PING_TIMEOUT_SECONDS = 2.0
-
-JOB_RUNS_COLLECTION = "ops_job_runs"
 
 OK = "ok"
 DEGRADED = "degraded"
@@ -143,14 +144,25 @@ async def _job_heartbeats(db: Any | None, now: datetime) -> dict[str, Any]:
         return {}
 
     jobs: dict[str, Any] = {}
+    ticks: dict[str, Any] = {}
     for doc in docs:
         name = doc.get("_id")
         if not isinstance(name, str):
             continue
+        ticks[name] = doc.get("last_tick_at")
         jobs[name] = {
             "last_tick_age_seconds": _age_seconds(doc.get("last_tick_at"), now),
             "last_run_age_seconds": _age_seconds(doc.get("recorded_at"), now),
+            "stale": False,
         }
+    # Dead-man flag (informational, rule 1): a job past its expected tick age,
+    # or one that never recorded a heartbeat, is listed as stale so an external
+    # monitor can alert on it without parsing ages against its own table.
+    for job in stale_jobs(ticks, now):
+        entry = jobs.setdefault(
+            job.job_id, {"last_tick_age_seconds": None, "last_run_age_seconds": None}
+        )
+        entry["stale"] = True
     return jobs
 
 

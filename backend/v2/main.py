@@ -192,13 +192,16 @@ from backend.v2.shared.observability import (
 from backend.v2.shared.observability.health import build_health_report
 from backend.v2.shared.observability.ops_alerts import (
     capture_message,
+    cron_checkin,
     handle_scheduler_job_event,
 )
 from backend.v2.shared.observability.ops_digest import (
     INVOICE_GENERATION_JOB,
+    JOB_STALE_AFTER,
     collect_ops_digest,
     record_job_run,
     render_ops_digest,
+    seed_job_heartbeats,
 )
 from backend.v2.shared.scheduling import job_lease
 from backend.v2.shared.tenancy.context import current_tenant_origins, tenant_scope
@@ -210,6 +213,61 @@ from backend.v2.shared.tenancy.resolver import (
 )
 
 log = logging.getLogger(__name__)
+
+#: Sentry Crons ``monitor_config`` per scheduled job, minus the timezone (which
+#: ``cron_checkin`` stamps from ``settings.scheduler_tz``). Must mirror the
+#: ``scheduler.add_job`` calls in ``_lifespan``; ``checkin_margin`` and
+#: ``max_runtime`` are minutes. Only the ids in ``settings.sentry_cron_jobs``
+#: actually check in — the rest are covered by the ops digest's stale-job
+#: section, whose thresholds live in ``ops_digest.JOB_STALE_AFTER``.
+SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
+    "process_scheduled_resume_actions": {
+        "schedule": {"type": "crontab", "value": "0 2 * * *"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
+    },
+    "expire_makeup_requests": {
+        "schedule": {"type": "crontab", "value": "30 2 * * *"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
+    },
+    "process_stripe_webhook_events": {
+        "schedule": {"type": "interval", "value": 1, "unit": "minute"},
+        "checkin_margin": 5,
+        "max_runtime": 5,
+    },
+    "reconcile_stripe_payment_intents": {
+        "schedule": {"type": "interval", "value": 10, "unit": "minute"},
+        "checkin_margin": 10,
+        "max_runtime": 10,
+    },
+    "process_dunning_retries": {
+        "schedule": {"type": "interval", "value": 60, "unit": "minute"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
+    },
+    "generate_monthly_invoices": {
+        "schedule": {"type": "crontab", "value": "0 3 * * *"},
+        "checkin_margin": 60,
+        "max_runtime": 60,
+    },
+    "send_coach_daily_digests": {
+        "schedule": {"type": "crontab", "value": "0 * * * *"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
+    },
+    "send_parent_daily_digests": {
+        "schedule": {"type": "crontab", "value": "0 * * * *"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
+    },
+    "send_ops_digest": {
+        "schedule": {"type": "crontab", "value": "0 7 * * *"},
+        "checkin_margin": 60,
+        "max_runtime": 30,
+    },
+}
+assert SCHEDULED_JOB_MONITORS.keys() == JOB_STALE_AFTER.keys()
 
 
 async def _verify_email_credentials(sender: Any) -> bool | None:
@@ -468,13 +526,32 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # each scheduled job per tick (max_instances=1 only guards within a process).
     scheduler_worker_id = os.environ.get("FLY_MACHINE_ID") or f"scheduler:{uuid.uuid4()}"
 
-    async def _process_scheduled_resumes() -> None:
-        async with job_lease(
-            db, "process_scheduled_resume_actions", timedelta(minutes=5), scheduler_worker_id
-        ) as acquired:
+    async def _run_leased_job(
+        name: str, ttl: timedelta, body: Callable[[], Awaitable[None]]
+    ) -> None:
+        """The per-tick plumbing shared by every scheduled job, in one place.
+
+        Inside the distributed lease (so only the machine that actually runs
+        the body reports on it): the Sentry Crons check-in for allowlisted
+        jobs, then the body, then the ``ops_job_runs`` heartbeat the ops
+        digest's stale-job section and ``/healthz`` read. The heartbeat is
+        written only after the body returns — a job that keeps crashing is
+        already reported by the error listener, and the dead-man switch
+        should see it as stopped rather than alive.
+        """
+        async with job_lease(db, name, ttl, scheduler_worker_id) as acquired:
             if not acquired:
                 return
-            await _process_scheduled_resumes_body()
+            async with cron_checkin(name, schedule=SCHEDULED_JOB_MONITORS[name], settings=settings):
+                await body()
+            await record_job_run(db, name, {}, meaningful=False)
+
+    async def _process_scheduled_resumes() -> None:
+        await _run_leased_job(
+            "process_scheduled_resume_actions",
+            timedelta(minutes=5),
+            _process_scheduled_resumes_body,
+        )
 
     async def _process_scheduled_resumes_body() -> None:
         totals = {
@@ -499,12 +576,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             log.info("scheduled_resume_actions_processed", extra=totals)
 
     async def _expire_makeup_requests() -> None:
-        async with job_lease(
-            db, "expire_makeup_requests", timedelta(minutes=5), scheduler_worker_id
-        ) as acquired:
-            if not acquired:
-                return
-            await _expire_makeup_requests_body()
+        await _run_leased_job(
+            "expire_makeup_requests", timedelta(minutes=5), _expire_makeup_requests_body
+        )
 
     async def _expire_makeup_requests_body() -> None:
         totals = {"academy_count": 0, "expired": 0}
@@ -525,12 +599,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     async def _process_stripe_webhook_events() -> None:
         # 60s interval: keep TTL just under the interval so a clean run's early
         # release lets the next tick reclaim, and a crash frees the lease fast.
-        async with job_lease(
-            db, "process_stripe_webhook_events", timedelta(seconds=55), scheduler_worker_id
-        ) as acquired:
-            if not acquired:
-                return
-            await _process_stripe_webhook_events_body()
+        await _run_leased_job(
+            "process_stripe_webhook_events",
+            timedelta(seconds=55),
+            _process_stripe_webhook_events_body,
+        )
 
     async def _process_stripe_webhook_events_body() -> None:
         # `quarantined` is tracked apart from `failed` (issue #437): a failure
@@ -566,12 +639,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             log.info("stripe_webhook_events_processed", extra=totals)
 
     async def _reconcile_stripe_payment_intents() -> None:
-        async with job_lease(
-            db, "reconcile_stripe_payment_intents", timedelta(minutes=5), scheduler_worker_id
-        ) as acquired:
-            if not acquired:
-                return
-            await _reconcile_stripe_payment_intents_body()
+        await _run_leased_job(
+            "reconcile_stripe_payment_intents",
+            timedelta(minutes=5),
+            _reconcile_stripe_payment_intents_body,
+        )
 
     async def _reconcile_stripe_payment_intents_body() -> None:
         totals = {
@@ -604,12 +676,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             log.info("stripe_payment_intent_reconciliation_processed", extra=totals)
 
     async def _process_dunning_retries() -> None:
-        async with job_lease(
-            db, "process_dunning_retries", timedelta(minutes=10), scheduler_worker_id
-        ) as acquired:
-            if not acquired:
-                return
-            await _process_dunning_retries_body()
+        await _run_leased_job(
+            "process_dunning_retries", timedelta(minutes=10), _process_dunning_retries_body
+        )
 
     async def _process_dunning_retries_body() -> None:
         totals = {
@@ -661,12 +730,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # 30-minute TTL: a full generation run walks every active enrollment in
         # every academy, so the lease must outlive a slow run rather than let a
         # second machine start a duplicate pass mid-flight.
-        async with job_lease(
-            db, "generate_monthly_invoices", timedelta(minutes=30), scheduler_worker_id
-        ) as acquired:
-            if not acquired:
-                return
-            await _generate_monthly_invoices_body()
+        await _run_leased_job(
+            "generate_monthly_invoices", timedelta(minutes=30), _generate_monthly_invoices_body
+        )
 
     async def _generate_monthly_invoices_body() -> None:
         # Daily tick. The per-academy gate and catch-up rules live in
@@ -735,12 +801,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
 
     async def _send_ops_digest() -> None:
-        async with job_lease(
-            db, "send_ops_digest", timedelta(minutes=30), scheduler_worker_id
-        ) as acquired:
-            if not acquired:
-                return
-            await _send_ops_digest_body()
+        await _run_leased_job("send_ops_digest", timedelta(minutes=30), _send_ops_digest_body)
 
     async def _send_ops_digest_body() -> None:
         # Owner-facing, cross-academy summary of the things that fail silently:
@@ -788,12 +849,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             capture_message(f"Ops digest send failed: {extra['failed_reason']}")
 
     async def _send_coach_daily_digests() -> None:
-        async with job_lease(
-            db, "send_coach_daily_digests", timedelta(minutes=10), scheduler_worker_id
-        ) as acquired:
-            if not acquired:
-                return
-            await _send_coach_daily_digests_body()
+        await _run_leased_job(
+            "send_coach_daily_digests", timedelta(minutes=10), _send_coach_daily_digests_body
+        )
 
     async def _send_coach_daily_digests_body() -> None:
         # Hourly tick. The job runs every hour and only sends for academies whose
@@ -867,12 +925,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             log.info("coach_daily_digests_processed", extra=totals)
 
     async def _send_parent_daily_digests() -> None:
-        async with job_lease(
-            db, "send_parent_daily_digests", timedelta(minutes=10), scheduler_worker_id
-        ) as acquired:
-            if not acquired:
-                return
-            await _send_parent_daily_digests_body()
+        await _run_leased_job(
+            "send_parent_daily_digests", timedelta(minutes=10), _send_parent_daily_digests_body
+        )
 
     async def _send_parent_daily_digests_body() -> None:
         # Hourly tick, mirroring _send_coach_daily_digests: only sends for
@@ -1082,6 +1137,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Job crashes and misfires previously died in APScheduler's own logger and
     # never reached Sentry (only the request path was instrumented).
     scheduler.add_listener(handle_scheduler_job_event, EVENT_JOB_ERROR | EVENT_JOB_MISSED)
+    # Boot-time heartbeat for every job without one, so the first ops digest
+    # after a deploy (or in a fresh database) does not list every job whose
+    # first tick is still ahead — itself included — as "never recorded".
+    await seed_job_heartbeats(db)
     scheduler.start()
     app.state.scheduler = scheduler
 

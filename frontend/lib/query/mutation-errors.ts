@@ -55,8 +55,44 @@ function apiStatus(error: unknown): number | null {
   return null;
 }
 
+function apiRequestId(error: unknown): string | null {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "requestId" in error &&
+    typeof (error as { requestId: unknown }).requestId === "string" &&
+    (error as { requestId: string }).requestId
+  ) {
+    return (error as { requestId: string }).requestId;
+  }
+  return null;
+}
+
+/**
+ * Short support reference derived from the `X-Request-ID` the BFF/backend
+ * echoed. Eight characters is enough to find the request in the logs and
+ * short enough to read out over the phone.
+ */
+export function formatReference(requestId: string): string {
+  return `Reference: ${requestId.slice(0, 8)}`;
+}
+
+function withReference(notice: MutationErrorNotice, error: unknown): MutationErrorNotice {
+  const requestId = apiRequestId(error);
+  if (!requestId) return notice;
+  const reference = formatReference(requestId);
+  return {
+    ...notice,
+    description: notice.description ? `${notice.description} ${reference}` : reference,
+  };
+}
+
 /** Human-readable title/description for an arbitrary mutation failure. */
 export function describeMutationError(error: unknown): MutationErrorNotice {
+  return withReference(describeMutationErrorBase(error), error);
+}
+
+function describeMutationErrorBase(error: unknown): MutationErrorNotice {
   if (isAbortError(error)) {
     return {
       title: "Request timed out",

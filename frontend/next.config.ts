@@ -27,6 +27,8 @@ const IS_DEV = process.env.NODE_ENV === "development";
 // Cloudflare Web Analytics is auto-injected at the zone level (see the
 // beacon.min.js handler in app/sw.ts): its loader needs script-src and its
 // RUM POST (cloudflareinsights.com/cdn-cgi/rum) needs connect-src.
+// Sentry (@sentry/browser, DSN-gated) posts envelopes to the project's
+// *.ingest.us.sentry.io host, so that pattern is in connect-src too.
 // Dev additions: 'unsafe-eval' (React refresh), ws:/localhost (HMR, emulators).
 // frame-ancestors is intentionally absent: it is spec-ignored in report-only
 // policies (WebKit logs a console error for it) — X-Frame-Options: DENY covers
@@ -39,7 +41,7 @@ const CONTENT_SECURITY_POLICY = [
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https://firebasestorage.googleapis.com",
   "font-src 'self' data:",
-  `connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firebasestorage.googleapis.com https://cloudflareinsights.com${
+  `connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firebasestorage.googleapis.com https://cloudflareinsights.com https://*.ingest.us.sentry.io${
     IS_DEV ? " ws: http://localhost:* http://127.0.0.1:*" : ""
   }`,
   "base-uri 'self'",

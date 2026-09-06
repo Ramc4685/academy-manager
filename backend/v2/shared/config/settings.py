@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -116,6 +116,15 @@ class Settings(BaseSettings):
         ),
     )
 
+    sentry_cron_jobs: Annotated[tuple[str, ...], NoDecode] = Field(
+        default=("generate_monthly_invoices",),
+        description=(
+            "APScheduler job ids that send Sentry Crons check-ins (comma-separated). "
+            "Opt-in per job: the free plan includes one monitor, and the monthly "
+            "invoice run is the one job whose silent failure costs money."
+        ),
+    )
+
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = Field(default="INFO")
     log_format: Literal["json", "console"] = Field(default="json")
 
@@ -192,6 +201,15 @@ class Settings(BaseSettings):
             return ",".join(str(item) for item in value)
         return str(value or "")
 
+    @field_validator("sentry_cron_jobs", mode="before")
+    @classmethod
+    def _split_sentry_cron_jobs(cls, value: object) -> tuple[str, ...]:
+        if isinstance(value, str):
+            return _split_csv(value)
+        if isinstance(value, list | tuple):
+            return tuple(str(item) for item in value)
+        return ()
+
     @model_validator(mode="after")
     def apply_legacy_deploy_fallbacks(self) -> Settings:
         """Reuse existing production deploy env names when V2_* is absent.
@@ -262,6 +280,8 @@ class Settings(BaseSettings):
                 "true",
                 "yes",
             }
+        if "V2_SENTRY_CRON_JOBS" not in os.environ and "SENTRY_CRON_JOBS" in os.environ:
+            self.sentry_cron_jobs = _split_csv(os.environ["SENTRY_CRON_JOBS"])
         if "V2_CORS_ORIGINS" not in os.environ:
             self.cors_origins = os.environ.get("CORS_ORIGINS", self.cors_origins)
         if "V2_FRONTEND_URL" not in os.environ:
@@ -350,6 +370,10 @@ def _explicit_env_value(*names: str) -> str | None:
         if value is not None and value.strip():
             return value
     return None
+
+
+def _split_csv(value: str) -> tuple[str, ...]:
+    return tuple(item.strip() for item in value.split(",") if item.strip())
 
 
 def _env_bool(name: str, default: bool) -> bool:
