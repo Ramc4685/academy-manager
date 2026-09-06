@@ -42,6 +42,16 @@ export default defineConfig({
     video: "retain-on-failure",
   },
   webServer: {
+    // `pnpm dev` runs Turbopack (see package.json). With the webpack dev
+    // server, the first request for a not-yet-compiled route pushed an HMR
+    // update to the already-open page that React Refresh could not apply, so
+    // `next dev` did a full `location.reload()` of the CURRENT url ~1.5s into
+    // the request. That reload cancelled the in-flight document load and
+    // Playwright failed the step with "Navigation to <deep route> is
+    // interrupted by another navigation to <the page we came from>" (#650,
+    // and deterministically on webkit-mobile in admin-shell.spec.ts). It is a
+    // dev-server artifact, not app behaviour: nothing in the shell navigates.
+    // Turbopack applies those updates without a full reload.
     command: "pnpm dev",
     url: `http://localhost:${PORT}/login`,
     reuseExistingServer: !process.env.CI,

@@ -197,7 +197,7 @@ mypy --config-file backend/pyproject.toml -p backend.v2 | mypy-baseline filter -
 # Fixed pre-existing errors? Shrink the baseline with: ... | mypy-baseline sync --baseline-path backend/mypy-baseline.txt
 
 # Frontend (pnpm, from frontend/)
-pnpm dev           # port 3001
+pnpm dev           # port 3001 (Turbopack; webpack dev full-reloads mid-navigation and breaks e2e)
 pnpm typecheck && pnpm lint && pnpm build
 pnpm e2e           # Playwright mobile projects, auth-bypassed
 pnpm e2e:local-auth  # real-auth suite (separate config, not in CI)
