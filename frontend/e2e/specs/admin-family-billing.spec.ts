@@ -347,7 +347,10 @@ test.describe("Family billing", () => {
       }),
     );
     await page.goto("/admin/billing-setup");
-    await expect(page).toHaveURL(/\/admin\/families$/);
+    // Mobile redirects are slow under load in this suite (the same 5s
+    // toHaveURL flake the /admin/parents and /admin/coaches redirect tests
+    // hit); give the navigation the longer budget used elsewhere.
+    await expect(page).toHaveURL(/\/admin\/families$/, { timeout: 30_000 });
     await expect(page.getByTestId("admin-families")).toBeVisible();
     await expect(page.getByTestId("family-link-parent-1")).toHaveAttribute(
       "href",

@@ -1,9 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 
 import { Button, Card, Chip, Overline } from "@/components/ds";
+import { getAdminInvoiceDetail } from "@/lib/api/admin";
 import type { FamilyInvoice, InvoiceAction } from "@/lib/api/admin-families";
+import { queryKeys } from "@/lib/query/keys";
 import { invoiceStatusChip } from "@/lib/billing-status";
 import { formatCents, formatInstantDay } from "@/lib/money";
 
@@ -120,6 +123,7 @@ export function InvoicesPanel({
                       !inv.settlement_unlinked && (
                         <p className="text-rally-muted">No payments applied.</p>
                       )}
+                    <InvoiceLines invoiceId={inv.invoice_id} />
                     <button
                       type="button"
                       className="mt-1 text-rally-cobalt-700 hover:underline"
@@ -136,5 +140,40 @@ export function InvoicesPanel({
         </ul>
       )}
     </Card>
+  );
+}
+
+/**
+ * What the invoice is made of. Lines are the only place a discount, a fee or an
+ * added charge is visible to an admin, so the ledger view keeps them (the
+ * billing surface inventory lists lines alongside allocations and credits for
+ * the panel this page absorbs). Fetched on expand rather than with the family
+ * so the page stays one request.
+ */
+function InvoiceLines({ invoiceId }: { invoiceId: string }) {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: queryKeys.admin.invoiceDetail(invoiceId),
+    queryFn: () => getAdminInvoiceDetail(invoiceId),
+  });
+
+  if (isLoading) {
+    return <p className="mt-1 text-rally-muted">Loading charges…</p>;
+  }
+  if (isError || !data) {
+    return <p className="mt-1 text-rally-muted">Charges unavailable.</p>;
+  }
+  const lines = data.lines ?? [];
+  if (lines.length === 0) {
+    return null;
+  }
+  return (
+    <div className="mt-1" data-testid={`invoice-lines-${invoiceId}`}>
+      {lines.map((line, i) => (
+        <p key={line.line_id ?? `${line.description}-${i}`}>
+          · {line.description}
+          {line.line_type ? ` (${line.line_type})` : ""} — {formatCents(line.amount_cents)}
+        </p>
+      ))}
+    </div>
   );
 }
