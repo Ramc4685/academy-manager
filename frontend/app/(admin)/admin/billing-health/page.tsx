@@ -32,6 +32,7 @@ import {
   replayWebhookEvent,
   triggerReconciliation,
   type BillingPaymentAttempt,
+  type ConnectedAccountReadiness,
   type ConnectReadiness,
   type DunningRow,
   type FailedPaymentRow,
@@ -899,7 +900,17 @@ function PaymentReadinessCard({
   }
 
   const data = query.data;
-  const account = data.connected_account;
+  // A resolved query still only guarantees the envelope, not every nested
+  // object in it, so the two the card dereferences get their own defaults.
+  const account: ConnectedAccountReadiness = data.connected_account ?? {
+    configured: false,
+    status: null,
+    charges_enabled: false,
+    payouts_enabled: false,
+    ready_for_charges: false,
+    account_id_masked: null,
+  };
+  const webhookEvents = data.webhook_events ?? { quarantined: 0, failed: 0 };
 
   // Three states, in the order the owner cares about them.
   const tone: "green" | "amber" | "red" = !data.payments_possible
@@ -950,7 +961,7 @@ function PaymentReadinessCard({
           />
           <Row
             label="Stuck webhook events"
-            value={`${data.webhook_events.quarantined} quarantined · ${data.webhook_events.failed} failed`}
+            value={`${webhookEvents.quarantined} quarantined · ${webhookEvents.failed} failed`}
           />
         </dl>
       </div>
