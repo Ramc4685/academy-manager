@@ -55,6 +55,7 @@ from backend.v2.interfaces.admin.views import (
     SessionAnnouncementPostRequest,
     SessionAnnouncementPostResponse,
     SessionAnnouncementView,
+    SetSessionAssistantsRequest,
     TransferEnrollmentRequest,
     UpdateOccurrenceCoachAttendanceRequest,
     UpdateOccurrenceReplacementRequest,
@@ -190,6 +191,36 @@ async def edit_session(
     if use_cases.maintain_session_occurrences is not None:
         await use_cases.maintain_session_occurrences(session)
     return AdminSessionView(**session.model_dump(exclude={"academy_id"}))
+
+
+@router.put(
+    "/sessions/{session_id}/assistants",
+    response_model=AdminSessionView,
+    summary="Replace the session's assistant coaches (re-syncs future occurrences)",
+)
+async def set_session_assistants(
+    session_id: str,
+    body: SetSessionAssistantsRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminSessionView:
+    if use_cases.set_session_assistants is None:
+        raise HTTPException(status_code=503, detail="Session assistants are not configured")
+    # Validation (active membership holding coach/assistant_coach) and the
+    # 404/422 semantics live in the use case; DomainError reaches the global
+    # handler unchanged.
+    await use_cases.set_session_assistants.execute(  # type: ignore[attr-defined]
+        session_id=session_id,
+        assistant_coach_ids=body.assistant_coach_ids,
+        actor_id=claims.user_id,
+        reason=body.reason,
+    )
+    if use_cases.get_admin_session is None:
+        raise HTTPException(status_code=503, detail="Session detail is not configured")
+    row = await use_cases.get_admin_session(session_id)  # type: ignore[operator]
+    if row is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return AdminSessionView(**row)
 
 
 @router.get("/sessions/{session_id}", response_model=AdminSessionView, summary="Get session")

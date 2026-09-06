@@ -72,13 +72,20 @@ from backend.v2.shared.http import register_exception_handlers
 # --- in-memory fakes ---
 
 
+def _coaches_session(session: Session, coach_id: str) -> bool:
+    """Mirrors the Mongo `$or`: primary coach OR listed assistant coach."""
+    return session.coach_id == coach_id or coach_id in session.assistant_coach_ids
+
+
 class FakeSessionQuery:
     def __init__(self, sessions: list[Session]) -> None:
         self._sessions = sessions
 
     async def for_coach_on_date(self, coach_id: str, on_date: date) -> list[Session]:
         return [
-            s for s in self._sessions if s.coach_id == coach_id and s.start_at.date() == on_date
+            s
+            for s in self._sessions
+            if _coaches_session(s, coach_id) and s.start_at.date() == on_date
         ]
 
     async def get(self, session_id: str) -> Session | None:
@@ -88,10 +95,19 @@ class FakeSessionQuery:
         return None
 
     async def for_coach(self, coach_id: str) -> list[Session]:
-        return [s for s in self._sessions if s.coach_id == coach_id]
+        return [s for s in self._sessions if _coaches_session(s, coach_id)]
 
-    async def assigned_session_ids_for_coach(self, coach_id: str) -> list[str]:
-        return sorted({s.session_id for s in self._sessions if s.coach_id == coach_id})
+    async def assigned_session_ids_for_coach(
+        self, coach_id: str, *, include_assistant: bool = True
+    ) -> list[str]:
+        return sorted(
+            {
+                s.session_id
+                for s in self._sessions
+                if s.coach_id == coach_id
+                or (include_assistant and coach_id in s.assistant_coach_ids)
+            }
+        )
 
 
 class FakeEnrollmentQuery:
@@ -144,6 +160,7 @@ class FakeOccurrenceQuery:
                 occurrence.scheduled_coach_id,
                 occurrence.actual_coach_id,
                 occurrence.substitute_coach_id,
+                *occurrence.assistant_coach_ids,
             }
         ]
 
@@ -165,6 +182,7 @@ class FakeOccurrenceQuery:
                 occurrence.scheduled_coach_id,
                 occurrence.actual_coach_id,
                 occurrence.substitute_coach_id,
+                *occurrence.assistant_coach_ids,
             }
         ]
         return sorted(rows, key=lambda occurrence: occurrence.start_at)[:limit]
@@ -542,6 +560,16 @@ def _admin_claims() -> AuthClaims:
     )
 
 
+def _assistant_coach_claims() -> AuthClaims:
+    """A bare assistant coach: coach surface, scoped to sessions listing them."""
+    return AuthClaims(
+        user_id="asst-1",
+        email="helper@example.com",
+        academy_id="test-academy",
+        roles=("assistant_coach",),
+    )
+
+
 def _admin_only_claims() -> AuthClaims:
     """An admin invited after the split: operations only, no `owner`."""
     return AuthClaims(
@@ -595,16 +623,17 @@ def _build_use_cases(seed_data) -> CoachUseCases:
 
     # Adapters wiring coach lookups to enrollment queries.
     class _SL:
-        # Mirrors composition.coach.CoachAssignedSessionLookup: a coach
-        # supervisor (the admin fixture's user id) passes for any session
-        # that exists; unknown sessions still fail for everyone.
+        # Mirrors composition.coach.CoachAssignedSessionLookup: the primary
+        # coach, a listed assistant coach, or a coach supervisor (the admin
+        # fixture's user id) passes for a session that exists; unknown
+        # sessions still fail for everyone.
         supervisor_ids = frozenset({"adm"})
 
         async def is_coach_assigned(self, coach_id, sid, on_date=None):
             s = await sessions.get(sid)
             if s is None:
                 return False
-            if s.coach_id != coach_id and coach_id not in self.supervisor_ids:
+            if not _coaches_session(s, coach_id) and coach_id not in self.supervisor_ids:
                 return False
             return on_date is None or s.start_at.date() == on_date
 
@@ -630,6 +659,7 @@ def _build_use_cases(seed_data) -> CoachUseCases:
                 actual_coach_id=occurrence.actual_coach_id,
                 substitute_coach_id=occurrence.substitute_coach_id,
                 template_session_id=occurrence.template_session_id,
+                assistant_coach_ids=occurrence.assistant_coach_ids,
             )
 
     class _EL:
@@ -854,6 +884,20 @@ def coach_admin_client(seed) -> Iterator[TestClient]:
     """
     use_cases = _build_use_cases(seed)
     app = _make_app(_admin_claims(), use_cases)
+    with TestClient(app) as client:
+        client.coach_use_cases = use_cases  # type: ignore[attr-defined]
+        yield client
+
+
+@pytest.fixture()
+def assistant_client(seed) -> Iterator[TestClient]:
+    """Coach routes mounted, token represents an assistant coach (``asst-1``).
+
+    The shared seed lists nobody as assistant; tests that need one override
+    ``seed`` (see ``test_assistant_coach.py``).
+    """
+    use_cases = _build_use_cases(seed)
+    app = _make_app(_assistant_coach_claims(), use_cases)
     with TestClient(app) as client:
         client.coach_use_cases = use_cases  # type: ignore[attr-defined]
         yield client

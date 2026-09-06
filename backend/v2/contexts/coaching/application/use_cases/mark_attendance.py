@@ -112,11 +112,10 @@ class MarkAttendance:
         """
         # 1. Occurrence + cancellation check.
         occurrence = await self._occurrences.get(cmd.occurrence_id)
-        session_id_matches = occurrence is not None and (
-            occurrence.session_id == cmd.session_id
-            or occurrence.template_session_id == cmd.session_id
-        )
-        if not session_id_matches:
+        if occurrence is None or (
+            occurrence.session_id != cmd.session_id
+            and occurrence.template_session_id != cmd.session_id
+        ):
             raise SessionNotAssigned(
                 "session occurrence not found or not assigned",
                 session_id=cmd.session_id,
@@ -129,10 +128,13 @@ class MarkAttendance:
                 session_id=cmd.session_id,
                 occurrence_id=cmd.occurrence_id,
             )
+        # Assistant coaches listed on the occurrence mark attendance like an
+        # assigned coach (they are never paid for it; payroll ignores the list).
         if not supervisor and coach_id not in {
             occurrence.scheduled_coach_id,
             occurrence.actual_coach_id,
             occurrence.substitute_coach_id,
+            *occurrence.assistant_coach_ids,
         }:
             raise SessionNotAssigned(
                 "session occurrence not assigned to this coach",

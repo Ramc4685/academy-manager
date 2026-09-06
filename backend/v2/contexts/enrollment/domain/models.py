@@ -41,6 +41,12 @@ class Session(BaseModel):
     start_time: str | None = None
     end_time: str | None = None
     timezone: str | None = None
+    # Assistant coaches (role ``assistant_coach``): helpers who get the coach
+    # surface for THIS session only (attendance, skills, notes). Copied onto
+    # every generated occurrence and re-synced onto future ones when edited.
+    # Never consulted by payroll, which pays actual_coach_id else
+    # scheduled_coach_id. Missing on legacy docs → empty.
+    assistant_coach_ids: tuple[str, ...] = ()
 
     # --- Communication pack (issue #613) ---
     # Optional, per-session onboarding facts a family needs on day one. Every
@@ -87,6 +93,10 @@ class SessionOccurrence(BaseModel):
     is_payable: bool = True
     cancellation_reason: str | None = None
     template_session_id: str | None = None
+    # Snapshot of the session's assistants when the occurrence was generated
+    # or last re-synced; the attendance use cases treat these ids like an
+    # assignment. Not a payroll field.
+    assistant_coach_ids: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def _end_after_start(self) -> SessionOccurrence:

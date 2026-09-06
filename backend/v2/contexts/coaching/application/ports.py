@@ -50,6 +50,9 @@ class OccurrenceDetails(BaseModel):
     actual_coach_id: str | None = None
     substitute_coach_id: str | None = None
     template_session_id: str | None = None
+    # Assistant coaches listed on the occurrence: allowed to mark attendance
+    # like an assigned coach. Not a payroll field.
+    assistant_coach_ids: tuple[str, ...] = ()
 
 
 class OccurrenceLookup(Protocol):

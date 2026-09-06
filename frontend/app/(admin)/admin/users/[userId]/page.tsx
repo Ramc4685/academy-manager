@@ -24,6 +24,7 @@ import {
   type CoachPayBillingUnit,
   type LoginInviteOutcome,
 } from "@/lib/api/admin";
+import { roleLabel } from "@/lib/admin/role-label";
 import { assignableRoles } from "@/lib/auth/assignable-roles";
 import { rateTimelineIssueLabel } from "@/lib/payroll-warnings";
 import { queryKeys } from "@/lib/query/keys";
@@ -422,7 +423,7 @@ function Header({ user }: { user: AdminUserDetail }) {
             <div className="mt-1 flex items-center gap-2">
               <Chip
                 variant={roleVariant(user.role)}
-                label={user.role.toUpperCase()}
+                label={roleLabel(user.role).toUpperCase()}
               />
               <Chip
                 variant={user.status === "active" ? "enrolled" : "expired"}
@@ -741,13 +742,13 @@ function RolesPanel({
               onChange={() => toggle(role)}
               data-testid={`role-checkbox-${role}`}
             />
-            <span className="capitalize">{role}</span>
+            <span>{roleLabel(role)}</span>
           </label>
         ))}
       </div>
       {lockedRoles.length > 0 && (
         <p className="text-xs text-rally-muted" data-testid="admin-user-locked-roles">
-          Also holds: <span className="capitalize">{lockedRoles.join(", ")}</span>{" "}
+          Also holds: <span>{lockedRoles.map(roleLabel).join(", ")}</span>{" "}
           <OwnerOnlyHint />
         </p>
       )}
@@ -1076,5 +1077,6 @@ function Field({
 function roleVariant(role: string): any {
   if (role === "admin") return "enrolled";
   if (role === "coach") return "autopayOn";
+  if (role === "assistant_coach") return "makeup";
   return "manual";
 }

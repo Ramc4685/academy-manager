@@ -151,6 +151,16 @@ def _normalize_series_text(value: str) -> str:
     return " ".join(value.strip().casefold().split())
 
 
+def _normalize_assistant_ids(values: list[str]) -> tuple[str, ...]:
+    """Trim, drop blanks, dedupe preserving order (tuple: the domain field)."""
+    seen: dict[str, None] = {}
+    for value in values:
+        cleaned = str(value or "").strip()
+        if cleaned:
+            seen.setdefault(cleaned, None)
+    return tuple(seen)
+
+
 def _normalize_days(days_of_week: list[str]) -> list[str]:
     reverse_dow = {
         0: "Mon",
@@ -313,6 +323,7 @@ class CreateSessionCommand(BaseModel):
     start_time: str | None = None
     end_time: str | None = None
     timezone: str | None = None
+    assistant_coach_ids: list[str] = Field(default_factory=list)
     whatsapp_group_link: str | None = None
     venue_address: str | None = None
     parking_notes: str | None = None
@@ -377,6 +388,7 @@ class CreateSession:
             days_of_week=cmd.days_of_week,
             start_time=cmd.start_time,
             end_time=cmd.end_time,
+            assistant_coach_ids=_normalize_assistant_ids(cmd.assistant_coach_ids),
             # Persist the EFFECTIVE zone, never None. `start_at`/`end_at` above
             # were already computed with this zone, and every downstream reader
             # (occurrence synthesis, monthly billing, payroll) re-derives
@@ -433,6 +445,8 @@ class EditSessionCommand(BaseModel):
     arrival_minutes_before: int | None = Field(default=None, ge=0, le=120)
     coach_contact_policy: str | None = None
     absence_policy: str | None = None
+    # None = unchanged, [] = clear (same convention as the PATCH body).
+    assistant_coach_ids: list[str] | None = None
     actor_id: str | None = None
     reason: str | None = None
 
@@ -491,6 +505,11 @@ class EditSession:
                 update["whatsapp_group_link"],  # type: ignore[arg-type]
                 field_label="WhatsApp group link",
             )
+        # Same skipped-validator caveat: the domain field is a tuple, and the
+        # occurrence re-sync for this list is the route's job
+        # (`maintain_session_occurrences` re-stamps clean future rows).
+        if cmd.assistant_coach_ids is not None:
+            update["assistant_coach_ids"] = _normalize_assistant_ids(cmd.assistant_coach_ids)
 
         recurring_values = {
             "days_of_week": update.get("days_of_week", current.days_of_week),

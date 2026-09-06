@@ -21,7 +21,7 @@ from backend.v2.interfaces.coach.views import (
     RosterResponse,
 )
 from backend.v2.shared.auth.claims import AuthClaims
-from backend.v2.shared.http import require_coach_surface
+from backend.v2.shared.http import require_coach_lead_surface, require_coach_surface
 
 router = APIRouter(tags=["coach.roster"])
 
@@ -73,7 +73,7 @@ async def get_roster(
 async def add_student_to_roster(
     session_id: str,
     body: AddStudentToRosterRequest,
-    claims: AuthClaims = Depends(require_coach_surface()),
+    claims: AuthClaims = Depends(require_coach_lead_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> AddStudentToRosterResponse:
     _ = session_id, body, claims, use_cases
@@ -88,7 +88,7 @@ async def add_student_to_roster(
 async def remove_student_from_roster(
     session_id: str,
     student_id: str,
-    claims: AuthClaims = Depends(require_coach_surface()),
+    claims: AuthClaims = Depends(require_coach_lead_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> None:
     _ = session_id, student_id, claims, use_cases

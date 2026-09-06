@@ -19,6 +19,10 @@ from backend.v2.composition.admin_registration_review import (
     AdminRegistrationReview,
     RegistrationDeclineRefunds,
 )
+from backend.v2.composition.admin_session_staff import (
+    attach_session_staff_names,
+    compose_set_session_assistants,
+)
 from backend.v2.composition.autopay_comms import (
     autopay_active_enrollment_ids,
     build_dunning_worker,
@@ -2163,35 +2167,8 @@ def compose_admin(
                 }
             )
 
-        # Batch coach-name enrichment (one DB call, no N+1).
-        coach_ids = list({r["coach_id"] for r in rows if r["coach_id"]})
-        coach_map: dict[str, str] = {}
-        if coach_ids:
-            oid_ids = [BsonObjectId(c) for c in coach_ids if BsonObjectId.is_valid(c)]
-            or_filter: list[dict[str, object]] = [
-                {"user_id": {"$in": coach_ids}},
-                {"firebase_uid": {"$in": coach_ids}},
-            ]
-            if oid_ids:
-                or_filter.append({"_id": {"$in": oid_ids}})
-            users_cursor = db["users"].find({"$or": or_filter})
-            async for user_doc in users_cursor:
-                name = str(
-                    user_doc.get("display_name")
-                    or f"{user_doc.get('first_name', '')} {user_doc.get('last_name', '')}".strip()
-                    or ""
-                )
-                for key in (
-                    str(user_doc.get("user_id") or ""),
-                    str(user_doc.get("firebase_uid") or ""),
-                    str(user_doc.get("_id") or ""),
-                ):
-                    if key and key in coach_ids:
-                        coach_map[key] = name
-
-            for row in rows:
-                row["coach_name"] = coach_map.get(row["coach_id"])
-
+        # Batch coach + assistant name enrichment (one DB call, no N+1).
+        await attach_session_staff_names(db, rows)
         return rows
 
     async def get_admin_session(session_id: str):
@@ -2271,6 +2248,7 @@ def compose_admin(
                         "scheduled_coach_id": session.coach_id,
                         "actual_coach_id": None,
                         "substitute_coach_id": None,
+                        "assistant_coach_ids": list(session.assistant_coach_ids),
                         "is_billable": True,
                         "is_payable": True,
                     }
@@ -2562,6 +2540,7 @@ def compose_admin(
                         "scheduled_coach_id": row["scheduled_coach_id"],
                         "actual_coach_id": None,
                         "substitute_coach_id": None,
+                        "assistant_coach_ids": row["assistant_coach_ids"],
                         "is_billable": True,
                         "is_payable": True,
                     },
@@ -4591,6 +4570,13 @@ def compose_admin(
         list_admin_sessions=list_admin_sessions,
         get_admin_session=get_admin_session,
         maintain_session_occurrences=maintain_session_occurrences,
+        set_session_assistants=compose_set_session_assistants(
+            sessions=sessions_w,
+            occurrences=occurrences_r,
+            memberships=MongoMembershipRepository(db),
+            users=users_r,
+            academy_id=request_academy_id,
+        ),
         list_session_occurrences=list_session_occurrences,
         get_session_occurrence=occurrences_r.get,
         generate_daily_teaching_plan=generate_daily_teaching_plan,
