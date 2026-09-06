@@ -2,10 +2,15 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  attendanceCopy,
+  balanceBannerCopy,
   buildParentHomeModel,
   findPaymentNeedingAttention,
   formatMoney,
+  milestoneCopy,
+  nextSessionCopy,
   progressPercent,
+  shouldShowBalanceBanner,
 } from "./parent-home.ts";
 
 function failedPayment(overrides = {}) {
@@ -343,6 +348,114 @@ test("does not treat paused enrollment as next class", () => {
   assert.equal(model.nextEnrollment, null);
   assert.equal(model.primaryAction.kind, "register");
   assert.equal(model.hero.subtitle, "First skills will appear after coach assessment.");
+});
+
+/* --- kid-first home (slice 4) ------------------------------------------ */
+
+function balance(overrides = {}) {
+  return {
+    amount_due_cents: 0,
+    currency: "usd",
+    due_date: null,
+    open_invoice_count: 0,
+    payment_failed: false,
+    ...overrides,
+  };
+}
+
+test("the balance banner shows only when money is due or a payment failed", () => {
+  assert.equal(shouldShowBalanceBanner(balance()), false);
+  assert.equal(shouldShowBalanceBanner(balance({ amount_due_cents: 12000 })), true);
+  assert.equal(shouldShowBalanceBanner(balance({ payment_failed: true })), true);
+  assert.equal(
+    shouldShowBalanceBanner(balance({ amount_due_cents: 12000, payment_failed: true })),
+    true,
+  );
+  // A zeroed balance with open invoices (fully credited) is still silent.
+  assert.equal(shouldShowBalanceBanner(balance({ open_invoice_count: 2 })), false);
+  assert.equal(shouldShowBalanceBanner(null), false);
+});
+
+test("banner copy leads with the amount and its due date", () => {
+  assert.deepEqual(
+    balanceBannerCopy(
+      balance({ amount_due_cents: 12000, due_date: "2026-09-12", open_invoice_count: 1 }),
+    ),
+    { headline: "$120.00 due", detail: "Due Sep 12" },
+  );
+  // No due date, several invoices: say how many rather than inventing a date.
+  assert.deepEqual(
+    balanceBannerCopy(balance({ amount_due_cents: 5000, open_invoice_count: 3 })),
+    { headline: "$50.00 due", detail: "3 open invoices" },
+  );
+});
+
+test("a failed payment outranks an amount due in the banner copy", () => {
+  const copy = balanceBannerCopy(
+    balance({ amount_due_cents: 12000, due_date: "2026-09-12", payment_failed: true }),
+  );
+  assert.equal(copy.headline, "Payment didn't go through");
+  assert.equal(copy.detail, "Update your payment method to stay enrolled.");
+});
+
+test("attendance copy counts marked sessions and never fakes a zero", () => {
+  assert.equal(attendanceCopy({ present: 6, total: 7 }), "6 of 7 sessions this month");
+  assert.equal(attendanceCopy({ present: 0, total: 0 }), "No sessions marked yet this month");
+  assert.equal(attendanceCopy(null), "No sessions marked yet this month");
+});
+
+test("next session renders in the academy timezone with a venue fallback", () => {
+  const copy = nextSessionCopy(
+    {
+      occurrence_id: "occ-1",
+      session_id: "sess-1",
+      session_title: "Junior Beginners",
+      location: "Court 2",
+      start_at: "2026-09-10T23:00:00Z",
+      end_at: "2026-09-11T00:00:00Z",
+      coach_name: null,
+    },
+    "America/Chicago",
+  );
+  // 23:00 UTC is still Sep 10 (6:00 PM) in Chicago — not Sep 11.
+  assert.equal(copy.when, "Thu, Sep 10 · 6:00 PM CDT");
+  assert.equal(copy.where, "Court 2");
+
+  const noVenue = nextSessionCopy(
+    {
+      occurrence_id: "occ-2",
+      session_id: "sess-1",
+      session_title: "Junior Beginners",
+      location: null,
+      start_at: "2026-09-10T23:00:00Z",
+      end_at: "2026-09-11T00:00:00Z",
+      coach_name: null,
+    },
+    "America/Chicago",
+  );
+  assert.equal(noVenue.where, "Venue to be confirmed");
+  assert.equal(nextSessionCopy(null, "America/Chicago"), null);
+});
+
+test("milestone copy labels notes and skills with a relative date", () => {
+  const now = new Date("2026-09-06T12:00:00Z");
+  assert.equal(
+    milestoneCopy({ kind: "skill", label: "Backhand lift", at: "2026-09-06T14:00:00Z" }, "America/Chicago", now),
+    "Backhand lift · Today",
+  );
+  assert.equal(
+    milestoneCopy({ kind: "note", label: "Footwork is sharper", at: "2026-09-05T14:00:00Z" }, "America/Chicago", now),
+    "Footwork is sharper · Yesterday",
+  );
+  assert.equal(
+    milestoneCopy({ kind: "skill", label: "Overhead clear", at: "2026-09-03T14:00:00Z" }, "America/Chicago", now),
+    "Overhead clear · 3 days ago",
+  );
+  assert.equal(
+    milestoneCopy({ kind: "note", label: "Great serve", at: "2026-08-20T14:00:00Z" }, "America/Chicago", now),
+    "Great serve · Aug 20",
+  );
+  assert.equal(milestoneCopy(null, "America/Chicago", now), null);
 });
 
 test("formats money and progress percentages safely", () => {

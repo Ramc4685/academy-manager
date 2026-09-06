@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
   AlertCircle,
+  AlertTriangle,
   BookOpen,
   CalendarDays,
   ChevronRight,
@@ -14,8 +15,8 @@ import {
   FileSignature,
   Mail,
   MapPin,
-  MessageSquare,
   Phone,
+  Sparkles,
   Trophy,
   UserPlus,
 } from "lucide-react";
@@ -24,36 +25,47 @@ import {
   getParentAcademy,
   getParentCurrentWaiver,
   listParentAttendance,
-  listParentChildren,
   listParentCredits,
   listParentEnrollments,
   listParentInvoices,
   listParentPayments,
   listParentProgress,
   type ParentAcademy,
+  type ParentChild,
 } from "@/lib/api/parent";
+import {
+  getParentHome,
+  type ParentHomeBalance,
+  type ParentHomeChild,
+} from "@/lib/api/parent-home";
 import { getParentProgressSummary } from "@/lib/api/curriculum";
 import { resolveAcademyTimeZone } from "@/lib/format/academy-time";
+import { nameGradient, nameInitial } from "@/lib/avatar-gradient";
 import {
+  attendanceCopy,
+  balanceBannerCopy,
   buildParentHomeModel,
+  milestoneCopy,
+  nextSessionCopy,
+  shouldShowBalanceBanner,
   type ParentHomeAction,
   type ParentHomeActivity,
-  type ParentHomeMetric,
 } from "@/lib/parent-home";
 
 const progressOverviewEnabled =
   process.env.NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW === "1";
 
 export default function ParentDashboardPage() {
-  const [selectedChildId, setSelectedChildId] = useState<string | null>(null);
-
   const academyQuery = useQuery({
     queryKey: ["parent", "academy"],
     queryFn: getParentAcademy,
   });
-  const childrenQuery = useQuery({
-    queryKey: ["parent", "children"],
-    queryFn: listParentChildren,
+  // One aggregated read backs the kid-first cards and the balance banner —
+  // rendering N children off the per-resource endpoints would cost 2N round
+  // trips on a phone. The queries below still feed the sections that stay.
+  const homeQuery = useQuery({
+    queryKey: ["parent", "home"],
+    queryFn: getParentHome,
   });
   const enrollmentsQuery = useQuery({
     queryKey: ["parent", "enrollments"],
@@ -90,11 +102,33 @@ export default function ParentDashboardPage() {
     enabled: progressOverviewEnabled,
   });
 
+  const homeChildren = useMemo(
+    () => homeQuery.data?.children ?? [],
+    [homeQuery.data],
+  );
+  const academyTimezone = homeQuery.data?.timezone ?? academyQuery.data?.timezone ?? null;
+
+  // The retained sections (PrimaryActionCard, RecentActivityCard) still run
+  // off buildParentHomeModel, which wants the ParentChild shape. The home
+  // aggregate carries the only two fields those code paths read; the counts
+  // it does not carry fed the deleted MetricGrid.
+  const modelChildren = useMemo<ParentChild[]>(
+    () =>
+      homeChildren.map((child) => ({
+        student_id: child.student_id,
+        full_name: child.full_name,
+        status: "active",
+        active_session_count: 0,
+        attended_count: 0,
+        absent_count: 0,
+      })),
+    [homeChildren],
+  );
+
   const model = useMemo(
     () =>
       buildParentHomeModel({
-        selectedChildId,
-        children: childrenQuery.data?.children ?? [],
+        children: modelChildren,
         enrollments: enrollmentsQuery.data?.enrollments ?? [],
         attendance: attendanceQuery.data?.records ?? [],
         notes: progressNotesQuery.data?.notes ?? [],
@@ -106,14 +140,13 @@ export default function ParentDashboardPage() {
       }),
     [
       attendanceQuery.data,
-      childrenQuery.data,
       creditsQuery.data,
       enrollmentsQuery.data,
       invoicesQuery.data,
+      modelChildren,
       paymentsQuery.data,
       progressNotesQuery.data,
       progressSummaryQuery.data,
-      selectedChildId,
       waiverQuery.data,
     ],
   );
@@ -127,35 +160,42 @@ export default function ParentDashboardPage() {
     progressSummaryQuery.isError ? "Skill progress unavailable" : null,
   ].filter(Boolean) as string[];
 
-  const coreLoading = childrenQuery.isLoading || academyQuery.isLoading;
+  const coreLoading = homeQuery.isLoading || academyQuery.isLoading;
+  const balance = homeQuery.data?.balance ?? null;
+  const showBanner = shouldShowBalanceBanner(balance);
+  const hasChildren = homeChildren.length > 0;
 
   return (
     <section data-testid="parent-dashboard" className="space-y-4">
       {coreLoading ? (
         <DashboardSkeleton />
-      ) : model.selectedChild ? (
-        <ProgressHero
-          academy={academyQuery.data}
-          model={model}
-          selectedChildId={model.selectedChild.student_id}
-          onSelectChild={setSelectedChildId}
-          progressEnabled={progressOverviewEnabled}
-        />
+      ) : homeQuery.isError ? (
+        <p
+          data-testid="parent-home-error"
+          className="rounded-xl border border-status-red-500/30 bg-status-red-50 px-4 py-3 text-sm font-semibold text-status-red-800"
+        >
+          We couldn&apos;t load your children right now. Pull down to refresh, or try again in a moment.
+        </p>
       ) : (
-        <RegistrationHero academy={academyQuery.data} />
+        <>
+          {showBanner && balance && <BalanceBanner balance={balance} />}
+          {hasChildren ? (
+            <ChildCardList items={homeChildren} timezone={academyTimezone} />
+          ) : (
+            <RegistrationHero academy={academyQuery.data} />
+          )}
+        </>
       )}
 
       {optionalIssues.length > 0 && <IssueStrip issues={optionalIssues} />}
 
-      {model.selectedChild && (
+      {hasChildren && (
         <>
-          <MetricGrid metrics={model.metrics} />
-          <div className="grid gap-3 sm:grid-cols-2">
-            <LatestNoteCard note={model.latestNote} academyTimezone={academyQuery.data?.timezone ?? null} />
-            <NextClassCard action={model.primaryAction} enrollmentTitle={model.nextEnrollment?.session_title ?? null} />
-          </div>
-          <PrimaryActionCard action={model.primaryAction} />
-          <RecentActivityCard activity={model.recentActivity} academyTimezone={academyQuery.data?.timezone ?? null} />
+          {/* The banner owns money now — a payment action would say it twice. */}
+          {model.primaryAction.kind !== "payment" && (
+            <PrimaryActionCard action={model.primaryAction} />
+          )}
+          <RecentActivityCard activity={model.recentActivity} academyTimezone={academyTimezone} />
         </>
       )}
 
@@ -168,111 +208,157 @@ export default function ParentDashboardPage() {
 
 function DashboardSkeleton() {
   return (
-    <div className="space-y-3">
-      <div className="h-64 rounded-2xl shimmer" />
-      <div className="grid grid-cols-3 gap-2">
-        <div className="h-20 rounded-xl shimmer" />
-        <div className="h-20 rounded-xl shimmer" />
-        <div className="h-20 rounded-xl shimmer" />
-      </div>
+    <div data-testid="parent-home-skeleton" className="space-y-3">
+      <div className="h-32 rounded-2xl shimmer" />
+      <div className="h-32 rounded-2xl shimmer" />
       <div className="h-28 rounded-xl shimmer" />
     </div>
   );
 }
 
-// The progress hero's teal->cobalt gradient is a decorative brand accent
-// outside the two-hue (cobalt/volt) token system — kept inline per the
-// DS4 plan's allowance for values a utility class can't reach.
-const PROGRESS_HERO_GRADIENT = "linear-gradient(135deg,#042f2e 0%,#0f766e 42%,#2563eb 100%)";
-const PROGRESS_HERO_TEAL = "#0f766e";
-
-function ProgressHero({
-  academy,
-  model,
-  selectedChildId,
-  onSelectChild,
-  progressEnabled,
-}: {
-  academy?: ParentAcademy;
-  model: ReturnType<typeof buildParentHomeModel>;
-  selectedChildId: string;
-  onSelectChild: (studentId: string) => void;
-  progressEnabled: boolean;
-}) {
-  const child = model.selectedChild;
-  if (!child) return null;
+function BalanceBanner({ balance }: { balance: ParentHomeBalance }) {
+  const { headline, detail } = balanceBannerCopy(balance);
+  const failed = balance.payment_failed;
+  const tone = failed
+    ? "border-status-red-500/30 bg-status-red-50 text-status-red-800"
+    : "border-status-amber-500/30 bg-status-amber-50 text-status-amber-800";
+  const iconTone = failed ? "bg-status-red-500/15" : "bg-status-amber-500/15";
+  const payTone = failed
+    ? "bg-status-red-600 text-white"
+    : "bg-status-amber-800 text-white";
 
   return (
     <div
-      className="overflow-hidden rounded-2xl animate-fade-in-up shadow-[0_18px_45px_rgba(15,23,42,0.18)]"
-      style={{ background: PROGRESS_HERO_GRADIENT }}
+      role="status"
+      data-testid="parent-balance-banner"
+      className={`flex items-center gap-3 rounded-xl border p-4 animate-fade-in-up ${tone}`}
     >
-      <div className="px-4 py-4 text-white">
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-100/80">
-              {academy?.display_name ?? "Academy"}
-            </p>
-            <h1 className="mt-1 truncate font-display text-[22px] font-bold leading-tight">
-              Family progress
-            </h1>
-          </div>
-          <AcademyMark academy={academy} />
-        </div>
+      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${iconTone}`}>
+        {failed ? <AlertTriangle size={18} /> : <CreditCard size={18} />}
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-bold">{headline}</p>
+        <p className="mt-0.5 text-xs opacity-80">{detail}</p>
+      </div>
+      <Link
+        href="/parent/payments"
+        data-testid="parent-balance-pay"
+        className={`inline-flex min-h-touch min-w-touch shrink-0 items-center justify-center rounded-xl px-4 text-sm font-bold transition-all duration-200 active:scale-95 ${payTone}`}
+      >
+        Pay
+      </Link>
+    </div>
+  );
+}
 
-        <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
-          {model.childOptions.map((option) => {
-            const active = option.student_id === selectedChildId;
-            return (
-              <button
-                key={option.student_id}
-                type="button"
-                onClick={() => onSelectChild(option.student_id)}
-                className={`min-h-touch shrink-0 rounded-full px-3 text-xs font-bold transition-all duration-200 active:scale-95 ${
-                  active ? "bg-white" : "bg-white/14 text-white"
-                }`}
-                style={active ? { color: PROGRESS_HERO_TEAL } : undefined}
-              >
-                {firstName(option.full_name)}
-              </button>
-            );
-          })}
-          <Link
-            href="/parent/onboarding"
-            className="min-h-touch shrink-0 rounded-full bg-white/10 px-3 text-xs font-bold text-emerald-100 transition-all duration-200 active:scale-95"
-          >
-            + Add
-          </Link>
-        </div>
+function ChildCardList({
+  items,
+  timezone,
+}: {
+  items: ParentHomeChild[];
+  timezone: string | null;
+}) {
+  return (
+    <ul data-testid="parent-child-cards" className="space-y-3 stagger-children">
+      {items.map((child) => (
+        <li key={child.student_id}>
+          <ChildCard child={child} timezone={timezone} />
+        </li>
+      ))}
+    </ul>
+  );
+}
 
-        <div className="flex items-center gap-4">
-          <div className="flex h-[72px] w-[72px] shrink-0 items-center justify-center rounded-2xl border border-white/22 bg-white/16 text-3xl font-bold hero-pop">
-            {child.full_name[0]?.toUpperCase() ?? "S"}
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="font-display text-[25px] font-bold leading-tight sm:text-[29px]">
-              {model.hero.title}
-            </p>
-            <p className="mt-1.5 truncate text-xs font-medium text-emerald-50/85">
-              {model.hero.subtitle}
-            </p>
-            <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/18">
-              <div
-                className="h-full rounded-full progress-fill"
-                style={{ width: `${model.hero.percent ?? 0}%`, background: "var(--rally-volt)" }}
-              />
-            </div>
-            {!progressEnabled && (
-              <p className="mt-2 text-[11px] font-medium text-emerald-50/70">
-                Skill pathway preview appears after progress is enabled.
-              </p>
-            )}
-          </div>
-        </div>
+/**
+ * One card per child, and the whole card is the tap target — a single link
+ * into that child's Progress. No nested interactive elements: a link inside a
+ * link is invalid and gives screen readers two overlapping targets.
+ */
+function ChildCard({
+  child,
+  timezone,
+}: {
+  child: ParentHomeChild;
+  timezone: string | null;
+}) {
+  const next = nextSessionCopy(child.next_session, timezone);
+  const milestone = milestoneCopy(child.latest_milestone, timezone);
+
+  return (
+    <Link
+      href={`/parent/progress?child=${encodeURIComponent(child.student_id)}#skill-progress`}
+      data-testid={`parent-child-card-${child.student_id}`}
+      className="block rounded-2xl border border-rally-line bg-white p-4 animate-fade-in-up transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.98]"
+    >
+      <div className="flex items-center gap-3">
+        {/* Avatar gradient is a per-child hash, shared with the Children list. */}
+        <span
+          aria-hidden="true"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-base font-bold text-white"
+          style={{ background: nameGradient(child.full_name) }}
+        >
+          {nameInitial(child.full_name)}
+        </span>
+        <p className="min-w-0 flex-1 truncate font-display text-lg font-bold text-rally-ink">
+          {child.full_name}
+        </p>
+        <ChevronRight className="shrink-0 text-rally-muted" size={18} />
+      </div>
+
+      <dl className="mt-3 space-y-2.5">
+        <CardRow
+          icon={<CalendarDays size={15} />}
+          label="Next session"
+          value={next ? next.when : "No upcoming sessions"}
+          meta={
+            next
+              ? [next.where, child.next_session?.coach_name].filter(Boolean).join(" · ")
+              : null
+          }
+        />
+        <CardRow
+          icon={<Trophy size={15} />}
+          label="Attendance this month"
+          value={attendanceCopy(child.attendance_this_month)}
+          meta={null}
+        />
+        <CardRow
+          icon={<Sparkles size={15} />}
+          label="Latest milestone"
+          value={milestone ?? "No milestones yet"}
+          meta={null}
+        />
+      </dl>
+    </Link>
+  );
+}
+
+function CardRow({
+  icon,
+  label,
+  value,
+  meta,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  meta: string | null;
+}) {
+  return (
+    <div className="flex gap-2.5">
+      <span className="mt-0.5 shrink-0 text-rally-cobalt-600">{icon}</span>
+      <div className="min-w-0 flex-1">
+        <dt className="text-[10px] font-bold uppercase tracking-widest text-rally-subtle">
+          {label}
+        </dt>
+        <dd className="text-sm font-semibold text-rally-ink">{value}</dd>
+        {meta && <p className="mt-0.5 truncate text-xs text-rally-muted">{meta}</p>}
       </div>
     </div>
   );
 }
+
+const PROGRESS_HERO_TEAL = "#0f766e";
 
 function RegistrationHero({ academy }: { academy?: ParentAcademy }) {
   return (
@@ -322,88 +408,6 @@ function AcademyMark({ academy }: { academy?: ParentAcademy }) {
         (academy?.display_name?.[0] ?? "A").toUpperCase()
       )}
     </div>
-  );
-}
-
-const METRIC_TONE_CLASS: Record<ParentHomeMetric["tone"], string> = {
-  green: "text-status-green-800",
-  amber: "text-status-amber-800",
-  blue: "text-rally-cobalt-600",
-};
-
-function MetricGrid({ metrics }: { metrics: ParentHomeMetric[] }) {
-  return (
-    <div className="grid grid-cols-3 gap-2 stagger-children">
-      {metrics.map((metric) => (
-        <div
-          key={metric.label}
-          className="rounded-xl border border-rally-line bg-white px-3 py-3 text-center animate-fade-in-up"
-        >
-          <p className={`font-display text-xl font-bold ${METRIC_TONE_CLASS[metric.tone] ?? METRIC_TONE_CLASS.blue}`}>
-            {metric.value}
-          </p>
-          <p className="mt-0.5 text-[10px] font-semibold text-rally-muted">{metric.label}</p>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-type AccentKey = "green" | "cobalt";
-
-const INFO_CARD_ACCENT: Record<AccentKey, { overline: string; iconBg: string; iconText: string; borderLeft: string }> = {
-  green: {
-    overline: "text-status-green-800",
-    iconBg: "bg-status-green-50",
-    iconText: "text-status-green-800",
-    borderLeft: "border-l-status-green-500",
-  },
-  cobalt: {
-    overline: "text-rally-cobalt-600",
-    iconBg: "bg-rally-cobalt-50",
-    iconText: "text-rally-cobalt-600",
-    borderLeft: "border-l-rally-cobalt-600",
-  },
-};
-
-function LatestNoteCard({
-  note,
-  academyTimezone,
-}: {
-  note: ReturnType<typeof buildParentHomeModel>["latestNote"];
-  academyTimezone: string | null;
-}) {
-  return (
-    <InfoCard
-      overline="Latest coach note"
-      title={note ? "Coach feedback" : "Notes will appear here"}
-      body={note?.body ?? "Coach updates and encouragement will show up after class."}
-      meta={note ? `${note.coach_name ?? "Coach"} · ${formatShortDate(note.created_at, academyTimezone)}` : "Progress"}
-      icon={<MessageSquare size={17} />}
-      accent="green"
-      href="/parent/progress"
-    />
-  );
-}
-
-function NextClassCard({
-  action,
-  enrollmentTitle,
-}: {
-  action: ParentHomeAction;
-  enrollmentTitle: string | null;
-}) {
-  const isNext = action.kind === "next_class" || Boolean(enrollmentTitle);
-  return (
-    <InfoCard
-      overline="Next up"
-      title={isNext ? "Class context" : "Stay on track"}
-      body={enrollmentTitle ?? action.body}
-      meta={isNext ? "Current enrollment" : action.title}
-      icon={<CalendarDays size={17} />}
-      accent="cobalt"
-      href={isNext ? "/parent/children" : action.href}
-    />
   );
 }
 
@@ -503,42 +507,6 @@ function RecentActivityCard({
   );
 }
 
-function InfoCard({
-  overline,
-  title,
-  body,
-  meta,
-  icon,
-  accent,
-  href,
-}: {
-  overline: string;
-  title: string;
-  body: string;
-  meta: string;
-  icon: React.ReactNode;
-  accent: AccentKey;
-  href: string;
-}) {
-  const theme = INFO_CARD_ACCENT[accent];
-  return (
-    <Link
-      href={href as Parameters<typeof Link>[0]["href"]}
-      className={`block rounded-xl border border-rally-line border-l-4 bg-white p-4 animate-fade-in-up transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.98] ${theme.borderLeft}`}
-    >
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <p className={`text-[10px] font-bold uppercase tracking-widest ${theme.overline}`}>{overline}</p>
-        <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${theme.iconBg} ${theme.iconText}`}>
-          {icon}
-        </span>
-      </div>
-      <p className="truncate text-sm font-bold text-rally-ink">{title}</p>
-      <p className="mt-1 line-clamp-2 text-xs leading-5 text-rally-muted">{body}</p>
-      <p className="mt-2 text-[11px] font-semibold text-rally-subtle">{meta}</p>
-    </Link>
-  );
-}
-
 function RequestsCard() {
   return (
     <Link
@@ -615,10 +583,6 @@ function IssueStrip({ issues }: { issues: string[] }) {
       ))}
     </div>
   );
-}
-
-function firstName(name: string): string {
-  return name.trim().split(/\s+/)[0] || name;
 }
 
 function formatShortDate(value: string, academyTimezone: string | null): string {

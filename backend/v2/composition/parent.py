@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from collections.abc import Awaitable, Callable
@@ -276,6 +277,7 @@ class ParentComposition:
     start_invoice_payment_for_parent: object
     start_balance_payment_for_parent: object
     get_child_schedule: object
+    get_parent_home: object  # callable
     enroll_child: object
     cancel_billing_enrollment: object
     get_parent_waiver_requirement: GetParentWaiverRequirement
@@ -2139,6 +2141,252 @@ def compose_parent(
             offset=offset,
         )
 
+    async def get_parent_home(*, parent_id: str) -> dict[str, Any]:
+        """Everything the kid-first Home screen needs, in one read.
+
+        Fan-out is deliberately per child and deliberately forgiving: one
+        child's schedule or skill feed failing must degrade that card only,
+        never 500 the page (decision 11). The month window is the academy's
+        month, not UTC's and not the device's (decision 3).
+        """
+        academy_id = current_academy_id()  # request-time tenant (C4)
+        academy = await get_academy_info(academy_id=academy_id)
+        timezone_name = str(academy.get("timezone") or "").strip() or "UTC"
+        now = clock()
+        start_utc, end_utc, month_label, timezone_name = _academy_month_window(now, timezone_name)
+
+        children = await list_children_for_parent(parent_id)
+        student_ids = [str(child["student_id"]) for child in children]
+
+        if not student_ids:
+            return {
+                "children": [],
+                "balance": await _parent_home_balance(parent_id),
+                "month_label": month_label,
+                "timezone": timezone_name,
+            }
+
+        # Next session per child. `frm` is today on the ACADEMY clock so a
+        # class earlier today is still inside the window the use case scans;
+        # the `start_at >= now` filter below is what actually makes it "next".
+        local_today = now.astimezone(_resolve_zone(timezone_name)).date()
+
+        async def _next_session(student_id: str) -> dict[str, Any] | None:
+            entries, _total = await get_child_schedule(
+                parent_id=parent_id,
+                student_id=student_id,
+                frm=local_today,
+                to=None,
+                limit=10,
+                offset=0,
+            )
+            for entry in entries:
+                start_at = _as_utc(entry.start_at)
+                if start_at is None or start_at < now:
+                    continue
+                return {
+                    "occurrence_id": entry.occurrence_id,
+                    "session_id": entry.session_id,
+                    "session_title": entry.session_title,
+                    "location": entry.location,
+                    "start_at": start_at,
+                    "end_at": _as_utc(entry.end_at) or start_at,
+                    # Always None today — see ParentHomeNextSessionView.
+                    "coach_name": entry.coach_name,
+                }
+            return None
+
+        schedule_results = await asyncio.gather(
+            *(_next_session(student_id) for student_id in student_ids),
+            return_exceptions=True,
+        )
+        next_session_by_student: dict[str, dict[str, Any] | None] = {}
+        for student_id, outcome in zip(student_ids, schedule_results, strict=True):
+            if isinstance(outcome, BaseException):
+                log.warning(
+                    "parent home: schedule leg failed for student %s",
+                    student_id,
+                    exc_info=outcome,
+                )
+                next_session_by_student[student_id] = None
+            else:
+                next_session_by_student[student_id] = outcome
+
+        # Attendance is COUNTED, never paged: list_attendance_for_parent caps
+        # at 50 rows and has no date filter, so folding it would silently
+        # undercount a busy family (decision 13).
+        attendance_by_student: dict[str, dict[str, int]] = {
+            student_id: {"present": 0, "total": 0} for student_id in student_ids
+        }
+        attendance_cursor = db["attendance"].aggregate(
+            [
+                {
+                    "$match": {
+                        "academy_id": academy_id,
+                        "student_id": {"$in": student_ids},
+                        "marked_at": {"$gte": start_utc, "$lt": end_utc},
+                    }
+                },
+                {
+                    "$group": {
+                        "_id": "$student_id",
+                        "total": {"$sum": 1},
+                        "present": {"$sum": {"$cond": [{"$eq": ["$status", "present"]}, 1, 0]}},
+                    }
+                },
+            ]
+        )
+        async for group in attendance_cursor:
+            student_id = str(group.get("_id") or "")
+            if student_id in attendance_by_student:
+                attendance_by_student[student_id] = {
+                    "present": int(group.get("present") or 0),
+                    "total": int(group.get("total") or 0),
+                }
+
+        milestone_by_student = await _parent_home_milestones(parent_id, student_ids)
+
+        return {
+            "children": [
+                {
+                    "student_id": student_id,
+                    "full_name": str(child.get("full_name") or "Unnamed student"),
+                    "next_session": next_session_by_student.get(student_id),
+                    "attendance_this_month": attendance_by_student[student_id],
+                    "latest_milestone": milestone_by_student.get(student_id),
+                }
+                for child, student_id in zip(children, student_ids, strict=True)
+            ],
+            "balance": await _parent_home_balance(parent_id),
+            "month_label": month_label,
+            "timezone": timezone_name,
+        }
+
+    async def _parent_home_milestones(
+        parent_id: str, student_ids: list[str]
+    ) -> dict[str, dict[str, Any] | None]:
+        """Latest parent-visible milestone per child: the newer of the newest
+        shared note/feedback and the newest skill status change (decision 4)."""
+        newest_note: dict[str, dict[str, Any]] = {}
+        try:
+            # One family-wide call. list_progress_for_parent fetches every
+            # matching row internally and slices, so a generous limit is cheap
+            # — and it already drops private notes (visibility != "shared").
+            notes, _total = await list_progress_for_parent(
+                parent_id, limit=max(len(student_ids) * 25, 100), offset=0
+            )
+        except Exception:  # pragma: no cover - defensive; one leg must not 500 Home
+            log.warning("parent home: progress leg failed for parent %s", parent_id, exc_info=True)
+            notes = []
+        for note in notes:
+            student_id = str(note.get("student_id") or "")
+            if student_id not in newest_note:
+                created_at = _as_utc(note.get("created_at"))
+                if created_at is None:
+                    continue
+                newest_note[student_id] = {
+                    "kind": "note",
+                    "label": _milestone_label(str(note.get("body") or "")),
+                    "at": created_at,
+                }
+
+        async def _newest_skill(student_id: str) -> dict[str, Any] | None:
+            if sp_composition is None:
+                return None
+            updates = await sp_composition.get_recent_skill_updates.execute(student_id)
+            for update in updates:
+                at = _as_utc(update.updated_at)
+                if at is None:
+                    continue
+                return {
+                    "kind": "skill",
+                    "label": _milestone_label(str(update.skill_name or "")),
+                    "at": at,
+                }
+            return None
+
+        skill_results = await asyncio.gather(
+            *(_newest_skill(student_id) for student_id in student_ids),
+            return_exceptions=True,
+        )
+
+        milestones: dict[str, dict[str, Any] | None] = {}
+        for student_id, outcome in zip(student_ids, skill_results, strict=True):
+            skill: dict[str, Any] | None
+            if isinstance(outcome, BaseException):
+                log.warning(
+                    "parent home: skill leg failed for student %s", student_id, exc_info=outcome
+                )
+                skill = None
+            else:
+                skill = outcome
+            latest_note = newest_note.get(student_id)
+            candidates: list[dict[str, Any]] = [
+                candidate for candidate in (latest_note, skill) if candidate and candidate["label"]
+            ]
+            milestones[student_id] = max(candidates, key=lambda c: c["at"]) if candidates else None
+        return milestones
+
+    async def _parent_home_balance(parent_id: str) -> dict[str, Any]:
+        """Family-level money summary (decisions 5, 6 and 6b).
+
+        ``list_invoices_for_parent`` applies no status filter, so the
+        paid/void exclusion is this method's job. ``partially_paid`` counts as
+        due, matching the gate the pay endpoints already use.
+        """
+        try:
+            invoices = await list_invoices_for_parent(parent_id)
+        except Exception:  # pragma: no cover - defensive
+            log.warning("parent home: invoice leg failed for parent %s", parent_id, exc_info=True)
+            invoices = []
+        unpaid = [inv for inv in invoices if str(inv.status) not in _SETTLED_INVOICE_STATUSES]
+        amount_due_cents = sum(int(inv.balance_due_cents) for inv in unpaid)
+        due_dates = [inv.due_date for inv in unpaid if inv.due_date]
+        currency = next((str(inv.currency) for inv in unpaid if inv.currency), None)
+
+        try:
+            enrollments = await list_enrollments_for_parent(parent_id)
+        except Exception:  # pragma: no cover - defensive
+            log.warning(
+                "parent home: enrollment leg failed for parent %s", parent_id, exc_info=True
+            )
+            enrollments = []
+        # Source 1: the autopay attempt projection. A declined attempt that
+        # never minted a payment row exists ONLY here.
+        payment_failed = any(
+            str(row.get("last_attempt_outcome") or "") in _FAILED_ATTEMPT_OUTCOMES
+            for row in enrollments
+        )
+        if not payment_failed:
+            # Source 2: the payments-history rule ported verbatim from
+            # frontend/lib/parent-home.ts findPaymentNeedingAttention.
+            has_active_enrollment = any(
+                str(row.get("status") or "") == "active" for row in enrollments
+            )
+            if has_active_enrollment:
+                try:
+                    payments = await list_payments_for_parent(parent_id)
+                except Exception:  # pragma: no cover - defensive
+                    log.warning(
+                        "parent home: payment leg failed for parent %s", parent_id, exc_info=True
+                    )
+                    payments = []
+                invoice_status_by_id = {str(inv.invoice_id): str(inv.status) for inv in invoices}
+                payment_failed = any(
+                    str(payment.status) in _PAYMENT_ISSUE_STATUSES
+                    and invoice_status_by_id.get(str(payment.invoice_id or ""))
+                    not in _SETTLED_INVOICE_STATUSES
+                    for payment in payments
+                )
+
+        return {
+            "amount_due_cents": amount_due_cents,
+            "currency": currency or "usd",
+            "due_date": min(due_dates) if due_dates else None,
+            "open_invoice_count": len(unpaid),
+            "payment_failed": payment_failed,
+        }
+
     # Session-type billing enrollment. Ownership check and enrollment stamping
     # both resolve the tenant at request time (issue #532): a parent of academy
     # B must never enroll against — or leak Stripe checkout metadata for — the
@@ -2245,6 +2493,7 @@ def compose_parent(
         start_invoice_payment_for_parent=start_invoice_payment_for_parent,
         start_balance_payment_for_parent=start_balance_payment_for_parent,
         get_child_schedule=get_child_schedule,
+        get_parent_home=get_parent_home,
         enroll_child=enroll_child_uc.execute,
         cancel_billing_enrollment=cancel_billing_enrollment_uc.execute,
         get_parent_waiver_requirement=get_waiver_req,
@@ -2358,6 +2607,78 @@ def _session_amount_cents(doc: dict[str, object]) -> int:
     if doc.get("monthly_price") is not None:
         return round(float(doc["monthly_price"]) * 100)  # type: ignore[arg-type]
     return 2500
+
+
+# Invoice statuses where nothing more is owed and a failed attempt against the
+# invoice no longer needs the parent's attention. Everything else — including
+# ``partially_paid`` — counts as due (decision 6). Mirrors
+# SETTLED_INVOICE_STATUSES in frontend/lib/parent-home.ts.
+_SETTLED_INVOICE_STATUSES = frozenset({"void", "paid"})
+# ``AutopayAttemptOutcome`` values that mean the last charge did not work.
+# The legacy strings are what migration 0137 could have backfilled from older
+# payment rows; keeping them here is cheap and fails visible rather than
+# silently dropping a real failure.
+_FAILED_ATTEMPT_OUTCOMES = frozenset(
+    {"declined", "requires_action", "error", "failed", "past_due", "requires_payment_method"}
+)
+# Ported verbatim from PAYMENT_ISSUE_STATUSES in frontend/lib/parent-home.ts.
+_PAYMENT_ISSUE_STATUSES = frozenset({"failed", "past_due", "requires_payment_method"})
+_MILESTONE_LABEL_MAX = 80
+
+
+def _resolve_zone(timezone_name: str) -> ZoneInfo:
+    """Academy zone, falling back to UTC rather than raising — a bad zone name
+    must never be able to blank out the parent's home screen."""
+    try:
+        return ZoneInfo(timezone_name)
+    except (KeyError, ValueError):
+        return ZoneInfo("UTC")
+
+
+def _academy_month_window(
+    instant: datetime, timezone_name: str
+) -> tuple[datetime, datetime, str, str]:
+    """``(start_utc, end_utc, month_label, resolved_timezone)`` for the calendar
+    month containing ``instant`` **on the academy's clock** (decision 3).
+
+    The month is picked with ``_local_period_label`` so this site cannot drift
+    from the billing-period label sites at a local month boundary (#541).
+    Returns the resolved zone name so callers report the zone they actually
+    bucketed by, not the unusable one they were handed.
+    """
+    period = _local_period_label(instant, timezone_name)
+    year, month = int(period[:4]), int(period[5:7])
+    try:
+        ZoneInfo(timezone_name)
+        resolved = timezone_name
+    except (KeyError, ValueError):
+        resolved = "UTC"
+    tz = _resolve_zone(resolved)
+    start_local = datetime(year, month, 1, tzinfo=tz)
+    next_year, next_month = (year + 1, 1) if month == 12 else (year, month + 1)
+    end_local = datetime(next_year, next_month, 1, tzinfo=tz)
+    return (
+        start_local.astimezone(UTC),
+        end_local.astimezone(UTC),
+        start_local.strftime("%B"),
+        resolved,
+    )
+
+
+def _as_utc(value: Any) -> datetime | None:
+    """Normalise a stored timestamp to a UTC instant. Naive datetimes are UTC
+    (what Mongo hands back after dropping tzinfo)."""
+    if not isinstance(value, datetime):
+        return None
+    return (value if value.tzinfo is not None else value.replace(tzinfo=UTC)).astimezone(UTC)
+
+
+def _milestone_label(text: str) -> str:
+    """First line of a note body (or a skill name), trimmed for a card row."""
+    first_line = text.strip().splitlines()[0].strip() if text.strip() else ""
+    if len(first_line) <= _MILESTONE_LABEL_MAX:
+        return first_line
+    return first_line[: _MILESTONE_LABEL_MAX - 1].rstrip() + "…"
 
 
 def _local_period_label(instant: datetime, timezone_name: str) -> str:

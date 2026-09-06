@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ds/skeleton";
 import { EmptyState } from "@/components/ds/empty-state";
@@ -65,7 +66,9 @@ export default function ParentProgressPage() {
       )}
 
       {/* Skill Progress section */}
-      <SkillProgressSection />
+      <Suspense fallback={null}>
+        <SkillProgressSection />
+      </Suspense>
     </section>
   );
 }
@@ -212,9 +215,25 @@ function SkillProgressSection() {
     queryFn: listParentChildren,
   });
 
-  const children = childrenData?.children ?? [];
+  const children = useMemo(() => childrenData?.children ?? [], [childrenData]);
 
+  // Home's child cards deep-link here as /parent/progress?child=<student_id>,
+  // so the tab strip opens on the child the parent tapped. The param only
+  // seeds the selection — the tabs stay the source of truth afterwards, and
+  // an absent or unknown id falls back to the first child.
+  const requestedChildId = useSearchParams().get("child");
   const [activeChildIdx, setActiveChildIdx] = useState(0);
+  // Seed once, after the roster arrives: re-applying it on every render would
+  // yank the parent back to the deep-linked child whenever they tap a tab.
+  const seededFromQuery = useRef(false);
+
+  useEffect(() => {
+    if (seededFromQuery.current || children.length === 0) return;
+    seededFromQuery.current = true;
+    if (!requestedChildId) return;
+    const idx = children.findIndex((child) => child.student_id === requestedChildId);
+    if (idx >= 0) setActiveChildIdx(idx);
+  }, [requestedChildId, children]);
 
   const activeChild = children[activeChildIdx];
   const { data: overviewRows, isLoading: loadingOverview } = useQuery({
@@ -230,7 +249,7 @@ function SkillProgressSection() {
   if (children.length === 0) return null;
 
   return (
-    <div className="mt-8 space-y-4 animate-fade-in-up">
+    <div id="skill-progress" className="mt-8 space-y-4 animate-fade-in-up">
       {/* Section heading */}
       <div>
         <h2 className="font-display text-xl font-bold tracking-tight text-rally-ink">

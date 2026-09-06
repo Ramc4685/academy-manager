@@ -107,6 +107,9 @@ class ParentUseCases:
     update_parent_profile: object | None = None  # callable
     confirm_parent_email: object | None = None  # callable
     update_parent_child: object | None = None  # callable
+    # Home aggregate (kid-first Home, slice 4). Defaulted so fixtures that
+    # predate it keep constructing; real parent composition always sets it.
+    get_parent_home: object | None = None  # callable
 
 
 def get_parent_use_cases(request: Request) -> ParentUseCases:

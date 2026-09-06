@@ -552,3 +552,67 @@ class UpdateParentChildRequest(BaseModel):
         if value < earliest:
             raise ValueError("date_of_birth is implausibly far in the past")
         return value
+
+
+# --- Home aggregate (kid-first Home, slice 4) ---
+
+
+class ParentHomeNextSessionView(BaseModel):
+    """The child's next upcoming occurrence.
+
+    ``coach_name`` is always ``None`` today — ``GetChildSchedule.execute``
+    hardcodes it. The field is kept for shape parity with
+    ``ParentScheduleEntryView`` so the card can render a coach line the day
+    the use case starts populating it.
+    """
+
+    occurrence_id: str
+    session_id: str
+    session_title: str
+    location: str | None = None
+    start_at: datetime
+    end_at: datetime
+    coach_name: str | None = None
+
+
+class ParentHomeAttendanceView(BaseModel):
+    """Marked attendance for the current academy-local month.
+
+    ``total`` counts every marked record, not scheduled sessions — an
+    unmarked session is in neither number, so the card never shows a fake 0%.
+    """
+
+    present: int = 0
+    total: int = 0
+
+
+class ParentHomeMilestoneView(BaseModel):
+    kind: Literal["note", "skill"]
+    label: str
+    at: datetime
+
+
+class ParentHomeChildView(BaseModel):
+    student_id: str
+    full_name: str
+    next_session: ParentHomeNextSessionView | None = None
+    attendance_this_month: ParentHomeAttendanceView
+    latest_milestone: ParentHomeMilestoneView | None = None
+
+
+class ParentHomeBalanceView(BaseModel):
+    """Family-level money summary — invoices are not reliably attributable to
+    one child, so this is never split per card."""
+
+    amount_due_cents: int = 0
+    currency: str = "usd"
+    due_date: date | None = None
+    open_invoice_count: int = 0
+    payment_failed: bool = False
+
+
+class ParentHomeResponse(BaseModel):
+    children: list[ParentHomeChildView]
+    balance: ParentHomeBalanceView
+    month_label: str
+    timezone: str

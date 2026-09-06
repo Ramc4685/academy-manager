@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
+from datetime import time as dt_time
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -20,6 +21,9 @@ from backend.v2.contexts.billing.domain.errors import (
     QuoteExpired,
 )
 from backend.v2.contexts.billing.domain.ledger import LedgerInvoice
+from backend.v2.contexts.enrollment.application.use_cases.get_child_schedule import (
+    GetChildSchedule,
+)
 from backend.v2.contexts.onboarding.domain.errors import (
     ApplicationNotEditable,
     IncompleteApplication,
@@ -2734,3 +2738,426 @@ async def test_parent_progress_feed_lists_only_shared_notes() -> None:
     assert rows[0]["coach_name"] == "Coach One"
     assert rows[0]["session_title"] == "Juniors"
     assert "visibility" not in rows[0], "response shape is unchanged"
+
+
+# --- GET /parent/home aggregator (kid-first Home, slice 4) ---------------------
+
+_HOME_NOW = datetime(2026, 9, 15, 12, 0, tzinfo=UTC)
+_CHICAGO = ZoneInfo("America/Chicago")
+
+
+def _home_student(student_id: str, full_name: str, *, legacy_link: bool = False) -> dict[str, Any]:
+    """A student linked by ``parent_user_id`` (current) or ``parent_id`` (legacy).
+
+    ``_parent_students`` matches either, so both shapes must reach Home — a
+    legacy-shaped row silently dropping out is exactly the regression this
+    covers.
+    """
+    doc: dict[str, Any] = {
+        "academy_id": "acad",
+        "student_id": student_id,
+        "full_name": full_name,
+        "status": "active",
+    }
+    doc["parent_id" if legacy_link else "parent_user_id"] = "parent-1"
+    return doc
+
+
+def _attendance_doc(
+    attendance_id: str, student_id: str, status: str, marked_at: datetime
+) -> dict[str, Any]:
+    return {
+        "academy_id": "acad",
+        "attendance_id": attendance_id,
+        "student_id": student_id,
+        "session_id": "sess-1",
+        "status": status,
+        "marked_at": marked_at,
+    }
+
+
+async def _seed_home_db(db: Any) -> None:
+    await db["academies"].insert_one(
+        {"academy_id": "acad", "display_name": "BLNO", "timezone": "America/Chicago"}
+    )
+    await db["students"].insert_many(
+        [
+            _home_student("st-1", "Asha Rao"),
+            # Legacy link shape — parent_id, not parent_user_id.
+            _home_student("st-2", "Dev Rao", legacy_link=True),
+        ]
+    )
+
+    # Attendance: 60 marked rows for st-1 inside the academy-local month (well
+    # past list_attendance_for_parent's 50-row page), of which 40 are present.
+    rows = [
+        _attendance_doc(
+            f"att-{i}",
+            "st-1",
+            "present" if i % 3 else "absent",
+            datetime(2026, 9, 2, 15, 0, tzinfo=UTC) + timedelta(hours=i),
+        )
+        for i in range(60)
+    ]
+    # 2026-09-01 00:30 UTC is 2026-08-31 19:30 in Chicago: LAST month on the
+    # academy's clock, and this month under UTC. The academy answer wins (#541).
+    rows.append(
+        _attendance_doc(
+            "att-utc-boundary", "st-1", "present", datetime(2026, 9, 1, 0, 30, tzinfo=UTC)
+        )
+    )
+    # 2026-10-01 02:00 UTC is 2026-09-30 21:00 in Chicago: still THIS month
+    # locally even though UTC has already rolled over.
+    rows.append(
+        _attendance_doc(
+            "att-local-tail", "st-1", "present", datetime(2026, 10, 1, 2, 0, tzinfo=UTC)
+        )
+    )
+    rows.append(
+        _attendance_doc(
+            "att-other-child", "st-2", "absent", datetime(2026, 9, 4, 15, 0, tzinfo=UTC)
+        )
+    )
+    await db["attendance"].insert_many(rows)
+
+    await db["progress_notes"].insert_many(
+        [
+            {
+                "academy_id": "acad",
+                "note_id": "note-shared",
+                "student_id": "st-1",
+                "coach_id": "coach-1",
+                "visibility": "shared",
+                "body": "Great footwork today\nsecond line ignored",
+                "created_at": datetime(2026, 9, 5, 15, 0, tzinfo=UTC),
+            },
+            {
+                "academy_id": "acad",
+                "note_id": "note-private",
+                "student_id": "st-2",
+                "coach_id": "coach-1",
+                "visibility": "private",
+                "body": "Parent must never see this",
+                "created_at": datetime(2026, 9, 14, 15, 0, tzinfo=UTC),
+            },
+        ]
+    )
+
+    # st-1 skill update is NEWER than the shared note, so the skill wins.
+    await db["skills"].insert_one(
+        {
+            "academy_id": "acad",
+            "skill_id": "skill-1",
+            "level_id": "lvl-1",
+            "program_id": "prog-1",
+            "sequence": 1,
+            "name": "Backhand Lift",
+            "created_at": _HOME_NOW,
+            "updated_at": _HOME_NOW,
+            "created_by": "coach-1",
+        }
+    )
+    await db["student_skill_progress"].insert_one(
+        {
+            "academy_id": "acad",
+            "skill_progress_id": "sp-1",
+            "student_id": "st-1",
+            "skill_id": "skill-1",
+            "level_id": "lvl-1",
+            "program_id": "prog-1",
+            "status": "PASSED",
+            "last_updated_at": datetime(2026, 9, 9, 15, 0, tzinfo=UTC),
+            "last_updated_by": "coach-1",
+        }
+    )
+
+    await db["invoices"].insert_many(
+        [
+            _home_invoice("inv-open", "open", 7_000, date(2026, 9, 20)),
+            _home_invoice("inv-partial", "partially_paid", 3_000, date(2026, 9, 12)),
+            _home_invoice("inv-paid", "paid", 0, date(2026, 9, 1)),
+            _home_invoice("inv-void", "void", 9_900, date(2026, 9, 2)),
+        ]
+    )
+
+
+def _home_invoice(
+    invoice_id: str, status: str, balance_due_cents: int, due_date: date
+) -> dict[str, Any]:
+    doc = LedgerInvoice(
+        invoice_id=invoice_id,
+        academy_id="acad",
+        parent_id="parent-1",
+        student_id="st-1",
+        period="2026-09",
+        status=status,  # type: ignore[arg-type]
+        subtotal_cents=balance_due_cents,
+        discount_cents=0,
+        total_cents=balance_due_cents,
+        balance_due_cents=balance_due_cents,
+        currency="usd",
+        due_date=due_date,
+        created_at=_HOME_NOW,
+        updated_at=_HOME_NOW,
+    ).model_dump(mode="python")
+    # Mongo has no `date` BSON type: the ledger repo stores due dates as UTC
+    # midnight instants, so the fixture must too or the fake is more
+    # permissive than the real store.
+    doc["due_date"] = datetime.combine(due_date, dt_time.min, tzinfo=UTC)
+    return doc
+
+
+def _compose_home_parent(db: Any, *, now: datetime = _HOME_NOW) -> Any:
+    return compose_parent(
+        db,
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=_PortalStripe(),  # type: ignore[arg-type]
+        academy_id="acad",
+        clock=lambda: now,
+    )
+
+
+@pytest.mark.asyncio
+async def test_parent_home_buckets_the_month_on_the_academy_clock() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-home-month"]
+    await _seed_home_db(db)
+    parent = _compose_home_parent(db)
+
+    with tenant_scope("acad"):
+        home = await parent.get_parent_home(parent_id="parent-1")
+
+    assert home["timezone"] == "America/Chicago"
+    assert home["month_label"] == "September"
+    asha = home["children"][0]
+    # 60 in-month rows + the 21:00-local tail on Sep 30; the 19:30-local row on
+    # Aug 31 is excluded even though UTC calls it September.
+    assert asha["attendance_this_month"]["total"] == 61
+    assert asha["attendance_this_month"]["present"] == 41
+    # Never truncated to a 50-row page.
+    assert asha["attendance_this_month"]["total"] > 50
+
+
+@pytest.mark.asyncio
+async def test_parent_home_includes_legacy_linked_child_in_stable_order() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-home-children"]
+    await _seed_home_db(db)
+    parent = _compose_home_parent(db)
+
+    with tenant_scope("acad"):
+        home = await parent.get_parent_home(parent_id="parent-1")
+
+    assert [child["student_id"] for child in home["children"]] == ["st-1", "st-2"]
+    assert [child["full_name"] for child in home["children"]] == ["Asha Rao", "Dev Rao"]
+    # No enrolments seeded, so nothing is upcoming for either child.
+    assert all(child["next_session"] is None for child in home["children"])
+    assert home["children"][1]["attendance_this_month"] == {"present": 0, "total": 1}
+
+
+@pytest.mark.asyncio
+async def test_parent_home_milestone_prefers_the_later_of_note_and_skill() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-home-milestone"]
+    await _seed_home_db(db)
+    parent = _compose_home_parent(db)
+
+    with tenant_scope("acad"):
+        home = await parent.get_parent_home(parent_id="parent-1")
+
+    asha, dev = home["children"]
+    assert asha["latest_milestone"] == {
+        "kind": "skill",
+        "label": "Backhand Lift",
+        "at": datetime(2026, 9, 9, 15, 0, tzinfo=UTC),
+    }
+    # Dev's only note is private, so he has no milestone at all.
+    assert dev["latest_milestone"] is None
+
+
+@pytest.mark.asyncio
+async def test_parent_home_milestone_falls_back_to_the_shared_note() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-home-note-wins"]
+    await _seed_home_db(db)
+    # Make the skill update OLDER than the shared note.
+    await db["student_skill_progress"].update_one(
+        {"skill_progress_id": "sp-1"},
+        {"$set": {"last_updated_at": datetime(2026, 9, 1, 15, 0, tzinfo=UTC)}},
+    )
+    parent = _compose_home_parent(db)
+
+    with tenant_scope("acad"):
+        home = await parent.get_parent_home(parent_id="parent-1")
+
+    assert home["children"][0]["latest_milestone"] == {
+        "kind": "note",
+        "label": "Great footwork today",
+        "at": datetime(2026, 9, 5, 15, 0, tzinfo=UTC),
+    }
+
+
+@pytest.mark.asyncio
+async def test_parent_home_balance_counts_partially_paid_and_drops_paid_and_void() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-home-balance"]
+    await _seed_home_db(db)
+    parent = _compose_home_parent(db)
+
+    with tenant_scope("acad"):
+        home = await parent.get_parent_home(parent_id="parent-1")
+
+    assert home["balance"] == {
+        "amount_due_cents": 10_000,
+        "currency": "usd",
+        "due_date": date(2026, 9, 12),
+        "open_invoice_count": 2,
+        "payment_failed": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_parent_home_payment_failed_comes_from_the_autopay_attempt_projection() -> None:
+    """A declined autopay attempt that never minted a payment row exists only
+    on student_billing_enrollments — the payments heuristic alone would miss
+    it (decision 6b)."""
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-home-failed"]
+    await _seed_home_db(db)
+    await db["enrollments"].insert_one(_enrollment_doc("enr-1", student_id="st-1"))
+    await db["student_billing_enrollments"].insert_one(
+        {
+            "academy_id": "acad",
+            "parent_id": "parent-1",
+            "enrollment_id": "enr-1",
+            "last_attempt_outcome": "declined",
+        }
+    )
+    parent = _compose_home_parent(db)
+
+    with tenant_scope("acad"):
+        home = await parent.get_parent_home(parent_id="parent-1")
+
+    assert home["balance"]["payment_failed"] is True
+
+
+@pytest.mark.asyncio
+async def test_parent_home_with_no_children_is_empty_not_an_error() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-home-empty"]
+    await db["academies"].insert_one({"academy_id": "acad", "timezone": "America/Chicago"})
+    parent = _compose_home_parent(db)
+
+    with tenant_scope("acad"):
+        home = await parent.get_parent_home(parent_id="parent-1")
+
+    assert home["children"] == []
+    assert home["balance"]["amount_due_cents"] == 0
+    assert home["balance"]["open_invoice_count"] == 0
+    assert home["balance"]["payment_failed"] is False
+    assert home["month_label"] == "September"
+
+
+@pytest.mark.asyncio
+async def test_parent_home_next_session_is_the_next_upcoming_occurrence() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-home-schedule"]
+    await _seed_home_db(db)
+    now = datetime.now(UTC).replace(microsecond=0)
+    await _seed_home_schedule(db, now)
+    parent = _compose_home_parent(db, now=now)
+
+    with tenant_scope("acad"):
+        home = await parent.get_parent_home(parent_id="parent-1")
+
+    asha = home["children"][0]
+    assert asha["next_session"] == {
+        "occurrence_id": "occ-next",
+        "session_id": "sess-1",
+        "session_title": "Junior Badminton",
+        "location": "Court 2",
+        "start_at": now + timedelta(days=1),
+        "end_at": now + timedelta(days=1, hours=1),
+        # Always None today (decision 12) — kept for shape parity.
+        "coach_name": None,
+    }
+    # st-2 has no enrollment, so no upcoming session.
+    assert home["children"][1]["next_session"] is None
+
+
+@pytest.mark.asyncio
+async def test_parent_home_degrades_per_child_when_one_schedule_leg_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One child's fan-out leg blowing up must cost that child a next-session
+    row, not the whole family a 200 (decision 11)."""
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-home-isolation"]
+    await _seed_home_db(db)
+    now = datetime.now(UTC).replace(microsecond=0)
+    await _seed_home_schedule(db, now)
+    parent = _compose_home_parent(db, now=now)
+
+    original = GetChildSchedule.execute
+
+    async def _flaky(self: Any, parent_id: str, student_id: str, **kwargs: Any) -> Any:
+        if student_id == "st-1":
+            raise RuntimeError("occurrence store is down")
+        return await original(self, parent_id, student_id, **kwargs)
+
+    monkeypatch.setattr(GetChildSchedule, "execute", _flaky)
+
+    with tenant_scope("acad"):
+        home = await parent.get_parent_home(parent_id="parent-1")
+
+    assert home["children"][0]["student_id"] == "st-1"
+    assert home["children"][0]["next_session"] is None
+    # Everything else on the broken child's card is still there...
+    assert home["children"][0]["attendance_this_month"]["total"] == 61
+    assert home["children"][0]["latest_milestone"]["label"] == "Backhand Lift"
+    # ...and the other card and the family balance are untouched.
+    assert home["children"][1]["student_id"] == "st-2"
+    assert home["children"][1]["next_session"] is None
+    assert home["balance"]["amount_due_cents"] == 10_000
+
+
+async def _seed_home_schedule(db: Any, now: datetime) -> None:
+    """One active enrollment for st-1 with a past and a future occurrence."""
+    await db["enrollments"].insert_one(
+        _enrollment_doc("enr-1", student_id="st-1", session_id="sess-1")
+    )
+    await db["sessions"].insert_one(
+        {
+            "academy_id": "acad",
+            "session_id": "sess-1",
+            "title": "Junior Badminton",
+            "location": "Court 2",
+            "coach_id": "coach-1",
+            "start_at": now,
+            "end_at": now + timedelta(hours=1),
+            "capacity": 12,
+        }
+    )
+    await db["session_occurrences"].insert_many(
+        [
+            {
+                "academy_id": "acad",
+                "occurrence_id": "occ-earlier-today",
+                "session_id": "sess-1",
+                "start_at": now - timedelta(hours=3),
+                "end_at": now - timedelta(hours=2),
+                "status": "scheduled",
+                "scheduled_coach_id": "coach-1",
+            },
+            {
+                "academy_id": "acad",
+                "occurrence_id": "occ-next",
+                "session_id": "sess-1",
+                "start_at": now + timedelta(days=1),
+                "end_at": now + timedelta(days=1, hours=1),
+                "status": "scheduled",
+                "scheduled_coach_id": "coach-1",
+            },
+        ]
+    )
