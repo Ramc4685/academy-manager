@@ -6,7 +6,6 @@ import collections
 import csv
 import io
 import logging
-import re
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -68,6 +67,10 @@ from backend.v2.contexts.billing.application.admin_payment_settlement import (
     SETTLED_STATUSES,
     settle_matching_rows,
     settlement_method,
+)
+from backend.v2.contexts.billing.application.charge_admin_invoice import (
+    attempt_regex,
+    charge_invoice_as_admin,
 )
 from backend.v2.contexts.billing.application.checkout_paid_period import (
     CheckoutPaidPeriodResolver,
@@ -1135,6 +1138,57 @@ def compose_admin(
         )
         return result.model_dump(mode="python")
 
+    class _AdminChargeAttempts:
+        """Adapts the payment_attempts collection to the AttemptLookup port."""
+
+        @staticmethod
+        async def find_latest_attempt(
+            *, academy_id: str, invoice_id: str, request_id: str
+        ) -> dict[str, Any] | None:
+            return await db["payment_attempts"].find_one(
+                {
+                    "academy_id": academy_id,
+                    "invoice_id": invoice_id,
+                    "idempotency_key": {"$regex": attempt_regex(request_id)},
+                },
+                sort=[("created_at", -1)],
+            )
+
+    _admin_charge_attempts = _AdminChargeAttempts()
+
+    async def charge_invoice_as_admin_action(
+        *, invoice_id: str, actor_id: str, reason: str, request_id: str
+    ) -> dict[str, Any]:
+        """Admin pressed "Charge card now" on a list or the Family page.
+
+        No amount was confirmed up front here, so the balance guard is skipped;
+        the charge is still attributed and audited, which is what the family
+        timeline reads.
+        """
+        from backend.v2.shared.tenancy import current_academy_id
+
+        academy_id = current_academy_id()
+        invoice = await billing_ledger_repo.get_invoice(invoice_id)
+        if invoice is None:
+            raise ValueError(f"invoice {invoice_id!r} not found")
+        return await charge_invoice_as_admin(
+            idempotency=idempotency_store,
+            customers=parent_customers_repo,
+            ledger=billing_ledger_repo,
+            attempts=_admin_charge_attempts,
+            charge=charge_invoice_via_autopay,
+            audit=billing_audit_log,
+            academy_id=academy_id,
+            parent_id=invoice.parent_id,
+            invoice_id=invoice_id,
+            actor_id=actor_id,
+            request_id=request_id,
+            reason=reason,
+            source="admin_manual",
+            audit_kind="admin-charge",
+            idem_prefix="admin_charge",
+        )
+
     async def charge_billing_setup_balance(
         *,
         parent_id: str,
@@ -1143,118 +1197,31 @@ def compose_admin(
         request_id: str,
         actor_id: str,
     ) -> dict[str, Any]:
-        """Charge the exact invoice and amount confirmed by the admin."""
+        """Charge the exact invoice and amount confirmed by the admin.
+
+        The flow itself lives in ``charge_admin_invoice`` so the Family billing
+        page charges through the same audited path (#664 follow-up).
+        """
         from backend.v2.shared.tenancy import current_academy_id
 
-        request_academy_id = current_academy_id()
-        idem_key = (
-            f"billing_setup_charge:{request_academy_id}:{actor_id}:{parent_id}:{invoice_id}:"
-            f"{expected_amount_cents}:{request_id}"
+        return await charge_invoice_as_admin(
+            idempotency=idempotency_store,
+            customers=parent_customers_repo,
+            ledger=billing_ledger_repo,
+            attempts=_admin_charge_attempts,
+            charge=charge_invoice_via_autopay,
+            audit=billing_audit_log,
+            academy_id=current_academy_id(),
+            parent_id=parent_id,
+            invoice_id=invoice_id,
+            actor_id=actor_id,
+            request_id=request_id,
+            reason="Billing Setup charge now",
+            source="admin_billing_setup",
+            audit_kind="billing-setup-charge",
+            idem_prefix="billing_setup_charge",
+            expected_amount_cents=expected_amount_cents,
         )
-        result_key = f"{idem_key}:result"
-        cached_result = await idempotency_store.get(result_key)
-        payload: dict[str, Any] | None = (
-            cached_result["payload"] if cached_result is not None else None
-        )
-        if payload is None:
-            if not await parent_customers_repo.has_saved_card(parent_id=parent_id):
-                raise ValueError("no_saved_payment_method: parent has no saved card")
-            invoice = await billing_ledger_repo.get_invoice(invoice_id)
-            if invoice is None or invoice.parent_id != parent_id:
-                raise ValueError("charge_target_changed: invoice is not available for this parent")
-            created_plan = False
-            plan = await idempotency_store.get(idem_key)
-            if plan is None:
-                plan = {"started_at": datetime.now(UTC).isoformat()}
-                try:
-                    await idempotency_store.put(idem_key, plan)
-                    created_plan = True
-                except DuplicateKeyError:
-                    plan = await idempotency_store.get(idem_key)
-                    if plan is None:
-                        raise
-            attempt = await db["payment_attempts"].find_one(
-                {
-                    "academy_id": request_academy_id,
-                    "invoice_id": invoice_id,
-                    "idempotency_key": {
-                        "$regex": f":{re.escape(request_id)}:(succeeded|processing|requires_action|failed):"
-                    },
-                },
-                sort=[("created_at", -1)],
-            )
-            if not created_plan and attempt is None:
-                started_at = datetime.fromisoformat(str(plan["started_at"]))
-                if started_at > datetime.now(UTC) - timedelta(seconds=60):
-                    raise ValueError("charge_in_progress: this charge is already being submitted")
-            if invoice.balance_due_cents != expected_amount_cents and attempt is None:
-                raise ValueError(
-                    "charge_target_changed: invoice balance changed; refresh and retry"
-                )
-            if attempt is not None and (
-                str(attempt.get("status")) != "succeeded"
-                or invoice.balance_due_cents != expected_amount_cents
-            ):
-                attempt_status = str(attempt.get("status"))
-                payload = {
-                    "invoice_id": invoice_id,
-                    "success": attempt_status == "succeeded",
-                    "status": invoice.status,
-                    "balance_due_cents": invoice.balance_due_cents,
-                    "charged_amount_cents": (
-                        int(attempt.get("amount_cents") or 0)
-                        if attempt_status == "succeeded"
-                        else 0
-                    ),
-                    "attempted_amount_cents": int(attempt.get("amount_cents") or 0),
-                    "processing": attempt_status == "processing",
-                    "requires_action": attempt_status == "requires_action",
-                    "decline_code": attempt.get("failure_code"),
-                }
-            else:
-                result = await charge_invoice_via_autopay(
-                    invoice_id,
-                    source="admin_billing_setup",
-                    actor_id=actor_id,
-                    retry_scope=request_id,
-                )
-                payload = result
-                payload["charged_amount_cents"] = (
-                    int(result.get("attempted_amount_cents", 0))
-                    if bool(result.get("success"))
-                    else 0
-                )
-            try:
-                await idempotency_store.put(result_key, {"payload": payload})
-            except DuplicateKeyError:
-                cached_result = await idempotency_store.get(result_key)
-                if cached_result is None:
-                    raise
-                payload = cached_result["payload"]
-
-        assert payload is not None
-
-        await billing_audit_log.append(
-            BillingAuditEntry(
-                audit_id=(
-                    f"baud-billing-setup-charge-{request_academy_id}-{invoice_id}-{request_id}"
-                ),
-                academy_id=request_academy_id,
-                action="admin_charge_initiated",
-                actor_id=actor_id,
-                at=datetime.now(UTC),
-                invoice_id=invoice_id,
-                reason="Billing Setup charge now",
-                before={"balance_due_cents": expected_amount_cents},
-                after={
-                    "success": bool(payload["success"]),
-                    "status": str(payload["status"]),
-                    "balance_due_cents": int(payload["balance_due_cents"]),
-                    "attempted_amount_cents": int(payload["attempted_amount_cents"]),
-                },
-            )
-        )
-        return payload
 
     async def enable_billing_setup_autopay(
         *, parent_id: str, actor_id: str, request_id: str
@@ -4483,6 +4450,7 @@ def compose_admin(
         send_billing_invoice=send_billing_invoice,
         send_generated_invoices=send_generated_invoices,
         charge_invoice_via_autopay=charge_invoice_via_autopay,
+        charge_invoice_as_admin_action=charge_invoice_as_admin_action,
         list_reconciliation_runs=list_reconciliation_runs,
         run_reconciliation=run_reconciliation,
         list_failed_payment_attempts=list_failed_payment_attempts,

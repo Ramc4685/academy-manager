@@ -2389,11 +2389,16 @@ export function chargeAdminInvoiceAutopay(
   invoiceId: string,
   reason?: string,
 ): Promise<ChargeAutopayResponse> {
+  // request_id makes a retried submit the same charge rather than a second one.
   return apiFetch<ChargeAutopayResponse>(
     `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/charge-autopay`,
-    reason
-      ? { method: "POST", body: JSON.stringify({ reason }) }
-      : { method: "POST" },
+    {
+      method: "POST",
+      body: JSON.stringify({
+        ...(reason ? { reason } : {}),
+        request_id: crypto.randomUUID(),
+      }),
+    },
   );
 }
 
