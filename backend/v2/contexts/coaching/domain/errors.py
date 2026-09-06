@@ -60,3 +60,20 @@ class BulkStudentNotEnrolled(DomainError):
 
     code = "Coaching.BulkStudentNotEnrolled"
     status_code = 422
+
+
+class NoteShareForbidden(DomainError):
+    """An assistant-only caller tried to share a note with a parent (or change
+    its visibility at all). A forbidden action on an allowed surface, so 403 —
+    not the wrong-persona 404."""
+
+    code = "Coaching.NoteShareForbidden"
+    status_code = 403
+
+
+class NoteNotFound(DomainError):
+    """Visibility change on a note that does not exist in this session/student,
+    or that a non-supervisor did not author."""
+
+    code = "Coaching.NoteNotFound"
+    status_code = 404

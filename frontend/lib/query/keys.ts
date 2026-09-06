@@ -23,6 +23,8 @@ export const queryKeys = {
       ["coach", "session", sessionId, "skills", date, programId ?? "default"] as const,
     skillNotes: (studentId: string, skillId: string) =>
       ["coach", "skill-notes", studentId, skillId] as const,
+    progressNotes: (sessionId: string) =>
+      ["coach", "progress-notes", sessionId] as const,
     messages: () => ["coach", "messages"] as const,
     calendar: () => ["coach", "calendar"] as const,
     billingEnrollments: (sessionId: string) =>

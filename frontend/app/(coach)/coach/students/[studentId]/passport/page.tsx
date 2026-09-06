@@ -124,7 +124,7 @@ export default function CoachStudentPassportPage() {
           <p>Couldn&apos;t load skill passport. Try again.</p>
           <button
             onClick={() => void refetch()}
-            className="mt-2 min-h-[36px] rounded-md border border-red-200 px-3 text-sm font-medium"
+            className="mt-2 min-h-touch rounded-md border border-red-200 px-3 text-sm font-medium"
           >
             Retry
           </button>
@@ -195,7 +195,10 @@ function SkillCard({
   });
 
   return (
-    <li className="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+    <li
+      data-testid={`passport-skill-${entry.skill_id}`}
+      className="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900"
+    >
       {/* Header row */}
       <div className="mb-3 flex flex-col gap-2 min-[420px]:flex-row min-[420px]:items-start min-[420px]:justify-between">
         <div className="flex-1 min-w-0">
@@ -243,7 +246,7 @@ function SkillCard({
           onChange={(e) => statusMutation.mutate(e.target.value as SkillStatus)}
           disabled={statusMutation.isPending}
           aria-label={`Status for ${entry.skill_name}`}
-          className="min-h-[36px] min-w-0 rounded-lg border border-neutral-300 bg-white px-2 py-1.5 text-xs font-medium focus:border-blue-500 focus:outline-none dark:border-neutral-700 dark:bg-neutral-800"
+          className="h-11 min-h-touch min-w-0 rounded-lg border border-neutral-300 bg-white px-2 py-1.5 text-xs font-medium focus:border-blue-500 focus:outline-none dark:border-neutral-700 dark:bg-neutral-800"
         >
           {/* Keep the current value selectable-but-disabled when it is one a coach
               cannot set by hand (Not started / Passed), so the select still shows it. */}
@@ -267,14 +270,14 @@ function SkillCard({
 
         <button
           onClick={() => setShowTestForm((v) => !v)}
-          className="min-h-[36px] rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 transition-colors hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300"
+          className="min-h-touch rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 transition-colors hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300"
         >
           {showTestForm ? "Cancel" : "Record Test"}
         </button>
 
         <button
           onClick={() => setShowNotesPanel(true)}
-          className="min-h-[36px] rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 transition-colors hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300"
+          className="min-h-touch rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 transition-colors hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300"
         >
           Notes
         </button>
@@ -337,7 +340,7 @@ function SkillCard({
           <button
             disabled={testMutation.isPending}
             onClick={() => testMutation.mutate()}
-            className="w-full min-h-[36px] rounded-lg bg-blue-600 text-sm font-semibold text-white transition-all active:scale-95 disabled:opacity-60"
+            className="w-full min-h-touch rounded-lg bg-blue-600 text-sm font-semibold text-white transition-all active:scale-95 disabled:opacity-60"
           >
             {testMutation.isPending ? "Saving..." : "Save Test"}
           </button>

@@ -11,6 +11,7 @@ import {
   coachDayHubPath,
   coachSessionBulkSkillStatusPath,
   coachSessionSkillsPath,
+  coachSkillNotePath,
   coachSkillNotesPath,
 } from "./coach-paths";
 
@@ -182,6 +183,14 @@ export interface LessonPlan {
   created_at: string;
 }
 
+/**
+ * Who a coach note is for. Notes default to `private` (coaches, assistants
+ * and supervisors only); `shared` notes also reach the student's parents.
+ * Assistant coaches may write notes but never share them (the BFF answers
+ * 403 `Coaching.NoteShareForbidden`).
+ */
+export type NoteVisibility = "private" | "shared";
+
 export interface ProgressNote {
   note_id: string;
   session_id: string;
@@ -189,16 +198,19 @@ export interface ProgressNote {
   coach_id: string;
   body: string;
   created_at: string;
+  visibility: NoteVisibility;
 }
 
 export interface SkillNote {
   note_id: string;
+  academy_id?: string;
   student_id: string;
   skill_id: string;
   coach_id: string;
   session_id: string | null;
   body: string;
   created_at: string;
+  visibility: NoteVisibility;
 }
 
 export interface CoachScheduleEntry {
@@ -350,13 +362,28 @@ export function listProgressNotes(
 
 export function createProgressNote(
   sessionId: string,
-  payload: { student_id: string; body: string },
+  payload: { student_id: string; body: string; visibility?: NoteVisibility },
 ): Promise<ProgressNote> {
   return apiFetch(
     `/coach/sessions/${encodeURIComponent(sessionId)}/progress-notes`,
     {
       method: "POST",
       body: JSON.stringify(payload),
+    },
+  );
+}
+
+/** Flip a progress note between private and shared-with-parent. */
+export function setProgressNoteVisibility(
+  sessionId: string,
+  noteId: string,
+  visibility: NoteVisibility,
+): Promise<ProgressNote> {
+  return apiFetch(
+    `/coach/sessions/${encodeURIComponent(sessionId)}/progress-notes/${encodeURIComponent(noteId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ visibility }),
     },
   );
 }
@@ -370,11 +397,23 @@ export function listSkillNotes(
 
 export function createSkillNote(
   studentId: string,
-  payload: { skill_id: string; body: string },
+  payload: { skill_id: string; body: string; visibility?: NoteVisibility },
 ): Promise<SkillNote> {
   return apiFetch(coachSkillNotesPath(studentId), {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+/** Flip a skill note between private and shared-with-parent. */
+export function setSkillNoteVisibility(
+  studentId: string,
+  noteId: string,
+  visibility: NoteVisibility,
+): Promise<SkillNote> {
+  return apiFetch(coachSkillNotePath(studentId, noteId), {
+    method: "PATCH",
+    body: JSON.stringify({ visibility }),
   });
 }
 

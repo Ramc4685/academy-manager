@@ -88,6 +88,69 @@ test.describe("Assistant coach shell", () => {
     expect(leadOnlyCalls).toEqual([]);
   });
 
+  test("notes stay private: no share switch, no toggle, private default on save", async ({
+    page,
+    mock,
+  }) => {
+    mock.progressNotes.push({
+      note_id: "note-lead",
+      session_id: "s-today-1",
+      student_id: "st1",
+      coach_id: "user-coach-e2e",
+      body: "Lead coach note",
+      created_at: new Date().toISOString(),
+      visibility: "shared",
+    });
+    await page.goto("/coach/sessions/s-today-1");
+    await page.getByTestId("roster-st1").getByRole("button", { name: "Note", exact: true }).click();
+    await expect(page.getByTestId("note-private-hint")).toContainText(
+      "stay private to coaches",
+    );
+    await expect(page.getByTestId("note-share-st1")).toHaveCount(0);
+    // Existing notes still list with their audience, but nothing can flip it.
+    await expect(page.getByTestId("note-visibility-note-lead")).toHaveText(/shared with parent/i);
+    await expect(page.getByTestId("note-share-toggle-note-lead")).toHaveCount(0);
+
+    await page.getByPlaceholder("Progress note for Alice…").fill("Worked on grip");
+    await page.getByRole("button", { name: "Save note" }).click();
+    await expect.poll(() => mock.progressNoteCalls.length).toBe(1);
+    expect(mock.progressNoteCalls[0]).toEqual({
+      student_id: "st1",
+      body: "Worked on grip",
+      visibility: "private",
+    });
+  });
+
+  test("skill notes panel has no share control for an assistant", async ({ page, mock }) => {
+    mock.skillNotes.push({
+      note_id: "skill-note-lead",
+      academy_id: "academy-e2e",
+      student_id: "st1",
+      skill_id: "skill-backhand",
+      coach_id: "user-coach-e2e",
+      session_id: null,
+      body: "Backhand improving",
+      created_at: new Date().toISOString(),
+      visibility: "private",
+    });
+    await page.goto("/coach/students/st1/passport?student_name=Alice");
+    await expect(page.getByTestId("coach-student-passport")).toBeVisible();
+    await page.getByTestId("passport-skill-skill-backhand").getByRole("button", { name: "Notes" }).click();
+    await expect(page.getByTestId("skill-note-skill-note-lead")).toContainText("Backhand improving");
+    await expect(page.getByTestId("skill-note-private-hint")).toBeVisible();
+    await expect(page.getByTestId("skill-note-share")).toHaveCount(0);
+    await expect(page.getByTestId("skill-note-share-toggle-skill-note-lead")).toHaveCount(0);
+
+    await page.getByPlaceholder("Add a note about this skill...").fill("Keep the elbow up");
+    await page.getByRole("button", { name: "Add Note" }).click();
+    await expect.poll(() => mock.skillNoteCalls.length).toBe(1);
+    expect(mock.skillNoteCalls[0]).toEqual({
+      skill_id: "skill-backhand",
+      body: "Keep the elbow up",
+      visibility: "private",
+    });
+  });
+
   test("profile has no pay card", async ({ page }) => {
     await page.goto("/coach/profile");
     await expect(page.getByTestId("coach-profile")).toBeVisible();

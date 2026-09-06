@@ -28,6 +28,11 @@ export function coachSkillNotesPath(studentId: string, skillId?: string): string
   });
 }
 
+/** One skill note — the PATCH target for its visibility flag. */
+export function coachSkillNotePath(studentId: string, noteId: string): string {
+  return `/coach/students/${encodeURIComponent(studentId)}/skill-notes/${encodeURIComponent(noteId)}`;
+}
+
 function withParams(path: string, params: Record<string, string | undefined>): string {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {

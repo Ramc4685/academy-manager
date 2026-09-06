@@ -49,10 +49,12 @@ from backend.v2.contexts.coaching.application.use_cases.session_notes import (
     CreateProgressNote,
     ListLessonPlans,
     ListProgressNotes,
+    SetProgressNoteVisibility,
 )
 from backend.v2.contexts.coaching.application.use_cases.skill_notes import (
     CreateSkillNote,
     ListSkillNotes,
+    SetSkillNoteVisibility,
 )
 from backend.v2.contexts.coaching.infrastructure.mongo_attendance_repo import (
     MongoAttendanceRepository,
@@ -194,6 +196,10 @@ class CoachComposition:
     # resolution for admins/owners covering the coach surface.
     list_all_sessions_for_academy: object = None  # Callable[[], Awaitable[list[...]]]
     resolve_user_names: object = None  # Callable[[Sequence[str]], Awaitable[dict[str, str]]]
+    # Note visibility (coach phone slice 3). Optional defaults keep hand-built
+    # test compositions working; real composition always sets both.
+    set_progress_note_visibility: SetProgressNoteVisibility | None = None
+    set_skill_note_visibility: SetSkillNoteVisibility | None = None
 
 
 class CoachAssignedSessionLookup:
@@ -491,6 +497,9 @@ def compose_coach(
             enrollments=enrollments_repo,
         ),
         list_progress_notes=ListProgressNotes(notes=notes_repo, sessions=assigned_sessions),
+        set_progress_note_visibility=SetProgressNoteVisibility(
+            notes=notes_repo, sessions=assigned_sessions
+        ),
         assigned_sessions=assigned_sessions,
         add_student_to_roster=CoachAddStudentToRoster(
             sessions=sessions_repo,
@@ -540,6 +549,7 @@ def compose_coach(
         # Skill pathway
         create_skill_note=CreateSkillNote(notes=skill_note_repo),
         list_skill_notes=ListSkillNotes(notes=skill_note_repo),
+        set_skill_note_visibility=SetSkillNoteVisibility(notes=skill_note_repo),
         student_progress=student_progress_comp,
         curriculum=compose_curriculum(db),
         generate_daily_teaching_plan=generate_daily_teaching_plan,

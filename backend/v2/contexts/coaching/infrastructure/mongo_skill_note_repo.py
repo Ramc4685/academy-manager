@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from backend.v2.contexts.coaching.domain.models import CoachSkillNote
+from typing import cast
+
+from backend.v2.contexts.coaching.domain.models import CoachSkillNote, NoteVisibility
 from backend.v2.shared.tenancy import TenantScopedRepository
 
 
@@ -20,6 +22,8 @@ class MongoSkillNoteRepository(TenantScopedRepository):
             session_id=str(doc["session_id"]) if doc.get("session_id") is not None else None,
             body=str(doc.get("body") or ""),
             created_at=doc["created_at"],
+            # Legacy docs (pre-0167) carry no flag and read as private.
+            visibility=cast(NoteVisibility, doc.get("visibility") or "private"),
         )
 
     async def save(self, note: CoachSkillNote) -> None:
@@ -32,8 +36,22 @@ class MongoSkillNoteRepository(TenantScopedRepository):
                 "session_id": note.session_id,
                 "body": note.body,
                 "created_at": note.created_at,
+                "visibility": note.visibility,
             }
         )
+
+    async def get(self, student_id: str, note_id: str) -> CoachSkillNote | None:
+        doc = await self._find_one({"student_id": student_id, "note_id": note_id})
+        return self._to_domain(doc) if doc else None
+
+    async def set_visibility(
+        self, student_id: str, note_id: str, visibility: NoteVisibility
+    ) -> CoachSkillNote | None:
+        doc = await self._find_one_and_update(
+            {"student_id": student_id, "note_id": note_id},
+            {"$set": {"visibility": visibility}},
+        )
+        return self._to_domain(doc) if doc else None
 
     async def list_for_student_skill(self, student_id: str, skill_id: str) -> list[CoachSkillNote]:
         cursor = self._find_many(

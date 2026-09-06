@@ -36,6 +36,10 @@ from backend.v2.contexts.coaching.application.use_cases.session_notes import (
     CreateProgressNote,
     ListLessonPlans,
     ListProgressNotes,
+    SetProgressNoteVisibility,
+)
+from backend.v2.contexts.coaching.application.use_cases.skill_notes import (
+    SetSkillNoteVisibility,
 )
 from backend.v2.contexts.enrollment.application.use_cases.coach_roster_writes import (
     CoachAddStudentToRoster,
@@ -125,6 +129,12 @@ class CoachUseCases:
     # the coach-scoped list.
     list_all_sessions_for_academy: Callable[[], Awaitable[list[Any]]] | None = None
     resolve_user_names: Callable[[Sequence[str]], Awaitable[dict[str, str]]] | None = None
+    # Note visibility (coach phone slice 3): share a note with the parent or
+    # make it private again. The progress-note one is required by its route
+    # but optional here so fixtures that predate it keep constructing; the
+    # skill-note one is optional like ``create_skill_note`` (503 when unset).
+    set_progress_note_visibility: SetProgressNoteVisibility | None = None
+    set_skill_note_visibility: SetSkillNoteVisibility | None = None
 
 
 def get_coach_use_cases(request: Request) -> CoachUseCases:

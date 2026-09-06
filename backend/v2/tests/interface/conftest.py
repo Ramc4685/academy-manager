@@ -41,6 +41,7 @@ from backend.v2.contexts.coaching.application.use_cases.session_notes import (
     CreateProgressNote,
     ListLessonPlans,
     ListProgressNotes,
+    SetProgressNoteVisibility,
 )
 from backend.v2.contexts.coaching.domain.models import Attendance, CoachAttendance
 from backend.v2.contexts.enrollment.application.use_cases.coach_roster_writes import (
@@ -250,7 +251,25 @@ class FakeCoachingNotesRepo:
         self.notes.append(note)
 
     async def list_progress_notes(self, session_id, coach_id):
-        return [n for n in self.notes if n.session_id == session_id and n.coach_id == coach_id]
+        # ``coach_id=None`` = every author (supervisor listing).
+        return [
+            n
+            for n in self.notes
+            if n.session_id == session_id and (coach_id is None or n.coach_id == coach_id)
+        ]
+
+    async def get_progress_note(self, session_id, note_id):
+        for n in self.notes:
+            if n.session_id == session_id and n.note_id == note_id:
+                return n
+        return None
+
+    async def set_progress_note_visibility(self, session_id, note_id, visibility):
+        for i, n in enumerate(self.notes):
+            if n.session_id == session_id and n.note_id == note_id:
+                self.notes[i] = n.model_copy(update={"visibility": visibility})
+                return self.notes[i]
+        return None
 
     async def find_by_attendance_id(self, attendance_id):
         for a in self.saved:
@@ -794,6 +813,9 @@ def _build_use_cases(seed_data) -> CoachUseCases:
             enrollments=enrollments,
         ),
         list_progress_notes=ListProgressNotes(notes=notes, sessions=session_lookup),
+        set_progress_note_visibility=SetProgressNoteVisibility(
+            notes=notes, sessions=session_lookup
+        ),
         assigned_sessions=session_lookup,
         add_student_to_roster=CoachAddStudentToRoster(
             sessions=rw_store,

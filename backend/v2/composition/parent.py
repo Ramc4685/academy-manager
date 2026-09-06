@@ -1413,13 +1413,17 @@ def compose_parent(
         if not by_id:
             return [], 0
         query = {"academy_id": academy_id, "student_id": {"$in": list(by_id)}}
-        total_notes = await db["progress_notes"].count_documents(query)
+        # Coach notes default to private; a parent sees only the ones the
+        # coach explicitly shared. Legacy docs without the field are private
+        # (migration 0167 backfills them), so an equality match is exact.
+        notes_query = {**query, "visibility": "shared"}
+        total_notes = await db["progress_notes"].count_documents(notes_query)
         total_feedback = await db["session_feedback"].count_documents(query)
         total = total_notes + total_feedback
         # Fetch ALL matching rows from both collections (no skip/limit on DB queries)
         # so we can merge and slice correctly — avoids page 2 repeating feedback items.
         note_rows = [
-            doc async for doc in db["progress_notes"].find(query).sort([("created_at", -1)])
+            doc async for doc in db["progress_notes"].find(notes_query).sort([("created_at", -1)])
         ]
         feedback_rows = [
             doc async for doc in db["session_feedback"].find(query).sort([("created_at", -1)])
