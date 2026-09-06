@@ -2,7 +2,7 @@
 
 import { apiFetch } from "@/lib/api/client";
 import { recordAudit } from "./audit";
-import { dropById, list, listQueued, type QueuedMutation, update } from "./queue";
+import { dropById, getById, list, listQueued, type QueuedMutation, update } from "./queue";
 
 /**
  * Offline mutation sync orchestrator.
@@ -52,6 +52,9 @@ export async function syncNow(): Promise<void> {
       const outcome = await sendOne(m);
       if (outcome === "succeeded") processed += 1;
       if (outcome === "needs_review") tray += 1;
+      // "superseded": a fresh tap replaced this mutation while it was in
+      // flight. Nothing to count and nothing to write back — the replacement
+      // is already in the queue and goes out on the next run.
       if (outcome === "paused") {
         emit({ kind: "paused", reason: "max attempts exceeded in this run" });
         break;
@@ -64,7 +67,35 @@ export async function syncNow(): Promise<void> {
   }
 }
 
-async function sendOne(m: QueuedMutation): Promise<"succeeded" | "needs_review" | "paused"> {
+type SendOutcome = "succeeded" | "needs_review" | "paused" | "superseded";
+
+/**
+ * Merge a few fields into the stored copy of a mutation, re-reading it first.
+ *
+ * `syncNow` iterates a snapshot taken at run start, so writing `{...snapshot}`
+ * back would resurrect a record a fresh coach tap has since dropped, or clobber
+ * a payload it rewrote. Returns null when the record is gone — the caller must
+ * then leave it alone.
+ */
+async function patchRecord(
+  mutation_id: string,
+  fields: Partial<Pick<QueuedMutation, "status" | "attempts" | "last_attempt_at" | "error">>,
+): Promise<QueuedMutation | null> {
+  const current = await getById(mutation_id);
+  if (!current) return null;
+  const next: QueuedMutation = { ...current, ...fields };
+  await update(next);
+  return next;
+}
+
+async function sendOne(snapshot: QueuedMutation): Promise<SendOutcome> {
+  // Claim the mutation for this run BEFORE the first POST. `queueMark` treats
+  // an `in_flight` record as un-rewritable, so a tap that lands while we are
+  // replaying enqueues a NEW mutation with its own idempotency key instead of
+  // mutating the payload we are about to send (or one the server may already
+  // have committed under this id).
+  const m = await patchRecord(snapshot.mutation_id, { status: "in_flight" });
+  if (!m) return "superseded";
   let attempt = m.attempts;
   while (attempt < MAX_ATTEMPTS) {
     if (RETRY_DELAYS_MS[attempt] > 0) {
@@ -88,9 +119,8 @@ async function sendOne(m: QueuedMutation): Promise<"succeeded" | "needs_review" 
     } catch (err) {
       const status = (err as { status?: number }).status;
       if (typeof status === "number" && status >= 400 && status < 500) {
-        // Domain error — move to tray.
-        const updated: QueuedMutation = {
-          ...m,
+        // Domain error — move to tray, unless a fresh tap already replaced it.
+        const updated = await patchRecord(m.mutation_id, {
           status: "needs_review",
           attempts: attempt,
           last_attempt_at: new Date().toISOString(),
@@ -99,8 +129,8 @@ async function sendOne(m: QueuedMutation): Promise<"succeeded" | "needs_review" 
             message: (err as { message?: string }).message ?? "Unknown",
             details: (err as { details?: Record<string, unknown> }).details,
           },
-        };
-        await update(updated);
+        });
+        if (!updated) return "superseded";
         await recordAudit({
           kind: "needs_review",
           mutation_id: m.mutation_id,
@@ -119,8 +149,15 @@ async function sendOne(m: QueuedMutation): Promise<"succeeded" | "needs_review" 
       });
     }
   }
-  // Max attempts hit without success — surface as paused; remains in queue.
-  await update({ ...m, attempts: attempt, last_attempt_at: new Date().toISOString() });
+  // Max attempts hit without success — surface as paused; release the claim so
+  // the mark is `queued` again (and picked up by the next run) without
+  // overwriting anything a concurrent tap changed.
+  const released = await patchRecord(m.mutation_id, {
+    status: "queued",
+    attempts: attempt,
+    last_attempt_at: new Date().toISOString(),
+  });
+  if (!released) return "superseded";
   return "paused";
 }
 
@@ -131,7 +168,9 @@ export function startAutoSync(): () => void {
   window.addEventListener("online", handler);
   // Kick once on mount in case we mounted online with queued items.
   void list().then((items) => {
-    if (items.some((m) => m.status === "queued") && navigator.onLine) {
+    // `in_flight` too: a run killed mid-replay (tab closed, reload) leaves its
+    // claim behind, and that mark still has to go out.
+    if (items.some((m) => m.status === "queued" || m.status === "in_flight") && navigator.onLine) {
       void syncNow();
     }
   });

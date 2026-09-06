@@ -14,6 +14,10 @@ AttendanceStatus = Literal["present", "absent", "late"]
 CoachAttendanceStatus = Literal["present", "absent"]
 CoachAttendanceRole = Literal["lead", "assistant"]
 CoachAttendanceSource = Literal["coach_self", "admin"]
+# Who may read a coach-authored note: ``private`` stays with coaches and
+# supervisors, ``shared`` is visible to the student's parent. Missing on
+# legacy documents, which read as private (migration 0167 backfills them).
+NoteVisibility = Literal["private", "shared"]
 
 
 class Attendance(BaseModel):
@@ -87,3 +91,4 @@ class CoachSkillNote(BaseModel):
     session_id: str | None = None
     body: str
     created_at: datetime
+    visibility: NoteVisibility = "private"

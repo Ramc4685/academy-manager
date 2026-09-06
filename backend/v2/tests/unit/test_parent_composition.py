@@ -2655,3 +2655,82 @@ async def test_zero_quote_period_is_stamped_in_the_session_timezone(
     app_doc = await db["onboarding_applications"].find_one({"application_id": "app-1"})
     assert app_doc["status"] == "PENDING_APPROVAL"
     assert app_doc["zero_quote_period"] == "2027-08"
+
+
+# ---------------------------------------------------------------------------
+# Progress feed: parents see only notes a coach explicitly shared
+# (coach phone slice 3 — note visibility)
+# ---------------------------------------------------------------------------
+
+
+async def test_parent_progress_feed_lists_only_shared_notes() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-progress"]
+    await _seed_profile_fixture(db)
+    await db["users"].insert_one(
+        {"user_id": "coach-1", "academy_id": "acad", "display_name": "Coach One"}
+    )
+    await db["sessions"].insert_one({"academy_id": "acad", "session_id": "s-1", "title": "Juniors"})
+    base = {
+        "academy_id": "acad",
+        "session_id": "s-1",
+        "student_id": "stu-1",
+        "coach_id": "coach-1",
+    }
+    await db["progress_notes"].insert_many(
+        [
+            {
+                **base,
+                "note_id": "shared",
+                "body": "Shared with mum",
+                "created_at": datetime(2026, 9, 3, tzinfo=UTC),
+                "visibility": "shared",
+            },
+            {
+                **base,
+                "note_id": "private",
+                "body": "Coaches only",
+                "created_at": datetime(2026, 9, 4, tzinfo=UTC),
+                "visibility": "private",
+            },
+            {
+                # Pre-0167 document: no field at all, reads as private.
+                **base,
+                "note_id": "legacy",
+                "body": "Old note",
+                "created_at": datetime(2026, 9, 5, tzinfo=UTC),
+            },
+            {
+                # Shared, but another family's child.
+                **base,
+                "student_id": "stu-other-parent",
+                "note_id": "other-family",
+                "body": "Not yours",
+                "created_at": datetime(2026, 9, 5, tzinfo=UTC),
+                "visibility": "shared",
+            },
+        ]
+    )
+    # Feedback rows are untouched by the visibility rule.
+    await db["session_feedback"].insert_one(
+        {
+            **base,
+            "feedback_id": "fb-1",
+            "body": "Great session",
+            "rating": 5,
+            "created_at": datetime(2026, 9, 1, tzinfo=UTC),
+        }
+    )
+    parent = await _compose_profile_parent(db)
+
+    with tenant_scope("acad"):
+        rows, total = await parent.list_progress_for_parent("parent-1")
+
+    assert total == 2
+    assert [(r["note_id"], r["note_type"]) for r in rows] == [
+        ("shared", "progress_note"),
+        ("fb-1", "feedback"),
+    ]
+    assert rows[0]["coach_name"] == "Coach One"
+    assert rows[0]["session_title"] == "Juniors"
+    assert "visibility" not in rows[0], "response shape is unchanged"

@@ -10,6 +10,8 @@ from pydantic import BaseModel, model_validator
 
 from backend.v2.contexts.coaching.application.use_cases.skill_notes import (
     CreateSkillNoteCommand,
+    NoteVisibility,
+    SetSkillNoteVisibilityCommand,
 )
 from backend.v2.contexts.student_progress.application.errors import StudentNotPlaced
 from backend.v2.contexts.student_progress.application.use_cases.get_passport import (
@@ -34,7 +36,7 @@ from backend.v2.contexts.student_progress.application.use_cases.update_skill_sta
 )
 from backend.v2.interfaces.coach.deps import CoachUseCases, get_coach_use_cases
 from backend.v2.shared.auth.claims import AuthClaims
-from backend.v2.shared.http import require_coach_surface
+from backend.v2.shared.http import is_assistant_only, is_coach_supervisor, require_coach_surface
 
 log = logging.getLogger(__name__)
 
@@ -88,6 +90,11 @@ class RecommendLevelUpBody(BaseModel):
 class CreateSkillNoteBody(BaseModel):
     skill_id: str
     body: str
+    visibility: NoteVisibility = "private"
+
+
+class SetSkillNoteVisibilityBody(BaseModel):
+    visibility: NoteVisibility
 
 
 class BulkStatusBody(BaseModel):
@@ -538,8 +545,37 @@ async def create_skill_note(
             coach_id=claims.user_id,
             session_id=session_id,
             body=body.body,
+            visibility=body.visibility,
+            is_assistant=is_assistant_only(claims),
         ),
         academy_id=claims.academy_id,
+    )
+    return result.model_dump() if hasattr(result, "model_dump") else result
+
+
+@router.patch("/students/{student_id}/skill-notes/{note_id}")
+async def set_skill_note_visibility(
+    student_id: str,
+    note_id: str,
+    body: SetSkillNoteVisibilityBody,
+    claims: AuthClaims = Depends(require_coach_surface()),
+    use_cases: CoachUseCases = Depends(get_coach_use_cases),
+) -> object:
+    """Share a skill note with the parent or make it private again. Same
+    surface as create: an assistant reaches it and gets 403
+    ``Coaching.NoteShareForbidden``; author-or-supervisor rule in the use case."""
+    await _require_assigned_to_student(use_cases, claims.user_id, student_id)
+    if use_cases.set_skill_note_visibility is None:
+        raise HTTPException(status_code=503, detail="Skill notes service not configured")
+    result = await use_cases.set_skill_note_visibility.execute(
+        SetSkillNoteVisibilityCommand(
+            student_id=student_id,
+            note_id=note_id,
+            visibility=body.visibility,
+            coach_id=claims.user_id,
+            is_assistant=is_assistant_only(claims),
+            is_supervisor=is_coach_supervisor(claims),
+        )
     )
     return result.model_dump() if hasattr(result, "model_dump") else result
 

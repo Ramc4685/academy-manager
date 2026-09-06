@@ -524,3 +524,124 @@ def test_domain_round_trip_defaults_to_no_assistants():
         scheduled_coach_id="c",
     )
     assert occurrence.assistant_coach_ids == ()
+
+
+# --- note visibility (coach phone slice 3) ---------------------------------
+#
+# Notes default to private; an assistant may write them but never share
+# them (403 ``Coaching.NoteShareForbidden`` — a forbidden action on an
+# allowed surface, not the wrong-persona 404). Author or supervisor may flip
+# the flag afterwards; anyone else gets 404 ``Coaching.NoteNotFound``.
+
+NOTES_PATH = f"/api/v2/coach/sessions/{ASSISTED_SESSION}/progress-notes"
+
+
+def _note_repo(client):
+    return client.coach_use_cases.list_progress_notes._notes  # type: ignore[attr-defined]
+
+
+def _seed_note(client, *, coach_id: str, note_id: str, visibility: str = "private"):
+    from backend.v2.contexts.coaching.application.use_cases.session_notes import ProgressNote
+
+    note = ProgressNote(
+        note_id=note_id,
+        session_id=ASSISTED_SESSION,
+        student_id="st1",
+        coach_id=coach_id,
+        body=f"note by {coach_id}",
+        created_at=datetime(2026, 5, 16, 9, 30, tzinfo=UTC),
+        visibility=visibility,  # type: ignore[arg-type]
+    )
+    _note_repo(client).notes.append(note)
+    return note
+
+
+def test_assistant_note_defaults_to_private(assistant_client):
+    r = assistant_client.post(NOTES_PATH, json={"student_id": "st1", "body": "Quiet today"})
+    assert r.status_code == 200, r.text
+    assert r.json()["visibility"] == "private"
+    listed = assistant_client.get(NOTES_PATH).json()["notes"]
+    assert [n["visibility"] for n in listed] == ["private"]
+
+
+def test_assistant_cannot_share_a_note_on_create(assistant_client):
+    r = assistant_client.post(
+        NOTES_PATH, json={"student_id": "st1", "body": "Tell mum", "visibility": "shared"}
+    )
+    assert r.status_code == 403, r.text
+    assert r.json()["error"]["code"] == "Coaching.NoteShareForbidden"
+    assert _note_repo(assistant_client).notes == [], "a refused share writes nothing"
+
+
+@pytest.mark.parametrize("visibility", ["shared", "private"])
+def test_assistant_cannot_change_visibility_at_all(assistant_client, visibility):
+    note = _seed_note(assistant_client, coach_id=ASSISTANT, note_id="n-asst")
+    r = assistant_client.patch(f"{NOTES_PATH}/{note.note_id}", json={"visibility": visibility})
+    assert r.status_code == 403, r.text
+    assert r.json()["error"]["code"] == "Coaching.NoteShareForbidden"
+
+
+def test_lead_coach_shares_then_unshares_own_note(coach_client):
+    created = coach_client.post(NOTES_PATH, json={"student_id": "st1", "body": "Great smash"})
+    assert created.status_code == 200, created.text
+    note_id = created.json()["note_id"]
+    assert created.json()["visibility"] == "private"
+
+    shared = coach_client.patch(f"{NOTES_PATH}/{note_id}", json={"visibility": "shared"})
+    assert shared.status_code == 200, shared.text
+    assert shared.json()["visibility"] == "shared"
+    assert shared.json()["note_id"] == note_id
+
+    private = coach_client.patch(f"{NOTES_PATH}/{note_id}", json={"visibility": "private"})
+    assert private.status_code == 200, private.text
+    assert private.json()["visibility"] == "private"
+    assert [n["visibility"] for n in coach_client.get(NOTES_PATH).json()["notes"]] == ["private"]
+
+
+def test_lead_coach_can_create_a_shared_note(coach_client):
+    r = coach_client.post(
+        NOTES_PATH, json={"student_id": "st1", "body": "Show this", "visibility": "shared"}
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["visibility"] == "shared"
+
+
+def test_lead_coach_cannot_touch_another_coachs_note(coach_client):
+    other = _seed_note(coach_client, coach_id="coach-2", note_id="n-other")
+    r = coach_client.patch(f"{NOTES_PATH}/{other.note_id}", json={"visibility": "shared"})
+    assert r.status_code == 404, r.text
+    assert r.json()["error"]["code"] == "Coaching.NoteNotFound"
+
+
+def test_patch_unknown_note_is_404(coach_client):
+    r = coach_client.patch(f"{NOTES_PATH}/no-such-note", json={"visibility": "shared"})
+    assert r.status_code == 404, r.text
+    assert r.json()["error"]["code"] == "Coaching.NoteNotFound"
+
+
+def test_patch_rejects_unknown_visibility(coach_client):
+    note = _seed_note(coach_client, coach_id="coach-1", note_id="n-mine")
+    r = coach_client.patch(f"{NOTES_PATH}/{note.note_id}", json={"visibility": "public"})
+    assert r.status_code == 422, r.text
+
+
+def test_coach_lists_only_own_notes(coach_client):
+    _seed_note(coach_client, coach_id="coach-1", note_id="n-mine")
+    _seed_note(coach_client, coach_id="coach-2", note_id="n-other")
+    r = coach_client.get(NOTES_PATH)
+    assert r.status_code == 200, r.text
+    assert [n["note_id"] for n in r.json()["notes"]] == ["n-mine"]
+
+
+def test_supervisor_lists_every_authors_notes_and_can_share_any(coach_admin_client):
+    _seed_note(coach_admin_client, coach_id="coach-1", note_id="n-c1")
+    _seed_note(coach_admin_client, coach_id=ASSISTANT, note_id="n-asst")
+
+    listed = coach_admin_client.get(NOTES_PATH)
+    assert listed.status_code == 200, listed.text
+    assert {n["note_id"] for n in listed.json()["notes"]} == {"n-c1", "n-asst"}
+
+    r = coach_admin_client.patch(f"{NOTES_PATH}/n-asst", json={"visibility": "shared"})
+    assert r.status_code == 200, r.text
+    assert r.json()["visibility"] == "shared"
+    assert r.json()["coach_id"] == ASSISTANT, "author is preserved; only the flag moves"

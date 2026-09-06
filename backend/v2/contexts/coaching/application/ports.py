@@ -10,6 +10,8 @@ from pydantic import BaseModel
 from backend.v2.contexts.coaching.domain.models import (
     Attendance,
     CoachAttendance,
+    CoachSkillNote,
+    NoteVisibility,
     SessionFeedback,
 )
 
@@ -75,5 +77,14 @@ class EnrollmentLookup(Protocol):
 
 
 class SkillNoteRepository(Protocol):
-    async def save(self, note: object) -> None: ...
-    async def list_for_student_skill(self, student_id: str, skill_id: str) -> list[object]: ...
+    async def save(self, note: CoachSkillNote) -> None: ...
+
+    async def list_for_student_skill(
+        self, student_id: str, skill_id: str
+    ) -> list[CoachSkillNote]: ...
+
+    async def get(self, student_id: str, note_id: str) -> CoachSkillNote | None: ...
+
+    async def set_visibility(
+        self, student_id: str, note_id: str, visibility: NoteVisibility
+    ) -> CoachSkillNote | None: ...

@@ -34,9 +34,12 @@ export interface MockState {
         student_id: string;
         full_name: string;
         enrollment_status: "active" | "paused" | "cancelled";
+        /** Seed a server-saved mark (hydrates the row as already marked). */
+        attendance_status?: "present" | "absent" | "late" | null;
       }>;
     }>;
   };
+  /** Every `POST /coach/attendance` body, including replays from the offline queue. */
   attendanceCalls: Array<Record<string, unknown>>;
   correctionCalls: Array<Record<string, unknown>>;
   bulkAttendanceCalls: Array<Record<string, unknown>>;
@@ -62,6 +65,47 @@ export interface MockState {
   // single failure would recover on its own). Specs set this true to exercise
   // the error state, then flip it false before clicking Retry.
   failTeachingPlan: boolean;
+  /**
+   * Coach progress notes for `s-today-1`, served by GET and appended to by
+   * POST (`visibility` defaults to private, as the BFF does). Seed before
+   * navigating to render an existing note in the roster's note box.
+   */
+  progressNotes: MockProgressNote[];
+  progressNoteCalls: Array<Record<string, unknown>>;
+  /** `{ note_id, visibility }` for every PATCH on a progress note. */
+  noteVisibilityCalls: Array<{ note_id: string; visibility: string }>;
+  /**
+   * When true, the next PATCH on a progress note 500s and the flag clears —
+   * so a spec can prove the UI surfaces the failure instead of silently
+   * reverting the chip.
+   */
+  failNextNoteVisibility: boolean;
+  /** Skill notes for the passport's Notes panel; same GET/POST/PATCH shape. */
+  skillNotes: MockSkillNote[];
+  skillNoteCalls: Array<Record<string, unknown>>;
+  skillNoteVisibilityCalls: Array<{ note_id: string; visibility: string }>;
+}
+
+export interface MockProgressNote {
+  note_id: string;
+  session_id: string;
+  student_id: string;
+  coach_id: string;
+  body: string;
+  created_at: string;
+  visibility: "private" | "shared";
+}
+
+export interface MockSkillNote {
+  note_id: string;
+  academy_id: string;
+  student_id: string;
+  skill_id: string;
+  coach_id: string;
+  session_id: string | null;
+  body: string;
+  created_at: string;
+  visibility: "private" | "shared";
 }
 
 interface TeachingPlanFixture {
@@ -165,6 +209,13 @@ export const test = base.extend<{
       statusCalls: [],
       testCalls: [],
       failTeachingPlan: false,
+      progressNotes: [],
+      progressNoteCalls: [],
+      noteVisibilityCalls: [],
+      failNextNoteVisibility: false,
+      skillNotes: [],
+      skillNoteCalls: [],
+      skillNoteVisibilityCalls: [],
       teachingPlan: {
         date: new Date().toISOString().slice(0, 10),
         program_id: "prog-badminton",
@@ -500,17 +551,199 @@ export const test = base.extend<{
       },
     );
 
+    // Progress notes (slice 3): GET lists, POST appends (private unless the
+    // body says shared), PATCH /{note_id} flips `visibility`.
+    let noteSeq = 0;
     await page.route(
       "**/api/v2/coach/sessions/*/progress-notes",
       async (route: Route) => {
-        if (route.request().method() !== "GET") return route.fallback();
+        const method = route.request().method();
+        const url = new URL(route.request().url());
+        const parts = url.pathname.split("/");
+        const sessionId = decodeURIComponent(parts[parts.length - 2] ?? "");
+        if (method === "GET") {
+          return route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+              notes: state.progressNotes.filter((n) => n.session_id === sessionId),
+            }),
+          });
+        }
+        if (method === "POST") {
+          const body = JSON.parse(route.request().postData() ?? "{}");
+          state.progressNoteCalls.push(body);
+          noteSeq += 1;
+          const note: MockProgressNote = {
+            note_id: `note-${noteSeq}`,
+            session_id: sessionId,
+            student_id: body.student_id,
+            coach_id: state.me.user_id,
+            body: body.body,
+            created_at: new Date(Date.now() + noteSeq).toISOString(),
+            visibility: body.visibility === "shared" ? "shared" : "private",
+          };
+          state.progressNotes.push(note);
+          return route.fulfill({
+            status: 201,
+            contentType: "application/json",
+            body: JSON.stringify(note),
+          });
+        }
+        return route.fallback();
+      },
+    );
+
+    await page.route(
+      "**/api/v2/coach/sessions/*/progress-notes/*",
+      async (route: Route) => {
+        if (route.request().method() !== "PATCH") return route.fallback();
+        const url = new URL(route.request().url());
+        const parts = url.pathname.split("/");
+        const noteId = decodeURIComponent(parts[parts.length - 1] ?? "");
+        const body = JSON.parse(route.request().postData() ?? "{}");
+        state.noteVisibilityCalls.push({ note_id: noteId, visibility: body.visibility });
+        if (state.failNextNoteVisibility) {
+          state.failNextNoteVisibility = false;
+          return route.fulfill({
+            status: 500,
+            contentType: "application/json",
+            body: JSON.stringify({
+              error: { code: "InternalError", message: "boom", details: {} },
+            }),
+          });
+        }
+        const note = state.progressNotes.find((n) => n.note_id === noteId);
+        if (!note) {
+          return route.fulfill({
+            status: 404,
+            contentType: "application/json",
+            body: JSON.stringify({
+              error: { code: "Coaching.NoteNotFound", message: "note not found", details: {} },
+            }),
+          });
+        }
+        note.visibility = body.visibility;
         return route.fulfill({
           status: 200,
           contentType: "application/json",
-          body: JSON.stringify({ notes: [] }),
+          body: JSON.stringify(note),
         });
       },
     );
+
+    // Skill notes (passport Notes panel): same three verbs, keyed by student.
+    let skillNoteSeq = 0;
+    await page.route(
+      "**/api/v2/coach/students/*/skill-notes*",
+      async (route: Route) => {
+        const method = route.request().method();
+        const url = new URL(route.request().url());
+        const parts = url.pathname.split("/");
+        const studentId = decodeURIComponent(parts[parts.length - 2] ?? "");
+        if (method === "GET") {
+          const skillId = url.searchParams.get("skill_id");
+          return route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+              notes: state.skillNotes.filter(
+                (n) => n.student_id === studentId && (!skillId || n.skill_id === skillId),
+              ),
+            }),
+          });
+        }
+        if (method === "POST") {
+          const body = JSON.parse(route.request().postData() ?? "{}");
+          state.skillNoteCalls.push(body);
+          skillNoteSeq += 1;
+          const note: MockSkillNote = {
+            note_id: `skill-note-${skillNoteSeq}`,
+            academy_id: state.me.academy_id,
+            student_id: studentId,
+            skill_id: body.skill_id,
+            coach_id: state.me.user_id,
+            session_id: null,
+            body: body.body,
+            created_at: new Date(Date.now() + skillNoteSeq).toISOString(),
+            visibility: body.visibility === "shared" ? "shared" : "private",
+          };
+          state.skillNotes.push(note);
+          return route.fulfill({
+            status: 201,
+            contentType: "application/json",
+            body: JSON.stringify(note),
+          });
+        }
+        return route.fallback();
+      },
+    );
+
+    await page.route(
+      "**/api/v2/coach/students/*/skill-notes/*",
+      async (route: Route) => {
+        if (route.request().method() !== "PATCH") return route.fallback();
+        const url = new URL(route.request().url());
+        const parts = url.pathname.split("/");
+        const noteId = decodeURIComponent(parts[parts.length - 1] ?? "");
+        const body = JSON.parse(route.request().postData() ?? "{}");
+        state.skillNoteVisibilityCalls.push({ note_id: noteId, visibility: body.visibility });
+        const note = state.skillNotes.find((n) => n.note_id === noteId);
+        if (!note) {
+          return route.fulfill({
+            status: 404,
+            contentType: "application/json",
+            body: JSON.stringify({
+              error: { code: "Coaching.NoteNotFound", message: "note not found", details: {} },
+            }),
+          });
+        }
+        note.visibility = body.visibility;
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(note),
+        });
+      },
+    );
+
+    // Session skill board (/coach/sessions/<id>/progress): one level, one
+    // skill, both roster students placed.
+    await page.route("**/api/v2/coach/sessions/*/skill-board*", async (route: Route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          program_id: "prog-001",
+          program_name: "Badminton",
+          groups: [
+            {
+              level_id: "level-001",
+              level_name: "Starter",
+              sequence: 1,
+              skills: [
+                { skill_id: "skill-backhand", name: "Backhand clear", sequence: 1, is_required: true },
+                { skill_id: "skill-serve", name: "Low serve", sequence: 2, is_required: false },
+              ],
+              students: state.today.sessions[0].roster.map((student) => ({
+                student_id: student.student_id,
+                student_name: student.full_name,
+                statuses: {
+                  "skill-backhand": { status: "LEARNING", last_updated_at: null },
+                },
+                required_passed: 0,
+                required_total: 1,
+                total_passed: 0,
+                total_count: 2,
+                level_up_status: null,
+              })),
+            },
+          ],
+          unplaced: [],
+        }),
+      });
+    });
 
     // Phase 3: daily teaching plan. Registered after `coach/today*` so it
     // wins for `/coach/today/plan` (Playwright matches most-recent route first).
