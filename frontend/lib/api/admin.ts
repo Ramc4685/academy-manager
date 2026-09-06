@@ -2387,10 +2387,13 @@ export function sendAdminInvoice(invoiceId: string): Promise<SendInvoiceResponse
 
 export function chargeAdminInvoiceAutopay(
   invoiceId: string,
+  reason?: string,
 ): Promise<ChargeAutopayResponse> {
   return apiFetch<ChargeAutopayResponse>(
     `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/charge-autopay`,
-    { method: "POST" },
+    reason
+      ? { method: "POST", body: JSON.stringify({ reason }) }
+      : { method: "POST" },
   );
 }
 

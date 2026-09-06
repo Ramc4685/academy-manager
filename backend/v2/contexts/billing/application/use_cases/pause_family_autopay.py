@@ -50,6 +50,14 @@ class PauseFamilyAutopayResult:
     warnings: list[str] = field(default_factory=list)
 
 
+def _result_of(stored: dict[str, Any]) -> PauseFamilyAutopayResult:
+    return PauseFamilyAutopayResult(
+        int(stored["paused_count"]),
+        int(stored["active_count_before"]),
+        list(stored.get("warnings", [])),
+    )
+
+
 class PauseFamilyAutopay:
     def __init__(
         self,
@@ -68,12 +76,15 @@ class PauseFamilyAutopay:
         self, *, academy_id: str, parent_id: str, actor_id: str, reason: str, request_id: str
     ) -> PauseFamilyAutopayResult:
         idem_key = f"family_autopay_pause:{academy_id}:{parent_id}:{request_id}"
+        # The store is insert-only, so the completed result CANNOT live under the
+        # same key as the plan — that insert always raises and the result is lost,
+        # and the replay then re-runs the pause. A delayed replay after the family
+        # re-enabled autopay would silently pause them again. Separate key.
+        done_key = f"{idem_key}:result"
+        done = await self._idempotency.get(done_key)
+        if done is not None:
+            return _result_of(done)
         cached = await self._idempotency.get(idem_key)
-        if cached is not None and "result" in cached:
-            r = cached["result"]
-            return PauseFamilyAutopayResult(
-                int(r["paused_count"]), int(r["active_count_before"]), list(r.get("warnings", []))
-            )
 
         if cached is None:
             rows = await self._enrollments.list_for_parent(parent_id)
@@ -110,8 +121,10 @@ class PauseFamilyAutopay:
         except Exception:
             # Money-movement rule: anything already flipped must be on the audit
             # trail before the error escapes, or an enrollment is silently off
-            # autopay with no record of who did it. The deterministic audit_id
-            # makes the retry's append a no-op.
+            # autopay with no record of who did it. This partial attempt gets its
+            # OWN audit id — reusing the final one would let the repository's
+            # duplicate-id guard swallow the later, complete entry, leaving the
+            # trail permanently short of the enrollments a retry goes on to pause.
             await self._append_audit(
                 academy_id=academy_id,
                 parent_id=parent_id,
@@ -120,6 +133,7 @@ class PauseFamilyAutopay:
                 request_id=request_id,
                 targets=targets,
                 paused=paused,
+                suffix=f"-partial-{len(paused)}",
             )
             raise
 
@@ -133,22 +147,19 @@ class PauseFamilyAutopay:
             paused=paused,
         )
         result = PauseFamilyAutopayResult(len(paused), len(targets), warnings)
+        payload = {
+            "paused_count": result.paused_count,
+            "active_count_before": result.active_count_before,
+            "warnings": warnings,
+        }
         try:
-            await self._idempotency.put(
-                idem_key,
-                {
-                    "plan": plan,
-                    "result": {
-                        "paused_count": result.paused_count,
-                        "active_count_before": result.active_count_before,
-                        "warnings": warnings,
-                    },
-                },
-            )
+            await self._idempotency.put(done_key, payload)
         except DuplicateKeyError:
-            # Mongo store is insert-only; the plan key already exists. Replays
-            # re-run the (idempotent) guarded writes and the deterministic audit id.
-            pass
+            # A concurrent double-submit won the race; return what it recorded so
+            # both callers see the same answer.
+            stored = await self._idempotency.get(done_key)
+            if stored is not None:
+                return _result_of(stored)
         return result
 
     async def _append_audit(
@@ -161,13 +172,16 @@ class PauseFamilyAutopay:
         request_id: str,
         targets: list[str],
         paused: list[str],
+        suffix: str = "",
     ) -> None:
-        """One entry per request (spec §5 step 3). The audit_id is derived from
-        ``request_id``, so a replay — or the failure path calling this before
-        re-raising — can never double-log."""
+        """One entry per outcome (spec §5 step 3). The audit_id is derived from
+        ``request_id`` so a replay can never double-log; ``suffix`` separates a
+        failed partial attempt from the completed one, which are different events."""
         await self._audit.append(
             BillingAuditEntry(
-                audit_id=f"baud-family-autopay-pause-{academy_id}-{parent_id}-{request_id}",
+                audit_id=(
+                    f"baud-family-autopay-pause-{academy_id}-{parent_id}-{request_id}{suffix}"
+                ),
                 academy_id=academy_id,
                 action="autopay_paused",
                 actor_id=actor_id,

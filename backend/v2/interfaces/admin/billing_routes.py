@@ -54,6 +54,7 @@ from backend.v2.interfaces.admin.views import (
     ApplyPaymentDiscountRequest,
     BillingReconciliationReportResponse,
     BillingWebhookQueueResponse,
+    ChargeAutopayRequest,
     ChargeAutopayResponse,
     DeleteExpenseRequest,
     EditExpenseRequest,
@@ -888,7 +889,8 @@ async def send_billing_invoice(
 )
 async def charge_invoice_via_autopay(
     invoice_id: str,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    body: ChargeAutopayRequest | None = None,
+    claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> ChargeAutopayResponse:
     """Charge the invoice balance via the parent's saved Stripe payment method (off-session).
@@ -905,8 +907,15 @@ async def charge_invoice_via_autopay(
         use_cases.charge_invoice_via_autopay,
         "Stripe autopay",
     )
+    # Every charge through this route is an admin pressing a button, not the
+    # dunning worker. Say so: without an explicit source and actor the Stripe
+    # attempt lands in the books as an unattributed `autopay` run.
     try:
-        result = await charge_autopay(invoice_id)  # type: ignore[operator]
+        result = await charge_autopay(  # type: ignore[operator]
+            invoice_id,
+            source="admin_manual",
+            actor_id=claims.user_id,
+        )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:

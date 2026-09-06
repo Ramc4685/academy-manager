@@ -96,7 +96,7 @@ export default function FamilyBillingPage() {
         break;
       case "charge_card":
         if (!invoiceId) return;
-        await chargeAdminInvoiceAutopay(invoiceId);
+        await chargeAdminInvoiceAutopay(invoiceId, r.reason);
         break;
       case "send_invoice":
         if (!invoiceId) return;

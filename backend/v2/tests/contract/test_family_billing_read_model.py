@@ -356,6 +356,44 @@ async def test_unknown_or_foreign_parent_is_none(db, acad) -> None:
 
 
 @pytest.mark.asyncio
+async def test_parent_of_another_academy_who_only_coaches_here_is_none(db, acad) -> None:
+    """A multi-academy user must not pass this tenant's gate on a role earned
+    elsewhere: the global users.roles list carries "parent" from their home
+    academy while they are only a coach here."""
+    await db["academies"].insert_one({"academy_id": acad, "timezone": "America/Chicago"})
+    await db["users"].insert_one(
+        {
+            "user_id": "u-multi",
+            "academy_id": "acad_other",  # home academy, where they DO parent
+            "display_name": "Multi Academy",
+            "email": "multi@example.com",
+            "roles": ["parent", "coach"],
+        }
+    )
+    await db["academy_memberships"].insert_one(
+        {"academy_id": acad, "user_id": "u-multi", "roles": ["coach"]}
+    )
+
+    assert await _read_model(db).build("u-multi") is None
+
+
+@pytest.mark.asyncio
+async def test_membership_parent_role_admits_even_without_students(db, acad) -> None:
+    await db["academies"].insert_one({"academy_id": acad, "timezone": "America/Chicago"})
+    await db["users"].insert_one(
+        {"user_id": "p-mem", "academy_id": "acad_other", "display_name": "Member Parent"}
+    )
+    await db["academy_memberships"].insert_one(
+        {"academy_id": acad, "user_id": "p-mem", "roles": ["parent"]}
+    )
+
+    view = await _read_model(db).build("p-mem")
+
+    assert view is not None
+    assert view["parent"]["name"] == "Member Parent"
+
+
+@pytest.mark.asyncio
 async def test_tenant_member_who_is_not_a_parent_is_none(db, acad) -> None:
     """Spec §3: "a user who is not a parent" is a 404, not a page showing their PII.
 
@@ -455,3 +493,46 @@ async def test_secondary_source_failure_becomes_a_warning(db, acad, monkeypatch)
     assert view is not None
     assert view["warnings"] == ["attempts_unavailable"]
     assert "charge_failed" not in [e["code"] for e in view["timeline"]]
+
+
+@pytest.mark.asyncio
+async def test_display_cap_never_drops_an_open_invoice_from_the_balance(db, acad) -> None:
+    """The cap bounds the response, not the money. An old open invoice buried
+    under 200 paid ones must still count toward the balance the admin collects on."""
+    from backend.v2.contexts.billing.infrastructure.family_billing_read_model import INVOICE_CAP
+
+    await db["academies"].insert_one({"academy_id": acad, "timezone": "America/Chicago"})
+    await db["users"].insert_one(
+        {"user_id": "p-many", "academy_id": acad, "display_name": "Many", "roles": ["parent"]}
+    )
+    old_open = {
+        "academy_id": acad,
+        "invoice_id": "inv-ancient-open",
+        "parent_id": "p-many",
+        "period": "2020-01",
+        "status": "open",
+        "total_cents": 7500,
+        "balance_due_cents": 7500,
+        "created_at": datetime(2020, 1, 1, tzinfo=UTC),
+    }
+    paid = [
+        {
+            "academy_id": acad,
+            "invoice_id": f"inv-paid-{i:04d}",
+            "parent_id": "p-many",
+            "period": "2026-09",
+            "status": "paid",
+            "total_cents": 100,
+            "balance_due_cents": 0,
+            "created_at": datetime(2026, 9, 1, tzinfo=UTC),
+        }
+        for i in range(INVOICE_CAP + 25)
+    ]
+    await db["invoices"].insert_many([old_open, *paid])
+
+    view = await _read_model(db).build("p-many")
+
+    assert view is not None
+    assert view["header"]["balance_cents"] == 7500
+    assert view["header"]["open_invoice_count"] == 1
+    assert "inv-ancient-open" in {inv["invoice_id"] for inv in view["invoices"]}

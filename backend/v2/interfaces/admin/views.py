@@ -1014,6 +1014,16 @@ class SendInvoiceResponse(BaseModel):
     checkout_failure_code: str | None = None
 
 
+class ChargeAutopayRequest(BaseModel):
+    """Optional body for an admin-initiated charge.
+
+    ``reason`` is what the admin typed into the confirmation dialog; it travels
+    with the charge so the family timeline can say why the card was run.
+    """
+
+    reason: str | None = None
+
+
 class ChargeAutopayResponse(BaseModel):
     invoice_id: str
     success: bool

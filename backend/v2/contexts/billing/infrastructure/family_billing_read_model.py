@@ -24,6 +24,9 @@ from zoneinfo import ZoneInfo
 
 from bson import ObjectId
 
+from backend.v2.contexts.billing.application.autopay_eligibility import (
+    CHARGEABLE_INVOICE_STATUSES,
+)
 from backend.v2.contexts.billing.application.family_billing import (
     AllocationFacts,
     AttemptFacts,
@@ -431,6 +434,28 @@ class MongoFamilyBillingReadModel:
         )
 
     async def _is_parent(self, academy_id: str, parent_id: str, doc: dict[str, Any]) -> bool:
+        """Is this user a parent *of this academy*?
+
+        The role must come from the membership in the request tenant, never from
+        the global ``users.roles``: a multi-academy user who parents at academy A
+        and coaches at academy B would otherwise pass B's gate on A's role, and
+        B's admin would see their contact details and family actions.
+        """
+        if await self._db["academy_memberships"].find_one(
+            {"academy_id": academy_id, "user_id": parent_id, "roles": "parent"}, {"_id": 1}
+        ):
+            return True
+        # A student of THIS academy is proof regardless of how roles are recorded.
+        if await self._db["students"].find_one(
+            {"academy_id": academy_id, "parent_id": parent_id}, {"_id": 1}
+        ):
+            return True
+        # Legacy fallback for rows predating per-academy membership roles. Gated
+        # on the user's OWN academy stamp, so it stays tenant-scoped: a coach of
+        # this academy whose home academy is another one cannot pass on a parent
+        # role earned there.
+        if _opt_str(doc.get("academy_id")) != academy_id:
+            return False
         roles: list[str] = []
         raw_roles = doc.get("roles")
         if isinstance(raw_roles, str):
@@ -440,13 +465,7 @@ class MongoFamilyBillingReadModel:
         single = _opt_str(doc.get("role"))
         if single:
             roles.append(single)
-        if "parent" in roles:
-            return True
-        return bool(
-            await self._db["students"].find_one(
-                {"academy_id": academy_id, "parent_id": parent_id}, {"_id": 1}
-            )
-        )
+        return "parent" in roles
 
     async def _belongs_to_tenant(self, academy_id: str, parent_id: str) -> bool:
         if await self._db["students"].find_one(
@@ -609,7 +628,17 @@ class MongoFamilyBillingReadModel:
             ),
             reverse=True,
         )
-        return docs[:INVOICE_CAP]
+        # The cap bounds the response, but it must never bound the MONEY: an
+        # older open invoice dropped here would silently vanish from
+        # ``balance_cents``, ``open_invoice_count`` and the collection actions
+        # the view derives. Keep every open invoice; spend the cap on settled
+        # history, newest first.
+        open_docs = [d for d in docs if str(d.get("status") or "") in CHARGEABLE_INVOICE_STATUSES]
+        if len(open_docs) >= INVOICE_CAP:
+            return open_docs
+        settled = [d for d in docs if str(d.get("status") or "") not in CHARGEABLE_INVOICE_STATUSES]
+        keep = {id(d) for d in open_docs} | {id(d) for d in settled[: INVOICE_CAP - len(open_docs)]}
+        return [d for d in docs if id(d) in keep]
 
     async def _allocations(
         self, academy_id: str, invoice_ids: list[str]
