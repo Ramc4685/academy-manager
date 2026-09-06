@@ -180,10 +180,15 @@ export default function AdminReportsPage() {
   const dashboard = dashboardQuery.data;
   // The backend decides whether payroll is complete enough for a final P&L;
   // this page only presents the reason it gives.
-  const payrollBlockedBy = dashboard?.payroll.blocked_by ?? null;
+  const payrollBlockedBy = dashboard?.payroll?.blocked_by ?? null;
+  const dashboardEmptyStates = dashboard?.empty_states ?? [];
+  const agingBuckets = dashboard?.collections_risk?.aging_buckets ?? [];
+  const expenseCategories = dashboard?.expenses?.by_category ?? [];
+  const recentPayments = paymentFeedQuery.data?.payments ?? [];
   const failedRows = failedPaymentsQuery.data?.rows ?? [];
   const failedTotalCents = failedRows.reduce((total, row) => total + row.balance_due_cents, 0);
   const projected = projectedIncomeQuery.data;
+  const projectedSessions = projected?.by_session ?? [];
 
   return (
     <section data-testid="admin-reports" className="space-y-5">
@@ -349,11 +354,11 @@ export default function AdminReportsPage() {
           </p>
         )}
 
-        {dashboard?.empty_states.length ? (
+        {dashboardEmptyStates.length ? (
           <Card p={20}>
             <Overline>Empty states</Overline>
             <ul className="mt-3 space-y-2 text-sm text-rally-subtle">
-              {dashboard.empty_states.map((state) => (
+              {dashboardEmptyStates.map((state) => (
                 <li key={state}>{state}</li>
               ))}
             </ul>
@@ -374,11 +379,11 @@ export default function AdminReportsPage() {
             <p className="mt-3 text-sm text-red-700">Could not load recent payments.</p>
           ) : paymentFeedQuery.isLoading ? (
             <p className="mt-3 text-sm text-rally-subtle">Loading…</p>
-          ) : (paymentFeedQuery.data?.payments.length ?? 0) === 0 ? (
+          ) : recentPayments.length === 0 ? (
             <p className="mt-3 text-sm text-rally-subtle">No payments received yet.</p>
           ) : (
             <div className="mt-4 divide-y divide-rally-line">
-              {paymentFeedQuery.data?.payments.map((item) => (
+              {recentPayments.map((item) => (
                 <div
                   key={item.payment_id}
                   className="flex flex-wrap items-center justify-between gap-2 py-2.5 text-sm"
@@ -466,9 +471,9 @@ export default function AdminReportsPage() {
               <DashboardTerm label="Failed payments" value={dashboard ? formatInteger(dashboard.collections_risk.failed_payment_count) : "No data"} />
               <DashboardTerm label="Partial payments" value={dashboard ? formatInteger(dashboard.collections_risk.partial_payment_count) : "No data"} />
             </dl>
-            {dashboard?.collections_risk.aging_buckets.length ? (
+            {agingBuckets.length ? (
               <div className="mt-5 space-y-2" data-testid="ar-aging-widget">
-                {dashboard.collections_risk.aging_buckets.map((bucket) => (
+                {agingBuckets.map((bucket) => (
                   <div key={bucket.label} className="rounded-md border border-rally-line">
                     <button
                       type="button"
@@ -536,7 +541,7 @@ export default function AdminReportsPage() {
         <div className="grid gap-4 lg:grid-cols-2">
           <Card p={24}>
             <Overline>Expenses</Overline>
-            {dashboard?.expenses.by_category.length ? (
+            {expenseCategories.length ? (
               <div className="mt-4 overflow-x-auto">
                 <table className="w-full min-w-[360px] text-left text-sm">
                   <thead className="text-xs uppercase text-rally-muted">
@@ -547,7 +552,7 @@ export default function AdminReportsPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-rally-line">
-                    {dashboard.expenses.by_category.map((category) => (
+                    {expenseCategories.map((category) => (
                       <tr key={category.category}>
                         <td className="px-2 py-2 font-medium text-rally-ink">{category.category}</td>
                         <td className="px-2 py-2 text-rally-muted">{formatCurrency(category.amount_cents)}</td>
@@ -570,9 +575,9 @@ export default function AdminReportsPage() {
               <DashboardTerm label="Paid" value={dashboard ? formatNullableCurrency(dashboard.payroll.paid_cents) : "No data"} />
               <DashboardTerm label="Unpaid" value={dashboard ? formatNullableCurrency(dashboard.payroll.unpaid_cents) : "No data"} />
             </dl>
-            {dashboard?.payroll.blocked_by ? (
+            {payrollBlockedBy ? (
               <p className="mt-4 rounded-md border border-dashed border-rally-line px-3 py-2 text-sm text-rally-subtle">
-                {dashboard.payroll.blocked_by}
+                {payrollBlockedBy}
               </p>
             ) : null}
           </Card>
@@ -635,7 +640,7 @@ export default function AdminReportsPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-rally-line">
-                    {projected.by_session.map((row) => (
+                    {projectedSessions.map((row) => (
                       <tr key={row.session_id}>
                         <td className="px-2 py-2 font-medium text-rally-ink">{row.title || row.session_id}</td>
                         <td className="px-2 py-2 text-rally-muted">{formatInteger(row.enrollment_count)}</td>
