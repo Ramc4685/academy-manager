@@ -10,6 +10,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
+import type { Route } from "next";
 import Link from "next/link";
 import { useInfiniteQuery } from "@tanstack/react-query";
 
@@ -51,7 +52,8 @@ const FILTERS: { value: "all" | BillingSetupRegistrationState; label: string }[]
   { value: "card_on_file", label: "Chargeable" },
 ];
 
-const familyHref = (parentId: string) => `/admin/families/${encodeURIComponent(parentId)}`;
+const familyHref = (parentId: string) =>
+  `/admin/families/${encodeURIComponent(parentId)}` as Route;
 
 export default function FamiliesPage() {
   const [status, setStatus] = useState<"all" | BillingSetupRegistrationState>("all");

@@ -208,10 +208,31 @@
       "role": "admin",
       "source": "frontend/app/(admin)/admin/billing-setup/page.tsx",
       "workflows": [
-        "Filter and search families by registration status",
-        "Send a context-aware invite (login invite or add-card reminder)",
-        "Charge a card-on-file parent's outstanding balance",
-        "Enable autopay for a parent's eligible (paused) enrollments"
+        "Redirect to /admin/families"
+      ],
+      "controls": {
+        "buttons": [],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "redirect"
+      ],
+      "risk_edges": [
+        "Old bookmark lands on the redirect"
+      ],
+      "acceptance": [
+        "Workflow evidence: \"Redirect to /admin/families\" completes for the admin route /admin/billing-setup with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Old bookmark lands on the redirect\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/families",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/families/page.tsx",
+      "workflows": [
+        "Filter and search families",
+        "Open a family"
       ],
       "controls": {
         "buttons": [
@@ -219,10 +240,7 @@
           "Not invited",
           "No card",
           "Chargeable",
-          "Send invite",
-          "Remind: add card",
-          "Charge now",
-          "Enable autopay",
+          "Open",
           "Refresh"
         ],
         "inputs": [
@@ -233,23 +251,74 @@
       "states": [
         "loading",
         "empty state",
-        "error state",
-        "charge declined",
-        "invite failed"
+        "error state"
       ],
       "risk_edges": [
-        "Charging without an active autopay enrollment must fail closed, not silently succeed",
-        "Enabling autopay must never skip the Stripe consent flow by jumping offered straight to active",
-        "Invite action must not create a duplicate login account on resend"
+        "Search returns a family from another academy"
       ],
       "acceptance": [
-        "Workflow evidence: \"Filter and search families\" completes for the admin route /admin/billing-setup with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Send a context-aware invite\" completes for the admin route /admin/billing-setup with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Charge a card-on-file parent's outstanding balance\" completes for the admin route /admin/billing-setup with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Enable autopay for eligible enrollments\" completes for the admin route /admin/billing-setup with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Charge without active autopay\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Autopay enable must not skip Stripe consent\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Duplicate invite on resend\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+        "Workflow evidence: \"Filter and search families\" completes for the admin route /admin/families with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Open a family\" completes for the admin route /admin/families with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Search returns a family from another academy\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/families/[parentId]",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/families/[parentId]/page.tsx",
+      "workflows": [
+        "Read balance, autopay and last payment",
+        "Turn autopay off with a reason",
+        "Record a payment",
+        "Void, refund or discount with a reason",
+        "Open full audit"
+      ],
+      "controls": {
+        "buttons": [
+          "Autopay toggle",
+          "Send invite",
+          "Send invoice",
+          "Record payment",
+          "Charge card now",
+          "Void invoice",
+          "Refund",
+          "Discount once",
+          "Full audit"
+        ],
+        "inputs": [
+          "Reason",
+          "Amount",
+          "Description"
+        ],
+        "modals": [
+          "Reason",
+          "Record payment",
+          "Refund",
+          "Discount",
+          "Audit drawer"
+        ]
+      },
+      "states": [
+        "loading",
+        "error state",
+        "needs consent",
+        "autopay off",
+        "mutation error"
+      ],
+      "risk_edges": [
+        "Owner-only action shown to admin",
+        "Action without reason",
+        "Stale balance after action"
+      ],
+      "acceptance": [
+        "Workflow evidence: \"Read balance, autopay and last payment\" completes for the admin route /admin/families/[parentId] with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Turn autopay off with a reason\" completes for the admin route /admin/families/[parentId] with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Record a payment\" completes for the admin route /admin/families/[parentId] with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Void, refund or discount with a reason\" completes for the admin route /admin/families/[parentId] with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Open full audit\" completes for the admin route /admin/families/[parentId] with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Owner-only action shown to admin\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Action without reason\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Stale balance after action\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     },
     {
@@ -1757,10 +1826,10 @@
         "submitting",
         "validation error",
         "create failed (email exists)",
-        "created \u2192 redirect to user detail"
+        "created → redirect to user detail"
       ],
       "risk_edges": [
-        "duplicate email \u2192 creation fails, surfaced inline",
+        "duplicate email → creation fails, surfaced inline",
         "parent auto-invite send failure is best-effort (user created, invite re-sendable)"
       ],
       "acceptance": [
@@ -3236,7 +3305,7 @@
         "error"
       ],
       "risk_edges": [
-        "Nothing may change on page load \u2014 a mail scanner's link prefetch must not unsubscribe anyone",
+        "Nothing may change on page load — a mail scanner's link prefetch must not unsubscribe anyone",
         "Transactional email must not be offered as something to switch off",
         "A token from another academy must be refused, not silently applied"
       ],
@@ -3250,7 +3319,7 @@
         "Workflow evidence: \"Open the emailed unsubscribe link\" completes for the public route /unsubscribe with real-user evidence and no framework or runtime errors.",
         "Workflow evidence: \"Save opt-out choices\" completes for the public route /unsubscribe with real-user evidence and no framework or runtime errors.",
         "Workflow evidence: \"Re-open the link and opt back in\" completes for the public route /unsubscribe with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Nothing may change on page load \u2014 a mail scanner's link prefetch must not unsubscribe anyone\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Nothing may change on page load — a mail scanner's link prefetch must not unsubscribe anyone\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"Transactional email must not be offered as something to switch off\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"A token from another academy must be refused, not silently applied\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]

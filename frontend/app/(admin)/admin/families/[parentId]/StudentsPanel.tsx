@@ -1,5 +1,6 @@
 "use client";
 
+import type { Route } from "next";
 import Link from "next/link";
 
 import { Card, Chip, Overline, type ChipVariant } from "@/components/ds";
@@ -15,8 +16,8 @@ const STATUS_CHIP: Record<string, { variant: ChipVariant; label: string }> = {
   withdrawn: { variant: "expired", label: "Withdrawn" },
 };
 
-function studentHref(studentId: string): string {
-  return `/admin/students/${encodeURIComponent(studentId)}`;
+function studentHref(studentId: string): Route {
+  return `/admin/students/${encodeURIComponent(studentId)}` as Route;
 }
 
 export function StudentsPanel({
