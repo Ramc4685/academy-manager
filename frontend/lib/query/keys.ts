@@ -63,6 +63,9 @@ export const queryKeys = {
       ["admin", "enrollments", sessionId] as const,
     waitlist: (sessionId: string) => ["admin", "waitlist", sessionId] as const,
     globalWaitlist: () => ["admin", "waitlist", "global"] as const,
+    families: () => ["admin", "families"] as const,
+    familyBilling: (parentId: string) =>
+      ["admin", "families", parentId, "billing"] as const,
     registrations: () => ["admin", "registrations"] as const,
     registrationDetail: (applicationId: string) =>
       ["admin", "registrations", applicationId] as const,
