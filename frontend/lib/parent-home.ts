@@ -126,15 +126,13 @@ export function buildParentHomeModel(input: ParentHomeInput): ParentHomeModel {
   );
   const activeEnrollment =
     childEnrollments.find((enrollment) => enrollment.status === "active") ?? null;
-  const childNotes = sortByDateDesc(
-    input.notes.filter((note) => note.student_id === selectedChild.student_id),
-    (note) => note.created_at,
-  );
-  const childAttendance = sortByDateDesc(
-    input.attendance.filter((record) => record.student_id === selectedChild.student_id),
+  const familyNotes = sortByDateDesc(input.notes, (note) => note.created_at);
+  const familyAttendance = sortByDateDesc(
+    input.attendance,
     (record) => record.marked_at,
   );
-  const latestNote = childNotes[0] ?? null;
+  const latestNote =
+    familyNotes.find((note) => note.student_id === selectedChild.student_id) ?? null;
 
   return {
     selectedChild,
@@ -155,6 +153,7 @@ export function buildParentHomeModel(input: ParentHomeInput): ParentHomeModel {
     latestNote,
     nextEnrollment: activeEnrollment,
     primaryAction: choosePrimaryAction({
+      children: input.children,
       selectedChild,
       progressRow,
       activeEnrollment,
@@ -166,9 +165,12 @@ export function buildParentHomeModel(input: ParentHomeInput): ParentHomeModel {
       invoices: input.invoices ?? [],
       waiver: input.waiver,
     }),
+    // Home no longer has a child switcher, so "Recent activity" is the
+    // family's — scoping it to the first child would silently hide every
+    // other child's notes and absences under a family-wide subtitle.
     recentActivity: buildActivity({
-      notes: childNotes,
-      attendance: childAttendance,
+      notes: familyNotes,
+      attendance: familyAttendance,
       payments: input.payments,
     }),
   };
@@ -265,6 +267,7 @@ export function findPaymentNeedingAttention({
 }
 
 function choosePrimaryAction({
+  children,
   selectedChild,
   progressRow,
   activeEnrollment,
@@ -274,6 +277,7 @@ function choosePrimaryAction({
   invoices,
   waiver,
 }: {
+  children: ParentChild[];
   selectedChild: ParentChild;
   progressRow: StudentProgressOverview | null;
   activeEnrollment: ParentEnrollment | null;
@@ -283,14 +287,21 @@ function choosePrimaryAction({
   invoices: ParentInvoice[];
   waiver: ParentWaiverCurrentView | null;
 }): ParentHomeAction {
-  const waiverStudent = waiver?.students.find(
-    (student) => student.student_id === selectedChild.student_id,
-  );
-  if (waiver?.required && waiverStudent && waiverStudent.status !== "signed") {
+  // Any child with an unsigned waiver can be turned away at the door, and
+  // Home has no child switcher to reveal the others — so the check runs over
+  // the whole family, not just the first child.
+  const familyStudentIds = new Set(children.map((child) => child.student_id));
+  const unsignedWaiverStudent = waiver?.required
+    ? waiver.students.find(
+        (student) =>
+          familyStudentIds.has(student.student_id) && student.status !== "signed",
+      )
+    : undefined;
+  if (unsignedWaiverStudent) {
     return {
       kind: "waiver",
       title: "Waiver needs signature",
-      body: "Sign the current academy waiver before the next class.",
+      body: `Sign the current academy waiver for ${unsignedWaiverStudent.student_name.split(" ")[0]} before the next class.`,
       href: "/parent/waivers",
     };
   }

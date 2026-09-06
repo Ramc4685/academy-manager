@@ -2799,18 +2799,30 @@ async def _seed_home_db(db: Any) -> None:
         )
         for i in range(60)
     ]
+    # The boundary rows are deliberately ASYMMETRIC in count and in status, so
+    # a UTC window and the academy window cannot produce the same numbers:
+    #   academy (Chicago): 62 total / 41 present
+    #   naive UTC:         61 total / 40 present
+    #
     # 2026-09-01 00:30 UTC is 2026-08-31 19:30 in Chicago: LAST month on the
     # academy's clock, and this month under UTC. The academy answer wins (#541).
+    # `absent` so a UTC window changes the present count too, not just totals.
     rows.append(
         _attendance_doc(
-            "att-utc-boundary", "st-1", "present", datetime(2026, 9, 1, 0, 30, tzinfo=UTC)
+            "att-utc-boundary", "st-1", "absent", datetime(2026, 9, 1, 0, 30, tzinfo=UTC)
         )
     )
-    # 2026-10-01 02:00 UTC is 2026-09-30 21:00 in Chicago: still THIS month
-    # locally even though UTC has already rolled over.
+    # 2026-10-01 02:00 / 03:00 UTC are 2026-09-30 21:00 / 22:00 in Chicago:
+    # still THIS month locally even though UTC has already rolled over. Two
+    # rows against the boundary's one is what makes the totals differ.
     rows.append(
         _attendance_doc(
             "att-local-tail", "st-1", "present", datetime(2026, 10, 1, 2, 0, tzinfo=UTC)
+        )
+    )
+    rows.append(
+        _attendance_doc(
+            "att-local-tail-2", "st-1", "absent", datetime(2026, 10, 1, 3, 0, tzinfo=UTC)
         )
     )
     rows.append(
@@ -2931,9 +2943,11 @@ async def test_parent_home_buckets_the_month_on_the_academy_clock() -> None:
     assert home["timezone"] == "America/Chicago"
     assert home["month_label"] == "September"
     asha = home["children"][0]
-    # 60 in-month rows + the 21:00-local tail on Sep 30; the 19:30-local row on
-    # Aug 31 is excluded even though UTC calls it September.
-    assert asha["attendance_this_month"]["total"] == 61
+    # 60 in-month rows (40 present) + the two Sep-30-local tails (one present);
+    # the 19:30-local absent row on Aug 31 is excluded even though UTC calls it
+    # September. A naive UTC window would answer 61 total / 40 present instead,
+    # so these two numbers are what pins the bucketing to the academy clock.
+    assert asha["attendance_this_month"]["total"] == 62
     assert asha["attendance_this_month"]["present"] == 41
     # Never truncated to a 50-row page.
     assert asha["attendance_this_month"]["total"] > 50
@@ -2999,6 +3013,48 @@ async def test_parent_home_milestone_falls_back_to_the_shared_note() -> None:
 
 
 @pytest.mark.asyncio
+async def test_parent_home_milestone_survives_a_sibling_filling_the_progress_page() -> None:
+    """The progress page is sliced across the WHOLE family, so a busy child can
+    fill it end to end; the quiet sibling must still get their milestone."""
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-home-progress-page"]
+    await _seed_home_db(db)
+    # st-2's shared note is OLDER than every one of st-1's feedback rows.
+    await db["progress_notes"].insert_one(
+        {
+            "academy_id": "acad",
+            "note_id": "note-dev-shared",
+            "student_id": "st-2",
+            "coach_id": "coach-1",
+            "visibility": "shared",
+            "body": "Nice serve",
+            "created_at": datetime(2026, 9, 1, 15, 0, tzinfo=UTC),
+        }
+    )
+    await db["session_feedback"].insert_many(
+        [
+            {
+                "academy_id": "acad",
+                "feedback_id": f"fb-{i}",
+                "student_id": "st-1",
+                "coach_id": "coach-1",
+                "body": "Good session",
+                "created_at": datetime(2026, 9, 3, 15, 0, tzinfo=UTC) + timedelta(minutes=i),
+            }
+            for i in range(120)
+        ]
+    )
+    parent = _compose_home_parent(db)
+
+    with tenant_scope("acad"):
+        home = await parent.get_parent_home(parent_id="parent-1")
+
+    dev = home["children"][1]
+    assert dev["latest_milestone"] is not None
+    assert dev["latest_milestone"]["label"] == "Nice serve"
+
+
+@pytest.mark.asyncio
 async def test_parent_home_balance_counts_partially_paid_and_drops_paid_and_void() -> None:
     mongomock_motor = pytest.importorskip("mongomock_motor")
     db = mongomock_motor.AsyncMongoMockClient()["parent-home-balance"]
@@ -3040,6 +3096,102 @@ async def test_parent_home_payment_failed_comes_from_the_autopay_attempt_project
         home = await parent.get_parent_home(parent_id="parent-1")
 
     assert home["balance"]["payment_failed"] is True
+
+
+async def _seed_failed_ledger_payment(db: Any, *, invoice_id: str) -> None:
+    """A failed card payment against ``invoice_id``, the way the payments
+    history actually stores it: a ledger_payments row plus the allocation that
+    links it to the invoice."""
+    await db["ledger_payments"].insert_one(
+        {
+            "academy_id": "acad",
+            "payment_id": "pay-failed",
+            "parent_id": "parent-1",
+            "amount_cents": 7_000,
+            "currency": "usd",
+            "status": "failed",
+            "created_at": datetime(2026, 9, 10, 15, 0, tzinfo=UTC),
+        }
+    )
+    await db["payment_allocations"].insert_one(
+        {
+            "academy_id": "acad",
+            "payment_id": "pay-failed",
+            "invoice_id": invoice_id,
+            "amount_cents": 7_000,
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_parent_home_payment_failed_comes_from_the_payments_history_too() -> None:
+    """A manual/portal card decline mints a payment row but leaves
+    ``last_attempt_outcome`` unset, so the autopay projection alone misses it.
+    """
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-home-failed-payment"]
+    await _seed_home_db(db)
+    await db["enrollments"].insert_one(_enrollment_doc("enr-1", student_id="st-1"))
+    await _seed_failed_ledger_payment(db, invoice_id="inv-open")
+    parent = _compose_home_parent(db)
+
+    with tenant_scope("acad"):
+        home = await parent.get_parent_home(parent_id="parent-1")
+
+    assert home["balance"]["payment_failed"] is True
+
+
+@pytest.mark.asyncio
+async def test_parent_home_ignores_a_failed_payment_whose_invoice_is_settled() -> None:
+    """The parent already paid another way — the invoice is `paid`, so the old
+    failure is history, not something needing attention."""
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-home-failed-settled"]
+    await _seed_home_db(db)
+    await db["enrollments"].insert_one(_enrollment_doc("enr-1", student_id="st-1"))
+    await _seed_failed_ledger_payment(db, invoice_id="inv-paid")
+    parent = _compose_home_parent(db)
+
+    with tenant_scope("acad"):
+        home = await parent.get_parent_home(parent_id="parent-1")
+
+    assert home["balance"]["payment_failed"] is False
+
+
+@pytest.mark.asyncio
+async def test_parent_home_ignores_a_failed_payment_without_an_active_enrollment() -> None:
+    """Ported gate: a family with nothing active is not chased about a past
+    failure (findPaymentNeedingAttention in frontend/lib/parent-home.ts)."""
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-home-failed-inactive"]
+    await _seed_home_db(db)
+    await db["enrollments"].insert_one(
+        _enrollment_doc("enr-1", status="cancelled", student_id="st-1")
+    )
+    await _seed_failed_ledger_payment(db, invoice_id="inv-open")
+    parent = _compose_home_parent(db)
+
+    with tenant_scope("acad"):
+        home = await parent.get_parent_home(parent_id="parent-1")
+
+    assert home["balance"]["payment_failed"] is False
+
+
+@pytest.mark.asyncio
+async def test_parent_home_balance_excludes_draft_invoices() -> None:
+    """A draft invoice is not payable by any parent surface, so the banner must
+    not offer a Pay button for it."""
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-home-draft"]
+    await _seed_home_db(db)
+    await db["invoices"].insert_one(_home_invoice("inv-draft", "draft", 12_000, date(2026, 9, 25)))
+    parent = _compose_home_parent(db)
+
+    with tenant_scope("acad"):
+        home = await parent.get_parent_home(parent_id="parent-1")
+
+    assert home["balance"]["amount_due_cents"] == 10_000
+    assert home["balance"]["open_invoice_count"] == 2
 
 
 @pytest.mark.asyncio
@@ -3087,6 +3239,36 @@ async def test_parent_home_next_session_is_the_next_upcoming_occurrence() -> Non
 
 
 @pytest.mark.asyncio
+async def test_parent_home_next_session_skips_a_cancelled_occurrence() -> None:
+    """`list_for_session_between` is the one occurrence query that does not
+    filter cancelled rows, so Home must skip them itself — otherwise a
+    cancelled class is announced as the child's next session."""
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-home-cancelled"]
+    await _seed_home_db(db)
+    now = datetime.now(UTC).replace(microsecond=0)
+    await _seed_home_schedule(db, now)
+    await db["session_occurrences"].insert_one(
+        {
+            "academy_id": "acad",
+            "occurrence_id": "occ-cancelled",
+            "session_id": "sess-1",
+            # Sooner than occ-next, so a naive "first upcoming" picks this one.
+            "start_at": now + timedelta(hours=2),
+            "end_at": now + timedelta(hours=3),
+            "status": "cancelled",
+            "scheduled_coach_id": "coach-1",
+        }
+    )
+    parent = _compose_home_parent(db, now=now)
+
+    with tenant_scope("acad"):
+        home = await parent.get_parent_home(parent_id="parent-1")
+
+    assert home["children"][0]["next_session"]["occurrence_id"] == "occ-next"
+
+
+@pytest.mark.asyncio
 async def test_parent_home_degrades_per_child_when_one_schedule_leg_raises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3114,7 +3296,7 @@ async def test_parent_home_degrades_per_child_when_one_schedule_leg_raises(
     assert home["children"][0]["student_id"] == "st-1"
     assert home["children"][0]["next_session"] is None
     # Everything else on the broken child's card is still there...
-    assert home["children"][0]["attendance_this_month"]["total"] == 61
+    assert home["children"][0]["attendance_this_month"]["total"] == 62
     assert home["children"][0]["latest_milestone"]["label"] == "Backhand Lift"
     # ...and the other card and the family balance are untouched.
     assert home["children"][1]["student_id"] == "st-2"

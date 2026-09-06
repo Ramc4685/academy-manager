@@ -297,6 +297,96 @@ test("prioritizes missing waiver as strongest action", () => {
   assert.equal(model.primaryAction.kind, "waiver");
 });
 
+test("an unsigned waiver on a NON-first child still surfaces (Home has no switcher)", () => {
+  const child = (student_id, full_name) => ({
+    student_id,
+    full_name,
+    status: "active",
+    active_session_count: 1,
+    attended_count: 0,
+    absent_count: 0,
+  });
+  const model = buildParentHomeModel({
+    children: [child("s1", "Ava Kim"), child("s2", "Bo Chen")],
+    enrollments: [],
+    attendance: [],
+    notes: [],
+    payments: [],
+    credits: { balance_cents: 0, credits: [] },
+    waiver: {
+      required: true,
+      waiver_template_id: "w1",
+      title: "Waiver",
+      version: "v1",
+      body: "Text",
+      students: [
+        {
+          student_id: "s1",
+          student_name: "Ava Kim",
+          status: "signed",
+          signed_at: "2026-09-01T00:00:00Z",
+          waiver_version: "v1",
+        },
+        {
+          student_id: "s2",
+          student_name: "Bo Chen",
+          status: "pending",
+          signed_at: null,
+          waiver_version: null,
+        },
+      ],
+    },
+    progressRows: [],
+  });
+
+  assert.equal(model.primaryAction.kind, "waiver");
+  assert.match(model.primaryAction.body, /Bo/);
+});
+
+test("recent activity spans the family, not just the first child", () => {
+  const child = (student_id, full_name) => ({
+    student_id,
+    full_name,
+    status: "active",
+    active_session_count: 1,
+    attended_count: 0,
+    absent_count: 0,
+  });
+  const model = buildParentHomeModel({
+    children: [child("s1", "Ava Kim"), child("s2", "Bo Chen")],
+    enrollments: [],
+    attendance: [
+      {
+        attendance_id: "a-bo",
+        student_id: "s2",
+        session_id: "session-1",
+        session_title: "Junior Beginners",
+        status: "absent",
+        marked_at: "2026-09-04T12:00:00Z",
+      },
+    ],
+    notes: [
+      {
+        note_id: "n-bo",
+        student_id: "s2",
+        student_name: "Bo Chen",
+        coach_name: "Coach Lee",
+        created_at: "2026-09-05T12:00:00Z",
+        body: "Bo's clear is improving.",
+      },
+    ],
+    payments: [],
+    credits: { balance_cents: 0, credits: [] },
+    waiver: null,
+    progressRows: [],
+  });
+
+  assert.deepEqual(
+    model.recentActivity.map((item) => item.id).sort(),
+    ["attendance-a-bo", "note-n-bo"],
+  );
+});
+
 test("handles no children with registration action", () => {
   const model = buildParentHomeModel({
     children: [],
@@ -387,6 +477,12 @@ test("banner copy leads with the amount and its due date", () => {
   assert.deepEqual(
     balanceBannerCopy(balance({ amount_due_cents: 5000, open_invoice_count: 3 })),
     { headline: "$50.00 due", detail: "3 open invoices" },
+  );
+  // One invoice with no due date (due_date is optional on ParentInvoice):
+  // neither a date nor a count is available, so the detail invites the tap.
+  assert.deepEqual(
+    balanceBannerCopy(balance({ amount_due_cents: 5000, open_invoice_count: 1 })),
+    { headline: "$50.00 due", detail: "Tap to pay your balance." },
   );
 });
 

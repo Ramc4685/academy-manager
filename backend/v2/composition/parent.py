@@ -22,6 +22,9 @@ from backend.v2.composition.pathway import (
     compose_student_progress,
 )
 from backend.v2.composition.roster_notifications import compose_roster_notifier
+from backend.v2.contexts.billing.application.autopay_eligibility import (
+    CHARGEABLE_INVOICE_STATUSES,
+)
 from backend.v2.contexts.billing.application.ports import (
     StripeCheckoutSessionNotExpirable,
     StripeGateway,
@@ -2181,6 +2184,11 @@ def compose_parent(
                 offset=0,
             )
             for entry in entries:
+                # `list_for_session_between` is the one occurrence query that
+                # does NOT filter cancelled rows out, so a cancelled class
+                # would otherwise be announced as the child's next session.
+                if str(entry.status) == "cancelled":
+                    continue
                 start_at = _as_utc(entry.start_at)
                 if start_at is None or start_at < now:
                     continue
@@ -2268,19 +2276,12 @@ def compose_parent(
         """Latest parent-visible milestone per child: the newer of the newest
         shared note/feedback and the newest skill status change (decision 4)."""
         newest_note: dict[str, dict[str, Any]] = {}
-        try:
-            # One family-wide call. list_progress_for_parent fetches every
-            # matching row internally and slices, so a generous limit is cheap
-            # — and it already drops private notes (visibility != "shared").
-            notes, _total = await list_progress_for_parent(
-                parent_id, limit=max(len(student_ids) * 25, 100), offset=0
-            )
-        except Exception:  # pragma: no cover - defensive; one leg must not 500 Home
-            log.warning("parent home: progress leg failed for parent %s", parent_id, exc_info=True)
-            notes = []
-        for note in notes:
-            student_id = str(note.get("student_id") or "")
-            if student_id not in newest_note:
+
+        def _absorb(rows: list[dict[str, Any]]) -> None:
+            for note in rows:
+                student_id = str(note.get("student_id") or "")
+                if student_id in newest_note:
+                    continue
                 created_at = _as_utc(note.get("created_at"))
                 if created_at is None:
                     continue
@@ -2289,6 +2290,23 @@ def compose_parent(
                     "label": _milestone_label(str(note.get("body") or "")),
                     "at": created_at,
                 }
+
+        try:
+            # One family-wide call. list_progress_for_parent fetches every
+            # matching row internally and slices, so a generous limit is cheap
+            # — and it already drops private notes (visibility != "shared").
+            first_page = max(len(student_ids) * 25, 100)
+            notes, total = await list_progress_for_parent(parent_id, limit=first_page, offset=0)
+            _absorb(notes)
+            # The page is sliced across the WHOLE family, so one busy child can
+            # fill it and hide a sibling's newest note entirely. If anyone is
+            # still missing and there are rows we have not seen, take the lot —
+            # the underlying query already read them all.
+            if total > len(notes) and any(sid not in newest_note for sid in student_ids):
+                notes, _total = await list_progress_for_parent(parent_id, limit=total, offset=0)
+                _absorb(notes)
+        except Exception:  # pragma: no cover - defensive; one leg must not 500 Home
+            log.warning("parent home: progress leg failed for parent %s", parent_id, exc_info=True)
 
         async def _newest_skill(student_id: str) -> dict[str, Any] | None:
             if sp_composition is None:
@@ -2330,16 +2348,28 @@ def compose_parent(
     async def _parent_home_balance(parent_id: str) -> dict[str, Any]:
         """Family-level money summary (decisions 5, 6 and 6b).
 
-        ``list_invoices_for_parent`` applies no status filter, so the
-        paid/void exclusion is this method's job. ``partially_paid`` counts as
-        due, matching the gate the pay endpoints already use.
+        ``list_invoices_for_parent`` applies no status filter, so restricting
+        to what is actually payable is this method's job: the amount due is
+        the ``{open, partially_paid}`` + positive-balance set the pay
+        endpoints accept, so ``partially_paid`` counts and ``draft`` does not.
+        ``_SETTLED_INVOICE_STATUSES`` stays for the payment-attention rule,
+        where "no longer needs attention" really is "paid or void".
         """
         try:
             invoices = await list_invoices_for_parent(parent_id)
         except Exception:  # pragma: no cover - defensive
             log.warning("parent home: invoice leg failed for parent %s", parent_id, exc_info=True)
             invoices = []
-        unpaid = [inv for inv in invoices if str(inv.status) not in _SETTLED_INVOICE_STATUSES]
+        # Filter POSITIVELY on the statuses the pay endpoints accept
+        # (start_invoice_payment_for_parent / start_balance_payment_for_parent
+        # both gate on {open, partially_paid} AND a positive balance). A
+        # `not in {paid, void}` negation would count `draft` invoices, and the
+        # banner would then offer a Pay button for money no surface can take.
+        unpaid = [
+            inv
+            for inv in invoices
+            if str(inv.status) in CHARGEABLE_INVOICE_STATUSES and int(inv.balance_due_cents) > 0
+        ]
         amount_due_cents = sum(int(inv.balance_due_cents) for inv in unpaid)
         due_dates = [inv.due_date for inv in unpaid if inv.due_date]
         currency = next((str(inv.currency) for inv in unpaid if inv.currency), None)

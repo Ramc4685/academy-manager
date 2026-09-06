@@ -229,6 +229,72 @@ test.describe("parent home — kid-first cards", () => {
     await expect(page.getByTestId("parent-balance-pay")).toBeVisible();
   });
 
+  test("money is said once: an open balance never also renders a payment action card", async ({
+    page,
+  }) => {
+    // Enough for buildParentHomeModel to pick a "payment" primary action:
+    // an active enrollment, a failed payment, and its still-open invoice.
+    await stubGet(page, "**/api/v2/parent/enrollments", {
+      enrollments: [
+        {
+          enrollment_id: "e1",
+          student_id: "st-1",
+          student_name: "Ava Kim",
+          session_id: "sess-1",
+          session_title: "Junior Beginners",
+          status: "active",
+          payment_mode: "monthly",
+          subscription_status: null,
+        },
+      ],
+    });
+    await stubGet(page, "**/api/v2/parent/payments", {
+      payments: [
+        {
+          payment_id: "pay-1",
+          amount_cents: 12000,
+          currency: "usd",
+          status: "failed",
+          refunded_cents: 0,
+          created_at: "2026-09-01T12:00:00Z",
+          session_id: "sess-1",
+          invoice_id: "inv-1",
+        },
+      ],
+    });
+    await stubGet(page, "**/api/v2/parent/invoices", {
+      invoices: [
+        {
+          invoice_id: "inv-1",
+          period: "2026-09",
+          status: "open",
+          total_cents: 12000,
+          balance_due_cents: 12000,
+          currency: "usd",
+          due_date: "2026-09-12",
+          pdf_url: null,
+          created_at: "2026-09-01T00:00:00Z",
+        },
+      ],
+    });
+    await stubHome(page, [AVA], {
+      amount_due_cents: 12000,
+      currency: "usd",
+      due_date: "2026-09-12",
+      open_invoice_count: 1,
+      payment_failed: false,
+    });
+
+    await page.goto("/parent/dashboard");
+
+    await expect(page.getByTestId("parent-balance-banner")).toBeVisible();
+    await expect(page.getByText("Payment needs attention")).toHaveCount(0);
+    // The banner's Pay button is Home's only route to billing.
+    await expect(
+      page.getByTestId("parent-dashboard").locator('a[href="/parent/payments"]'),
+    ).toHaveCount(1);
+  });
+
   test("a parent with no children keeps the registration hero and shows no cards", async ({
     page,
   }) => {

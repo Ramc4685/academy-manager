@@ -167,6 +167,14 @@ export default function ParentDashboardPage() {
 
   return (
     <section data-testid="parent-dashboard" className="space-y-4">
+      {/*
+        The kid-first Home has no visible page title — the child cards are the
+        title. It still needs one h1 so the screen-reader rotor and the a11y
+        audits have a document heading; the zero-children branch renders its
+        own visible h1 inside RegistrationHero, so this one is hidden only
+        when there are children to head.
+      */}
+      {hasChildren && <h1 className="sr-only">Home</h1>}
       {coreLoading ? (
         <DashboardSkeleton />
       ) : homeQuery.isError ? (
@@ -299,9 +307,11 @@ function ChildCard({
         >
           {nameInitial(child.full_name)}
         </span>
-        <p className="min-w-0 flex-1 truncate font-display text-lg font-bold text-rally-ink">
+        {/* The child's name heads the card, so it is a real heading: the
+            rotor's Headings list becomes a list of children. */}
+        <h2 className="min-w-0 flex-1 truncate font-display text-lg font-bold text-rally-ink">
           {child.full_name}
-        </p>
+        </h2>
         <ChevronRight className="shrink-0 text-rally-muted" size={18} />
       </div>
 

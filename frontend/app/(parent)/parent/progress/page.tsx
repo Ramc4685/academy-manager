@@ -227,12 +227,24 @@ function SkillProgressSection() {
   // yank the parent back to the deep-linked child whenever they tap a tab.
   const seededFromQuery = useRef(false);
 
+  const sectionRef = useRef<HTMLDivElement | null>(null);
+
   useEffect(() => {
     if (seededFromQuery.current || children.length === 0) return;
     seededFromQuery.current = true;
     if (!requestedChildId) return;
     const idx = children.findIndex((child) => child.student_id === requestedChildId);
-    if (idx >= 0) setActiveChildIdx(idx);
+    if (idx < 0) return;
+    setActiveChildIdx(idx);
+    // The `#skill-progress` fragment on Home's card cannot do this on its own:
+    // this section is not in the DOM when the router commits the navigation
+    // (the roster query is still in flight), so the browser scrolls to top and
+    // never retries. Jump — and move focus — once the child actually resolves.
+    const section = sectionRef.current;
+    if (section) {
+      section.scrollIntoView({ block: "start" });
+      section.focus({ preventScroll: true });
+    }
   }, [requestedChildId, children]);
 
   const activeChild = children[activeChildIdx];
@@ -249,7 +261,12 @@ function SkillProgressSection() {
   if (children.length === 0) return null;
 
   return (
-    <div id="skill-progress" className="mt-8 space-y-4 animate-fade-in-up">
+    <div
+      id="skill-progress"
+      ref={sectionRef}
+      tabIndex={-1}
+      className="mt-8 space-y-4 animate-fade-in-up outline-none"
+    >
       {/* Section heading */}
       <div>
         <h2 className="font-display text-xl font-bold tracking-tight text-rally-ink">
