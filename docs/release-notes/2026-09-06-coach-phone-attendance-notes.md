@@ -15,20 +15,17 @@ shared notes, and assistant coaches can write notes but never share them
 session.
 
 ## Deploy notes
-Migration `0167_coach_notes_visibility_private` marks every existing
-progress note and skill note as private. It does **not** run on boot in
-production (`V2_RUN_MIGRATIONS_ON_BOOT` is off, #629): after Deploy Backend
-succeeds run it by hand and report the modified counts for both collections:
+**Run migration `0167_coach_notes_visibility_private` by hand after the
+deploy.** Boot migrations are off in prod (`V2_RUN_MIGRATIONS_ON_BOOT=false`,
+#629). It stamps `visibility: "private"` on every `progress_notes` and
+`coach_skill_notes` document that predates the flag, and is idempotent. The
+app already treats a missing field as private, so parents see the same thing
+before and after; the backfill makes the parent feed's equality match exact.
+No env vars.
 
-```
-fly ssh console -a courtmastr-academy-api
-python -c "import asyncio; from backend.v2.migrations.runner import run_pending_migrations; asyncio.run(run_pending_migrations())"
-```
-
-(Use whatever entry point was used for 0165 if the module path differs.)
-Until it runs, notes without the field already read as private, so parents
-see no coach notes either way. Expect parents to lose every previously
-visible coach note until a coach re-shares it — tell coaches. No env vars.
+**Behaviour change to announce:** every coach note written before this deploy
+disappears from the parent progress feed until its coach (or an owner/admin)
+shares it again from the session's note box. Tell coaches before the deploy.
 
 ## Risk / rollback
 Medium for parents (notes disappear from the parent feed until re-shared);

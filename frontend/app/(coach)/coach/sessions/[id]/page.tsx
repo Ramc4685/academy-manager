@@ -142,7 +142,9 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   const { data: notesData } = useQuery({
     queryKey: progressNotesKey,
     queryFn: () => listProgressNotes(sessionId),
-    enabled: online && Boolean(session),
+    // Existing notes only render inside an open note box, so don't spend a
+    // request on every session-detail load. The staleTime keeps re-opens free.
+    enabled: online && Boolean(session) && noteOpen !== null,
     staleTime: 60 * 1000,
   });
   const notesByStudent = useMemo(() => {
@@ -203,7 +205,9 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
             pending: false,
           },
         }));
-        void queryClient.invalidateQueries({ queryKey: queryKeys.coach.today(date) });
+        // No invalidation here: replaying N marks would fire N refetches that
+        // cancel each other. The `finished` branch above refetches once, and
+        // the local state already shows the mark as saved.
       } else {
         setLocalMarks((m) => ({
           ...m,
@@ -650,6 +654,7 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
                     ? noteVisibilityMutation.variables?.noteId ?? null
                     : null
                 }
+                noteVisibilityFailed={noteVisibilityMutation.isError}
                 showBilling={!assistant}
                 billingOpen={billingOpen === student.student_id}
                 onToggleBilling={() =>
@@ -709,6 +714,7 @@ function RosterRow({
   noteSaving,
   onNoteVisibility,
   noteVisibilityPendingId,
+  noteVisibilityFailed,
   showBilling,
   billingOpen,
   onToggleBilling,
@@ -732,6 +738,8 @@ function RosterRow({
   noteSaving: boolean;
   onNoteVisibility: (noteId: string, visibility: NoteVisibility) => void;
   noteVisibilityPendingId: string | null;
+  /** The last visibility change failed — the chip silently reverted, so say so. */
+  noteVisibilityFailed: boolean;
   /** False for assistant coaches: the billing preview is lead-only. */
   showBilling: boolean;
   billingOpen: boolean;
@@ -940,8 +948,7 @@ function RosterRow({
                 data-testid={`note-share-${student.student_id}`}
                 checked={noteShare}
                 onChange={(e) => onNoteShareChange(e.target.checked)}
-                className="h-5 w-5 rounded border"
-                style={{ accentColor: "#facc15" }}
+                className="h-5 w-5 rounded border accent-rally-volt-400"
               />
               <span style={{ color: "var(--rally-ink)" }}>Share with parent</span>
             </label>
@@ -1014,6 +1021,12 @@ function RosterRow({
                 );
               })}
             </ul>
+          )}
+
+          {noteVisibilityFailed && (
+            <p data-testid="note-visibility-error" className="text-xs text-red-600">
+              Couldn&apos;t change who sees that note. Try again.
+            </p>
           )}
         </div>
       )}

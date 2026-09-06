@@ -293,6 +293,33 @@ test.describe("Coach Today", () => {
     expect(mock.progressNoteCalls[0]).toMatchObject({ student_id: "st1", visibility: "private" });
   });
 
+  test("a failed visibility change is surfaced, not silently reverted", async ({ page, mock }) => {
+    mock.progressNotes.push({
+      note_id: "note-seeded",
+      session_id: "s-today-1",
+      student_id: "st1",
+      coach_id: "user-coach-e2e",
+      body: "Needs to work on the serve",
+      created_at: new Date().toISOString(),
+      visibility: "private",
+    });
+    mock.failNextNoteVisibility = true;
+    await page.goto("/coach/sessions/s-today-1");
+    await page.getByTestId("roster-st1").getByRole("button", { name: "Note", exact: true }).click();
+    const toggle = page.getByTestId("note-share-toggle-note-seeded");
+    await toggle.click();
+    await expect.poll(() => mock.noteVisibilityCalls.length).toBe(1);
+    await expect(page.getByTestId("note-visibility-error")).toBeVisible();
+    // Nothing changed server-side, and the chip agrees.
+    await expect(page.getByTestId("note-visibility-note-seeded")).toHaveText(/private/i);
+
+    // Retrying clears the error and applies the change.
+    await toggle.click();
+    await expect.poll(() => mock.noteVisibilityCalls.length).toBe(2);
+    await expect(page.getByTestId("note-visibility-note-seeded")).toHaveText(/shared with parent/i);
+    await expect(page.getByTestId("note-visibility-error")).toHaveCount(0);
+  });
+
   test("server conflict on a plain mark is applied as a correction", async ({ page, mock }) => {
     // The mark already exists server-side (e.g. another device): the coach's
     // tap is a change, so the page must PATCH a correction instead of

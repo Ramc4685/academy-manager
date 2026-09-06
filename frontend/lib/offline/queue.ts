@@ -52,6 +52,16 @@ export async function update(m: QueuedMutation): Promise<void> {
   await put(STORE, m);
 }
 
+/**
+ * Re-read one mutation by id. Returns null when it is no longer in the store —
+ * which is how a writer learns that a fresh coach tap superseded (and dropped)
+ * the record it was holding, so it must not write a stale copy back.
+ */
+export async function getById(mutation_id: string): Promise<QueuedMutation | null> {
+  const items = await getAll<QueuedMutation>(STORE);
+  return items.find((m) => m.mutation_id === mutation_id) ?? null;
+}
+
 export async function dropById(mutation_id: string): Promise<void> {
   await remove(STORE, mutation_id);
 }

@@ -68,7 +68,11 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
 
   return (
     <ToastProvider>
-    <CoachSurfaceProvider assistant={assistant}>
+    <CoachSurfaceProvider
+      assistant={assistant}
+      userId={auth.authorized ? auth.user.user_id : null}
+      supervisor={supervising}
+    >
     <div
       className="min-h-screen flex flex-col"
       style={

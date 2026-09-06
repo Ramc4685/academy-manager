@@ -13,7 +13,7 @@ import {
 import type { ApiError } from "@/lib/api/client";
 import { queryKeys } from "@/lib/query/keys";
 import { Modal } from "@/components/ds/modal";
-import { useIsAssistantCoach } from "./coach-surface-context";
+import { canChangeNoteVisibility, useCoachSurface } from "./coach-surface-context";
 
 const BODY_MAX_LENGTH = 1000;
 
@@ -45,7 +45,8 @@ export function SkillNotesPanel({
   const notesKey = queryKeys.coach.skillNotes(studentId, skillId);
   // Assistant coaches write notes but never share them (the BFF 403s a
   // `shared` create and any visibility change), so no share control at all.
-  const assistant = useIsAssistantCoach();
+  const scope = useCoachSurface();
+  const assistant = scope.assistant;
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: notesKey,
@@ -103,6 +104,10 @@ export function SkillNotesPanel({
               .map((note: SkillNote) => {
                 const shared = note.visibility === "shared";
                 const pending = visibilityPendingId === note.note_id;
+                // The listing carries every author's notes for this skill, but
+                // only the author (or a supervisor) can flip one — anyone else
+                // gets a 404 from SetSkillNoteVisibility.
+                const canChange = canChangeNoteVisibility(scope, note.coach_id);
                 return (
                   <li
                     key={note.note_id}
@@ -120,13 +125,13 @@ export function SkillNotesPanel({
                               : "bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300"
                           }`}
                         >
-                          {shared ? "Shared with parent" : "Private"}
+                          {shared ? "Shared" : "Private"}
                         </span>
                         <span className="text-[11px] text-neutral-400">
                           {formatTimestamp(note.created_at)}
                         </span>
                       </span>
-                      {!assistant && (
+                      {canChange && (
                         <button
                           data-testid={`skill-note-share-toggle-${note.note_id}`}
                           disabled={pending}
@@ -166,16 +171,26 @@ export function SkillNotesPanel({
                 Notes you write stay private to coaches.
               </p>
             ) : (
-              <label className="flex min-h-touch items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
-                <input
-                  type="checkbox"
-                  data-testid="skill-note-share"
-                  checked={share}
-                  onChange={(e) => setShare(e.target.checked)}
-                  className="h-5 w-5 rounded border-neutral-300"
-                />
-                Share with parent
-              </label>
+              // "Mark as shared", not "Share with parent": nothing on the
+              // parent side reads coach_skill_notes yet (the parent feed reads
+              // progress_notes + session_feedback, and parent skill updates
+              // come from student_progress). The flag is real and enforced —
+              // it just isn't a parent-visible surface today.
+              <div className="space-y-1">
+                <label className="flex min-h-touch items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
+                  <input
+                    type="checkbox"
+                    data-testid="skill-note-share"
+                    checked={share}
+                    onChange={(e) => setShare(e.target.checked)}
+                    className="h-5 w-5 rounded border-neutral-300"
+                  />
+                  Mark as shared
+                </label>
+                <p data-testid="skill-note-share-hint" className="text-xs text-neutral-500">
+                  Shared skill notes are not in the parent portal yet.
+                </p>
+              </div>
             )}
             <div className="flex items-center justify-between">
               <span className="text-[11px] text-neutral-400">

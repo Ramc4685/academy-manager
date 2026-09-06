@@ -74,6 +74,12 @@ export interface MockState {
   progressNoteCalls: Array<Record<string, unknown>>;
   /** `{ note_id, visibility }` for every PATCH on a progress note. */
   noteVisibilityCalls: Array<{ note_id: string; visibility: string }>;
+  /**
+   * When true, the next PATCH on a progress note 500s and the flag clears —
+   * so a spec can prove the UI surfaces the failure instead of silently
+   * reverting the chip.
+   */
+  failNextNoteVisibility: boolean;
   /** Skill notes for the passport's Notes panel; same GET/POST/PATCH shape. */
   skillNotes: MockSkillNote[];
   skillNoteCalls: Array<Record<string, unknown>>;
@@ -206,6 +212,7 @@ export const test = base.extend<{
       progressNotes: [],
       progressNoteCalls: [],
       noteVisibilityCalls: [],
+      failNextNoteVisibility: false,
       skillNotes: [],
       skillNoteCalls: [],
       skillNoteVisibilityCalls: [],
@@ -596,6 +603,16 @@ export const test = base.extend<{
         const noteId = decodeURIComponent(parts[parts.length - 1] ?? "");
         const body = JSON.parse(route.request().postData() ?? "{}");
         state.noteVisibilityCalls.push({ note_id: noteId, visibility: body.visibility });
+        if (state.failNextNoteVisibility) {
+          state.failNextNoteVisibility = false;
+          return route.fulfill({
+            status: 500,
+            contentType: "application/json",
+            body: JSON.stringify({
+              error: { code: "InternalError", message: "boom", details: {} },
+            }),
+          });
+        }
         const note = state.progressNotes.find((n) => n.note_id === noteId);
         if (!note) {
           return route.fulfill({

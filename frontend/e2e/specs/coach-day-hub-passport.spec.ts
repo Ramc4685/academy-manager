@@ -103,6 +103,10 @@ test.describe("Coach Day Hub and Skill Passport", () => {
     await card.getByRole("button", { name: "Notes" }).click();
     const share = page.getByTestId("skill-note-share");
     await expect(share).not.toBeChecked();
+    // The copy must not promise a parent surface that does not exist yet.
+    await expect(page.getByTestId("skill-note-share-hint")).toHaveText(
+      /not in the parent portal yet/i,
+    );
     await share.check();
     await page.getByPlaceholder("Add a note about this skill...").fill("Shuttle contact is higher");
     const addButton = page.getByRole("button", { name: "Add Note" });
@@ -114,9 +118,7 @@ test.describe("Coach Day Hub and Skill Passport", () => {
       body: "Shuttle contact is higher",
       visibility: "shared",
     });
-    await expect(page.getByTestId("skill-note-visibility-skill-note-1")).toHaveText(
-      /shared with parent/i,
-    );
+    await expect(page.getByTestId("skill-note-visibility-skill-note-1")).toHaveText(/^Shared$/);
     const toggle = page.getByTestId("skill-note-share-toggle-skill-note-1");
     await expectTouchHeight(toggle);
     await toggle.click();
@@ -126,5 +128,50 @@ test.describe("Coach Day Hub and Skill Passport", () => {
       visibility: "private",
     });
     await expect(page.getByTestId("skill-note-visibility-skill-note-1")).toHaveText(/private/i);
+  });
+
+  test("the share toggle only appears on notes this coach wrote", async ({ page, mock }) => {
+    // ListSkillNotes has no author filter, but SetSkillNoteVisibility 404s a
+    // non-supervisor who did not write the note — so a toggle on a colleague's
+    // note could never succeed and must not be offered.
+    const created_at = new Date().toISOString();
+    mock.skillNotes.push(
+      {
+        note_id: "skill-note-mine",
+        academy_id: "academy-e2e",
+        student_id: "st1",
+        skill_id: "skill-backhand",
+        coach_id: "user-coach-e2e",
+        session_id: null,
+        body: "My own note",
+        created_at,
+        visibility: "private",
+      },
+      {
+        note_id: "skill-note-theirs",
+        academy_id: "academy-e2e",
+        student_id: "st1",
+        skill_id: "skill-backhand",
+        coach_id: "user-other-coach",
+        session_id: null,
+        body: "A colleague's note",
+        created_at,
+        visibility: "private",
+      },
+    );
+
+    await page.goto("/coach/students/st1/passport?student_name=Alice");
+    await expect(page.getByTestId("coach-student-passport")).toBeVisible();
+    await page
+      .getByTestId("passport-skill-skill-backhand")
+      .getByRole("button", { name: "Notes" })
+      .click();
+
+    // Both notes list; only the viewer's own carries a toggle.
+    await expect(page.getByTestId("skill-note-skill-note-theirs")).toContainText(
+      "A colleague's note",
+    );
+    await expect(page.getByTestId("skill-note-share-toggle-skill-note-mine")).toBeVisible();
+    await expect(page.getByTestId("skill-note-share-toggle-skill-note-theirs")).toHaveCount(0);
   });
 });

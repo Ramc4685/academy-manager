@@ -124,10 +124,15 @@ export function BillingPreviewDrawer({
 
           <label className="block text-xs" style={{ color: "var(--rally-muted)" }}>
             Preview move to
+            {/*
+              WebKit ignores author min-height on a native select, so the
+              explicit h-11 is what actually gives it the 44px touch target
+              (same fix as the other coach selects).
+            */}
             <select
               value={toSessionTypeId}
               onChange={(event) => setToSessionTypeId(event.target.value)}
-              className="mt-1 h-9 w-full rounded-md border px-2 text-sm"
+              className="mt-1 h-11 min-h-touch w-full rounded-md border px-2 text-sm"
               style={{ borderColor: "var(--rally-line)", background: "#fff" }}
               data-testid="billing-preview-target"
             >

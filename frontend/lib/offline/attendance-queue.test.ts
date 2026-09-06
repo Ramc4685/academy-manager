@@ -22,6 +22,9 @@ vi.mock("./queue", () => ({
   update: async (m: QueuedMutation) => {
     store.set(m.mutation_id, m);
   },
+  dropById: async (mutation_id: string) => {
+    store.delete(mutation_id);
+  },
 }));
 
 import { queueMark, queuedMarksFor } from "./attendance-queue";
@@ -51,7 +54,9 @@ describe("queueMark", () => {
     expect(store.size).toBe(1);
   });
 
-  it("rewrites the queued mark for the same student instead of adding a second one", async () => {
+  it("rewrites a fresh queued mark in place, keeping the same mutation id", async () => {
+    // Never sent (queued, zero attempts) → the id cannot be cached server-side,
+    // so reusing it is safe and keeps one queued mark per student.
     const first = await queueMark({ ...base, student_id: "st1", status: "present" });
     const second = await queueMark({ ...base, student_id: "st1", status: "absent" });
     expect(second.mutation_id).toBe(first.mutation_id);
@@ -60,10 +65,12 @@ describe("queueMark", () => {
     expect(store.get(first.mutation_id)?.payload.status).toBe("absent");
   });
 
-  it("resets the retry budget when a paused mark is rewritten", async () => {
+  it("gives an already-attempted mark a NEW id and drops the old entry", async () => {
     // sync.ts leaves a mark `queued` with attempts === MAX_ATTEMPTS after five
-    // transient failures and then skips it on every later run. A fresh tap
-    // must give it a new budget or the QUEUED chip is permanent.
+    // failures. Any attempt > 0 may have committed server-side without the
+    // response reaching us, and MarkAttendance is @idempotent on mutation_id —
+    // a replay under the same id would return the CACHED old status. So the
+    // new intent must travel under a fresh key, with a fresh retry budget.
     const first = await queueMark({ ...base, student_id: "st1", status: "present" });
     store.set(first.mutation_id, {
       ...first,
@@ -71,13 +78,27 @@ describe("queueMark", () => {
       last_attempt_at: "2026-09-06T10:00:00.000Z",
     });
     const again = await queueMark({ ...base, student_id: "st1", status: "absent" });
-    expect(again.mutation_id).toBe(first.mutation_id);
+    expect(again.mutation_id).not.toBe(first.mutation_id);
     expect(again.attempts).toBe(0);
     expect(again.last_attempt_at).toBeUndefined();
-    const stored = store.get(first.mutation_id);
-    expect(stored?.attempts).toBe(0);
-    expect(stored?.last_attempt_at).toBeUndefined();
-    expect(stored?.payload.status).toBe("absent");
+    expect(again.payload.status).toBe("absent");
+    expect(again.payload.mutation_id).toBe(again.mutation_id);
+    // Exactly one queued mark for this student, and it is the new one.
+    expect(store.has(first.mutation_id)).toBe(false);
+    expect(store.size).toBe(1);
+  });
+
+  it("gives a mark the sync has claimed (in_flight) a NEW id", async () => {
+    // The tap landed while syncNow was replaying this mutation. Rewriting the
+    // payload in place would be sent-and-deleted with the OLD status.
+    const first = await queueMark({ ...base, student_id: "st1", status: "present" });
+    store.set(first.mutation_id, { ...first, status: "in_flight" });
+    const again = await queueMark({ ...base, student_id: "st1", status: "absent" });
+    expect(again.mutation_id).not.toBe(first.mutation_id);
+    expect(again.status).toBe("queued");
+    expect(again.payload.status).toBe("absent");
+    expect(store.has(first.mutation_id)).toBe(false);
+    expect(store.size).toBe(1);
   });
 
   it("keeps separate mutations for different students and occurrences", async () => {
