@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from typing import Annotated, Any
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field, StringConstraints
@@ -903,18 +904,20 @@ async def charge_invoice_via_autopay(
     - Raises 409 when the invoice is not chargeable (paid/void/draft with zero balance)
       or the parent has no saved payment method.
     """
-    charge_autopay = _required_callable(
-        use_cases.charge_invoice_via_autopay,
+    # Every charge through this route is an admin pressing a button, not the
+    # dunning worker, so it goes through the audited admin path: attributed in
+    # Stripe and written to the trail as `admin_charge_initiated` with the
+    # reason, which is the entry the family timeline renders.
+    charge_as_admin = _required_callable(
+        use_cases.charge_invoice_as_admin_action,
         "Stripe autopay",
     )
-    # Every charge through this route is an admin pressing a button, not the
-    # dunning worker. Say so: without an explicit source and actor the Stripe
-    # attempt lands in the books as an unattributed `autopay` run.
     try:
-        result = await charge_autopay(  # type: ignore[operator]
-            invoice_id,
-            source="admin_manual",
+        result = await charge_as_admin(  # type: ignore[operator]
+            invoice_id=invoice_id,
             actor_id=claims.user_id,
+            reason=(body.reason if body and body.reason else "Charged by admin"),
+            request_id=(body.request_id if body and body.request_id else str(uuid4())),
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
