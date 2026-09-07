@@ -158,29 +158,31 @@ class FakeOutbox:
 
 
 @dataclass
-class FakeLifecycleBilling:
-    async def record_move_proration(
-        self,
-        *,
-        enrollment: Enrollment,
-        from_session_id: str,
-        to_session_id: str,
-        effective_at: datetime,
-        actor_id: str,
-        reason: str | None,
-    ):
-        assert enrollment.enrollment_id == "enr-1"
-        assert from_session_id == "sess-1"
-        assert to_session_id == "sess-2"
-        assert effective_at == _effective()
-        assert actor_id == "admin-1"
-        assert reason == "schedule change"
+class RecordingMoveBillingSync:
+    """``EnrollmentMoveBillingSync`` fake (issue #669): records the call and
+    answers the way the production adapter does."""
+
+    calls: list[dict[str, Any]] = field(default_factory=list)
+    fail: bool = False
+    result: str = "credit:1250"
+
+    async def apply_move(self, **kwargs: Any) -> dict[str, Any]:
+        if self.fail:
+            raise RuntimeError("billing down")
+        self.calls.append(kwargs)
         return {
-            "billing_policy": "move_proration",
-            "billing_result": "credit:1250",
-            "metadata": {"adjustment_cents": "-1250"},
+            "billing_policy": "move_proration_current_period",
+            "billing_result": self.result,
+            "metadata": {
+                "outcome": "credited",
+                "delta_cents": "-1250",
+                "credit_id": "credit-move-1",
+            },
         }
 
+
+@dataclass
+class FakeLifecycleBilling:
     async def record_withdrawal_decision(
         self,
         *,
@@ -326,12 +328,13 @@ async def test_move_records_effective_date_and_billing_proration_result() -> Non
     enrollments = FakeEnrollments(rows={"enr-1": _enrollment()})
     events = FakeEnrollmentEvents()
     sessions = FakeSessions()
+    billing_sync = RecordingMoveBillingSync()
 
     use_case = TransferEnrollment(
         enrollments=enrollments,
         sessions=sessions,
         enrollment_events=events,
-        billing=FakeLifecycleBilling(),
+        billing_sync=billing_sync,
         clock=_now,
     )
 
@@ -347,14 +350,77 @@ async def test_move_records_effective_date_and_billing_proration_result() -> Non
 
     assert enrollments.rows["enr-1"].session_id == "sess-2"
     assert sessions.reserved == {"sess-1": 0, "sess-2": 1}
+    # Billing got the real transition: old session, new session, effective date.
+    assert billing_sync.calls == [
+        {
+            "enrollment_id": "enr-1",
+            "from_session_id": "sess-1",
+            "to_session_id": "sess-2",
+            "effective_at": _effective(),
+            "reason": "schedule change",
+            "actor_id": "admin-1",
+        }
+    ]
     event = events.rows[0]
     assert event.event_type == "moved"
     assert event.effective_at == _effective()
     assert event.from_session_id == "sess-1"
     assert event.to_session_id == "sess-2"
-    assert event.billing_policy == "move_proration"
+    assert event.billing_policy == "move_proration_current_period"
     assert event.billing_result == "credit:1250"
-    assert event.metadata == {"adjustment_cents": "-1250"}
+    assert event.credit_id == "credit-move-1"
+    assert event.metadata == {
+        "outcome": "credited",
+        "delta_cents": "-1250",
+        "credit_id": "credit-move-1",
+    }
+
+
+@pytest.mark.asyncio
+async def test_move_billing_failure_is_recorded_not_raised() -> None:
+    enrollments = FakeEnrollments(rows={"enr-1": _enrollment()})
+    events = FakeEnrollmentEvents()
+    sessions = FakeSessions()
+
+    use_case = TransferEnrollment(
+        enrollments=enrollments,
+        sessions=sessions,
+        enrollment_events=events,
+        billing_sync=RecordingMoveBillingSync(fail=True),
+        clock=_now,
+    )
+
+    moved = await use_case.execute(
+        TransferEnrollmentCommand(
+            enrollment_id="enr-1",
+            target_session_id="sess-2",
+            effective_at=_effective(),
+            actor_id="admin-1",
+        )
+    )
+
+    assert moved.session_id == "sess-2"
+    assert sessions.reserved == {"sess-1": 0, "sess-2": 1}
+    assert events.rows[0].billing_result == "billing_sync_failed"
+
+
+@pytest.mark.asyncio
+async def test_move_without_billing_sync_reports_unwired() -> None:
+    enrollments = FakeEnrollments(rows={"enr-1": _enrollment()})
+    events = FakeEnrollmentEvents()
+
+    await TransferEnrollment(
+        enrollments=enrollments,
+        sessions=FakeSessions(),
+        enrollment_events=events,
+        clock=_now,
+    ).execute(
+        TransferEnrollmentCommand(
+            enrollment_id="enr-1", target_session_id="sess-2", actor_id="admin-1"
+        )
+    )
+
+    assert events.rows[0].billing_result == "billing_sync_unwired"
 
 
 @pytest.mark.asyncio

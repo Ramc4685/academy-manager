@@ -24,7 +24,11 @@ PaymentStatus = Literal[
 ]
 SubscriptionStatus = Literal["active", "past_due", "cancelled", "incomplete"]
 CreditEntryType = Literal[
-    "EARLY_WITHDRAWAL_CREDIT", "MANUAL_CREDIT", "CREDIT_APPLIED", "CREDIT_VOIDED"
+    "EARLY_WITHDRAWAL_CREDIT",
+    "MOVE_PRORATION_CREDIT",
+    "MANUAL_CREDIT",
+    "CREDIT_APPLIED",
+    "CREDIT_VOIDED",
 ]
 CreditStatus = Literal["PENDING", "APPROVED", "APPLIED", "EXPIRED", "VOIDED"]
 AutopayConsentSource = Literal[

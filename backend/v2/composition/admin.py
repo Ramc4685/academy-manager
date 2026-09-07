@@ -49,6 +49,7 @@ from backend.v2.composition.lifecycle_billing import (
     build_autopay_status_gateway,
     build_void_billing_invoice,
     compose_enrollment_billing_sync,
+    compose_enrollment_move_billing_sync,
 )
 from backend.v2.composition.pathway import (
     compose_curriculum,
@@ -736,6 +737,7 @@ def compose_admin(
         sessions=sessions_w,
         enrollment_events=enrollment_events,
         roster_notifier=notifiers.roster,
+        billing_sync=compose_enrollment_move_billing_sync(db, idempotency=idempotency_store),
     )
     override_enrollment_fee = OverrideEnrollmentFee(enrollments=enrollments_w)
     pause_enrollment = PauseEnrollment(

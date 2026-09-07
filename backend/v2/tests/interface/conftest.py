@@ -1383,24 +1383,28 @@ class FakeWaitlistRepo:
         }
 
 
-class FakeLifecycleBilling:
-    async def record_move_proration(
-        self,
-        *,
-        enrollment,
-        from_session_id,
-        to_session_id,
-        effective_at,
-        actor_id,
-        reason,
-    ):
-        _ = (enrollment, from_session_id, to_session_id, effective_at, actor_id, reason)
+@dataclass
+class FakeMoveBillingSync:
+    """``EnrollmentMoveBillingSync`` (issue #669): records what the transfer
+    route hands billing and answers like the production adapter."""
+
+    calls: list[dict[str, Any]] = field(default_factory=list)
+
+    async def apply_move(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(kwargs)
         return {
-            "billing_policy": "move_proration",
-            "billing_result": "recorded",
-            "metadata": {},
+            "billing_policy": "move_proration_current_period",
+            "billing_result": "debit:4000",
+            "metadata": {
+                "outcome": "debited",
+                "delta_cents": "4000",
+                "invoice_id": "inv-move-target",
+                "line_id": "line-move-1",
+            },
         }
 
+
+class FakeLifecycleBilling:
     async def record_withdrawal_decision(
         self,
         *,
@@ -1851,6 +1855,7 @@ def admin_seed():
         "enrollments": enrollments,
         "enrollment_query": enrollments,
         "enrollment_events": FakeEnrollmentEvents(),
+        "move_billing_sync": FakeMoveBillingSync(),
         "students": FakeStudentWriter(),
         "waitlist": FakeWaitlistRepo(),
         "pause_requests": FakePauseRequestRepo(),
@@ -1940,7 +1945,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         enrollments=enrollments_w,
         sessions=sessions,
         enrollment_events=enrollment_events,
-        billing=lifecycle_billing,
+        billing_sync=seed["move_billing_sync"],
     )
     override_enrollment_fee = OverrideEnrollmentFee(enrollments=enrollments_w)
     pause_enrollment = PauseEnrollment(

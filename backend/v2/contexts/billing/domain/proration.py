@@ -169,3 +169,100 @@ def _round_half_up_rational(numerator: int, denominator: int) -> int:
         return 0
     quotient, remainder = divmod(numerator, denominator)
     return quotient + (1 if remainder * 2 >= denominator else 0)
+
+
+# ---------------------------------------------------------------------------
+# Mid-period move between sessions (issue #669).
+# ---------------------------------------------------------------------------
+
+
+class MoveProrationQuote(BaseModel):
+    """Price delta owed (positive) or owed back (negative) for the rest of a period.
+
+    Each side is the session's monthly price scaled by the share of its
+    billable occurrences that start at or after ``effective_at``:
+    ``price * remaining / total`` rounded half-up on the final cent, the same
+    rounding ``FirstMonthProrationPolicy`` uses. ``delta_cents`` is
+    ``to_share_cents - from_share_cents``; the family already paid (or owes)
+    the from-session's full month, so only the difference moves.
+    """
+
+    model_config = {"frozen": True}
+
+    billing_period_label: str
+    from_session_id: str
+    to_session_id: str
+    from_price_cents: int
+    to_price_cents: int
+    from_total_classes: int
+    from_remaining_classes: int
+    to_total_classes: int
+    to_remaining_classes: int
+    from_share_cents: int
+    to_share_cents: int
+    delta_cents: int
+    policy_version: str = "move-proration-v1"
+
+
+def remaining_share_cents(
+    *,
+    monthly_price_cents: int,
+    period: BillingPeriod,
+    occurrences: list[ClassOccurrence],
+    effective_at: datetime,
+) -> tuple[int, int, int]:
+    """``(share_cents, remaining, total)`` for the classes from ``effective_at`` on.
+
+    ``total`` counts every billable occurrence of the period (the classes the
+    monthly price buys); ``remaining`` counts those starting at or after
+    ``effective_at``. An empty schedule yields ``(0, 0, 0)``.
+    """
+    eligible = [
+        occurrence
+        for occurrence in occurrences
+        if FirstMonthProrationPolicy._is_eligible(occurrence, period)
+    ]
+    total = len(eligible)
+    remaining = sum(1 for occurrence in eligible if occurrence.start_at >= effective_at)
+    if total == 0 or remaining == 0 or monthly_price_cents <= 0:
+        return 0, remaining, total
+    return _round_half_up_rational(monthly_price_cents * remaining, total), remaining, total
+
+
+def quote_move_proration(
+    *,
+    period: BillingPeriod,
+    from_session_id: str,
+    to_session_id: str,
+    from_price_cents: int,
+    to_price_cents: int,
+    from_occurrences: list[ClassOccurrence],
+    to_occurrences: list[ClassOccurrence],
+    effective_at: datetime,
+) -> MoveProrationQuote:
+    from_share, from_remaining, from_total = remaining_share_cents(
+        monthly_price_cents=from_price_cents,
+        period=period,
+        occurrences=from_occurrences,
+        effective_at=effective_at,
+    )
+    to_share, to_remaining, to_total = remaining_share_cents(
+        monthly_price_cents=to_price_cents,
+        period=period,
+        occurrences=to_occurrences,
+        effective_at=effective_at,
+    )
+    return MoveProrationQuote(
+        billing_period_label=period.label,
+        from_session_id=from_session_id,
+        to_session_id=to_session_id,
+        from_price_cents=from_price_cents,
+        to_price_cents=to_price_cents,
+        from_total_classes=from_total,
+        from_remaining_classes=from_remaining,
+        to_total_classes=to_total,
+        to_remaining_classes=to_remaining,
+        from_share_cents=from_share,
+        to_share_cents=to_share,
+        delta_cents=to_share - from_share,
+    )
