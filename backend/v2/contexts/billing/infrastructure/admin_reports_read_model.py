@@ -33,7 +33,6 @@ from backend.v2.contexts.billing.application.admin_money import (
     ledger_payment_effective_at,
     ledger_payment_effective_month,
     ledger_payment_effective_window_query,
-    legacy_payment_cash_candidate_query,
     month_bounds,
     payment_collected_cents,
     payment_due_date,
@@ -43,6 +42,7 @@ from backend.v2.contexts.billing.application.admin_money import (
     payment_revenue_net_cents,
     round_money_minor,
 )
+from backend.v2.contexts.billing.infrastructure.cash_received import cash_received_in_period
 from backend.v2.shared.occurrences import occurrence_session_id
 from backend.v2.shared.tenancy import current_academy_id
 
@@ -635,7 +635,10 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
         academy_id = current_academy_id()
         start, end = month_bounds(period)
 
-        cash_collected_cents = 0
+        # Spec 2026-09-07 §3.2: one reader is the definition of cash received.
+        cash_collected_cents = (
+            await cash_received_in_period(db, academy_id=academy_id, start=start, end=end)
+        ).net_cents
         billed_cents = 0
         outstanding_dues_cents = 0
         failed_payment_count = 0
@@ -645,10 +648,9 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
             label: {"amount_cents": 0, "family_ids": set(), "family_amounts": {}}
             for label in ("Current", "1-30", "31-60", "60+")
         }
+        # Rebuilt here for the ``risk_payments`` pass below only; the cash
+        # reader keeps its own copy because its legacy dedup depends on it.
         invoice_keys: set[str] = set()
-        ledger_payment_keys: set[str] = set()
-        ledger_payment_ids: set[str] = set()
-        successful_ledger_statuses = ["succeeded", "paid", "partially_refunded", "refunded"]
         invoices_cursor = db["invoices"].find(
             {
                 "academy_id": academy_id,
@@ -685,80 +687,6 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
                     family_amounts = bucket["family_amounts"]
                     family_amounts[family_id] = int(family_amounts.get(family_id, 0)) + outstanding
 
-        ledger_payments_cursor = db["ledger_payments"].find(
-            {
-                "academy_id": academy_id,
-                **ledger_payment_effective_window_query(start, end),
-                "status": {"$in": successful_ledger_statuses},
-            },
-            {
-                "payment_id": 1,
-                "invoice_id": 1,
-                "invoice_number": 1,
-                "stripe_invoice_id": 1,
-                "stripe_payment_intent_id": 1,
-                "stripe_checkout_session_id": 1,
-                "amount_cents": 1,
-                "final_amount_cents": 1,
-                "gross_amount_cents": 1,
-                "amount": 1,
-                "final_amount": 1,
-                "gross_amount": 1,
-                "discount_cents": 1,
-                "discount": 1,
-                "paid_amount_cents": 1,
-                "amount_received_cents": 1,
-                "paid_amount": 1,
-                "amount_received": 1,
-                "refunded_cents": 1,
-                "paid_at": 1,
-                "created_at": 1,
-            },
-        )
-        async for ledger_payment in ledger_payments_cursor:
-            if ledger_payment_effective_month(ledger_payment) != period:
-                continue
-            ledger_payment_keys.update(payment_provider_keys(ledger_payment))
-            payment_id = str(ledger_payment.get("payment_id") or "")
-            if payment_id:
-                ledger_payment_ids.add(payment_id)
-            cash_collected_cents += payment_revenue_net_cents(ledger_payment)
-
-        ledger_key_cursor = db["ledger_payments"].find(
-            {
-                "academy_id": academy_id,
-                "status": {"$in": successful_ledger_statuses},
-            },
-            {
-                "payment_id": 1,
-                "invoice_id": 1,
-                "invoice_number": 1,
-                "stripe_invoice_id": 1,
-                "stripe_payment_intent_id": 1,
-                "stripe_checkout_session_id": 1,
-            },
-        )
-        async for ledger_payment in ledger_key_cursor:
-            ledger_payment_keys.update(payment_provider_keys(ledger_payment))
-            payment_id = str(ledger_payment.get("payment_id") or "")
-            if payment_id:
-                ledger_payment_ids.add(payment_id)
-
-        ledger_payment_id_list = sorted(ledger_payment_ids)
-        for index in range(0, len(ledger_payment_id_list), 500):
-            payment_id_batch = ledger_payment_id_list[index : index + 500]
-            allocation_cursor = db["payment_allocations"].find(
-                {
-                    "academy_id": academy_id,
-                    "payment_id": {"$in": payment_id_batch},
-                },
-                {"invoice_id": 1},
-            )
-            async for allocation in allocation_cursor:
-                invoice_id = str(allocation.get("invoice_id") or "")
-                if invoice_id:
-                    ledger_payment_keys.add(invoice_id)
-
         failed_attempts_cursor = db["payment_attempts"].find(
             {
                 "academy_id": academy_id,
@@ -768,43 +696,6 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
         )
         async for _attempt in failed_attempts_cursor:
             failed_payment_count += 1
-
-        cash_payments_cursor = db["payments"].find(
-            legacy_payment_cash_candidate_query(academy_id, period, start, end),
-            {
-                "payment_id": 1,
-                "invoice_id": 1,
-                "invoice_number": 1,
-                "stripe_invoice_id": 1,
-                "stripe_payment_intent_id": 1,
-                "stripe_checkout_session_id": 1,
-                "status": 1,
-                "amount_cents": 1,
-                "final_amount_cents": 1,
-                "gross_amount_cents": 1,
-                "amount": 1,
-                "final_amount": 1,
-                "gross_amount": 1,
-                "discount_cents": 1,
-                "discount": 1,
-                "paid_amount_cents": 1,
-                "amount_received_cents": 1,
-                "paid_amount": 1,
-                "amount_received": 1,
-                "refunded_cents": 1,
-                "paid_at": 1,
-                "payment_date": 1,
-                "created_at": 1,
-                "period": 1,
-            },
-        )
-        async for payment in cash_payments_cursor:
-            if payment_effective_month(payment) != period:
-                continue
-            payment_keys = payment_provider_keys(payment)
-            if payment_keys & (invoice_keys | ledger_payment_keys):
-                continue
-            cash_collected_cents += payment_collected_cents(payment)
 
         risk_payments_cursor = db["payments"].find(
             {
