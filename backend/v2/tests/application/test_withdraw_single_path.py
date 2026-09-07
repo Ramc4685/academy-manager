@@ -9,6 +9,7 @@ domain error rather than a silent no-op or a double-decrement.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -92,7 +93,7 @@ async def test_credit_withdraw_runs_every_side_effect_exactly_once() -> None:
     await h.use_case.execute(_cmd("credit"))
 
     assert h.enrollments.rows["enr-1"].status == "withdrawn"
-    # the credit decision ran once, before anything else, with the admin's inputs
+    # the credit decision ran once, for the CAS winner, with the admin's inputs
     assert [c["outcome"] for c in h.decision.calls] == ["credit"]
     assert h.decision.credits == {"enr-1": "credit-enr-1"}
     # the seat is released once
@@ -171,29 +172,32 @@ async def test_paused_row_withdraws_without_releasing_a_seat_it_no_longer_holds(
 
 
 @pytest.mark.asyncio
-async def test_refused_credit_decision_leaves_the_row_untouched() -> None:
+async def test_failed_credit_decision_still_withdraws_and_says_so() -> None:
+    """The decision runs after the CAS, so it can no longer abandon a
+    half-withdrawn row: the failure is recorded on the event instead."""
     h = _build()
     h.decision.fail = True
 
-    with pytest.raises(RuntimeError):
-        await h.use_case.execute(_cmd("credit"))
+    await h.use_case.execute(_cmd("credit"))
 
-    # decision runs BEFORE any write: the owner can retry with another outcome
-    assert h.enrollments.rows["enr-1"].status == "active"
-    assert h.sessions.reserved["sess-1"] == 1
-    assert h.sync.calls == []
-    assert h.events.rows == []
-    assert h.outbox.rows == []
-
-    h.decision.fail = False
-    await h.use_case.execute(_cmd("adjustment"))
     assert h.enrollments.rows["enr-1"].status == "withdrawn"
     assert h.sessions.reserved["sess-1"] == 0
+    assert [c["transition"] for c in h.sync.calls] == ["withdrawn"]
+    assert len(h.outbox.rows) == 1
+    event = h.events.rows[0]
+    assert event.billing_policy == "withdrawal_credit"
+    assert event.billing_result.startswith("withdrawal_decision_failed")
+    assert event.credit_id is None
+    assert event.metadata["automation"] == "failed"
 
 
 @pytest.mark.asyncio
-async def test_lost_cas_race_is_a_conflict_with_no_seat_release() -> None:
-    """Two admins submit at once: both read `active`, only one CAS wins."""
+async def test_lost_cas_race_is_a_conflict_and_issues_no_credit() -> None:
+    """Two admins submit at once: both read `active`, only one CAS wins.
+
+    The loser must not have written a credit — an APPROVED credit with no
+    withdrawal event behind it is real money nobody can reconcile.
+    """
     h = _build()
     original = h.enrollments.mark_withdrawn_if_open
 
@@ -208,10 +212,33 @@ async def test_lost_cas_race_is_a_conflict_with_no_seat_release() -> None:
         await h.use_case.execute(_cmd("credit"))
 
     assert h.enrollments.rows["enr-1"].status == "withdrawn"
-    # the loser released nothing and offered nothing
+    # the loser released nothing, offered nothing and credited nothing
     assert h.sessions.reserved["sess-1"] == 1
     assert h.outbox.rows == []
     assert h.events.rows == []
+    assert h.decision.calls == []
+    assert h.decision.credits == {}
+
+
+@pytest.mark.asyncio
+async def test_two_concurrent_withdraws_issue_exactly_one_credit() -> None:
+    """Both admins submit `credit` at the same moment. The CAS admits one, so
+    only one of them ever reaches the credit ledger."""
+    h = _build()
+    results = await asyncio.gather(
+        h.use_case.execute(_cmd("credit")),
+        h.use_case.execute(_cmd("credit")),
+        return_exceptions=True,
+    )
+
+    conflicts = [r for r in results if isinstance(r, EnrollmentNotWithdrawable)]
+    assert len(conflicts) == 1, results
+    assert h.enrollments.rows["enr-1"].status == "withdrawn"
+    assert len(h.decision.calls) == 1
+    assert h.decision.credits == {"enr-1": "credit-enr-1"}
+    assert h.sessions.reserved["sess-1"] == 0
+    assert len(h.events.rows) == 1
+    assert len(h.outbox.rows) == 1
 
 
 @pytest.mark.asyncio

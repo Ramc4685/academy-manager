@@ -279,15 +279,20 @@ class EnrollmentWithdrawalDecisionPort(Protocol):
     """Cross-context port (issue #670): the billing-side half of a withdrawal.
 
     ``WithdrawEnrollment`` is the only writer of the lifecycle transition; it
-    calls this port FIRST, before any enrollment write, so a refused decision
-    (for example no paid tuition to credit) leaves the row untouched. The
-    adapter lives in ``composition/lifecycle_billing.py``.
+    calls this port AFTER winning the status CAS, so only one caller can ever
+    reach the money side of a given withdrawal. The adapter lives in
+    ``composition/lifecycle_billing.py``.
 
     Contract:
 
+    * Implementations MUST NOT refuse a withdrawal. A family with nothing to
+      credit is a zero-credit result (``credit_none`` plus a
+      ``no_credit_reason``), never an exception: the row is already withdrawn
+      by the time this runs, and a raise would strand it.
     * ``outcome == "credit"`` issues the early-withdrawal credit ledger entry
       (idempotent on the ledger: a retry returns the entry it already made,
-      never a second one) and cancels the legacy Stripe subscription.
+      never a second one) and cancels the legacy Stripe subscription
+      (best effort — a failed cancel is reported in ``metadata``).
     * ``refund`` / ``adjustment`` have no automation; the result must say so
       (``refund_manual`` / ``adjustment_manual``) rather than pretend a
       decision was recorded.

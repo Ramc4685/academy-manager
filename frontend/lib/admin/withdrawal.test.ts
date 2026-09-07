@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  NO_PAID_TUITION_MESSAGE,
+  OWNER_GATE_404_MESSAGE,
   OWNER_ONLY_CREDIT_HINT,
   buildWithdrawRequest,
   defaultWithdrawalOutcome,
@@ -53,8 +55,27 @@ describe("withdrawErrorMessage", () => {
     ).toBe("Enrollment is already withdrawn; it cannot be withdrawn again.");
   });
 
-  it("explains a 404 as the owner-only credit refusal", () => {
-    expect(withdrawErrorMessage({ status: 404, message: "Not found" })).toMatch(/academy owner/);
+  it("explains a codeless 404 as the owner-only credit refusal", () => {
+    expect(withdrawErrorMessage({ status: 404, message: "Not found" })).toBe(
+      OWNER_GATE_404_MESSAGE,
+    );
+  });
+
+  it("does not blame permissions when the 404 carries a domain code", () => {
+    expect(
+      withdrawErrorMessage({
+        status: 404,
+        code: "Billing.PaymentNotFound",
+        message: "paid payment snapshot not found",
+      }),
+    ).toBe(NO_PAID_TUITION_MESSAGE);
+    expect(
+      withdrawErrorMessage({
+        status: 404,
+        code: "Enrollment.NotFound",
+        message: "enrollment missing",
+      }),
+    ).toBe("enrollment missing");
   });
 
   it("keeps other server messages and has a fallback", () => {

@@ -224,4 +224,32 @@ test.describe("admin enrollment withdraw dialog (#670)", () => {
     await expect(dialog).toBeVisible();
     expect(stub.withdrawBodies).toHaveLength(1);
   });
+
+  test("a 404 with a domain code is not reported as a permissions problem", async ({ page }) => {
+    // The owner IS the owner; telling them to ask the academy owner hid the
+    // real cause (issue #670 review). The copy is keyed off the error code.
+    await stubAdminShell(page, ["admin", "owner"]);
+    const stub = await stubSessionDetail(page);
+    stub.respond = (route) =>
+      fulfillJson(
+        route,
+        {
+          error: {
+            code: "Billing.PaymentNotFound",
+            message: "paid payment snapshot not found",
+            details: { enrollment_id: ENROLLMENT_ID },
+          },
+        },
+        404,
+      );
+    await openWithdrawDialog(page);
+
+    const dialog = page.getByRole("dialog", { name: "Withdraw enrollment" });
+    await dialog.getByLabel("Withdrawal date").fill("2026-09-15");
+    await dialog.getByRole("button", { name: "Withdraw", exact: true }).click();
+
+    const alert = dialog.getByRole("alert");
+    await expect(alert).toContainText("no paid tuition");
+    await expect(alert).not.toContainText("permission");
+  });
 });

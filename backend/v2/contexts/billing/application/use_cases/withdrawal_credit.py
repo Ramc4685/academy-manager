@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import Literal, Protocol
 from zoneinfo import ZoneInfo
@@ -21,6 +22,13 @@ from backend.v2.contexts.billing.domain.errors import PaymentNotFound
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry, Payment
 from backend.v2.contexts.billing.domain.proration import BillingCalculationSnapshot
 from backend.v2.shared.ids import new_ulid
+
+log = logging.getLogger(__name__)
+
+#: ``no_credit_reason`` for a family that never paid through a snapshot-carrying
+#: checkout — everything they owe went through the v2 invoice/AR ledger, so
+#: there is no paid tuition for the early-withdrawal policy to prorate.
+NO_PAID_TUITION_SNAPSHOT = "no_paid_tuition_snapshot"
 
 
 class WithdrawalPaymentRepository(Protocol):
@@ -127,8 +135,20 @@ class RecordWithdrawalDecision:
 
     For ``credit`` it is idempotent on the ledger — an APPROVED
     EARLY_WITHDRAWAL_CREDIT for the enrollment is returned, never duplicated,
-    so a retried withdraw cannot inflate the parent's balance — and it
-    cancels the legacy Stripe subscription at period end exactly once.
+    so a retried withdraw cannot inflate the parent's balance.
+
+    It never refuses a withdrawal:
+
+    * A family with no paid tuition snapshot (billed only through the v2
+      invoice/AR ledger) is a zero-credit outcome — ``credit_none`` with
+      ``no_credit_reason="no_paid_tuition_snapshot"`` — not a 404. Refusing
+      here would block the withdrawal itself, leaving the seat held and the
+      family invoiced for a student who left.
+    * The legacy Stripe subscription cancel is attempted on EVERY ``credit``
+      run (including the already-credited retry) and its failure is recorded
+      as ``subscription: "cancel_failed"`` rather than raised, so one Stripe
+      outage cannot both block the withdrawal and be forgotten forever
+      behind the credit's idempotency guard.
     """
 
     def __init__(
@@ -156,6 +176,12 @@ class RecordWithdrawalDecision:
                 metadata={"outcome": cmd.outcome, "automation": "none"},
             )
 
+        now = self._clock()
+        # Before either return below, so a cancel that failed on the first run
+        # is retried by the next withdraw instead of being skipped forever by
+        # the credit's idempotency guard.
+        subscription_result = await self._cancel_legacy_subscription(cmd.enrollment_id, now)
+
         existing = await self._credits.find_active_for_enrollment(
             enrollment_id=cmd.enrollment_id,
             type="EARLY_WITHDRAWAL_CREDIT",
@@ -171,11 +197,32 @@ class RecordWithdrawalDecision:
                 metadata={
                     "outcome": "credit",
                     "credit_amount_cents": str(existing.amount_cents),
+                    "subscription": subscription_result,
                 },
             )
 
-        payment, snapshot = await _paid_payment_and_snapshot(self._payments, cmd.enrollment_id)
-        now = self._clock()
+        try:
+            payment, snapshot = await _paid_payment_and_snapshot(self._payments, cmd.enrollment_id)
+        except PaymentNotFound:
+            # Ledger-only family: nothing paid through a snapshot-carrying
+            # checkout, so there is nothing to prorate. Zero credit, said out
+            # loud on the event — never a refusal that blocks the withdrawal.
+            log.info(
+                "withdrawal_credit_none: enrollment_id=%s reason=%s",
+                cmd.enrollment_id,
+                NO_PAID_TUITION_SNAPSHOT,
+            )
+            return WithdrawalDecisionResult(
+                billing_policy="early_withdrawal_credit",
+                billing_result="credit_none",
+                no_credit_reason=NO_PAID_TUITION_SNAPSHOT,
+                metadata={
+                    "outcome": "credit",
+                    "credit_amount_cents": "0",
+                    "no_credit_reason": NO_PAID_TUITION_SNAPSHOT,
+                    "subscription": subscription_result,
+                },
+            )
         preview = _preview_from_snapshot(
             payment=payment,
             snapshot=snapshot,
@@ -207,7 +254,6 @@ class RecordWithdrawalDecision:
                     updated_at=now,
                 )
             )
-        subscription_result = await self._cancel_legacy_subscription(cmd.enrollment_id, now)
         balance = await self._credits.balance_for_parent(payment.parent_id)
         metadata = {
             "outcome": "credit",
@@ -227,15 +273,32 @@ class RecordWithdrawalDecision:
         )
 
     async def _cancel_legacy_subscription(self, enrollment_id: str, now: datetime) -> str:
+        """Best effort, and retryable: a Stripe failure is recorded, not raised.
+
+        Raising here used to abort the whole withdrawal after the credit had
+        been written, and the local subscription row is only marked
+        ``cancelled`` once Stripe agreed — so the next withdraw attempt (or a
+        later one on the already-credited enrollment) tries again.
+        """
         subscription = await self._subscriptions.latest_for_enrollment(enrollment_id)
         if subscription is None or not subscription.stripe_subscription_id:
             return "none"
         if subscription.status == "cancelled":
             return "already_cancelled"
-        await self._stripe.cancel_subscription(
-            subscription.stripe_subscription_id,
-            at_period_end=True,
-        )
+        try:
+            await self._stripe.cancel_subscription(
+                subscription.stripe_subscription_id,
+                at_period_end=True,
+            )
+        except Exception:
+            log.exception(
+                "withdrawal_subscription_cancel_failed: enrollment_id=%s "
+                "stripe_subscription_id=%s — the withdrawal continues; cancel is "
+                "re-attempted on the next withdraw and must otherwise be done by hand",
+                enrollment_id,
+                subscription.stripe_subscription_id,
+            )
+            return "cancel_failed"
         await self._subscriptions.save(
             subscription.model_copy(update={"status": "cancelled", "updated_at": now})
         )

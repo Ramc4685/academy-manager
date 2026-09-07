@@ -253,24 +253,119 @@ async def test_credit_decision_reports_zero_credit_honestly() -> None:
     assert result.metadata.get("no_credit_reason")
 
 
+@dataclass
+class NoPayments:
+    """A family billed only through the v2 invoice/AR ledger: no legacy
+    `payments` doc carrying a calculation_snapshot_id anywhere."""
+
+    async def latest_paid_payment_for_enrollment(self, _enrollment_id: str):
+        return None
+
+    async def get_snapshot(self, _snapshot_id: str):
+        return None
+
+
 @pytest.mark.asyncio
-async def test_credit_decision_refuses_without_a_paid_snapshot() -> None:
-    @dataclass
-    class NoPayments:
-        async def latest_paid_payment_for_enrollment(self, _enrollment_id: str):
-            return None
-
-        async def get_snapshot(self, _snapshot_id: str):
-            return None
-
+async def test_ledger_only_family_is_zero_credit_not_a_refusal() -> None:
+    """Issue #670 review: raising here refused the WITHDRAWAL itself, so the
+    seat stayed held and the family kept being invoiced for a student who
+    had left. No paid tuition to prorate is an honest zero, not a 404."""
+    credits = FakeCredits()
+    subscriptions = FakeSubscriptions(_live_subscription())
+    stripe = FakeStripe()
     uc = RecordWithdrawalDecision(
         payments=NoPayments(),
-        credits=FakeCredits(),
-        subscriptions=FakeSubscriptions(None),
-        stripe=FakeStripe(),
+        credits=credits,
+        subscriptions=subscriptions,
+        stripe=stripe,
+        clock=lambda: datetime(2026, 5, 20, tzinfo=UTC),
+    )
+
+    result = await uc.execute(_decision("credit"))
+
+    assert result.billing_policy == "early_withdrawal_credit"
+    assert result.billing_result == "credit_none"
+    assert result.credit_id is None
+    assert result.credit_amount_cents == 0
+    assert result.no_credit_reason == "no_paid_tuition_snapshot"
+    assert result.metadata == {
+        "outcome": "credit",
+        "credit_amount_cents": "0",
+        "no_credit_reason": "no_paid_tuition_snapshot",
+        "subscription": "cancelled_at_period_end",
+    }
+    assert credits.entries == []
+    # the legacy subscription still has to stop, credit or no credit
+    assert stripe.cancelled == [("sub_stripe_1", True)]
+
+
+@pytest.mark.asyncio
+async def test_preview_still_refuses_without_a_paid_snapshot() -> None:
+    """The preview route answers a question ("how much?"), so an honest 404
+    is right there — only the withdrawal itself must never be blocked."""
+    uc = PreviewWithdrawalCredit(
+        payments=NoPayments(),
+        enrollments=FakeEnrollments(
+            Enrollment(
+                enrollment_id="enroll-1",
+                academy_id="acad",
+                session_id="sess-1",
+                student_id="student-1",
+                status="active",
+            )
+        ),
     )
     with pytest.raises(PaymentNotFound):
-        await uc.execute(_decision("credit"))
+        await uc.execute(
+            PreviewWithdrawalCreditCommand(
+                enrollment_id="enroll-1",
+                withdrawal_date=datetime(2026, 5, 21, tzinfo=UTC),
+                actor_id="admin-1",
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_stripe_cancel_failure_is_recorded_not_raised() -> None:
+    """A Stripe outage must not abort a withdrawal that already wrote a
+    credit, and must not be forgotten behind the idempotency guard."""
+
+    @dataclass
+    class BrokenStripe:
+        calls: list[str] = field(default_factory=list)
+        broken: bool = True
+
+        async def cancel_subscription(self, stripe_subscription_id, *, at_period_end):
+            self.calls.append(stripe_subscription_id)
+            if self.broken:
+                raise RuntimeError("stripe is down")
+
+    credits = FakeCredits()
+    subscriptions = FakeSubscriptions(_live_subscription())
+    stripe = BrokenStripe()
+    uc = RecordWithdrawalDecision(
+        payments=FakePayments(payment=_paid_payment(), snapshot=_snapshot()),
+        credits=credits,
+        subscriptions=subscriptions,
+        stripe=stripe,
+        clock=lambda: datetime(2026, 5, 20, tzinfo=UTC),
+    )
+
+    result = await uc.execute(_decision("credit"))
+
+    assert result.billing_result == "credit_approved"
+    assert result.metadata["subscription"] == "cancel_failed"
+    assert len(credits.entries) == 1
+    # not marked cancelled locally, so the next run tries Stripe again
+    assert subscriptions.saved is None
+
+    stripe.broken = False
+    retry = await uc.execute(_decision("credit"))
+
+    assert retry.billing_result == "credit_already_approved"
+    assert retry.metadata["subscription"] == "cancelled_at_period_end"
+    assert stripe.calls == ["sub_stripe_1", "sub_stripe_1"]
+    assert len(credits.entries) == 1
 
 
 @pytest.mark.asyncio

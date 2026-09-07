@@ -1508,10 +1508,14 @@ async def _decide_withdrawal_billing(
 ) -> dict[str, Any]:
     """Run the billing-side half of a withdrawal (issue #670).
 
-    Unlike ``_sync_billing`` this MAY raise: it runs before any enrollment
-    write, so a refused credit (no paid tuition to credit from) aborts the
-    withdrawal cleanly instead of leaving a withdrawn row with no decision.
-    A missing port is a wiring bug and is recorded as such on the event.
+    Like ``_sync_billing`` this never raises into the caller. It runs AFTER
+    the status CAS, so the caller has already won the right to withdraw this
+    row: raising here would leave a half-withdrawn enrollment (no seat
+    release, no billing_sync, no lifecycle event) that no retry can finish,
+    because the retry loses the CAS. A failed decision is recorded on the
+    event as ``withdrawal_decision_failed`` so the money side is visibly
+    outstanding instead of silently dropped. A missing port is a wiring bug
+    and is recorded as such.
     """
     if billing is None:
         log.error(
@@ -1525,13 +1529,26 @@ async def _decide_withdrawal_billing(
             "billing_result": "withdrawal_decision_unwired",
             "metadata": {"outcome": outcome},
         }
-    return await billing.record_withdrawal_decision(
-        enrollment=enrollment,
-        outcome=outcome,
-        effective_at=effective_at,
-        actor_id=actor_id,
-        reason=reason,
-    )
+    try:
+        return await billing.record_withdrawal_decision(
+            enrollment=enrollment,
+            outcome=outcome,
+            effective_at=effective_at,
+            actor_id=actor_id,
+            reason=reason,
+        )
+    except Exception:
+        log.exception(
+            "enrollment_withdrawal_decision_failed: outcome=%s for enrollment_id=%s — "
+            "the withdrawal completes; the money side must be settled by hand",
+            outcome,
+            enrollment.enrollment_id,
+        )
+        return {
+            "billing_policy": f"withdrawal_{outcome}",
+            "billing_result": "withdrawal_decision_failed",
+            "metadata": {"outcome": outcome, "automation": "failed"},
+        }
 
 
 class WithdrawEnrollment:
@@ -1539,12 +1556,17 @@ class WithdrawEnrollment:
 
     Order matters:
 
-    1. The billing decision runs first through ``EnrollmentWithdrawalDecisionPort``
-       (credit ledger entry for ``outcome="credit"``, honest ``*_manual`` for
-       the rest). It is idempotent on the ledger and may refuse, in which case
-       nothing below has happened yet.
-    2. The status flip is a CAS (``mark_withdrawn_if_open``): only ``active``
+    1. The status flip is a CAS (``mark_withdrawn_if_open``): only ``active``
        / ``paused`` rows move, a loser gets ``EnrollmentNotWithdrawable``.
+    2. The billing decision runs second, through
+       ``EnrollmentWithdrawalDecisionPort`` (credit ledger entry for
+       ``outcome="credit"``, honest ``*_manual`` for the rest), and ONLY for
+       the caller that won the CAS. Money after the CAS, never before: a
+       loser must not leave an APPROVED credit on the parent's balance with
+       no withdrawal event to explain it. The port is idempotent on the
+       ledger and never raises into this use case — a failure is recorded as
+       ``withdrawal_decision_failed`` rather than abandoning a half-withdrawn
+       row that no retry can finish.
     3. The seat is released only when the CAS pre-image was ``active`` — a
        paused row released its seat when it paused — so a retry or a
        concurrent submit can never double-decrement ``reserved_seats``.
@@ -1591,6 +1613,21 @@ class WithdrawEnrollment:
                 status=e.status,
             )
         now = self._now()
+        before = await self._enrollments.mark_withdrawn_if_open(
+            e.enrollment_id, withdrawal_date=cmd.effective_at
+        )
+        if before is None:
+            # Lost a race with another withdraw/cancel between the read and
+            # the CAS. The winner owns the seat release and the outbox event.
+            # Nothing has been written on the money side yet — the credit is
+            # issued below, only by the caller that won this CAS.
+            raise EnrollmentNotWithdrawable(
+                "Enrollment was withdrawn or cancelled by another action.",
+                enrollment_id=e.enrollment_id,
+                status=e.status,
+            )
+        # Only the CAS winner reaches the money side, so a concurrent cancel
+        # can never leave an APPROVED credit behind with no withdrawal event.
         billing_decision = await _decide_withdrawal_billing(
             self._billing,
             enrollment=e,
@@ -1599,17 +1636,6 @@ class WithdrawEnrollment:
             actor_id=cmd.actor_id,
             reason=cmd.reason,
         )
-        before = await self._enrollments.mark_withdrawn_if_open(
-            e.enrollment_id, withdrawal_date=cmd.effective_at
-        )
-        if before is None:
-            # Lost a race with another withdraw/cancel between the read and
-            # the CAS. The winner owns the seat release and the outbox event.
-            raise EnrollmentNotWithdrawable(
-                "Enrollment was withdrawn or cancelled by another action.",
-                enrollment_id=e.enrollment_id,
-                status=e.status,
-            )
         # Issue #651: a withdrawn student no longer holds a seat. A paused row
         # released its seat when it paused, so only an active row releases —
         # judged on the CAS pre-image, the only read that cannot be stale.
