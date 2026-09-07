@@ -56,6 +56,7 @@ from backend.v2.composition.pathway import (
 )
 from backend.v2.composition.roster_notifications import compose_enrollment_notifiers
 from backend.v2.composition.session_announcements import compose_announcements
+from backend.v2.composition.student_autopay import compose_get_admin_student
 from backend.v2.contexts.billing.application.admin_money import (
     coerce_report_datetime,
     invoice_outstanding_cents,
@@ -269,7 +270,6 @@ from backend.v2.contexts.curriculum.infrastructure.mongo_video_ref_repo import (
 )
 from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
     ChangeAdminStudentParent,
-    GetAdminStudent,
     ListAdminStudents,
     UpdateAdminStudent,
 )
@@ -2083,7 +2083,7 @@ def compose_admin(
         academies=academy_repo,
         return_url=_billing_setup_return_url,
     )
-    get_admin_student = GetAdminStudent(students_r)
+    get_admin_student = compose_get_admin_student(db, students_r)
     update_admin_student = UpdateAdminStudent(students_r)
     change_admin_student_parent = ChangeAdminStudentParent(students_r)
 

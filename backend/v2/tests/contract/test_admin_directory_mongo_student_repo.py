@@ -1293,3 +1293,108 @@ async def test_get_admin_student_reports_distinct_active_session_total(db, acad)
     assert detail is not None
     assert detail.active_session_total == 2
     assert detail.active_session_names == ["Thursday Drills", "Tuesday Drills"]
+
+
+@pytest.mark.asyncio
+async def test_get_admin_student_lists_past_enrollments_newest_ended_first(db, acad) -> None:
+    """Issue #674: cancelled / withdrawn / transferred_out rows come back with
+    their lifecycle facts, soft-deleted and other-tenant rows are excluded,
+    paused stays in the CURRENT list, and the newest ended row is first."""
+    now = datetime.now(UTC)
+    await db["students"].insert_one(
+        {"academy_id": acad, "student_id": "st-alice", "full_name": "Alice", "parent_id": "p-1"}
+    )
+    await db["sessions"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "session_id": f"sess-{n}",
+                "title": f"Session {n}",
+                "location": "Court 1",
+                "start_at": now + timedelta(days=n),
+                "end_at": now + timedelta(days=n, hours=1),
+                "status": "scheduled",
+                "amount_cents": 10_000,
+            }
+            for n in range(1, 6)
+        ]
+    )
+    await db["enrollments"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "enrollment_id": "enr-paused",
+                "student_id": "st-alice",
+                "session_id": "sess-1",
+                "status": "paused",
+            },
+            {
+                "academy_id": acad,
+                "enrollment_id": "enr-cancelled-old",
+                "student_id": "st-alice",
+                "session_id": "sess-2",
+                "status": "cancelled",
+                "cancelled_at": now - timedelta(days=30),
+                "cancelled_by": "admin",
+                "cancellation_reason": "Moved away",
+            },
+            {
+                "academy_id": acad,
+                "enrollment_id": "enr-withdrawn-new",
+                "student_id": "st-alice",
+                "session_id": "sess-3",
+                "status": "withdrawn",
+                "withdrawal_date": now - timedelta(days=2),
+            },
+            {
+                "academy_id": acad,
+                "enrollment_id": "enr-transferred",
+                "student_id": "st-alice",
+                "session_id": "sess-4",
+                "status": "transferred_out",
+            },
+            {
+                "academy_id": acad,
+                "enrollment_id": "enr-deleted",
+                "student_id": "st-alice",
+                "session_id": "sess-5",
+                "status": "cancelled",
+                "cancelled_at": now,
+                "is_deleted": True,
+            },
+            {
+                "academy_id": "other-academy",
+                "enrollment_id": "enr-other-tenant",
+                "student_id": "st-alice",
+                "session_id": "sess-5",
+                "status": "cancelled",
+                "cancelled_at": now,
+            },
+        ]
+    )
+
+    detail = await MongoStudentRepository(db).get_admin_student("st-alice")
+
+    assert detail is not None
+    assert [row.enrollment_id for row in detail.enrolled_sessions] == ["enr-paused"]
+    assert [row.enrollment_id for row in detail.past_enrollments] == [
+        "enr-withdrawn-new",
+        "enr-cancelled-old",
+        "enr-transferred",  # no date at all sorts last
+    ]
+    withdrawn, cancelled, transferred = detail.past_enrollments
+    assert withdrawn.status == "withdrawn"
+    assert withdrawn.session_title == "Session 3"
+    assert withdrawn.withdrawal_date is not None
+    assert withdrawn.ended_at == withdrawn.withdrawal_date
+    assert withdrawn.cancelled_at is None
+    assert withdrawn.cancelled_by is None
+    assert cancelled.status == "cancelled"
+    assert cancelled.ended_at == cancelled.cancelled_at
+    assert cancelled.cancelled_by == "admin"
+    assert cancelled.reason == "Moved away"
+    assert cancelled.amount_cents == 10_000
+    assert transferred.status == "transferred_out"
+    assert transferred.ended_at is None
+    # Past rows never carry autopay: that axis is only looked up for current rows.
+    assert all(row.autopay_status is None for row in detail.past_enrollments)
