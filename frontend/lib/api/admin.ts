@@ -908,13 +908,6 @@ export interface AdminRevenueResponse {
   by_month: Record<string, number>; // "YYYY-MM": cents
 }
 
-export interface AdminReportsKpiResponse {
-  active_students: number;
-  attendance_rate_30d: number;
-  dues_collected_mtd_cents: number;
-  pending_waivers: number;
-}
-
 export interface AdminReportsAttendanceSummary {
   present_count: number;
   recorded_count: number;
@@ -2531,10 +2524,6 @@ export function deleteExpense(expenseId: string, payload: { reason: string }): P
 
 export function getRevenue(): Promise<AdminRevenueResponse> {
   return apiFetch<AdminRevenueResponse>("/admin/finance/revenue", { method: "GET" });
-}
-
-export function getAdminReportKpis(): Promise<AdminReportsKpiResponse> {
-  return apiFetch<AdminReportsKpiResponse>("/admin/reports/kpis", { method: "GET" });
 }
 
 export interface AdminProjectedIncomeSessionRow {

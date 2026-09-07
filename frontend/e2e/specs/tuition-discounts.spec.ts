@@ -83,6 +83,51 @@ const adminInvoiceDetail = {
   receipt_artifact_id: null,
 };
 
+/**
+ * Month close carries the tuition discount card now (spec §5). The figures are
+ * the same two discounts the admin set above, summed for the month.
+ */
+const MONTH_CLOSE_WITH_DISCOUNTS = {
+  generated_at: "2026-06-30T14:00:00Z",
+  timezone: "America/Chicago",
+  period: "2026-06",
+  invoices: {
+    generated: 1,
+    emailed: 0,
+    autopay_notices: 0,
+    not_sent: 1,
+    voided: 0,
+    voided_cents: 0,
+    void_reasons: [],
+  },
+  money: {
+    billed_cents: 9_600,
+    collected_cents: 0,
+    outstanding_cents: 9_600,
+    collection_rate: 0,
+  },
+  autopay_run: {
+    charge_on: null,
+    charge_on_varies: false,
+    has_run: false,
+    scheduled: { count: 0, cents: 0 },
+    succeeded: { count: 0, cents: 0 },
+    failed: { count: 0, cents: 0 },
+    pending: { count: 0, cents: 0 },
+  },
+  odd: [],
+  tuition_discounts: {
+    gross_cents: 22_000,
+    discount_cents: 12_400,
+    net_cents: 9_600,
+    by_category: [
+      { category: "scholarship", amount_cents: 10_000 },
+      { category: "coach_child", amount_cents: 2_400 },
+    ],
+  },
+  warnings: [],
+};
+
 function baseStudentFixture(): StudentDetail {
   return {
     student_id: "student-discounts",
@@ -395,6 +440,39 @@ test.describe("tuition discounts", () => {
     await expect(lines).toContainText("Coach child discount");
     await expect(lines).toContainText("-$100");
     await expect(lines).toContainText("-$24");
+
+    guard.assertNoLegacyApiCalls();
+    expect(errors, `Console errors: ${errors.join("\n")}`).toEqual([]);
+  });
+
+  test("the tuition discount summary now lives on Month close", async ({ page }) => {
+    const guard = installTenantGuard(page);
+    const errors = collectConsoleErrors(page);
+
+    await stubMe(page, ADMIN_USER_A);
+    await stubMemberships(page, [
+      { academy_id: ACADEMY_A, academy_name: "Aces Academy", role: "admin" },
+    ]);
+    await stubAcademy(page, ACADEMY_A);
+    // Catch-all first (Playwright matches LIFO), so the page's other feeds
+    // answer `{}` and only the assertions below depend on real shapes.
+    await page.route("**/api/v2/admin/**", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, {});
+    });
+    // Named in full: a `*` glob stops at `/`, so `admin/reports*` would miss it.
+    await page.route("**/api/v2/admin/reports/month-close*", (route) =>
+      fulfillJson(route, MONTH_CLOSE_WITH_DISCOUNTS),
+    );
+
+    await page.goto("/admin/reports");
+    const card = page.getByTestId("tuition-discounts-section");
+    await expect(card).toBeVisible({ timeout: 45_000 });
+    await expect(card).toContainText("$220.00");
+    await expect(card).toContainText("$124.00");
+    await expect(card).toContainText("$96.00");
+    await expect(page.getByTestId("tuition-discounts-row-scholarship")).toContainText("$100.00");
+    await expect(page.getByTestId("tuition-discounts-row-coach_child")).toContainText("$24.00");
 
     guard.assertNoLegacyApiCalls();
     expect(errors, `Console errors: ${errors.join("\n")}`).toEqual([]);
