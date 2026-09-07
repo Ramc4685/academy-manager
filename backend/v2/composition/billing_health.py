@@ -21,6 +21,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 from backend.v2.contexts.billing.application.billing_health import (
+    CHECK_AUTOPAY_DISABLE,
+    CHECK_RECONCILIATION,
+    CHECK_WEBHOOKS,
     LastReconciliationRun,
     evaluate_billing_health,
 )
@@ -113,7 +116,7 @@ def compose_admin_billing_health(db: Any, stripe: StripeGateway) -> AdminBilling
         except Exception:
             log.warning("connect_readiness_webhook_counts_failed", exc_info=True)
             stuck = {"quarantined": 0, "failed": 0}
-            unavailable.append("the webhook backlog")
+            unavailable.append(CHECK_WEBHOOKS)
 
         last_run: LastReconciliationRun | None = None
         try:
@@ -128,14 +131,14 @@ def compose_admin_billing_health(db: Any, stripe: StripeGateway) -> AdminBilling
                 )
         except Exception:
             log.warning("connect_readiness_reconciliation_runs_failed", exc_info=True)
-            unavailable.append("the reconciliation history")
+            unavailable.append(CHECK_RECONCILIATION)
 
         try:
             disable_failures = await dunning_state_repo.list_autopay_disable_failures()
         except Exception:
             log.warning("connect_readiness_autopay_disable_failures_failed", exc_info=True)
             disable_failures = {"count": 0, "rows": [], "truncated": False}
-            unavailable.append("the autopay switch-off backlog")
+            unavailable.append(CHECK_AUTOPAY_DISABLE)
 
         ready = bool(account and account.is_ready_for_charges())
         payments_possible = ready or fallback_allowed

@@ -47,6 +47,15 @@ INFORMATIONAL_REASON_CODES: frozenset[str] = frozenset({"fallback_only"})
 BLOCKED_HEADLINE = "Parents cannot pay right now"
 OK_HEADLINE = "Stripe is healthy"
 
+#: The names a caller passes in ``unavailable_checks`` when a read failed.
+#: They are constants rather than inline strings because the verdict has to
+#: recognise a failed reconciliation read: without that, a read error looks
+#: exactly like "no run has ever finished" and the owner is told the worker is
+#: dead when only the query failed.
+CHECK_WEBHOOKS = "the webhook backlog"
+CHECK_RECONCILIATION = "the reconciliation history"
+CHECK_AUTOPAY_DISABLE = "the autopay switch-off backlog"
+
 
 @dataclass(frozen=True)
 class HealthReason:
@@ -136,7 +145,15 @@ def evaluate_billing_health(
             )
         )
 
-    if last_run is None or last_run.finished_at is None:
+    checks = [c for c in unavailable_checks if c]
+    reconciliation_checked = CHECK_RECONCILIATION not in checks
+
+    if not reconciliation_checked:
+        # The read failed, so we know nothing about the worker. Saying "no run
+        # has finished" here would be the same class of wrong verdict this
+        # module exists to remove: it names a fault we did not observe.
+        pass
+    elif last_run is None or last_run.finished_at is None:
         attention.append(
             HealthReason(
                 "reconciliation_stale",
@@ -171,7 +188,6 @@ def evaluate_billing_health(
         )
 
     reasons.extend(attention)
-    checks = [c for c in unavailable_checks if c]
 
     if not payments_possible:
         return HealthVerdict("blocked", BLOCKED_HEADLINE, tuple(reasons))

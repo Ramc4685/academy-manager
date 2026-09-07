@@ -11,6 +11,8 @@ from datetime import UTC, datetime, timedelta
 
 from backend.v2.contexts.billing.application.billing_health import (
     BLOCKED_HEADLINE,
+    CHECK_RECONCILIATION,
+    CHECK_WEBHOOKS,
     OK_HEADLINE,
     REASON_CODES,
     HealthVerdict,
@@ -134,11 +136,36 @@ def test_informational_fallback_is_not_counted_in_the_headline() -> None:
 
 
 def test_an_unavailable_check_never_claims_health() -> None:
-    verdict = _evaluate(unavailable_checks=["the webhook backlog"])
+    verdict = _evaluate(unavailable_checks=[CHECK_WEBHOOKS])
     assert verdict.state == "attention"
     assert verdict.headline == "Payments work, but the webhook backlog could not be checked"
     # A check that could not run contributes no reason code (§7).
     assert verdict.reasons == ()
+
+
+def test_a_failed_reconciliation_read_does_not_report_a_stale_worker() -> None:
+    """A read error is not evidence of a fault.
+
+    ``last_run`` is None both when no run has ever finished and when the query
+    failed. Treating the second as the first told the owner the reconciliation
+    worker was dead whenever Mongo hiccuped — the same class of wrong verdict
+    this module exists to remove.
+    """
+    verdict = _evaluate(last_run=None, unavailable_checks=[CHECK_RECONCILIATION])
+
+    assert _codes(verdict) == set()
+    assert verdict.state == "attention"
+    assert verdict.headline == (
+        "Payments work, but the reconciliation history could not be checked"
+    )
+
+
+def test_a_genuinely_absent_run_is_still_reported_as_stale() -> None:
+    """The guard above must not swallow the real "no run yet" signal."""
+    verdict = _evaluate(last_run=None)
+
+    assert "reconciliation_stale" in _codes(verdict)
+    assert verdict.state == "attention"
 
 
 def test_every_emitted_code_is_declared() -> None:
