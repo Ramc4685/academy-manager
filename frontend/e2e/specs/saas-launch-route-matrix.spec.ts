@@ -175,7 +175,9 @@ async function stubAdminLaunchBff(page: Page): Promise<void> {
     fulfillJson(route, { events: [] })
   );
   // #432: the catch-all's `{}` would leave the readiness card without a
-  // connected_account and crash /admin/billing-health.
+  // connected_account and crash /admin/billing-health. Since the trim
+  // (spec 2026-09-07) the response also carries the health verdict the page
+  // header renders, so the stub must include it or the pill reads "unknown".
   await page.route("**/api/v2/admin/billing/connect-readiness", (route) =>
     fulfillJson(route, {
       connected_account: {
@@ -190,7 +192,12 @@ async function stubAdminLaunchBff(page: Page): Promise<void> {
       payments_possible: true,
       funds_route_to_academy: true,
       webhook_events: { quarantined: 0, failed: 0 },
+      autopay_disable_failures: { count: 0, rows: [], truncated: false },
+      health: { state: "ok", headline: "Stripe is healthy", reasons: [] },
     })
+  );
+  await page.route("**/api/v2/admin/billing/reconciliation-runs", (route) =>
+    fulfillJson(route, { runs: [] })
   );
   await page.route("**/api/v2/admin/dues-followup*", (route) =>
     fulfillJson(route, { parents: [] })

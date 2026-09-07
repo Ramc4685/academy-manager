@@ -744,6 +744,8 @@ test.describe("Rally admin shell", () => {
       await expect(nav.getByTestId("admin-nav-reports")).toHaveCount(0);
       await expect(nav.getByTestId("admin-nav-coach-payouts")).toHaveCount(0);
       await expect(nav.getByTestId("admin-nav-audit-logs")).toHaveCount(0);
+      // Stripe plumbing became owner-only with the Billing Health trim.
+      await expect(nav.getByTestId("admin-nav-billing-health")).toHaveCount(0);
       await expect(nav.getByText("Admin", { exact: true })).toBeVisible();
       await expect(nav.getByText("Owner", { exact: true })).toHaveCount(0);
 
@@ -751,6 +753,12 @@ test.describe("Rally admin shell", () => {
       await page.goto("/admin/reports");
       await expect(page.getByTestId("owner-only-panel")).toBeVisible({ timeout: 30_000 });
       await expect(page.getByTestId("admin-reports")).toHaveCount(0);
+
+      // Billing Health too — its BFF 404s for a non-owner, so the page would
+      // have nothing to show even without the panel.
+      await page.goto("/admin/billing-health");
+      await expect(page.getByTestId("owner-only-panel")).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByTestId("billing-health-page")).toHaveCount(0);
 
       // Dues follow-up is operations work and stays open.
       await page.goto("/admin/reports/dues");
@@ -778,6 +786,7 @@ test.describe("Rally admin shell", () => {
       await expect(nav.getByTestId("admin-nav-reports")).toBeVisible();
       await expect(nav.getByTestId("admin-nav-coach-payouts")).toBeVisible();
       await expect(nav.getByTestId("admin-nav-audit-logs")).toBeVisible();
+      await expect(nav.getByTestId("admin-nav-billing-health")).toBeVisible();
 
       await page.goto("/admin/reports");
       await expect(page.getByTestId("admin-reports")).toBeVisible({ timeout: 30_000 });
