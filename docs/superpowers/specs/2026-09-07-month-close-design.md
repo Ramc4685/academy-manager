@@ -97,12 +97,24 @@ Callers after this spec:
 - **Month close** `money.collected_cents` = `net_cents`.
 - **Reports dashboard** `cash_collected_cents` and `profit_and_loss.revenue_cents` call
   it instead of inlining the two passes.
-- **Deposit slip** calls it and groups `rows` by day and method, using `gross_cents`
-  (the report stays gross; it now provably shares the row set with the tile).
-- **QuickBooks journal** keeps its shape: it already mixes deposit-slip gross with
-  allocation-based category credits, and both halves now come from one row set, so the
-  balancing `Unapplied Customer Payments` line is derived from the same numbers the
-  screen shows.
+
+**The deposit slip and the QuickBooks journal are deliberately left alone.** They look
+like they should share this reader, and they must not, for two reasons found while
+specifying:
+
+- The slip's gross is `amount_cents` per ledger row, while the cash reader's gross half
+  is `paid_amount_cents` / `amount_received_cents` when present. Those differ on rows
+  where Stripe reported a settled amount separate from the requested one.
+- The slip reads **ledger payments only**; the cash reader also folds in de-duplicated
+  legacy `payments` rows.
+
+Pointing the slip at the reader would therefore change both the per-row amount and the
+row membership of a document whose whole purpose is to match a bank deposit, and it would
+flow straight into the QuickBooks `Undeposited Funds` debit. That is a real change to
+book-keeping output and is not something this spec should make as a side effect of a
+refactor. Both keep their current computation; §11 carries the follow-up. This is also
+what keeps the "existing tests pass unchanged" claim honest: the extraction is scoped to
+the dashboard, and the financial-report tests are untouched because the reports are.
 
 Deleted: `make_reports_kpis`, `GET /admin/reports/kpis`, `getAdminReportKpis`, and their
 tests. Nothing calls them.
@@ -289,8 +301,11 @@ replacing the five local formatters defined in the page file.
   manifest entries are rewritten to a single "redirects to Payments" workflow.
 - The dashboard's "Overdue dues" attention card keeps its data source and changes its
   `href` to `/admin/payments`.
-- `GET /admin/dues-followup`, its composition closure and `listDuesFollowup` are
-  deleted. `POST /admin/dues-reminders` stays: the buckets' Send reminder action uses it.
+- `GET /admin/dues-followup` and the frontend `listDuesFollowup` are deleted.
+  **The composition closure `list_dues_followup` stays**: the dashboard's attention-card
+  builder reads it directly, and it is where the WhatsApp deep link and reminder text are
+  composed, which §7 reuses. Only the HTTP route and its client go.
+  `POST /admin/dues-reminders` stays: the buckets' Send reminder action uses it.
 - The tuition-discount card moves to Month close (§5). `GET /admin/finance/tuition-discounts`
   is unchanged and now has one caller.
 - Nav loses the Dues item; `OWNER_ONLY_ROUTE_EXCEPTIONS` loses `/admin/reports/dues`,
@@ -382,4 +397,7 @@ and the deleted `kpis` and `dues-followup` routes.
   single-row action has been used for a month.
 - Retire the `payment_allocations`-based Collections tile in favour of a cash figure, if
   the relabel proves confusing rather than clarifying.
+- Reconcile the deposit slip and the QuickBooks journal with the cash reader (§3.2). They
+  differ in per-row amount and in whether legacy payments count, so unifying them changes
+  book-keeping output and needs its own PR and its own sign-off.
 - Billing Health trim (spec 4) and Settings Billing rules (spec 5).
