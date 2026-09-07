@@ -394,6 +394,10 @@ class AdminSessionOccurrenceView(BaseModel):
     start_at: datetime
     end_at: datetime
     status: Literal["scheduled", "cancelled", "completed"]
+    # Issue #671: why this date is off, and when it was called off. Both stay
+    # None for a live date; a whole-session cancel (#467) sets the reason only.
+    cancellation_reason: str | None = None
+    cancelled_at: datetime | None = None
     scheduled_coach_id: str
     actual_coach_id: str | None = None
     substitute_coach_id: str | None = None
@@ -508,6 +512,25 @@ class SetSessionAssistantsRequest(BaseModel):
 
     assistant_coach_ids: list[str] = Field(default_factory=list, max_length=20)
     reason: str | None = Field(default=None, max_length=500)
+
+
+class CancelSessionOccurrenceRequest(BaseModel):
+    """Admin "cancel this date" body (#671)."""
+
+    reason: str = Field(min_length=1, max_length=500)
+    #: ``False`` records the cancellation without emailing anyone — for a date
+    #: the academy has already announced by WhatsApp or in person.
+    notify: bool = True
+
+
+class CancelSessionOccurrenceResponse(BaseModel):
+    occurrence: AdminSessionOccurrenceView
+    affected_enrollment_ids: list[str] = Field(default_factory=list)
+    roster_entries_removed: int = 0
+    makeups_reopened: int = 0
+    credits_issued: int = 0
+    billing_result: str | None = None
+    notified: bool = False
 
 
 class UpdateOccurrenceReplacementRequest(BaseModel):

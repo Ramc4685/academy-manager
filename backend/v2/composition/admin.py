@@ -50,6 +50,7 @@ from backend.v2.composition.lifecycle_billing import (
     build_void_billing_invoice,
     compose_enrollment_billing_sync,
 )
+from backend.v2.composition.occurrence_cancellation import compose_cancel_session_occurrence
 from backend.v2.composition.pathway import (
     compose_curriculum,
     compose_student_progress,
@@ -2724,6 +2725,8 @@ def compose_admin(
             "start_at": occurrence.start_at,
             "end_at": occurrence.end_at,
             "status": occurrence.status,
+            "cancellation_reason": occurrence.cancellation_reason,
+            "cancelled_at": occurrence.cancelled_at,
             "scheduled_coach_id": occurrence.scheduled_coach_id,
             "actual_coach_id": occurrence.actual_coach_id,
             "substitute_coach_id": occurrence.substitute_coach_id,
@@ -4547,6 +4550,7 @@ def compose_admin(
         ),
         list_session_occurrences=list_session_occurrences,
         get_session_occurrence=occurrences_r.get,
+        cancel_session_occurrence=compose_cancel_session_occurrence(db, notifier=notifiers.roster),
         generate_daily_teaching_plan=generate_daily_teaching_plan,
         get_coach_engagement_stats=get_coach_engagement_stats,
         update_session_occurrence_coach=update_session_occurrence_coach,

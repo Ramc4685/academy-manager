@@ -133,6 +133,9 @@ VALIDATORS: dict[str, dict[str, Any]] = {
             "is_billable": {"bsonType": OPT_BOOL},
             "is_payable": {"bsonType": OPT_BOOL},
             "cancellation_reason": {"bsonType": OPT_STRING},
+            # Issue #671: stamped when ONE dated class is cancelled by an admin.
+            "cancelled_at": {"bsonType": OPT_DATE},
+            "cancelled_by": {"bsonType": OPT_STRING},
             "created_at": {"bsonType": OPT_DATE},
             "updated_at": {"bsonType": OPT_DATE},
         },

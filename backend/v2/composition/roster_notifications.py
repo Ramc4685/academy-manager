@@ -32,7 +32,9 @@ from __future__ import annotations
 import html
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Protocol
+from zoneinfo import ZoneInfo
 
 from backend.v2.composition.digests import (
     _build_email_sender,
@@ -142,6 +144,63 @@ def format_session_schedule(session: Session, *, academy_timezone: str | None = 
     when = format_session_when(session, academy_timezone=academy_timezone)
     zone = (session.timezone or academy_timezone or "").strip() or _NO_TIMEZONE
     return f"{when} ({zone})"
+
+
+def format_occurrence_when(
+    start_at: datetime,
+    *,
+    session_timezone: str | None,
+    academy_timezone: str | None,
+) -> str:
+    """One dated class, in the SESSION's clock, with the zone named (#671).
+
+    Unlike ``format_session_schedule`` this is a single instant, not a
+    recurrence, so the stored UTC moment is always converted. The zone name is
+    printed for the same reason it is there: prod holds sessions stamped
+    ``UTC`` under an America/Chicago academy, and a silently shifted class
+    time in a cancellation notice is worse than a visibly odd one.
+    """
+    zone = (session_timezone or academy_timezone or "").strip()
+    try:
+        tz = ZoneInfo(zone) if zone else None
+    except Exception:
+        tz = None
+    if tz is None:
+        return f"{start_at.astimezone(UTC).strftime('%A, %B %-d at %-I:%M %p')} ({_NO_TIMEZONE})"
+    return f"{start_at.astimezone(tz).strftime('%A, %B %-d at %-I:%M %p')} ({zone})"
+
+
+def render_occurrence_cancelled_email(
+    *,
+    session: Session,
+    academy_name: str,
+    when: str,
+    reason: str,
+    portal_url: str | None,
+) -> tuple[str, str]:
+    """``(subject, html_body)`` for "this one class will not run" (#671)."""
+    safe_session = html.escape(session.title)
+    parts = [
+        f"<h2 style='color: {_BRAND_HEADING}; font-size: 18px; margin: 0 0 12px;'>"
+        f"Class cancelled — {safe_session}</h2>",
+        _para(f"The {safe_session} class on <strong>{html.escape(when)}</strong> will not run."),
+    ]
+    if reason.strip():
+        parts.append(_para(f"Reason: {html.escape(reason.strip())}"))
+    parts.append(
+        _para(
+            "Every other date in the schedule is unchanged, and the cancelled "
+            "date is credited to your account automatically."
+        )
+    )
+    if session.location:
+        parts.append(_para(f"<strong>Usual location:</strong> {html.escape(session.location)}"))
+    if portal_url:
+        parts.append(_branded_button(label="Open the parent portal", url=portal_url))
+    return (
+        f"Class cancelled: {session.title} — {when}",
+        _branded_shell(academy_name=academy_name, inner_html="".join(parts)),
+    )
 
 
 def render_roster_alert(
@@ -464,6 +523,111 @@ class RosterAlertAdapter:
             category=EmailCategory.TRANSACTIONAL,
             context={"change": change, "session_id": session.session_id},
         )
+
+    async def occurrence_cancelled(
+        self,
+        *,
+        session_id: str,
+        occurrence_id: str,
+        start_at: datetime,
+        reason: str,
+        actor_id: str | None,
+    ) -> None:
+        """One dated class is off: tell every enrolled family and the staff (#671).
+
+        Implements enrollment's ``OccurrenceCancellationNotifier``. Family
+        mail is TRANSACTIONAL — "your child's class on Thursday will not run"
+        is a record of that family's own enrollment, not a marketing ping, and
+        a family that switched roster alerts off must still be told. The staff
+        copy reuses ``_staff_recipients``, so it is unsubscribable and carries
+        the footer like every other roster alert.
+
+        Never raises: the occurrence is already cancelled by the time this
+        runs, and a mail outage may not undo that.
+        """
+        academy_id = current_academy_id()
+        session = await self._sessions.get(session_id)
+        if session is None:
+            logger.warning(
+                "enrollment.occurrence_cancelled_session_missing",
+                extra={"session_id": session_id, "occurrence_id": occurrence_id},
+            )
+            return
+        academy_doc = await self._academies.find_by_id(academy_id) or {}
+        academy_name = (
+            str(academy_doc.get("display_name") or academy_doc.get("name") or "") or "Your academy"
+        )
+        academy_timezone = str(academy_doc.get("timezone") or "") or None
+        academy_slug = str(academy_doc.get("slug") or "") or None
+        when = format_occurrence_when(
+            start_at,
+            session_timezone=session.timezone,
+            academy_timezone=academy_timezone,
+        )
+        base = academy_frontend_url(
+            frontend_url=self._unsubscribe_links.frontend_url, academy_slug=academy_slug
+        )
+        portal_url = f"{base.rstrip('/')}/parent" if base else None
+        subject, body = render_occurrence_cancelled_email(
+            session=session,
+            academy_name=academy_name,
+            when=when,
+            reason=reason,
+            portal_url=portal_url,
+        )
+        context = {"change": "occurrence_cancelled", "session_id": session_id}
+
+        for parent_id in await self._parent_ids_for_session(session_id):
+            for recipient in await self._resolve_users([parent_id]):
+                if not (recipient.email or "").strip():
+                    continue
+                await self._send_one(
+                    recipient=recipient,
+                    subject=subject,
+                    body=body,
+                    category=EmailCategory.TRANSACTIONAL,
+                    context=context,
+                )
+
+        for recipient in await self._staff_recipients(
+            session_id=session_id, from_session_id=None, actor_id=actor_id
+        ):
+            await self._send_one(
+                recipient=recipient,
+                subject=subject,
+                body=append_unsubscribe_footer(
+                    body,
+                    self._unsubscribe_links.build(
+                        academy_id=academy_id,
+                        user_id=recipient.user_id,
+                        academy_slug=academy_slug,
+                    ),
+                ),
+                category=EmailCategory.NOTIFICATION,
+                context=context,
+            )
+
+    async def _parent_ids_for_session(self, session_id: str) -> list[str]:
+        """Distinct parents behind the session's active roster, order preserved."""
+        try:
+            rows = await self._enrollments.active_for_session(session_id)
+        except Exception:  # pragma: no cover - defensive
+            logger.exception(
+                "enrollment.occurrence_cancelled_roster_failed",
+                extra={"session_id": session_id},
+            )
+            return []
+        seen: set[str] = set()
+        out: list[str] = []
+        for row in rows:
+            student_id = str(getattr(row, "student_id", "") or "")
+            if not student_id:
+                continue
+            parent_id = await self._parent_id_for_student(student_id)
+            if parent_id and parent_id not in seen:
+                seen.add(parent_id)
+                out.append(parent_id)
+        return out
 
     async def pause_request_declined(
         self,

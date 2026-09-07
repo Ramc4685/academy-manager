@@ -100,6 +100,27 @@ class MongoMakeupRequestRepository(TenantScopedRepository):
         )
         return self._to_domain(doc) if doc else None
 
+    async def reopen_for_target_occurrence(self, occurrence_id: str) -> int:
+        """Put approved make-ups that targeted a now-cancelled date back to
+        ``pending`` so an admin can offer another class (issue #671).
+
+        Only ``approved`` rows pointing at THIS occurrence are touched; the
+        approval stamp is cleared so the row reads as an undecided request
+        again. Returns the number of requests re-opened.
+        """
+        result = await self.collection.update_many(
+            self._scoped({"status": "approved", "approved_target_occurrence_id": occurrence_id}),
+            {
+                "$set": {
+                    "status": "pending",
+                    "approved_target_occurrence_id": None,
+                    "decided_by": None,
+                    "decided_at": None,
+                }
+            },
+        )
+        return int(result.modified_count)
+
     async def expire_pending_before(self, now: datetime) -> int:
         """Bulk-flip pending requests whose window has lapsed to ``expired``.
 

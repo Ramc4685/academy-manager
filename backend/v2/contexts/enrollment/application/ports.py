@@ -65,6 +65,18 @@ class SessionOccurrenceRepository(Protocol):
 
     async def save_many(self, occurrences: list[SessionOccurrence]) -> None: ...
 
+    async def cancel_scheduled(
+        self,
+        *,
+        occurrence_id: str,
+        reason: str,
+        actor_id: str | None,
+        now: datetime,
+    ) -> SessionOccurrence | None:
+        """CAS ``scheduled`` → ``cancelled`` for one date (issue #671); ``None``
+        when the row is missing or no longer scheduled."""
+        ...
+
     async def update_coach_assignment(
         self,
         *,
@@ -243,6 +255,62 @@ class OccurrenceRosterCleanup(Protocol):
     async def remove_future_for_student(
         self, *, session_id: str, student_id: str, after: datetime
     ) -> int: ...
+
+
+class OccurrenceRosterPurge(Protocol):
+    """Drop every one-time roster row for ONE cancelled date (issue #671).
+
+    Returns the removed entries so the caller can re-open the make-up
+    requests behind them. Best-effort from the use case's point of view.
+    """
+
+    async def remove_for_occurrence(self, occurrence_id: str) -> list[Any]: ...
+
+
+class MakeupReopener(Protocol):
+    """Put approved make-ups that targeted a cancelled date back to pending
+    (issue #671) so an admin can offer another class."""
+
+    async def reopen_for_target_occurrence(self, occurrence_id: str) -> int: ...
+
+
+class OccurrenceBillingSync(Protocol):
+    """Tell billing one dated class was called off (issue #671).
+
+    Sibling of :class:`EnrollmentBillingSync`: a narrow port here, the adapter
+    over the billing context's ``ApplyOccurrenceCancellation`` in
+    ``composition/occurrence_cancellation.py``. The occurrence write has
+    already committed when this runs; the use case logs a failure and stamps
+    ``billing_result`` on the lifecycle event, but never reports the cancel
+    as failed. Returns a summary dict (``credits`` keyed by enrollment id).
+    """
+
+    async def apply(
+        self,
+        *,
+        occurrence_id: str,
+        session_id: str,
+        start_at: datetime,
+        reason: str,
+        actor_id: str | None,
+    ) -> dict[str, Any]: ...
+
+
+class OccurrenceCancellationNotifier(Protocol):
+    """Tell the enrolled families and the coach one date is off (issue #671).
+
+    Best-effort: implementations must not raise into the enrollment write.
+    """
+
+    async def occurrence_cancelled(
+        self,
+        *,
+        session_id: str,
+        occurrence_id: str,
+        start_at: datetime,
+        reason: str,
+        actor_id: str | None,
+    ) -> None: ...
 
 
 class EnrollmentLifecycleBillingPort(Protocol):

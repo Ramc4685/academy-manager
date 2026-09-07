@@ -636,6 +636,25 @@ class MongoPaymentRepository(TenantScopedRepository):
         )
         return str(snapshot.snapshot_id)
 
+    async def occurrences_for_period(
+        self, *, session_id: str, period: str, timezone_name: str
+    ) -> list[ClassOccurrence]:
+        """The generator's own view of one session's classes in ``period`` (#671).
+
+        Public because cancelling a single date has to reason about exactly
+        the rows the monthly generator would price — synthesised from the
+        session template and then overlaid with ``session_occurrence_overrides``
+        — and must not re-implement that synthesis and drift from it.
+        """
+        session_doc = await self._db["sessions"].find_one(
+            {"academy_id": current_academy_id(), "session_id": session_id}
+        )
+        if session_doc is None:
+            return []
+        return await self._occurrences_for_session(
+            session_doc, BillingPeriod.from_label(period, timezone_name=timezone_name)
+        )
+
     async def _occurrences_for_session(
         self,
         session_doc: dict[str, object],
