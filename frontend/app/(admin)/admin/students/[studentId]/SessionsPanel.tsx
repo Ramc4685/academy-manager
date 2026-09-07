@@ -58,7 +58,7 @@ function SessionsPanel({
   queryClient,
 }: {
   sessions: AdminStudentSessionSummary[];
-  /** Issue #674: cancelled / withdrawn / transferred_out rows, newest ended first. */
+  /** Issue #674: cancelled / withdrawn rows, newest ended first. */
   pastEnrollments?: AdminStudentSessionSummary[];
   /** Autopay lives on the family page; the chip links there when a parent is on file. */
   parentId?: string | null;
@@ -748,8 +748,8 @@ function AutopayChipLink({
 }
 
 /**
- * Issue #674: enrollments that ended (cancelled / withdrawn / transferred
- * out) with when, by whom and why, so a cancelled student no longer looks
+ * Issue #674: enrollments that ended (cancelled / withdrawn) with when, by
+ * whom and why, so a cancelled student no longer looks
  * like one who was never enrolled. Read-only: nothing here can be edited.
  */
 function PastEnrollmentsPanel({ rows }: { rows: AdminStudentSessionSummary[] }) {

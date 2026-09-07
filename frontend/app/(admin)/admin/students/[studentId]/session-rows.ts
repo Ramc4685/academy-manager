@@ -9,7 +9,7 @@
 import type { ChipVariant } from "@/components/ds/chip";
 import type { AdminStudentSessionSummary } from "@/lib/api/v2/students";
 
-import { formatDate, formatDateUtc } from "./format";
+import { formatInvoiceDate } from "./format";
 
 export interface AutopayChip {
   variant: ChipVariant;
@@ -17,25 +17,31 @@ export interface AutopayChip {
 }
 
 /**
- * Billing's `autopay_enrollment_status` axis collapsed to four admin-facing
- * states. Anything that is not on / paused / off (the setup_* states) reads as
- * pending, and a missing record (null) reads as "no autopay" rather than
- * pretending the family opted out.
+ * Billing's `autopay_enrollment_status` axis (not_offered | offered |
+ * setup_started | active | paused | disabled) collapsed to the same three
+ * admin-facing words the family billing page uses
+ * (`families/[parentId]/StudentsPanel.tsx`): "Autopay" when it is on,
+ * "Autopay off" when the family paused it, and "Manual" for everything else,
+ * including the repository default `not_offered`, a merely `offered` setup
+ * and a missing billing record. Only `setup_started` — a family part-way
+ * through saving a card — reads as pending.
  */
 export function autopayChip(status: string | null | undefined): AutopayChip {
   switch (status) {
     case "active":
-      return { variant: "autopayOn", label: "Autopay on" };
+      return { variant: "autopayOn", label: "Autopay" };
     case "paused":
-      return { variant: "paused", label: "Autopay paused" };
-    case "disabled":
       return { variant: "manual", label: "Autopay off" };
+    case "setup_started":
+      return { variant: "autopayPend", label: "Autopay pending" };
+    case "not_offered":
+    case "offered":
+    case "disabled":
     case null:
     case undefined:
     case "":
-      return { variant: "manual", label: "No autopay" };
     default:
-      return { variant: "autopayPend", label: "Autopay pending" };
+      return { variant: "manual", label: "Manual" };
   }
 }
 
@@ -50,19 +56,23 @@ export interface PastEnrollmentRow {
   statusLabel: string;
   statusVariant: ChipVariant;
   /**
-   * "cancelled_at" (an instant, local time) for cancels; "withdrawal_date"
-   * (a calendar day stored at UTC midnight, so rendered in UTC — issue #215)
-   * for withdrawals.
+   * `ended_at` (`cancelled_at` for cancels, `withdrawal_date` for
+   * withdrawals). The writers mix calendar days stored at UTC midnight (admin
+   * cancel and withdraw both stamp `_start_of_day_utc(effective_date)`, #215)
+   * with real instants (parent self-cancel, session cancel), so the value is
+   * rendered with the same midnight-means-a-day heuristic as invoice dates
+   * regardless of status: a 9/1 admin cancel must not read as 8/31 in Chicago.
    */
   endedOn: string;
   endedBy: string;
   reason: string;
 }
 
+// A transfer moves the enrollment in place (no status change), so the
+// enrollment read never yields a "transferred" past row.
 const STATUS_LABELS: Record<string, { label: string; variant: ChipVariant }> = {
   cancelled: { label: "Cancelled", variant: "expired" },
   withdrawn: { label: "Withdrawn", variant: "expired" },
-  transferred_out: { label: "Transferred", variant: "transferred" },
 };
 
 const ACTOR_LABELS: Record<string, string> = {
@@ -82,7 +92,7 @@ export function pastEnrollmentRow(row: AdminStudentSessionSummary): PastEnrollme
     (withdrawn
       ? (row.withdrawal_date ?? row.cancelled_at)
       : (row.cancelled_at ?? row.withdrawal_date));
-  const endedOn = !endedAt ? "—" : withdrawn ? formatDateUtc(endedAt) : formatDate(endedAt);
+  const endedOn = formatInvoiceDate(endedAt);
   const actor = row.cancelled_by?.trim().toLowerCase() ?? "";
   return {
     enrollmentId: row.enrollment_id,

@@ -13,10 +13,19 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_directory import
     AdminStudentCursor,
     ChangeAdminStudentParentCommand,
 )
+from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
+    CancelEnrollment,
+    CancelEnrollmentCommand,
+    WithdrawEnrollment,
+    WithdrawEnrollmentCommand,
+)
 from backend.v2.contexts.enrollment.domain.errors import (
     StudentParentInactive,
     StudentParentInvalidRole,
     StudentParentNotFound,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_writer import (
+    MongoEnrollmentWriter,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_student_repo import (
     MongoStudentRepository,
@@ -1297,9 +1306,10 @@ async def test_get_admin_student_reports_distinct_active_session_total(db, acad)
 
 @pytest.mark.asyncio
 async def test_get_admin_student_lists_past_enrollments_newest_ended_first(db, acad) -> None:
-    """Issue #674: cancelled / withdrawn / transferred_out rows come back with
-    their lifecycle facts, soft-deleted and other-tenant rows are excluded,
-    paused stays in the CURRENT list, and the newest ended row is first."""
+    """Issue #674: cancelled / withdrawn rows come back with their lifecycle
+    facts, soft-deleted and other-tenant rows are excluded, paused stays in
+    the CURRENT list, and the newest ended row is first. A legacy cancelled
+    row with no date sorts last."""
     now = datetime.now(UTC)
     await db["students"].insert_one(
         {"academy_id": acad, "student_id": "st-alice", "full_name": "Alice", "parent_id": "p-1"}
@@ -1348,10 +1358,11 @@ async def test_get_admin_student_lists_past_enrollments_newest_ended_first(db, a
             },
             {
                 "academy_id": acad,
-                "enrollment_id": "enr-transferred",
+                "enrollment_id": "enr-cancelled-legacy",
                 "student_id": "st-alice",
                 "session_id": "sess-4",
-                "status": "transferred_out",
+                "status": "cancelled",
+                # Pre-#651 rows carry no lifecycle date at all.
             },
             {
                 "academy_id": acad,
@@ -1380,9 +1391,9 @@ async def test_get_admin_student_lists_past_enrollments_newest_ended_first(db, a
     assert [row.enrollment_id for row in detail.past_enrollments] == [
         "enr-withdrawn-new",
         "enr-cancelled-old",
-        "enr-transferred",  # no date at all sorts last
+        "enr-cancelled-legacy",  # no date at all sorts last
     ]
-    withdrawn, cancelled, transferred = detail.past_enrollments
+    withdrawn, cancelled, legacy = detail.past_enrollments
     assert withdrawn.status == "withdrawn"
     assert withdrawn.session_title == "Session 3"
     assert withdrawn.withdrawal_date is not None
@@ -1394,7 +1405,115 @@ async def test_get_admin_student_lists_past_enrollments_newest_ended_first(db, a
     assert cancelled.cancelled_by == "admin"
     assert cancelled.reason == "Moved away"
     assert cancelled.amount_cents == 10_000
-    assert transferred.status == "transferred_out"
-    assert transferred.ended_at is None
+    assert legacy.status == "cancelled"
+    assert legacy.ended_at is None
+    assert legacy.cancelled_by is None
+    assert legacy.reason is None
     # Past rows never carry autopay: that axis is only looked up for current rows.
     assert all(row.autopay_status is None for row in detail.past_enrollments)
+
+
+class _SeatSink:
+    """Just enough SessionWriter for CancelEnrollment: it only releases a seat."""
+
+    async def release_seat(self, session_id: str) -> None:
+        return None
+
+
+class _OutboxSink:
+    async def append(self, event: object) -> None:
+        return None
+
+
+async def _seed_one_active_enrollment(db, acad: str, enrollment_id: str) -> None:
+    await db["students"].insert_one(
+        {"academy_id": acad, "student_id": "st-alice", "full_name": "Alice", "parent_id": "p-1"}
+    )
+    await db["sessions"].insert_one(
+        {
+            "academy_id": acad,
+            "session_id": "sess-1",
+            "title": "Session 1",
+            "location": "Court 1",
+            "status": "scheduled",
+            "amount_cents": 10_000,
+        }
+    )
+    await db["enrollments"].insert_one(
+        {
+            "academy_id": acad,
+            "enrollment_id": enrollment_id,
+            "student_id": "st-alice",
+            "session_id": "sess-1",
+            "status": "active",
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_admin_cancel_through_real_writer_shows_actor_and_reason_on_past_row(
+    db, acad
+) -> None:
+    """Issue #674 review: the past row reads actor + reason off the enrollment
+    doc, so the admin cancel path must stamp them there (not only on the
+    lifecycle event). Runs the real use case against the real Mongo writer."""
+    await _seed_one_active_enrollment(db, acad, "enr-1")
+    effective_at = datetime(2026, 9, 1, tzinfo=UTC)
+
+    await CancelEnrollment(
+        enrollments=MongoEnrollmentWriter(db),
+        sessions=_SeatSink(),
+        outbox=_OutboxSink(),
+        academy_id=acad,
+    ).execute(
+        CancelEnrollmentCommand(
+            enrollment_id="enr-1",
+            event_type="removed",
+            reason="Moved away",
+            effective_at=effective_at,
+            actor_id="admin-1",
+        )
+    )
+
+    detail = await MongoStudentRepository(db).get_admin_student("st-alice")
+    assert detail is not None
+    assert detail.enrolled_sessions == []
+    (row,) = detail.past_enrollments
+    assert row.status == "cancelled"
+    assert row.cancelled_at == effective_at
+    assert row.ended_at == effective_at
+    assert row.cancelled_by == "admin"
+    assert row.reason == "Moved away"
+
+
+@pytest.mark.asyncio
+async def test_admin_withdraw_through_real_writer_shows_actor_and_reason_on_past_row(
+    db, acad
+) -> None:
+    """Issue #674 review: withdrawals used to stamp neither actor nor reason
+    on the doc, leaving every withdrawn past row with blank columns."""
+    await _seed_one_active_enrollment(db, acad, "enr-2")
+    effective_at = datetime(2026, 9, 1, tzinfo=UTC)
+
+    await WithdrawEnrollment(
+        enrollments=MongoEnrollmentWriter(db),
+        sessions=_SeatSink(),
+    ).execute(
+        WithdrawEnrollmentCommand(
+            enrollment_id="enr-2",
+            effective_at=effective_at,
+            outcome="credit",
+            actor_id="admin-1",
+            reason="Family relocating",
+        )
+    )
+
+    detail = await MongoStudentRepository(db).get_admin_student("st-alice")
+    assert detail is not None
+    (row,) = detail.past_enrollments
+    assert row.status == "withdrawn"
+    assert row.withdrawal_date == effective_at
+    assert row.ended_at == effective_at
+    assert row.cancelled_at is None
+    assert row.cancelled_by == "admin"
+    assert row.reason == "Family relocating"

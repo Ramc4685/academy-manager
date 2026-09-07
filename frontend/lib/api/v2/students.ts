@@ -108,7 +108,7 @@ export interface AdminStudentDetail extends AdminStudentView {
   waiver_version?: string | null;
   recent_attendance: AdminStudentRecentAttendance[];
   enrolled_sessions: AdminStudentSessionSummary[];
-  /** Issue #674: cancelled / withdrawn / transferred_out rows, newest ended first. */
+  /** Issue #674: cancelled / withdrawn rows, newest ended first. */
   past_enrollments?: AdminStudentSessionSummary[];
   payment_history: AdminStudentPaymentSummary[];
   current_payment?: AdminStudentCurrentPaymentSummary | null;

@@ -71,8 +71,8 @@ class AdminStudentSessionSummary(BaseModel):
     # states). Filled by ``GetAdminStudent`` through ``EnrollmentAutopayLookup``
     # for CURRENT rows only; None when billing has no record.
     autopay_status: str | None = None
-    # Issue #674: lifecycle facts for PAST rows (cancelled / withdrawn /
-    # transferred_out). ``cancelled_at`` and ``withdrawal_date`` are both kept
+    # Issue #674: lifecycle facts for PAST rows (cancelled / withdrawn).
+    # ``cancelled_at`` and ``withdrawal_date`` are both kept
     # because admin cancel stamps the former and withdraw stamps the latter;
     # ``ended_at`` is whichever applies so the UI sorts and renders one date.
     cancelled_at: datetime | None = None
@@ -139,8 +139,8 @@ class AdminStudentDetail(AdminStudentSummary):
     waiver_version: str | None = None
     recent_attendance: list[AdminStudentRecentAttendance] = Field(default_factory=list)
     enrolled_sessions: list[AdminStudentSessionSummary] = Field(default_factory=list)
-    # Issue #674: cancelled / withdrawn / transferred_out enrollments, newest
-    # ended first, so a cancelled student no longer looks never-enrolled.
+    # Issue #674: cancelled / withdrawn enrollments, newest ended first, so a
+    # cancelled student no longer looks never-enrolled.
     past_enrollments: list[AdminStudentSessionSummary] = Field(default_factory=list)
     payment_history: list[AdminStudentPaymentSummary] = Field(default_factory=list)
     current_payment: AdminStudentCurrentPaymentSummary | None = None

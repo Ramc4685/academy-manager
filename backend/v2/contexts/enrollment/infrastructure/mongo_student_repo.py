@@ -828,7 +828,9 @@ class MongoStudentRepository(TenantScopedRepository):
 
     # Statuses an enrollment lands in once attendance has stopped for good.
     # "paused" is deliberately NOT here: it stays in the current list (#651).
-    PAST_ENROLLMENT_STATUSES = ("cancelled", "withdrawn", "transferred_out")
+    # A transfer moves the row to the new session in place (no status change),
+    # so it never appears here.
+    PAST_ENROLLMENT_STATUSES = ("cancelled", "withdrawn")
 
     async def _admin_student_past_enrollments(
         self,
@@ -836,11 +838,11 @@ class MongoStudentRepository(TenantScopedRepository):
         academy_id: str,
         student_id: str,
     ) -> list[AdminStudentSessionSummary]:
-        """Issue #674: cancelled / withdrawn / transferred_out enrollments with
-        the lifecycle facts the writers persist (``cancelled_at`` from an admin
-        or parent cancel, ``withdrawal_date`` from a withdraw, ``cancelled_by``
-        and ``cancellation_reason``). Newest ended first; rows with no date
-        sort last so a legacy row cannot hide a recent cancellation.
+        """Issue #674: cancelled / withdrawn enrollments with the lifecycle
+        facts the writers persist (``cancelled_at`` from an admin or parent
+        cancel, ``withdrawal_date`` from a withdraw, ``cancelled_by`` and
+        ``cancellation_reason`` from both). Newest ended first; rows with no
+        date sort last so a legacy row cannot hide a recent cancellation.
         """
         enrollments = [
             doc
@@ -862,9 +864,8 @@ class MongoStudentRepository(TenantScopedRepository):
             row = self._admin_student_session_row(enrollment, sessions_by_id)
             cancelled_at = self._coerce_datetime(enrollment.get("cancelled_at"))
             withdrawal_date = self._coerce_datetime(enrollment.get("withdrawal_date"))
-            transferred_at = self._coerce_datetime(enrollment.get("transferred_at"))
             ended_at = withdrawal_date if row.status == "withdrawn" else cancelled_at
-            ended_at = ended_at or cancelled_at or withdrawal_date or transferred_at
+            ended_at = ended_at or cancelled_at or withdrawal_date
             rows.append(
                 row.model_copy(
                     update={
@@ -872,9 +873,7 @@ class MongoStudentRepository(TenantScopedRepository):
                         "withdrawal_date": withdrawal_date,
                         "ended_at": ended_at,
                         "cancelled_by": self._optional_str(enrollment.get("cancelled_by")),
-                        "reason": self._optional_str(
-                            enrollment.get("cancellation_reason") or enrollment.get("reason")
-                        ),
+                        "reason": self._optional_str(enrollment.get("cancellation_reason")),
                     }
                 )
             )

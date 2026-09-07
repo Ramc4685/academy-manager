@@ -1,26 +1,33 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { autopayChip, familyBillingHref, pastEnrollmentRow } from "./session-rows";
 
 describe("autopayChip", () => {
-  it("maps billing's autopay axis onto the four admin states", () => {
-    expect(autopayChip("active")).toEqual({ variant: "autopayOn", label: "Autopay on" });
-    expect(autopayChip("paused")).toEqual({ variant: "paused", label: "Autopay paused" });
-    expect(autopayChip("disabled")).toEqual({ variant: "manual", label: "Autopay off" });
+  it("uses the family billing page's wording for on / paused / off", () => {
+    expect(autopayChip("active")).toEqual({ variant: "autopayOn", label: "Autopay" });
+    expect(autopayChip("paused")).toEqual({ variant: "manual", label: "Autopay off" });
+    expect(autopayChip("disabled")).toEqual({ variant: "manual", label: "Manual" });
   });
 
-  it("treats a missing billing record as no autopay, not as opted out", () => {
-    expect(autopayChip(null).label).toBe("No autopay");
-    expect(autopayChip(undefined).label).toBe("No autopay");
-    expect(autopayChip("").label).toBe("No autopay");
+  it("reads the default not_offered and a merely offered setup as Manual, not pending", () => {
+    // `not_offered` is the repository default for every billing enrollment;
+    // labelling it "pending" would suggest a card setup that never started.
+    expect(autopayChip("not_offered")).toEqual({ variant: "manual", label: "Manual" });
+    expect(autopayChip("offered")).toEqual({ variant: "manual", label: "Manual" });
   });
 
-  it("reads every setup_* state as pending", () => {
+  it("treats a missing billing record as Manual, like the family page", () => {
+    expect(autopayChip(null).label).toBe("Manual");
+    expect(autopayChip(undefined).label).toBe("Manual");
+    expect(autopayChip("").label).toBe("Manual");
+  });
+
+  it("reserves pending for a card setup that has actually started", () => {
     expect(autopayChip("setup_started")).toEqual({
       variant: "autopayPend",
       label: "Autopay pending",
     });
-    expect(autopayChip("setup_required").label).toBe("Autopay pending");
+    expect(autopayChip("some_future_state").label).toBe("Manual");
   });
 });
 
@@ -48,6 +55,35 @@ function digits(rendered: string) {
 }
 
 describe("pastEnrollmentRow", () => {
+  // Pin the process to a US zone so a UTC-midnight day would render a day
+  // early if it were formatted as a local instant. Node re-reads TZ on the
+  // next Date call, so setting it here is enough; restore it afterwards.
+  const originalTz = process.env.TZ;
+  beforeAll(() => {
+    process.env.TZ = "America/Chicago";
+  });
+  afterAll(() => {
+    if (originalTz === undefined) delete process.env.TZ;
+    else process.env.TZ = originalTz;
+  });
+
+  it("renders an admin cancel stored at UTC midnight on its stored calendar day", () => {
+    // Admin cancel stamps cancelled_at = _start_of_day_utc(effective_date);
+    // a local render in Chicago would show 8/31.
+    const row = pastEnrollmentRow({
+      ...base,
+      cancelled_at: "2026-09-01T00:00:00Z",
+      ended_at: "2026-09-01T00:00:00Z",
+      cancelled_by: "admin",
+      reason: "Moved away",
+    });
+    expect(new Date("2026-09-01T00:00:00Z").getDate()).toBe(31); // TZ pin is in effect
+    expect(digits(row.endedOn)).toEqual(expect.arrayContaining(["9", "1", "2026"]));
+    expect(digits(row.endedOn)).not.toContain("31");
+    expect(row.endedBy).toBe("Admin");
+    expect(row.reason).toBe("Moved away");
+  });
+
   it("renders a cancelled row with its date, actor and reason", () => {
     const row = pastEnrollmentRow({
       ...base,
@@ -77,9 +113,10 @@ describe("pastEnrollmentRow", () => {
   });
 
   it("falls back to dashes when the lifecycle facts are missing", () => {
-    const row = pastEnrollmentRow({ ...base, status: "transferred_out" });
-    expect(row.statusLabel).toBe("Transferred");
-    expect(row.statusVariant).toBe("transferred");
+    // Pre-#651 cancelled rows carry no date, actor or reason at all.
+    const row = pastEnrollmentRow({ ...base });
+    expect(row.statusLabel).toBe("Cancelled");
+    expect(row.statusVariant).toBe("expired");
     expect(row.endedOn).toBe("—");
     expect(row.endedBy).toBe("—");
     expect(row.reason).toBe("—");
