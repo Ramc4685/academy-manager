@@ -90,15 +90,19 @@ class FakeOccurrenceLookup:
 class FakeEnrollmentLookup:
     """Mirrors the composition adapter: ``active`` answers the standing
     enrollment; ``roster`` maps (occurrence_id, student_id) to an approved
-    one-time make-up / trial source (issue #672)."""
+    one-time make-up / trial source (issue #672); ``live`` says whether the
+    student still holds an active-or-paused enrollment anywhere, which a
+    make-up row (but not a trial) requires."""
 
     def __init__(
         self,
         active: bool = True,
         roster: dict[tuple[str, str], str] | None = None,
+        live: bool = True,
     ) -> None:
         self.active = active
         self.roster = roster or {}
+        self.live = live
         self.calls: list[dict[str, Any]] = []
 
     async def is_active(self, session_id: str, student_id: str) -> bool:
@@ -124,6 +128,8 @@ class FakeEnrollmentLookup:
             return AttendanceEligibility(source="enrollment")
         source = self.roster.get((occurrence_id, student_id))
         if source is None:
+            return None
+        if source == "makeup" and not self.live:
             return None
         return AttendanceEligibility(source=source)  # type: ignore[arg-type]
 
@@ -340,6 +346,31 @@ async def test_approved_makeup_row_is_eligible_and_recorded_as_makeup() -> None:
             "student_id": "st1",
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_makeup_row_of_a_student_with_no_live_enrollment_is_refused() -> None:
+    # The family cancelled / withdrew after approval: the roster row survived
+    # (cleanup only prunes the cancelled session) but earns nothing now.
+    repo = FakeAttendanceRepo()
+    lookup = FakeEnrollmentLookup(
+        active=False, roster={("occ-2026-05-16", "st1"): "makeup"}, live=False
+    )
+    uc = _build(attendance_repo=repo, enrollment_lookup=lookup)
+    with pytest.raises(StudentNotEnrolled):
+        await uc.execute(_cmd(), coach_id="coach-1")
+    assert repo.saved == []
+
+
+@pytest.mark.asyncio
+async def test_approved_trial_row_needs_no_live_enrollment() -> None:
+    repo = FakeAttendanceRepo()
+    lookup = FakeEnrollmentLookup(
+        active=False, roster={("occ-2026-05-16", "st1"): "trial"}, live=False
+    )
+    uc = _build(attendance_repo=repo, enrollment_lookup=lookup)
+    await uc.execute(_cmd(), coach_id="coach-1")
+    assert repo.saved[0].entry_source == "trial"
 
 
 @pytest.mark.asyncio

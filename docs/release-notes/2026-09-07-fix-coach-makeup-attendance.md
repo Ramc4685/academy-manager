@@ -11,6 +11,14 @@ occurrence-aware `EnrollmentLookup.attendance_eligibility`, adapted in
 `composition/coaching_lookups.py` from an active enrollment (session or recurring
 template, unchanged fallback) OR an approved one-time `OccurrenceRosterEntry` for exactly
 that occurrence. Paused, withdrawn and cancelled enrollments stay ineligible.
+
+A `makeup` roster row additionally requires the student to still hold an active-or-paused
+enrollment somewhere in the academy (`MongoEnrollmentRepository.active_or_paused_for_student`,
+reached through the new `EnrollmentEligibilityReads` protocol in
+`composition/coaching_lookups.py`). Cancel / withdraw only prunes one-time rows on the
+*cancelled* session and a make-up targets a different session by construction, so an
+approved row can outlive the family's exit; without this check it would still earn
+attendance. `trial` rows have no enrollment by definition and stay eligible.
 `BulkMarkAttendance` validates every row first and the 422
 `Coaching.BulkStudentNotEnrolled` now carries `details.student_ids`; the coach session page
 (`frontend/app/(coach)/coach/sessions/[id]/page.tsx`) shows a banner naming those students,

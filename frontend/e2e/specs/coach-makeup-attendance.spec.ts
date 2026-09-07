@@ -87,6 +87,90 @@ test.describe("Coach make-up attendance", () => {
       ],
     });
     await expect(page.getByTestId("bulk-attendance-error")).toHaveCount(0);
-    await expect(bulkButton).toContainText("Mark all present (0)").catch(() => undefined);
+    // Bob stays out after the retry succeeds: the button does not offer a
+    // "Mark all present (1)" that would only re-send him and 422 again.
+    await expect(bulkButton).toContainText("All marked");
+    await expect(bulkButton).toBeDisabled();
+    await expect(page.getByTestId("mark-error-st2")).toContainText("no approved make-up");
+    await expect(page.getByTestId("mark-st2-present")).toHaveAttribute("aria-pressed", "false");
+  });
+
+  test("a failed single tap on an eligible student does not shrink the retry", async ({
+    page,
+    mock,
+  }) => {
+    mock.bulkAttendanceResponder = () => ({
+      status: 422,
+      body: {
+        error: {
+          code: "Coaching.BulkStudentNotEnrolled",
+          message: "students not actively enrolled in session",
+          details: { student_ids: ["st2"], occurrence_id: "occ-today-1" },
+        },
+      },
+    });
+    await page.goto("/coach/sessions/s-today-1");
+
+    const bulkButton = page.getByTestId("mark-all-present");
+    await bulkButton.click();
+    await expect.poll(() => mock.bulkAttendanceCalls.length).toBe(1);
+    await expect(bulkButton).toContainText("Mark all present (2)");
+
+    // Alice's own tap fails on the network: her row shows the error, but she
+    // is still eligible and must stay in the batch.
+    mock.attendanceResponder = () => ({
+      status: 500,
+      body: { error: { code: "Internal", message: "boom" } },
+    });
+    await page.getByTestId("mark-st1-present").click();
+    await expect.poll(() => mock.attendanceCalls.length).toBe(1);
+    await expect(page.getByTestId("mark-error-st1")).toBeVisible();
+    await expect(bulkButton).toContainText("Mark all present (2)");
+
+    mock.attendanceResponder = undefined;
+    mock.bulkAttendanceResponder = undefined;
+    await bulkButton.click();
+    await expect.poll(() => mock.bulkAttendanceCalls.length).toBe(2);
+    expect(mock.bulkAttendanceCalls[1]).toMatchObject({
+      entries: [
+        { student_id: "st1", status: "present" },
+        { student_id: "st-makeup", status: "present" },
+      ],
+    });
+    await expect(bulkButton).toContainText("All marked");
+    await expect(page.getByTestId("mark-error-st1")).toHaveCount(0);
+  });
+
+  test("a single tap that succeeds for the named student lets the batch reach everyone", async ({
+    page,
+    mock,
+  }) => {
+    mock.bulkAttendanceResponder = () => ({
+      status: 422,
+      body: {
+        error: {
+          code: "Coaching.BulkStudentNotEnrolled",
+          message: "students not actively enrolled in session",
+          details: { student_ids: ["st2"], occurrence_id: "occ-today-1" },
+        },
+      },
+    });
+    await page.goto("/coach/sessions/s-today-1");
+    const bulkButton = page.getByTestId("mark-all-present");
+    await bulkButton.click();
+    await expect.poll(() => mock.bulkAttendanceCalls.length).toBe(1);
+    await expect(bulkButton).toContainText("Mark all present (2)");
+
+    // The admin fixed Bob's status meanwhile; the coach taps him directly.
+    await page.getByTestId("mark-st2-present").click();
+    await expect.poll(() => mock.attendanceCalls.length).toBe(1);
+    await expect(page.getByTestId("mark-st2-present")).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByTestId("mark-error-st2")).toHaveCount(0);
+    await expect(bulkButton).toContainText("Mark all present (2)");
+
+    mock.bulkAttendanceResponder = undefined;
+    await bulkButton.click();
+    await expect.poll(() => mock.bulkAttendanceCalls.length).toBe(2);
+    await expect(bulkButton).toContainText("All marked");
   });
 });

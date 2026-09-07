@@ -133,6 +133,13 @@ class FakeEnrollmentQuery:
             for e in self._enrollments
         )
 
+    async def active_or_paused_for_student(self, student_id: str) -> list[Enrollment]:
+        return [
+            e
+            for e in self._enrollments
+            if e.student_id == student_id and e.status in ("active", "paused")
+        ]
+
 
 class FakeStudentQuery:
     def __init__(self, students: list[Student]) -> None:
@@ -701,7 +708,8 @@ def _build_use_cases(seed_data) -> CoachUseCases:
     class _EL:
         # Mirrors composition.coaching_lookups.EnrollmentLookupAdapter: an
         # active enrollment in the session or its template, else an approved
-        # one-time make-up / trial entry for exactly this occurrence (#672).
+        # one-time make-up / trial entry for exactly this occurrence (#672);
+        # a make-up row also needs a live enrollment somewhere in the academy.
         async def is_active(self, sid, student_id):
             return await enrollments.is_active(sid, student_id)
 
@@ -714,8 +722,13 @@ def _build_use_cases(seed_data) -> CoachUseCases:
                 if await enrollments.is_active(template_session_id, student_id):
                     return AttendanceEligibility(source="enrollment")
             for entry in await occurrence_roster.list_for_occurrence(occurrence_id):
-                if entry.student_id == student_id:
-                    return AttendanceEligibility(source=entry.source)
+                if entry.student_id != student_id:
+                    continue
+                if entry.source == "makeup" and not await enrollments.active_or_paused_for_student(
+                    student_id
+                ):
+                    return None
+                return AttendanceEligibility(source=entry.source)
             return None
 
     async def _dashboard(_coach_id):

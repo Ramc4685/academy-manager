@@ -51,8 +51,20 @@ async def _seed(db) -> EnrollmentLookupAdapter:
             _enrollment("academy-a", "sess-1", "st-paused", "paused"),
             _enrollment("academy-a", "sess-1", "st-withdrawn", "withdrawn"),
             _enrollment("academy-a", "sess-1", "st-cancelled", "cancelled"),
+            # Make-up attendees are enrolled in their *home* session, never in
+            # the one they make up in (issue #672): active or paused counts.
+            _enrollment("academy-a", "sess-home", "st-makeup", "active"),
+            _enrollment("academy-a", "sess-home", "st-makeup-later", "paused"),
+            # A family that left after the make-up was approved: the roster
+            # row survives (cleanup only prunes the cancelled session), but
+            # no live enrollment remains anywhere in the academy.
+            _enrollment("academy-a", "sess-home", "st-makeup-gone", "cancelled"),
+            _enrollment("academy-a", "sess-other", "st-makeup-gone", "withdrawn"),
             # Same ids in another tenant: must never leak across.
             _enrollment("academy-b", "sess-1", "st-other-tenant", "active"),
+            _enrollment("academy-b", "sess-home", "st-b-makeup", "active"),
+            # st-makeup's live enrollment must not vouch for academy-b's row.
+            _enrollment("academy-b", "sess-home", "st-makeup-a-only", "cancelled"),
         ]
     )
     roster = MongoOccurrenceRosterRepository(db)
@@ -60,10 +72,19 @@ async def _seed(db) -> EnrollmentLookupAdapter:
         await roster.add(_entry("occ-sat", "st-makeup", "makeup"))
         await roster.add(_entry("occ-sat", "st-trial", "trial"))
         await roster.add(_entry("occ-next-week", "st-makeup-later", "makeup"))
-        # A paused family whose make-up was approved for this occurrence
-        # before the pause: the roster row still exists (past-dated cleanup
-        # only removes future rows), but it is for the occurrence itself.
+        await roster.add(_entry("occ-sat", "st-makeup-gone", "makeup"))
     with tenant_scope("academy-b"):
+        await roster.add(
+            OccurrenceRosterEntry(
+                entry_id="ore-b-a-only",
+                academy_id="academy-b",
+                occurrence_id="occ-sat",
+                student_id="st-makeup",
+                source="makeup",
+                origin_request_id="req-b2",
+                created_at=NOW,
+            )
+        )
         await roster.add(
             OccurrenceRosterEntry(
                 entry_id="ore-b",
@@ -126,6 +147,34 @@ async def test_paused_withdrawn_cancelled_and_unknown_students_are_not_eligible(
 
 
 @pytest.mark.asyncio
+async def test_makeup_row_of_a_fully_cancelled_or_withdrawn_student_is_refused(db) -> None:
+    # The approved row outlived the family's cancel / withdraw (those only
+    # prune one-time rows on the cancelled session, and a make-up targets a
+    # different one). With no active-or-paused enrollment left anywhere in
+    # the academy the row no longer earns attendance.
+    adapter = await _seed(db)
+    with tenant_scope("academy-a"):
+        assert await _eligibility(adapter, "st-makeup-gone") is None
+
+
+@pytest.mark.asyncio
+async def test_trial_row_needs_no_enrollment(db) -> None:
+    adapter = await _seed(db)
+    with tenant_scope("academy-a"):
+        assert await db["enrollments"].count_documents({"student_id": "st-trial"}) == 0
+        trial = await _eligibility(adapter, "st-trial")
+    assert trial is not None and trial.source == "trial"
+
+
+@pytest.mark.asyncio
+async def test_makeup_row_of_a_paused_student_stays_eligible(db) -> None:
+    adapter = await _seed(db)
+    with tenant_scope("academy-a"):
+        later = await _eligibility(adapter, "st-makeup-later", occurrence_id="occ-next-week")
+    assert later is not None and later.source == "makeup"
+
+
+@pytest.mark.asyncio
 async def test_eligibility_never_crosses_tenants(db) -> None:
     adapter = await _seed(db)
     with tenant_scope("academy-a"):
@@ -134,4 +183,6 @@ async def test_eligibility_never_crosses_tenants(db) -> None:
     with tenant_scope("academy-b"):
         b = await _eligibility(adapter, "st-b-makeup")
         assert b is not None and b.source == "makeup"
+        # academy-b holds a make-up row for st-makeup, but the live
+        # enrollment vouching for it lives in academy-a only.
         assert await _eligibility(adapter, "st-makeup") is None

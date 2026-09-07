@@ -33,6 +33,8 @@ import { formatBulkAttendanceError } from "./bulk-attendance-error";
 
 const CLIENT_APP_VERSION = "v2-w1b";
 
+const NO_STUDENTS: ReadonlySet<string> = new Set();
+
 function todayISO(): string {
   const now = new Date();
   const year = now.getFullYear();
@@ -112,7 +114,7 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   const assistant = useIsAssistantCoach();
 
   const date = dateParam ?? todayISO();
-  const { data: today, isLoading, isError } = useQuery({
+  const { data: today, isLoading, isError, dataUpdatedAt } = useQuery({
     queryKey: queryKeys.coach.today(date),
     queryFn: () => getCoachToday(date),
     staleTime: 5 * 60 * 1000,
@@ -139,6 +141,24 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   // Why the last "Mark all present" was refused as a whole (#672): the bulk
   // endpoint saves nothing when any row is ineligible, so name the rows.
   const [bulkError, setBulkError] = useState<string | null>(null);
+  // The students that 422 named. Kept apart from the banner and from row
+  // errors: the retry must leave exactly these rows out, and keep leaving
+  // them out after the banner clears, until the roster is refetched
+  // (`rosterVersion` is the query's dataUpdatedAt when the 422 landed) or a
+  // single mark / correction for that student succeeds.
+  const [bulkIneligible, setBulkIneligible] = useState<{
+    ids: ReadonlySet<string>;
+    rosterVersion: number;
+  }>({ ids: NO_STUDENTS, rosterVersion: 0 });
+  const ineligibleIds =
+    bulkIneligible.rosterVersion === dataUpdatedAt ? bulkIneligible.ids : NO_STUDENTS;
+  const clearIneligible = (student_id: string): void =>
+    setBulkIneligible((prev) => {
+      if (!prev.ids.has(student_id)) return prev;
+      const ids = new Set(prev.ids);
+      ids.delete(student_id);
+      return { ...prev, ids };
+    });
   // noteOpen tracks which student has the inline note box open
   const [noteOpen, setNoteOpen] = useState<string | null>(null);
   const [noteTexts, setNoteTexts] = useState<Record<string, string>>({});
@@ -284,6 +304,7 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
           pending: false,
         },
       }));
+      clearIneligible(res.student_id);
       void queryClient.invalidateQueries({ queryKey: queryKeys.coach.today(date) });
     },
     onError: (err: unknown, vars) => {
@@ -332,6 +353,7 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
           pending: false,
         },
       }));
+      clearIneligible(res.student_id);
     },
     onError: (err: unknown, vars) => {
       setLocalMarks((m) => ({
@@ -395,6 +417,7 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
       if (rejection) {
         const ineligible = new Set(rejection.ineligibleIds);
         setBulkError(rejection.message);
+        setBulkIneligible({ ids: ineligible, rosterVersion: dataUpdatedAt });
         setLocalMarks((m) => {
           const next = { ...m };
           for (const student_id of studentIds) {
@@ -454,8 +477,9 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
         !hasServerMark(student) &&
         !queuedMarks[student.student_id] &&
         // Named ineligible by the last bulk attempt (#672): leave them out
-        // of the retry; the row keeps its own explanation.
-        !(bulkError && localMarks[student.student_id]?.error),
+        // of the retry; the row keeps its own explanation. Other rows' own
+        // errors (a failed single tap) never shrink the retry.
+        !ineligibleIds.has(student.student_id),
     )
     .map((student) => student.student_id);
   const queuedCount = Object.keys(queuedMarks).length;

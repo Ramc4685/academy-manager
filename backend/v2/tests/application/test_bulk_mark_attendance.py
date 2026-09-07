@@ -100,7 +100,10 @@ class FakeEnrollmentLookup:
     ``active`` is the set of (session_id, student_id) pairs with an ``active``
     enrollment — a paused or withdrawn student is simply absent from it, the
     same way the Mongo ``status: "active"`` filter drops them. ``roster`` maps
-    (occurrence_id, student_id) to an approved one-time source.
+    (occurrence_id, student_id) to an approved one-time source. ``live`` is
+    the set of students with an active-or-paused enrollment anywhere in the
+    academy (defaults to the students in ``active``): a make-up row is only
+    honoured for them, since the row outlives a family's cancel / withdraw.
     """
 
     def __init__(
@@ -108,9 +111,11 @@ class FakeEnrollmentLookup:
         *,
         active: set[tuple[str, str]] | None = None,
         roster: dict[tuple[str, str], str] | None = None,
+        live: set[str] | None = None,
     ) -> None:
         self.active = active or set()
         self.roster = roster or {}
+        self.live = live if live is not None else {student_id for _, student_id in self.active}
 
     async def is_active(self, session_id: str, student_id: str) -> bool:
         return (session_id, student_id) in self.active
@@ -129,6 +134,8 @@ class FakeEnrollmentLookup:
             return AttendanceEligibility(source="enrollment")
         source = self.roster.get((occurrence_id, student_id))
         if source is None:
+            return None
+        if source == "makeup" and student_id not in self.live:
             return None
         return AttendanceEligibility(source=source)  # type: ignore[arg-type]
 
@@ -179,6 +186,7 @@ async def test_batch_with_enrolled_makeup_and_trial_rows_saves_all_with_sources(
     lookup = FakeEnrollmentLookup(
         active={("sess-1", "st1"), ("sess-1", "st2")},
         roster={(OCC, "st-makeup"): "makeup", (OCC, "st-trial"): "trial"},
+        live={"st1", "st2", "st-makeup"},
     )
     uc = _build(attendance_repo=repo, outbox=outbox, enrollment_lookup=lookup)
 
@@ -200,7 +208,9 @@ async def test_makeup_entry_resolves_through_template_session_fallback() -> None
     # Occurrence expanded from a recurring template: enrolled students are
     # active on the template id, the make-up is on the occurrence.
     repo = FakeAttendanceRepo()
-    lookup = FakeEnrollmentLookup(active={("tmpl-1", "st1")}, roster={(OCC, "st-makeup"): "makeup"})
+    lookup = FakeEnrollmentLookup(
+        active={("tmpl-1", "st1")}, roster={(OCC, "st-makeup"): "makeup"}, live={"st1", "st-makeup"}
+    )
     uc = _build(
         attendance_repo=repo,
         occurrence_lookup=FakeOccurrenceLookup(template_session_id="tmpl-1"),
@@ -219,7 +229,9 @@ async def test_paused_and_withdrawn_rows_fail_the_batch_and_are_named() -> None:
     # entry; the batch is rejected before any write and the error lists them
     # both — not just the first miss — so the coach UI can say who.
     repo = FakeAttendanceRepo()
-    lookup = FakeEnrollmentLookup(active={("sess-1", "st1")}, roster={(OCC, "st-makeup"): "makeup"})
+    lookup = FakeEnrollmentLookup(
+        active={("sess-1", "st1")}, roster={(OCC, "st-makeup"): "makeup"}, live={"st1", "st-makeup"}
+    )
     uc = _build(attendance_repo=repo, enrollment_lookup=lookup)
 
     with pytest.raises(BulkStudentNotEnrolled) as exc_info:
@@ -243,6 +255,24 @@ async def test_makeup_for_another_occurrence_is_not_eligible_here() -> None:
 
 
 @pytest.mark.asyncio
+async def test_makeup_row_of_a_student_with_no_live_enrollment_is_refused() -> None:
+    # The family cancelled / withdrew after the make-up was approved; the
+    # roster row survived but the student holds no active-or-paused
+    # enrollment anywhere. A trial row needs no enrollment at all.
+    repo = FakeAttendanceRepo()
+    lookup = FakeEnrollmentLookup(
+        active={("sess-1", "st1")},
+        roster={(OCC, "st-gone"): "makeup", (OCC, "st-trial"): "trial"},
+        live={"st1"},
+    )
+    uc = _build(attendance_repo=repo, enrollment_lookup=lookup)
+    with pytest.raises(BulkStudentNotEnrolled) as exc_info:
+        await uc.execute(_cmd("st1", "st-gone", "st-trial"), coach_id="coach-1")
+    assert exc_info.value.details["student_ids"] == ["st-gone"]
+    assert repo.saved == []
+
+
+@pytest.mark.asyncio
 async def test_duplicate_student_ids_still_rejected() -> None:
     uc = _build()
     with pytest.raises(BulkStudentNotEnrolled) as exc_info:
@@ -253,7 +283,9 @@ async def test_duplicate_student_ids_still_rejected() -> None:
 @pytest.mark.asyncio
 async def test_idempotent_replay_returns_same_result_one_save_each() -> None:
     repo = FakeAttendanceRepo()
-    lookup = FakeEnrollmentLookup(active={("sess-1", "st1")}, roster={(OCC, "st-makeup"): "makeup"})
+    lookup = FakeEnrollmentLookup(
+        active={("sess-1", "st1")}, roster={(OCC, "st-makeup"): "makeup"}, live={"st1", "st-makeup"}
+    )
     uc = _build(attendance_repo=repo, enrollment_lookup=lookup)
     first = await uc.execute(_cmd("st1", "st-makeup"), coach_id="coach-1")
     second = await uc.execute(_cmd("st1", "st-makeup"), coach_id="coach-1")

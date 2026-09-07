@@ -100,6 +100,7 @@ def _seed_with_one_time_rows(seed):
         Student(student_id="st-makeup", academy_id="test-academy", parent_id="p3", full_name="C"),
         Student(student_id="st-trial", academy_id="test-academy", parent_id="p4", full_name="D"),
         Student(student_id="st-paused", academy_id="test-academy", parent_id="p5", full_name="E"),
+        Student(student_id="st-gone", academy_id="test-academy", parent_id="p6", full_name="F"),
     ]
     seed["enrollments"] = [
         *seed["enrollments"],
@@ -109,6 +110,24 @@ def _seed_with_one_time_rows(seed):
             session_id="s-today-1",
             student_id="st-paused",
             status="paused",
+        ),
+        # The make-up attendee's home enrollment: a make-up targets a session
+        # the student is NOT enrolled in, but the entitlement rests on a live
+        # enrollment somewhere in the academy.
+        Enrollment(
+            enrollment_id="e-makeup-home",
+            academy_id="test-academy",
+            session_id="s-home",
+            student_id="st-makeup",
+            status="active",
+        ),
+        # A family that cancelled after their make-up was approved.
+        Enrollment(
+            enrollment_id="e-gone-home",
+            academy_id="test-academy",
+            session_id="s-home",
+            student_id="st-gone",
+            status="cancelled",
         ),
     ]
     created = datetime(2026, 5, 15, 8, 0, tzinfo=UTC)
@@ -129,6 +148,17 @@ def _seed_with_one_time_rows(seed):
             student_id="st-trial",
             source="trial",
             origin_request_id="req-2",
+            created_at=created,
+        ),
+        # The cancelled family's make-up row survived cancel (cleanup only
+        # prunes rows on the cancelled session): must NOT be markable.
+        OccurrenceRosterEntry(
+            entry_id="ore-gone",
+            academy_id="test-academy",
+            occurrence_id="occ-today-1",
+            student_id="st-gone",
+            source="makeup",
+            origin_request_id="req-4",
             created_at=created,
         ),
         # Approved for a *different* occurrence: not eligible today.
@@ -179,6 +209,27 @@ def test_bulk_mark_all_present_accepts_makeup_and_trial_rows(seed):
         "st-makeup": "makeup",
         "st-trial": "trial",
     }
+
+
+def test_bulk_422_refuses_a_makeup_row_whose_family_has_left(seed):
+    """The approved make-up row outlived the family's cancel; with no live
+    enrollment left in the academy the batch is refused and names them."""
+    client, use_cases = _client_for(_seed_with_one_time_rows(seed))
+    with client:
+        r = client.post(
+            "/api/v2/coach/occurrences/occ-today-1/attendance/bulk",
+            json=_payload(
+                entries=[
+                    {"student_id": "st1", "status": "present"},
+                    {"student_id": "st-makeup", "status": "present"},
+                    {"student_id": "st-gone", "status": "present"},
+                ]
+            ),
+        )
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["code"] == "Coaching.BulkStudentNotEnrolled"
+    assert r.json()["error"]["details"]["student_ids"] == ["st-gone"]
+    assert use_cases.mark_attendance._attendance.saved == []
 
 
 def test_bulk_422_names_every_ineligible_student(seed):
