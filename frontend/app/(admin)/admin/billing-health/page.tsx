@@ -910,7 +910,10 @@ function PaymentReadinessCard({
     ready_for_charges: false,
     account_id_masked: null,
   };
-  const webhookEvents = data.webhook_events ?? { quarantined: 0, failed: 0 };
+  // Missing counts are unknown, not healthy. Rendering "0 quarantined · 0
+  // failed" for a response that simply omitted them would hide unrecovered
+  // Stripe failures on the one page whose job is to surface them.
+  const webhookEvents = data.webhook_events ?? null;
 
   // Three states, in the order the owner cares about them.
   const tone: "green" | "amber" | "red" = !data.payments_possible
@@ -961,7 +964,11 @@ function PaymentReadinessCard({
           />
           <Row
             label="Stuck webhook events"
-            value={`${webhookEvents.quarantined} quarantined · ${webhookEvents.failed} failed`}
+            value={
+              webhookEvents
+                ? `${webhookEvents.quarantined} quarantined · ${webhookEvents.failed} failed`
+                : "Unavailable"
+            }
           />
         </dl>
       </div>
