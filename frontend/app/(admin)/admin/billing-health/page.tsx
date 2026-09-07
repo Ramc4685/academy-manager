@@ -1,56 +1,52 @@
 "use client";
 
 /**
- * Admin Billing Health (#235).
+ * Admin Billing Health — the page you open when *Stripe* is the problem.
  *
- * Surfaces the #224 app-owned billing infrastructure to admins:
- * - reconciliation run history (scheduler health)
- * - open failed autopay payments, with one-click retry
- * - quarantined webhook events, with replay
- * Plus a per-invoice payment-attempt timeline.
+ * Spec: `docs/superpowers/specs/2026-09-07-billing-health-trim-design.md`.
+ *
+ * Four things and nothing else: can parents pay (plus the one health verdict),
+ * quarantined webhooks with replay, reconciliation (runs, "Reconcile now", the
+ * lookup by Stripe id, and the autopay switch-off failures), and linking a
+ * Stripe charge to an invoice.
+ *
+ * Removed by the trim: open failed payments with Retry, the attempts dialog,
+ * the dunning ladder and the legacy match queue. The Payments Failed-autopay
+ * bucket and the Family billing page own family payment behaviour; keeping a
+ * third Retry here meant three places to check and two ways to charge a card.
+ *
+ * The page computes no verdict of its own: `health` arrives from the backend.
  */
 
 import { useState } from "react";
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-  type UseQueryResult,
-} from "@tanstack/react-query";
-import * as Dialog from "@radix-ui/react-dialog";
+import Link from "next/link";
+import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 
 import {
-  chargeAdminInvoiceAutopay,
   confirmLegacyMatch,
   fetchConnectReadiness,
-  fetchDunningFailures,
-  fetchFailedPaymentAttempts,
-  fetchInvoiceAttempts,
-  fetchLegacyMatchQueue,
   fetchReconciliationRuns,
   listBillingWebhookEvents,
   replayWebhookEvent,
   triggerReconciliation,
-  type BillingPaymentAttempt,
+  type AutopayDisableFailures,
   type ConnectReadiness,
-  type DunningRow,
-  type FailedPaymentRow,
-  type LegacyMatchCandidate,
-  type LegacyMatchRow,
   type ReconciliationRun,
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
+import { formatCents, parseDollarsToCents } from "@/lib/money";
+import { healthPillTone, truncationLine } from "@/lib/billing-health";
 
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
-import { Chip, type ChipVariant } from "@/components/ds/chip";
+import { Chip } from "@/components/ds/chip";
+import { Field } from "@/components/ds/dialog-chrome";
 import { BigNum, Overline } from "@/components/ds/typography";
 
-function formatCents(cents: number): string {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
-    cents / 100,
-  );
-}
+import { ReconciliationLookupPanel } from "./ReconciliationLookupPanel";
+
+/** How many quarantined events the list route returns; the tile shows the true count. */
+const WEBHOOK_LIST_LIMIT = 50;
 
 function formatTimestamp(iso: string | null): string {
   if (!iso) return "—";
@@ -80,96 +76,40 @@ function truncate(value: string, max = 14): string {
   return value.length > max ? `${value.slice(0, max)}…` : value;
 }
 
-function attemptChip(status: string): { variant: ChipVariant; label: string } {
-  if (status === "succeeded") return { variant: "paid", label: "SUCCEEDED" };
-  if (status === "requires_action") return { variant: "pending", label: "ACTION" };
-  return { variant: "failed", label: status.replace(/_/g, " ").toUpperCase() };
-}
-
 function runStatusDot(run: ReconciliationRun): string {
   if (run.quarantined > 0 || run.failed > 0) return "#dc2626"; // red
   if (run.repaired > 0) return "#d97706"; // amber
   return "#16a34a"; // green
 }
 
-const ACTIVE_DUNNING_STATUSES = new Set(["active", "processing", "dunned"]);
-
-function dunningChip(status: string): { variant: ChipVariant; label: string } {
-  if (status === "resolved") return { variant: "paid", label: "RESOLVED" };
-  if (status === "dunned") return { variant: "failed", label: "DUNNED" };
-  if (status === "processing") return { variant: "pending", label: "PROCESSING" };
-  if (status === "suppressed") return { variant: "manual", label: "SUPPRESSED" };
-  return { variant: "overdue", label: status.replace(/_/g, " ").toUpperCase() };
-}
-
-function dunningDisableText(row: DunningRow): string {
-  if (row.autopay_disable_status === "failed") {
-    return `Disable failed: ${row.autopay_disable_error ?? "needs retry"}`;
-  }
-  if (row.autopay_disable_status === "succeeded") {
-    return `Disabled ${formatTimestamp(row.autopay_disabled_at)}`;
-  }
-  if (row.status === "dunned") return "Disable pending";
-  return "—";
-}
-
 export default function BillingHealthPage() {
   const queryClient = useQueryClient();
-  const [attemptsInvoice, setAttemptsInvoice] = useState<FailedPaymentRow | null>(null);
-  const [retryResult, setRetryResult] = useState<Record<string, string>>({});
   const [replayState, setReplayState] = useState<Record<string, string>>({});
-  const [matchTarget, setMatchTarget] = useState<{
-    row: LegacyMatchRow;
-    candidate: LegacyMatchCandidate;
-  } | null>(null);
 
-  const runsQuery = useQuery({
-    queryKey: queryKeys.admin.reconciliationRuns(),
-    queryFn: () => fetchReconciliationRuns(),
-    refetchInterval: 30_000,
-  });
-  const failedQuery = useQuery({
-    queryKey: queryKeys.admin.failedAttempts(),
-    queryFn: () => fetchFailedPaymentAttempts(),
-  });
-  const dunningQuery = useQuery({
-    queryKey: queryKeys.admin.dunningFailures(),
-    queryFn: () => fetchDunningFailures(),
-  });
-  const quarantinedQuery = useQuery({
-    queryKey: queryKeys.admin.quarantinedEvents(),
-    queryFn: () => listBillingWebhookEvents({ status: "quarantined", limit: 50 }),
-  });
-  const legacyQuery = useQuery({
-    queryKey: queryKeys.admin.legacyMatchQueue(),
-    queryFn: () => fetchLegacyMatchQueue(),
-  });
   const readinessQuery = useQuery({
     queryKey: queryKeys.admin.connectReadiness(),
     queryFn: () => fetchConnectReadiness(),
     refetchInterval: 30_000,
   });
+  const runsQuery = useQuery({
+    queryKey: queryKeys.admin.reconciliationRuns(),
+    queryFn: () => fetchReconciliationRuns(),
+    refetchInterval: 30_000,
+  });
+  const quarantinedQuery = useQuery({
+    queryKey: queryKeys.admin.quarantinedEvents(),
+    queryFn: () => listBillingWebhookEvents({ status: "quarantined", limit: WEBHOOK_LIST_LIMIT }),
+  });
 
-  const webhookCounts = readinessQuery.data?.webhook_events;
+  const readiness = readinessQuery.data;
   const runs = runsQuery.data?.runs ?? [];
-  const failedRows = failedQuery.data?.rows ?? [];
   const quarantined = quarantinedQuery.data?.events ?? [];
-  const legacyRows = legacyQuery.data?.rows ?? [];
   const latestRun = runs[0];
-  const dunningRows = dunningQuery.data?.rows ?? [];
-  // The backend endpoint (MongoDunningStateRepository.list_admin_rows) returns
-  // only "dunned" / "active" (attempt_count > 0) / "processing" states, but
-  // filter defensively so resolved/suppressed rows never trip the red metric.
-  const activeDunningRows = dunningRows.filter((row) =>
-    ACTIVE_DUNNING_STATUSES.has(row.status),
-  );
 
   const invalidateAll = () => {
     void queryClient.invalidateQueries({ queryKey: queryKeys.admin.reconciliationRuns() });
-    void queryClient.invalidateQueries({ queryKey: queryKeys.admin.failedAttempts() });
-    void queryClient.invalidateQueries({ queryKey: queryKeys.admin.dunningFailures() });
     void queryClient.invalidateQueries({ queryKey: queryKeys.admin.quarantinedEvents() });
-    // Replaying a webhook changes its status, so the backlog counts move too.
+    // Replaying a webhook or reconciling changes the verdict, so refresh it too.
     void queryClient.invalidateQueries({ queryKey: queryKeys.admin.connectReadiness() });
   };
 
@@ -178,56 +118,50 @@ export default function BillingHealthPage() {
     onSuccess: invalidateAll,
   });
 
-  const retryMutation = useMutation({
-    mutationFn: (invoiceId: string) => chargeAdminInvoiceAutopay(invoiceId),
-    onSuccess: (result, invoiceId) => {
-      setRetryResult((prev) => ({
-        ...prev,
-        [invoiceId]: result.success
-          ? "Charged successfully"
-          : `${result.decline_code ?? result.status}`,
-      }));
-      invalidateAll();
-    },
-    onError: (err: Error, invoiceId) => {
-      setRetryResult((prev) => ({ ...prev, [invoiceId]: err.message ?? "Retry failed" }));
-    },
-  });
-
   const replayMutation = useMutation({
     mutationFn: (eventId: string) => replayWebhookEvent(eventId),
     onSuccess: (_result, eventId) => {
       setReplayState((prev) => ({ ...prev, [eventId]: "Replayed — processing" }));
-      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.quarantinedEvents() });
+      invalidateAll();
     },
     onError: (err: Error, eventId) => {
       setReplayState((prev) => ({ ...prev, [eventId]: err.message ?? "Replay failed" }));
     },
   });
 
-  const confirmMatchMutation = useMutation({
-    mutationFn: () => {
-      const { row, candidate } = matchTarget!;
-      return confirmLegacyMatch({
-        invoice_id: row.invoice_id,
-        stripe_charge_id: candidate.stripe_charge_id,
-        amount_cents: row.balance_due_cents,
-        stripe_payment_intent_id: candidate.stripe_payment_intent_id,
-        paid_at: candidate.created_at,
-      });
-    },
-    onSuccess: () => {
-      setMatchTarget(null);
-      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.legacyMatchQueue() });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.failedAttempts() });
-    },
-  });
+  // Readiness failing is the one fatal error: without it there is no verdict,
+  // so show a retry panel rather than a misleading green pill (§7).
+  if (readinessQuery.isError) {
+    return (
+      <div className="space-y-4 p-4 sm:p-6" data-testid="billing-health-page">
+        <h1 className="font-display text-2xl font-semibold tracking-[-0.01em]">Billing Health</h1>
+        <Card p={20}>
+          <div data-testid="billing-health-fatal" className="space-y-3">
+            <p className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+              {(readinessQuery.error as Error)?.message ??
+                "Could not check whether parents can pay."}{" "}
+              Nothing else on this page is meaningful until this check succeeds.
+            </p>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void readinessQuery.refetch()}
+              data-testid="retry-readiness"
+            >
+              Try again
+            </Button>
+          </div>
+        </Card>
+      </div>
+    );
+  }
 
-  const healthy =
-    failedRows.length === 0 && activeDunningRows.length === 0 && quarantined.length === 0;
-  // "Healthy" is only a meaningful claim once at least one reconciliation run
-  // has happened; before that, the system state is unknown, not healthy.
-  const hasRunData = runs.length > 0;
+  const health = readiness?.health;
+  const pill = healthPillTone(health?.state);
+  const truncationNotice = truncationLine(
+    quarantined.length,
+    readiness?.webhook_events.quarantined ?? 0,
+  );
 
   return (
     <div className="space-y-6 p-4 sm:p-6" data-testid="billing-health-page">
@@ -242,20 +176,13 @@ export default function BillingHealthPage() {
         <div className="flex items-center gap-2">
           <span
             className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${
-              !healthy
-                ? "bg-red-50 text-red-700"
-                : hasRunData
-                  ? "bg-green-50 text-green-700"
-                  : "bg-neutral-100 text-neutral-600"
+              readinessQuery.isLoading ? "bg-neutral-100 text-neutral-600" : pill.className
             }`}
             data-testid="billing-health-status"
+            data-state={health?.state ?? (readinessQuery.isLoading ? "loading" : "unknown")}
+            data-tone={readinessQuery.isLoading ? "neutral" : pill.tone}
           >
-            ●{" "}
-            {!healthy
-              ? "Needs attention"
-              : hasRunData
-                ? "System healthy"
-                : "No reconciliation run yet"}
+            ● {readinessQuery.isLoading ? "Checking…" : (health?.headline ?? "Health unknown")}
           </span>
           <Button
             variant="primary"
@@ -264,7 +191,7 @@ export default function BillingHealthPage() {
             disabled={reconcileMutation.isPending}
             data-testid="run-reconciliation"
           >
-            {reconcileMutation.isPending ? "Running…" : "Run reconciliation now"}
+            {reconcileMutation.isPending ? "Running…" : "Reconcile now"}
           </Button>
         </div>
       </div>
@@ -275,40 +202,152 @@ export default function BillingHealthPage() {
         </Alert>
       )}
 
-      {/* Can we take money at all? (#432) — first thing on the page, because
-          every other number here is moot if the answer is no. */}
-      <PaymentReadinessCard query={readinessQuery} />
+      {health && health.reasons.length > 0 && (
+        <ul className="space-y-1 text-sm text-rally-muted" data-testid="health-reasons">
+          {health.reasons.map((reason) => (
+            <li key={reason.code} data-reason={reason.code}>
+              {reason.detail}
+            </li>
+          ))}
+        </ul>
+      )}
 
-      {/* Stat cards */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">
-        <Metric label="Last Run Scanned" value={String(latestRun?.scanned ?? 0)} />
-        <Metric label="Repaired" value={String(latestRun?.repaired ?? 0)} accent="#16a34a" />
-        <Metric label="Open Failed Payments" value={String(failedRows.length)} accent="#dc2626" />
-        <Metric label="Dunning Cases" value={String(activeDunningRows.length)} accent="#dc2626" />
-        {/* Real counts, not the length of a 50-capped list: "50 quarantined"
-            used to mean anything from 50 to 5,000. */}
+      {/* Three tiles, all fed by the readiness response (§4.3) */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Metric
-          label="Quarantined Events"
-          value={String(webhookCounts?.quarantined ?? quarantined.length)}
+          label="Connect state"
+          value={readiness?.connected_account.ready_for_charges ? "Ready" : "Not ready"}
+          hint={
+            readiness?.funds_route_to_academy
+              ? "Funds route to the academy"
+              : readiness?.payments_possible
+                ? "Funds land on the platform account"
+                : "No parent can pay"
+          }
+          accent={readiness?.connected_account.ready_for_charges ? undefined : "#dc2626"}
+        />
+        <Metric
+          label="Quarantined events"
+          value={String(readiness?.webhook_events.quarantined ?? 0)}
+          hint={`${readiness?.webhook_events.failed ?? 0} failed`}
           accent="#d97706"
         />
         <Metric
-          label="Failed Events"
-          value={String(webhookCounts?.failed ?? 0)}
-          accent="#dc2626"
+          label="Last reconciliation"
+          value={relativeFromNow(latestRun?.finished_at ?? null)}
+          hint={
+            latestRun
+              ? `${latestRun.repaired} repaired · ${latestRun.failed} failed`
+              : "No run recorded"
+          }
+          accent={latestRun && latestRun.failed > 0 ? "#dc2626" : undefined}
         />
       </div>
 
-      {/* Section 1: Reconciliation runs */}
-      <Section title="Reconciliation Runs" hint="Runs every 10 min · showing last 10">
+      <PaymentReadinessCard query={readinessQuery} />
+
+      {/* Webhooks */}
+      <Section
+        title="Webhooks"
+        hint="Quarantined events Stripe sent that we never applied"
+        badge={quarantined.length > 0 ? `${quarantined.length} pending` : undefined}
+      >
+        <Card p={0}>
+          {quarantinedQuery.isLoading ? (
+            <TableSkeleton />
+          ) : quarantinedQuery.isError ? (
+            <Alert tone="red">
+              {(quarantinedQuery.error as Error)?.message ?? "Could not load quarantined events."}
+            </Alert>
+          ) : quarantined.length === 0 ? (
+            <Alert tone="green">No quarantined webhook events.</Alert>
+          ) : (
+            <>
+              <div className="overflow-x-auto">
+                <table
+                  className="w-full min-w-[720px] text-sm"
+                  data-testid="quarantined-events-table"
+                >
+                  <thead>
+                    <tr className="border-b border-rally-line text-left">
+                      <Th>Event ID</Th>
+                      <Th>Type</Th>
+                      <Th>Reason quarantined</Th>
+                      <Th>
+                        <span className="sr-only">Action</span>
+                      </Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {quarantined.map((evt) => {
+                      const state = replayState[evt.event_id];
+                      return (
+                        <tr
+                          key={evt.event_id}
+                          className="border-b border-rally-line/60"
+                          data-testid={`quarantined-row-${evt.event_id}`}
+                        >
+                          <Td>
+                            <span className="font-mono text-xs text-rally-muted">
+                              {truncate(evt.event_id)}
+                            </span>
+                          </Td>
+                          <Td>
+                            <Chip variant="manual" label={evt.event_type} />
+                          </Td>
+                          <Td>
+                            <span className="text-xs text-rally-muted">
+                              {evt.error_message ?? "—"}
+                            </span>
+                          </Td>
+                          <Td>
+                            {state ? (
+                              <span className="text-xs text-rally-muted">{state}</span>
+                            ) : (
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => replayMutation.mutate(evt.event_id)}
+                                disabled={replayMutation.isPending}
+                                data-testid={`replay-${evt.event_id}`}
+                              >
+                                Replay
+                              </Button>
+                            )}
+                          </Td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {truncationNotice && (
+                <p className="px-4 py-3 text-xs text-rally-muted" data-testid="webhook-truncation">
+                  {truncationNotice}
+                </p>
+              )}
+            </>
+          )}
+        </Card>
+      </Section>
+
+      {/* Reconciliation */}
+      <Section title="Reconciliation" hint="Runs every 10 min · showing last 10">
         <Card p={0}>
           {runsQuery.isLoading ? (
             <TableSkeleton />
+          ) : runsQuery.isError ? (
+            <Alert tone="red">
+              {(runsQuery.error as Error)?.message ?? "Could not load reconciliation runs."}
+            </Alert>
           ) : runs.length === 0 ? (
             <Empty>No runs recorded yet. The scheduler runs every 10 minutes.</Empty>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[720px] text-sm" data-testid="reconciliation-runs-table">
+              <table
+                className="w-full min-w-[720px] text-sm"
+                data-testid="reconciliation-runs-table"
+              >
                 <thead>
                   <tr className="border-b border-rally-line text-left">
                     <Th>Time</Th>
@@ -328,288 +367,226 @@ export default function BillingHealthPage() {
             </div>
           )}
         </Card>
+
+        <ReconciliationLookupPanel />
+
+        <AutopaySwitchOffLine failures={readiness?.autopay_disable_failures} />
       </Section>
 
-      {/* Section 2: Open failed payments */}
+      {/* Link a Stripe charge */}
       <Section
-        title="Open Failed Payments"
-        hint="Invoices with no successful payment yet"
-        badge={failedRows.length > 0 ? `${failedRows.length} need action` : undefined}
+        title="Link a Stripe charge"
+        hint="For a charge that only exists in Stripe — a migrated invoice, or one the webhook never reached"
       >
-        <Card p={0}>
-          {failedQuery.isLoading ? (
-            <TableSkeleton />
-          ) : failedRows.length === 0 ? (
-            <Alert tone="green">All autopay invoices are current.</Alert>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[820px] text-sm" data-testid="failed-payments-table">
-                <thead>
-                  <tr className="border-b border-rally-line text-left">
-                    <Th>Parent · Invoice</Th>
-                    <Th align="right">Amount</Th>
-                    <Th>Last attempt</Th>
-                    <Th>Decline reason</Th>
-                    <Th><span className="sr-only">Actions</span></Th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {failedRows.map((row) => {
-                    const result = retryResult[row.invoice_id];
-                    return (
-                      <tr
-                        key={row.invoice_id}
-                        className="border-b border-rally-line/60"
-                        data-testid={`failed-row-${row.invoice_id}`}
-                      >
-                        <Td>
-                          <div className="font-medium text-rally-ink">
-                            {row.parent_name ?? row.parent_id}
-                          </div>
-                          <div className="text-xs text-rally-muted">
-                            {row.invoice_id} · {row.period}
-                          </div>
-                        </Td>
-                        <Td align="right">{formatCents(row.balance_due_cents)}</Td>
-                        <Td>{formatTimestamp(row.latest_attempt_at)}</Td>
-                        <Td>
-                          {row.latest_decline_code ? (
-                            <Chip variant="failed" label={row.latest_decline_code} />
-                          ) : (
-                            "—"
-                          )}
-                        </Td>
-                        <Td>
-                          <div className="flex items-center gap-2">
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              onClick={() => retryMutation.mutate(row.invoice_id)}
-                              disabled={retryMutation.isPending}
-                              data-testid={`retry-${row.invoice_id}`}
-                            >
-                              Retry
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => setAttemptsInvoice(row)}
-                              data-testid={`view-${row.invoice_id}`}
-                            >
-                              View →
-                            </Button>
-                          </div>
-                          {result && (
-                            <div className="mt-1 text-xs text-rally-muted">{result}</div>
-                          )}
-                        </Td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Card>
+        <LinkChargeForm onLinked={invalidateAll} />
       </Section>
-
-      {/* Section 3: Dunning ladder */}
-      <Section
-        title="Dunning Ladder"
-        hint="App-owned retry states and terminal autopay disable status"
-        badge={dunningRows.length > 0 ? `${dunningRows.length} need review` : undefined}
-      >
-        <Card p={0}>
-          {dunningQuery.isLoading ? (
-            <TableSkeleton />
-          ) : dunningRows.length === 0 ? (
-            <Alert tone="green">No active or terminal dunning cases.</Alert>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[920px] text-sm" data-testid="dunning-table">
-                <thead>
-                  <tr className="border-b border-rally-line text-left">
-                    <Th>Parent · Invoice</Th>
-                    <Th>Status</Th>
-                    <Th align="right">Balance</Th>
-                    <Th>Attempts</Th>
-                    <Th>Next / terminal</Th>
-                    <Th>Autopay disable</Th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {dunningRows.map((row) => {
-                    const chip = dunningChip(row.status);
-                    return (
-                      <tr
-                        key={row.invoice_id}
-                        className="border-b border-rally-line/60"
-                        data-testid={`dunning-row-${row.invoice_id}`}
-                      >
-                        <Td>
-                          <div className="font-medium text-rally-ink">
-                            {row.parent_name ?? row.parent_id}
-                          </div>
-                          <div className="text-xs text-rally-muted">
-                            {row.invoice_id} · {row.period}
-                          </div>
-                        </Td>
-                        <Td>
-                          <Chip variant={chip.variant} label={chip.label} />
-                          {row.last_failure_code && (
-                            <div className="mt-1 text-xs text-rally-muted">
-                              {row.last_failure_code}
-                            </div>
-                          )}
-                        </Td>
-                        <Td align="right">{formatCents(row.balance_due_cents)}</Td>
-                        <Td>{row.attempt_count}</Td>
-                        <Td>
-                          <div>
-                            {row.next_attempt_at
-                              ? `Next: ${formatTimestamp(row.next_attempt_at)}`
-                              : row.terminal_at
-                                ? `Terminal: ${formatTimestamp(row.terminal_at)}`
-                                : "—"}
-                          </div>
-                          {row.last_attempt_at && (
-                            <div className="text-xs text-rally-muted">
-                              Last {formatTimestamp(row.last_attempt_at)}
-                            </div>
-                          )}
-                        </Td>
-                        <Td>
-                          <span
-                            className={
-                              row.autopay_disable_status === "failed"
-                                ? "text-xs font-medium text-red-600"
-                                : "text-xs text-rally-muted"
-                            }
-                          >
-                            {dunningDisableText(row)}
-                          </span>
-                        </Td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Card>
-      </Section>
-
-      {/* Section 4: Quarantined webhook events */}
-      <Section
-        title="Quarantined Webhook Events"
-        badge={quarantined.length > 0 ? `${quarantined.length} pending` : undefined}
-      >
-        <Card p={0}>
-          {quarantinedQuery.isLoading ? (
-            <TableSkeleton />
-          ) : quarantined.length === 0 ? (
-            <Alert tone="green">No quarantined webhook events.</Alert>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[720px] text-sm" data-testid="quarantined-events-table">
-                <thead>
-                  <tr className="border-b border-rally-line text-left">
-                    <Th>Event ID</Th>
-                    <Th>Type</Th>
-                    <Th>Reason quarantined</Th>
-                    <Th><span className="sr-only">Action</span></Th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {quarantined.map((evt) => {
-                    const state = replayState[evt.event_id];
-                    return (
-                      <tr
-                        key={evt.event_id}
-                        className="border-b border-rally-line/60"
-                        data-testid={`quarantined-row-${evt.event_id}`}
-                      >
-                        <Td>
-                          <span className="font-mono text-xs text-rally-muted">
-                            {truncate(evt.event_id)}
-                          </span>
-                        </Td>
-                        <Td>
-                          <Chip variant="manual" label={evt.event_type} />
-                        </Td>
-                        <Td>
-                          <span className="text-xs text-rally-muted">
-                            {evt.error_message ?? "—"}
-                          </span>
-                        </Td>
-                        <Td>
-                          {state ? (
-                            <span className="text-xs text-rally-muted">{state}</span>
-                          ) : (
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              onClick={() => replayMutation.mutate(evt.event_id)}
-                              disabled={replayMutation.isPending}
-                              data-testid={`replay-${evt.event_id}`}
-                            >
-                              Replay
-                            </Button>
-                          )}
-                        </Td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Card>
-      </Section>
-
-      {/* Section 5: Legacy invoice ↔ Stripe charge review queue (#242 WI-3) */}
-      <Section
-        title="Legacy Invoice Matches"
-        hint="Migrated invoices with no app-linked payment · confirm a charge to settle"
-        badge={legacyRows.length > 0 ? `${legacyRows.length} to review` : undefined}
-      >
-        <Card p={0}>
-          {legacyQuery.isLoading ? (
-            <TableSkeleton />
-          ) : legacyQuery.isError ? (
-            <Alert tone="red">
-              {(legacyQuery.error as Error)?.message ?? "Could not load the match queue."}
-            </Alert>
-          ) : legacyRows.length === 0 ? (
-            <Alert tone="green">No unmatched legacy invoices.</Alert>
-          ) : (
-            <div className="divide-y divide-rally-line/60" data-testid="legacy-match-list">
-              {legacyRows.map((row) => (
-                <LegacyMatchRowView
-                  key={row.invoice_id}
-                  row={row}
-                  onConfirm={(candidate) => setMatchTarget({ row, candidate })}
-                />
-              ))}
-            </div>
-          )}
-        </Card>
-      </Section>
-
-      <AttemptsDialog row={attemptsInvoice} onClose={() => setAttemptsInvoice(null)} />
-      <ConfirmMatchDialog
-        target={matchTarget}
-        pending={confirmMatchMutation.isPending}
-        error={confirmMatchMutation.isError ? (confirmMatchMutation.error as Error)?.message : null}
-        onConfirm={() => confirmMatchMutation.mutate()}
-        onClose={() => {
-          if (!confirmMatchMutation.isPending) {
-            confirmMatchMutation.reset();
-            setMatchTarget(null);
-          }
-        }}
-      />
     </div>
+  );
+}
+
+/**
+ * "Autopay switch-off failed for {n} invoices" (§4.4).
+ *
+ * When the dunning ladder runs out the worker switches autopay off, and that
+ * Stripe call can itself fail — meaning the worker believes autopay is off
+ * while the card may still be attached. Nothing else in the product shows it.
+ * No action: the worker retries on its next pass.
+ */
+function AutopaySwitchOffLine({ failures }: { failures?: AutopayDisableFailures }) {
+  if (!failures || failures.count === 0) return null;
+  return (
+    <Card p={16}>
+      <div data-testid="autopay-switch-off-failures" className="space-y-2 text-sm">
+        <p className="font-medium text-red-700">
+          Autopay switch-off failed for {failures.count}{" "}
+          {failures.count === 1 ? "invoice" : "invoices"}
+        </p>
+        <p className="text-xs text-rally-muted">
+          The worker believes autopay is off for these; the card may still be attached in Stripe.
+          It retries on its next pass.
+        </p>
+        <ul className="space-y-1">
+          {failures.rows.map((row) => (
+            <li key={row.invoice_id} className="flex flex-wrap items-baseline gap-2">
+              <Link
+                href={`/admin/families/${encodeURIComponent(row.parent_id)}`}
+                className="font-mono text-xs underline"
+                data-testid={`switch-off-${row.invoice_id}`}
+              >
+                {row.invoice_id}
+              </Link>
+              <span className="text-xs text-rally-muted">{row.error ?? "no error recorded"}</span>
+              <span className="text-xs text-rally-subtle">{formatTimestamp(row.failed_at)}</span>
+            </li>
+          ))}
+        </ul>
+        {failures.truncated && (
+          <p className="text-xs text-rally-subtle">
+            Showing the {failures.rows.length} most recent of {failures.count}.
+          </p>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+/**
+ * Link a Stripe charge to an invoice — the surviving half of legacy match.
+ *
+ * The endpoint is idempotent on the (charge, invoice) pair, so a double submit
+ * is safe, and it refuses an invoice that is not payable or an amount above
+ * the balance; both render inline. The confirmation names the invoice and the
+ * amount before anything is posted.
+ */
+function LinkChargeForm({ onLinked }: { onLinked: () => void }) {
+  const [invoiceId, setInvoiceId] = useState("");
+  const [chargeId, setChargeId] = useState("");
+  const [amount, setAmount] = useState("");
+  const [paymentIntentId, setPaymentIntentId] = useState("");
+  const [paidAt, setPaidAt] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
+
+  const amountCents = parseDollarsToCents(amount);
+  const ready = Boolean(invoiceId.trim() && chargeId.trim()) && amountCents > 0;
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      confirmLegacyMatch({
+        invoice_id: invoiceId.trim(),
+        stripe_charge_id: chargeId.trim(),
+        amount_cents: amountCents,
+        stripe_payment_intent_id: paymentIntentId.trim() || null,
+        paid_at: paidAt ? new Date(paidAt).toISOString() : null,
+      }),
+    onSuccess: () => {
+      setError(null);
+      setConfirming(false);
+      onLinked();
+    },
+    onError: (err: Error) => {
+      setError(err.message ?? "Could not link that charge.");
+      setConfirming(false);
+    },
+  });
+
+  return (
+    <Card p={16}>
+      <form
+        data-testid="link-charge-form"
+        className="space-y-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!ready) {
+            setError("An invoice ID, a charge ID and a positive amount are required.");
+            return;
+          }
+          setError(null);
+          setConfirming(true);
+        }}
+      >
+        <div className="grid gap-3 lg:grid-cols-3">
+          <Field label="Invoice ID">
+            <input
+              value={invoiceId}
+              onChange={(e) => setInvoiceId(e.target.value)}
+              className={inputClass}
+              placeholder="inv-..."
+              data-testid="link-invoice-id"
+            />
+          </Field>
+          <Field label="Stripe charge ID">
+            <input
+              value={chargeId}
+              onChange={(e) => setChargeId(e.target.value)}
+              className={inputClass}
+              placeholder="ch_..."
+              data-testid="link-charge-id"
+            />
+          </Field>
+          <Field label="Amount">
+            <input
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              className={inputClass}
+              placeholder="70.00"
+              inputMode="decimal"
+              data-testid="link-amount"
+            />
+          </Field>
+          <Field label="PaymentIntent ID (optional)">
+            <input
+              value={paymentIntentId}
+              onChange={(e) => setPaymentIntentId(e.target.value)}
+              className={inputClass}
+              placeholder="pi_..."
+              data-testid="link-payment-intent-id"
+            />
+          </Field>
+          <Field label="Paid at (optional)">
+            <input
+              type="date"
+              value={paidAt}
+              onChange={(e) => setPaidAt(e.target.value)}
+              className={inputClass}
+              data-testid="link-paid-at"
+            />
+          </Field>
+        </div>
+        <div className="flex items-center gap-3">
+          <Button variant="secondary" size="sm" type="submit" data-testid="link-charge-submit">
+            Review
+          </Button>
+          {mutation.isSuccess && !confirming && (
+            <span className="text-sm text-green-700" data-testid="link-charge-success">
+              Linked. Invoice {mutation.data?.invoice_id} is now {mutation.data?.invoice_status}.
+            </span>
+          )}
+        </div>
+      </form>
+
+      {error && (
+        <p className="mt-3 rounded-md bg-red-50 p-3 text-sm text-red-700" data-testid="link-error">
+          {error}
+        </p>
+      )}
+
+      {confirming && (
+        <div
+          className="mt-3 space-y-3 rounded-md border border-rally-line bg-rally-paper/50 p-3 text-sm"
+          data-testid="link-charge-confirm"
+        >
+          <p>
+            Record {formatCents(amountCents)} against invoice{" "}
+            <span className="font-mono">{invoiceId.trim()}</span> from Stripe charge{" "}
+            <span className="font-mono">{chargeId.trim()}</span>?
+          </p>
+          <p className="text-xs text-rally-muted">
+            This records a back-dated payment. Re-submitting the same charge and invoice is safe —
+            it will not pay the invoice twice.
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setConfirming(false)}
+              disabled={mutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => mutation.mutate()}
+              disabled={mutation.isPending}
+              data-testid="link-charge-confirm-submit"
+            >
+              {mutation.isPending ? "Recording…" : "Link the charge"}
+            </Button>
+          </div>
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -655,234 +632,12 @@ function NotesCell({ errors, notes }: { errors: unknown[]; notes: string[] }) {
   );
 }
 
-function AttemptsDialog({
-  row,
-  onClose,
-}: {
-  row: FailedPaymentRow | null;
-  onClose: () => void;
-}) {
-  const open = row !== null;
-  const attemptsQuery = useQuery({
-    queryKey: queryKeys.admin.invoiceAttempts(row?.invoice_id ?? "none"),
-    queryFn: () => fetchInvoiceAttempts(row!.invoice_id),
-    enabled: open,
-  });
-  const attempts = attemptsQuery.data?.attempts ?? [];
-
-  return (
-    <Dialog.Root open={open} onOpenChange={(v) => !v && onClose()}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-rally-ink/40" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[90vh] w-full max-w-lg -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl bg-white p-6 shadow-xl focus:outline-none">
-          <Overline>Invoice detail</Overline>
-          <Dialog.Title className="mt-1 font-display text-xl font-semibold tracking-[-0.01em]">
-            Payment Attempts
-          </Dialog.Title>
-          <Dialog.Description className="mt-1 mb-4 text-sm text-rally-muted">
-            {row ? `${row.invoice_id} · ${row.parent_name ?? row.parent_id}` : ""}
-          </Dialog.Description>
-
-          {attemptsQuery.isLoading ? (
-            <TableSkeleton />
-          ) : attempts.length === 0 ? (
-            <p className="text-sm text-rally-muted">No payment attempts recorded for this invoice.</p>
-          ) : (
-            <ol className="space-y-3" data-testid="attempts-timeline">
-              {attempts.map((a: BillingPaymentAttempt) => {
-                const chip = attemptChip(a.status);
-                return (
-                  <li key={a.attempt_id} className="flex gap-3 text-sm">
-                    <span
-                      className="mt-1.5 h-2 w-2 flex-shrink-0 rounded-full"
-                      style={{
-                        background:
-                          a.status === "succeeded"
-                            ? "#16a34a"
-                            : a.status === "requires_action"
-                              ? "#d97706"
-                              : "#dc2626",
-                      }}
-                    />
-                    <div className="flex-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-rally-muted">{formatTimestamp(a.created_at)}</span>
-                        <Chip variant={chip.variant} label={chip.label} />
-                      </div>
-                      <div className="mt-0.5 font-mono text-xs text-rally-muted">
-                        {a.stripe_payment_intent_id ? truncate(a.stripe_payment_intent_id) : "—"} ·{" "}
-                        {formatCents(a.amount_cents)}
-                      </div>
-                      {a.failure_message && (
-                        <div className="mt-0.5 text-xs text-red-600">{a.failure_message}</div>
-                      )}
-                    </div>
-                  </li>
-                );
-              })}
-            </ol>
-          )}
-
-          <div className="flex justify-end pt-4">
-            <Button variant="secondary" size="sm" onClick={onClose}>
-              Close
-            </Button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
-  );
-}
-
-function confidenceChip(confidence: string): { variant: ChipVariant; label: string } {
-  if (confidence === "high") return { variant: "paid", label: "HIGH MATCH" };
-  return { variant: "pending", label: "REVIEW" };
-}
-
-function LegacyMatchRowView({
-  row,
-  onConfirm,
-}: {
-  row: LegacyMatchRow;
-  onConfirm: (candidate: LegacyMatchCandidate) => void;
-}) {
-  return (
-    <div className="p-4" data-testid={`legacy-row-${row.invoice_id}`}>
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <div>
-          <div className="font-medium text-rally-ink">{row.parent_name ?? row.parent_id}</div>
-          <div className="text-xs text-rally-muted">
-            {row.invoice_id} · {row.period} · balance {formatCents(row.balance_due_cents)}
-          </div>
-        </div>
-        <Chip
-          variant={row.status === "partially_paid" ? "pending" : "failed"}
-          label={row.status.replace(/_/g, " ").toUpperCase()}
-        />
-      </div>
-
-      {row.candidates.length === 0 ? (
-        <p className="mt-3 text-sm text-rally-muted">
-          {row.stripe_customer_id
-            ? "No matching Stripe charges found for this customer."
-            : "No Stripe customer on file for this parent."}
-        </p>
-      ) : (
-        <ul className="mt-3 space-y-2" data-testid={`legacy-candidates-${row.invoice_id}`}>
-          {row.candidates.map((candidate) => {
-            const chip = confidenceChip(candidate.confidence);
-            const exact = candidate.amount_cents === row.balance_due_cents;
-            return (
-              <li
-                key={candidate.stripe_charge_id}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-rally-line/60 px-3 py-2"
-              >
-                <div className="text-sm">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium tabular-nums">
-                      {formatCents(candidate.amount_cents)}
-                    </span>
-                    <Chip variant={chip.variant} label={chip.label} />
-                    {!exact && (
-                      <span className="text-xs text-amber-600">≠ balance</span>
-                    )}
-                  </div>
-                  <div className="mt-0.5 font-mono text-xs text-rally-muted">
-                    {truncate(candidate.stripe_charge_id, 22)} · {formatTimestamp(candidate.created_at)}
-                  </div>
-                </div>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  disabled={!exact}
-                  onClick={() => onConfirm(candidate)}
-                  data-testid={`confirm-${row.invoice_id}-${candidate.stripe_charge_id}`}
-                >
-                  Confirm match
-                </Button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-function ConfirmMatchDialog({
-  target,
-  pending,
-  error,
-  onConfirm,
-  onClose,
-}: {
-  target: { row: LegacyMatchRow; candidate: LegacyMatchCandidate } | null;
-  pending: boolean;
-  error: string | null;
-  onConfirm: () => void;
-  onClose: () => void;
-}) {
-  const open = target !== null;
-  return (
-    <Dialog.Root open={open} onOpenChange={(v) => !v && onClose()}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-rally-ink/40" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl bg-white p-6 shadow-xl focus:outline-none">
-          <Overline>Confirm legacy match</Overline>
-          <Dialog.Title className="mt-1 font-display text-xl font-semibold tracking-[-0.01em]">
-            Apply this Stripe charge?
-          </Dialog.Title>
-          <Dialog.Description className="mt-1 mb-4 text-sm text-rally-muted">
-            This records a back-dated payment and marks the invoice as paid. It cannot be undone
-            from here — verify the charge belongs to this invoice.
-          </Dialog.Description>
-
-          {target && (
-            <dl className="space-y-2 rounded-lg bg-rally-line/20 p-3 text-sm">
-              <Row label="Invoice" value={`${target.row.invoice_id} · ${target.row.period}`} />
-              <Row label="Parent" value={target.row.parent_name ?? target.row.parent_id} />
-              <Row label="Charge" value={target.candidate.stripe_charge_id} mono />
-              <Row label="Amount" value={formatCents(target.candidate.amount_cents)} />
-              <Row label="Charged" value={formatTimestamp(target.candidate.created_at)} />
-            </dl>
-          )}
-
-          {error && <p className="mt-3 rounded-md bg-red-50 p-2 text-sm text-red-700">{error}</p>}
-
-          <div className="flex justify-end gap-2 pt-4">
-            <Button variant="secondary" size="sm" onClick={onClose} disabled={pending}>
-              Cancel
-            </Button>
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={onConfirm}
-              disabled={pending}
-              data-testid="confirm-match-submit"
-            >
-              {pending ? "Recording…" : "Confirm & record payment"}
-            </Button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
-  );
-}
-
 /**
  * Can this academy physically take a payment, and where does the money land?
- * (issue #432)
- *
- * Every parent payment is gated on one condition — an `active` Stripe Connect
- * account with charges enabled — or on the platform-charge fallback being on.
- * Nothing in the admin UI showed either, so an academy could be unable to
- * collect a cent with no signal anywhere.
+ * (issue #432). Takes its tone from the backend verdict rather than deriving
+ * one of its own.
  */
-function PaymentReadinessCard({
-  query,
-}: {
-  query: UseQueryResult<ConnectReadiness>;
-}) {
+function PaymentReadinessCard({ query }: { query: UseQueryResult<ConnectReadiness> }) {
   if (query.isLoading) {
     return (
       <Card p={20}>
@@ -890,23 +645,12 @@ function PaymentReadinessCard({
       </Card>
     );
   }
-  if (query.isError || !query.data) {
-    return (
-      <Alert tone="red">
-        {(query.error as Error)?.message ?? "Could not load payment readiness."}
-      </Alert>
-    );
-  }
+  if (!query.data) return null;
 
   const data = query.data;
   const account = data.connected_account;
+  const tone = !data.payments_possible ? "red" : data.funds_route_to_academy ? "green" : "amber";
 
-  // Three states, in the order the owner cares about them.
-  const tone: "green" | "amber" | "red" = !data.payments_possible
-    ? "red"
-    : data.funds_route_to_academy
-      ? "green"
-      : "amber";
   // "Ready to take payments", not "payments are working": this card checks the
   // Connect gate, it does not observe a successful charge.
   const headline = !data.payments_possible
@@ -967,7 +711,17 @@ function Row({ label, value, mono }: { label: string; value: string; mono?: bool
   );
 }
 
-function Metric({ label, value, accent }: { label: string; value: string; accent?: string }) {
+function Metric({
+  label,
+  value,
+  hint,
+  accent,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  accent?: string;
+}) {
   return (
     <Card p={20}>
       <Overline>{label}</Overline>
@@ -976,6 +730,7 @@ function Metric({ label, value, accent }: { label: string; value: string; accent
           <span style={accent && value !== "0" ? { color: accent } : undefined}>{value}</span>
         </BigNum>
       </div>
+      {hint && <p className="mt-1 text-xs text-rally-muted">{hint}</p>}
     </Card>
   );
 }
@@ -1045,3 +800,6 @@ function TableSkeleton() {
     </div>
   );
 }
+
+const inputClass =
+  "w-full rounded-md border border-rally-line bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30";

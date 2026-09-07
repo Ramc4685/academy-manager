@@ -2003,6 +2003,41 @@ export interface ConnectReadiness {
    */
   funds_route_to_academy: boolean;
   webhook_events: { quarantined: number; failed: number };
+  /**
+   * The one health verdict, composed on the backend (billing-health trim spec
+   * §4.2). The page renders it and computes nothing: the old page-side
+   * `healthy` flag read backlog counts alone and could show a green pill above
+   * a red "Parents cannot pay right now" card.
+   */
+  health: BillingHealthVerdict;
+  autopay_disable_failures: AutopayDisableFailures;
+}
+
+export type BillingHealthState = "blocked" | "attention" | "ok";
+
+export interface BillingHealthReason {
+  code: string;
+  detail: string;
+}
+
+export interface BillingHealthVerdict {
+  state: BillingHealthState;
+  headline: string;
+  reasons: BillingHealthReason[];
+}
+
+export interface AutopayDisableFailure {
+  invoice_id: string;
+  parent_id: string;
+  error: string | null;
+  failed_at: string | null;
+}
+
+/** Terminal autopay switch-offs the dunning worker could not complete (§4.4). */
+export interface AutopayDisableFailures {
+  count: number;
+  rows: AutopayDisableFailure[];
+  truncated: boolean;
 }
 
 export function fetchConnectReadiness(): Promise<ConnectReadiness> {
@@ -2243,37 +2278,11 @@ export function enableBillingSetupAutopay(
   );
 }
 
-// --- Legacy invoice ↔ Stripe charge review queue (#242 WI-3) --------------- //
-export interface LegacyMatchCandidate {
-  stripe_charge_id: string;
-  stripe_payment_intent_id: string | null;
-  amount_cents: number;
-  currency: string;
-  created_at: string | null;
-  description: string | null;
-  confidence: "high" | "medium" | string;
-}
-
-export interface LegacyMatchRow {
-  invoice_id: string;
-  parent_id: string;
-  parent_name: string | null;
-  period: string;
-  status: string;
-  total_cents: number;
-  balance_due_cents: number;
-  currency: string;
-  due_date: string | null;
-  created_at: string | null;
-  stripe_invoice_id: string | null;
-  stripe_customer_id: string | null;
-  candidates: LegacyMatchCandidate[];
-}
-
-export interface LegacyMatchQueueResponse {
-  rows: LegacyMatchRow[];
-}
-
+// --- Link a legacy Stripe charge to an invoice (#242 WI-3) ----------------- //
+// The list half was deleted by the Billing Health trim (spec 2026-09-07 §2):
+// it recomputed "every open invoice with no allocation" per load and fanned
+// out a Stripe call per row, so it presented ordinary unpaid invoices as
+// migrated ones. Only the explicit, admin-named confirm remains.
 export interface ConfirmLegacyMatchRequest {
   invoice_id: string;
   stripe_charge_id: string;
@@ -2287,12 +2296,6 @@ export interface ConfirmLegacyMatchResult {
   payment_id: string;
   invoice_status: string;
   balance_due_cents: number;
-}
-
-export function fetchLegacyMatchQueue(): Promise<LegacyMatchQueueResponse> {
-  return apiFetch<LegacyMatchQueueResponse>("/admin/billing/legacy-match-queue", {
-    method: "GET",
-  });
 }
 
 export function confirmLegacyMatch(

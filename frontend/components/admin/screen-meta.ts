@@ -68,7 +68,7 @@ export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
         icon: "pay",
         match: startsWith("/admin/payments"),
       },
-      { href: "/admin/billing-health", label: "Billing Health", icon: "signal", match: startsWith("/admin/billing-health") },
+      { href: "/admin/billing-health", label: "Billing Health", icon: "signal", match: startsWith("/admin/billing-health"), ownerOnly: true },
       { href: "/admin/families", label: "Families", icon: "user", match: startsWith("/admin/families") },
       {
         href: "/admin/expenses",
@@ -123,6 +123,9 @@ export function navForRoles(
  * shown to a non-owner either.
  */
 export const OWNER_ONLY_ROUTE_PREFIXES: ReadonlyArray<string> = [
+  // Stripe plumbing is governance, the same tier as Reports and Payouts
+  // (billing-health trim spec §2).
+  "/admin/billing-health",
   "/admin/payouts",
   "/admin/reports",
   "/admin/audit-logs",
@@ -169,7 +172,7 @@ export const SCREEN_META: Record<string, AdminScreenMeta> = {
   "/admin/registrations": { title: "Admissions", subtitle: "Registrations, waitlist, level-ups", breadcrumbs: ["Admin", "Admissions"] },
   "/admin/requests": { title: "Requests", subtitle: "Makeups, trials, absences, cancellations, pauses", breadcrumbs: ["Admin", "Requests"] },
   "/admin/payments": { title: "Payments", subtitle: "Who owes, who is charged, who paid", breadcrumbs: ["Admin", "Money", "Payments"] },
-  "/admin/billing-health": { title: "Billing Health", subtitle: "Reconciliation, failed payments, webhook recovery", breadcrumbs: ["Admin", "Money", "Billing Health"] },
+  "/admin/billing-health": { title: "Billing Health", subtitle: "Connect readiness, webhooks, reconciliation", breadcrumbs: ["Admin", "Money", "Billing Health"] },
   "/admin/families": { title: "Families", subtitle: "Every parent: balance, card on file, autopay", breadcrumbs: ["Admin", "Money", "Families"] },
   "/admin/families/[parentId]": { title: "Family billing", subtitle: "Balance, autopay, invoices and what the system did", breadcrumbs: ["Admin", "Money", "Families", "Family"] },
   "/admin/expenses": { title: "Expenses", subtitle: "Categorised academy spend", breadcrumbs: ["Admin", "Money", "Expenses"] },
