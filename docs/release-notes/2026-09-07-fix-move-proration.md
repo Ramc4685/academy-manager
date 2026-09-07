@@ -1,6 +1,6 @@
 # fix-move-proration
 
-PR: #TBD
+PR: #678
 
 ## What changed
 Moving a student between sessions ("Move" on the session roster,
