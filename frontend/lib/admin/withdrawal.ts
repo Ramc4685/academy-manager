@@ -1,0 +1,73 @@
+/**
+ * Withdraw-dialog rules (issue #670).
+ *
+ * There is ONE withdraw path: every outcome goes through
+ * `POST /admin/enrollments/{id}/withdraw`. The backend issues the account
+ * credit itself for `outcome: "credit"` and refuses that outcome to anyone
+ * without the `owner` scope (404, mirroring `require_owner`), so the option is
+ * hidden from plain admins here rather than shown and then refused.
+ */
+
+import type { WithdrawEnrollmentRequest } from "@/lib/api/admin";
+
+export type WithdrawalOutcome = NonNullable<WithdrawEnrollmentRequest["outcome"]>;
+
+export interface WithdrawalOutcomeOption {
+  value: WithdrawalOutcome;
+  label: string;
+  /** Present when the option cannot be chosen by this user. */
+  disabledReason?: string;
+}
+
+export const OWNER_ONLY_CREDIT_HINT = "Only the academy owner can issue an account credit.";
+
+export function withdrawalOutcomeOptions(isOwner: boolean): WithdrawalOutcomeOption[] {
+  return [
+    {
+      value: "credit",
+      label: "Account credit",
+      ...(isOwner ? {} : { disabledReason: OWNER_ONLY_CREDIT_HINT }),
+    },
+    { value: "refund", label: "Refund" },
+    { value: "adjustment", label: "Admin adjustment" },
+  ];
+}
+
+/** The outcome the dialog opens on: credit for owners, refund for admins. */
+export function defaultWithdrawalOutcome(isOwner: boolean): WithdrawalOutcome {
+  return isOwner ? "credit" : "refund";
+}
+
+/** The one request body both dialog paths used to build separately. */
+export function buildWithdrawRequest(input: {
+  withdrawalDate: string;
+  outcome: WithdrawalOutcome;
+  adminNote: string;
+}): WithdrawEnrollmentRequest {
+  const note = input.adminNote.trim();
+  return {
+    effective_date: input.withdrawalDate,
+    outcome: input.outcome,
+    reason: note || `Withdrawal ${input.outcome}`,
+  };
+}
+
+const ALREADY_MOVED_ON_CODE = "Enrollment.NotWithdrawable";
+
+/**
+ * What the dialog shows when the withdraw fails. A 409 means the row already
+ * moved on (withdrawn or cancelled in another tab); the server's message says
+ * which, so surface it verbatim rather than a generic failure.
+ */
+export function withdrawErrorMessage(
+  err: { status?: number; code?: string; message?: string } | null | undefined,
+): string {
+  if (!err) return "Could not withdraw enrollment.";
+  if (err.status === 409 || err.code === ALREADY_MOVED_ON_CODE) {
+    return err.message?.trim() || "This enrollment was already withdrawn or cancelled.";
+  }
+  if (err.status === 404) {
+    return "You do not have permission for that outcome. Ask the academy owner to issue the credit.";
+  }
+  return err.message?.trim() || "Could not withdraw enrollment.";
+}

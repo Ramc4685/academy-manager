@@ -787,12 +787,6 @@ export interface WithdrawalCreditPreviewResponse {
   no_credit_reason?: string | null;
 }
 
-export interface WithdrawalCreditApproveResponse {
-  status: string;
-  credit_amount_cents: number;
-  credit_balance_cents: number;
-}
-
 export interface AdminPayoutView {
   payout_id: string;
   coach_id: string;
@@ -1733,20 +1727,10 @@ export function previewWithdrawalCredit(
   );
 }
 
-export function approveWithdrawalCredit(
-  enrollmentId: string,
-  payload: {
-    withdrawal_date: string;
-    admin_note?: string;
-    cancel_subscription_immediately?: boolean;
-  }
-): Promise<WithdrawalCreditApproveResponse> {
-  return apiFetch<WithdrawalCreditApproveResponse>(
-    `/admin/enrollments/${enrollmentId}/withdrawal-credit/approve`,
-    { method: "POST", body: JSON.stringify(payload) }
-  );
-}
-
+/**
+ * The one withdraw path (issue #670): every outcome, including the account
+ * credit the owner-only `withdrawal-credit/approve` route used to issue.
+ */
 export function withdrawEnrollment(
   enrollmentId: string,
   payload: WithdrawEnrollmentRequest
