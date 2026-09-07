@@ -9,12 +9,22 @@ of cancelling the whole session, and the money and payroll follow automatically.
 Issue #671.
 
 **Owner policy implemented here** (state it to the academy before deploying):
-a cancelled date automatically credits every enrolled family the date's share of
-the month through the account credit ledger when the period is already invoiced.
-When the period is not yet invoiced, the generator simply prices the month
-without that date — no credit is issued, because the family was never charged
-for it. There is no make-up entitlement and no refund to a card; the credit
-lands on the account and is consumed by the next invoice.
+a cancelled date automatically credits every family who has already been priced
+for the month — an invoiced family, and a family who paid their first month at
+registration checkout — the date's share of what they were charged, through the
+account credit ledger. A family whose month is not priced yet is not credited:
+the generator simply leaves the date out of their first-month numerator. There
+is no make-up entitlement and no refund to a card; the credit lands on the
+account and is consumed by the next invoice.
+
+**Policy change to first-month proration.** A cancelled date now stays in the
+first-month proration DENOMINATOR (`total_eligible_classes`) while being
+excluded from the numerator, under the new `CANCELLED_AFTER_PRICING_STATUS` in
+`contexts/billing/domain/proration.py`. Without this, calling a class off made
+the month more expensive per class for the next family through the door: four
+$120 Thursdays with Sept 3 cancelled would have quoted a Sept 12 enrollment
+$120 x 2/3 = $80 instead of $120 x 2/4 = $60. Pinned by
+`test_a_cancelled_date_stays_in_the_denominator_but_never_the_numerator`.
 
 - Enrollment domain: `contexts/enrollment/domain/occurrence_cancellation.py`
   holds the guard — an already-cancelled date, a class that has started or
@@ -29,18 +39,36 @@ lands on the account and is consumed by the next invoice.
   — best effort, past the commit point — drops the date's one-time make-up/trial
   roster rows (`MongoOccurrenceRosterRepository.remove_for_occurrence`),
   re-opens the make-up requests that targeted it
-  (`MongoMakeupRequestRepository.reopen_for_target_occurrence`), records a
+  (`MongoMakeupRequestRepository.reopen_for_target_occurrence`, now with a
+  FRESH `expires_at` so the next expiry sweep cannot swallow an entitlement the
+  academy already granted) AND the trial requests assigned to it
+  (`MongoTrialRequestRepository.reopen_for_assigned_occurrence`), records a
   lifecycle event per enrolled student, hands the date to billing, and notifies
   the families and staff. A mail or ledger outage never un-cancels a class.
+  Make-up and trial students hold a one-time seat and no enrollment on the
+  session, so their ids are passed to the notifier explicitly — previously they
+  lost the seat in silence. `trials_reopened` is new on the API response.
 - Billing:
   `contexts/billing/application/use_cases/apply_occurrence_cancellation.py`
   writes the `session_occurrence_overrides` document that
   `MongoPaymentRepository._occurrences_for_session` has always read and nothing
   ever wrote, then issues one `CLASS_CANCELLATION_CREDIT` per already-invoiced
-  family worth `period charge / classes the month was priced against`. Skipped,
-  with a recorded reason: a void period invoice, a paused family with no
-  invoice, and a family whose first month is this period (rule 1 already
-  excludes the date from their proration). Idempotent on
+  family worth `period charge / the classes that charge actually bought`.
+  The charge is the invoice's `tuition` + `discount` LINES, not
+  `subtotal - discount_cents` — an equipment charge or registration fee added
+  to the same monthly invoice would otherwise inflate the credit (and once a
+  line is added, `recompute_totals` makes the header subtract the discount
+  twice). The divisor is the enrollment's own CONSUMED billing snapshot
+  (`billable_remaining_classes` for a prorated month, `total_eligible_classes`
+  for a full one), so a late-generated first month is not under-credited by the
+  proration ratio; and a date the charge never covered is skipped rather than
+  credited. Session pricing goes through the generator's own
+  `session_amount_cents` (promoted from `_session_amount_cents` in
+  `mongo_monthly_billing.py`) — a bare `amount_cents` read priced a legacy
+  session doc at zero and credited nobody while the month was billed in full
+  (#609). Skipped, with a recorded reason: a void period invoice, a paused
+  family with no invoice, a family whose first month is this period and is not
+  priced yet, and `date_not_billed`. Idempotent on
   `source_type="occurrence_cancellation"` +
   `source_id="<occurrence>:<enrollment>"`.
   `MongoPaymentRepository.occurrences_for_period` is new and public so the
@@ -59,12 +87,26 @@ lands on the account and is consumed by the next invoice.
 - Notifications: `RosterAlertAdapter.occurrence_cancelled` in
   `composition/roster_notifications.py`. Families get a TRANSACTIONAL email
   naming the date in the session's own zone, with the zone printed; staff get
-  the usual unsubscribable NOTIFICATION copy. The admin can uncheck "Email the
+  the usual unsubscribable NOTIFICATION copy. The email only promises a credit
+  to families billing actually credited — the sync runs after the occurrence
+  write and can fail wholesale or skip an individual family — and the staff copy
+  carries an explicit warning when it did not run, so an admin never learns
+  about a missing credit from a parent. The admin can uncheck "Email the
   families and the coach" for a date already announced by other means.
-- Frontend: a "Class dates" card on `/admin/sessions/[id]` lists every date with
-  a Cancelled chip and a "Cancel this date" action; the dialog requires a reason
-  (it reaches families verbatim) and states the credit consequence.
+- Frontend (admin): the "Replacement coaches" card on `/admin/sessions/[id]` is
+  folded into a single "Class dates" card (lane 02) that lists every date once
+  with its replacement column, a status chip and a "Cancel this date" action —
+  two cards over the same component listed every replaced date twice with two
+  identical buttons. "Cancel this date" is offered only on a `scheduled` date
+  that has not started, matching `assert_occurrence_cancellable`; a past or
+  completed date reads "Past" / "Completed" instead of "Scheduled".
   `cancelSessionOccurrence` in `frontend/lib/api/admin.ts`. No new route.
+- Frontend (parent): `GetChildSchedule` returns cancelled occurrences (its
+  `list_for_session_between` has no status filter, unlike every coach read), so
+  the parent calendar (`lib/parent/schedule-events.ts`) now greys them and
+  prefixes the title with "Cancelled", the children page strikes the row through
+  and hides "Report absence", and the absence-notice picker on
+  `/parent/requests` no longer offers a class that will not run.
 
 ## Deploy notes
 
@@ -77,9 +119,17 @@ lands on the account and is consumed by the next invoice.
   validator (migration 0133 now declares `cancelled_at` / `cancelled_by`).
   Prod still boots with `V2_RUN_MIGRATIONS_ON_BOOT` false (#629), so run
   `run_pending_migrations` by hand after deploy, as with 0164/0165.
-  The credit index is partial on `source_type: {$type: "string"}`, so existing
-  early-withdrawal and manual credits (which have no `source_type`) are
-  untouched and no backfill is needed.
+  The credit index's partial filter is pinned to
+  `source_type: "occurrence_cancellation"` — the key space this feature
+  introduces — and deliberately NOT to "any string `source_type`". OVERPAYMENT
+  credits already carry a string `source_type` written through a non-atomic
+  check-then-insert in `MongoPaymentRepository.record_manual_payment`, so prod
+  may already hold duplicates: a broader filter would abort this migration on
+  `DuplicateKeyError`, taking the override index and the validator refresh with
+  it, and would turn that pre-existing race into a 500 on a money path. No
+  backfill is needed and no existing credit is constrained.
+  That overpayment writer is now also wrapped in a `DuplicateKeyError` catch so
+  a lost race logs instead of 500ing after the payment doc has committed.
 - No new environment variables and no new secrets.
 - `session_occurrence_overrides` gets its first ever writer. It is already on
   the tenant-owned allowlist, so no tenancy change is required.
@@ -88,10 +138,10 @@ lands on the account and is consumed by the next invoice.
 
 ## Risk / rollback
 
-- **Money.** The credit is issued from the invoice's tuition net of discount
-  (or the monthly price net of discount when the period is not yet invoiced),
-  divided by the classes the month was priced against — including dates
-  cancelled earlier in the same month. An earlier draft shrank that divisor
+- **Money.** The credit is issued from the invoice's TUITION lines net of the
+  tuition discount (or the consumed first-month proration amount, or the monthly
+  price net of discount when nothing is priced yet), divided by the classes that
+  charge actually bought — including dates cancelled earlier in the same month. An earlier draft shrank that divisor
   after each cancellation and over-refunded a second cancellation (1/4 + 1/3 of
   a four-class month); that is fixed and pinned by
   `test_an_earlier_cancellation_does_not_shrink_the_divisor`. Invoice totals are
@@ -112,6 +162,12 @@ lands on the account and is consumed by the next invoice.
   read overrides before this change, and un-applying the code simply stops new
   ones being written. Credits already issued stay on the families' accounts,
   which is the correct outcome for a class that genuinely did not run.
+- **First-month quotes move.** Any month containing a cancelled date now quotes
+  a new mid-month enrollment against the pre-cancellation class count. That is
+  the intended fix (it restores the price the family would have paid had the
+  cancellation never happened), but it does change quoted first-month amounts
+  for those sessions; `schedule_signature` on such a snapshot changes too, since
+  the cancelled occurrence is now part of the eligible set.
 - A cancelled date still appears on the session's date list and in payroll
   reads; it is excluded by status and `is_payable`, not deleted, so the audit
   trail that the class was scheduled survives.
