@@ -358,7 +358,9 @@ export type CollectionsAction =
   | "record_payment"
   | "message"
   | "skip_month"
-  | "resume";
+  | "resume"
+  /** A link, not a mutation — Past due and Awaiting payment rows only. */
+  | "whatsapp";
 
 export interface AdminCollectionsFamily {
   parent_id: string;
@@ -401,6 +403,12 @@ export interface AdminCollectionsFamily {
   } | null;
   paid: { amount_cents: number; method: string | null; paid_at: string | null } | null;
   last_reminder_at: string | null;
+  /**
+   * Pre-filled `wa.me` link carrying the dues reminder text. Present on Past
+   * due and Awaiting payment rows whose family has a dialable phone; the
+   * `whatsapp` action is only listed when this is non-null.
+   */
+  whatsapp_url?: string | null;
   actions: CollectionsAction[];
 }
 
@@ -1358,21 +1366,6 @@ export interface AdminAuditLogView {
 
 export interface AdminAuditLogList {
   logs: AdminAuditLogView[];
-}
-
-export interface DuesFollowupParentView {
-  parent_id: string;
-  parent_name: string | null;
-  email: string | null;
-  phone: string | null;
-  pending_count: number;
-  total_due_cents: number;
-  /** Pre-filled wa.me link; null when the parent has no usable phone on file. */
-  whatsapp_url: string | null;
-}
-
-export interface DuesFollowupResponse {
-  parents: DuesFollowupParentView[];
 }
 
 export interface SendDuesRemindersResponse {
@@ -2994,10 +2987,6 @@ export function listAuditLogs(): Promise<AdminAuditLogList> {
   return apiFetch<AdminAuditLogList>("/admin/audit-logs", { method: "GET" });
 }
 
-export function listDuesFollowup(): Promise<DuesFollowupResponse> {
-  return apiFetch<DuesFollowupResponse>("/admin/dues-followup", { method: "GET" });
-}
-
 export function sendDuesReminders(payload: { parent_ids?: string[] } = {}): Promise<SendDuesRemindersResponse> {
   return apiFetch<SendDuesRemindersResponse>("/admin/dues-reminders", {
     method: "POST",
@@ -3023,6 +3012,84 @@ export function getTuitionDiscountSummary(period: string): Promise<AdminTuitionD
     `/admin/finance/tuition-discounts?period=${encodeURIComponent(period)}`,
     { method: "GET" },
   );
+}
+
+/**
+ * `GET /admin/reports/month-close` — the Month close view.
+ *
+ * Field names mirror `AdminMonthCloseView` in
+ * `backend/v2/interfaces/admin/month_close_views.py` (month close spec §4.2).
+ * Owner only: an admin without the owner scope gets a 404, never a 403.
+ */
+export type MonthCloseOddCode =
+  | "invoice_without_enrollment"
+  | "paused_family_invoiced"
+  | "autopay_no_card"
+  | "autopay_on_dead_enrollment";
+
+export interface AdminMonthCloseTally {
+  count: number;
+  cents: number;
+}
+
+export interface AdminMonthCloseOddItem {
+  kind: "family" | "invoice";
+  id: string;
+  label: string;
+  href: string;
+}
+
+export interface AdminMonthCloseOdd {
+  code: MonthCloseOddCode;
+  label: string;
+  /** The true count; `items` is capped at 20 so the page can say "showing 20 of N". */
+  count: number;
+  items: AdminMonthCloseOddItem[];
+}
+
+export interface AdminMonthCloseView {
+  generated_at: string;
+  timezone: string;
+  period: string;
+  invoices: {
+    generated: number;
+    emailed: number;
+    autopay_notices: number;
+    not_sent: number;
+    voided: number;
+    voided_cents: number;
+    void_reasons: { reason: string; count: number }[];
+  };
+  money: {
+    billed_cents: number;
+    collected_cents: number;
+    outstanding_cents: number;
+    /** Null, never 0, when nothing was billed — the page renders "—". */
+    collection_rate: number | null;
+  };
+  autopay_run: {
+    charge_on: string | null;
+    charge_on_varies: boolean;
+    has_run: boolean;
+    scheduled: AdminMonthCloseTally;
+    succeeded: AdminMonthCloseTally;
+    failed: AdminMonthCloseTally;
+    pending: AdminMonthCloseTally;
+  };
+  odd: AdminMonthCloseOdd[];
+  /** Null when the discount query was unavailable (see `warnings`). */
+  tuition_discounts: {
+    gross_cents: number;
+    discount_cents: number;
+    net_cents: number;
+    by_category: { category: string; amount_cents: number }[];
+  } | null;
+  warnings: string[];
+}
+
+export function getAdminMonthClose(period?: string): Promise<AdminMonthCloseView> {
+  const query = period ? `?period=${encodeURIComponent(period)}` : "";
+  return apiFetch<AdminMonthCloseView>(`/admin/reports/month-close${query}`, { method: "GET" });
 }
 
 export function exportAdminReportCsv(reportName: string, period?: string): Promise<string> {
