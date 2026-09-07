@@ -51,12 +51,28 @@ class ScheduledEnrollmentActionRepository(Protocol):
     async def add(self, action: ScheduledEnrollmentAction) -> None: ...
 
     async def list_due(
-        self, *, now: datetime, limit: int = 50
-    ) -> list[ScheduledEnrollmentAction]: ...
+        self,
+        *,
+        now: datetime,
+        limit: int = 50,
+        action_type: ScheduledActionType | None = None,
+    ) -> list[ScheduledEnrollmentAction]:
+        """Due pending actions. Every worker MUST pass its own
+        ``action_type``: the two queues share one collection, and a worker
+        that takes the other type's row no-ops it and retires it, losing the
+        work for good (issue #675 follow-up)."""
+        ...
 
     async def list_by_status(
         self,
         status: ScheduledActionStatus,
+        *,
+        limit: int = 50,
+    ) -> list[ScheduledEnrollmentAction]: ...
+
+    async def list_by_statuses(
+        self,
+        statuses: list[ScheduledActionStatus],
         *,
         limit: int = 50,
     ) -> list[ScheduledEnrollmentAction]: ...
@@ -72,6 +88,16 @@ class ScheduledEnrollmentActionRepository(Protocol):
         attempted_at: datetime,
         error: str,
     ) -> None: ...
+
+    async def mark_retry_pending(
+        self,
+        action_id: str,
+        *,
+        attempted_at: datetime,
+        error: str,
+    ) -> None:
+        """Record the failed attempt and leave the row PENDING for the next
+        tick (issue #675 follow-up). ``attempt_count`` bounds the retries."""
 
     async def mark_cancelled(
         self,

@@ -41,6 +41,17 @@ describe("pendingCancellationLabel", () => {
   it("renders the academy-local end date", () => {
     expect(pendingCancellationLabel(CHICAGO_MONTH_END, "America/Chicago")).toMatch(/^Ends .*Sep.* 30/);
   });
+
+  it("disagrees with the viewer's zone when no academy zone is passed", () => {
+    // Issue #675 follow-up: the admin roster used to pass null here, so an
+    // admin browsing from a zone east of the academy read "Ends Oct 1" for a
+    // child whose last day is Sep 30. Pinning the behaviour makes the
+    // regression loud if a caller ever drops the zone again.
+    expect(pendingCancellationLabel(CHICAGO_MONTH_END, "UTC")).toMatch(/^Ends .*Oct.* 1/);
+    expect(pendingCancellationLabel(CHICAGO_MONTH_END, "America/Chicago")).not.toEqual(
+      pendingCancellationLabel(CHICAGO_MONTH_END, "UTC"),
+    );
+  });
 });
 
 describe("cancellationResultTitle", () => {

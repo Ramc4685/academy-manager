@@ -34,8 +34,17 @@ class MongoEnrollmentWriter(TenantScopedRepository):
             return False
         return result.upserted_id is not None
 
+    #: Statuses that END an enrollment. Reaching one retires any scheduled
+    #: end-of-period cancel marker: an admin who cancels or withdraws on the
+    #: 20th must not leave the roster showing "Ends Sep 30" for a student who
+    #: is already off it (issue #675 follow-up).
+    _TERMINAL_STATUSES = frozenset({"cancelled", "withdrawn"})
+
     async def update_status(self, enrollment_id: str, status: str) -> None:
-        await self._update_one({"enrollment_id": enrollment_id}, {"$set": {"status": status}})
+        fields: dict[str, object] = {"status": status}
+        if status in self._TERMINAL_STATUSES:
+            fields["pending_cancellation_at"] = None
+        await self._update_one({"enrollment_id": enrollment_id}, {"$set": fields})
 
     async def set_lifecycle_dates(
         self,

@@ -356,6 +356,7 @@ def _use_case(
     enrollment_events: _FakeLifecycleEvents | None = None,
     scheduled_actions: _FakeScheduledActions | None = None,
     billing_sync: Any | None = None,
+    roster_notifier: Any | None = None,
     academy_timezone: str | None = None,
     clock=lambda: datetime(2026, 7, 6, 12, 0, tzinfo=UTC),
 ) -> SelfCancelEnrollment:
@@ -375,15 +376,24 @@ def _use_case(
         scheduled_actions=scheduled_actions
         if scheduled_actions is not None
         else _FakeScheduledActions(),
+        roster_notifier=roster_notifier,
         academy_timezone=_tz if academy_timezone is not None else None,
         clock=clock,
     )
 
 
+class _FakeRosterNotifier:
+    def __init__(self) -> None:
+        self.changes: list[str] = []
+
+    async def roster_changed(self, *, change: str, **_: Any) -> None:
+        self.changes.append(change)
+
+
 class _FakeScheduledActions:
     """Mirrors ``MongoScheduledEnrollmentActionRepository.add`` for the
     cancel type: one PENDING ``cancel_at_period_end`` per enrollment (the
-    partial unique index from migration 0168) — a second add is a no-op."""
+    partial unique index from migration 0169) — a second add is a no-op."""
 
     def __init__(self) -> None:
         self.actions: list[Any] = []
@@ -1383,3 +1393,42 @@ async def test_cancellation_fee_period_falls_back_to_utc_for_an_unknown_zone() -
         )
         assert invoice is not None
         assert invoice["period"] == "2026-12"
+
+
+async def test_scheduled_cancel_alerts_staff_with_its_own_change_kind() -> None:
+    """Issue #675 follow-up (P3): the request-time staff alert must NOT say
+    "cancelled". The child is still on the roster and attending for the rest of
+    the month, and the worker sends the real ``cancelled`` alert at month end —
+    two identical alerts three weeks apart had coaches dropping a student who
+    was still enrolled."""
+    notifier = _FakeRosterNotifier()
+    uc = _use_case(
+        enrollments=_FakeEnrollments([_enrollment()]),
+        policies=_FakePolicies(_policy(timing="end_of_period")),
+        occurrences=_FakeOccurrenceForSession({"session-1": None}),
+        roster_notifier=notifier,
+        clock=lambda: datetime(2026, 7, 6, 12, 0, tzinfo=UTC),
+    )
+
+    await uc.execute(
+        SelfCancelEnrollmentCommand(enrollment_id="enr-1", parent_id="parent-1", reason="r")
+    )
+
+    assert notifier.changes == ["cancellation_scheduled"]
+
+
+async def test_immediate_cancel_still_alerts_staff_as_cancelled() -> None:
+    notifier = _FakeRosterNotifier()
+    uc = _use_case(
+        enrollments=_FakeEnrollments([_enrollment()]),
+        policies=_FakePolicies(_policy(timing="immediate")),
+        occurrences=_FakeOccurrenceForSession({"session-1": None}),
+        roster_notifier=notifier,
+        clock=lambda: datetime(2026, 7, 6, 12, 0, tzinfo=UTC),
+    )
+
+    await uc.execute(
+        SelfCancelEnrollmentCommand(enrollment_id="enr-1", parent_id="parent-1", reason="r")
+    )
+
+    assert notifier.changes == ["cancelled"]

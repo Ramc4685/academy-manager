@@ -1191,6 +1191,7 @@ export type AdminAttentionKind =
   | "overdue_dues"
   | "pause_requests"
   | "scheduled_resume_blocked"
+  | "scheduled_action_failed"
   | "billing_deferrals"
   | "waivers"
   | "session_pressure";

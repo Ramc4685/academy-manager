@@ -187,3 +187,72 @@ async def test_cancel_pending_for_enrollment_retires_both_action_types() -> None
 
     assert count == 2
     assert due == []
+
+
+@pytest.mark.asyncio
+async def test_list_due_filters_by_action_type_in_the_store() -> None:
+    """Issue #675 follow-up (P1): the resume worker and the cancellation worker
+    drain the SAME collection. If ``list_due`` hands a worker the other type's
+    row it no-ops it and marks it succeeded — the parent's cancellation is gone
+    for good. The filter therefore lives in the query, not in each worker."""
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["scheduled-actions-typed"]
+    repo = MongoScheduledEnrollmentActionRepository(db)
+    now = datetime(2026, 6, 3, 7, 0, tzinfo=UTC)
+    cancel = _action("cancel-1", run_at=now).model_copy(
+        update={"action_type": "cancel_at_period_end", "pause_request_id": None}
+    )
+
+    with tenant_scope("acad-1"):
+        await repo.add(_action("resume-1", run_at=now))
+        await repo.add(cancel)
+
+        resumes = await repo.list_due(now=now, limit=50, action_type="resume_from_pause")
+        cancels = await repo.list_due(now=now, limit=50, action_type="cancel_at_period_end")
+        everything = await repo.list_due(now=now, limit=50)
+
+    assert [row.action_id for row in resumes] == ["resume-1"]
+    assert [row.action_id for row in cancels] == ["cancel-1"]
+    assert {row.action_id for row in everything} == {"resume-1", "cancel-1"}
+
+
+@pytest.mark.asyncio
+async def test_retry_pending_keeps_the_row_due_and_counts_the_attempt() -> None:
+    """A transient failure must heal itself on the next tick rather than
+    parking the cancellation forever (#675 follow-up)."""
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["scheduled-actions-retry"]
+    repo = MongoScheduledEnrollmentActionRepository(db)
+    now = datetime(2026, 6, 3, 7, 0, tzinfo=UTC)
+
+    with tenant_scope("acad-1"):
+        await repo.add(_action("resume-1", run_at=now))
+        await repo.mark_retry_pending("resume-1", attempted_at=now, error="mongo blip")
+
+        [row] = await repo.list_due(now=now, limit=50)
+
+    assert row.status == "pending"
+    assert row.attempt_count == 1
+    assert row.last_error == "mongo blip"
+
+
+@pytest.mark.asyncio
+async def test_list_by_statuses_returns_blocked_and_failed_rows() -> None:
+    """The admin attention reader takes both terminal-without-a-human statuses
+    (#675 follow-up): a failed month-end cancel used to reach no screen."""
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["scheduled-actions-stuck"]
+    repo = MongoScheduledEnrollmentActionRepository(db)
+    now = datetime(2026, 6, 3, 7, 0, tzinfo=UTC)
+
+    with tenant_scope("acad-1"):
+        await repo.add(_action("blocked", run_at=now))
+        await repo.add(_action("broken", run_at=now))
+        await repo.add(_action("fine", run_at=now))
+        await repo.mark_blocked_capacity("blocked", attempted_at=now)
+        await repo.mark_failed("broken", attempted_at=now, error="boom")
+        await repo.mark_succeeded("fine", attempted_at=now)
+
+        rows = await repo.list_by_statuses(["blocked_capacity", "failed"], limit=50)
+
+    assert {row.action_id for row in rows} == {"blocked", "broken"}

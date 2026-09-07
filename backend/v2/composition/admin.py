@@ -56,6 +56,7 @@ from backend.v2.composition.pathway import (
 )
 from backend.v2.composition.roster_notifications import compose_enrollment_notifiers
 from backend.v2.composition.scheduled_cancellations import (
+    compose_list_stuck_scheduled_actions,
     compose_process_scheduled_cancellation_actions,
 )
 from backend.v2.composition.session_announcements import compose_announcements
@@ -4624,10 +4625,7 @@ def compose_admin(
         list_student_billing_enrollments=list_student_billing_enrollments,
         move_student_session_type=move_student_session_type,
         override_student_price=override_student_price,
-        list_blocked_scheduled_resume_actions=lambda: scheduled_actions.list_by_status(
-            "blocked_capacity",
-            limit=100,
-        ),
+        list_stuck_scheduled_actions=compose_list_stuck_scheduled_actions(scheduled_actions),
     )
     admin.get_reports_dashboard = make_reports_dashboard(db)  # type: ignore[attr-defined]
 

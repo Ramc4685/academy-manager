@@ -115,9 +115,14 @@ export function RosterTable({
   onResume,
   onTransfer,
   onWithdraw,
+  academyTimezone,
 }: {
   enrollments: AdminEnrollmentView[];
   sessionId: string;
+  /** Session/academy zone. `pending_cancellation_at` is the last instant of
+   * the academy-local month, so rendering it in the viewer's browser zone
+   * shows the wrong last day east of the academy (#675 follow-up). */
+  academyTimezone: string | null;
   pathwayLevels: Level[];
   updatingPlacementStudentId: string | null;
   onPathwayLevelChange: (enrollment: AdminEnrollmentView, levelId: string) => void;
@@ -199,7 +204,12 @@ export function RosterTable({
                     {e.pending_cancellation_at && (
                       <Chip
                         variant="pending"
-                        label={pendingCancellationLabel(e.pending_cancellation_at, null) ?? "ENDING"}
+                        label={
+                          pendingCancellationLabel(
+                            e.pending_cancellation_at,
+                            academyTimezone,
+                          ) ?? "ENDING"
+                        }
                       />
                     )}
                   </div>

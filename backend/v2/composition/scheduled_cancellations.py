@@ -9,6 +9,7 @@ lifecycle row, ``EnrollmentCancelled`` outbox event, staff alert.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from backend.v2.contexts.enrollment.application.ports import (
@@ -21,6 +22,7 @@ from backend.v2.contexts.enrollment.application.use_cases.process_scheduled_canc
     ProcessScheduledCancellationActions,
 )
 from backend.v2.contexts.enrollment.application.use_cases.scheduled_actions import (
+    ScheduledEnrollmentAction,
     ScheduledEnrollmentActionRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_writer import (
@@ -54,3 +56,23 @@ def compose_process_scheduled_cancellation_actions(
         occurrence_roster=occurrence_roster,
         roster_notifier=roster_notifier,
     )
+
+
+def compose_list_stuck_scheduled_actions(
+    scheduled_actions: ScheduledEnrollmentActionRepository,
+) -> Callable[[], Awaitable[list[ScheduledEnrollmentAction]]]:
+    """Reader for the admin attention list: every scheduled enrollment action
+    that has stopped moving on its own.
+
+    Issue #675 follow-up: this used to be ``list_by_status("blocked_capacity")``
+    — resume actions only. A ``cancel_at_period_end`` that exhausted its
+    retries is marked ``failed``, is never picked up again, and left the family
+    seated, invoiced and unable to re-request the cancel with nobody told.
+    Both statuses are terminal-without-a-human, so both belong here; the
+    dashboard route splits them into their own items.
+    """
+
+    async def _list() -> list[ScheduledEnrollmentAction]:
+        return await scheduled_actions.list_by_statuses(["blocked_capacity", "failed"], limit=100)
+
+    return _list

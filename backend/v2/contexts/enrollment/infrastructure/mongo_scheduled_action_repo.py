@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 from backend.v2.contexts.enrollment.application.use_cases.scheduled_actions import (
     ScheduledActionStatus,
+    ScheduledActionType,
     ScheduledEnrollmentAction,
 )
 from backend.v2.shared.tenancy import TenantScopedRepository
@@ -38,7 +39,7 @@ class MongoScheduledEnrollmentActionRepository(TenantScopedRepository):
         module docstring): a pause resume is one-per-pause-request; an
         end-of-period cancel is one PENDING action per enrollment, so a
         retired (cancelled/succeeded) row never blocks a later request.
-        Migration 0168 backs both keys with partial unique indexes."""
+        Migration 0169 backs both keys with partial unique indexes."""
         doc = action.model_dump(mode="python")
         if action.pause_request_id is not None:
             key: dict[str, object] = {
@@ -58,10 +59,36 @@ class MongoScheduledEnrollmentActionRepository(TenantScopedRepository):
         *,
         now: datetime,
         limit: int = 50,
+        action_type: ScheduledActionType | None = None,
+    ) -> list[ScheduledEnrollmentAction]:
+        """Due pending work, narrowed to ONE ``action_type`` per caller.
+
+        Issue #675 follow-up: the two workers share this collection, and the
+        resume worker used to take whatever was due — including a
+        ``cancel_at_period_end`` row, which it no-ops and marks succeeded,
+        destroying the parent's cancellation. Filtering in Mongo (rather than
+        in each worker) also stops one type's backlog from crowding the other
+        out of the ``limit`` window.
+        """
+        query: dict[str, object] = {"status": "pending", "run_at": {"$lte": now}}
+        if action_type is not None:
+            query["action_type"] = action_type
+        cursor = self._find_many(
+            query,
+            sort=[("run_at", 1), ("created_at", 1)],
+            limit=limit,
+        )
+        return [self._to_domain(doc) async for doc in cursor]
+
+    async def list_by_statuses(
+        self,
+        statuses: list[ScheduledActionStatus],
+        *,
+        limit: int = 50,
     ) -> list[ScheduledEnrollmentAction]:
         cursor = self._find_many(
-            {"status": "pending", "run_at": {"$lte": now}},
-            sort=[("run_at", 1), ("created_at", 1)],
+            {"status": {"$in": statuses}},
+            sort=[("updated_at", -1), ("created_at", 1)],
             limit=limit,
         )
         return [self._to_domain(doc) async for doc in cursor]
@@ -72,12 +99,7 @@ class MongoScheduledEnrollmentActionRepository(TenantScopedRepository):
         *,
         limit: int = 50,
     ) -> list[ScheduledEnrollmentAction]:
-        cursor = self._find_many(
-            {"status": status},
-            sort=[("updated_at", -1), ("created_at", 1)],
-            limit=limit,
-        )
-        return [self._to_domain(doc) async for doc in cursor]
+        return await self.list_by_statuses([status], limit=limit)
 
     async def mark_succeeded(self, action_id: str, *, attempted_at: datetime) -> None:
         await self._transition(
@@ -105,6 +127,23 @@ class MongoScheduledEnrollmentActionRepository(TenantScopedRepository):
         await self._transition(
             action_id,
             status="failed",
+            attempted_at=attempted_at,
+            last_error=error,
+        )
+
+    async def mark_retry_pending(
+        self,
+        action_id: str,
+        *,
+        attempted_at: datetime,
+        error: str,
+    ) -> None:
+        """Record a failed attempt but LEAVE the row pending so the next tick
+        retries it (issue #675 follow-up). ``_transition`` increments
+        ``attempt_count``, which is what bounds the retries."""
+        await self._transition(
+            action_id,
+            status="pending",
             attempted_at=attempted_at,
             last_error=error,
         )

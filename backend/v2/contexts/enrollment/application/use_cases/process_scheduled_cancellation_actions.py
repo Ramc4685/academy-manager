@@ -28,10 +28,18 @@ Outcomes per action:
   cleared the pending marker or flipped the status) → nothing to do;
   ``cancelled`` with the reason, never ``failed`` — an operator reading the
   blocked-actions list should not chase a cancellation that already happened.
-- enrollment missing → ``failed`` (``enrollment_missing``).
-- any other exception → ``failed`` with the error; the next hourly tick does
-  NOT retry a failed row (same as the resume worker), so it lands on the
-  admin's blocked-actions surface.
+- enrollment missing → ``failed`` (``enrollment_missing``); terminal, because
+  no number of retries will make a deleted enrollment reappear.
+- any other exception → the row stays ``pending`` with an incremented
+  ``attempt_count`` and the next hourly tick retries it, up to
+  ``MAX_ATTEMPTS``; after that it is marked ``failed``. A ``failed`` row is
+  never retried again, so it is surfaced to admins: the dashboard attention
+  list reads ``list_by_statuses(["blocked_capacity", "failed"])`` (see
+  ``composition/scheduled_cancellations.py`` and
+  ``interfaces/admin/dashboard_routes.py``). Both halves matter — a transient
+  Mongo blip must heal itself, and a permanent failure must reach a human,
+  because a stuck row leaves the family enrolled, seated and invoiced while
+  ``_not_cancellable_reason`` refuses to let them cancel again.
 """
 
 from __future__ import annotations
@@ -91,12 +99,19 @@ class ProcessScheduledCancellationActionsResult(BaseModel):
     processed: int = 0
     succeeded: int = 0
     skipped_already_ended: int = 0
+    #: Attempt failed but the row is still pending and will be retried.
+    retried: int = 0
     failed: int = 0
 
 
 #: Statuses that still hold a seat; a paused row released its own when it
 #: paused (see ``admin_writes.CancelEnrollment._SEATLESS_STATUSES``).
 _SEATED_STATUSES = frozenset({"active"})
+
+#: How many times a transient failure is retried before the row is parked as
+#: ``failed`` for a human. Hourly ticks, so three attempts spans ~2h — inside
+#: the ops-digest stale-job window and well short of the next month's billing.
+MAX_ATTEMPTS = 3
 
 
 class ProcessScheduledCancellationActions:
@@ -132,10 +147,12 @@ class ProcessScheduledCancellationActions:
         attempted_at = now or self._now()
         actions = [
             a
-            for a in await self._scheduled_actions.list_due(now=attempted_at, limit=limit)
+            for a in await self._scheduled_actions.list_due(
+                now=attempted_at, limit=limit, action_type="cancel_at_period_end"
+            )
             if a.action_type == "cancel_at_period_end"
         ]
-        succeeded = skipped = failed = 0
+        succeeded = skipped = retried = failed = 0
         for action in actions:
             try:
                 outcome = await self._run_one(action, attempted_at=attempted_at)
@@ -144,10 +161,16 @@ class ProcessScheduledCancellationActions:
                     "scheduled_cancellation_failed",
                     extra={"action_id": action.action_id, "enrollment_id": action.enrollment_id},
                 )
-                await self._scheduled_actions.mark_failed(
-                    action.action_id, attempted_at=attempted_at, error=str(exc)[:500]
-                )
-                failed += 1
+                if action.attempt_count + 1 < MAX_ATTEMPTS:
+                    await self._scheduled_actions.mark_retry_pending(
+                        action.action_id, attempted_at=attempted_at, error=str(exc)[:500]
+                    )
+                    retried += 1
+                else:
+                    await self._scheduled_actions.mark_failed(
+                        action.action_id, attempted_at=attempted_at, error=str(exc)[:500]
+                    )
+                    failed += 1
                 continue
             if outcome == "succeeded":
                 succeeded += 1
@@ -159,6 +182,7 @@ class ProcessScheduledCancellationActions:
             processed=len(actions),
             succeeded=succeeded,
             skipped_already_ended=skipped,
+            retried=retried,
             failed=failed,
         )
 
@@ -241,6 +265,7 @@ class ProcessScheduledCancellationActions:
 
 
 __all__ = [
+    "MAX_ATTEMPTS",
     "PendingCancellationEnrollmentWriter",
     "PendingCancellationSessionWriter",
     "ProcessScheduledCancellationActions",

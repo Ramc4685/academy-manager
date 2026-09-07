@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from backend.v2.contexts.enrollment.application.use_cases.process_scheduled_cancellation_actions import (
+    MAX_ATTEMPTS,
     ProcessScheduledCancellationActions,
 )
 from backend.v2.contexts.enrollment.application.use_cases.scheduled_actions import (
@@ -54,14 +55,33 @@ class _FakeScheduledActions:
         self._actions = actions
         self.statuses: list[tuple[str, str, str | None]] = []
 
-    async def list_due(self, *, now: datetime, limit: int = 50) -> list[ScheduledEnrollmentAction]:
-        return [a for a in self._actions if a.status == "pending" and a.run_at <= now][:limit]
+    async def list_due(
+        self,
+        *,
+        now: datetime,
+        limit: int = 50,
+        action_type: str | None = None,
+    ) -> list[ScheduledEnrollmentAction]:
+        # Mirrors the Mongo repo: the STORE applies the type filter, so a
+        # worker that forgets to pass its own type is caught here too.
+        return [
+            a
+            for a in self._actions
+            if a.status == "pending"
+            and a.run_at <= now
+            and (action_type is None or a.action_type == action_type)
+        ][:limit]
 
     async def mark_succeeded(self, action_id: str, *, attempted_at: datetime) -> None:
         self.statuses.append((action_id, "succeeded", None))
 
     async def mark_failed(self, action_id: str, *, attempted_at: datetime, error: str) -> None:
         self.statuses.append((action_id, "failed", error))
+
+    async def mark_retry_pending(
+        self, action_id: str, *, attempted_at: datetime, error: str
+    ) -> None:
+        self.statuses.append((action_id, "retry_pending", error))
 
     async def mark_cancelled(self, action_id: str, *, attempted_at: datetime, reason: str) -> None:
         self.statuses.append((action_id, "cancelled", reason))
@@ -273,17 +293,45 @@ async def test_seat_release_failure_marks_action_failed_and_continues() -> None:
     result = await _use_case(actions, enrollments, sessions=_Broken()).execute()
 
     assert result.processed == 2
-    assert result.failed == 2
-    assert actions.statuses[0] == ("action-1", "failed", "mongo write timed out")
+    # A transient write error leaves the row PENDING for the next hourly tick
+    # (#675 follow-up): before this, one Mongo blip parked the cancellation
+    # forever with nobody told.
+    assert result.retried == 1
+    assert result.failed == 1
+    assert actions.statuses[0] == ("action-1", "retry_pending", "mongo write timed out")
     assert actions.statuses[1] == ("action-2", "failed", "enrollment_missing")
 
 
 @pytest.mark.asyncio
+async def test_retries_are_bounded_and_the_last_attempt_is_marked_failed() -> None:
+    """A permanently broken row must stop retrying and become visible: `failed`
+    rows are what the admin attention list reads (#675 follow-up)."""
+
+    class _Broken:
+        async def release_seat(self, session_id: str) -> None:
+            raise RuntimeError("mongo write timed out")
+
+    exhausted = _action().model_copy(update={"attempt_count": MAX_ATTEMPTS - 1})
+    actions = _FakeScheduledActions([exhausted])
+    enrollments = _FakeEnrollments({"enr-1": _enrollment()})
+
+    result = await _use_case(actions, enrollments, sessions=_Broken()).execute()
+
+    assert result.retried == 0
+    assert result.failed == 1
+    assert actions.statuses == [("action-1", "failed", "mongo write timed out")]
+
+
+@pytest.mark.asyncio
 async def test_resume_actions_are_left_to_the_resume_worker() -> None:
+    """The mirror of the resume worker's test: neither worker may consume the
+    other's due row (#675 follow-up). The filter lives in the repository, and
+    the fake enforces it the way Mongo does."""
     actions = _FakeScheduledActions(
         [_action(action_type="resume_from_pause", pause_request_id="pause-1")]
     )
     enrollments = _FakeEnrollments({"enr-1": _enrollment()})
     result = await _use_case(actions, enrollments).execute()
     assert result.processed == 0
+    assert actions.statuses == []
     assert enrollments.rows["enr-1"].status == "active"

@@ -398,6 +398,7 @@ export default function AdminSessionDetailPage() {
             <RosterTable
               enrollments={enrollments}
               sessionId={sessionId}
+              academyTimezone={session?.timezone ?? null}
               pathwayLevels={pathwayLevels}
               updatingPlacementStudentId={
                 placementMutation.isPending ? placementMutation.variables?.studentId : null

@@ -125,3 +125,53 @@ async def test_complete_pending_cancellation_stands_down_when_admin_ended_it_fir
             {"$set": {"status": "active", "pending_cancellation_at": None}},
         )
         assert await writer.complete_pending_cancellation("enr-1", cancelled_at=MONTH_END) is None
+
+
+@pytest.mark.asyncio
+async def test_terminal_status_write_clears_the_pending_cancellation_marker() -> None:
+    """#675 follow-up: an admin who cancels outright on the 20th must not leave
+    "Ends Sep 30" on the roster next to a CANCELLED chip — the chip renders on
+    the presence of the marker, independent of status."""
+    db = _db("pending-cancel-admin-cancel")
+    writer = MongoEnrollmentWriter(db)
+
+    with tenant_scope("acad-1"):
+        await _seed(db)
+        await _mark_pending(writer)
+        await writer.update_status("enr-1", "cancelled")
+        row = await db["enrollments"].find_one({"enrollment_id": "enr-1"})
+
+    assert row["status"] == "cancelled"
+    assert row["pending_cancellation_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_withdraw_status_write_clears_the_pending_cancellation_marker() -> None:
+    db = _db("pending-cancel-admin-withdraw")
+    writer = MongoEnrollmentWriter(db)
+
+    with tenant_scope("acad-1"):
+        await _seed(db)
+        await _mark_pending(writer)
+        await writer.update_status("enr-1", "withdrawn")
+        row = await db["enrollments"].find_one({"enrollment_id": "enr-1"})
+
+    assert row["status"] == "withdrawn"
+    assert row["pending_cancellation_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_pause_keeps_the_pending_cancellation_marker() -> None:
+    """A pause is not an ending: the scheduled cancel still has to fire at
+    month end, and ``complete_pending_cancellation`` accepts a paused row."""
+    db = _db("pending-cancel-admin-pause")
+    writer = MongoEnrollmentWriter(db)
+
+    with tenant_scope("acad-1"):
+        await _seed(db)
+        await _mark_pending(writer)
+        await writer.update_status("enr-1", "paused")
+        row = await db["enrollments"].find_one({"enrollment_id": "enr-1"})
+
+    assert row["status"] == "paused"
+    assert _utc(row["pending_cancellation_at"]) == MONTH_END

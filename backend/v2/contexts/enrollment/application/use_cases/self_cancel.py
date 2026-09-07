@@ -663,8 +663,13 @@ class SelfCancelEnrollment:
                 )
         if self._roster_notifier is not None:
             try:
+                # NOT ``cancelled``: the child is still enrolled and attending
+                # until month end, and the scheduled worker sends the real
+                # ``cancelled`` alert when it flips. Two identical "student
+                # cancelled" alerts three weeks apart had coaches dropping a
+                # student who was still on the roster.
                 await self._roster_notifier.roster_changed(
-                    change="cancelled",
+                    change="cancellation_scheduled",
                     session_id=enrollment.session_id,
                     student_id=enrollment.student_id,
                     enrollment_id=enrollment.enrollment_id,
@@ -674,7 +679,7 @@ class SelfCancelEnrollment:
                 log.warning(
                     "enrollment.roster_notification_failed",
                     extra={
-                        "change": "cancelled",
+                        "change": "cancellation_scheduled",
                         "enrollment_id": enrollment.enrollment_id,
                         "session_id": enrollment.session_id,
                     },
