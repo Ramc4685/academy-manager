@@ -243,12 +243,16 @@ async def on_capacity_exceeded(event: CapacityExceededEvent) -> None:
 async def on_enrollment_cancelled(event: EnrollmentCancelled) -> None:
     deps = _require_deps()
     with tenant_scope(event.academy_id):
-        await deps.promote_from_waitlist.execute(event.payload.session_id)
         # Issue #673: a pending level-up recommendation for a student who has
-        # no live enrollment left is closed here. Failure is logged rather
-        # than raised: the seat promotion above must not be replayed for a
-        # level-up hiccup, and the queue chip + approve guard already keep a
-        # stale row from being certified.
+        # no live enrollment left is closed here. It runs first, in its own
+        # try/except, so the two side effects are isolated in both directions:
+        # an expiry failure is logged rather than raised (raising would make
+        # the outbox replay the seat promotion below for a level-up hiccup —
+        # the queue chip + approve guard already keep a stale row from being
+        # certified), and a persistently failing promotion cannot starve the
+        # expiry, since by the time promotion raises the expiry has already
+        # run. The expiry is idempotent (CAS on RECOMMENDED), so the replay a
+        # promotion failure triggers is harmless for it.
         if deps.expire_level_up_recommendations is not None:
             try:
                 await deps.expire_level_up_recommendations.execute(event.payload.student_id)
@@ -258,6 +262,7 @@ async def on_enrollment_cancelled(event: EnrollmentCancelled) -> None:
                     event.payload.student_id,
                     event.payload.enrollment_id,
                 )
+        await deps.promote_from_waitlist.execute(event.payload.session_id)
 
 
 @handler(event=WelcomeEmailRequested, schema_version=1)

@@ -27,6 +27,10 @@ Code: new `EnrollmentStatusLookup` port in
 `composition/level_up_lifecycle.py` (kept out of `composition/admin.py`, which is at its
 line cap); `contexts/student_progress/application/use_cases/expire_level_up_recommendations.py`;
 `frontend/components/admin/admissions/LevelUpsTab.tsx` + `level-up-review.ts`.
+The coach passport (`frontend/app/(coach)/coach/students/[studentId]/passport/page.tsx`)
+names the ended enrollment when the recommend tap hits the same 409 instead of the
+generic "Failed to submit recommendation.", and `admin-level-ups-lifecycle.spec.ts` now
+also runs on the `chromium-desktop` Playwright project.
 
 ## Deploy notes
 None. No migration (no new status, no new field on a validated collection — the queue's
@@ -40,8 +44,11 @@ and approve is refused; an admin rejects them from the tab.
 The approve guard reads `enrollments` by `student_id` + status; a student whose only
 enrollment rows are `cancelled`/`withdrawn` is refused, `active`/`paused` pass. If the
 enrollment data is wrong for a student the admin sees a 409 with the student id and
-can reject or fix the enrollment — no silent certificate. The expiry runs after the
-waitlist promotion inside the same handler and its failure is logged, not raised, so a
-level-up hiccup never replays a seat promotion. Rollback is reverting the PR; expired
+can reject or fix the enrollment — no silent certificate. The expiry runs before the
+waitlist promotion inside the same handler, in its own try/except: its failure is logged,
+not raised, so a level-up hiccup never replays a seat promotion. Rollback is reverting the PR; expired
 rows stay `REJECTED` (reason `enrollment_ended`) and would need a manual status reset if
-the expiry was wrong for someone.
+the expiry was wrong for someone. The approve guard is check-then-act: a withdrawal that
+commits in the few milliseconds between the enrollment read and the approval write can
+still certify that student — accepted as-is given the window, and the certificate is
+visible in the student's timeline if it ever needs a manual revoke.

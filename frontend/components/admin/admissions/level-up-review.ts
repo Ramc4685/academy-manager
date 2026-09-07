@@ -26,3 +26,16 @@ export function reviewErrorMessage(err: unknown): string {
   }
   return err instanceof Error && err.message ? err.message : "Could not update this recommendation.";
 }
+
+/**
+ * Coach passport counterpart of `reviewErrorMessage` (#673): the recommend
+ * call raises the same `EnrollmentEnded` 409 when the withdrawal landed
+ * between the passport load and the tap.
+ */
+export function recommendErrorMessage(err: unknown): string {
+  const apiErr = err as ApiError | undefined;
+  if (apiErr?.status === 409 && apiErr?.code === ENROLLMENT_ENDED_CODE) {
+    return "This student no longer has an active enrollment, so a level-up cannot be recommended.";
+  }
+  return "Failed to submit recommendation.";
+}

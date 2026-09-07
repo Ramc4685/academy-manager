@@ -3,7 +3,12 @@
 Issue #673: a coach recommends a student, the family withdraws, and the row
 sat in the admin queue forever — approvable, and a certificate would be
 issued to a student who no longer attends. This runs from the
-``Enrollment.EnrollmentCancelled`` handler and clears the row itself.
+``Enrollment.EnrollmentCancelled`` handler, so it covers only the transitions
+that emit that outbox event (admin cancel, withdraw, session cancel, parent
+self-cancel). The coach roster-remove path sets ``cancelled`` directly with no
+event (noted as unreachable in #651) and is not covered here; for it, and for
+any expiry hiccup, the queue's Withdrawn chip and the approve guard in
+``review_level_up.py`` are the backstop.
 
 The recommendation is closed as ``REJECTED`` with ``rejection_reason`` set to
 :data:`ENROLLMENT_ENDED_REASON` rather than a new ``EXPIRED`` status: the

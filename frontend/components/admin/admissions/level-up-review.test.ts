@@ -5,6 +5,7 @@ import type { ApiError } from "@/lib/api/client";
 import {
   ENROLLMENT_ENDED_CODE,
   isWithdrawn,
+  recommendErrorMessage,
   reviewErrorMessage,
 } from "./level-up-review";
 
@@ -44,5 +45,20 @@ describe("reviewErrorMessage", () => {
     expect(reviewErrorMessage(apiError(404))).toMatch(/no longer exists/i);
     expect(reviewErrorMessage(new Error("boom"))).toBe("boom");
     expect(reviewErrorMessage(undefined)).toBe("Could not update this recommendation.");
+  });
+});
+
+describe("recommendErrorMessage", () => {
+  it("names the ended enrollment for the coach's 409", () => {
+    const message = recommendErrorMessage(apiError(409, ENROLLMENT_ENDED_CODE));
+    expect(message).toMatch(/no longer has an active enrollment/i);
+    expect(message).not.toMatch(/failed to submit/i);
+  });
+
+  it("keeps the generic wording for every other failure", () => {
+    expect(recommendErrorMessage(apiError(409))).toBe("Failed to submit recommendation.");
+    expect(recommendErrorMessage(apiError(500))).toBe("Failed to submit recommendation.");
+    expect(recommendErrorMessage(new Error("boom"))).toBe("Failed to submit recommendation.");
+    expect(recommendErrorMessage(undefined)).toBe("Failed to submit recommendation.");
   });
 });
