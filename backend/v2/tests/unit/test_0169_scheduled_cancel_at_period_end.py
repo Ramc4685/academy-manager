@@ -16,7 +16,7 @@ from backend.v2.contexts.enrollment.application.use_cases.scheduled_actions impo
 BASE = importlib.import_module(
     "backend.v2.migrations.0133_broader_validators_and_outbox_retry_lock"
 )
-FIX = importlib.import_module("backend.v2.migrations.0168_scheduled_cancel_at_period_end")
+FIX = importlib.import_module("backend.v2.migrations.0169_scheduled_cancel_at_period_end")
 
 
 def _schema() -> dict:
@@ -35,7 +35,7 @@ def test_validator_matches_the_widened_model() -> None:
 
 
 @pytest.mark.asyncio
-async def test_0168_reapplies_validator_and_rebuilds_partial_unique_indexes() -> None:
+async def test_0169_reapplies_validator_and_rebuilds_partial_unique_indexes() -> None:
     db = MagicMock()
     db.command = AsyncMock(return_value={"ok": 1})
     collection = MagicMock()
@@ -62,7 +62,7 @@ async def test_0168_reapplies_validator_and_rebuilds_partial_unique_indexes() ->
 
 
 @pytest.mark.asyncio
-async def test_0168_tolerates_a_missing_0113_index() -> None:
+async def test_0169_tolerates_a_missing_0113_index() -> None:
     from pymongo.errors import OperationFailure
 
     db = MagicMock()

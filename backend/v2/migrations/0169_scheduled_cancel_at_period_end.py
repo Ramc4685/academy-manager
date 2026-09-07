@@ -47,7 +47,7 @@ from pymongo.errors import OperationFailure
 
 log = logging.getLogger(__name__)
 
-version = "0168_scheduled_cancel_at_period_end"
+version = "0169_scheduled_cancel_at_period_end"
 
 COLLECTION = "scheduled_enrollment_actions"
 PAUSE_INDEX = "unique_pause_action"
@@ -90,4 +90,4 @@ async def up(db: AsyncIOMotorDatabase[Any]) -> None:
         name=CANCEL_INDEX,
         partialFilterExpression={"status": "pending", "action_type": "cancel_at_period_end"},
     )
-    log.info("0168: %s validator re-applied and partial unique indexes rebuilt", COLLECTION)
+    log.info("0169: %s validator re-applied and partial unique indexes rebuilt", COLLECTION)

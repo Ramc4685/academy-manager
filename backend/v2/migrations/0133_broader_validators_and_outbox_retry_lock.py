@@ -212,7 +212,7 @@ VALIDATORS: dict[str, dict[str, Any]] = {
             "academy_id": {"bsonType": "string"},
             # Issue #675: ``cancel_at_period_end`` has no pause request. The
             # original schema required ``pause_request_id`` as a string;
-            # migration 0168 re-applies this corrected definition.
+            # migration 0169 re-applies this corrected definition.
             "action_type": {"enum": ["resume_from_pause", "cancel_at_period_end"]},
             "enrollment_id": {"bsonType": "string"},
             "pause_request_id": {"bsonType": OPT_STRING},
