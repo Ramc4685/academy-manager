@@ -1,4 +1,8 @@
-"""Application tests for the legacy invoice ↔ Stripe charge review queue (#242 WI-3)."""
+"""Application tests for linking a legacy Stripe charge to an invoice (#242 WI-3).
+
+The list half was deleted by the Billing Health trim (spec 2026-09-07 §2); only
+the explicit, admin-named confirm remains.
+"""
 
 from __future__ import annotations
 
@@ -11,7 +15,6 @@ import pytest
 from backend.v2.contexts.billing.application.use_cases.match_legacy_invoices import (
     ConfirmLegacyMatch,
     ConfirmLegacyMatchCommand,
-    ListLegacyMatchQueue,
 )
 from backend.v2.contexts.billing.domain.ledger import (
     InvoiceLine,
@@ -52,48 +55,6 @@ def _invoice(
         created_at=_NOW,
         updated_at=_NOW,
     )
-
-
-def _charge(
-    *,
-    charge_id: str = "ch_legacy_1",
-    amount: int = 7_000,
-    payment_intent: str | None = "pi_legacy_1",
-    status: str = "succeeded",
-    refunded: bool = False,
-) -> dict[str, Any]:
-    return {
-        "id": charge_id,
-        "object": "charge",
-        "amount": amount,
-        "currency": "usd",
-        "status": status,
-        "paid": True,
-        "refunded": refunded,
-        "payment_intent": payment_intent,
-        "created": _CHARGE_EPOCH,
-        "description": "Legacy tuition",
-    }
-
-
-@dataclass
-class FakeParentCustomers:
-    customers: dict[str, str] = field(default_factory=dict)
-
-    async def get_stripe_customer_id(self, *, parent_id: str) -> str | None:
-        return self.customers.get(parent_id)
-
-
-@dataclass
-class FakeStripe:
-    charges_by_customer: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
-    list_calls: list[str] = field(default_factory=list)
-
-    async def list_charges_for_customer(
-        self, *, stripe_customer_id: str, limit: int = 100
-    ) -> list[dict[str, Any]]:
-        self.list_calls.append(stripe_customer_id)
-        return self.charges_by_customer.get(stripe_customer_id, [])[:limit]
 
 
 @dataclass
@@ -179,95 +140,6 @@ def _row_from_invoice(inv: LedgerInvoice) -> dict[str, Any]:
         "created_at": inv.created_at,
         "stripe_invoice_id": None,
     }
-
-
-# --------------------------------------------------------------------------- #
-# ListLegacyMatchQueue
-# --------------------------------------------------------------------------- #
-@pytest.mark.asyncio
-async def test_queue_surfaces_amount_matching_charge_without_allocating() -> None:
-    invoice = _invoice()
-    ledger = FakeLedger(invoices={"inv-1": invoice}, unmatched=[_row_from_invoice(invoice)])
-    stripe = FakeStripe(charges_by_customer={"cus_1": [_charge()]})
-    customers = FakeParentCustomers(customers={"parent-1": "cus_1"})
-
-    rows = await ListLegacyMatchQueue(
-        ledger=ledger, stripe=stripe, parent_customers=customers
-    ).execute()
-
-    assert len(rows) == 1
-    row = rows[0]
-    assert row.stripe_customer_id == "cus_1"
-    assert [c.stripe_charge_id for c in row.candidates] == ["ch_legacy_1"]
-    assert row.candidates[0].confidence == "high"  # exact balance + near due date
-    # Nothing was auto-allocated.
-    assert ledger.allocations == {}
-    assert ledger.invoices["inv-1"].status == "open"
-
-
-@pytest.mark.asyncio
-async def test_queue_skips_non_matching_amounts_and_refunds() -> None:
-    invoice = _invoice()
-    ledger = FakeLedger(invoices={"inv-1": invoice}, unmatched=[_row_from_invoice(invoice)])
-    stripe = FakeStripe(
-        charges_by_customer={
-            "cus_1": [
-                _charge(charge_id="ch_wrong_amt", amount=1_234, payment_intent="pi_a"),
-                _charge(charge_id="ch_refunded", refunded=True, payment_intent="pi_b"),
-                _charge(charge_id="ch_failed", status="failed", payment_intent="pi_c"),
-            ]
-        }
-    )
-    customers = FakeParentCustomers(customers={"parent-1": "cus_1"})
-
-    rows = await ListLegacyMatchQueue(
-        ledger=ledger, stripe=stripe, parent_customers=customers
-    ).execute()
-
-    assert rows[0].candidates == []
-
-
-@pytest.mark.asyncio
-async def test_queue_excludes_charge_already_in_ledger() -> None:
-    invoice = _invoice()
-    ledger = FakeLedger(invoices={"inv-1": invoice}, unmatched=[_row_from_invoice(invoice)])
-    # A ledger payment already references this charge's PaymentIntent.
-    ledger.payments["existing"] = LedgerPayment(
-        payment_id="existing",
-        academy_id="acad",
-        parent_id="parent-1",
-        amount_cents=7_000,
-        unapplied_amount_cents=0,
-        currency="usd",
-        status="succeeded",
-        stripe_payment_intent_id="pi_legacy_1",
-        created_at=_NOW,
-        updated_at=_NOW,
-    )
-    stripe = FakeStripe(charges_by_customer={"cus_1": [_charge()]})
-    customers = FakeParentCustomers(customers={"parent-1": "cus_1"})
-
-    rows = await ListLegacyMatchQueue(
-        ledger=ledger, stripe=stripe, parent_customers=customers
-    ).execute()
-
-    assert rows[0].candidates == []
-
-
-@pytest.mark.asyncio
-async def test_queue_no_customer_yields_empty_candidates_and_no_stripe_call() -> None:
-    invoice = _invoice()
-    ledger = FakeLedger(invoices={"inv-1": invoice}, unmatched=[_row_from_invoice(invoice)])
-    stripe = FakeStripe()
-    customers = FakeParentCustomers(customers={})  # parent has no Stripe customer
-
-    rows = await ListLegacyMatchQueue(
-        ledger=ledger, stripe=stripe, parent_customers=customers
-    ).execute()
-
-    assert rows[0].candidates == []
-    assert rows[0].stripe_customer_id is None
-    assert stripe.list_calls == []
 
 
 # --------------------------------------------------------------------------- #

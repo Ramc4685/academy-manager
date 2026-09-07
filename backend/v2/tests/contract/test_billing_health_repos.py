@@ -452,7 +452,9 @@ async def test_autopay_disable_failures_are_listed_newest_first(db, acad) -> Non
     await _seed_dunning_state(
         db, academy_id=acad, invoice_id="inv-pending", autopay_disable_status="pending"
     )
-    await _seed_dunning_state(db, academy_id=acad, invoice_id="inv-none", autopay_disable_status=None)
+    await _seed_dunning_state(
+        db, academy_id=acad, invoice_id="inv-none", autopay_disable_status=None
+    )
 
     result = await MongoDunningStateRepository(db).list_autopay_disable_failures()
 
