@@ -44,6 +44,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_connected_account_repo imp
 from backend.v2.contexts.billing.infrastructure.mongo_dunning_state_repo import (
     MongoDunningStateRepository,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_parent_billing_customer_repo import (
+    MongoParentBillingCustomerRepository,
+)
 from backend.v2.contexts.identity.application.get_academy_gateway_use_case import (
     mask_stripe_account_id,
 )
@@ -224,16 +227,23 @@ def compose_admin_billing_health(db: Any, stripe: StripeGateway) -> AdminBilling
         invoice_id: str,
         stripe_charge_id: str,
         amount_cents: int,
-        stripe_payment_intent_id: str | None,
         paid_at: datetime | None,
         recorded_by: str | None,
     ) -> dict[str, Any]:
-        result = await ConfirmLegacyMatch(ledger=billing_ledger_repo).execute(
+        # The charge is read back from Stripe before anything is written, so a
+        # gateway that cannot list charges must fail loudly rather than let an
+        # unverified match through.
+        if not hasattr(stripe, "list_charges_for_customer"):
+            raise RuntimeError("Stripe gateway cannot list charges; cannot verify a match")
+        result = await ConfirmLegacyMatch(
+            ledger=billing_ledger_repo,
+            stripe=stripe,
+            parent_customers=MongoParentBillingCustomerRepository(db),
+        ).execute(
             ConfirmLegacyMatchCommand(
                 invoice_id=invoice_id,
                 stripe_charge_id=stripe_charge_id,
                 amount_cents=amount_cents,
-                stripe_payment_intent_id=stripe_payment_intent_id,
                 paid_at=paid_at,
                 recorded_by=recorded_by,
             )

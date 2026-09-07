@@ -2287,7 +2287,6 @@ export interface ConfirmLegacyMatchRequest {
   invoice_id: string;
   stripe_charge_id: string;
   amount_cents: number;
-  stripe_payment_intent_id?: string | null;
   paid_at?: string | null;
 }
 

@@ -127,6 +127,67 @@ class FakeLedger:
         return result
 
 
+@dataclass
+class FakeParentCustomers:
+    """Mirrors the real repo: a parent may simply have no Stripe customer."""
+
+    customer_id: str | None = "cus_1"
+
+    async def get_stripe_customer_id(self, *, parent_id: str) -> str | None:
+        return self.customer_id
+
+
+@dataclass
+class FakeStripe:
+    """Returns charge dicts shaped like Stripe's, keyed by customer.
+
+    Deliberately NOT permissive: a charge id that was never issued to this
+    customer is absent, exactly as the real list would leave it out. A fake that
+    invented one would hide the parent-binding guard.
+    """
+
+    charges: list[dict[str, Any]] = field(default_factory=list)
+
+    async def list_charges_for_customer(self, *, stripe_customer_id: str) -> list[dict[str, Any]]:
+        return list(self.charges)
+
+
+def _charge(
+    *,
+    charge_id: str = "ch_legacy_1",
+    amount: int = 7_000,
+    payment_intent: str | None = "pi_legacy_1",
+    status: str = "succeeded",
+    refunded: bool = False,
+    paid: bool = True,
+    currency: str = "usd",
+) -> dict[str, Any]:
+    return {
+        "id": charge_id,
+        "amount": amount,
+        "currency": currency,
+        "status": status,
+        "paid": paid,
+        "refunded": refunded,
+        "payment_intent": payment_intent,
+        "created": _CHARGE_EPOCH,
+    }
+
+
+def _uc(
+    ledger: FakeLedger,
+    *,
+    charges: list[dict[str, Any]] | None = None,
+    customer_id: str | None = "cus_1",
+) -> ConfirmLegacyMatch:
+    return ConfirmLegacyMatch(
+        ledger=ledger,
+        stripe=FakeStripe(charges=charges if charges is not None else [_charge()]),
+        parent_customers=FakeParentCustomers(customer_id=customer_id),
+        clock=lambda: _NOW,
+    )
+
+
 def _row_from_invoice(inv: LedgerInvoice) -> dict[str, Any]:
     return {
         "invoice_id": inv.invoice_id,
@@ -150,12 +211,11 @@ async def test_confirm_records_backdated_payment_and_marks_invoice_paid() -> Non
     ledger = FakeLedger(invoices={"inv-1": _invoice()})
     paid_at = datetime(2026, 6, 28, 9, 0, tzinfo=UTC)
 
-    result = await ConfirmLegacyMatch(ledger=ledger, clock=lambda: _NOW).execute(
+    result = await _uc(ledger).execute(
         ConfirmLegacyMatchCommand(
             invoice_id="inv-1",
             stripe_charge_id="ch_legacy_1",
             amount_cents=7_000,
-            stripe_payment_intent_id="pi_legacy_1",
             paid_at=paid_at,
             recorded_by="admin-9",
         )
@@ -178,9 +238,8 @@ async def test_confirm_is_idempotent_on_rerun() -> None:
         invoice_id="inv-1",
         stripe_charge_id="ch_legacy_1",
         amount_cents=7_000,
-        stripe_payment_intent_id="pi_legacy_1",
     )
-    uc = ConfirmLegacyMatch(ledger=ledger, clock=lambda: _NOW)
+    uc = _uc(ledger)
 
     await uc.execute(cmd)
     await uc.execute(cmd)
@@ -195,7 +254,7 @@ async def test_confirm_rejects_overpayment() -> None:
     ledger = FakeLedger(invoices={"inv-1": _invoice(balance_due_cents=5_000)})
 
     with pytest.raises(ValueError, match="exceeds"):
-        await ConfirmLegacyMatch(ledger=ledger, clock=lambda: _NOW).execute(
+        await _uc(ledger, charges=[_charge(amount=7_000)]).execute(
             ConfirmLegacyMatchCommand(
                 invoice_id="inv-1",
                 stripe_charge_id="ch_legacy_1",
@@ -209,10 +268,126 @@ async def test_confirm_rejects_unpayable_invoice() -> None:
     ledger = FakeLedger(invoices={"inv-1": _invoice(status="paid", balance_due_cents=0)})
 
     with pytest.raises(ValueError, match="not payable"):
-        await ConfirmLegacyMatch(ledger=ledger, clock=lambda: _NOW).execute(
+        await _uc(ledger).execute(
             ConfirmLegacyMatchCommand(
                 invoice_id="inv-1",
                 stripe_charge_id="ch_legacy_1",
                 amount_cents=7_000,
+            )
+        )
+
+
+# --------------------------------------------------------------------------- #
+# Verification against Stripe (the guarantees the deleted list used to give)
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_confirm_records_stripes_payment_intent_not_the_charge_id() -> None:
+    """The webhook and reconciler dedupe on the payment intent.
+
+    Storing the charge id here instead left the same money bookable twice: once
+    by hand, then again when the quarantined event was replayed, with the second
+    copy landing as spendable parent credit.
+    """
+    ledger = FakeLedger(invoices={"inv-1": _invoice()})
+
+    result = await _uc(ledger).execute(
+        ConfirmLegacyMatchCommand(
+            invoice_id="inv-1", stripe_charge_id="ch_legacy_1", amount_cents=7_000
+        )
+    )
+
+    assert ledger.payments[result.payment_id].stripe_payment_intent_id == "pi_legacy_1"
+
+
+@pytest.mark.asyncio
+async def test_confirm_rejects_a_charge_already_in_the_ledger() -> None:
+    """The deleted queue filtered these out; the guard now lives on confirm."""
+    ledger = FakeLedger(invoices={"inv-1": _invoice()})
+    ledger.payments["pay-webhook"] = LedgerPayment(
+        payment_id="pay-webhook",
+        academy_id="acad",
+        parent_id="parent-1",
+        amount_cents=7_000,
+        unapplied_amount_cents=0,
+        currency="usd",
+        status="succeeded",
+        payment_method="card",
+        stripe_payment_intent_id="pi_legacy_1",
+        paid_at=_NOW,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+
+    with pytest.raises(ValueError, match="already recorded"):
+        await _uc(ledger).execute(
+            ConfirmLegacyMatchCommand(
+                invoice_id="inv-1", stripe_charge_id="ch_legacy_1", amount_cents=7_000
+            )
+        )
+
+    assert len(ledger.allocations) == 0
+
+
+@pytest.mark.asyncio
+async def test_confirm_rejects_an_amount_that_is_not_the_charge_amount() -> None:
+    """A typo must not book money nobody paid.
+
+    Typing the invoice balance instead of the charge amount used to pass, since
+    the only check was ``amount <= balance``.
+    """
+    ledger = FakeLedger(invoices={"inv-1": _invoice(total_cents=70_000, balance_due_cents=70_000)})
+
+    with pytest.raises(ValueError, match="does not match the Stripe charge amount"):
+        await _uc(ledger, charges=[_charge(amount=7_000)]).execute(
+            ConfirmLegacyMatchCommand(
+                invoice_id="inv-1", stripe_charge_id="ch_legacy_1", amount_cents=70_000
+            )
+        )
+
+    assert ledger.payments == {}
+
+
+@pytest.mark.asyncio
+async def test_confirm_rejects_a_charge_belonging_to_another_family() -> None:
+    ledger = FakeLedger(invoices={"inv-1": _invoice()})
+
+    with pytest.raises(ValueError, match="not found on this parent"):
+        await _uc(ledger, charges=[_charge(charge_id="ch_someone_else")]).execute(
+            ConfirmLegacyMatchCommand(
+                invoice_id="inv-1", stripe_charge_id="ch_legacy_1", amount_cents=7_000
+            )
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("charge", "message"),
+    [
+        (_charge(refunded=True), "refunded or never paid"),
+        (_charge(status="failed"), "did not succeed"),
+        (_charge(currency="eur"), "is not in USD"),
+    ],
+)
+async def test_confirm_rejects_a_charge_that_is_not_good_money(
+    charge: dict[str, Any], message: str
+) -> None:
+    ledger = FakeLedger(invoices={"inv-1": _invoice()})
+
+    with pytest.raises(ValueError, match=message):
+        await _uc(ledger, charges=[charge]).execute(
+            ConfirmLegacyMatchCommand(
+                invoice_id="inv-1", stripe_charge_id="ch_legacy_1", amount_cents=7_000
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_confirm_refuses_when_the_parent_has_no_stripe_customer() -> None:
+    ledger = FakeLedger(invoices={"inv-1": _invoice()})
+
+    with pytest.raises(ValueError, match="no Stripe customer"):
+        await _uc(ledger, customer_id=None).execute(
+            ConfirmLegacyMatchCommand(
+                invoice_id="inv-1", stripe_charge_id="ch_legacy_1", amount_cents=7_000
             )
         )

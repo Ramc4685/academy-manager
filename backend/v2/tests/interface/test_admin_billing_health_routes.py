@@ -297,7 +297,6 @@ def test_confirm_posts_the_charge_and_records_the_actor(
             "invoice_id": "inv-1",
             "stripe_charge_id": "ch_1",
             "amount_cents": 7000,
-            "stripe_payment_intent_id": "pi_1",
             "paid_at": "2026-06-28T09:00:00+00:00",
         },
     )
@@ -305,7 +304,9 @@ def test_confirm_posts_the_charge_and_records_the_actor(
     assert response.status_code == 200, response.text
     assert response.json()["invoice_status"] == "paid"
     assert services.calls["confirm"]["amount_cents"] == 7000
-    assert services.calls["confirm"]["stripe_payment_intent_id"] == "pi_1"
+    # No payment-intent field: the use case reads the charge's real intent back
+    # from Stripe rather than trusting a typed one (see test_confirm_legacy_match).
+    assert "stripe_payment_intent_id" not in services.calls["confirm"]
     assert services.calls["confirm"]["recorded_by"] == "u-owner"
 
 

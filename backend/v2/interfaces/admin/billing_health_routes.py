@@ -158,7 +158,6 @@ class ConfirmLegacyMatchRequest(BaseModel):
     invoice_id: str
     stripe_charge_id: str
     amount_cents: int = Field(gt=0)
-    stripe_payment_intent_id: str | None = None
     paid_at: datetime | None = None
 
 
@@ -311,7 +310,6 @@ async def confirm_legacy_match(
             invoice_id=body.invoice_id,
             stripe_charge_id=body.stripe_charge_id,
             amount_cents=body.amount_cents,
-            stripe_payment_intent_id=body.stripe_payment_intent_id,
             paid_at=body.paid_at,
             recorded_by=claims.user_id,
         )

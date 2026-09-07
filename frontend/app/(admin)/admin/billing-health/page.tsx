@@ -442,7 +442,6 @@ function LinkChargeForm({ onLinked }: { onLinked: () => void }) {
   const [invoiceId, setInvoiceId] = useState("");
   const [chargeId, setChargeId] = useState("");
   const [amount, setAmount] = useState("");
-  const [paymentIntentId, setPaymentIntentId] = useState("");
   const [paidAt, setPaidAt] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -456,7 +455,6 @@ function LinkChargeForm({ onLinked }: { onLinked: () => void }) {
         invoice_id: invoiceId.trim(),
         stripe_charge_id: chargeId.trim(),
         amount_cents: amountCents,
-        stripe_payment_intent_id: paymentIntentId.trim() || null,
         paid_at: paidAt ? new Date(paidAt).toISOString() : null,
       }),
     onSuccess: () => {
@@ -512,15 +510,6 @@ function LinkChargeForm({ onLinked }: { onLinked: () => void }) {
               placeholder="70.00"
               inputMode="decimal"
               data-testid="link-amount"
-            />
-          </Field>
-          <Field label="PaymentIntent ID (optional)">
-            <input
-              value={paymentIntentId}
-              onChange={(e) => setPaymentIntentId(e.target.value)}
-              className={inputClass}
-              placeholder="pi_..."
-              data-testid="link-payment-intent-id"
             />
           </Field>
           <Field label="Paid at (optional)">
