@@ -384,9 +384,10 @@ test.describe("admin session creation and fee settings UI", () => {
 
     await page.goto("/admin/sessions/series-wed");
 
-    await expect(page.getByRole("heading", { name: "Replacement coaches" })).toBeVisible();
+    // #671 merged "Replacement coaches" into the single "Class dates" card.
+    await expect(page.getByRole("heading", { name: "Class dates" })).toBeVisible();
     await expect(page.getByText("Occurrences")).toHaveCount(0);
-    await expect(page.getByText("No replacement coaches added.")).toBeVisible();
+    await expect(page.getByRole("cell", { name: "Replacement Coach" })).toHaveCount(0);
 
     await page.getByRole("button", { name: "Add replacement" }).click();
     await page.getByLabel("Date").fill(replacementDate);
@@ -403,10 +404,8 @@ test.describe("admin session creation and fee settings UI", () => {
       replacement_coach_id: "coach-replacement",
       reason: null,
     });
-    await expect(page.getByText("No replacement coaches added.")).toHaveCount(0);
-    // Issue #671 added a second table ("Class dates") listing every date, so
-    // this occurrence's replacement coach now shows in both cards.
-    await expect(page.getByRole("cell", { name: "Replacement Coach" }).first()).toBeVisible();
-    await expect(page.getByRole("cell", { name: "Replacement Coach" })).toHaveCount(2);
+    // Issue #671 folded the replacement-coach table into the single "Class
+    // dates" card, so a replaced date is listed exactly ONCE.
+    await expect(page.getByRole("cell", { name: "Replacement Coach" })).toHaveCount(1);
   });
 });

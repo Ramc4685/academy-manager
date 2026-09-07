@@ -102,6 +102,28 @@ test.describe("admin cancels one class date (#671)", () => {
       coach_attendance: [],
     });
 
+    // #671: a date that has already run. The domain guard refuses to cancel
+    // it (409), so the page must not offer the action at all — and the status
+    // column must not call it "Scheduled".
+    const pastDate = formatDateInput(new Date(Date.now() - 14 * 86400000));
+    const pastOccurrenceId = `series-thu:${pastDate}:18:00`;
+    const pastRow = {
+      occurrence_id: pastOccurrenceId,
+      session_id: "series-thu",
+      start_at: `${pastDate}T23:00:00Z`,
+      end_at: `${pastDate}T23:45:00Z`,
+      status: "scheduled",
+      cancellation_reason: null,
+      cancelled_at: null,
+      scheduled_coach_id: "coach-scheduled",
+      actual_coach_id: null,
+      substitute_coach_id: null,
+      attendance_marked_count: 0,
+      attendance_marked_by: [],
+      attendance_last_marked_at: null,
+      coach_attendance: [],
+    };
+
     await page.route("**/api/v2/admin/**", (route) => {
       const request = route.request();
       const url = new URL(request.url());
@@ -128,7 +150,7 @@ test.describe("admin cancels one class date (#671)", () => {
         request.method() === "GET" &&
         url.pathname === "/api/v2/admin/sessions/series-thu/occurrences"
       ) {
-        return fulfillJson(route, { occurrences: [occurrenceRow()] });
+        return fulfillJson(route, { occurrences: [pastRow, occurrenceRow()] });
       }
       if (
         request.method() === "POST" &&
@@ -181,6 +203,9 @@ test.describe("admin cancels one class date (#671)", () => {
 
     await expect(page.getByRole("heading", { name: "Class dates" })).toBeVisible();
     await expect(page.getByTestId("occurrence-cancelled-chip")).toHaveCount(0);
+    // The past date is listed, labelled Past, and offers no cancel action.
+    await expect(page.getByTestId(`cancel-occurrence-${pastOccurrenceId}`)).toHaveCount(0);
+    await expect(page.getByText("Past", { exact: true })).toBeVisible();
 
     await page.getByTestId(`cancel-occurrence-${occurrenceId}`).click();
 

@@ -49,6 +49,22 @@ import {
   resolveAcademyTimeZone,
 } from "@/lib/format/academy-time";
 
+/**
+ * A date the server will refuse to cancel (#671).
+ *
+ * `assert_occurrence_cancellable` rejects any occurrence whose `start_at` has
+ * passed and any `completed` one, so offering the action there only ever
+ * produces a raw 409 in the dialog. Module-level, not computed in the
+ * component body: reading the clock during render is impure.
+ */
+function hasStarted(occurrence: AdminSessionOccurrenceView): boolean {
+  return parseAcademyInstant(occurrence.start_at).getTime() <= Date.now();
+}
+
+function isCancellable(occurrence: AdminSessionOccurrenceView): boolean {
+  return occurrence.status === "scheduled" && !hasStarted(occurrence);
+}
+
 export function ReplacementCoachTable({
   occurrences,
   userNameById,
@@ -64,9 +80,11 @@ export function ReplacementCoachTable({
   timezone: string | null;
   onEdit: (occurrence: AdminSessionOccurrenceView) => void;
   /**
-   * Issue #671. When given, each still-scheduled future date offers "Cancel
-   * this date". Omitted on the replacement-coach table, which is about who
-   * teaches a class, not whether it runs.
+   * Issue #671. When given, each still-scheduled FUTURE date offers "Cancel
+   * this date". Past and completed dates never do: the domain guard
+   * (`assert_occurrence_cancellable`) refuses any occurrence whose `start_at`
+   * has passed, so offering the button there only ever produces a raw 409 in
+   * the dialog for an action that was never possible.
    */
   onCancel?: (occurrence: AdminSessionOccurrenceView) => void;
   /** Show the Cancelled chip column (#671). */
@@ -146,6 +164,13 @@ export function ReplacementCoachTable({
                     >
                       Cancelled
                     </span>
+                  ) : occurrence.status === "completed" ? (
+                    <span className="text-xs text-rally-subtle">Completed</span>
+                  ) : hasStarted(occurrence) ? (
+                    // A date that ran but was never marked completed still
+                    // reads "scheduled" in the database; calling it Scheduled
+                    // here is what made an admin try to cancel last week.
+                    <span className="text-xs text-rally-subtle">Past</span>
                   ) : (
                     <span className="text-xs text-rally-subtle">Scheduled</span>
                   )}
@@ -160,7 +185,7 @@ export function ReplacementCoachTable({
                   >
                     Change replacement
                   </Button>
-                  {onCancel && occurrence.status !== "cancelled" && (
+                  {onCancel && isCancellable(occurrence) && (
                     <Button
                       variant="secondary"
                       size="sm"

@@ -174,7 +174,6 @@ export default function AdminSessionDetailPage() {
     [enrollmentsQuery.data?.enrollments],
   );
   const occurrences = occurrencesQuery.data?.occurrences ?? [];
-  const replacementOccurrences = occurrences.filter((occurrence) => Boolean(occurrence.actual_coach_id));
   const userNameById = new Map(
     (usersQuery.data?.users ?? []).map((user) => [user.user_id, user.display_name || user.email])
   );
@@ -313,11 +312,14 @@ export default function AdminSessionDetailPage() {
         {session ? <CoachingStaffCard session={session} /> : <TableSkeleton />}
       </Card>
 
-      {/* Replacement coaches */}
+      {/* Class dates (#671) — one table. It already carries the replacement
+          column, the replacement action and the cancel action, so a separate
+          "Replacement coaches" card would list every replaced date twice with
+          two identical buttons (ambiguous for the admin and for locators). */}
       <Card p={20} className="min-w-0">
         <LaneHeader
           index="02"
-          title="Replacement coaches"
+          title="Class dates"
           action={
             <Button
               variant="primary"
@@ -329,23 +331,6 @@ export default function AdminSessionDetailPage() {
             </Button>
           }
         />
-        {occurrencesQuery.isLoading ? (
-          <TableSkeleton />
-        ) : replacementOccurrences.length === 0 ? (
-          <p className="text-sm text-rally-subtle">No replacement coaches added.</p>
-        ) : (
-          <ReplacementCoachTable
-            occurrences={replacementOccurrences}
-            userNameById={userNameById}
-            timezone={session?.timezone ?? null}
-            onEdit={setOccurrenceTarget}
-          />
-        )}
-      </Card>
-
-      {/* Class dates (#671) */}
-      <Card p={20} className="min-w-0">
-        <LaneHeader index="03" title="Class dates" />
         {occurrencesQuery.isLoading ? (
           <TableSkeleton />
         ) : (
@@ -361,10 +346,10 @@ export default function AdminSessionDetailPage() {
         )}
       </Card>
 
-            {/* Communication pack (#613) */}
+      {/* Communication pack (#613) */}
       <Card p={20} className="min-w-0">
         <LaneHeader
-          index="04"
+          index="03"
           title="Communication pack"
           action={
             // Distinct accessible name from the header's "Edit session": both
@@ -398,7 +383,7 @@ export default function AdminSessionDetailPage() {
       {activeTab === "roster" && (
         <Card p={20} className="min-w-0">
           <LaneHeader
-            index="05"
+            index="04"
             title="Roster"
             action={
               session && (
@@ -442,7 +427,7 @@ export default function AdminSessionDetailPage() {
 
       {activeTab === "roster" && (
         <Card p={20} className="min-w-0">
-          <LaneHeader index="06" title="Announcements" />
+          <LaneHeader index="05" title="Announcements" />
           <AnnouncementsPanel persona="admin" sessionId={sessionId} />
         </Card>
       )}
@@ -450,7 +435,7 @@ export default function AdminSessionDetailPage() {
       {activeTab === "waitlist" && (
         <Card p={20} className="min-w-0">
           <LaneHeader
-            index="07"
+            index="06"
             title="Waitlist"
             action={
               <Button
@@ -483,7 +468,7 @@ export default function AdminSessionDetailPage() {
 
       {activeTab === "teaching-plan" && (
         <Card p={20} className="min-w-0">
-          <LaneHeader index="08" title="Teaching plan" />
+          <LaneHeader index="07" title="Teaching plan" />
           <AdminTeachingPlan sessionId={sessionId} programId={rosterProgramId || null} />
         </Card>
       )}
