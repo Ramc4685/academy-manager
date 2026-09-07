@@ -69,11 +69,14 @@ describe("isOwnerOnlyRoute", () => {
     expect(isOwnerOnlyRoute("/admin/session-economics")).toBe(true);
   });
 
-  it("has no owner-only exceptions now that the Dues page is gone", () => {
-    // `/admin/reports/dues` is a redirect stub to `/admin/payments`; the whole
-    // Reports subtree is owner-only again (month close spec §6).
-    expect(OWNER_ONLY_ROUTE_EXCEPTIONS).toEqual([]);
-    expect(isOwnerOnlyRoute("/admin/reports/dues")).toBe(true);
+  it("keeps the old Dues path reachable so its redirect can run for admins", () => {
+    // The page is gone, but the path is now a redirect to `/admin/payments` —
+    // a page admins may use. Dropping the exception would meet an admin
+    // following an old bookmark with an owner-only wall instead of forwarding
+    // them (month close spec §6).
+    expect(OWNER_ONLY_ROUTE_EXCEPTIONS).toEqual(["/admin/reports/dues"]);
+    expect(isOwnerOnlyRoute("/admin/reports/dues")).toBe(false);
+    expect(isOwnerOnlyRoute("/admin/reports")).toBe(true);
   });
 
   it("does not match on a shared string prefix", () => {

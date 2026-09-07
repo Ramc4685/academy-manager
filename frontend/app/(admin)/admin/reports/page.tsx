@@ -13,6 +13,7 @@ import {
   YAxis,
 } from "recharts";
 
+import type { Route } from "next";
 import Link from "next/link";
 
 import {
@@ -297,7 +298,7 @@ export default function AdminMonthClosePage() {
                       {row.items.map((item) => (
                         <li key={`${item.kind}:${item.id}`} className="px-3 py-2 text-sm">
                           <Link
-                            href={item.href}
+                            href={item.href as Route}
                             className="font-medium text-rally-accent hover:underline"
                           >
                             {item.label}

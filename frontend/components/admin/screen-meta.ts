@@ -131,11 +131,16 @@ export const OWNER_ONLY_ROUTE_PREFIXES: ReadonlyArray<string> = [
 ];
 
 /**
- * Exceptions carved out of `OWNER_ONLY_ROUTE_PREFIXES`. Empty since the Dues
- * page was removed (month close spec §6): `/admin/reports/dues` now just
- * redirects to `/admin/payments`, which admins can reach directly.
+ * Exceptions carved out of `OWNER_ONLY_ROUTE_PREFIXES`.
+ *
+ * `/admin/reports/dues` stays listed even though the Dues page is gone (month
+ * close spec §6). It is now a redirect to `/admin/payments`, and `/admin/reports`
+ * is owner-only, so removing the exception would meet an admin following an old
+ * bookmark with an owner-only wall instead of forwarding them to a page they are
+ * allowed to use. The exception keeps the redirect reachable by whoever the
+ * target is reachable by.
  */
-export const OWNER_ONLY_ROUTE_EXCEPTIONS: ReadonlyArray<string> = [];
+export const OWNER_ONLY_ROUTE_EXCEPTIONS: ReadonlyArray<string> = ["/admin/reports/dues"];
 
 const matchesPrefix = (pathname: string, prefix: string) =>
   pathname === prefix || pathname.startsWith(prefix + "/");
