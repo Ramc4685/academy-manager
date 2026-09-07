@@ -90,13 +90,11 @@ async def test_get_academy_fees():
     repo = AsyncMock()
     repo.find_by_id.return_value = {
         "_id": "acad-1",
-        "default_monthly_cents": 10000,
         "late_fee_cents": 1500,
         "grace_days": 3,
     }
     use_case = GetAcademyFeesUseCase(academy_repo=repo)
     output = await use_case.execute("acad-1")
-    assert output.default_monthly_cents == 10000
     assert output.late_fee_cents == 1500
     assert output.grace_days == 3
 
@@ -106,7 +104,6 @@ async def test_update_academy_fees():
     repo = AsyncMock()
     repo.update_by_id.return_value = {
         "_id": "acad-1",
-        "default_monthly_cents": 10000,
         "late_fee_cents": 2000,
         "grace_days": 3,
     }

@@ -29,8 +29,6 @@ class UpdateAcademyFeesUseCase:
             raise LookupError(f"academy {academy_id} not found")
         fees = doc.get("fees") or doc
         return GetAcademyFeesOutput(
-            default_monthly_cents=fees.get("default_monthly_cents")
-            or fees.get("default_session_price_cents"),
             late_fee_cents=fees.get("late_fee_cents") or fees.get("late_cancellation_fee_cents"),
             grace_days=fees.get("grace_days"),
         )

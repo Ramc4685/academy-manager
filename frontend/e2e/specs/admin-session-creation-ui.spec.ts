@@ -1,5 +1,7 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 
+import { billingRulesFixture } from "../fixtures/billing-rules";
+
 const ADMIN_ME = {
   user_id: "user-admin-session-ui-e2e",
   email: "admin@example.com",
@@ -67,7 +69,7 @@ function nextWednesdayDateInput(): string {
   return formatDateInput(value);
 }
 
-test.describe("admin session creation and fee settings UI", () => {
+test.describe("admin session creation and billing-rules settings UI", () => {
   test.describe.configure({ mode: "serial" });
 
   test("create session dialog opens, fills form, and preserves the API payload", async ({
@@ -148,75 +150,41 @@ test.describe("admin session creation and fee settings UI", () => {
     });
   });
 
-  test("fee settings focus on late-payment policy instead of session tuition", async ({ page }) => {
-    await stubAdminShell(page);
-    let feePatch: unknown = null;
-
-    await page.route("**/api/v2/admin/academy/fees", (route) => {
-      const request = route.request();
-      if (request.method() === "GET") {
-        return fulfillJson(route, {
-          default_monthly_cents: 12000,
-          late_fee_cents: 1500,
-          grace_days: 5,
-        });
-      }
-      if (request.method() === "PATCH") {
-        feePatch = request.postDataJSON();
-        return fulfillJson(route, {
-          default_monthly_cents: 12550,
-          late_fee_cents: 1500,
-          grace_days: 5,
-        });
-      }
-      return route.fallback();
-    });
-
-    await page.goto("/admin/settings?panel=fees");
-
-    await expect(page.getByLabel("Monthly cents")).toHaveCount(0);
-    await expect(page.getByLabel("Late fee ($)")).toHaveValue("15.00");
-    await expect(page.getByLabel("Grace days")).toHaveValue("5");
-
-    await page.getByLabel("Late fee ($)").fill("17.50");
-    await page.getByRole("button", { name: "Save changes" }).click();
-
-    await expect.poll(() => feePatch).toEqual({ late_fee_cents: 1750 });
-  });
-
-  test("invoice schedule panel reads and saves billing day and grace days (#651)", async ({
+  test("billing rules save the late fee and the invoice schedule from one panel", async ({
     page,
   }) => {
     await stubAdminShell(page);
-    await page.route("**/api/v2/admin/academy/fees", (route) =>
-      fulfillJson(route, { default_monthly_cents: 12000, late_fee_cents: 1500, grace_days: 5 }),
-    );
-    let schedulePut: unknown = null;
-    await page.route("**/api/v2/admin/billing/settings/invoice-schedule", (route) => {
+    let rulesPut: unknown = null;
+
+    await page.route("**/api/v2/admin/billing/rules", (route) => {
       const request = route.request();
-      if (request.method() === "GET") {
-        return fulfillJson(route, { billing_day: 1, invoice_due_days: 7 });
-      }
+      if (request.method() === "GET") return fulfillJson(route, billingRulesFixture());
       if (request.method() === "PUT") {
-        schedulePut = request.postDataJSON();
-        return fulfillJson(route, { billing_day: 1, invoice_due_days: 10 });
+        rulesPut = request.postDataJSON();
+        return fulfillJson(
+          route,
+          billingRulesFixture(request.postDataJSON() as Record<string, number>),
+        );
       }
       return route.fallback();
     });
 
-    await page.goto("/admin/settings?panel=fees");
+    await page.goto("/admin/settings?panel=billing-rules");
 
-    const panel = page.getByTestId("invoice-schedule-panel");
-    await expect(panel).toContainText("9:00 AM academy time");
-    await expect(page.getByTestId("invoice-schedule-billing-day")).toHaveValue("1");
-    await expect(page.getByTestId("invoice-schedule-due-days")).toHaveValue("7");
-    await expect(page.getByTestId("invoice-schedule-save")).toBeDisabled();
+    // The dead per-session tuition field is gone for good.
+    await expect(page.getByLabel("Monthly cents")).toHaveCount(0);
+    await expect(page.getByTestId("billing-rules-input-late_fee_cents")).toHaveValue("15.00");
+    await expect(page.getByTestId("billing-rules-input-grace_days")).toHaveValue("5");
+    await expect(page.getByTestId("billing-rules-input-billing_day")).toHaveValue("1");
+    await expect(page.getByTestId("billing-rules-input-invoice_due_days")).toHaveValue("7");
+    await expect(page.getByTestId("billing-rules-save")).toBeDisabled();
 
-    await page.getByTestId("invoice-schedule-due-days").fill("10");
-    await page.getByTestId("invoice-schedule-save").click();
+    await page.getByTestId("billing-rules-input-late_fee_cents").fill("17.50");
+    await page.getByTestId("billing-rules-input-invoice_due_days").fill("10");
+    await page.getByTestId("billing-rules-save").click();
 
-    await expect.poll(() => schedulePut).toEqual({ billing_day: 1, invoice_due_days: 10 });
-    await expect(panel).toContainText("Saved.");
+    await expect.poll(() => rulesPut).toEqual({ invoice_due_days: 10, late_fee_cents: 1750 });
+    await expect(page.getByTestId("billing-rules-saved")).toBeVisible();
   });
 
   test("dashboard recent payments show money received with method", async ({ page }) => {

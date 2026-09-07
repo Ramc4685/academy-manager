@@ -1,5 +1,6 @@
 import { test, expect, type Page, type Route } from "@playwright/test";
 
+import { billingRulesFixture } from "../fixtures/billing-rules";
 import { openAdminNav } from "../helpers/nav";
 import {
   stubCoachMessages,
@@ -109,7 +110,7 @@ const ADMIN_ROUTES = [
 
 const SETTINGS_PANELS = [
   { key: "academy", label: "Academy", testid: "admin-settings-academy" },
-  { key: "fees", label: "Fees", testid: "admin-settings-fees" },
+  { key: "billing-rules", label: "Billing rules", testid: "admin-settings-billing-rules" },
   { key: "gateway", label: "Gateway", testid: "admin-settings-gateway" },
   { key: "notify", label: "Notify", testid: "admin-settings-notify" },
   { key: "roles", label: "Roles", testid: "admin-settings-roles" },
@@ -442,10 +443,12 @@ async function stubAdminBff(
   );
   await page.route(/\/api\/v2\/admin\/academy\/fees(?:\?.*)?$/, (route) =>
     fulfillJson(route, {
-      default_monthly_cents: null,
       late_fee_cents: null,
       grace_days: null,
     }),
+  );
+  await page.route(/\/api\/v2\/admin\/billing\/rules(?:\?.*)?$/, (route) =>
+    fulfillJson(route, billingRulesFixture()),
   );
   await page.route(
     /\/api\/v2\/admin\/academy\/notifications(?:\?.*)?$/,
@@ -815,21 +818,23 @@ test.describe("Rally admin shell", () => {
       expect(options.sort()).toEqual(["Admin", "Assistant coach", "Coach", "Owner", "Parent"]);
     });
 
-    test("admin without the owner scope sees no Fees or Gateway settings", async ({
+    test("admin without the owner scope sees no Billing rules or Gateway settings", async ({
       page,
     }) => {
       const errors = collectConsoleErrors(page);
       await stubAdminBff(page, SINGLE_MEMBERSHIP, ADMIN_ONLY_ME);
       await page.goto("/admin/settings");
       await expect(page.getByTestId("admin-settings-academy")).toBeVisible();
-      await expect(page.getByRole("link", { name: "Fees", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("link", { name: "Billing rules", exact: true })).toHaveCount(0);
       await expect(page.getByRole("link", { name: "Gateway", exact: true })).toHaveCount(0);
       await expect(page.getByRole("link", { name: "Notify", exact: true })).toBeVisible();
 
       // A deep link to an owner-only panel shows the notice, not the form.
+      // A retired deep link (?panel=fees) resolves to Billing rules, which is
+      // still owner-only, so the notice shows rather than the form.
       await page.goto("/admin/settings?panel=fees");
       await expect(page.getByTestId("owner-only-panel")).toBeVisible();
-      await expect(page.getByTestId("admin-settings-fees")).toHaveCount(0);
+      await expect(page.getByTestId("admin-settings-billing-rules")).toHaveCount(0);
       expect(
         errors,
         `App console errors on admin-only settings: ${errors.join("\n")}`,

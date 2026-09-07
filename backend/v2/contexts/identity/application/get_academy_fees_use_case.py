@@ -13,7 +13,6 @@ class AcademyRepo(Protocol):
 
 @dataclass(frozen=True)
 class GetAcademyFeesOutput:
-    default_monthly_cents: int | None = None
     late_fee_cents: int | None = None
     grace_days: int | None = None
 
@@ -28,8 +27,6 @@ class GetAcademyFeesUseCase:
             doc = await self._repo.upsert_defaults(academy_id)
         fees = doc.get("fees") or doc  # fees may be nested or flat
         return GetAcademyFeesOutput(
-            default_monthly_cents=fees.get("default_monthly_cents")
-            or fees.get("default_session_price_cents"),
             late_fee_cents=fees.get("late_fee_cents") or fees.get("late_cancellation_fee_cents"),
             grace_days=fees.get("grace_days"),
         )

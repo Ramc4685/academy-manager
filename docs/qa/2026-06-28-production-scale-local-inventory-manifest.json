@@ -1469,7 +1469,7 @@
       "source": "frontend/app/(admin)/admin/settings/page.tsx",
       "workflows": [
         "Edit academy settings",
-        "Fees",
+        "Billing rules",
         "Gateway",
         "Notifications",
         "Branding",
@@ -1480,13 +1480,19 @@
         "buttons": [
           "Save",
           "Cancel",
+          "Save billing rules",
           "Connect Stripe",
           "New session type",
           "Archive"
         ],
         "inputs": [
           "Academy name",
-          "Fees",
+          "Invoice day of month",
+          "Days until due",
+          "Grace days after due",
+          "Late fee",
+          "Cancellation notice",
+          "Late-cancellation fee",
           "Notification toggles",
           "Branding",
           "Session type name",
@@ -1515,8 +1521,9 @@
       ],
       "acceptance": [
         "Each panel saves or shows specific failure",
+        "Fixed billing rules (autopay charge time, retry ladder, cancel/join/pause policy, parent messages) render as stated values with no input, and the late-fee box carries its \"not applied automatically yet\" note above the inputs.",
         "Workflow evidence: \"Edit academy settings\" completes for the admin route /admin/settings with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Fees\" completes for the admin route /admin/settings with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Billing rules\" completes for the admin route /admin/settings with real-user evidence and no framework or runtime errors.",
         "Workflow evidence: \"Gateway\" completes for the admin route /admin/settings with real-user evidence and no framework or runtime errors.",
         "Workflow evidence: \"Notifications\" completes for the admin route /admin/settings with real-user evidence and no framework or runtime errors.",
         "Workflow evidence: \"Branding\" completes for the admin route /admin/settings with real-user evidence and no framework or runtime errors.",

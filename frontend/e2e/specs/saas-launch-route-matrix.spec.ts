@@ -260,7 +260,6 @@ async function stubAdminLaunchBff(page: Page): Promise<void> {
   );
   await page.route(/\/api\/v2\/admin\/academy\/fees(?:\?.*)?$/, (route) =>
     fulfillJson(route, {
-      default_monthly_cents: null,
       late_fee_cents: null,
       grace_days: null,
     })
