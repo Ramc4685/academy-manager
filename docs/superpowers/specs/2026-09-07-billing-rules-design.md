@@ -104,9 +104,20 @@ routes stay for their other callers:
 - `GET /admin/billing/rules` — admin persona, read-only, returns every row above,
   editable and fixed alike, each with its value and an `editable` flag. The fixed values
   are read from the constants that govern the behaviour, never re-typed as literals in the
-  view: the charge hour from the dunning repository, the ladder from the dunning domain,
-  the proration policy version from `domain/proration.py`. If a constant changes, the page
-  changes with it.
+  view: the ladder from `domain/dunning.py`, the proration policy version from
+  `domain/proration.py`, and the charge hour as described immediately below. If a constant
+  changes, the page changes with it.
+
+**The charge hour must move to the domain first.** It lives today as
+`first_attempt_local_hour: ClassVar[int] = 9` on `MongoDunningStateRepository`, which is
+infrastructure, and import-linter's `application-does-not-import-infrastructure` rule
+forbids the assembler from reading it there. So this spec moves the constant to
+`contexts/billing/domain/dunning.py` as `FIRST_ATTEMPT_LOCAL_HOUR = 9`, and the
+repository's class attribute references it. That puts all three dunning constants — the
+hour, the schedule and the maximum attempts — in one domain file, which is where a rule
+the worker obeys belongs. The repository's behaviour is unchanged and its existing tests
+prove it. This is a small edit outside the panel's own files and is called out here so it
+is not a surprise in review.
 - `PUT /admin/billing/rules` — **owner only**, body carries only the editable fields, all
   optional; applies each to its existing store through its existing use case
   (`SetInvoiceScheduleSettings`, the academy fees update, the self-service policy update),
