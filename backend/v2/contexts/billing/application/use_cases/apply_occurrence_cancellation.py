@@ -10,23 +10,31 @@ Policy (owner assumption, stated in the release note):
 1. The date is written to ``session_occurrence_overrides`` as
    ``status="cancelled", is_billable=False``. That collection is the overlay
    the monthly generator already reads (``MongoPaymentRepository
-   ._occurrences_for_session``), so a family whose FIRST month is priced
-   after this point is prorated over the remaining dates only, and every
-   calculation snapshot records the date as excluded.
+   ._occurrences_for_session``). A family whose FIRST month is priced after
+   this point is NOT charged for the date — but the date stays in the
+   proration DENOMINATOR (``CANCELLED_AFTER_PRICING_STATUS``), so calling a
+   class off can never make the remaining classes more expensive for the
+   next family through the door.
 2. Every family already enrolled is credited the date's share of the month
-   through the account credit ledger: ``period charge / billable classes in
-   the period``. When the period invoice exists (open, paid, partially paid)
-   the charge is that invoice's tuition net of discount; when it does not
-   exist yet the charge is the monthly price net of discount and the credit
-   auto-applies to the invoice when the generator mints it. The generator's
+   through the account credit ledger: ``period charge / the classes that
+   charge bought``. The charge is the period invoice's TUITION lines net of
+   the tuition discount when an invoice exists; the CONSUMED first-month
+   proration snapshot's amount when the month was paid at registration
+   checkout (no invoice is ever keyed to that enrollment+period); else the
+   monthly price net of discount, and the credit auto-applies when the
+   generator mints the invoice. The divisor comes from the same snapshot —
+   ``billable_remaining_classes`` for a prorated month, ``total_eligible_classes``
+   for a full one — because dividing a prorated charge by the month's whole
+   class list under-credits by the proration ratio. The generator's
    full-month amount is deliberately NOT changed: its completeness check
    compares the tuition line to the recomputed gross, and a gross that moved
    after the invoice existed would flag every later run as ``repair_failed``.
 3. Skipped, with a reason recorded: a void period invoice (the family already
    left), a paused family with no invoice for the period (never charged), an
-   enrollment whose first month is this period and is not invoiced yet (rule
-   1 prorates it instead — crediting too would pay the date back twice), and
-   a date before the family's billing start.
+   enrollment whose first month is this period and is not priced yet (rule
+   1 prorates it instead — crediting too would pay the date back twice), a
+   date before the family's billing start, and a date the family's charge
+   never covered (``date_not_billed``).
 
 Idempotent per ``(occurrence_id, enrollment_id)``: the credit carries
 ``source_type="occurrence_cancellation"`` and ``source_id=
@@ -53,7 +61,7 @@ from backend.v2.contexts.billing.domain.credits import (
     class_cancellation_credit_cents,
     class_cancellation_source_id,
 )
-from backend.v2.contexts.billing.domain.ledger import LedgerInvoice
+from backend.v2.contexts.billing.domain.ledger import InvoiceLine, LedgerInvoice
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry
 from backend.v2.contexts.billing.domain.proration import ClassOccurrence
 from backend.v2.shared.ids import new_ulid
@@ -86,6 +94,24 @@ class BillableEnrollment:
     monthly_discount_cents: int = 0
 
 
+@dataclass(frozen=True)
+class PeriodChargeBasis:
+    """The billing snapshot behind what a family was charged for one period.
+
+    The credit divisor must be *the classes the charge actually bought*, not
+    the period's whole occurrence list: a first-month invoice is
+    ``base * remaining / total``, so its per-class value is
+    ``charge / remaining``. Recomputing the divisor from the current schedule
+    under-credits a late-generated first month by the proration ratio (#671).
+    """
+
+    calculation_type: str  # FIRST_MONTH_PRORATION | MONTHLY_TUITION
+    final_amount_cents: int
+    total_eligible_classes: int
+    billable_remaining_classes: int
+    included_occurrence_ids: tuple[str, ...] = ()
+
+
 class OccurrenceCancellationReader(Protocol):
     async def session_pricing(self, session_id: str) -> SessionPricing | None: ...
 
@@ -93,6 +119,12 @@ class OccurrenceCancellationReader(Protocol):
         self, *, session_id: str, period: str
     ) -> list[ClassOccurrence]:
         """The generator's own synthesis for the period, overrides applied."""
+        ...
+
+    async def period_charge_basis(
+        self, *, enrollment_id: str, student_id: str, session_id: str, period: str
+    ) -> PeriodChargeBasis | None:
+        """What was priced for this family for this period, if anything."""
         ...
 
     async def enrollments_for_session(self, session_id: str) -> list[BillableEnrollment]: ...
@@ -118,6 +150,8 @@ class CancellationInvoiceLedger(Protocol):
         *,
         statuses: set[str] | None = None,
     ) -> LedgerInvoice | None: ...
+
+    async def get_lines_for_invoice(self, invoice_id: str) -> list[InvoiceLine]: ...
 
 
 class CancellationCreditLedger(Protocol):
@@ -257,6 +291,30 @@ class ApplyOccurrenceCancellation:
             decisions=tuple(decisions),
         )
 
+    async def _tuition_cents(self, invoice: LedgerInvoice) -> int:
+        """The period's TUITION on ``invoice``, net of its tuition discount.
+
+        Not ``subtotal_cents - discount_cents``: ``recompute_totals`` rebuilds
+        the subtotal from every line, so an equipment charge or registration
+        fee added to the same monthly invoice inflates it — and once a line is
+        added the invoice's own ``discount_cents`` is subtracted twice. Summing
+        the tuition and discount lines is right in both states (#671).
+        """
+        try:
+            lines = await self._invoices.get_lines_for_invoice(invoice.invoice_id)
+        except Exception:  # pragma: no cover - defensive
+            log.exception(
+                "apply_occurrence_cancellation_invoice_lines_failed",
+                extra={"invoice_id": invoice.invoice_id},
+            )
+            lines = []
+        tuition = sum(line.amount_cents for line in lines if line.line_type in _TUITION_LINE_TYPES)
+        if not lines:
+            # Legacy invoice with no line documents: the header still holds
+            # the monthly shape the generator wrote it with.
+            tuition = invoice.subtotal_cents - invoice.discount_cents
+        return max(tuition, 0)
+
     async def _decide(
         self,
         *,
@@ -291,22 +349,48 @@ class ApplyOccurrenceCancellation:
         invoice = await self._invoices.get_invoice_for_enrollment_period(
             enrollment.enrollment_id, period
         )
+        if invoice is not None and invoice.status == "void":
+            return _skip(enrollment, "invoice_void")
+
+        basis = await self._reader.period_charge_basis(
+            enrollment_id=enrollment.enrollment_id,
+            student_id=enrollment.student_id,
+            session_id=cmd.session_id,
+            period=period,
+        )
+
         if invoice is not None:
-            if invoice.status == "void":
-                return _skip(enrollment, "invoice_void")
-            charge = max(invoice.subtotal_cents - invoice.discount_cents, 0)
+            charge = await self._tuition_cents(invoice)
+        elif basis is not None and basis.calculation_type == "FIRST_MONTH_PRORATION":
+            # The family paid their first month at registration checkout: the
+            # proration snapshot is CONSUMED, the Payment carries no
+            # enrollment_id and no ledger invoice is keyed to
+            # (enrollment, period), so ``get_invoice_for_enrollment_period``
+            # finds nothing — but the generator will never re-price the month
+            # either. Skipping here would leave them paying for a class the
+            # academy called off (#671).
+            charge = max(basis.final_amount_cents, 0)
         else:
             if enrollment.status == "paused":
                 return _skip(enrollment, "paused_not_invoiced")
             if billing_start is not None and period_of(billing_start, pricing.timezone) == period:
-                # Rule 1 handles this family: their first-month proration is
-                # computed from the overlay and already leaves the date out.
+                # Nothing priced yet. Rule 1 handles this family: their
+                # first-month proration reads the overlay and excludes the
+                # date from the numerator (while keeping it in the
+                # denominator, so the month does not get more expensive).
                 return _skip(enrollment, "first_month_proration_excludes_date")
             charge = max(pricing.monthly_price_cents - enrollment.monthly_discount_cents, 0)
 
-        classes = [o for o in priced if billing_start is None or o.start_at >= billing_start]
+        billed_classes, billed_ids = _billed_classes(
+            basis=basis, priced=priced, billing_start=billing_start
+        )
+        if billed_ids is not None and target.occurrence_id not in billed_ids:
+            # The charge never covered this date (it fell before the family's
+            # enrollment, or inside the same-day cutoff). Crediting it would
+            # hand back money that was never taken.
+            return _skip(enrollment, "date_not_billed")
         amount = class_cancellation_credit_cents(
-            period_charge_cents=charge, billable_classes=len(classes)
+            period_charge_cents=charge, billable_classes=billed_classes
         )
         if amount <= 0:
             return _skip(enrollment, "zero_amount")
@@ -344,6 +428,34 @@ class ApplyOccurrenceCancellation:
         return OccurrenceCreditDecision(
             enrollment.enrollment_id, entry.credit_id, amount, "credited"
         )
+
+
+#: Invoice lines that make up the period's TUITION. ``discount`` lines are
+#: negative and belong here; a racket, a registration fee or any other
+#: admin-added line does not — dividing those by the month's class count and
+#: crediting the result would refund a purchase that has nothing to do with
+#: the cancelled class (#671).
+_TUITION_LINE_TYPES: frozenset[str] = frozenset({"tuition", "discount"})
+
+
+def _billed_classes(
+    *,
+    basis: PeriodChargeBasis | None,
+    priced: list[ClassOccurrence],
+    billing_start: datetime | None,
+) -> tuple[int, frozenset[str] | None]:
+    """``(divisor, the ids the charge covered)`` for one family's period.
+
+    The second element is ``None`` when membership is unknown — a full-month
+    charge buys every class in the month, so there is nothing to check.
+    """
+    if basis is not None:
+        if basis.calculation_type == "FIRST_MONTH_PRORATION" and basis.billable_remaining_classes:
+            return basis.billable_remaining_classes, frozenset(basis.included_occurrence_ids)
+        if basis.calculation_type == "MONTHLY_TUITION" and basis.total_eligible_classes:
+            return basis.total_eligible_classes, None
+    fallback = [o for o in priced if billing_start is None or o.start_at >= billing_start]
+    return len(fallback), None
 
 
 def _skip(enrollment: BillableEnrollment, reason: str) -> OccurrenceCreditDecision:

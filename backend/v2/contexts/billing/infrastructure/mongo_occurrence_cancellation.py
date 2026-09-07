@@ -29,10 +29,12 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from backend.v2.contexts.billing.application.use_cases.apply_occurrence_cancellation import (
     BillableEnrollment,
+    PeriodChargeBasis,
     SessionPricing,
 )
 from backend.v2.contexts.billing.domain.proration import ClassOccurrence
 from backend.v2.contexts.billing.domain.tuition_discount import monthly_discount_cents
+from backend.v2.contexts.billing.infrastructure.mongo_monthly_billing import session_amount_cents
 from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import MongoPaymentRepository
 from backend.v2.contexts.billing.infrastructure.mongo_tuition_discount_repo import (
     MongoTuitionDiscountRepository,
@@ -100,11 +102,13 @@ class MongoOccurrenceCancellationReader:
         )
         if doc is None:
             return None
-        amount = doc.get("amount_cents")
         return SessionPricing(
             session_id=session_id,
             timezone=str(doc.get("timezone") or "") or await self._academy_timezone(),
-            monthly_price_cents=int(amount) if amount is not None else 0,
+            # The generator's own helper, never a bare ``amount_cents`` read:
+            # a legacy session doc priced only in ``monthly_price_cents``
+            # would otherwise credit 0 while still being billed in full (#671).
+            monthly_price_cents=session_amount_cents(doc),
         )
 
     async def occurrences_for_period(
@@ -115,6 +119,57 @@ class MongoOccurrenceCancellationReader:
             return []
         return await self._payments.occurrences_for_period(
             session_id=session_id, period=period, timezone_name=pricing.timezone
+        )
+
+    async def period_charge_basis(
+        self, *, enrollment_id: str, student_id: str, session_id: str, period: str
+    ) -> PeriodChargeBasis | None:
+        """What the generator (or the registration checkout) actually billed
+        this family for ``period`` — the divisor a credit must use (#671).
+
+        Two lookups, in order of precision:
+
+        1. the enrollment-keyed CONSUMED snapshot the monthly generator
+           writes (``persist_monthly_tuition`` / ``persist_consumed_first_month``);
+        2. the registration-checkout snapshot, which is stamped with
+           ``student_id``/``session_id`` but ``enrollment_id=None`` (#506) —
+           the family HAS paid the first month even though no ledger invoice
+           is keyed to (enrollment, period) and the generator will never
+           re-price it.
+
+        ``None`` means nothing was priced yet; the caller falls back to
+        recomputing the period's class list.
+        """
+        collection = self._db["billing_calculation_snapshots"]
+        base = {
+            "academy_id": current_academy_id(),
+            "billing_period_label": period,
+            "status": "CONSUMED",
+        }
+        doc = await collection.find_one(
+            {**base, "enrollment_id": enrollment_id}, sort=[("calculated_at", -1)]
+        )
+        if doc is None and student_id and session_id:
+            doc = await collection.find_one(
+                {
+                    **base,
+                    "enrollment_id": None,
+                    "student_id": student_id,
+                    "session_id": session_id,
+                    "calculation_type": "FIRST_MONTH_PRORATION",
+                },
+                sort=[("calculated_at", -1)],
+            )
+        if doc is None:
+            return None
+        return PeriodChargeBasis(
+            calculation_type=str(doc.get("calculation_type") or ""),
+            final_amount_cents=int(doc.get("final_amount_cents") or 0),
+            total_eligible_classes=int(doc.get("total_eligible_classes") or 0),
+            billable_remaining_classes=int(doc.get("billable_remaining_classes") or 0),
+            included_occurrence_ids=tuple(
+                str(value) for value in (doc.get("included_occurrence_ids") or [])
+            ),
         )
 
     async def enrollments_for_session(self, session_id: str) -> list[BillableEnrollment]:

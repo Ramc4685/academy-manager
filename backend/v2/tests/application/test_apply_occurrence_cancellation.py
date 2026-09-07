@@ -18,13 +18,14 @@ from backend.v2.contexts.billing.application.use_cases.apply_occurrence_cancella
     ApplyOccurrenceCancellation,
     ApplyOccurrenceCancellationCommand,
     BillableEnrollment,
+    PeriodChargeBasis,
     SessionPricing,
 )
 from backend.v2.contexts.billing.domain.credits import (
     CLASS_CANCELLATION_SOURCE_TYPE,
     class_cancellation_credit_cents,
 )
-from backend.v2.contexts.billing.domain.ledger import LedgerInvoice
+from backend.v2.contexts.billing.domain.ledger import InvoiceLine, LedgerInvoice
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry
 from backend.v2.contexts.billing.domain.proration import ClassOccurrence
 
@@ -58,6 +59,8 @@ class FakeReader:
         default_factory=lambda: [_occurrence(i) for i in range(4)]
     )
     enrollments: list[BillableEnrollment] = field(default_factory=list)
+    #: enrollment_id (or "student:session") -> what was priced for the period.
+    bases: dict[str, PeriodChargeBasis] = field(default_factory=dict)
 
     async def session_pricing(self, session_id: str) -> SessionPricing | None:
         return self.pricing
@@ -66,6 +69,11 @@ class FakeReader:
         self, *, session_id: str, period: str
     ) -> list[ClassOccurrence]:
         return list(self.occurrences)
+
+    async def period_charge_basis(
+        self, *, enrollment_id: str, student_id: str, session_id: str, period: str
+    ) -> PeriodChargeBasis | None:
+        return self.bases.get(enrollment_id) or self.bases.get(f"{student_id}:{session_id}")
 
     async def enrollments_for_session(self, session_id: str) -> list[BillableEnrollment]:
         return list(self.enrollments)
@@ -82,11 +90,16 @@ class FakeOverrides:
 @dataclass
 class FakeInvoices:
     rows: dict[str, LedgerInvoice] = field(default_factory=dict)
+    #: invoice_id -> its lines, mirroring ``get_lines_for_invoice``.
+    lines: dict[str, list[InvoiceLine]] = field(default_factory=dict)
 
     async def get_invoice_for_enrollment_period(
         self, enrollment_id: str, period: str, *, statuses: set[str] | None = None
     ) -> LedgerInvoice | None:
         return self.rows.get(enrollment_id)
+
+    async def get_lines_for_invoice(self, invoice_id: str) -> list[InvoiceLine]:
+        return list(self.lines.get(invoice_id, []))
 
 
 @dataclass
@@ -338,3 +351,124 @@ async def test_missing_session_is_reported_not_crashed() -> None:
 
     assert result.billing_occurrence_id is None
     assert overrides.written == []
+
+
+def _line(invoice_id: str, *, line_type: str, amount: int, line_id: str) -> InvoiceLine:
+    return InvoiceLine(
+        line_id=line_id,
+        academy_id="acad",
+        invoice_id=invoice_id,
+        line_type=line_type,
+        description=line_type,
+        quantity=1,
+        unit_amount_cents=amount,
+        amount_cents=amount,
+        created_at=NOW,
+    )
+
+
+@pytest.mark.asyncio
+async def test_non_tuition_invoice_lines_do_not_inflate_the_credit() -> None:
+    # A $120 racket billed on the same September invoice must not be divided
+    # by the month's classes and handed back as a cancellation credit.
+    invoice = _invoice("enr-1", subtotal=32000)
+    invoices = FakeInvoices(
+        rows={"enr-1": invoice},
+        lines={
+            "inv-enr-1": [
+                _line("inv-enr-1", line_type="tuition", amount=20000, line_id="l-1"),
+                _line("inv-enr-1", line_type="equipment", amount=12000, line_id="l-2"),
+            ]
+        },
+    )
+    credits = FakeCredits()
+
+    await _build(
+        FakeReader(enrollments=[_enrollment("enr-1")]), invoices, credits, FakeOverrides()
+    ).execute(_cmd())
+
+    assert credits.rows[0].amount_cents == 5000  # 20000 / 4, not 32000 / 4
+
+
+@pytest.mark.asyncio
+async def test_credit_divisor_is_the_classes_the_prorated_invoice_bought() -> None:
+    # Late first-month generation: charge = base * 1/4, so the family paid for
+    # exactly ONE class. Cancelling it credits the whole charge, not a quarter.
+    reader = FakeReader(
+        enrollments=[_enrollment("enr-1", billing_start_at=datetime(2026, 9, 1, tzinfo=UTC))],
+        bases={
+            "enr-1": PeriodChargeBasis(
+                calculation_type="FIRST_MONTH_PRORATION",
+                final_amount_cents=3000,
+                total_eligible_classes=4,
+                billable_remaining_classes=1,
+                included_occurrence_ids=("sess-1:2026-09-24:18:00",),
+            )
+        },
+    )
+    invoices = FakeInvoices(
+        rows={"enr-1": _invoice("enr-1", subtotal=3000)},
+        lines={"inv-enr-1": [_line("inv-enr-1", line_type="tuition", amount=3000, line_id="l-1")]},
+    )
+    credits = FakeCredits()
+
+    await _build(reader, invoices, credits, FakeOverrides()).execute(_cmd(start_at=DATES[3]))
+
+    assert credits.rows[0].amount_cents == 3000  # 3000 / 1, not 3000 / 4
+
+
+@pytest.mark.asyncio
+async def test_a_date_the_prorated_charge_never_covered_is_not_credited() -> None:
+    reader = FakeReader(
+        enrollments=[_enrollment("enr-1", billing_start_at=datetime(2026, 9, 1, tzinfo=UTC))],
+        bases={
+            "enr-1": PeriodChargeBasis(
+                calculation_type="FIRST_MONTH_PRORATION",
+                final_amount_cents=3000,
+                total_eligible_classes=4,
+                billable_remaining_classes=1,
+                included_occurrence_ids=("sess-1:2026-09-24:18:00",),
+            )
+        },
+    )
+    invoices = FakeInvoices(
+        rows={"enr-1": _invoice("enr-1", subtotal=3000)},
+        lines={"inv-enr-1": [_line("inv-enr-1", line_type="tuition", amount=3000, line_id="l-1")]},
+    )
+    credits = FakeCredits()
+
+    result = await _build(reader, invoices, credits, FakeOverrides()).execute(_cmd())
+
+    assert credits.rows == []
+    assert result.decisions[0].outcome == "skipped:date_not_billed"
+
+
+@pytest.mark.asyncio
+async def test_mid_month_checkout_family_with_no_invoice_is_credited() -> None:
+    # Registration checkout: the first month is PAID, the snapshot is CONSUMED
+    # with no enrollment_id, and no ledger invoice is keyed to
+    # (enrollment, period) — the generator will never re-price the month. The
+    # family must still get the cancelled date back (#671).
+    enrollment = _enrollment("enr-1", billing_start_at=DATES[0])
+    reader = FakeReader(
+        enrollments=[enrollment],
+        bases={
+            f"{enrollment.student_id}:sess-1": PeriodChargeBasis(
+                calculation_type="FIRST_MONTH_PRORATION",
+                final_amount_cents=9000,
+                total_eligible_classes=4,
+                billable_remaining_classes=3,
+                included_occurrence_ids=(
+                    "sess-1:2026-09-10:18:00",
+                    "sess-1:2026-09-17:18:00",
+                    "sess-1:2026-09-24:18:00",
+                ),
+            )
+        },
+    )
+    credits = FakeCredits()
+
+    result = await _build(reader, FakeInvoices(), credits, FakeOverrides()).execute(_cmd())
+
+    assert credits.rows[0].amount_cents == 3000  # 9000 / 3
+    assert result.decisions[0].outcome == "credited"

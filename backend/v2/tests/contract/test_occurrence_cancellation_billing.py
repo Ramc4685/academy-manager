@@ -10,6 +10,8 @@ Covers the three claims the feature rests on, end to end through Mongo:
 
 from __future__ import annotations
 
+import importlib
+import inspect
 from datetime import UTC, datetime
 
 import pytest
@@ -20,6 +22,7 @@ from backend.v2.composition.occurrence_cancellation import (
 from backend.v2.contexts.billing.application.use_cases.apply_occurrence_cancellation import (
     ApplyOccurrenceCancellationCommand,
 )
+from backend.v2.contexts.billing.domain.credits import CLASS_CANCELLATION_SOURCE_TYPE
 from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import (
     MongoCreditLedgerRepository,
 )
@@ -35,14 +38,14 @@ TZ = "America/Chicago"
 CANCELLED_DAY = datetime(2026, 9, 10, 23, 0, tzinfo=UTC)  # 18:00 America/Chicago
 
 
-async def _seed(db, *, invoiced: bool) -> None:
+async def _seed(db, *, invoiced: bool, price_field: str = "amount_cents") -> None:
     await db["academies"].insert_one({"academy_id": ACADEMY, "timezone": TZ})
     await db["sessions"].insert_one(
         {
             "academy_id": ACADEMY,
             "session_id": "sess-1",
             "title": "Beginner badminton",
-            "amount_cents": 12000,
+            price_field: 12000,
             "timezone": TZ,
             "days_of_week": ["Thu"],
             "start_time": "18:00",
@@ -183,3 +186,52 @@ async def test_another_academys_cancel_never_touches_this_one(db) -> None:
 
     assert await db["account_credit_ledger"].count_documents({"academy_id": ACADEMY}) == 0
     assert await db["session_occurrence_overrides"].count_documents({"academy_id": ACADEMY}) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_legacy_priced_session_still_credits_the_families(db) -> None:
+    """#671: a session doc carrying only ``monthly_price_cents``.
+
+    The generator prices it through its ``session_amount_cents`` fallback
+    chain; a bare ``amount_cents`` read in the cancellation path priced it at
+    zero, so every family was skipped as ``zero_amount`` while the month was
+    still invoiced in full.
+    """
+    await run_pending_migrations(db)
+    with tenant_scope(ACADEMY):
+        await _seed(db, invoiced=True, price_field="monthly_price_cents")
+
+        result = await compose_apply_occurrence_cancellation(db).execute(_cmd())
+
+        pricing = await MongoOccurrenceCancellationReader(db).session_pricing("sess-1")
+        assert pricing is not None
+        assert pricing.monthly_price_cents == 12000
+        credits = await MongoCreditLedgerRepository(db).list_for_parent("par-1")
+        assert [credit.amount_cents for credit in credits] == [3000]
+        assert result.decisions[0].outcome == "credited"
+
+
+@pytest.mark.asyncio
+async def test_migration_0168_scopes_the_unique_credit_index_to_this_feature(db) -> None:
+    """The unique credit index must cover ONLY the class-cancellation key
+    space (#671).
+
+    OVERPAYMENT credits already carry a string ``source_type`` with
+    ``source_id`` = a payment id or an allocation id, written by a non-atomic
+    check-then-insert (``record_manual_payment``), so prod may already hold
+    duplicates. A ``{"$type": "string"}`` filter would abort this migration on
+    DuplicateKeyError — taking the override index and the validator refresh
+    with it — and would turn that pre-existing race into a 500 on a money
+    path. mongomock does not evaluate partial filters, so the assertion is on
+    the declared index spec, which is what Mongo actually applies.
+    """
+    migration = importlib.import_module("backend.v2.migrations.0168_occurrence_cancellation")
+    assert migration.CLASS_CANCELLATION_SOURCE_TYPE == CLASS_CANCELLATION_SOURCE_TYPE
+
+    await run_pending_migrations(db)
+    indexes = await db["account_credit_ledger"].index_information()
+    assert "credit_source_unique" in indexes
+
+    source = inspect.getsource(migration.up)
+    assert 'partialFilterExpression={"source_type": CLASS_CANCELLATION_SOURCE_TYPE}' in source
+    assert "$type" not in source
