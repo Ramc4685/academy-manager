@@ -113,13 +113,6 @@ def test_admin_message_broadcast_response_includes_scope(admin_client):
     assert body["delivery_status"] == "recorded"
 
 
-def test_admin_reports_kpis_are_available_as_dashboard_data(admin_client):
-    response = admin_client.get("/api/v2/admin/reports/kpis")
-
-    assert response.status_code == 200, response.text
-    assert response.json() == {
-        "active_students": 0,
-        "attendance_rate_30d": 0.0,
-        "dues_collected_mtd_cents": 0,
-        "pending_waivers": 0,
-    }
+def test_admin_reports_kpis_route_is_gone(admin_client):
+    """Deleted with the Reports rewrite: it had no caller (spec §3.2)."""
+    assert admin_client.get("/api/v2/admin/reports/kpis").status_code == 404

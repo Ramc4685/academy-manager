@@ -2438,14 +2438,6 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         list_billing_deferral_warnings=billing_deferrals.list_admin_warnings,
         send_dues_reminders=send_dues_reminders,
         export_report_csv=export_report_csv,
-        get_reports_kpis=AsyncMock(
-            return_value={
-                "active_students": 0,
-                "attendance_rate_30d": 0.0,
-                "dues_collected_mtd_cents": 0,
-                "pending_waivers": 0,
-            }
-        ),
         list_enrollment_events=enrollment_events.list_for_enrollment,
         comms=comms,
         list_admin_waivers=waivers,  # type: ignore[arg-type]

@@ -16,6 +16,7 @@ from .dashboard_routes import router as dashboard_router
 from .directory_routes import router as directory_router
 from .dues_routes import router as dues_router
 from .families_routes import router as families_router
+from .month_close_routes import router as month_close_router
 from .pathway_routes import router as pathway_router
 from .pause_routes import router as pause_router
 from .payout_period_routes import router as payout_period_router
@@ -39,6 +40,7 @@ router.include_router(pause_router)
 router.include_router(registration_router)
 router.include_router(dues_router)
 router.include_router(reports_router)
+router.include_router(month_close_router)
 router.include_router(sessions_router)
 router.include_router(teaching_plan_router)
 router.include_router(session_type_router)
