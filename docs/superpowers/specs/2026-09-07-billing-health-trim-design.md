@@ -236,6 +236,28 @@ where they went, and the moved reconciliation lookup.
 
 ## 10. Follow-ups this spec deliberately leaves
 
+- **A partial unique index on `ledger_payments.stripe_payment_intent_id`** (issue #679). The
+  charge-linking bug found in review (a hand-linked charge stored under its charge id,
+  then booked a second time when the webhook replayed under its real payment-intent id)
+  was caught by application code alone: nothing in the database would have stopped it.
+  `payment_allocations.idempotency_key`, `payment_attempts.idempotency_key` and
+  `ledger_payments.ledger_idempotency_key` all carry partial unique indexes; the payment
+  intent does not, so the one identifier every settlement path dedupes on is the one
+  without a constraint behind it.
+
+  The index belongs on `(academy_id, stripe_payment_intent_id)` with
+  `partialFilterExpression={"stripe_payment_intent_id": {"$type": "string"}}` so manual
+  payments — Zelle, cash, cheque — which carry no intent are unaffected, matching the
+  shape migration 0128 already uses.
+
+  **It cannot be added blind.** A unique index fails to build if the collection already
+  holds duplicates, and duplicates are exactly what this bug produced, so production may
+  well contain some. The follow-up is therefore two steps: first an audit script that
+  reports duplicate `(academy_id, stripe_payment_intent_id)` groups with their
+  allocations and any credit they generated, then — once those are reconciled by hand —
+  the migration. Doing it in that order also tells us whether the bug ever fired in
+  production, which the code fix alone does not answer.
+
 - Delete `GET /admin/billing/failed-payment-attempts`, `GET /admin/billing/dunning` and
   `GET /admin/billing/invoices/{id}/attempts` once spec 3 has merged and no caller
   remains.
