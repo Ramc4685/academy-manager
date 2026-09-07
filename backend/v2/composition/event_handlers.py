@@ -9,6 +9,7 @@ Wave 2 wires:
 - `Enrollment.CapacityExceeded` → Billing.IssueRefund (auto-refund)
 - `Billing.CheckoutExpired` → Onboarding transition to CHECKOUT_EXPIRED
 - `Enrollment.EnrollmentCancelled` → Enrollment.PromoteFromWaitlist
+- `Enrollment.EnrollmentCancelled` → StudentProgress.ExpireLevelUpRecommendations (#673)
 """
 
 from __future__ import annotations
@@ -50,6 +51,9 @@ from backend.v2.contexts.onboarding.domain.errors import (
     ApplicationForPaymentNotFound,
     ApplicationNotEditable,
 )
+from backend.v2.contexts.student_progress.application.use_cases.expire_level_up_recommendations import (
+    ExpireLevelUpRecommendations,
+)
 from backend.v2.contexts.student_progress.domain.events import StudentPlacedInLevel
 from backend.v2.shared.events import handler
 from backend.v2.shared.tenancy.context import tenant_scope
@@ -63,6 +67,9 @@ class HandlerDeps:
     promote_from_waitlist: PromoteFromWaitlist
     issue_refund: IssueRefund
     transition_application: TransitionApplication
+    # Issue #673. Optional only so wiring that predates it keeps working; the
+    # production composition (compose_parent) always installs it.
+    expire_level_up_recommendations: ExpireLevelUpRecommendations | None = None
 
 
 # Module-level holder so the `@handler` registrations have a reference to
@@ -237,6 +244,20 @@ async def on_enrollment_cancelled(event: EnrollmentCancelled) -> None:
     deps = _require_deps()
     with tenant_scope(event.academy_id):
         await deps.promote_from_waitlist.execute(event.payload.session_id)
+        # Issue #673: a pending level-up recommendation for a student who has
+        # no live enrollment left is closed here. Failure is logged rather
+        # than raised: the seat promotion above must not be replayed for a
+        # level-up hiccup, and the queue chip + approve guard already keep a
+        # stale row from being certified.
+        if deps.expire_level_up_recommendations is not None:
+            try:
+                await deps.expire_level_up_recommendations.execute(event.payload.student_id)
+            except Exception:
+                log.exception(
+                    "level-up expiry failed for student %s after enrollment %s cancelled",
+                    event.payload.student_id,
+                    event.payload.enrollment_id,
+                )
 
 
 @handler(event=WelcomeEmailRequested, schema_version=1)

@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pydantic import BaseModel
 
 from backend.v2.contexts.student_progress.application.ports import (
+    EnrollmentStatusLookup,
     LevelUpRecommendationRepository,
     SkillLookup,
     StudentLevelProgressRepository,
@@ -14,6 +15,7 @@ from backend.v2.contexts.student_progress.application.ports import (
 )
 from backend.v2.contexts.student_progress.domain.errors import (
     ActiveRecommendationExists,
+    EnrollmentEnded,
     LevelNotConfigured,
     LevelUpNotReady,
     StudentNotPlaced,
@@ -48,15 +50,26 @@ class RecommendLevelUp:
         skill_progress: StudentSkillProgressRepository,
         recommendations: LevelUpRecommendationRepository,
         skill_lookup: SkillLookup,
+        enrollment_lookup: EnrollmentStatusLookup,
         outbox: Outbox | None = None,
     ) -> None:
         self._level_progress = level_progress
         self._skill_progress = skill_progress
         self._recommendations = recommendations
         self._skill_lookup = skill_lookup
+        self._enrollments = enrollment_lookup
         self._outbox = outbox
 
     async def execute(self, cmd: RecommendLevelUpCommand) -> LevelUpRecommendation:
+        # Issue #673, defence in depth: the coach route already 404s a student
+        # who is not on one of the coach's sessions, but the use case must not
+        # rely on the caller for it.
+        if not await self._enrollments.has_active_or_paused_enrollment(cmd.student_id):
+            raise EnrollmentEnded(
+                "student no longer has an active or paused enrollment",
+                student_id=cmd.student_id,
+                program_id=cmd.program_id,
+            )
         active = await self._level_progress.get_active(cmd.student_id, cmd.program_id)
         if active is None:
             raise StudentNotPlaced(

@@ -48,3 +48,15 @@ class ActiveRecommendationExists(DomainError):
 class LevelNotConfigured(DomainError):
     code = "StudentProgress.LevelNotConfigured"
     status_code = 422
+
+
+class EnrollmentEnded(DomainError):
+    """The student no longer has a live (active or paused) enrollment (#673).
+
+    Raised on recommend and on approve: a withdrawn or cancelled student must
+    not be advanced or certified. Reject stays allowed so the admin can clear
+    the row.
+    """
+
+    code = "StudentProgress.EnrollmentEnded"
+    status_code = 409

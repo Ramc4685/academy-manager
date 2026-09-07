@@ -26,6 +26,7 @@ from backend.v2.composition.event_handlers import (
     on_enrollment_cancelled,
     on_payment_succeeded,
 )
+from backend.v2.composition.level_up_lifecycle import compose_expire_level_up_recommendations
 from backend.v2.contexts.billing.application.use_cases.issue_refund import IssueRefund
 from backend.v2.contexts.billing.domain.events import (
     PaymentSucceeded,
@@ -121,6 +122,7 @@ async def _wire(
             promote_from_waitlist=promote,
             issue_refund=issue_refund,
             transition_application=transition,
+            expire_level_up_recommendations=compose_expire_level_up_recommendations(db),
         )
     )
     return confirm, promote, issue_refund, transition, outbox
@@ -385,6 +387,98 @@ async def test_on_enrollment_cancelled_promotes_oldest_waitlist_entry(db, acad) 
     # Outbox got the WaitlistPromoted event.
     events = [doc async for doc in db["outbox_events"].find({})]
     assert any(e["name"] == "Enrollment.WaitlistPromoted" for e in events)
+
+
+def _pending_rec(rec_id: str, student_id: str) -> dict:
+    return {
+        "rec_id": rec_id,
+        "academy_id": "acad",
+        "student_id": student_id,
+        "from_level_id": "lvl-1",
+        "to_level_id": "lvl-2",
+        "program_id": "prog-1",
+        "status": "RECOMMENDED",
+        "recommended_by": "coach-1",
+        "recommended_at": datetime(2026, 8, 20, 9, 0, tzinfo=UTC),
+        "reviewed_by": None,
+        "reviewed_at": None,
+        "rejection_reason": None,
+    }
+
+
+def _cancelled(student_id: str, session_id: str = "sess-673") -> EnrollmentCancelled:
+    return EnrollmentCancelled(
+        aggregate_id=f"enr-{student_id}",
+        academy_id="acad",
+        payload=EnrollmentCancelledPayload(
+            enrollment_id=f"enr-{student_id}",
+            session_id=session_id,
+            student_id=student_id,
+            reason="admin_cancel",
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_on_enrollment_cancelled_expires_the_withdrawn_students_pending_level_up(
+    db, acad
+) -> None:
+    """Issue #673: the handler closes a pending recommendation once the
+    student has no live enrollment left, and leaves a student who is still
+    enrolled elsewhere (or paused) alone."""
+    await _wire(db)
+    await db["level_up_recommendations"].insert_many(
+        [
+            _pending_rec("rec-gone", "st-gone"),
+            _pending_rec("rec-still-here", "st-still-here"),
+            _pending_rec("rec-paused", "st-paused"),
+        ]
+    )
+    await db["enrollments"].insert_many(
+        [
+            {
+                "enrollment_id": "enr-st-gone",
+                "academy_id": "acad",
+                "session_id": "sess-673",
+                "student_id": "st-gone",
+                "status": "withdrawn",
+            },
+            {
+                "enrollment_id": "enr-st-still-here",
+                "academy_id": "acad",
+                "session_id": "sess-673",
+                "student_id": "st-still-here",
+                "status": "cancelled",
+            },
+            {
+                "enrollment_id": "enr-st-still-here-2",
+                "academy_id": "acad",
+                "session_id": "sess-other",
+                "student_id": "st-still-here",
+                "status": "active",
+            },
+            {
+                "enrollment_id": "enr-st-paused",
+                "academy_id": "acad",
+                "session_id": "sess-673",
+                "student_id": "st-paused",
+                "status": "paused",
+            },
+        ]
+    )
+
+    await on_enrollment_cancelled(_cancelled("st-gone"))
+    await on_enrollment_cancelled(_cancelled("st-still-here"))
+    await on_enrollment_cancelled(_cancelled("st-paused"))
+
+    gone = await db["level_up_recommendations"].find_one({"rec_id": "rec-gone"})
+    assert gone["status"] == "REJECTED"
+    assert gone["rejection_reason"] == "enrollment_ended"
+    assert gone["reviewed_by"] == "system:enrollment_ended"
+    still = await db["level_up_recommendations"].find_one({"rec_id": "rec-still-here"})
+    assert still["status"] == "RECOMMENDED"
+    paused = await db["level_up_recommendations"].find_one({"rec_id": "rec-paused"})
+    assert paused["status"] == "RECOMMENDED"
 
 
 @pytest.mark.asyncio
