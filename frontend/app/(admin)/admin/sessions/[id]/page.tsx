@@ -49,6 +49,7 @@ import {
 } from "./format";
 import { RosterMetrics, RosterTable } from "./RosterPanel";
 import {
+  CancelOccurrenceDialog,
   OccurrenceReplacementDialog,
   ReplacementCoachTable,
   SessionAssistantsDialog,
@@ -82,6 +83,8 @@ export default function AdminSessionDetailPage() {
   const [withdrawalTarget, setWithdrawalTarget] = useState<AdminEnrollmentView | null>(null);
   const [occurrenceTarget, setOccurrenceTarget] = useState<AdminSessionOccurrenceView | null>(null);
   const [replacementOpen, setReplacementOpen] = useState(false);
+  // Issue #671: the date an admin is calling off, or null.
+  const [cancelTarget, setCancelTarget] = useState<AdminSessionOccurrenceView | null>(null);
   const [assistantsOpen, setAssistantsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<DetailTab>("roster");
   const [cancelError, setCancelError] = useState<string | null>(null);
@@ -340,10 +343,28 @@ export default function AdminSessionDetailPage() {
         )}
       </Card>
 
-      {/* Communication pack (#613) */}
+      {/* Class dates (#671) */}
+      <Card p={20} className="min-w-0">
+        <LaneHeader index="03" title="Class dates" />
+        {occurrencesQuery.isLoading ? (
+          <TableSkeleton />
+        ) : (
+          <ReplacementCoachTable
+            occurrences={occurrences}
+            userNameById={userNameById}
+            timezone={session?.timezone ?? null}
+            onEdit={setOccurrenceTarget}
+            onCancel={setCancelTarget}
+            showStatus
+            emptyLabel="No dates scheduled yet."
+          />
+        )}
+      </Card>
+
+            {/* Communication pack (#613) */}
       <Card p={20} className="min-w-0">
         <LaneHeader
-          index="03"
+          index="04"
           title="Communication pack"
           action={
             // Distinct accessible name from the header's "Edit session": both
@@ -377,7 +398,7 @@ export default function AdminSessionDetailPage() {
       {activeTab === "roster" && (
         <Card p={20} className="min-w-0">
           <LaneHeader
-            index="04"
+            index="05"
             title="Roster"
             action={
               session && (
@@ -421,7 +442,7 @@ export default function AdminSessionDetailPage() {
 
       {activeTab === "roster" && (
         <Card p={20} className="min-w-0">
-          <LaneHeader index="05" title="Announcements" />
+          <LaneHeader index="06" title="Announcements" />
           <AnnouncementsPanel persona="admin" sessionId={sessionId} />
         </Card>
       )}
@@ -429,7 +450,7 @@ export default function AdminSessionDetailPage() {
       {activeTab === "waitlist" && (
         <Card p={20} className="min-w-0">
           <LaneHeader
-            index="06"
+            index="07"
             title="Waitlist"
             action={
               <Button
@@ -462,7 +483,7 @@ export default function AdminSessionDetailPage() {
 
       {activeTab === "teaching-plan" && (
         <Card p={20} className="min-w-0">
-          <LaneHeader index="07" title="Teaching plan" />
+          <LaneHeader index="08" title="Teaching plan" />
           <AdminTeachingPlan sessionId={sessionId} programId={rosterProgramId || null} />
         </Card>
       )}
@@ -510,6 +531,17 @@ export default function AdminSessionDetailPage() {
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessionDetail(sessionId) });
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
           // Assistants are re-synced onto future occurrences server-side.
+          void queryClient.invalidateQueries({
+            queryKey: queryKeys.admin.sessionOccurrences(sessionId),
+          });
+        }}
+      />
+      <CancelOccurrenceDialog
+        occurrence={cancelTarget}
+        timezone={session?.timezone ?? null}
+        onClose={() => setCancelTarget(null)}
+        onCancelled={() => {
+          setCancelTarget(null);
           void queryClient.invalidateQueries({
             queryKey: queryKeys.admin.sessionOccurrences(sessionId),
           });

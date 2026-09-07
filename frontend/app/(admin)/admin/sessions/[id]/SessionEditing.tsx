@@ -5,6 +5,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 
 import {
   addSessionReplacement,
+  cancelSessionOccurrence,
   listAdminUsers,
   setSessionAssistants,
   updateAdminSession,
@@ -53,12 +54,24 @@ export function ReplacementCoachTable({
   userNameById,
   timezone,
   onEdit,
+  onCancel,
+  showStatus = false,
+  emptyLabel,
 }: {
   occurrences: AdminSessionOccurrenceView[];
   userNameById: Map<string, string>;
   /** The parent session's IANA zone; occurrence instants render in it. */
   timezone: string | null;
   onEdit: (occurrence: AdminSessionOccurrenceView) => void;
+  /**
+   * Issue #671. When given, each still-scheduled future date offers "Cancel
+   * this date". Omitted on the replacement-coach table, which is about who
+   * teaches a class, not whether it runs.
+   */
+  onCancel?: (occurrence: AdminSessionOccurrenceView) => void;
+  /** Show the Cancelled chip column (#671). */
+  showStatus?: boolean;
+  emptyLabel?: string;
 }) {
   // Occurrence start/end are UTC instants. Formatting them without an explicit
   // timeZone renders the viewer's browser zone, which shows the wrong hour for
@@ -76,6 +89,7 @@ export function ReplacementCoachTable({
             <Th>Time</Th>
             <Th>Scheduled coach</Th>
             <Th>Replacement coach</Th>
+            {showStatus && <Th>Status</Th>}
             <Th className={actionHeaderClass}>Action</Th>
           </tr>
         </thead>
@@ -122,20 +136,165 @@ export function ReplacementCoachTable({
               <td className="py-3 pr-4 text-rally-muted">
                 {coachLabel(occurrence.actual_coach_id, "Replacement coach")}
               </td>
+              {showStatus && (
+                <td className="py-3 pr-4">
+                  {occurrence.status === "cancelled" ? (
+                    <span
+                      data-testid="occurrence-cancelled-chip"
+                      title={occurrence.cancellation_reason ?? undefined}
+                      className="inline-flex items-center rounded-full bg-rally-line px-2 py-0.5 text-xs font-medium text-rally-muted"
+                    >
+                      Cancelled
+                    </span>
+                  ) : (
+                    <span className="text-xs text-rally-subtle">Scheduled</span>
+                  )}
+                </td>
+              )}
               <td className={actionCellClass}>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => onEdit(occurrence)}
-                >
-                  Change replacement
-                </Button>
+                <div className="flex justify-end gap-2">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => onEdit(occurrence)}
+                  >
+                    Change replacement
+                  </Button>
+                  {onCancel && occurrence.status !== "cancelled" && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      data-testid={`cancel-occurrence-${occurrence.occurrence_id}`}
+                      onClick={() => onCancel(occurrence)}
+                    >
+                      Cancel this date
+                    </Button>
+                  )}
+                </div>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
+      {occurrences.length === 0 && emptyLabel && (
+        <p className="pt-2 text-sm text-rally-subtle">{emptyLabel}</p>
+      )}
     </div>
+  );
+}
+
+/**
+ * "Cancel this date" (issue #671).
+ *
+ * A rain-out, a sick coach or a holiday calls off ONE class. The reason is
+ * required because it reaches the families verbatim, and the copy states the
+ * money consequence up front: everyone enrolled that month is credited the
+ * date's share automatically, so an admin is never guessing whether they also
+ * have to issue a refund by hand.
+ */
+export function CancelOccurrenceDialog({
+  occurrence,
+  timezone,
+  onClose,
+  onCancelled,
+}: {
+  occurrence: AdminSessionOccurrenceView | null;
+  timezone: string | null;
+  onClose: () => void;
+  onCancelled: () => void;
+}) {
+  const [reason, setReason] = useState("");
+  const [notify, setNotify] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const open = Boolean(occurrence);
+  const { timeZone } = resolveAcademyTimeZone(timezone);
+
+  useEffect(() => {
+    if (!open) return;
+    setReason("");
+    setNotify(true);
+    setError(null);
+  }, [open, occurrence]);
+
+  const mutation = useMutation({
+    mutationFn: () => {
+      if (!occurrence) throw new Error("No class date selected.");
+      return cancelSessionOccurrence(occurrence.occurrence_id, {
+        reason: reason.trim(),
+        notify,
+      });
+    },
+    onSuccess: onCancelled,
+    onError: (err: Error) =>
+      setError(err.message ?? "Failed to cancel this class date."),
+  });
+
+  const when = occurrence
+    ? parseAcademyInstant(occurrence.start_at).toLocaleString("en-US", {
+        weekday: "long",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        timeZone,
+      })
+    : "";
+
+  return (
+    <RallyDialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+      title="Cancel this date"
+      description={
+        when
+          ? `${when} will not run. Everyone enrolled is credited this date's share of the month automatically, and the coach is not paid for it.`
+          : ""
+      }
+      overline="Class date"
+    >
+      {error && <DialogError message={error} />}
+      <form
+        className="space-y-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          mutation.mutate();
+        }}
+      >
+        <Field label="Reason">
+          <input
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            className={inputClass}
+            placeholder="Gym flooded"
+            maxLength={500}
+          />
+        </Field>
+        <label className="flex items-center gap-2 text-sm text-rally-muted">
+          <input
+            type="checkbox"
+            checked={notify}
+            onChange={(event) => setNotify(event.target.checked)}
+          />
+          Email the families and the coach
+        </label>
+        <DialogActions>
+          <Button variant="secondary" size="sm" type="button" onClick={onClose}>
+            Keep the class
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            type="submit"
+            data-testid="confirm-cancel-occurrence"
+            disabled={mutation.isPending || reason.trim().length === 0}
+          >
+            {mutation.isPending ? "Cancelling..." : "Cancel this date"}
+          </Button>
+        </DialogActions>
+      </form>
+    </RallyDialog>
   );
 }
 

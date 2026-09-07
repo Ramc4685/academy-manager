@@ -404,6 +404,9 @@ test.describe("admin session creation and fee settings UI", () => {
       reason: null,
     });
     await expect(page.getByText("No replacement coaches added.")).toHaveCount(0);
-    await expect(page.getByRole("cell", { name: "Replacement Coach" })).toBeVisible();
+    // Issue #671 added a second table ("Class dates") listing every date, so
+    // this occurrence's replacement coach now shows in both cards.
+    await expect(page.getByRole("cell", { name: "Replacement Coach" }).first()).toBeVisible();
+    await expect(page.getByRole("cell", { name: "Replacement Coach" })).toHaveCount(2);
   });
 });
