@@ -193,6 +193,17 @@ async function stubAdminStudentDiscounts(page: Page, student: StudentDetail) {
     if (route.request().method() !== "GET") return route.fallback();
     return fulfillJson(route, { programs: [] });
   });
+  // The student detail page's Billing tab fetches both of these. Unstubbed
+  // they reach the dev server with no backend behind it, come back 500 and
+  // trip this spec's clean-console assertion.
+  await page.route("**/api/v2/admin/session-types*", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, { session_types: [] });
+  });
+  await page.route("**/api/v2/admin/billing-enrollments*", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, { enrollments: [] });
+  });
   await page.route("**/api/v2/admin/students/student-discounts", (route) => {
     if (route.request().method() !== "GET") return route.fallback();
     return fulfillJson(route, student);
