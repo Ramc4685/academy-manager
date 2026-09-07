@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import html
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -177,8 +178,18 @@ def render_occurrence_cancelled_email(
     when: str,
     reason: str,
     portal_url: str | None,
+    credited: bool = False,
+    staff_warning: str | None = None,
 ) -> tuple[str, str]:
-    """``(subject, html_body)`` for "this one class will not run" (#671)."""
+    """``(subject, html_body)`` for "this one class will not run" (#671).
+
+    ``credited`` gates the money sentence, and it is OFF by default. Billing
+    runs after the occurrence write and can fail wholesale or skip an
+    individual family (void invoice, before their billing start, a date their
+    charge never covered), and a make-up or trial family is not billed for
+    the date at all. Promising "credited automatically" to those families
+    sends them chasing a credit the ledger does not hold.
+    """
     safe_session = html.escape(session.title)
     parts = [
         f"<h2 style='color: {_BRAND_HEADING}; font-size: 18px; margin: 0 0 12px;'>"
@@ -187,12 +198,22 @@ def render_occurrence_cancelled_email(
     ]
     if reason.strip():
         parts.append(_para(f"Reason: {html.escape(reason.strip())}"))
-    parts.append(
-        _para(
-            "Every other date in the schedule is unchanged, and the cancelled "
-            "date is credited to your account automatically."
+    if credited:
+        parts.append(
+            _para(
+                "Every other date in the schedule is unchanged, and the cancelled "
+                "date has been credited to your account."
+            )
         )
-    )
+    else:
+        parts.append(
+            _para(
+                "Every other date in the schedule is unchanged. Contact the "
+                "academy if you have a question about this date."
+            )
+        )
+    if staff_warning:
+        parts.append(_para(f"<strong>{html.escape(staff_warning)}</strong>"))
     if session.location:
         parts.append(_para(f"<strong>Usual location:</strong> {html.escape(session.location)}"))
     if portal_url:
@@ -532,8 +553,11 @@ class RosterAlertAdapter:
         start_at: datetime,
         reason: str,
         actor_id: str | None,
+        extra_student_ids: Sequence[str] = (),
+        credited_student_ids: Sequence[str] = (),
+        billing_warning: str | None = None,
     ) -> None:
-        """One dated class is off: tell every enrolled family and the staff (#671).
+        """One dated class is off: tell every affected family and the staff (#671).
 
         Implements enrollment's ``OccurrenceCancellationNotifier``. Family
         mail is TRANSACTIONAL — "your child's class on Thursday will not run"
@@ -568,16 +592,27 @@ class RosterAlertAdapter:
             frontend_url=self._unsubscribe_links.frontend_url, academy_slug=academy_slug
         )
         portal_url = f"{base.rstrip('/')}/parent" if base else None
-        subject, body = render_occurrence_cancelled_email(
-            session=session,
-            academy_name=academy_name,
-            when=when,
-            reason=reason,
-            portal_url=portal_url,
-        )
-        context = {"change": "occurrence_cancelled", "session_id": session_id}
 
-        for parent_id in await self._parent_ids_for_session(session_id):
+        def _body(*, credited: bool, staff_warning: str | None = None) -> tuple[str, str]:
+            return render_occurrence_cancelled_email(
+                session=session,
+                academy_name=academy_name,
+                when=when,
+                reason=reason,
+                portal_url=portal_url,
+                credited=credited,
+                staff_warning=staff_warning,
+            )
+
+        context = {"change": "occurrence_cancelled", "session_id": session_id}
+        credited = {str(value) for value in credited_student_ids if value}
+
+        for parent_id, was_credited in await self._occurrence_audience(
+            session_id=session_id,
+            extra_student_ids=extra_student_ids,
+            credited_student_ids=credited,
+        ):
+            subject, body = _body(credited=was_credited)
             for recipient in await self._resolve_users([parent_id]):
                 if not (recipient.email or "").strip():
                     continue
@@ -589,14 +624,18 @@ class RosterAlertAdapter:
                     context=context,
                 )
 
+        # The staff copy states the money outcome plainly, including when
+        # billing did not run: an admin must not learn about a missing credit
+        # from a parent (#671).
+        staff_subject, staff_body = _body(credited=False, staff_warning=billing_warning)
         for recipient in await self._staff_recipients(
             session_id=session_id, from_session_id=None, actor_id=actor_id
         ):
             await self._send_one(
                 recipient=recipient,
-                subject=subject,
+                subject=staff_subject,
                 body=append_unsubscribe_footer(
-                    body,
+                    staff_body,
                     self._unsubscribe_links.build(
                         academy_id=academy_id,
                         user_id=recipient.user_id,
@@ -607,8 +646,23 @@ class RosterAlertAdapter:
                 context=context,
             )
 
-    async def _parent_ids_for_session(self, session_id: str) -> list[str]:
-        """Distinct parents behind the session's active roster, order preserved."""
+    async def _occurrence_audience(
+        self,
+        *,
+        session_id: str,
+        extra_student_ids: Sequence[str],
+        credited_student_ids: set[str],
+    ) -> list[tuple[str, bool]]:
+        """``(parent_id, was_credited)`` for everyone who loses this date.
+
+        The session's active roster PLUS the make-up and trial students whose
+        one-time seat was just deleted — they hold no enrollment on the
+        session, so the roster read alone leaves them to turn up at a closed
+        gym (#671). ``was_credited`` is true only when billing actually
+        issued that family a credit, so the email never promises one that
+        does not exist. Order preserved, one entry per parent.
+        """
+        student_ids: list[str] = []
         try:
             rows = await self._enrollments.active_for_session(session_id)
         except Exception:  # pragma: no cover - defensive
@@ -616,18 +670,26 @@ class RosterAlertAdapter:
                 "enrollment.occurrence_cancelled_roster_failed",
                 extra={"session_id": session_id},
             )
-            return []
-        seen: set[str] = set()
-        out: list[str] = []
+            rows = []
         for row in rows:
-            student_id = str(getattr(row, "student_id", "") or "")
+            student_ids.append(str(getattr(row, "student_id", "") or ""))
+        student_ids.extend(str(value or "") for value in extra_student_ids)
+
+        seen: dict[str, bool] = {}
+        order: list[str] = []
+        for student_id in student_ids:
             if not student_id:
                 continue
             parent_id = await self._parent_id_for_student(student_id)
-            if parent_id and parent_id not in seen:
-                seen.add(parent_id)
-                out.append(parent_id)
-        return out
+            if not parent_id:
+                continue
+            was_credited = student_id in credited_student_ids
+            if parent_id not in seen:
+                seen[parent_id] = was_credited
+                order.append(parent_id)
+            elif was_credited:
+                seen[parent_id] = True
+        return [(parent_id, seen[parent_id]) for parent_id in order]
 
     async def pause_request_declined(
         self,

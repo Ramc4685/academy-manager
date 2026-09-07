@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import date, datetime
 from typing import Any, Literal, Protocol
 
@@ -269,9 +270,29 @@ class OccurrenceRosterPurge(Protocol):
 
 class MakeupReopener(Protocol):
     """Put approved make-ups that targeted a cancelled date back to pending
-    (issue #671) so an admin can offer another class."""
+    (issue #671) so an admin can offer another class.
 
-    async def reopen_for_target_occurrence(self, occurrence_id: str) -> int: ...
+    ``expires_at`` is mandatory: a re-opened request whose original window has
+    already lapsed is flipped straight back to ``expired`` by the next sweep,
+    so the family loses an entitlement the academy had granted.
+    """
+
+    async def reopen_for_target_occurrence(
+        self, occurrence_id: str, *, expires_at: datetime
+    ) -> int: ...
+
+
+class TrialReopener(Protocol):
+    """Put approved trials assigned to a cancelled date back to pending
+    (issue #671). Returns the student ids so the families can be told."""
+
+    async def reopen_for_assigned_occurrence(self, occurrence_id: str) -> list[str]: ...
+
+
+class MakeupPolicyLookup(Protocol):
+    """The academy's self-service policy, for the re-opened make-up window."""
+
+    async def get_or_default(self) -> Any: ...
 
 
 class OccurrenceBillingSync(Protocol):
@@ -297,9 +318,17 @@ class OccurrenceBillingSync(Protocol):
 
 
 class OccurrenceCancellationNotifier(Protocol):
-    """Tell the enrolled families and the coach one date is off (issue #671).
+    """Tell the affected families and the coach one date is off (issue #671).
 
     Best-effort: implementations must not raise into the enrollment write.
+
+    ``extra_student_ids`` are the make-up and trial students whose one-time
+    seat for the date was just deleted — they have no enrollment on the
+    session, so the roster audience misses them entirely and they would turn
+    up at a closed gym. ``credited_student_ids`` are the families billing
+    actually credited: the email may only promise a credit to them, and
+    ``billing_warning`` carries a staff-facing note when the sync did not run
+    at all.
     """
 
     async def occurrence_cancelled(
@@ -310,6 +339,9 @@ class OccurrenceCancellationNotifier(Protocol):
         start_at: datetime,
         reason: str,
         actor_id: str | None,
+        extra_student_ids: Sequence[str] = (),
+        credited_student_ids: Sequence[str] = (),
+        billing_warning: str | None = None,
     ) -> None: ...
 
 

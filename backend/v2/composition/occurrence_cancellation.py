@@ -52,8 +52,14 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_repo import 
 from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_roster_repo import (
     MongoOccurrenceRosterRepository,
 )
+from backend.v2.contexts.enrollment.infrastructure.mongo_self_service_policy_repo import (
+    MongoSelfServicePolicyRepository,
+)
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import (
     MongoSessionRepository,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_trial_request_repo import (
+    MongoTrialRequestRepository,
 )
 
 
@@ -114,6 +120,8 @@ def compose_cancel_session_occurrence(
         enrollment_events=MongoEnrollmentEventRepository(db),
         occurrence_roster=MongoOccurrenceRosterRepository(db),
         makeups=MongoMakeupRequestRepository(db),
+        trials=MongoTrialRequestRepository(db),
+        makeup_policies=MongoSelfServicePolicyRepository(db),
         billing_sync=compose_occurrence_billing_sync(db),
         notifier=notifier,
     )

@@ -83,21 +83,42 @@ class FakeEvents:
 
 
 @dataclass
-class FakeRoster:
-    entries: dict[str, list[str]] = field(default_factory=dict)
+class FakeRosterEntry:
+    """Mirrors ``OccurrenceRosterEntry``: the purge hands the caller the rows
+    it deleted, and each carries the student who lost the seat."""
 
-    async def remove_for_occurrence(self, occurrence_id: str) -> list[str]:
+    entry_id: str
+    student_id: str
+
+
+@dataclass
+class FakeRoster:
+    entries: dict[str, list[FakeRosterEntry]] = field(default_factory=dict)
+
+    async def remove_for_occurrence(self, occurrence_id: str) -> list[FakeRosterEntry]:
         return self.entries.pop(occurrence_id, [])
 
 
 @dataclass
 class FakeMakeups:
-    reopened: list[str] = field(default_factory=list)
+    reopened: list[tuple[str, datetime]] = field(default_factory=list)
     count: int = 0
 
-    async def reopen_for_target_occurrence(self, occurrence_id: str) -> int:
-        self.reopened.append(occurrence_id)
+    async def reopen_for_target_occurrence(
+        self, occurrence_id: str, *, expires_at: datetime
+    ) -> int:
+        self.reopened.append((occurrence_id, expires_at))
         return self.count
+
+
+@dataclass
+class FakeTrials:
+    reopened: list[str] = field(default_factory=list)
+    student_ids: list[str] = field(default_factory=list)
+
+    async def reopen_for_assigned_occurrence(self, occurrence_id: str) -> list[str]:
+        self.reopened.append(occurrence_id)
+        return list(self.student_ids)
 
 
 @dataclass
@@ -167,6 +188,7 @@ def _build(
     enrollments: FakeEnrollments | None = None,
     roster: FakeRoster | None = None,
     makeups: FakeMakeups | None = None,
+    trials: FakeTrials | None = None,
     billing: FakeBilling | None = None,
     notifier: FakeNotifier | None = None,
     events: FakeEvents | None = None,
@@ -178,6 +200,7 @@ def _build(
         enrollment_events=events,  # type: ignore[arg-type]
         occurrence_roster=roster,  # type: ignore[arg-type]
         makeups=makeups,  # type: ignore[arg-type]
+        trials=trials,  # type: ignore[arg-type]
         billing_sync=billing,  # type: ignore[arg-type]
         notifier=notifier,  # type: ignore[arg-type]
         clock=lambda: NOW,
@@ -237,13 +260,19 @@ async def test_past_date_is_refused_and_never_written() -> None:
 
 @pytest.mark.asyncio
 async def test_roster_rows_dropped_and_makeups_reopened() -> None:
-    roster = FakeRoster({"occ-1": ["entry-1", "entry-2"]})
+    roster = FakeRoster(
+        {"occ-1": [FakeRosterEntry("entry-1", "st-m"), FakeRosterEntry("entry-2", "st-t")]}
+    )
     makeups = FakeMakeups(count=2)
+    trials = FakeTrials(student_ids=["st-t"])
+    notifier = FakeNotifier()
     use_case = _build(
         occurrences=FakeOccurrences({"occ-1": _occurrence()}),
         roster=roster,
         makeups=makeups,
+        trials=trials,
         billing=FakeBilling(),
+        notifier=notifier,
     )
 
     result = await use_case.execute(
@@ -252,8 +281,54 @@ async def test_roster_rows_dropped_and_makeups_reopened() -> None:
 
     assert result.roster_entries_removed == 2
     assert result.makeups_reopened == 2
+    assert result.trials_reopened == 1
     assert "occ-1" not in roster.entries
-    assert makeups.reopened == ["occ-1"]
+    assert trials.reopened == ["occ-1"]
+    # A re-opened make-up gets a FRESH window: keeping the lapsed one hands it
+    # straight back to the expiry sweep and the family loses the entitlement.
+    assert makeups.reopened[0][0] == "occ-1"
+    assert makeups.reopened[0][1] > NOW
+    # The make-up and trial families have no enrollment on this session, so
+    # they only hear about the cancellation through extra_student_ids.
+    assert notifier.calls[0]["extra_student_ids"] == ["st-m", "st-t"]
+
+
+@pytest.mark.asyncio
+async def test_only_credited_families_are_told_about_a_credit() -> None:
+    billing = FakeBilling(
+        result={"billing_result": "credited=1,skipped=1", "credits": {"enr-1": "cr-1"}}
+    )
+    notifier = FakeNotifier()
+    use_case = _build(
+        occurrences=FakeOccurrences({"occ-1": _occurrence()}),
+        enrollments=FakeEnrollments([_enrollment("enr-1", "st-1"), _enrollment("enr-2", "st-2")]),
+        billing=billing,
+        notifier=notifier,
+    )
+
+    await use_case.execute(CancelSessionOccurrenceCommand(occurrence_id="occ-1", reason="rain"))
+
+    assert notifier.calls[0]["credited_student_ids"] == ["st-1"]
+    assert notifier.calls[0]["billing_warning"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_failed_billing_sync_warns_the_staff_and_promises_nobody_a_credit() -> None:
+    notifier = FakeNotifier()
+    use_case = _build(
+        occurrences=FakeOccurrences({"occ-1": _occurrence()}),
+        enrollments=FakeEnrollments([_enrollment("enr-1", "st-1")]),
+        billing=FakeBilling(boom=True),
+        notifier=notifier,
+    )
+
+    result = await use_case.execute(
+        CancelSessionOccurrenceCommand(occurrence_id="occ-1", reason="rain")
+    )
+
+    assert result.billing_result == "billing_sync_failed"
+    assert notifier.calls[0]["credited_student_ids"] == []
+    assert "no credits were issued" in notifier.calls[0]["billing_warning"]
 
 
 @pytest.mark.asyncio

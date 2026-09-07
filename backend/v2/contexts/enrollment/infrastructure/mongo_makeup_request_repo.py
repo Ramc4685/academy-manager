@@ -100,13 +100,23 @@ class MongoMakeupRequestRepository(TenantScopedRepository):
         )
         return self._to_domain(doc) if doc else None
 
-    async def reopen_for_target_occurrence(self, occurrence_id: str) -> int:
+    async def reopen_for_target_occurrence(
+        self, occurrence_id: str, *, expires_at: datetime
+    ) -> int:
         """Put approved make-ups that targeted a now-cancelled date back to
         ``pending`` so an admin can offer another class (issue #671).
 
         Only ``approved`` rows pointing at THIS occurrence are touched; the
         approval stamp is cleared so the row reads as an undecided request
         again. Returns the number of requests re-opened.
+
+        ``expires_at`` is REQUIRED and is set unconditionally: a request
+        approved onto a class that runs after its original window has lapsed
+        carries a past ``expires_at``, and ``expire_pending_before`` would
+        flip it straight back to ``expired`` on the next sweep — the family
+        would silently lose an entitlement the academy had already granted
+        AND the seat the academy just cancelled. The academy called the class
+        off, so the window starts again.
         """
         result = await self.collection.update_many(
             self._scoped({"status": "approved", "approved_target_occurrence_id": occurrence_id}),
@@ -116,6 +126,7 @@ class MongoMakeupRequestRepository(TenantScopedRepository):
                     "approved_target_occurrence_id": None,
                     "decided_by": None,
                     "decided_at": None,
+                    "expires_at": expires_at,
                 }
             },
         )

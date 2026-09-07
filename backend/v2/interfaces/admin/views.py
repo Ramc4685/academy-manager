@@ -528,6 +528,8 @@ class CancelSessionOccurrenceResponse(BaseModel):
     affected_enrollment_ids: list[str] = Field(default_factory=list)
     roster_entries_removed: int = 0
     makeups_reopened: int = 0
+    #: Approved trials that were assigned to this date and are pending again (#671).
+    trials_reopened: int = 0
     credits_issued: int = 0
     billing_result: str | None = None
     notified: bool = False
