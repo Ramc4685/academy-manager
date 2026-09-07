@@ -60,8 +60,12 @@ from backend.v2.shared.ids import new_ulid
 
 log = logging.getLogger(__name__)
 
-#: Occurrence states the generator prices (mirrors ``FirstMonthProrationPolicy._is_eligible``).
-_BILLABLE_STATUSES: frozenset[str] = frozenset({"scheduled", "completed", "makeup"})
+#: States that were never part of what the month cost. A date cancelled by an
+#: EARLIER run of this use case is deliberately NOT here: the family paid one
+#: monthly price for the schedule as it stood when the month was priced, so
+#: every cancelled date is worth the same 1/N of it. Shrinking the divisor
+#: after each cancellation would refund 1/4 + 1/3 of a four-class month.
+_NEVER_SCHEDULED_STATUSES: frozenset[str] = frozenset({"holiday"})
 
 
 @dataclass(frozen=True)
@@ -221,12 +225,10 @@ class ApplyOccurrenceCancellation:
                 period=period, billing_occurrence_id=billing_id, override_written=False
             )
 
-        # Priced classes for the period BEFORE this cancellation lands: the
-        # target counts (the month was priced with it in) and earlier
-        # cancellations do not.
-        priced = [
-            o for o in occurrences if _is_priced(o) or o.occurrence_id == target.occurrence_id
-        ]
+        # What the month's charge bought: every date the generator laid out
+        # for the period, including the one being cancelled now and any
+        # cancelled before it. See ``_NEVER_SCHEDULED_STATUSES``.
+        priced = [o for o in occurrences if o.status not in _NEVER_SCHEDULED_STATUSES]
         await self._overrides.mark_cancelled(
             session_id=cmd.session_id,
             occurrence_id=target.occurrence_id,
@@ -346,10 +348,6 @@ class ApplyOccurrenceCancellation:
 
 def _skip(enrollment: BillableEnrollment, reason: str) -> OccurrenceCreditDecision:
     return OccurrenceCreditDecision(enrollment.enrollment_id, None, 0, f"skipped:{reason}")
-
-
-def _is_priced(occurrence: ClassOccurrence) -> bool:
-    return occurrence.is_billable and occurrence.status in _BILLABLE_STATUSES
 
 
 def _match_occurrence(
