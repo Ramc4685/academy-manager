@@ -12,6 +12,7 @@ from datetime import date
 from typing import Any
 
 from backend.v2.contexts.coaching.application.ports import (
+    AttendanceEligibility,
     EnrollmentLookup,
     OccurrenceDetails,
     OccurrenceLookup,
@@ -20,6 +21,9 @@ from backend.v2.contexts.coaching.application.ports import (
 from backend.v2.contexts.enrollment.application.ports import (
     EnrollmentQuery,
     SessionQuery,
+)
+from backend.v2.contexts.enrollment.application.use_cases.get_occurrence_roster import (
+    OccurrenceRosterQuery,
 )
 
 
@@ -43,13 +47,45 @@ class EnrollmentSessionLookup(SessionLookup):
 
 
 class EnrollmentLookupAdapter(EnrollmentLookup):
-    """Implements Coaching's EnrollmentLookup using Enrollment's EnrollmentQuery."""
+    """Implements Coaching's EnrollmentLookup using Enrollment's EnrollmentQuery
+    plus the one-time occurrence roster (approved make-ups / trials).
 
-    def __init__(self, enrollments: EnrollmentQuery) -> None:
+    Tenant scope comes from the request context inside both repositories;
+    nothing tenant-specific is captured here.
+    """
+
+    def __init__(
+        self, enrollments: EnrollmentQuery, occurrence_roster: OccurrenceRosterQuery
+    ) -> None:
         self._enrollments = enrollments
+        self._occurrence_roster = occurrence_roster
 
     async def is_active(self, session_id: str, student_id: str) -> bool:
         return await self._enrollments.is_active(session_id, student_id)
+
+    async def attendance_eligibility(
+        self,
+        *,
+        occurrence_id: str,
+        session_id: str,
+        template_session_id: str | None,
+        student_id: str,
+    ) -> AttendanceEligibility | None:
+        # Standing enrollment first (session, then the recurring template the
+        # occurrence was expanded from) — the pre-#672 rule, unchanged. Only
+        # ``active`` counts: paused / cancelled / withdrawn stay ineligible.
+        if await self._enrollments.is_active(session_id, student_id):
+            return AttendanceEligibility(source="enrollment")
+        if template_session_id and template_session_id != session_id:
+            if await self._enrollments.is_active(template_session_id, student_id):
+                return AttendanceEligibility(source="enrollment")
+        # Otherwise an approved make-up / trial entry for exactly this
+        # occurrence — the same read GetOccurrenceRoster uses to render the
+        # MAKE-UP / TRIAL rows the coach is tapping (issue #672).
+        for entry in await self._occurrence_roster.list_for_occurrence(occurrence_id):
+            if entry.student_id == student_id:
+                return AttendanceEligibility(source=entry.source)
+        return None
 
 
 class EnrollmentOccurrenceLookup(OccurrenceLookup):
