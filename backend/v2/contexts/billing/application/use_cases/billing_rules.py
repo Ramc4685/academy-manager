@@ -73,8 +73,18 @@ class InvoiceScheduleWriter(Protocol):
 
 
 class AcademyFeesLike(Protocol):
-    late_fee_cents: int | None
-    grace_days: int | None
+    """Read-only view of the two fee fields this panel owns.
+
+    Declared as properties rather than attributes because the identity use
+    cases return a *frozen* dataclass, and a frozen dataclass cannot satisfy a
+    protocol whose members are mutable attributes.
+    """
+
+    @property
+    def late_fee_cents(self) -> int | None: ...
+
+    @property
+    def grace_days(self) -> int | None: ...
 
 
 class AcademyFeesReader(Protocol):

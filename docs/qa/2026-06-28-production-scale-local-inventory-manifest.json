@@ -1480,7 +1480,7 @@
         "buttons": [
           "Save",
           "Cancel",
-          "Save billing rules",
+          "Save <changed billing rules>",
           "Connect Stripe",
           "New session type",
           "Archive"
@@ -1512,12 +1512,15 @@
         "saved",
         "validation error",
         "provider unavailable",
-        "empty"
+        "empty",
+        "no changes to save (billing rules save button disabled)"
       ],
       "risk_edges": [
         "CORS/origin mismatch",
         "Stripe connect unavailable",
-        "Archiving a session type referenced by active billing enrollments"
+        "Archiving a session type referenced by active billing enrollments",
+        "Partial billing-rules save: an early write lands and a later one fails",
+        "Non-owner admin reaching the owner-only billing rules panel, including the legacy ?panel=fees deep link"
       ],
       "acceptance": [
         "Each panel saves or shows specific failure",
@@ -1530,6 +1533,8 @@
         "Workflow evidence: \"Data\" completes for the admin route /admin/settings with real-user evidence and no framework or runtime errors.",
         "Risk evidence: \"CORS/origin mismatch\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"Stripe connect unavailable\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Partial billing-rules save: an early write lands and a later one fails\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Non-owner admin reaching the owner-only billing rules panel, including the legacy ?panel=fees deep link\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Workflow evidence: \"Manage session types\" completes for the admin route /admin/settings with real-user evidence and no framework or runtime errors.",
         "Risk evidence: \"Archiving a session type referenced by active billing enrollments\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
