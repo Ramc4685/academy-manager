@@ -284,6 +284,21 @@ test.describe("admin students", () => {
           payment_mode: "monthly",
           subscription_status: "active",
           amount_cents: 15000,
+          autopay_status: "active",
+        },
+      ],
+      // Issue #674: a cancelled enrollment stays on the record with its facts.
+      past_enrollments: [
+        {
+          enrollment_id: "enr-0",
+          session_id: "sess-0",
+          session_title: "Beginner Basics",
+          location: "Court 2",
+          status: "cancelled",
+          cancelled_at: "2026-08-20T15:00:00Z",
+          ended_at: "2026-08-20T15:00:00Z",
+          cancelled_by: "parent",
+          reason: "Schedule conflict",
         },
       ],
       payment_history: [
@@ -395,6 +410,17 @@ test.describe("admin students", () => {
       "Advanced Footwork",
     );
     await expect(page.getByTestId("admin-student-enrolled-sessions")).toContainText("$150");
+    // Issue #674: autopay chip on the current row links to the family page.
+    const autopayChip = page.getByTestId("admin-student-autopay-enr-1");
+    await expect(autopayChip).toContainText("Autopay on");
+    await expect(autopayChip).toHaveAttribute("href", "/admin/families/parent-1");
+    // Issue #674: the cancelled enrollment is listed with date, actor and reason.
+    const pastRow = page.getByTestId("admin-student-past-enrollment-enr-0");
+    await expect(pastRow).toContainText("Beginner Basics");
+    await expect(pastRow).toContainText("Cancelled");
+    await expect(pastRow).toContainText("2026");
+    await expect(pastRow).toContainText("Parent");
+    await expect(pastRow).toContainText("Schedule conflict");
 
     await page.getByRole("tab", { name: "Billing" }).click();
     await expect(page.getByTestId("admin-student-family-billing-link")).toContainText(

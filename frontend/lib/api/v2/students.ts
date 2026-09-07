@@ -49,6 +49,14 @@ export interface AdminStudentSessionSummary {
   subscription_status?: string | null;
   amount_cents?: number | null;
   discount?: AdminStudentSessionDiscount | null;
+  /** Issue #674: billing's per-enrollment autopay axis; current rows only. */
+  autopay_status?: string | null;
+  /** Issue #674: lifecycle facts, present on past (cancelled/withdrawn) rows. */
+  cancelled_at?: string | null;
+  withdrawal_date?: string | null;
+  ended_at?: string | null;
+  cancelled_by?: string | null;
+  reason?: string | null;
 }
 
 export interface AdminStudentPaymentSummary {
@@ -100,6 +108,8 @@ export interface AdminStudentDetail extends AdminStudentView {
   waiver_version?: string | null;
   recent_attendance: AdminStudentRecentAttendance[];
   enrolled_sessions: AdminStudentSessionSummary[];
+  /** Issue #674: cancelled / withdrawn / transferred_out rows, newest ended first. */
+  past_enrollments?: AdminStudentSessionSummary[];
   payment_history: AdminStudentPaymentSummary[];
   current_payment?: AdminStudentCurrentPaymentSummary | null;
   outstanding_balance_cents: number;
