@@ -94,7 +94,6 @@ def _minimal_admin_use_cases(
         issue_refund=mock,  # type: ignore[arg-type]
         quote_enrollment=mock,
         preview_withdrawal_credit=mock,  # type: ignore[arg-type]
-        approve_withdrawal_credit=mock,  # type: ignore[arg-type]
         list_payments_recent=mock,
         list_billing_invoices=mock,
         get_billing_invoice_detail=mock,

@@ -970,7 +970,6 @@ from backend.v2.contexts.billing.application.use_cases.tuition_discounts import 
     SetTuitionDiscount,
 )
 from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import (
-    ApproveWithdrawalCreditResult,
     WithdrawalCreditPreviewResult,
 )
 from backend.v2.contexts.billing.domain.errors import (
@@ -1202,6 +1201,14 @@ class FakeEnrollmentWriter:
         if e is not None:
             self.rows[enrollment_id] = e.model_copy(update={"status": status})
 
+    async def mark_withdrawn_if_open(self, enrollment_id, *, withdrawal_date):
+        # Mirrors the Mongo CAS: only active/paused flip; returns the pre-image.
+        before = self.rows.get(enrollment_id)
+        if before is None or before.status not in {"active", "paused"}:
+            return None
+        self.rows[enrollment_id] = before.model_copy(update={"status": "withdrawn"})
+        return before
+
     async def update_session(self, enrollment_id, session_id):
         e = self.rows.get(enrollment_id)
         if e is not None:
@@ -1401,6 +1408,15 @@ class FakeLifecycleBilling:
             "metadata": {},
         }
 
+
+class FakeWithdrawalDecision:
+    """``EnrollmentWithdrawalDecisionPort`` (issue #670) with the real adapter's
+    semantics: one credit per enrollment, manual outcomes record nothing."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+        self.credits: dict[str, str] = {}
+
     async def record_withdrawal_decision(
         self,
         *,
@@ -1410,11 +1426,30 @@ class FakeLifecycleBilling:
         actor_id,
         reason,
     ):
-        _ = (enrollment, effective_at, actor_id, reason)
+        self.calls.append(
+            {
+                "enrollment_id": enrollment.enrollment_id,
+                "outcome": outcome,
+                "effective_at": effective_at,
+                "actor_id": actor_id,
+                "reason": reason,
+            }
+        )
+        if outcome != "credit":
+            return {
+                "billing_policy": f"withdrawal_{outcome}",
+                "billing_result": f"{outcome}_manual",
+                "metadata": {"outcome": outcome, "automation": "none"},
+            }
+        already = enrollment.enrollment_id in self.credits
+        credit_id = self.credits.setdefault(
+            enrollment.enrollment_id, f"credit-{enrollment.enrollment_id}"
+        )
         return {
-            "billing_policy": f"withdrawal_{outcome}",
-            "billing_result": "recorded",
-            "metadata": {"outcome": outcome},
+            "billing_policy": "early_withdrawal_credit",
+            "billing_result": "credit_already_approved" if already else "credit_approved",
+            "credit_id": credit_id,
+            "metadata": {"outcome": "credit", "credit_amount_cents": "3750"},
         }
 
 
@@ -1626,17 +1661,6 @@ class _FakePreviewWithdrawalCredit:
             unused_eligible_classes=3,
             paid_period_eligible_classes=8,
             formula="max(10000 - 0, 0) * 3 / 8",
-        )
-
-
-class _FakeApproveWithdrawalCredit:
-    async def execute(self, cmd):
-        _ = cmd
-        return ApproveWithdrawalCreditResult(
-            status="APPROVED",
-            credit_amount_cents=3750,
-            credit_balance_cents=3750,
-            credit_id="credit-1",
         )
 
 
@@ -1867,6 +1891,7 @@ def admin_seed():
         "outbox": _AdminFakeOutbox(),
         "idempotency": _AdminFakeIdempotencyStore(),
         "stripe": FakeStripeGateway(),
+        "withdrawal_decision": FakeWithdrawalDecision(),
     }
 
 
@@ -1970,7 +1995,9 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
     withdraw_enrollment = WithdrawEnrollment(
         enrollments=enrollments_w,
         enrollment_events=enrollment_events,
-        billing=lifecycle_billing,
+        billing=seed["withdrawal_decision"],
+        sessions=sessions,
+        outbox=outbox,
     )
     join_waitlist = JoinWaitlist(
         waitlist=waitlist,
@@ -2411,7 +2438,6 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         issue_refund=issue_refund,
         quote_enrollment=quote_enrollment,
         preview_withdrawal_credit=_FakePreviewWithdrawalCredit(),  # type: ignore[arg-type]
-        approve_withdrawal_credit=_FakeApproveWithdrawalCredit(),  # type: ignore[arg-type]
         list_payments_recent=list_payments_recent,
         list_billing_invoices=AsyncMock(return_value=[]),
         get_billing_invoice_detail=get_billing_invoice_detail,

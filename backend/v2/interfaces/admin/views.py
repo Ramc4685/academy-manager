@@ -923,18 +923,6 @@ class WithdrawalCreditPreviewResponse(BaseModel):
     no_credit_reason: str | None = None
 
 
-class WithdrawalCreditApproveRequest(BaseModel):
-    withdrawal_date: datetime
-    admin_note: str = ""
-    cancel_subscription_immediately: bool = False
-
-
-class WithdrawalCreditApproveResponse(BaseModel):
-    status: str
-    credit_amount_cents: int
-    credit_balance_cents: int
-
-
 # --- Invoices ---
 
 

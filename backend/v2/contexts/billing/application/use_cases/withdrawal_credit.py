@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import Protocol
+from typing import Literal, Protocol
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel
@@ -30,25 +30,11 @@ class WithdrawalPaymentRepository(Protocol):
 
 class WithdrawalEnrollmentRepository(Protocol):
     async def get(self, enrollment_id: str): ...
-    async def mark_withdrawn(self, enrollment_id: str, *, withdrawal_date: datetime) -> None: ...
 
 
-class WithdrawalLifecycleEventSink(Protocol):
-    async def record_withdrawal(
-        self,
-        *,
-        academy_id: str,
-        enrollment_id: str,
-        session_id: str,
-        student_id: str,
-        actor_id: str,
-        reason: str,
-        effective_at: datetime,
-        occurred_at: datetime,
-        billing_policy: str,
-        billing_result: str,
-        credit_id: str | None,
-    ) -> None: ...
+#: Mirrors ``enrollment.application.ports.WithdrawalOutcome`` (billing may not
+#: import enrollment; composition bridges the two identical literals).
+WithdrawalOutcome = Literal["credit", "refund", "adjustment"]
 
 
 class PreviewWithdrawalCreditCommand(BaseModel):
@@ -72,24 +58,39 @@ class WithdrawalCreditPreviewResult(BaseModel):
     no_credit_reason: str | None = None
 
 
-class ApproveWithdrawalCreditCommand(BaseModel):
+class RecordWithdrawalDecisionCommand(BaseModel):
     model_config = {"frozen": True}
 
     enrollment_id: str
+    academy_id: str
+    student_id: str | None = None
+    outcome: WithdrawalOutcome
     withdrawal_date: datetime
     actor_id: str
-    admin_note: str = ""
-    cancel_subscription_immediately: bool = False
+    reason: str = ""
 
 
-class ApproveWithdrawalCreditResult(BaseModel):
+class WithdrawalDecisionResult(BaseModel):
+    """What billing actually did for one withdrawal (issue #670).
+
+    ``billing_result`` vocabulary, copied verbatim onto the lifecycle event:
+
+    * ``credit_approved`` — a new EARLY_WITHDRAWAL_CREDIT ledger entry
+    * ``credit_already_approved`` — an earlier run made it; nothing new issued
+    * ``credit_none`` — the policy computed zero (``no_credit_reason`` says why)
+    * ``refund_manual`` / ``adjustment_manual`` — nothing automated happens;
+      the owner settles it by hand from the invoice/refund screens
+    """
+
     model_config = {"frozen": True}
 
-    status: str
-    credit_amount_cents: int
-    credit_balance_cents: int
+    billing_policy: str
+    billing_result: str
     credit_id: str | None = None
+    credit_amount_cents: int = 0
+    credit_balance_cents: int = 0
     no_credit_reason: str | None = None
+    metadata: dict[str, str]
 
 
 class PreviewWithdrawalCredit:
@@ -119,48 +120,58 @@ class PreviewWithdrawalCredit:
         return _preview_result(preview)
 
 
-class ApproveWithdrawalCredit:
+class RecordWithdrawalDecision:
+    """Billing-side step of a withdrawal, invoked BY ``WithdrawEnrollment``
+    (issue #670). Owns no lifecycle state: it never touches the enrollment
+    row, the seat, the roster or the lifecycle event.
+
+    For ``credit`` it is idempotent on the ledger — an APPROVED
+    EARLY_WITHDRAWAL_CREDIT for the enrollment is returned, never duplicated,
+    so a retried withdraw cannot inflate the parent's balance — and it
+    cancels the legacy Stripe subscription at period end exactly once.
+    """
+
     def __init__(
         self,
         *,
         payments: WithdrawalPaymentRepository,
         credits: CreditLedgerRepository,
-        enrollments: WithdrawalEnrollmentRepository,
         subscriptions: SubscriptionRepository,
         stripe: StripeGateway,
-        academy_id: str,
-        enrollment_events: WithdrawalLifecycleEventSink | None = None,
         clock=lambda: datetime.now(UTC),
     ) -> None:
         self._payments = payments
         self._credits = credits
-        self._enrollments = enrollments
         self._subscriptions = subscriptions
         self._stripe = stripe
-        self._academy_id = academy_id
-        self._enrollment_events = enrollment_events
         self._clock = clock
 
-    async def execute(self, cmd: ApproveWithdrawalCreditCommand) -> ApproveWithdrawalCreditResult:
-        enrollment = await self._enrollments.get(cmd.enrollment_id)
-        if enrollment is None:
-            raise PaymentNotFound("enrollment not found", enrollment_id=cmd.enrollment_id)
+    async def execute(self, cmd: RecordWithdrawalDecisionCommand) -> WithdrawalDecisionResult:
+        if cmd.outcome != "credit":
+            # Honest: no refund or adjustment is automated here. The owner
+            # issues it from the invoice / refund screens; the event says so.
+            return WithdrawalDecisionResult(
+                billing_policy=f"withdrawal_{cmd.outcome}",
+                billing_result=f"{cmd.outcome}_manual",
+                metadata={"outcome": cmd.outcome, "automation": "none"},
+            )
 
-        # Idempotency: if a previous approval already created an APPROVED
-        # EARLY_WITHDRAWAL_CREDIT for this enrollment, return it instead of
-        # creating a duplicate. Retries, double-click submissions, or repeated
-        # admin actions therefore do not inflate the parent's credit balance.
         existing = await self._credits.find_active_for_enrollment(
-            enrollment_id=cmd.enrollment_id, type="EARLY_WITHDRAWAL_CREDIT"
+            enrollment_id=cmd.enrollment_id,
+            type="EARLY_WITHDRAWAL_CREDIT",
         )
         if existing is not None:
             balance = await self._credits.balance_for_parent(existing.parent_id)
-            return ApproveWithdrawalCreditResult(
-                status="APPROVED",
+            return WithdrawalDecisionResult(
+                billing_policy="early_withdrawal_credit",
+                billing_result="credit_already_approved",
+                credit_id=existing.credit_id,
                 credit_amount_cents=existing.amount_cents,
                 credit_balance_cents=balance,
-                credit_id=existing.credit_id,
-                no_credit_reason=None,
+                metadata={
+                    "outcome": "credit",
+                    "credit_amount_cents": str(existing.amount_cents),
+                },
             )
 
         payment, snapshot = await _paid_payment_and_snapshot(self._payments, cmd.enrollment_id)
@@ -172,24 +183,23 @@ class ApproveWithdrawalCredit:
             calculated_at=now,
             calculated_by=cmd.actor_id,
         )
-
         credit_id: str | None = None
         if preview.credit_amount_cents > 0:
             credit_id = str(new_ulid())
             await self._credits.create(
                 CreditLedgerEntry(
                     credit_id=credit_id,
-                    academy_id=self._academy_id,
+                    academy_id=cmd.academy_id,
                     parent_id=payment.parent_id,
-                    student_id=enrollment.student_id,
-                    enrollment_id=enrollment.enrollment_id,
+                    student_id=cmd.student_id,
+                    enrollment_id=cmd.enrollment_id,
                     type="EARLY_WITHDRAWAL_CREDIT",
                     status="APPROVED",
                     amount_cents=preview.credit_amount_cents,
                     remaining_amount_cents=preview.credit_amount_cents,
                     currency=payment.currency,
-                    reason=cmd.admin_note or "Early withdrawal",
-                    calculation_snapshot_id=snapshot.snapshot_id,
+                    reason=cmd.reason or "Early withdrawal",
+                    calculation_snapshot_id=payment.calculation_snapshot_id,
                     approved_by=cmd.actor_id,
                     approved_at=now,
                     expires_at=now + timedelta(days=365),
@@ -197,44 +207,39 @@ class ApproveWithdrawalCredit:
                     updated_at=now,
                 )
             )
-
-        await self._enrollments.mark_withdrawn(
-            enrollment.enrollment_id,
-            withdrawal_date=cmd.withdrawal_date,
-        )
-        if self._enrollment_events is not None:
-            await self._enrollment_events.record_withdrawal(
-                academy_id=self._academy_id,
-                enrollment_id=enrollment.enrollment_id,
-                session_id=enrollment.session_id,
-                student_id=enrollment.student_id,
-                actor_id=cmd.actor_id,
-                reason=cmd.admin_note or "Early withdrawal",
-                effective_at=cmd.withdrawal_date,
-                occurred_at=now,
-                billing_policy="early_withdrawal_credit",
-                billing_result="APPROVED" if credit_id else "NO_CREDIT",
-                credit_id=credit_id,
-            )
-        subscription = await self._subscriptions.latest_for_enrollment(enrollment.enrollment_id)
-        if subscription is not None and subscription.stripe_subscription_id:
-            at_period_end = not cmd.cancel_subscription_immediately
-            await self._stripe.cancel_subscription(
-                subscription.stripe_subscription_id,
-                at_period_end=at_period_end,
-            )
-            await self._subscriptions.save(
-                subscription.model_copy(update={"status": "cancelled", "updated_at": now})
-            )
-
+        subscription_result = await self._cancel_legacy_subscription(cmd.enrollment_id, now)
         balance = await self._credits.balance_for_parent(payment.parent_id)
-        return ApproveWithdrawalCreditResult(
-            status="APPROVED" if credit_id else "NO_CREDIT",
+        metadata = {
+            "outcome": "credit",
+            "credit_amount_cents": str(preview.credit_amount_cents),
+            "subscription": subscription_result,
+        }
+        if preview.no_credit_reason:
+            metadata["no_credit_reason"] = preview.no_credit_reason
+        return WithdrawalDecisionResult(
+            billing_policy="early_withdrawal_credit",
+            billing_result="credit_approved" if credit_id else "credit_none",
+            credit_id=credit_id,
             credit_amount_cents=preview.credit_amount_cents,
             credit_balance_cents=balance,
-            credit_id=credit_id,
             no_credit_reason=preview.no_credit_reason,
+            metadata=metadata,
         )
+
+    async def _cancel_legacy_subscription(self, enrollment_id: str, now: datetime) -> str:
+        subscription = await self._subscriptions.latest_for_enrollment(enrollment_id)
+        if subscription is None or not subscription.stripe_subscription_id:
+            return "none"
+        if subscription.status == "cancelled":
+            return "already_cancelled"
+        await self._stripe.cancel_subscription(
+            subscription.stripe_subscription_id,
+            at_period_end=True,
+        )
+        await self._subscriptions.save(
+            subscription.model_copy(update={"status": "cancelled", "updated_at": now})
+        )
+        return "cancelled_at_period_end"
 
 
 async def _paid_payment_and_snapshot(

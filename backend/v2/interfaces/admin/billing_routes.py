@@ -33,7 +33,6 @@ from backend.v2.contexts.billing.application.use_cases.tuition_discounts import 
     SetTuitionDiscountCommand,
 )
 from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import (
-    ApproveWithdrawalCreditCommand,
     PreviewWithdrawalCreditCommand,
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
@@ -76,8 +75,6 @@ from backend.v2.interfaces.admin.views import (
     RecordExpenseRequest,
     SendInvoiceResponse,
     SetTuitionDiscountRequest,
-    WithdrawalCreditApproveRequest,
-    WithdrawalCreditApproveResponse,
     WithdrawalCreditPreviewRequest,
     WithdrawalCreditPreviewResponse,
 )
@@ -384,32 +381,6 @@ async def preview_withdrawal_credit(
             else "No withdrawal credit is available for this date."
         ),
         no_credit_reason=result.no_credit_reason,
-    )
-
-
-@router.post(
-    "/enrollments/{enrollment_id}/withdrawal-credit/approve",
-    response_model=WithdrawalCreditApproveResponse,
-)
-async def approve_withdrawal_credit(
-    enrollment_id: str,
-    body: WithdrawalCreditApproveRequest,
-    claims: AuthClaims = Depends(require_owner()),
-    use_cases: AdminUseCases = Depends(get_admin_use_cases),
-) -> WithdrawalCreditApproveResponse:
-    result = await use_cases.approve_withdrawal_credit.execute(
-        ApproveWithdrawalCreditCommand(
-            enrollment_id=enrollment_id,
-            withdrawal_date=body.withdrawal_date,
-            actor_id=claims.user_id,
-            admin_note=body.admin_note,
-            cancel_subscription_immediately=body.cancel_subscription_immediately,
-        )
-    )
-    return WithdrawalCreditApproveResponse(
-        status=result.status,
-        credit_amount_cents=result.credit_amount_cents,
-        credit_balance_cents=result.credit_balance_cents,
     )
 
 

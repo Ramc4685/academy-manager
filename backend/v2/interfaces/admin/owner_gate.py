@@ -12,6 +12,11 @@ split from:
 * :func:`ensure_can_assign_role` — the action-level rule inside the (still
   admin-reachable) role-management routes: granting or revoking ``admin`` or
   ``owner`` needs the caller to hold ``owner``.
+* :func:`ensure_owner_for_withdrawal_credit` — the action-level rule inside
+  ``POST /enrollments/{id}/withdraw`` (issue #670): the ``credit`` outcome
+  issues an account credit, which was owner-only when it had its own route
+  (``.../withdrawal-credit/approve``, removed). Same 404 as ``require_owner``
+  so the contract a plain admin sees is unchanged.
 
 Decisions (spec ``2026-09-04-role-model-and-screens-design.md``): admins keep
 recording manual payments and seeing balances, expenses, the payments list
@@ -40,7 +45,8 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         # billing_routes.py — money governance
         ("PUT", f"{_ADMIN}/billing/settings/platform-fallback"),
         ("PUT", f"{_ADMIN}/billing/settings/invoice-schedule"),
-        ("POST", f"{_ADMIN}/enrollments/{{enrollment_id}}/withdrawal-credit/approve"),
+        # (POST /enrollments/{id}/withdraw stays admin; its `credit` outcome is
+        # owner-gated per action by `ensure_owner_for_withdrawal_credit`.)
         ("POST", f"{_ADMIN}/payments/refund"),
         ("POST", f"{_ADMIN}/payments/{{payment_id}}/discount"),
         ("PUT", f"{_ADMIN}/enrollments/{{enrollment_id}}/tuition-discount"),
@@ -115,3 +121,16 @@ def ensure_can_assign_role(claims: AuthClaims, role: str) -> None:
             status_code=403,
             detail="Only the academy owner can grant or revoke admin and owner roles",
         )
+
+
+def ensure_owner_for_withdrawal_credit(claims: AuthClaims, outcome: str) -> None:
+    """Only an owner may withdraw with ``outcome="credit"`` (issue #670).
+
+    Refund and adjustment outcomes record nothing automated and stay open to
+    admins; the credit outcome writes an account credit, which is money
+    governance. Mirrors ``require_owner``: 404, so a plain admin gets exactly
+    the answer the old owner-only approve route gave.
+    """
+
+    if outcome == "credit" and "owner" not in claims.roles:
+        raise HTTPException(status_code=404, detail="Not found")

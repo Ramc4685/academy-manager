@@ -10,6 +10,11 @@ resume / session-cancel / self-cancel use cases MUST pass the adapter from
 ``compose_enrollment_billing_sync``. Leaving it out silently re-opens the
 "cancelled family keeps getting auto-charged" defect; the use cases log an
 error when the port is missing, but nothing else stops the charge.
+
+Issue #670: ``WithdrawEnrollment`` additionally needs the withdrawal decision
+adapter from ``compose_withdrawal_decision`` — the billing-side half of a
+withdrawal (early-withdrawal credit ledger entry, legacy subscription cancel).
+Without it a credit outcome issues no credit and the event says so.
 """
 
 from __future__ import annotations
@@ -22,6 +27,10 @@ from backend.v2.contexts.billing.application.use_cases.apply_enrollment_lifecycl
     ApplyEnrollmentLifecycle,
     ApplyEnrollmentLifecycleCommand,
 )
+from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import (
+    RecordWithdrawalDecision,
+    RecordWithdrawalDecisionCommand,
+)
 from backend.v2.contexts.billing.domain.ledger import void_invoice
 from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
     MongoBillingLedgerRepository,
@@ -32,6 +41,8 @@ from backend.v2.contexts.billing.infrastructure.mongo_dunning_state_repo import 
 from backend.v2.contexts.billing.infrastructure.mongo_student_billing_enrollment_repo import (
     MongoStudentBillingEnrollmentRepository,
 )
+from backend.v2.contexts.enrollment.application.ports import WithdrawalOutcome
+from backend.v2.contexts.enrollment.domain.models import Enrollment
 from backend.v2.shared.tenancy import current_academy_id
 from backend.v2.shared.time.academy_timezone import academy_timezone_lookup
 
@@ -104,6 +115,55 @@ def compose_enrollment_billing_sync(
         academy_timezone=request_academy_timezone,
     )
     return EnrollmentBillingSyncAdapter(use_case)
+
+
+class WithdrawalDecisionAdapter:
+    """``EnrollmentWithdrawalDecisionPort`` over billing's
+    ``RecordWithdrawalDecision`` (issue #670)."""
+
+    def __init__(self, use_case: RecordWithdrawalDecision) -> None:
+        self._use_case = use_case
+
+    async def record_withdrawal_decision(
+        self,
+        *,
+        enrollment: Enrollment,
+        outcome: WithdrawalOutcome,
+        effective_at: datetime,
+        actor_id: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        result = await self._use_case.execute(
+            RecordWithdrawalDecisionCommand(
+                enrollment_id=enrollment.enrollment_id,
+                academy_id=enrollment.academy_id,
+                student_id=enrollment.student_id,
+                outcome=outcome,
+                withdrawal_date=effective_at,
+                actor_id=actor_id,
+                reason=reason[:500],
+            )
+        )
+        return {
+            "billing_policy": result.billing_policy,
+            "billing_result": result.billing_result,
+            "credit_id": result.credit_id,
+            "metadata": dict(result.metadata),
+        }
+
+
+def compose_withdrawal_decision(
+    *, payments: Any, credits: Any, subscriptions: Any, stripe: Any
+) -> WithdrawalDecisionAdapter:
+    """Build the withdrawal decision adapter over the caller's billing repos."""
+    return WithdrawalDecisionAdapter(
+        RecordWithdrawalDecision(
+            payments=payments,
+            credits=credits,
+            subscriptions=subscriptions,
+            stripe=stripe,
+        )
+    )
 
 
 def build_void_billing_invoice(*, ledger: Any, dunning: Any) -> Callable[..., Awaitable[None]]:

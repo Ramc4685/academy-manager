@@ -53,6 +53,17 @@ class FakeEnrollments:
     async def update_status(self, enrollment_id: str, status: str) -> None:
         self.rows[enrollment_id] = self.rows[enrollment_id].model_copy(update={"status": status})
 
+    async def mark_withdrawn_if_open(
+        self, enrollment_id: str, *, withdrawal_date: datetime
+    ) -> Enrollment | None:
+        # Mirrors the Mongo CAS: only active/paused rows flip; returns the
+        # pre-image, None when the row was not open.
+        before = self.rows.get(enrollment_id)
+        if before is None or before.status not in {"active", "paused"}:
+            return None
+        self.rows[enrollment_id] = before.model_copy(update={"status": "withdrawn"})
+        return before
+
     async def update_session(self, enrollment_id: str, session_id: str) -> None:
         self.rows[enrollment_id] = self.rows[enrollment_id].model_copy(
             update={"session_id": session_id}
@@ -181,6 +192,17 @@ class FakeLifecycleBilling:
             "metadata": {"adjustment_cents": "-1250"},
         }
 
+
+@dataclass
+class FakeWithdrawalDecision:
+    """``EnrollmentWithdrawalDecisionPort`` with the real adapter's semantics:
+    one credit per enrollment (a retry hands back the same id), manual
+    outcomes record nothing."""
+
+    calls: list[dict[str, Any]] = field(default_factory=list)
+    credits: dict[str, str] = field(default_factory=dict)
+    fail: bool = False
+
     async def record_withdrawal_decision(
         self,
         *,
@@ -189,16 +211,33 @@ class FakeLifecycleBilling:
         effective_at: datetime,
         actor_id: str,
         reason: str,
-    ):
-        assert enrollment.enrollment_id == "enr-1"
-        assert outcome == "refund"
-        assert effective_at == _effective()
-        assert actor_id == "admin-1"
-        assert reason == "moving away"
+    ) -> dict[str, Any]:
+        if self.fail:
+            raise RuntimeError("no paid tuition to credit")
+        self.calls.append(
+            {
+                "enrollment_id": enrollment.enrollment_id,
+                "outcome": outcome,
+                "effective_at": effective_at,
+                "actor_id": actor_id,
+                "reason": reason,
+            }
+        )
+        if outcome != "credit":
+            return {
+                "billing_policy": f"withdrawal_{outcome}",
+                "billing_result": f"{outcome}_manual",
+                "metadata": {"outcome": outcome, "automation": "none"},
+            }
+        already = enrollment.enrollment_id in self.credits
+        credit_id = self.credits.setdefault(
+            enrollment.enrollment_id, f"credit-{enrollment.enrollment_id}"
+        )
         return {
-            "billing_policy": "withdrawal_refund",
-            "billing_result": "refund_requested",
-            "metadata": {"outcome": "refund"},
+            "billing_policy": "early_withdrawal_credit",
+            "billing_result": "credit_already_approved" if already else "credit_approved",
+            "credit_id": credit_id,
+            "metadata": {"outcome": "credit", "credit_amount_cents": "1250"},
         }
 
 
@@ -361,11 +400,12 @@ async def test_move_records_effective_date_and_billing_proration_result() -> Non
 async def test_withdraw_records_admin_selected_outcome_and_effective_date() -> None:
     enrollments = FakeEnrollments(rows={"enr-1": _enrollment()})
     events = FakeEnrollmentEvents()
+    decision = FakeWithdrawalDecision()
 
     use_case = WithdrawEnrollment(
         enrollments=enrollments,
         enrollment_events=events,
-        billing=FakeLifecycleBilling(),
+        billing=decision,
         clock=_now,
     )
 
@@ -380,14 +420,23 @@ async def test_withdraw_records_admin_selected_outcome_and_effective_date() -> N
     )
 
     assert enrollments.rows["enr-1"].status == "withdrawn"
+    assert decision.calls == [
+        {
+            "enrollment_id": "enr-1",
+            "outcome": "refund",
+            "effective_at": _effective(),
+            "actor_id": "admin-1",
+            "reason": "moving away",
+        }
+    ]
     event = events.rows[0]
     assert event.event_type == "withdrawn"
     assert event.effective_at == _effective()
     assert event.actor_id == "admin-1"
     assert event.reason == "moving away"
     assert event.billing_policy == "withdrawal_refund"
-    assert event.billing_result == "refund_requested"
-    assert event.metadata == {"outcome": "refund"}
+    assert event.billing_result == "refund_manual"
+    assert event.metadata == {"outcome": "refund", "automation": "none"}
 
 
 @pytest.mark.asyncio

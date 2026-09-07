@@ -120,6 +120,21 @@ class EnrollmentNotFound(DomainError):
     status_code = 404
 
 
+class EnrollmentNotWithdrawable(DomainError):
+    """Withdrawal needs an ``active`` or ``paused`` row (issue #670).
+
+    A row that is already withdrawn or cancelled has had its seat released,
+    its future invoices voided and its credit decision recorded; running the
+    withdraw again would decrement the seat counter under the real roster
+    and could stack a second credit decision on the first. Reported as a
+    conflict, never silently ignored, so a second tab or a stale roster
+    learns the row already moved on.
+    """
+
+    code = "Enrollment.NotWithdrawable"
+    status_code = 409
+
+
 class WaitlistEmpty(DomainError):
     code = "Enrollment.WaitlistEmpty"
     status_code = 404
