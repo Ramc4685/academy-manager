@@ -27,6 +27,7 @@ from backend.v2.contexts.billing.application.use_cases.apply_enrollment_move imp
 from backend.v2.contexts.billing.domain.ledger import InvoiceLine, LedgerInvoice
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry
 from backend.v2.contexts.billing.domain.proration import ClassOccurrence
+from backend.v2.contexts.billing.domain.tuition_discount import TuitionDiscount
 
 TZ = "America/Chicago"
 NOW = datetime(2026, 9, 9, 15, 0, tzinfo=UTC)
@@ -292,9 +293,9 @@ async def test_debit_on_partially_paid_invoice_keeps_recorded_money() -> None:
 
 
 @pytest.mark.asyncio
-async def test_credit_creates_move_proration_credit() -> None:
+async def test_credit_creates_move_proration_credit_when_the_invoice_is_paid() -> None:
     ledger, credits = FakeLedger(), FakeCredits()
-    invoice = _invoice()
+    invoice = _invoice(status="paid")
     ledger.seed(invoice, _line(invoice, 8000))
 
     result = await _build(ledger, credits, _schedules(12000, 8000)).execute(_cmd())
@@ -386,9 +387,9 @@ async def test_repeat_move_is_idempotent_for_debit_credit_and_adjustment() -> No
     assert ledger.invoices[invoice.invoice_id].total_cents == 11000
     assert len(await ledger.get_lines_for_invoice(invoice.invoice_id)) == 2
 
-    # credit
+    # credit (paid invoice → credit ledger)
     ledger, credits = FakeLedger(), FakeCredits()
-    invoice = _invoice()
+    invoice = _invoice(status="paid")
     ledger.seed(invoice, _line(invoice, 8000))
     use_case = _build(ledger, credits, _schedules(12000, 8000))
     first = await use_case.execute(_cmd())
@@ -424,7 +425,7 @@ async def test_repeat_without_cached_result_still_does_not_double_apply() -> Non
     assert ledger.invoices[invoice.invoice_id].total_cents == 11000
 
     ledger, credits = FakeLedger(), FakeCredits()
-    invoice = _invoice()
+    invoice = _invoice(status="paid")
     ledger.seed(invoice, _line(invoice, 8000))
     cheaper = _schedules(12000, 8000)
     first = await _build(ledger, credits, cheaper).execute(_cmd())
@@ -450,8 +451,9 @@ async def test_a_second_move_in_the_same_period_is_priced_on_its_own() -> None:
 
     assert first.outcome == "debited" and first.delta_cents == 3000
     assert second.outcome == "credited" and second.delta_cents == -6000
-    assert ledger.invoices[invoice.invoice_id].total_cents == 11000
-    assert len(credits.rows) == 1
+    # Both landed on the still-open invoice: 8000 + 3000 - 6000.
+    assert ledger.invoices[invoice.invoice_id].total_cents == 5000
+    assert credits.rows == {}
 
 
 @pytest.mark.asyncio
@@ -494,3 +496,277 @@ async def test_void_and_prior_adjustment_invoices_are_not_the_period_invoice() -
     result = await _build(ledger, credits, _schedules()).execute(_cmd())
 
     assert result.outcome == "no_invoice"
+
+
+# --- review follow-ups (#669) ------------------------------------------------
+
+
+@dataclass
+class FakeDiscounts:
+    policy: TuitionDiscount | None = None
+
+    async def get_active(self, enrollment_id: str) -> TuitionDiscount | None:
+        return self.policy
+
+
+def _percent_discount(bps: int, *, start: date = date(2026, 1, 1)) -> TuitionDiscount:
+    return TuitionDiscount(
+        discount_id="disc-1",
+        academy_id=ACADEMY,
+        enrollment_id="enr-1",
+        student_id="stu-1",
+        category="sibling",
+        kind="percent",
+        percent_bps=bps,
+        effective_start=start,
+    )
+
+
+@pytest.mark.asyncio
+async def test_delta_is_priced_net_of_the_active_tuition_discount() -> None:
+    """The invoice was built net of the discount, so the delta must be too."""
+    ledger, credits = FakeLedger(), FakeCredits()
+    invoice = _invoice(total=6400)  # 8000 less 20%
+    ledger.seed(invoice, _line(invoice, 6400))
+    use_case = ApplyEnrollmentMove(
+        ledger=ledger,
+        credits=credits,
+        schedules=_schedules(),
+        discounts=FakeDiscounts(_percent_discount(2000)),
+        idempotency_store=InMemoryIdempotency(),
+        academy_timezone=_tz,
+        clock=lambda: NOW,
+    )
+
+    result = await use_case.execute(_cmd())
+
+    # Gross, 3 of 4 classes left, the delta would be (12000 - 8000) * 3/4 =
+    # 3000. Net of the 20% policy the invoice was priced with it is 2400.
+    assert result.from_share_cents == 4800  # 6400 * 3/4
+    assert result.to_share_cents == 7200  # 9600 * 3/4
+    assert result.delta_cents == 2400
+    assert ledger.invoices[invoice.invoice_id].total_cents == 8800
+
+
+@pytest.mark.asyncio
+async def test_a_discount_that_ended_before_the_period_is_not_applied() -> None:
+    ledger, credits = FakeLedger(), FakeCredits()
+    invoice = _invoice()
+    ledger.seed(invoice, _line(invoice, 8000))
+    expired = _percent_discount(2000).model_copy(
+        update={"effective_end": date(2026, 8, 31)}, deep=True
+    )
+    use_case = ApplyEnrollmentMove(
+        ledger=ledger,
+        credits=credits,
+        schedules=_schedules(),
+        discounts=FakeDiscounts(expired),
+        idempotency_store=InMemoryIdempotency(),
+        academy_timezone=_tz,
+        clock=lambda: NOW,
+    )
+
+    assert (await use_case.execute(_cmd())).delta_cents == 3000
+
+
+@pytest.mark.asyncio
+async def test_unexpandable_schedule_refuses_instead_of_billing_a_bogus_delta() -> None:
+    """A from-session we cannot expand used to yield from_share=0, so the
+    family was debited the whole new-session share on an already-billed month."""
+    ledger, credits = FakeLedger(), FakeCredits()
+    invoice = _invoice()
+    ledger.seed(invoice, _line(invoice, 8000))
+    schedules = _schedules()
+    schedules.rows["sess-a"] = MoveSessionSchedule(
+        session_id="sess-a", monthly_price_cents=10000, timezone=TZ, occurrences=[]
+    )
+
+    result = await _build(ledger, credits, schedules).execute(_cmd())
+
+    assert result.outcome == "schedule_unavailable"
+    assert result.billing_result == "schedule_unavailable"
+    assert result.invoice_id == invoice.invoice_id
+    assert ledger.invoices[invoice.invoice_id].total_cents == 8000
+    assert len(await ledger.get_lines_for_invoice(invoice.invoice_id)) == 1
+    assert credits.rows == {}
+
+
+@pytest.mark.asyncio
+async def test_a_missing_session_document_refuses_too() -> None:
+    ledger, credits = FakeLedger(), FakeCredits()
+    invoice = _invoice()
+    ledger.seed(invoice, _line(invoice, 8000))
+    schedules = _schedules()
+    del schedules.rows["sess-b"]
+
+    result = await _build(ledger, credits, schedules).execute(_cmd())
+
+    assert result.outcome == "schedule_unavailable"
+    assert ledger.invoices[invoice.invoice_id].total_cents == 8000
+
+
+@pytest.mark.asyncio
+async def test_effective_date_uses_the_local_day_boundary_for_evening_classes() -> None:
+    """A 19:00-local class on Sep 9 must NOT count as remaining for a move
+    effective Sep 10 — midnight UTC of Sep 10 is 19:00 CDT on Sep 9."""
+
+    def evening(session_id: str, day: int) -> ClassOccurrence:
+        start = datetime(2026, 9, day, 19, 0, tzinfo=ZoneInfo(TZ))
+        return ClassOccurrence(
+            occurrence_id=f"{session_id}:{day}",
+            session_id=session_id,
+            start_at=start.astimezone(UTC),
+            end_at=start.astimezone(UTC),
+            status="scheduled",
+            is_billable=True,
+            timezone=TZ,
+        )
+
+    schedules = FakeSchedules(
+        rows={
+            "sess-a": MoveSessionSchedule(
+                session_id="sess-a",
+                monthly_price_cents=8000,
+                timezone=TZ,
+                occurrences=[evening("sess-a", d) for d in (2, 9, 16, 23)],
+            ),
+            "sess-b": MoveSessionSchedule(
+                session_id="sess-b",
+                monthly_price_cents=12000,
+                timezone=TZ,
+                occurrences=[evening("sess-b", d) for d in (3, 10, 17, 24)],
+            ),
+        }
+    )
+    ledger, credits = FakeLedger(), FakeCredits()
+    invoice = _invoice()
+    ledger.seed(invoice, _line(invoice, 8000))
+
+    result = await _build(ledger, credits, schedules).execute(
+        _cmd(effective_date=date(2026, 9, 10))
+    )
+
+    # Sep 9 is behind us: 2 of 4 remain in sess-a, 3 of 4 in sess-b. With the
+    # old midnight-UTC boundary the Sep 9 class counted as remaining.
+    assert result.from_share_cents == 4000
+    assert result.to_share_cents == 9000
+    assert result.delta_cents == 5000
+
+
+@pytest.mark.asyncio
+async def test_negative_delta_reduces_a_still_open_unpaid_invoice() -> None:
+    """Autopay charges the invoice balance, so a downward move must lower the
+    invoice rather than park a credit the parent gets back later."""
+    ledger, credits = FakeLedger(), FakeCredits()
+    invoice = _invoice(total=12000)
+    ledger.seed(invoice, _line(invoice, 12000))
+
+    result = await _build(ledger, credits, _schedules(12000, 8000)).execute(_cmd())
+
+    assert result.outcome == "credited"
+    assert result.delta_cents == -3000
+    assert result.credit_id is None
+    assert credits.rows == {}
+    updated = ledger.invoices[invoice.invoice_id]
+    assert updated.total_cents == updated.balance_due_cents == 9000
+
+
+@pytest.mark.asyncio
+async def test_negative_delta_on_a_partially_paid_invoice_still_credits() -> None:
+    """Money is already allocated, so reducing the invoice could strand an
+    overpayment; the credit ledger stays the instrument there."""
+    ledger, credits = FakeLedger(), FakeCredits()
+    invoice = _invoice(status="partially_paid", total=12000).model_copy(
+        update={"balance_due_cents": 2000}
+    )
+    ledger.seed(invoice, _line(invoice, 12000))
+    ledger.allocations[invoice.invoice_id] = 10000
+
+    result = await _build(ledger, credits, _schedules(12000, 8000)).execute(_cmd())
+
+    assert result.outcome == "credited"
+    assert result.credit_id is not None
+    assert ledger.invoices[invoice.invoice_id].total_cents == 12000
+
+
+@pytest.mark.asyncio
+async def test_a_half_applied_debit_self_heals_the_invoice_header() -> None:
+    """The line write and the version-guarded header write are two round
+    trips; a conflict on the second must not leave the header behind forever."""
+    ledger, credits = FakeLedger(), FakeCredits()
+    invoice = _invoice()
+    ledger.seed(invoice, _line(invoice, 8000))
+    use_case = _build(ledger, credits, _schedules())
+    first = await use_case.execute(_cmd())
+    # Simulate the header write having been lost: the line is there, the
+    # invoice still shows the pre-move totals.
+    ledger.invoices[invoice.invoice_id] = ledger.invoices[invoice.invoice_id].model_copy(
+        update={"subtotal_cents": 8000, "total_cents": 8000, "balance_due_cents": 8000}
+    )
+
+    retry = await _build(ledger, credits, _schedules()).execute(_cmd())
+
+    assert retry.line_id == first.line_id
+    repaired = ledger.invoices[invoice.invoice_id]
+    assert repaired.total_cents == repaired.balance_due_cents == 11000
+    assert len(await ledger.get_lines_for_invoice(invoice.invoice_id)) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_repeated_identical_move_in_one_period_is_billed_again() -> None:
+    """A→B, B→A, A→B: the third move has its own move_seq, so it posts."""
+    ledger, credits = FakeLedger(), FakeCredits()
+    invoice = _invoice()
+    ledger.seed(invoice, _line(invoice, 8000))
+    use_case = _build(ledger, credits, _schedules())
+
+    first = await use_case.execute(_cmd(move_seq=0))
+    back = await use_case.execute(
+        _cmd(from_session_id="sess-b", to_session_id="sess-a", move_seq=1)
+    )
+    again = await use_case.execute(_cmd(move_seq=2))
+
+    assert first.outcome == "debited" and first.delta_cents == 3000
+    assert back.delta_cents == -3000
+    assert again.outcome == "debited" and again.delta_cents == 3000
+    assert again.line_id != first.line_id
+    # 8000 + 3000 - 3000 + 3000 — the family pays for the session they are in.
+    assert ledger.invoices[invoice.invoice_id].total_cents == 11000
+
+
+@pytest.mark.asyncio
+async def test_debit_on_an_already_noticed_invoice_records_notice_stale() -> None:
+    ledger, credits = FakeLedger(), FakeCredits()
+    invoice = _invoice().model_copy(update={"delivery_status": "sent"})
+    ledger.seed(invoice, _line(invoice, 8000))
+
+    result = await _build(ledger, credits, _schedules()).execute(_cmd())
+
+    assert result.notice_stale is True
+    assert result.metadata["notice_stale"] == "true"
+
+
+@pytest.mark.asyncio
+async def test_invoice_due_days_of_none_falls_back_to_seven_days() -> None:
+    class _Settings:
+        invoice_due_days = None
+
+        async def get(self) -> object:
+            return self
+
+    ledger, credits = FakeLedger(), FakeCredits()
+    invoice = _invoice(status="paid")
+    ledger.seed(invoice, _line(invoice, 8000))
+    use_case = ApplyEnrollmentMove(
+        ledger=ledger,
+        credits=credits,
+        schedules=_schedules(),
+        idempotency_store=InMemoryIdempotency(),
+        academy_timezone=_tz,
+        settings=_Settings(),
+        clock=lambda: NOW,
+    )
+
+    result = await use_case.execute(_cmd())
+
+    assert ledger.invoices[result.invoice_id].due_date == date(2026, 9, 16)

@@ -28,6 +28,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import 
 from backend.v2.contexts.billing.infrastructure.mongo_move_schedule_reader import (
     MongoMoveScheduleReader,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_tuition_discount_repo import (
+    MongoTuitionDiscountRepository,
+)
 from backend.v2.shared.idempotency.mongo_store import MongoIdempotencyStore
 
 NOW = datetime(2026, 9, 9, 15, 0, tzinfo=UTC)
@@ -95,6 +98,7 @@ def _use_case(db) -> ApplyEnrollmentMove:
         ledger=MongoBillingLedgerRepository(db),
         credits=MongoCreditLedgerRepository(db),
         schedules=MongoMoveScheduleReader(db),
+        discounts=MongoTuitionDiscountRepository(db),
         idempotency_store=MongoIdempotencyStore(db),
         academy_timezone=_tz,
         clock=lambda: NOW,
@@ -145,10 +149,12 @@ async def test_move_to_dearer_session_adds_line_to_open_invoice_once(db, acad) -
 
 @pytest.mark.asyncio
 async def test_move_to_cheaper_session_credits_parent_ledger(db, acad) -> None:
+    """A PAID period invoice cannot be reduced, so the money comes back as a
+    credit. (An open, unpaid one is reduced in place — see the test below.)"""
     await _seed_session(db, acad, "sess-a", price=12000, day="Sat")
     await _seed_session(db, acad, "sess-b", price=8000, day="Sun")
     ledger = MongoBillingLedgerRepository(db)
-    await _seed_invoice(ledger, acad)
+    await _seed_invoice(ledger, acad, status="paid")
     credits = MongoCreditLedgerRepository(db)
 
     result = await _use_case(db).execute(_cmd())
@@ -228,3 +234,96 @@ async def test_other_tenant_invoice_is_invisible(db, acad, other_acad) -> None:
         _tv.reset(token)
 
     assert result.outcome == "no_invoice"
+
+
+@pytest.mark.asyncio
+async def test_move_to_cheaper_session_reduces_a_still_open_invoice(db, acad) -> None:
+    """#669 review: autopay charges the invoice balance, so an open, unpaid
+    invoice must come DOWN rather than leave the old amount to be charged."""
+    await _seed_session(db, acad, "sess-a", price=12000, day="Sat")
+    await _seed_session(db, acad, "sess-b", price=8000, day="Sun")
+    ledger = MongoBillingLedgerRepository(db)
+    await _seed_invoice(ledger, acad)
+
+    result = await _use_case(db).execute(_cmd())
+
+    assert result.outcome == "credited" and result.delta_cents == -3000
+    invoice = await ledger.get_invoice("inv-enr-1-2026-09")
+    assert invoice is not None
+    assert invoice.total_cents == invoice.balance_due_cents == 5000
+    assert await db["account_credit_ledger"].count_documents({}) == 0
+
+
+@pytest.mark.asyncio
+async def test_delta_is_net_of_the_stored_tuition_discount(db, acad) -> None:
+    await _seed_session(db, acad, "sess-a", price=8000, day="Sat")
+    await _seed_session(db, acad, "sess-b", price=12000, day="Sun")
+    ledger = MongoBillingLedgerRepository(db)
+    await _seed_invoice(ledger, acad)
+    await db["enrollment_discounts"].insert_one(
+        {
+            "discount_id": "disc-1",
+            "academy_id": acad,
+            "enrollment_id": "enr-1",
+            "student_id": "stu-1",
+            "category": "sibling",
+            "kind": "percent",
+            "percent_bps": 2000,
+            "effective_start": "2026-01-01",
+            "status": "active",
+        }
+    )
+
+    result = await _use_case(db).execute(_cmd())
+
+    # Gross the delta would be 3000; net of the 20% policy it is 2400.
+    assert result.delta_cents == 2400
+
+
+@pytest.mark.asyncio
+async def test_a_session_without_a_schedule_refuses(db, acad) -> None:
+    await db["sessions"].insert_one(
+        {
+            "session_id": "sess-a",
+            "academy_id": acad,
+            "title": "open ended",
+            "timezone": "America/Chicago",
+            "amount_cents": 8000,
+            "status": "active",
+        }
+    )
+    await _seed_session(db, acad, "sess-b", price=12000, day="Sun")
+    ledger = MongoBillingLedgerRepository(db)
+    await _seed_invoice(ledger, acad)
+
+    result = await _use_case(db).execute(_cmd())
+
+    assert result.outcome == "schedule_unavailable"
+    invoice = await ledger.get_invoice("inv-enr-1-2026-09")
+    assert invoice is not None and invoice.total_cents == 8000
+
+
+@pytest.mark.asyncio
+async def test_move_adjustment_is_not_mistaken_for_the_period_invoice(db, acad) -> None:
+    """#669 review: the adjustment shares (enrollment_id, period) with the
+    monthly invoice and is newer, so the generator's lookup must skip it."""
+    from backend.v2.contexts.billing.infrastructure.mongo_monthly_billing import (
+        MongoMonthlyBillingGenerator,
+    )
+    from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
+        MongoPaymentRepository,
+    )
+
+    await _seed_session(db, acad, "sess-a", price=8000, day="Sat")
+    await _seed_session(db, acad, "sess-b", price=12000, day="Sun")
+    ledger = MongoBillingLedgerRepository(db)
+    await _seed_invoice(ledger, acad, status="paid")
+
+    adjustment = await _use_case(db).execute(_cmd())
+    assert adjustment.outcome == "adjustment_invoiced"
+
+    generator = MongoMonthlyBillingGenerator(MongoPaymentRepository(db))
+    found = await generator._find_existing_invoice_for_enrollment_period(
+        enrollment_id="enr-1", period="2026-09"
+    )
+    assert found == "inv-enr-1-2026-09"

@@ -176,15 +176,26 @@ def _round_half_up_rational(numerator: int, denominator: int) -> int:
 # ---------------------------------------------------------------------------
 
 
+#: ``source_type`` stamped on a move adjustment invoice and on every
+#: ``move_proration`` line. Lives in the domain because the monthly generator's
+#: invoice lookup has to be able to exclude adjustments without importing an
+#: application use case.
+MOVE_SOURCE_TYPE = "MOVE_PRORATION"
+
+
 class MoveProrationQuote(BaseModel):
     """Price delta owed (positive) or owed back (negative) for the rest of a period.
 
-    Each side is the session's monthly price scaled by the share of its
-    billable occurrences that start at or after ``effective_at``:
-    ``price * remaining / total`` rounded half-up on the final cent, the same
-    rounding ``FirstMonthProrationPolicy`` uses. ``delta_cents`` is
-    ``to_share_cents - from_share_cents``; the family already paid (or owes)
-    the from-session's full month, so only the difference moves.
+    Each side is the session's monthly price NET of the enrollment's active
+    recurring tuition discount, scaled by the share of its billable occurrences
+    that start at or after ``effective_at``: ``(price - discount) * remaining /
+    total`` rounded half-up on the final cent, the same rounding
+    ``FirstMonthProrationPolicy`` uses. Pricing net of the discount is what
+    keeps the delta consistent with the invoice it lands on, which the monthly
+    generator built net of the same policy (issue #669 review).
+    ``delta_cents`` is ``to_share_cents - from_share_cents``; the family
+    already paid (or owes) the from-session's full month, so only the
+    difference moves.
     """
 
     model_config = {"frozen": True}
@@ -194,6 +205,8 @@ class MoveProrationQuote(BaseModel):
     to_session_id: str
     from_price_cents: int
     to_price_cents: int
+    from_discount_cents: int = 0
+    to_discount_cents: int = 0
     from_total_classes: int
     from_remaining_classes: int
     to_total_classes: int
@@ -201,7 +214,7 @@ class MoveProrationQuote(BaseModel):
     from_share_cents: int
     to_share_cents: int
     delta_cents: int
-    policy_version: str = "move-proration-v1"
+    policy_version: str = "move-proration-v2"
 
 
 def remaining_share_cents(
@@ -210,12 +223,18 @@ def remaining_share_cents(
     period: BillingPeriod,
     occurrences: list[ClassOccurrence],
     effective_at: datetime,
+    discount_cents: int = 0,
 ) -> tuple[int, int, int]:
     """``(share_cents, remaining, total)`` for the classes from ``effective_at`` on.
 
     ``total`` counts every billable occurrence of the period (the classes the
     monthly price buys); ``remaining`` counts those starting at or after
-    ``effective_at``. An empty schedule yields ``(0, 0, 0)``.
+    ``effective_at``. ``discount_cents`` is the enrollment's recurring tuition
+    discount expressed at monthly scale and is subtracted BEFORE prorating, the
+    way ``FirstMonthProrationPolicy.quote`` does, so a discounted family's move
+    delta matches the discounted invoice it lands on. An empty schedule yields
+    ``(0, 0, 0)`` — callers must treat a ``total`` of 0 as "schedule unknown"
+    rather than "nothing left to bill" (issue #669 review).
     """
     eligible = [
         occurrence
@@ -224,9 +243,10 @@ def remaining_share_cents(
     ]
     total = len(eligible)
     remaining = sum(1 for occurrence in eligible if occurrence.start_at >= effective_at)
-    if total == 0 or remaining == 0 or monthly_price_cents <= 0:
+    net_price = max(monthly_price_cents - max(discount_cents, 0), 0)
+    if total == 0 or remaining == 0 or net_price <= 0:
         return 0, remaining, total
-    return _round_half_up_rational(monthly_price_cents * remaining, total), remaining, total
+    return _round_half_up_rational(net_price * remaining, total), remaining, total
 
 
 def quote_move_proration(
@@ -239,18 +259,22 @@ def quote_move_proration(
     from_occurrences: list[ClassOccurrence],
     to_occurrences: list[ClassOccurrence],
     effective_at: datetime,
+    from_discount_cents: int = 0,
+    to_discount_cents: int = 0,
 ) -> MoveProrationQuote:
     from_share, from_remaining, from_total = remaining_share_cents(
         monthly_price_cents=from_price_cents,
         period=period,
         occurrences=from_occurrences,
         effective_at=effective_at,
+        discount_cents=from_discount_cents,
     )
     to_share, to_remaining, to_total = remaining_share_cents(
         monthly_price_cents=to_price_cents,
         period=period,
         occurrences=to_occurrences,
         effective_at=effective_at,
+        discount_cents=to_discount_cents,
     )
     return MoveProrationQuote(
         billing_period_label=period.label,
@@ -258,6 +282,8 @@ def quote_move_proration(
         to_session_id=to_session_id,
         from_price_cents=from_price_cents,
         to_price_cents=to_price_cents,
+        from_discount_cents=from_discount_cents,
+        to_discount_cents=to_discount_cents,
         from_total_classes=from_total,
         from_remaining_classes=from_remaining,
         to_total_classes=to_total,

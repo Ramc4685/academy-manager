@@ -265,6 +265,8 @@ class EnrollmentMoveBillingSync(Protocol):
         effective_at: datetime,
         reason: str,
         actor_id: str | None,
+        effective_date: date | None = None,
+        move_seq: int = 0,
     ) -> dict[str, Any]: ...
 
 

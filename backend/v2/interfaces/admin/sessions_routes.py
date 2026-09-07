@@ -543,6 +543,9 @@ async def transfer_enrollment(
             enrollment_id=enrollment_id,
             target_session_id=body.target_session_id,
             effective_at=_start_of_day_utc(body.effective_date),
+            # The date itself, so billing can resolve the academy-local day
+            # boundary instead of inferring it from midnight UTC (#669 review).
+            effective_date=body.effective_date,
             actor_id=claims.user_id,
             reason=body.reason,
         )

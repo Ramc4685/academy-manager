@@ -7,21 +7,32 @@ generator because it reads the enrollment's *current* session.
 
 Decision table, once the effective period's invoice is found:
 
+- either side's schedule cannot be expanded for the period (session doc
+  missing, or no billable occurrence in the month) → refuse. We cannot tell
+  "no classes left" from "we could not read the schedule", and the monthly
+  generator bills the full month either way, so a delta computed against a
+  zero share would double-charge the family (issue #669 review).
 - no invoice yet for that period → do nothing. The generator has not run
   for it, and when it does it prices from the new session.
-- delta > 0 and the invoice still accepts lines (open / draft /
-  partially_paid) → append a ``move_proration`` line to it.
+- delta != 0 and the invoice still accepts lines (open / draft /
+  partially_paid) and no money has been allocated to it yet → append a
+  ``move_proration`` line to it (negative for a downward move, so the amount
+  autopay charges is the corrected one rather than the old higher figure).
 - delta > 0 but the invoice is already paid → mint a separate adjustment
   invoice through the ledger's idempotent ``create_invoice`` path. Lines are
   never corrected in place (they are ``$setOnInsert``), so a paid invoice is
   never re-opened. The new invoice carries ``enrollment_id`` and so follows
   the same autopay eligibility path as any other open invoice: the dunning
   worker decides whether and when to charge it; nothing charges here.
-- delta < 0 → an APPROVED ``MOVE_PRORATION_CREDIT`` on the parent's credit
-  ledger, the same ledger withdrawal credits use, applied to the next invoice.
+- delta < 0 against an invoice that already has money on it (or is paid) →
+  an APPROVED ``MOVE_PRORATION_CREDIT`` on the parent's credit ledger, the
+  same ledger withdrawal credits use, applied to the next invoice.
 - delta == 0 → record only.
 
-Idempotency: one key per (tenant, enrollment, period, from, to). The
+Idempotency: one key per (tenant, enrollment, period, from, to, move_seq),
+where ``move_seq`` is how many moves this enrollment had already been through
+when the transfer was issued. Without it a second A→B move in one period
+reuses the first move's key and can never post money (issue #669 review). The
 ``@idempotent`` store returns the first result on a repeat; underneath, the
 line lookup, ``create_invoice`` and the credit lookup are each keyed on the
 same value so a crash between the write and the store put cannot double-apply.
@@ -31,8 +42,9 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any, Literal, Protocol
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
 
@@ -43,13 +55,24 @@ from backend.v2.contexts.billing.application.use_cases.apply_enrollment_lifecycl
 from backend.v2.contexts.billing.application.use_cases.invoice_numbering import (
     mint_invoice_number,
 )
-from backend.v2.contexts.billing.domain.ledger import InvoiceLine, LedgerInvoice, add_line
+from backend.v2.contexts.billing.domain.ledger import (
+    InvoiceLine,
+    LedgerInvoice,
+    add_line,
+    recompute_totals,
+)
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry
 from backend.v2.contexts.billing.domain.proration import (
+    MOVE_SOURCE_TYPE,
     BillingPeriod,
     ClassOccurrence,
     MoveProrationQuote,
     quote_move_proration,
+)
+from backend.v2.contexts.billing.domain.tuition_discount import (
+    TuitionDiscount,
+    monthly_discount_cents,
+    policy_applies_to_period,
 )
 from backend.v2.shared.idempotency import IdempotencyStore, idempotent
 from backend.v2.shared.ids import new_ulid
@@ -58,14 +81,23 @@ from backend.v2.shared.tenancy import current_academy_id
 log = logging.getLogger(__name__)
 
 MOVE_LINE_TYPE = "move_proration"
-MOVE_SOURCE_TYPE = "MOVE_PRORATION"
+# MOVE_SOURCE_TYPE now lives in the domain (imported above) so the monthly
+# generator's invoice lookup can exclude adjustments; re-exported here because
+# callers and tests import it from this module.
 MOVE_CREDIT_TYPE = "MOVE_PRORATION_CREDIT"
 BILLING_POLICY = "move_proration_current_period"
 
 #: Invoice statuses that still accept a line (``domain.ledger.add_line``).
 _LINE_ACCEPTING_STATUSES: frozenset[str] = frozenset({"open", "draft", "partially_paid"})
 
-MoveOutcome = Literal["debited", "adjustment_invoiced", "credited", "no_change", "no_invoice"]
+MoveOutcome = Literal[
+    "debited",
+    "adjustment_invoiced",
+    "credited",
+    "no_change",
+    "no_invoice",
+    "schedule_unavailable",
+]
 
 
 class MoveSessionSchedule(BaseModel):
@@ -108,6 +140,17 @@ class MoveInvoiceLedger(Protocol):
     ) -> LedgerInvoice: ...
 
 
+class MoveDiscountReader(Protocol):
+    """The enrollment's active recurring tuition discount, or ``None``.
+
+    Satisfied by ``MongoTuitionDiscountRepository``. The move delta must be
+    priced net of the same policy the monthly generator priced the invoice
+    with, or a discounted family is over-charged / over-credited (#669 review).
+    """
+
+    async def get_active(self, enrollment_id: str) -> TuitionDiscount | None: ...
+
+
 AcademyTimezoneReader = Callable[[], Awaitable[str | None]]
 
 
@@ -118,6 +161,16 @@ class ApplyEnrollmentMoveCommand(BaseModel):
     from_session_id: str
     to_session_id: str
     effective_at: datetime
+    #: The admin-chosen effective DATE, when there was one. The route turns a
+    #: date into midnight UTC, which is the previous evening in an academy's
+    #: local zone, so an evening class on the day before the move counted as
+    #: "still to come" (issue #669 review). When this is set the boundary is
+    #: local midnight of this date in the session's zone instead.
+    effective_date: date | None = None
+    #: How many moves this enrollment had already been through when this
+    #: transfer was issued. Part of the idempotency key so a repeated A→B move
+    #: in one period is billed, while a retry of ONE move still collapses.
+    move_seq: int = Field(default=0, ge=0)
     reason: str = Field(default="", max_length=500)
     actor_id: str | None = None
 
@@ -133,6 +186,10 @@ class ApplyEnrollmentMoveResult(BaseModel):
     invoice_id: str | None = None
     line_id: str | None = None
     credit_id: str | None = None
+    #: True when the debited invoice's autopay pre-charge notice had already
+    #: gone out, so the family was quoted a smaller amount than they will be
+    #: charged. Recorded on the lifecycle event; nothing re-notices today.
+    notice_stale: bool = False
     idempotency_key: str
 
     @property
@@ -159,6 +216,8 @@ class ApplyEnrollmentMoveResult(BaseModel):
             out["line_id"] = self.line_id
         if self.credit_id:
             out["credit_id"] = self.credit_id
+        if self.notice_stale:
+            out["notice_stale"] = "true"
         return out
 
 
@@ -169,9 +228,15 @@ def move_idempotency_key(
     period: str,
     from_session_id: str,
     to_session_id: str,
+    move_seq: int = 0,
 ) -> str:
     # The idempotency store is global, so the tenant must be part of the key.
-    return f"move-proration:{academy_id}:{enrollment_id}:{period}:{from_session_id}:{to_session_id}"
+    # ``move_seq`` distinguishes two genuine A→B moves in one period; a retry
+    # of the same transfer carries the same seq and so collapses.
+    return (
+        f"move-proration:{academy_id}:{enrollment_id}:{period}:"
+        f"{from_session_id}:{to_session_id}:{move_seq}"
+    )
 
 
 class ApplyEnrollmentMove:
@@ -182,6 +247,7 @@ class ApplyEnrollmentMove:
         credits: CreditLedgerRepository,
         schedules: MoveScheduleReader,
         idempotency_store: IdempotencyStore,
+        discounts: MoveDiscountReader | None = None,
         academy_timezone: AcademyTimezoneReader | None = None,
         counters: Any | None = None,
         settings: Any | None = None,
@@ -190,6 +256,7 @@ class ApplyEnrollmentMove:
         self._ledger = ledger
         self._credits = credits
         self._schedules = schedules
+        self._discounts = discounts
         self._idempotency_store = idempotency_store
         self._academy_timezone = academy_timezone
         self._counters = counters
@@ -198,13 +265,20 @@ class ApplyEnrollmentMove:
 
     async def execute(self, cmd: ApplyEnrollmentMoveCommand) -> ApplyEnrollmentMoveResult:
         timezone_name = await self._academy_timezone() if self._academy_timezone else None
-        period = period_of(cmd.effective_at, timezone_name)
+        # An admin-chosen effective DATE names a local month directly; only a
+        # bare instant needs the tenant's zone to resolve which month it is in.
+        period = (
+            f"{cmd.effective_date.year:04d}-{cmd.effective_date.month:02d}"
+            if cmd.effective_date is not None
+            else period_of(cmd.effective_at, timezone_name)
+        )
         key = move_idempotency_key(
             academy_id=current_academy_id(),
             enrollment_id=cmd.enrollment_id,
             period=period,
             from_session_id=cmd.from_session_id,
             to_session_id=cmd.to_session_id,
+            move_seq=cmd.move_seq,
         )
         result = await self._execute_once(cmd, period=period, key=key)
         log.info(
@@ -237,6 +311,26 @@ class ApplyEnrollmentMove:
             )
 
         quote = await self._quote(cmd, period=period)
+        if quote is None:
+            # One of the two schedules could not be expanded for this period.
+            # A zero share is indistinguishable from "no classes left", and the
+            # generator billed the whole month regardless, so refuse rather
+            # than post a delta we cannot stand behind.
+            log.warning(
+                "apply_enrollment_move_schedule_unavailable",
+                extra={
+                    "enrollment_id": cmd.enrollment_id,
+                    "from_session_id": cmd.from_session_id,
+                    "to_session_id": cmd.to_session_id,
+                    "effective_period": period,
+                },
+            )
+            return ApplyEnrollmentMoveResult(
+                outcome="schedule_unavailable",
+                effective_period=period,
+                invoice_id=invoice.invoice_id,
+                idempotency_key=key,
+            )
         base = {
             "effective_period": period,
             "delta_cents": quote.delta_cents,
@@ -248,6 +342,27 @@ class ApplyEnrollmentMove:
             return ApplyEnrollmentMoveResult(
                 outcome="no_change", invoice_id=invoice.invoice_id, **base
             )
+        allocated = await self._ledger.sum_allocations_for_invoice(invoice.invoice_id)
+        # A negative delta reduces the invoice itself while it is still open and
+        # untouched by money — otherwise autopay would charge the OLD, higher
+        # amount and the family would have to wait for a later invoice to
+        # consume the credit (issue #669 review). Once anything has been
+        # allocated, reducing the invoice could strand an overpayment, so the
+        # credit ledger stays the instrument there.
+        if invoice.status in _LINE_ACCEPTING_STATUSES and (
+            quote.delta_cents > 0
+            or (allocated == 0 and invoice.total_cents + quote.delta_cents > 0)
+        ):
+            line = await self._debit_existing(
+                cmd, invoice=invoice, quote=quote, key=key, now=now, allocated=allocated
+            )
+            return ApplyEnrollmentMoveResult(
+                outcome="debited" if quote.delta_cents > 0 else "credited",
+                invoice_id=invoice.invoice_id,
+                line_id=line.line_id,
+                notice_stale=quote.delta_cents > 0 and invoice.delivery_status == "sent",
+                **base,
+            )
         if quote.delta_cents < 0:
             credit = await self._credit(cmd, invoice=invoice, quote=quote, key=key, now=now)
             return ApplyEnrollmentMoveResult(
@@ -255,11 +370,6 @@ class ApplyEnrollmentMove:
                 invoice_id=invoice.invoice_id,
                 credit_id=credit.credit_id,
                 **base,
-            )
-        if invoice.status in _LINE_ACCEPTING_STATUSES:
-            line = await self._debit_existing(cmd, invoice=invoice, quote=quote, key=key, now=now)
-            return ApplyEnrollmentMoveResult(
-                outcome="debited", invoice_id=invoice.invoice_id, line_id=line.line_id, **base
             )
         adjustment, line = await self._mint_adjustment(
             cmd, paid_invoice=invoice, quote=quote, key=key, now=now
@@ -288,27 +398,72 @@ class ApplyEnrollmentMove:
                 return inv
         return candidates[0] if candidates else None
 
-    async def _quote(self, cmd: ApplyEnrollmentMoveCommand, *, period: str) -> MoveProrationQuote:
+    async def _quote(
+        self, cmd: ApplyEnrollmentMoveCommand, *, period: str
+    ) -> MoveProrationQuote | None:
+        """The move quote, or ``None`` when either side's schedule is unknown."""
         from_schedule = await self._schedules.load(session_id=cmd.from_session_id, period=period)
         to_schedule = await self._schedules.load(session_id=cmd.to_session_id, period=period)
-        effective_at = (
+        if from_schedule is None or to_schedule is None:
+            return None
+        timezone_name = to_schedule.timezone
+        billing_period = BillingPeriod.from_label(period, timezone_name=timezone_name)
+        effective_at = self._effective_boundary(cmd, timezone_name=timezone_name)
+        discount = await self._active_discount(cmd.enrollment_id, billing_period)
+        quote = quote_move_proration(
+            period=billing_period,
+            from_session_id=cmd.from_session_id,
+            to_session_id=cmd.to_session_id,
+            from_price_cents=from_schedule.monthly_price_cents,
+            to_price_cents=to_schedule.monthly_price_cents,
+            from_discount_cents=self._discount_cents(discount, from_schedule.monthly_price_cents),
+            to_discount_cents=self._discount_cents(discount, to_schedule.monthly_price_cents),
+            from_occurrences=list(from_schedule.occurrences),
+            to_occurrences=list(to_schedule.occurrences),
+            effective_at=effective_at,
+        )
+        if quote.from_total_classes == 0 or quote.to_total_classes == 0:
+            return None
+        return quote
+
+    @staticmethod
+    def _effective_boundary(cmd: ApplyEnrollmentMoveCommand, *, timezone_name: str) -> datetime:
+        """The instant classes start counting as "still to come".
+
+        With an admin-chosen date this is LOCAL midnight of that date in the
+        session's zone. Midnight UTC of the same date is 19:00 the previous
+        local evening in America/Chicago, which counted the class the student
+        actually attended the night before as remaining (issue #669 review).
+        """
+        if cmd.effective_date is not None:
+            return datetime.combine(cmd.effective_date, time.min, tzinfo=ZoneInfo(timezone_name))
+        return (
             cmd.effective_at
             if cmd.effective_at.tzinfo is not None
             else cmd.effective_at.replace(tzinfo=UTC)
         )
-        known = to_schedule or from_schedule
-        timezone_name = known.timezone if known is not None else "UTC"
-        billing_period = BillingPeriod.from_label(period, timezone_name=timezone_name)
-        return quote_move_proration(
-            period=billing_period,
-            from_session_id=cmd.from_session_id,
-            to_session_id=cmd.to_session_id,
-            from_price_cents=from_schedule.monthly_price_cents if from_schedule else 0,
-            to_price_cents=to_schedule.monthly_price_cents if to_schedule else 0,
-            from_occurrences=list(from_schedule.occurrences) if from_schedule else [],
-            to_occurrences=list(to_schedule.occurrences) if to_schedule else [],
-            effective_at=effective_at,
+
+    async def _active_discount(
+        self, enrollment_id: str, billing_period: BillingPeriod
+    ) -> TuitionDiscount | None:
+        """The recurring tuition discount the period's invoice was priced with."""
+        if self._discounts is None:
+            return None
+        policy = await self._discounts.get_active(enrollment_id)
+        if policy is None:
+            return None
+        applies = policy_applies_to_period(
+            policy,
+            period_start=billing_period.start_at.date(),
+            period_end=billing_period.end_at.date(),
         )
+        return policy if applies else None
+
+    @staticmethod
+    def _discount_cents(policy: TuitionDiscount | None, monthly_price_cents: int) -> int:
+        if policy is None:
+            return 0
+        return monthly_discount_cents(policy, monthly_price_cents=monthly_price_cents)
 
     @staticmethod
     def _description(quote: MoveProrationQuote) -> str:
@@ -343,13 +498,37 @@ class ApplyEnrollmentMove:
         quote: MoveProrationQuote,
         key: str,
         now: datetime,
+        allocated: int,
     ) -> InvoiceLine:
         lines = await self._ledger.get_lines_for_invoice(invoice.invoice_id)
-        for line in lines:
-            if line.source_type == MOVE_SOURCE_TYPE and line.source_id == key:
-                return line  # already applied by an earlier attempt
+        applied = next(
+            (
+                line
+                for line in lines
+                if line.source_type == MOVE_SOURCE_TYPE and line.source_id == key
+            ),
+            None,
+        )
+        if applied is not None:
+            # The line landed on an earlier attempt. Do NOT return here without
+            # checking the header: the line write and the version-guarded
+            # header write are two round trips, and a conflict on the second
+            # used to leave the invoice permanently under-stating the charge
+            # with no path back (issue #669 review). Re-derive the header from
+            # the lines that exist and save it if it disagrees.
+            repaired = recompute_totals(
+                invoice.model_copy(update={"updated_at": now}),
+                lines,
+                allocated_cents=allocated,
+            )
+            if (
+                repaired.subtotal_cents,
+                repaired.total_cents,
+                repaired.balance_due_cents,
+            ) != (invoice.subtotal_cents, invoice.total_cents, invoice.balance_due_cents):
+                await self._ledger.save_invoice(repaired)
+            return applied
         new_line = self._line(invoice=invoice, quote=quote, key=key, now=now)
-        allocated = await self._ledger.sum_allocations_for_invoice(invoice.invoice_id)
         updated, _ = add_line(invoice, lines, new_line, now=now, allocated_cents=allocated)
         await self._ledger.save_line(new_line)
         await self._ledger.save_invoice(updated)
@@ -406,7 +585,11 @@ class ApplyEnrollmentMove:
         except Exception:
             log.exception("apply_enrollment_move_settings_unreadable")
             return 7
-        return int(getattr(settings, "invoice_due_days", 7) or 0)
+        # `or 0` on the attribute value would turn an explicit null (the field
+        # is optional in billing_settings) into "due today", and the dunning
+        # ladder would chase a charge the parent has not seen yet.
+        value = getattr(settings, "invoice_due_days", None)
+        return 7 if value is None else int(value)
 
     async def _credit(
         self,

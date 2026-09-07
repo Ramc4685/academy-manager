@@ -15,7 +15,7 @@ error when the port is missing, but nothing else stops the charge.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from backend.v2.contexts.billing.application.use_cases.apply_enrollment_lifecycle import (
@@ -50,6 +50,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_move_schedule_reader impor
 )
 from backend.v2.contexts.billing.infrastructure.mongo_student_billing_enrollment_repo import (
     MongoStudentBillingEnrollmentRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_tuition_discount_repo import (
+    MongoTuitionDiscountRepository,
 )
 from backend.v2.shared.idempotency import IdempotencyStore
 from backend.v2.shared.tenancy import current_academy_id
@@ -141,6 +144,8 @@ class EnrollmentMoveBillingSyncAdapter:
         effective_at: datetime,
         reason: str,
         actor_id: str | None,
+        effective_date: date | None = None,
+        move_seq: int = 0,
     ) -> dict[str, Any]:
         result = await self._use_case.execute(
             ApplyEnrollmentMoveCommand(
@@ -148,6 +153,8 @@ class EnrollmentMoveBillingSyncAdapter:
                 from_session_id=from_session_id,
                 to_session_id=to_session_id,
                 effective_at=effective_at,
+                effective_date=effective_date,
+                move_seq=move_seq,
                 reason=reason[:500],
                 actor_id=actor_id,
             )
@@ -177,6 +184,9 @@ def compose_enrollment_move_billing_sync(
         ledger=ledger or MongoBillingLedgerRepository(db),
         credits=credits or MongoCreditLedgerRepository(db),
         schedules=MongoMoveScheduleReader(db),
+        # Price the delta net of the same recurring tuition discount the
+        # monthly generator priced the invoice with (issue #669 review).
+        discounts=MongoTuitionDiscountRepository(db),
         idempotency_store=idempotency,
         academy_timezone=request_academy_timezone,
         counters=MongoBillingCounterRepository(db),

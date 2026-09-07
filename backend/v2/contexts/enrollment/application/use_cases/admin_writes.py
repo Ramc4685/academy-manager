@@ -52,6 +52,7 @@ from backend.v2.contexts.enrollment.domain.errors import (
     CapacityExceeded,
     DuplicateSessionSeries,
     EnrollmentNotFound,
+    EnrollmentNotTransferable,
     SeatCounterDrift,
     SessionNotEnrollable,
     SessionNotFound,
@@ -1047,6 +1048,8 @@ async def _sync_move_billing(
     effective_at: datetime,
     reason: str | None,
     actor_id: str | None,
+    effective_date: date | None = None,
+    move_seq: int = 0,
 ) -> dict[str, object]:
     """Tell billing the enrollment moved sessions (issue #669). Never raises.
 
@@ -1069,6 +1072,8 @@ async def _sync_move_billing(
             effective_at=effective_at,
             reason=reason or "",
             actor_id=actor_id,
+            effective_date=effective_date,
+            move_seq=move_seq,
         )
     except Exception:
         log.exception(
@@ -1213,6 +1218,10 @@ class TransferEnrollmentCommand(BaseModel):
     enrollment_id: str
     target_session_id: str
     effective_at: datetime | None = None
+    #: The admin-chosen effective DATE, passed straight through to billing so
+    #: the "classes still to come" boundary is local midnight rather than
+    #: midnight UTC (which is the previous evening locally — issue #669 review).
+    effective_date: date | None = None
     actor_id: str | None = None
     reason: str | None = None
 
@@ -1241,11 +1250,27 @@ class TransferEnrollment:
         self._roster_notifier = roster_notifier
         self._now = clock
 
+    #: Only these rows still hold a seat and still attend (see the docstring).
+    _TRANSFERABLE_STATUSES = frozenset({"active", "paused"})
+
     async def execute(self, cmd: TransferEnrollmentCommand) -> Enrollment:
         enrollment = await self._enrollments.get(cmd.enrollment_id)
         if enrollment is None:
             raise EnrollmentNotFound("enrollment missing", enrollment_id=cmd.enrollment_id)
+        if enrollment.status not in self._TRANSFERABLE_STATUSES:
+            # A cancelled/withdrawn row would otherwise consume a target seat,
+            # double-release the old one and get billed a move proration.
+            raise EnrollmentNotTransferable(
+                "only an active or paused enrollment can be transferred",
+                enrollment_id=cmd.enrollment_id,
+                status=enrollment.status,
+            )
+        move_seq = await self._prior_move_count(cmd.enrollment_id)
         if enrollment.session_id == cmd.target_session_id:
+            # Not a move — but if the LAST move's billing sync failed this is
+            # the only way an admin has to re-drive it, so retry it here rather
+            # than dead-ending (issue #669 review).
+            await self._retry_failed_move_billing(enrollment, cmd)
             return enrollment
         reserved = await self._sessions.try_reserve_seat(cmd.target_session_id)
         if not reserved:
@@ -1266,8 +1291,12 @@ class TransferEnrollment:
             effective_at=effective_at,
             reason=cmd.reason,
             actor_id=cmd.actor_id,
+            effective_date=cmd.effective_date,
+            move_seq=move_seq,
         )
-        metadata = billing_decision.get("metadata")
+        metadata = self._move_metadata(
+            billing_decision, move_seq=move_seq, effective_date=cmd.effective_date
+        )
         await _record_lifecycle_event(
             self._enrollment_events,
             academy_id=enrollment.academy_id,
@@ -1283,10 +1312,8 @@ class TransferEnrollment:
             occurred_at=now,
             billing_policy=str(billing_decision.get("billing_policy") or "move_proration"),
             billing_result=str(billing_decision.get("billing_result") or "unknown"),
-            credit_id=(metadata or {}).get("credit_id") if isinstance(metadata, dict) else None,
-            metadata={str(k): str(v) for k, v in metadata.items()}
-            if isinstance(metadata, dict)
-            else {},
+            credit_id=metadata.get("credit_id"),
+            metadata=metadata,
         )
         await self._sessions.release_seat(enrollment.session_id)
         await _notify_roster_change(
@@ -1303,6 +1330,100 @@ class TransferEnrollment:
             actor_id=cmd.actor_id,
         )
         return enrollment.model_copy(update={"session_id": cmd.target_session_id})
+
+    # -- move bookkeeping (issue #669) ------------------------------------
+
+    @staticmethod
+    def _move_metadata(
+        billing_decision: dict[str, object], *, move_seq: int, effective_date: date | None
+    ) -> dict[str, str]:
+        """Audit metadata for a `moved` event, including what a retry needs."""
+        raw = billing_decision.get("metadata")
+        out = {str(k): str(v) for k, v in raw.items()} if isinstance(raw, dict) else {}
+        out["move_seq"] = str(move_seq)
+        if effective_date is not None:
+            out["effective_date"] = effective_date.isoformat()
+        return out
+
+    async def _moved_events(self, enrollment_id: str) -> list[EnrollmentLifecycleEvent]:
+        if self._enrollment_events is None:
+            return []
+        try:
+            events = await self._enrollment_events.list_for_enrollment(enrollment_id)
+        except Exception:
+            log.exception("enrollment_move_history_unreadable", extra={"e": enrollment_id})
+            return []
+        return [event for event in events if event.event_type == "moved"]
+
+    async def _prior_move_count(self, enrollment_id: str) -> int:
+        """How many moves this enrollment has already been through.
+
+        Feeds the billing idempotency key so a repeated A→B move inside one
+        period is a distinct, billable move rather than a cached no-op.
+        Retries of ONE move reuse the seq stored on its lifecycle event.
+        """
+        return len(await self._moved_events(enrollment_id))
+
+    async def _retry_failed_move_billing(
+        self, enrollment: Enrollment, cmd: TransferEnrollmentCommand
+    ) -> None:
+        """Re-drive billing for a move whose sync failed, on a repeat transfer.
+
+        `_sync_move_billing` never raises, so a Mongo blip leaves the roster
+        moved and the period un-repriced with `billing_result=billing_sync_*`.
+        Nothing else re-drives it, and the plain repeat transfer used to return
+        immediately — so the money was silently never collected.
+        """
+        moved = await self._moved_events(enrollment.enrollment_id)
+        if not moved:
+            return
+        last = moved[-1]
+        if str(last.billing_result or "") not in {"billing_sync_failed", "billing_sync_unwired"}:
+            return
+        if not last.from_session_id or last.to_session_id != cmd.target_session_id:
+            return
+        stored_seq = last.metadata.get("move_seq")
+        move_seq = (
+            int(stored_seq) if stored_seq and stored_seq.isdigit() else max(len(moved) - 1, 0)
+        )
+        stored_date = last.metadata.get("effective_date")
+        try:
+            effective_date = date.fromisoformat(stored_date) if stored_date else None
+        except ValueError:
+            effective_date = None
+        billing_decision = await _sync_move_billing(
+            self._billing_sync,
+            enrollment_id=enrollment.enrollment_id,
+            from_session_id=last.from_session_id,
+            to_session_id=cmd.target_session_id,
+            effective_at=last.effective_at,
+            reason=cmd.reason or last.reason,
+            actor_id=cmd.actor_id,
+            effective_date=effective_date,
+            move_seq=move_seq,
+        )
+        metadata = self._move_metadata(
+            billing_decision, move_seq=move_seq, effective_date=effective_date
+        )
+        metadata["retry_of_event_id"] = last.event_id
+        await _record_lifecycle_event(
+            self._enrollment_events,
+            academy_id=enrollment.academy_id,
+            event_type="moved",
+            enrollment_id=enrollment.enrollment_id,
+            session_id=cmd.target_session_id,
+            from_session_id=last.from_session_id,
+            to_session_id=cmd.target_session_id,
+            student_id=enrollment.student_id,
+            actor_id=cmd.actor_id,
+            reason=cmd.reason or last.reason,
+            effective_at=last.effective_at,
+            occurred_at=self._now(),
+            billing_policy=str(billing_decision.get("billing_policy") or "move_proration"),
+            billing_result=str(billing_decision.get("billing_result") or "unknown"),
+            credit_id=metadata.get("credit_id"),
+            metadata=metadata,
+        )
 
 
 class OverrideEnrollmentFeeCommand(BaseModel):

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 import pytest
@@ -17,6 +17,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     WithdrawEnrollment,
     WithdrawEnrollmentCommand,
 )
+from backend.v2.contexts.enrollment.domain.errors import EnrollmentNotTransferable
 from backend.v2.contexts.enrollment.domain.events import EnrollmentLifecycleEvent
 from backend.v2.contexts.enrollment.domain.models import Enrollment, Session, Student
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
@@ -147,6 +148,11 @@ class FakeEnrollmentEvents:
 
     async def record(self, event: EnrollmentLifecycleEvent) -> None:
         self.rows.append(event)
+
+    async def list_for_enrollment(self, enrollment_id: str) -> list[EnrollmentLifecycleEvent]:
+        # Mirrors the Mongo repo: ascending by occurred_at.
+        rows = [e for e in self.rows if e.enrollment_id == enrollment_id]
+        return sorted(rows, key=lambda e: (e.occurred_at, e.event_id))
 
 
 @dataclass
@@ -359,6 +365,8 @@ async def test_move_records_effective_date_and_billing_proration_result() -> Non
             "effective_at": _effective(),
             "reason": "schedule change",
             "actor_id": "admin-1",
+            "effective_date": None,
+            "move_seq": 0,
         }
     ]
     event = events.rows[0]
@@ -373,6 +381,7 @@ async def test_move_records_effective_date_and_billing_proration_result() -> Non
         "outcome": "credited",
         "delta_cents": "-1250",
         "credit_id": "credit-move-1",
+        "move_seq": "0",
     }
 
 
@@ -421,6 +430,139 @@ async def test_move_without_billing_sync_reports_unwired() -> None:
     )
 
     assert events.rows[0].billing_result == "billing_sync_unwired"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["cancelled", "withdrawn"])
+async def test_move_refuses_a_dead_enrollment_before_any_side_effect(status: str) -> None:
+    """#669 review: a cancelled row holds no seat and is not attending, so a
+    transfer must not consume a target seat nor bill a move proration."""
+    enrollments = FakeEnrollments(rows={"enr-1": _enrollment(status)})
+    sessions = FakeSessions()
+    billing_sync = RecordingMoveBillingSync()
+    events = FakeEnrollmentEvents()
+
+    with pytest.raises(EnrollmentNotTransferable):
+        await TransferEnrollment(
+            enrollments=enrollments,
+            sessions=sessions,
+            enrollment_events=events,
+            billing_sync=billing_sync,
+            clock=_now,
+        ).execute(
+            TransferEnrollmentCommand(
+                enrollment_id="enr-1", target_session_id="sess-2", actor_id="admin-1"
+            )
+        )
+
+    assert enrollments.rows["enr-1"].session_id == "sess-1"
+    assert sessions.reserved == {"sess-1": 1}  # no seat taken, none released
+    assert billing_sync.calls == []
+    assert events.rows == []
+
+
+@pytest.mark.asyncio
+async def test_second_move_to_the_same_session_carries_its_own_move_seq() -> None:
+    """A→B, B→A, A→B in one period: the third move must not reuse the first
+    move's billing idempotency scope (#669 review)."""
+    enrollments = FakeEnrollments(rows={"enr-1": _enrollment()})
+    events = FakeEnrollmentEvents()
+    billing_sync = RecordingMoveBillingSync()
+    use_case = TransferEnrollment(
+        enrollments=enrollments,
+        sessions=FakeSessions(),
+        enrollment_events=events,
+        billing_sync=billing_sync,
+        clock=_now,
+    )
+
+    for target in ("sess-2", "sess-1", "sess-2"):
+        await use_case.execute(
+            TransferEnrollmentCommand(
+                enrollment_id="enr-1", target_session_id=target, actor_id="admin-1"
+            )
+        )
+
+    assert [call["move_seq"] for call in billing_sync.calls] == [0, 1, 2]
+    assert [event.metadata["move_seq"] for event in events.rows] == ["0", "1", "2"]
+
+
+@pytest.mark.asyncio
+async def test_repeat_transfer_retries_a_failed_move_billing_sync() -> None:
+    """The roster already moved, so the only way back to the money is to let a
+    repeat transfer re-drive billing instead of returning early (#669 review)."""
+    enrollments = FakeEnrollments(rows={"enr-1": _enrollment()})
+    events = FakeEnrollmentEvents()
+    failing = RecordingMoveBillingSync(fail=True)
+    await TransferEnrollment(
+        enrollments=enrollments,
+        sessions=FakeSessions(),
+        enrollment_events=events,
+        billing_sync=failing,
+        clock=_now,
+    ).execute(
+        TransferEnrollmentCommand(
+            enrollment_id="enr-1",
+            target_session_id="sess-2",
+            effective_at=_effective(),
+            effective_date=date(2026, 5, 25),
+            actor_id="admin-1",
+        )
+    )
+    assert events.rows[-1].billing_result == "billing_sync_failed"
+
+    healthy = RecordingMoveBillingSync()
+    again = await TransferEnrollment(
+        enrollments=enrollments,
+        sessions=FakeSessions(),
+        enrollment_events=events,
+        billing_sync=healthy,
+        clock=_now,
+    ).execute(
+        TransferEnrollmentCommand(
+            enrollment_id="enr-1", target_session_id="sess-2", actor_id="admin-1"
+        )
+    )
+
+    assert again.session_id == "sess-2"  # roster unchanged, no second seat
+    # Same move re-driven: same sides, same seq (so billing stays idempotent).
+    assert healthy.calls == [
+        {
+            "enrollment_id": "enr-1",
+            "from_session_id": "sess-1",
+            "to_session_id": "sess-2",
+            "effective_at": _effective(),
+            "reason": "",
+            "actor_id": "admin-1",
+            "effective_date": date(2026, 5, 25),
+            "move_seq": 0,
+        }
+    ]
+    assert events.rows[-1].billing_result == "credit:1250"
+    assert events.rows[-1].metadata["retry_of_event_id"] == events.rows[0].event_id
+
+
+@pytest.mark.asyncio
+async def test_repeat_transfer_after_a_successful_move_stays_a_no_op() -> None:
+    enrollments = FakeEnrollments(rows={"enr-1": _enrollment()})
+    events = FakeEnrollmentEvents()
+    billing_sync = RecordingMoveBillingSync()
+    use_case = TransferEnrollment(
+        enrollments=enrollments,
+        sessions=FakeSessions(),
+        enrollment_events=events,
+        billing_sync=billing_sync,
+        clock=_now,
+    )
+    cmd = TransferEnrollmentCommand(
+        enrollment_id="enr-1", target_session_id="sess-2", actor_id="admin-1"
+    )
+
+    await use_case.execute(cmd)
+    await use_case.execute(cmd)
+
+    assert len(billing_sync.calls) == 1
+    assert len(events.rows) == 1
 
 
 @pytest.mark.asyncio
