@@ -1,6 +1,6 @@
 # fix-coach-makeup-attendance
 
-PR: #TBD
+PR: #676
 
 ## What changed
 Coaches can now mark attendance for the MAKE-UP and TRIAL rows the occurrence roster
