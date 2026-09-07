@@ -83,6 +83,50 @@ const adminInvoiceDetail = {
   receipt_artifact_id: null,
 };
 
+const REPORTS_DASHBOARD_EMPTY = {
+  period: "2026-06",
+  billed_cents: 0,
+  cash_collected_cents: 0,
+  outstanding_dues_cents: 0,
+  collection_rate: null,
+  attendance: { present_count: 0, recorded_count: 0, attendance_rate: null, empty: true },
+  sessions: {
+    scheduled_count: 0,
+    completed_count: 0,
+    cancelled_count: 0,
+    enrolled_seats: 0,
+    capacity: 0,
+    capacity_utilization: null,
+    waitlist_count: 0,
+    empty: true,
+  },
+  expenses: { total_cents: 0, by_category: [], empty: true },
+  payroll: {
+    estimated_cents: null,
+    approved_cents: null,
+    paid_cents: null,
+    unpaid_cents: null,
+    blocked_by: null,
+    empty: true,
+  },
+  profit_and_loss: {
+    revenue_cents: 0,
+    coach_payroll_cents: null,
+    rent_cents: 0,
+    misc_expenses_cents: 0,
+    net_profit_cents: null,
+    profit_margin: null,
+  },
+  collections_risk: {
+    overdue_family_count: 0,
+    overdue_cents: 0,
+    failed_payment_count: 0,
+    partial_payment_count: 0,
+    aging_buckets: [],
+  },
+  empty_states: [],
+};
+
 /**
  * Month close carries the tuition discount card now (spec §5). The figures are
  * the same two discounts the admin set above, summed for the month.
@@ -460,6 +504,27 @@ test.describe("tuition discounts", () => {
       if (route.request().method() !== "GET") return route.fallback();
       return fulfillJson(route, {});
     });
+    // The page's other feeds need their real shapes: the catch-all `{}` would
+    // put `dashboard.payroll` at undefined and send the page to the error
+    // boundary before the discount card ever renders.
+    await page.route("**/api/v2/admin/reports/dashboard*", (route) =>
+      fulfillJson(route, REPORTS_DASHBOARD_EMPTY),
+    );
+    await page.route("**/api/v2/admin/reports/projected-income*", (route) =>
+      fulfillJson(route, {
+        period: "2026-07",
+        total_cents: 0,
+        autopay_cents: 0,
+        manual_cents: 0,
+        autopay_enrollment_count: 0,
+        manual_enrollment_count: 0,
+        by_session: [],
+        empty: true,
+      }),
+    );
+    await page.route("**/api/v2/admin/finance/revenue*", (route) =>
+      fulfillJson(route, { by_month: {} }),
+    );
     // Named in full: a `*` glob stops at `/`, so `admin/reports*` would miss it.
     await page.route("**/api/v2/admin/reports/month-close*", (route) =>
       fulfillJson(route, MONTH_CLOSE_WITH_DISCOUNTS),
