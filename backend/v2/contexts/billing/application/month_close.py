@@ -28,6 +28,7 @@ from typing import Any, Literal
 from backend.v2.contexts.billing.application.autopay_eligibility import (
     AUTOPAY_ACTIVE_STATUS,
     autopay_eligibility,
+    invoice_is_chargeable,
 )
 
 #: Odd-list checks are capped so one bad month cannot return thousands of rows.
@@ -54,7 +55,15 @@ _DEAD_ENROLLMENT_STATUSES: frozenset[str] = frozenset({"cancelled", "withdrawn"}
 _FAILED_LADDER_STATUSES: frozenset[str] = frozenset({"active", "processing"})
 _DUNNED_STATUS = "dunned"
 
-Warning = Literal["attempts_unavailable", "dunning_unavailable", "discounts_unavailable"]
+Warning = Literal[
+    "attempts_unavailable",
+    "dunning_unavailable",
+    "discounts_unavailable",
+    # The card-on-file read failed, so ``autopay_no_card`` is suppressed rather
+    # than guessed. Without this code the page rendered a zero for a check that
+    # never ran, which reads as "nothing wrong" (spec §8).
+    "card_state_unavailable",
+]
 
 
 @dataclass(frozen=True)
@@ -143,7 +152,18 @@ def _family_label(inv: InvoiceFacts) -> str:
 
 
 def _has_failed_ladder(inv: InvoiceFacts) -> bool:
-    """The Failed autopay bucket's predicate, not a second opinion on it."""
+    """The Failed autopay bucket's predicate, not a second opinion on it.
+
+    The chargeable-and-owing half matters as much as the ladder half. A dunning
+    row is only suppressed the next time the worker claims that state, so an
+    invoice paid by hand after a failed charge keeps its ``active`` ladder row
+    until ``next_attempt_at``. Without this guard the tile counted that invoice
+    as failed and sent the owner to a Failed autopay bucket that had already
+    dropped it — the tile and the bucket disagreeing is exactly what this page
+    exists to stop.
+    """
+    if not invoice_is_chargeable(inv.status, inv.outstanding_cents):
+        return False
     if inv.dunning_status == _DUNNED_STATUS:
         return True
     return inv.dunning_status in _FAILED_LADDER_STATUSES and inv.dunning_attempt_count >= 1

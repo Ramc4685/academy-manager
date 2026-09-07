@@ -42,6 +42,7 @@ const WARNING_LABELS: Record<string, string> = {
   attempts_unavailable: "charge attempts could not be read",
   dunning_unavailable: "the autopay retry ladder could not be read",
   discounts_unavailable: "the tuition discount summary could not be read",
+  card_state_unavailable: "cards on file could not be read, so the autopay-without-a-card check was skipped",
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {

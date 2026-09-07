@@ -191,6 +191,31 @@ def test_a_dunned_ladder_counts_as_failed_even_with_no_attempt_count() -> None:
     assert section["failed"]["count"] == 1
 
 
+def test_an_invoice_paid_by_hand_after_a_failed_charge_is_not_still_failed() -> None:
+    """The tile must not send the owner to a bucket that has already dropped it.
+
+    A dunning row is only suppressed the next time the worker claims that state,
+    so a hand-paid invoice keeps its ``active`` ladder row until the next
+    attempt is due. The Failed autopay bucket requires the invoice to be
+    chargeable and owing; the tile has to require the same thing.
+    """
+    section = build_autopay_run_section(
+        [
+            inv(
+                "a",
+                status="paid",
+                outstanding_cents=0,
+                autopay_enrollment_status="active",
+                dunning_status="active",
+                dunning_attempt_count=1,
+            )
+        ],
+        today=TODAY,
+    )
+
+    assert section["failed"] == {"count": 0, "cents": 0}
+
+
 def test_a_resolved_ladder_is_not_a_failure() -> None:
     section = build_autopay_run_section(
         [
