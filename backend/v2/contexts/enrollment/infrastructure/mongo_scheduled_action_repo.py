@@ -21,7 +21,9 @@ class MongoScheduledEnrollmentActionRepository(TenantScopedRepository):
             academy_id=str(doc["academy_id"]),
             action_type=doc["action_type"],
             enrollment_id=str(doc["enrollment_id"]),
-            pause_request_id=str(doc["pause_request_id"]),
+            pause_request_id=(
+                str(doc["pause_request_id"]) if doc.get("pause_request_id") is not None else None
+            ),
             run_at=doc["run_at"],
             status=doc.get("status", "pending"),
             attempt_count=int(doc.get("attempt_count") or 0),
@@ -32,15 +34,24 @@ class MongoScheduledEnrollmentActionRepository(TenantScopedRepository):
         )
 
     async def add(self, action: ScheduledEnrollmentAction) -> None:
+        """Upsert on the action's natural identity (see ``scheduled_actions``
+        module docstring): a pause resume is one-per-pause-request; an
+        end-of-period cancel is one PENDING action per enrollment, so a
+        retired (cancelled/succeeded) row never blocks a later request.
+        Migration 0168 backs both keys with partial unique indexes."""
         doc = action.model_dump(mode="python")
-        await self._update_one(
-            {
+        if action.pause_request_id is not None:
+            key: dict[str, object] = {
                 "pause_request_id": action.pause_request_id,
                 "action_type": action.action_type,
-            },
-            {"$setOnInsert": doc},
-            upsert=True,
-        )
+            }
+        else:
+            key = {
+                "enrollment_id": action.enrollment_id,
+                "action_type": action.action_type,
+                "status": "pending",
+            }
+        await self._update_one(key, {"$setOnInsert": doc}, upsert=True)
 
     async def list_due(
         self,
@@ -96,6 +107,20 @@ class MongoScheduledEnrollmentActionRepository(TenantScopedRepository):
             status="failed",
             attempted_at=attempted_at,
             last_error=error,
+        )
+
+    async def mark_cancelled(
+        self,
+        action_id: str,
+        *,
+        attempted_at: datetime,
+        reason: str,
+    ) -> None:
+        await self._transition(
+            action_id,
+            status="cancelled",
+            attempted_at=attempted_at,
+            last_error=reason,
         )
 
     async def cancel_pending_for_enrollment(self, enrollment_id: str, *, reason: str) -> int:

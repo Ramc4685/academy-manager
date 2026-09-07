@@ -13,6 +13,7 @@ rather than forking or reshaping it.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal, Protocol
 
 from pydantic import BaseModel
@@ -41,6 +42,9 @@ class OccurrenceRosterItem(BaseModel):
     status: EnrollmentStatus | None
     entry_source: EntrySource
     expected_absence: bool
+    # Issue #675: a parent's end-of-period cancel is pending; the student
+    # keeps attending until this instant. Rosters stay status-only.
+    pending_cancellation_at: datetime | None = None
 
 
 class AbsenceNoticeQuery(Protocol):
@@ -80,6 +84,7 @@ class GetOccurrenceRoster:
                 status=entry.status,
                 entry_source="enrollment",
                 expected_absence=entry.student_id in absent_student_ids,
+                pending_cancellation_at=entry.pending_cancellation_at,
             )
             for entry in roster
         ]

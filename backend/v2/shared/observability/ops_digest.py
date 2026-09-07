@@ -97,6 +97,7 @@ JOB_STALE_AFTER: dict[str, timedelta] = {
     "send_coach_daily_digests": timedelta(hours=3),
     "send_parent_daily_digests": timedelta(hours=3),
     "process_scheduled_resume_actions": timedelta(hours=26),
+    "process_scheduled_cancellation_actions": timedelta(hours=3),
     "expire_makeup_requests": timedelta(hours=26),
     "send_ops_digest": timedelta(hours=26),
 }

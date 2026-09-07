@@ -227,6 +227,11 @@ SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
         "checkin_margin": 30,
         "max_runtime": 30,
     },
+    "process_scheduled_cancellation_actions": {
+        "schedule": {"type": "crontab", "value": "15 * * * *"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
+    },
     "expire_makeup_requests": {
         "schedule": {"type": "crontab", "value": "30 2 * * *"},
         "checkin_margin": 30,
@@ -576,6 +581,39 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             totals["failed"] += result.failed
         if totals["processed"]:
             log.info("scheduled_resume_actions_processed", extra=totals)
+
+    async def _process_scheduled_cancellations() -> None:
+        await _run_leased_job(
+            "process_scheduled_cancellation_actions",
+            timedelta(minutes=5),
+            _process_scheduled_cancellations_body,
+        )
+
+    async def _process_scheduled_cancellations_body() -> None:
+        # Issue #675: month-end parent self-cancels. Hourly, so the flip lands
+        # within the hour after the academy-local month ends.
+        totals = {
+            "processed": 0,
+            "succeeded": 0,
+            "skipped_already_ended": 0,
+            "failed": 0,
+            "academy_count": 0,
+        }
+        for academy_id in await _scheduler_academy_ids(
+            MongoAcademyRepository(db),
+            runtime_academy_id,
+        ):
+            with tenant_scope(academy_id):
+                result = await app.state.admin.process_scheduled_cancellation_actions.execute(
+                    limit=100
+                )
+            totals["academy_count"] += 1
+            totals["processed"] += result.processed
+            totals["succeeded"] += result.succeeded
+            totals["skipped_already_ended"] += result.skipped_already_ended
+            totals["failed"] += result.failed
+        if totals["processed"]:
+            log.info("scheduled_cancellation_actions_processed", extra=totals)
 
     async def _expire_makeup_requests() -> None:
         await _run_leased_job(
@@ -1016,6 +1054,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Parity with the other jobs: prevent a slow run from overlapping the
         # next tick within this process. (Cross-machine exclusivity still
         # depends on a single Fly machine — see deferred leader-election note.)
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _process_scheduled_cancellations,
+        "cron",
+        minute=15,
+        id="process_scheduled_cancellation_actions",
+        replace_existing=True,
         max_instances=1,
     )
     scheduler.add_job(

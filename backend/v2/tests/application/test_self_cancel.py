@@ -144,6 +144,7 @@ class _FakeEnrollments:
             e.enrollment_id: e for e in (enrollments or [_enrollment()])
         }
         self.cancelled_calls: list[dict[str, Any]] = []
+        self.pending_calls: list[dict[str, Any]] = []
         self.fee_billing_error_calls: list[dict[str, Any]] = []
 
     async def get(self, enrollment_id: str) -> Enrollment | None:
@@ -176,6 +177,43 @@ class _FakeEnrollments:
                 "cancellation_reason": cancellation_reason,
                 "cancellation_policy_snapshot": cancellation_policy_snapshot,
                 "cancelled_at": cancelled_at,
+            }
+        )
+        return updated
+
+    async def mark_pending_cancellation_by_parent(
+        self,
+        enrollment_id: str,
+        *,
+        cancellation_reason: str,
+        cancellation_policy_snapshot: dict[str, Any],
+        pending_cancellation_at: datetime,
+        requested_at: datetime,
+    ) -> Enrollment | None:
+        """Mirrors the Mongo CAS (issue #675): active AND no pending marker,
+        otherwise the caller lost and gets ``None``. Status stays active."""
+        current = self._by_id.get(enrollment_id)
+        if (
+            current is None
+            or current.status != "active"
+            or current.pending_cancellation_at is not None
+        ):
+            return None
+        updated = current.model_copy(
+            update={
+                "cancellation_reason": cancellation_reason,
+                "cancellation_policy_snapshot": cancellation_policy_snapshot,
+                "pending_cancellation_at": pending_cancellation_at,
+                "pending_cancellation_requested_at": requested_at,
+            }
+        )
+        self._by_id[enrollment_id] = updated
+        self.pending_calls.append(
+            {
+                "enrollment_id": enrollment_id,
+                "cancellation_reason": cancellation_reason,
+                "pending_cancellation_at": pending_cancellation_at,
+                "requested_at": requested_at,
             }
         )
         return updated
@@ -316,8 +354,14 @@ def _use_case(
     sessions: _FakeSessions | None = None,
     outbox: _FakeOutbox | None = None,
     enrollment_events: _FakeLifecycleEvents | None = None,
+    scheduled_actions: _FakeScheduledActions | None = None,
+    billing_sync: Any | None = None,
+    academy_timezone: str | None = None,
     clock=lambda: datetime(2026, 7, 6, 12, 0, tzinfo=UTC),
 ) -> SelfCancelEnrollment:
+    async def _tz() -> str | None:
+        return academy_timezone
+
     return SelfCancelEnrollment(
         enrollments=enrollments or _FakeEnrollments(),
         students=students or _FakeStudents(),
@@ -326,9 +370,42 @@ def _use_case(
         sessions=sessions or _FakeSessions(),
         outbox=outbox or _FakeOutbox(),
         billing=billing,
+        billing_sync=billing_sync,
         enrollment_events=enrollment_events,
+        scheduled_actions=scheduled_actions
+        if scheduled_actions is not None
+        else _FakeScheduledActions(),
+        academy_timezone=_tz if academy_timezone is not None else None,
         clock=clock,
     )
+
+
+class _FakeScheduledActions:
+    """Mirrors ``MongoScheduledEnrollmentActionRepository.add`` for the
+    cancel type: one PENDING ``cancel_at_period_end`` per enrollment (the
+    partial unique index from migration 0168) — a second add is a no-op."""
+
+    def __init__(self) -> None:
+        self.actions: list[Any] = []
+
+    async def add(self, action: Any) -> None:
+        for existing in self.actions:
+            if (
+                existing.enrollment_id == action.enrollment_id
+                and existing.action_type == action.action_type
+                and existing.status == "pending"
+            ):
+                return
+        self.actions.append(action)
+
+
+class _FakeBillingSync:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def apply(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(kwargs)
+        return {"billing_result": "voided=0"}
 
 
 async def test_happy_path_sufficient_notice_no_fee_audit_fields_set() -> None:
@@ -458,13 +535,26 @@ async def test_immediate_timing_sets_cancelled_at_now() -> None:
     assert result.cancelled_at == now
 
 
-async def test_end_of_period_timing_sets_cancelled_at_end_of_month() -> None:
+async def test_end_of_period_timing_keeps_enrollment_active_and_schedules_the_flip() -> None:
+    """Issue #675: end_of_period no longer flips status. The family keeps the
+    seat, roster and schedule for the month they paid for; a durable
+    ``cancel_at_period_end`` action performs the cancel at month end."""
     now = datetime(2026, 7, 6, 12, 0, tzinfo=UTC)
     enrollments = _FakeEnrollments([_enrollment()])
+    sessions = _FakeSessions()
+    outbox = _FakeOutbox()
+    events = _FakeLifecycleEvents()
+    scheduled = _FakeScheduledActions()
+    billing_sync = _FakeBillingSync()
     uc = _use_case(
         enrollments=enrollments,
         policies=_FakePolicies(_policy(timing="end_of_period")),
         occurrences=_FakeOccurrenceForSession({"session-1": None}),
+        sessions=sessions,
+        outbox=outbox,
+        enrollment_events=events,
+        scheduled_actions=scheduled,
+        billing_sync=billing_sync,
         clock=lambda: now,
     )
 
@@ -472,9 +562,123 @@ async def test_end_of_period_timing_sets_cancelled_at_end_of_month() -> None:
         SelfCancelEnrollmentCommand(enrollment_id="enr-1", parent_id="parent-1", reason="r")
     )
 
+    month_end = datetime(2026, 7, 31, 23, 59, 59, 999999, tzinfo=UTC)
     assert result.effective_timing == "end_of_period"
-    assert result.cancelled_at == datetime(2026, 7, 31, 23, 59, 59, 999999, tzinfo=UTC)
-    assert result.status == "cancelled"
+    assert result.status == "pending_cancellation"
+    assert result.cancelled_at == month_end
+    assert result.pending_cancellation_at == month_end
+
+    # The row is still active with the marker; nothing was cancelled yet.
+    stored = await enrollments.get("enr-1")
+    assert stored is not None
+    assert stored.status == "active"
+    assert stored.pending_cancellation_at == month_end
+    assert stored.cancellation_reason == "r"
+    assert enrollments.cancelled_calls == []
+    # Seat, waitlist promotion: untouched until month end.
+    assert sessions.released == []
+    assert outbox.events == []
+    # The durable action is what flips it later.
+    [action] = scheduled.actions
+    assert action.action_type == "cancel_at_period_end"
+    assert action.enrollment_id == "enr-1"
+    assert action.pause_request_id is None
+    assert action.run_at == month_end
+    # Billing still fires now: July stays payable, August+ is voided.
+    [sync] = billing_sync.calls
+    assert sync["transition"] == "cancelled"
+    assert sync["effective_at"] == month_end
+    # Timeline shows the request, not a cancellation that has not happened.
+    [event] = events.recorded
+    assert event.event_type == "cancellation_scheduled"
+    assert event.effective_at == month_end
+
+
+async def test_end_of_period_month_end_is_academy_local() -> None:
+    """8pm on Sept 30 in Chicago is already Oct 1 in UTC. The cancel must land
+    on the Chicago month end (matching billing's ``period_of``), not on
+    Oct 31."""
+    now = datetime(2026, 10, 1, 1, 0, tzinfo=UTC)  # Sept 30, 8pm Chicago (CDT)
+    enrollments = _FakeEnrollments([_enrollment()])
+    uc = _use_case(
+        enrollments=enrollments,
+        policies=_FakePolicies(_policy(timing="end_of_period")),
+        occurrences=_FakeOccurrenceForSession({"session-1": None}),
+        academy_timezone="America/Chicago",
+        clock=lambda: now,
+    )
+
+    result = await uc.execute(
+        SelfCancelEnrollmentCommand(enrollment_id="enr-1", parent_id="parent-1", reason="r")
+    )
+
+    # 2026-09-30 23:59:59.999999 CDT == 2026-10-01 04:59:59.999999 UTC
+    assert result.cancelled_at == datetime(2026, 10, 1, 4, 59, 59, 999999, tzinfo=UTC)
+
+
+async def test_second_cancel_while_one_is_pending_is_refused_without_a_second_action() -> None:
+    now = datetime(2026, 7, 6, 12, 0, tzinfo=UTC)
+    enrollments = _FakeEnrollments([_enrollment()])
+    scheduled = _FakeScheduledActions()
+    billing = _FakeBilling()
+    uc = _use_case(
+        enrollments=enrollments,
+        policies=_FakePolicies(
+            _policy(timing="end_of_period", fee_cents=2500, minimum_notice_days=7)
+        ),
+        occurrences=_FakeOccurrenceForSession({"session-1": now + timedelta(days=1)}),
+        scheduled_actions=scheduled,
+        billing=billing,
+        clock=lambda: now,
+    )
+    cmd = SelfCancelEnrollmentCommand(enrollment_id="enr-1", parent_id="parent-1", reason="r")
+    await uc.execute(cmd)
+
+    with pytest.raises(EnrollmentNotCancellable):
+        await uc.execute(cmd)
+
+    assert len(scheduled.actions) == 1
+    assert len(billing.fee_calls) == 1
+
+
+async def test_preview_reports_pending_cancellation_as_blocked() -> None:
+    now = datetime(2026, 7, 6, 12, 0, tzinfo=UTC)
+    month_end = datetime(2026, 7, 31, 23, 59, 59, 999999, tzinfo=UTC)
+    pending = _enrollment().model_copy(update={"pending_cancellation_at": month_end})
+    preview = PreviewSelfCancel(
+        enrollments=_FakeEnrollments([pending]),
+        students=_FakeStudents(),
+        policies=_FakePolicies(_policy(timing="end_of_period")),
+        occurrences=_FakeOccurrenceForSession(),
+        clock=lambda: now,
+    )
+
+    view = await preview.execute(enrollment_id="enr-1", parent_id="parent-1")
+
+    assert view.allowed is False
+    assert view.blocked_reason is not None and "2026-07-31" in view.blocked_reason
+    assert view.effective_at == month_end
+
+
+async def test_preview_carries_the_effective_date_for_end_of_period() -> None:
+    now = datetime(2026, 7, 6, 12, 0, tzinfo=UTC)
+
+    async def _tz() -> str | None:
+        return "UTC"
+
+    preview = PreviewSelfCancel(
+        enrollments=_FakeEnrollments([_enrollment()]),
+        students=_FakeStudents(),
+        policies=_FakePolicies(_policy(timing="end_of_period")),
+        occurrences=_FakeOccurrenceForSession(),
+        academy_timezone=_tz,
+        clock=lambda: now,
+    )
+
+    view = await preview.execute(enrollment_id="enr-1", parent_id="parent-1")
+
+    assert view.allowed is True
+    assert view.effective_at == datetime(2026, 7, 31, 23, 59, 59, 999999, tzinfo=UTC)
 
 
 async def test_wrong_parent_raises_enrollment_not_found() -> None:
@@ -889,8 +1093,9 @@ async def test_self_cancel_records_a_cancelled_lifecycle_event_for_admin_parity(
 
 async def test_lifecycle_event_effective_at_is_the_end_of_period_cancel_date() -> None:
     """``effective_at`` carries the policy's cancellation date, not the
-    request time — so an end_of_period cancel reads as taking effect at
-    month end on the admin timeline."""
+    request time — so an end_of_period request reads as taking effect at
+    month end on the admin timeline (issue #675: as ``cancellation_scheduled``;
+    the ``cancelled`` row is written by the month-end processor)."""
     events = _FakeLifecycleEvents()
     now = datetime(2026, 7, 6, 12, 0, tzinfo=UTC)
     uc = _use_case(
@@ -906,6 +1111,7 @@ async def test_lifecycle_event_effective_at_is_the_end_of_period_cancel_date() -
     )
 
     [event] = events.recorded
+    assert event.event_type == "cancellation_scheduled"
     assert event.effective_at == result.cancelled_at
     assert event.effective_at == datetime(2026, 7, 31, 23, 59, 59, 999999, tzinfo=UTC)
     assert event.occurred_at == now

@@ -19,6 +19,9 @@ EnrollmentLifecycleEventType = Literal[
     "withdrawn",
     "waitlisted",
     "promoted",
+    # Issue #675: a parent's end-of-period self-cancel was accepted; the
+    # real "cancelled" row follows when the scheduled action runs.
+    "cancellation_scheduled",
 ]
 
 

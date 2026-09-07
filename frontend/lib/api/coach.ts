@@ -22,6 +22,8 @@ export interface CoachRosterEntry {
   student_id: string;
   full_name: string;
   enrollment_status: EnrollmentStatus;
+  /** Issue #675: parent end-of-period cancel pending; the student still attends until then. */
+  pending_cancellation_at?: string | null;
   /** Mark already recorded for this occurrence (hydrates state on reload). */
   attendance_status?: AttendanceStatus | null;
   /** True when a parent submitted an absence notice for this occurrence. */

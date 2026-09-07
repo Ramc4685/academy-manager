@@ -205,6 +205,7 @@ def test_post_self_cancel_returns_200_with_result_fields() -> None:
         "fee_cents": 0,
         "effective_timing": "immediate",
         "cancelled_at": "2026-07-06T12:00:00Z",
+        "pending_cancellation_at": None,
     }
     [cmd] = use_cases.cancel_commands
     assert cmd.enrollment_id == "enr-1"
@@ -368,3 +369,42 @@ def test_wrong_persona_cannot_list_admin_self_cancellations() -> None:
         response = client.get("/api/v2/admin/self-service/cancellations")
 
     assert response.status_code == 404
+
+
+def test_post_self_cancel_reports_a_pending_end_of_period_cancellation() -> None:
+    """Issue #675: end_of_period no longer flips status; the route reports
+    ``pending_cancellation`` plus the date the enrollment ends."""
+    month_end = datetime(2026, 7, 31, 23, 59, 59, 999999, tzinfo=UTC)
+    use_cases = _ParentUseCases(
+        cancel_result=SelfCancelEnrollmentResult(
+            enrollment_id="enr-1",
+            status="pending_cancellation",
+            fee_cents=2500,
+            notice_met=False,
+            effective_timing="end_of_period",
+            cancelled_at=month_end,
+            pending_cancellation_at=month_end,
+        )
+    )
+    with _make_client(use_cases=use_cases) as client:
+        response = client.post(
+            "/api/v2/parent/enrollments/enr-1/self-cancel",
+            json={"reason": "moving away"},
+        )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "pending_cancellation"
+    assert body["effective_timing"] == "end_of_period"
+    assert body["cancelled_at"] == "2026-07-31T23:59:59.999999Z"
+    assert body["pending_cancellation_at"] == "2026-07-31T23:59:59.999999Z"
+
+
+def test_preview_carries_effective_at() -> None:
+    month_end = datetime(2026, 7, 31, 23, 59, 59, 999999, tzinfo=UTC)
+    view = _preview_view().model_copy(update={"effective_at": month_end})
+    with _make_client(use_cases=_ParentUseCases(preview_result=view)) as client:
+        response = client.get("/api/v2/parent/enrollments/enr-1/cancellation-preview")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["effective_at"] == "2026-07-31T23:59:59.999999Z"

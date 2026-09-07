@@ -318,6 +318,8 @@ class AdminUseCases:
     move_student_session_type: MoveStudentSessionType | None = None
     override_student_price: OverrideStudentPrice | None = None
     process_scheduled_resume_actions: ProcessScheduledResumeActions | None = None
+    # Issue #675: month-end parent self-cancels (hourly scheduler job).
+    process_scheduled_cancellation_actions: object | None = None
     list_blocked_scheduled_resume_actions: object | None = None
     get_enrollment_funnel: object | None = (
         None  # async (period: str | None) -> EnrollmentFunnelResult

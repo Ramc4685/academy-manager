@@ -825,6 +825,9 @@ class MongoStudentRepository(TenantScopedRepository):
                     start_at=self._coerce_datetime(session.get("start_at")),
                     end_at=self._coerce_datetime(session.get("end_at")),
                     status=str(enrollment.get("status") or "active"),
+                    pending_cancellation_at=self._coerce_datetime(
+                        enrollment.get("pending_cancellation_at")
+                    ),
                     payment_mode=self._optional_str(enrollment.get("payment_mode")),
                     subscription_status=self._optional_str(
                         enrollment.get("subscription_status")

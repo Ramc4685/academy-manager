@@ -36,6 +36,9 @@ class CancellationPreviewResponse(BaseModel):
     effective_timing: str
     policy: dict[str, Any]
     blocked_reason: str | None
+    # Issue #675: when the cancel takes effect (now, or the academy-local
+    # month end) so the UI can render human copy instead of the raw timing.
+    effective_at: datetime | None = None
 
 
 class SelfCancelRequest(BaseModel):
@@ -44,10 +47,13 @@ class SelfCancelRequest(BaseModel):
 
 class SelfCancelResponse(BaseModel):
     enrollment_id: str
+    #: ``"cancelled"`` (immediate) or ``"pending_cancellation"`` (end of
+    #: period, issue #675 — the enrollment stays active until ``cancelled_at``).
     status: str
     fee_cents: int
     effective_timing: str
     cancelled_at: datetime
+    pending_cancellation_at: datetime | None = None
 
 
 @router.get(
@@ -89,4 +95,5 @@ async def self_cancel_enrollment(
         fee_cents=result.fee_cents,
         effective_timing=result.effective_timing,
         cancelled_at=result.cancelled_at,
+        pending_cancellation_at=result.pending_cancellation_at,
     )

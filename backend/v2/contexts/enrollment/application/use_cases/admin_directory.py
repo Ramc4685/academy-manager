@@ -61,6 +61,7 @@ class AdminStudentSessionSummary(BaseModel):
     start_at: datetime | None = None
     end_at: datetime | None = None
     status: str
+    pending_cancellation_at: datetime | None = None
     payment_mode: str | None = None
     subscription_status: str | None = None
     amount_cents: int | None = None

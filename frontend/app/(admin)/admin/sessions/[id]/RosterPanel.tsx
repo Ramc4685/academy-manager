@@ -16,6 +16,8 @@ import { Button } from "@/components/ds/button";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { Th } from "@/components/ds/dialog-chrome";
 
+import { pendingCancellationLabel } from "@/lib/format/cancellation-copy";
+
 import { actionCellClass, actionHeaderClass, formatDateOnly, formatEnrollmentDate, formatLifecycleType } from "./format";
 
 const ENROLL_CHIP: Record<EnrollmentStatus, { variant: ChipVariant; label: string }> = {
@@ -192,7 +194,15 @@ export function RosterTable({
                   </p>
                 </td>
                 <td className="px-4 py-3">
-                  <Chip variant={chip.variant} label={chip.label} />
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Chip variant={chip.variant} label={chip.label} />
+                    {e.pending_cancellation_at && (
+                      <Chip
+                        variant="pending"
+                        label={pendingCancellationLabel(e.pending_cancellation_at, null) ?? "ENDING"}
+                      />
+                    )}
+                  </div>
                 </td>
                 <td className="px-4 py-3">
                   <DuesChip status={e.dues_status ?? "current"} />
