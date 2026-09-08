@@ -21,6 +21,7 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_reconciliation_run
 from backend.v2.contexts.billing.infrastructure.mongo_stripe_dedup import (
     MongoStripeEventDedup,
 )
+from backend.v2.shared.tenancy import tenant_scope
 
 NOW = datetime(2026, 6, 21, 12, 0, tzinfo=UTC)
 
@@ -394,3 +395,117 @@ async def test_stuck_webhook_counts_ignore_healthy_events(db, acad) -> None:
     counts = await MongoStripeEventDedup(db).count_stuck_by_status(academy_id=acad)
 
     assert counts == {"quarantined": 0, "failed": 0}
+
+
+# --------------------------------------------------------------------------- #
+# autopay switch-off failures (spec 2026-09-07 §4.4)
+# --------------------------------------------------------------------------- #
+async def _seed_dunning_state(
+    db,
+    *,
+    academy_id: str,
+    invoice_id: str,
+    autopay_disable_status: str | None,
+    error: str | None = None,
+    updated_at: datetime = NOW,
+) -> None:
+    doc: dict = {
+        "academy_id": academy_id,
+        "invoice_id": invoice_id,
+        "parent_id": f"parent-{invoice_id}",
+        "status": "dunned",
+        "attempt_count": 4,
+        "updated_at": updated_at,
+    }
+    if autopay_disable_status is not None:
+        doc["autopay_disable_status"] = autopay_disable_status
+        doc["autopay_disable_error"] = error
+    await db["dunning_states"].insert_one(doc)
+
+
+@pytest.mark.asyncio
+async def test_autopay_disable_failures_are_listed_newest_first(db, acad) -> None:
+    from backend.v2.contexts.billing.infrastructure.mongo_dunning_state_repo import (
+        MongoDunningStateRepository,
+    )
+
+    await _seed_dunning_state(
+        db,
+        academy_id=acad,
+        invoice_id="inv-old",
+        autopay_disable_status="failed",
+        error="card_declined",
+        updated_at=NOW - timedelta(hours=2),
+    )
+    await _seed_dunning_state(
+        db,
+        academy_id=acad,
+        invoice_id="inv-new",
+        autopay_disable_status="failed",
+        error="rate_limited",
+        updated_at=NOW,
+    )
+    # Neither of these is a failed switch-off.
+    await _seed_dunning_state(
+        db, academy_id=acad, invoice_id="inv-ok", autopay_disable_status="succeeded"
+    )
+    await _seed_dunning_state(
+        db, academy_id=acad, invoice_id="inv-pending", autopay_disable_status="pending"
+    )
+    await _seed_dunning_state(
+        db, academy_id=acad, invoice_id="inv-none", autopay_disable_status=None
+    )
+
+    result = await MongoDunningStateRepository(db).list_autopay_disable_failures()
+
+    assert result["count"] == 2
+    assert result["truncated"] is False
+    assert [r["invoice_id"] for r in result["rows"]] == ["inv-new", "inv-old"]
+    assert result["rows"][0]["error"] == "rate_limited"
+    assert result["rows"][0]["parent_id"] == "parent-inv-new"
+    assert result["rows"][0]["failed_at"].replace(tzinfo=None) == NOW.replace(tzinfo=None)
+
+
+@pytest.mark.asyncio
+async def test_autopay_disable_failures_do_not_cross_academies(db, acad, other_acad) -> None:
+    from backend.v2.contexts.billing.infrastructure.mongo_dunning_state_repo import (
+        MongoDunningStateRepository,
+    )
+
+    await _seed_dunning_state(
+        db, academy_id=acad, invoice_id="inv-mine", autopay_disable_status="failed"
+    )
+    await _seed_dunning_state(
+        db, academy_id=other_acad, invoice_id="inv-theirs", autopay_disable_status="failed"
+    )
+
+    # ``other_acad`` leaves the tenant ContextVar pointing at the other academy,
+    # so name the tenant the read must be scoped to explicitly.
+    with tenant_scope(acad):
+        result = await MongoDunningStateRepository(db).list_autopay_disable_failures()
+
+    assert result["count"] == 1
+    assert [r["invoice_id"] for r in result["rows"]] == ["inv-mine"]
+
+
+@pytest.mark.asyncio
+async def test_autopay_disable_failure_count_is_the_true_count_not_the_page(db, acad) -> None:
+    """The count comes from an aggregate; only the row list is capped."""
+    from backend.v2.contexts.billing.infrastructure.mongo_dunning_state_repo import (
+        MongoDunningStateRepository,
+    )
+
+    for n in range(25):
+        await _seed_dunning_state(
+            db,
+            academy_id=acad,
+            invoice_id=f"inv-{n:02d}",
+            autopay_disable_status="failed",
+            updated_at=NOW - timedelta(minutes=n),
+        )
+
+    result = await MongoDunningStateRepository(db).list_autopay_disable_failures(limit=5)
+
+    assert result["count"] == 25
+    assert len(result["rows"]) == 5
+    assert result["truncated"] is True

@@ -1,17 +1,18 @@
 /**
- * Admin Billing Health page (#235).
+ * Admin Billing Health — the trimmed page (spec 2026-09-07).
  *
- * Verifies the three observability sections render from stubbed BFF data and
- * that the recovery actions (run reconciliation, retry charge, view attempts)
- * fire the expected v2 admin requests.
+ * Four things and nothing else: the health verdict + Connect readiness,
+ * quarantined webhooks with replay, reconciliation (runs, "Reconcile now", the
+ * Stripe-id lookup, the autopay switch-off line) and link-a-charge.
+ *
+ * The failed-payments table, its Retry/View dialog and the dunning ladder are
+ * gone — the Payments Failed-autopay bucket and the Family page own them — and
+ * so is the legacy match queue. The page computes no verdict of its own.
  */
 
 import { test, expect, type Page, type Route } from "@playwright/test";
 
-import {
-  collectConsoleErrors,
-  installTenantGuard,
-} from "../fixtures/tenant-isolation";
+import { collectConsoleErrors, installTenantGuard } from "../fixtures/tenant-isolation";
 import {
   ACADEMY_A,
   ADMIN_USER_A,
@@ -20,19 +21,6 @@ import {
   stubMe,
   stubMemberships,
 } from "../fixtures/saas-stubs";
-
-const FAILED_ROW = {
-  invoice_id: "inv-2026-06",
-  parent_id: "parent-1",
-  parent_name: "Sarah M.",
-  period: "2026-06",
-  total_cents: 12000,
-  balance_due_cents: 12000,
-  currency: "usd",
-  latest_attempt_at: "2026-06-21T09:45:00Z",
-  latest_decline_code: "card_declined",
-  attempt_count: 2,
-};
 
 const QUARANTINED_EVENT = {
   event_id: "evt_1Abc123",
@@ -46,25 +34,20 @@ const QUARANTINED_EVENT = {
   error_message: "parent mismatch: invoice=parent_A payment_intent=parent_B",
 };
 
-const DUNNING_ROW = {
-  invoice_id: "inv-dunned",
-  parent_id: "parent-2",
-  parent_name: "Ana P.",
-  period: "2026-07",
-  status: "dunned",
-  attempt_count: 4,
-  next_attempt_at: null,
-  last_attempt_at: "2026-07-08T09:00:00Z",
-  last_failure_code: "insufficient_funds",
-  terminal_at: "2026-07-08T09:00:00Z",
-  autopay_disable_status: "failed",
-  autopay_disable_error: "transition rejected",
-  autopay_disabled_at: null,
-  balance_due_cents: 12000,
-  currency: "usd",
+const RUN = {
+  run_id: "r-1",
+  started_at: "2026-06-21T10:02:00Z",
+  finished_at: "2026-06-21T10:02:01Z",
+  scanned: 8,
+  repaired: 0,
+  skipped: 8,
+  quarantined: 0,
+  failed: 0,
+  errors: [],
+  notes: [],
 };
 
-const READY_CONNECT = {
+const HEALTHY = {
   connected_account: {
     configured: true,
     status: "active",
@@ -76,7 +59,9 @@ const READY_CONNECT = {
   allow_platform_charge_fallback: false,
   payments_possible: true,
   funds_route_to_academy: true,
-  webhook_events: { quarantined: 1, failed: 0 },
+  webhook_events: { quarantined: 0, failed: 0 },
+  autopay_disable_failures: { count: 0, rows: [], truncated: false },
+  health: { state: "ok", headline: "Stripe is healthy", reasons: [] },
 };
 
 async function stubConnectReadiness(page: Page, body: unknown): Promise<void> {
@@ -85,7 +70,9 @@ async function stubConnectReadiness(page: Page, body: unknown): Promise<void> {
   );
 }
 
-async function stubAdmin(page: Page): Promise<void> {
+async function stubOwner(page: Page): Promise<void> {
+  // ADMIN_USER_A carries `owner` (migration 0165 granted it to every existing
+  // admin) — the page is owner-only since the trim.
   await stubMe(page, ADMIN_USER_A);
   await stubMemberships(page, [
     { academy_id: ACADEMY_A, academy_name: "Aces Academy", role: "admin" },
@@ -96,112 +83,178 @@ async function stubAdmin(page: Page): Promise<void> {
     if (route.request().method() !== "GET") return route.fallback();
     return fulfillJson(route, {});
   });
-  // Healthy Connect readiness by default (#432). Must come after the
-  // catch-all — later routes win — or the card would receive `{}` and the
-  // page would crash on the missing connected_account. A test that needs a
-  // different state registers its own route afterwards.
-  await stubConnectReadiness(page, READY_CONNECT);
-}
-
-async function stubDunning(page: Page, rows: unknown[] = []): Promise<void> {
-  await page.route("**/api/v2/admin/billing/dunning", (route) =>
-    fulfillJson(route, { rows }),
+  // Readiness is the one fatal read; the catch-all's `{}` would blank the
+  // verdict. A test that needs another state registers its own route after.
+  await stubConnectReadiness(page, HEALTHY);
+  await page.route("**/api/v2/admin/billing/reconciliation-runs", (route) =>
+    fulfillJson(route, { runs: [RUN] }),
+  );
+  await page.route("**/api/v2/admin/billing/webhooks**", (route) =>
+    fulfillJson(route, { events: [] }),
   );
 }
 
 test.describe("admin billing health", () => {
-  test("renders billing health sections with stat counts", async ({ page }) => {
+  test("shows the three tiles, the verdict and nothing about a family", async ({ page }) => {
     const guard = installTenantGuard(page);
     const errors = collectConsoleErrors(page);
-    await stubAdmin(page);
-
-    await page.route("**/api/v2/admin/billing/reconciliation-runs", (route) =>
-      fulfillJson(route, {
-        runs: [
-          {
-            run_id: "r-1",
-            started_at: "2026-06-21T10:02:00Z",
-            finished_at: "2026-06-21T10:02:01Z",
-            scanned: 8,
-            repaired: 0,
-            skipped: 8,
-            quarantined: 0,
-            failed: 0,
-            errors: [],
-          },
-        ],
-      }),
-    );
-    await page.route("**/api/v2/admin/billing/failed-payment-attempts", (route) =>
-      fulfillJson(route, { rows: [FAILED_ROW] }),
-    );
+    await stubOwner(page);
     await page.route("**/api/v2/admin/billing/webhooks**", (route) =>
       fulfillJson(route, { events: [QUARANTINED_EVENT] }),
     );
-    await stubDunning(page, [DUNNING_ROW]);
 
     await page.goto("/admin/billing-health");
 
     await expect(page.getByTestId("billing-health-page")).toBeVisible();
+    // Tiles: Connect state, quarantined count, last reconciliation.
+    await expect(page.getByText("Connect state", { exact: true })).toBeVisible();
+    await expect(page.getByText("Quarantined events", { exact: true })).toBeVisible();
+    await expect(page.getByText("Last reconciliation", { exact: true })).toBeVisible();
     await expect(page.getByTestId("reconciliation-runs-table")).toBeVisible();
-    await expect(page.getByTestId("failed-payments-table")).toBeVisible();
-    await expect(page.getByTestId("dunning-table")).toBeVisible();
     await expect(page.getByTestId("quarantined-events-table")).toBeVisible();
-    await expect(page.getByText("Sarah M.")).toBeVisible();
-    await expect(page.getByTestId("dunning-row-inv-dunned")).toContainText("Ana P.");
-    await expect(page.getByTestId("dunning-row-inv-dunned")).toContainText(
-      "Disable failed: transition rejected",
-    );
-    await expect(page.getByTestId("billing-health-status")).toContainText("Needs attention");
+    await expect(page.getByTestId("reconciliation-lookup")).toBeVisible();
+    await expect(page.getByTestId("link-charge-form")).toBeVisible();
+
+    // Family payment behaviour lives on Payments and the Family page now.
+    await expect(page.getByTestId("failed-payments-table")).toHaveCount(0);
+    await expect(page.getByTestId("dunning-table")).toHaveCount(0);
+    await expect(page.getByTestId("legacy-match-list")).toHaveCount(0);
+    await expect(page.getByText("Open Failed Payments")).toHaveCount(0);
+    await expect(page.getByText("Dunning Ladder")).toHaveCount(0);
 
     expect(errors).toEqual([]);
     guard.assertNoLegacyApiCalls();
   });
 
-  test("run reconciliation fires POST and shows the new run", async ({ page }) => {
-    await stubAdmin(page);
-    let reconciled = false;
+  test("the pill reads blocked when payments are impossible, even with an empty backlog", async ({
+    page,
+  }) => {
+    // The contradiction this spec removes: nothing in the backlog, and no
+    // parent can pay a cent. The old page called that "System healthy".
+    await stubOwner(page);
+    await stubConnectReadiness(page, {
+      ...HEALTHY,
+      connected_account: {
+        configured: false,
+        status: null,
+        charges_enabled: false,
+        payouts_enabled: false,
+        ready_for_charges: false,
+        account_id_masked: null,
+      },
+      payments_possible: false,
+      funds_route_to_academy: false,
+      health: {
+        state: "blocked",
+        headline: "Parents cannot pay right now",
+        reasons: [
+          {
+            code: "connect_not_ready",
+            detail: "No Stripe account is ready to take charges.",
+          },
+        ],
+      },
+    });
 
-    await page.route("**/api/v2/admin/billing/reconciliation-runs", (route) =>
-      fulfillJson(route, {
-        runs: reconciled
-          ? [
-              {
-                run_id: "r-2",
-                started_at: "2026-06-21T10:12:00Z",
-                finished_at: "2026-06-21T10:12:01Z",
-                scanned: 9,
-                repaired: 1,
-                skipped: 8,
-                quarantined: 0,
-                failed: 0,
-                errors: [],
-              },
-            ]
-          : [],
+    await page.goto("/admin/billing-health");
+
+    const pill = page.getByTestId("billing-health-status");
+    await expect(pill).toHaveAttribute("data-state", "blocked");
+    await expect(pill).toHaveAttribute("data-tone", "red");
+    await expect(pill).toContainText("Parents cannot pay right now");
+    await expect(page.getByTestId("payment-readiness")).toHaveAttribute("data-tone", "red");
+    await expect(page.getByTestId("health-reasons")).toContainText(
+      "No Stripe account is ready to take charges.",
+    );
+  });
+
+  test("the pill renders the backend's attention headline", async ({ page }) => {
+    await stubOwner(page);
+    await stubConnectReadiness(page, {
+      ...HEALTHY,
+      webhook_events: { quarantined: 137, failed: 4 },
+      health: {
+        state: "attention",
+        headline: "Payments work, 1 thing needs attention",
+        reasons: [
+          { code: "webhooks_quarantined", detail: "137 quarantined webhook events." },
+        ],
+      },
+    });
+    await page.route("**/api/v2/admin/billing/webhooks**", (route) =>
+      fulfillJson(route, { events: [QUARANTINED_EVENT] }),
+    );
+
+    await page.goto("/admin/billing-health");
+
+    const pill = page.getByTestId("billing-health-status");
+    await expect(pill).toHaveAttribute("data-state", "attention");
+    await expect(pill).toHaveAttribute("data-tone", "amber");
+    await expect(pill).toContainText("Payments work, 1 thing needs attention");
+    // The tile shows the true aggregate, not the length of the capped list.
+    await expect(page.getByText("137", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("webhook-truncation")).toContainText(
+      "Showing the 1 most recent of 137 quarantined events.",
+    );
+  });
+
+  test("readiness failing shows a retry panel, not a pill", async ({ page }) => {
+    await stubOwner(page);
+    await page.route("**/api/v2/admin/billing/connect-readiness", (route) =>
+      route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "readiness check failed" }),
       }),
     );
-    await page.route("**/api/v2/admin/billing/failed-payment-attempts", (route) =>
-      fulfillJson(route, { rows: [] }),
-    );
+
+    await page.goto("/admin/billing-health");
+
+    // A 5xx is retried with backoff by the shared query client, so give the
+    // fatal panel room to appear after the retries are exhausted.
+    await expect(page.getByTestId("billing-health-fatal")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("retry-readiness")).toBeVisible();
+    await expect(page.getByTestId("billing-health-status")).toHaveCount(0);
+  });
+
+  test("replay fires the POST for the quarantined event", async ({ page }) => {
+    await stubOwner(page);
     await page.route("**/api/v2/admin/billing/webhooks**", (route) =>
-      fulfillJson(route, { events: [] }),
+      fulfillJson(route, { events: [QUARANTINED_EVENT] }),
     );
-    await stubDunning(page);
+
+    let replayed: string | null = null;
+    await page.route(
+      "**/api/v2/admin/billing/webhook-events/evt_1Abc123/replay",
+      (route: Route) => {
+        replayed = "evt_1Abc123";
+        return fulfillJson(route, { replayed: true, event_id: "evt_1Abc123" });
+      },
+    );
+
+    await page.goto("/admin/billing-health");
+    await page.getByTestId("replay-evt_1Abc123").click();
+
+    await expect.poll(() => replayed).toBe("evt_1Abc123");
+    await expect(page.getByTestId("quarantined-row-evt_1Abc123")).toContainText(
+      "Replayed — processing",
+    );
+  });
+
+  test("reconcile now fires POST and shows the new run", async ({ page }) => {
+    await stubOwner(page);
+    let reconciled = false;
+    await page.route("**/api/v2/admin/billing/reconciliation-runs", (route) =>
+      fulfillJson(route, {
+        runs: reconciled ? [{ ...RUN, run_id: "r-2", scanned: 9, repaired: 1 }] : [],
+      }),
+    );
 
     let postFired = false;
     await page.route("**/api/v2/admin/billing/reconcile-now", (route: Route) => {
       postFired = true;
       reconciled = true;
-      return fulfillJson(route, {
-        run_id: "r-2",
-        scanned: 9,
-        repaired: 1,
-        skipped: 8,
-        quarantined: 0,
-        failed: 0,
-        errors: [],
-      });
+      return fulfillJson(route, { ...RUN, run_id: "r-2", scanned: 9, repaired: 1 });
     });
 
     await page.goto("/admin/billing-health");
@@ -211,127 +264,161 @@ test.describe("admin billing health", () => {
     await expect(page.getByTestId("reconciliation-runs-table")).toContainText("9");
   });
 
-  test("retry charges the invoice via autopay", async ({ page }) => {
-    await stubAdmin(page);
-    await page.route("**/api/v2/admin/billing/reconciliation-runs", (route) =>
-      fulfillJson(route, { runs: [] }),
-    );
-    await page.route("**/api/v2/admin/billing/failed-payment-attempts", (route) =>
-      fulfillJson(route, { rows: [FAILED_ROW] }),
-    );
-    await page.route("**/api/v2/admin/billing/webhooks**", (route) =>
-      fulfillJson(route, { events: [] }),
-    );
-    await stubDunning(page);
-
-    let chargeFired = false;
-    await page.route(
-      "**/api/v2/admin/billing/invoices/inv-2026-06/charge-autopay",
-      (route: Route) => {
-        chargeFired = true;
-        return fulfillJson(route, {
-          invoice_id: "inv-2026-06",
-          success: true,
-          status: "paid",
-          balance_due_cents: 0,
-          requires_action: false,
-          decline_code: null,
-        });
-      },
+  test("reconcile now surfaces the unconfigured-Stripe message", async ({ page }) => {
+    await stubOwner(page);
+    await page.route("**/api/v2/admin/billing/reconcile-now", (route) =>
+      route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "Stripe reconciliation not configured" }),
+      }),
     );
 
     await page.goto("/admin/billing-health");
-    await page.getByTestId("retry-inv-2026-06").click();
+    await page.getByTestId("run-reconciliation").click();
 
-    await expect.poll(() => chargeFired).toBe(true);
-    await expect(page.getByTestId("failed-row-inv-2026-06")).toContainText(
-      "Charged successfully",
-    );
+    // The inline alert; the global mutation toast repeats it.
+    await expect(page.getByText(/Stripe reconciliation not configured/).first()).toBeVisible();
   });
 
-  test("view opens the invoice attempt timeline", async ({ page }) => {
-    await stubAdmin(page);
-    await page.route("**/api/v2/admin/billing/reconciliation-runs", (route) =>
-      fulfillJson(route, { runs: [] }),
-    );
-    await page.route("**/api/v2/admin/billing/failed-payment-attempts", (route) =>
-      fulfillJson(route, { rows: [FAILED_ROW] }),
-    );
-    await page.route("**/api/v2/admin/billing/webhooks**", (route) =>
-      fulfillJson(route, { events: [] }),
-    );
-    await stubDunning(page);
-    await page.route(
-      "**/api/v2/admin/billing/invoices/inv-2026-06/attempts",
-      (route) =>
-        fulfillJson(route, {
-          attempts: [
-            {
-              attempt_id: "a-2",
-              status: "failed",
-              amount_cents: 12000,
-              currency: "usd",
-              stripe_payment_intent_id: "pi_3xyz",
-              failure_code: "card_declined",
-              failure_message: "Your card was declined.",
-              created_at: "2026-06-21T09:45:00Z",
-            },
-          ],
+  test("the reconciliation lookup lives here now", async ({ page }) => {
+    await stubOwner(page);
+    let queried: string | null = null;
+    await page.route("**/api/v2/admin/billing/reconciliation?**", (route: Route) => {
+      queried = route.request().url();
+      return fulfillJson(route, {
+        result: "MISSING_ALLOCATION",
+        stripe_invoice_id: null,
+        payment_intent_id: "pi_test_1",
+        stripe_customer_id: "cus_1",
+        local_invoice_id: "inv-open",
+        ledger_payment_id: "lp_1",
+        payment_allocation_id: null,
+        checked_at: "2026-06-02T12:05:00Z",
+        mismatches: [
+          {
+            code: "MISSING_ALLOCATION",
+            message: "Ledger payment exists without payment allocation.",
+            stripe_value: "paid",
+            local_value: null,
+          },
+        ],
+        manual_review_candidates: [],
+      });
+    });
+
+    await page.goto("/admin/billing-health");
+    await page.getByPlaceholder("pi_...").first().fill("pi_test_1");
+    await page.getByRole("button", { name: "Run report" }).click();
+
+    await expect.poll(() => queried).toContain("payment_intent_id=pi_test_1");
+    await expect(page.getByText("Ledger payment exists without payment allocation.")).toBeVisible();
+  });
+
+  test("link a charge confirms first, then posts the right body", async ({ page }) => {
+    await stubOwner(page);
+    let posted: Record<string, unknown> | null = null;
+    await page.route("**/api/v2/admin/billing/legacy-match/confirm", (route: Route) => {
+      posted = route.request().postDataJSON();
+      return fulfillJson(route, {
+        invoice_id: "inv-legacy-1",
+        payment_id: "legacy-match-ch_1",
+        invoice_status: "paid",
+        balance_due_cents: 0,
+      });
+    });
+
+    await page.goto("/admin/billing-health");
+    await page.getByTestId("link-invoice-id").fill("inv-legacy-1");
+    await page.getByTestId("link-charge-id").fill("ch_1");
+    await page.getByTestId("link-amount").fill("70.00");
+    await page.getByTestId("link-charge-submit").click();
+
+    // Nothing is posted until the confirmation naming the invoice and amount.
+    const confirmation = page.getByTestId("link-charge-confirm");
+    await expect(confirmation).toContainText("$70.00");
+    await expect(confirmation).toContainText("inv-legacy-1");
+    expect(posted).toBeNull();
+
+    await page.getByTestId("link-charge-confirm-submit").click();
+
+    await expect.poll(() => posted).not.toBeNull();
+    expect(posted).toMatchObject({
+      invoice_id: "inv-legacy-1",
+      stripe_charge_id: "ch_1",
+      amount_cents: 7000,
+    });
+    await expect(page.getByTestId("link-charge-success")).toContainText("paid");
+  });
+
+  test("link a charge renders a refusal inline", async ({ page }) => {
+    await stubOwner(page);
+    await page.route("**/api/v2/admin/billing/legacy-match/confirm", (route) =>
+      route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({
+          detail: "amount_cents 9000 exceeds balance_due_cents 7000",
         }),
+      }),
     );
 
     await page.goto("/admin/billing-health");
-    await page.getByTestId("view-inv-2026-06").click();
+    await page.getByTestId("link-invoice-id").fill("inv-legacy-1");
+    await page.getByTestId("link-charge-id").fill("ch_1");
+    await page.getByTestId("link-amount").fill("90.00");
+    await page.getByTestId("link-charge-submit").click();
+    await page.getByTestId("link-charge-confirm-submit").click();
 
-    await expect(page.getByTestId("attempts-timeline")).toBeVisible();
-    await expect(page.getByText("Your card was declined.")).toBeVisible();
-  });
-  test("payment readiness card shows a healthy connected account", async ({ page }) => {
-    const errors = collectConsoleErrors(page);
-    await stubAdmin(page);
-    await stubDunning(page);
-
-    await page.goto("/admin/billing-health");
-
-    const card = page.getByTestId("payment-readiness");
-    await expect(card).toBeVisible();
-    await expect(card).toHaveAttribute("data-tone", "green");
-    await expect(card.getByText("Ready to take payments")).toBeVisible();
-    await expect(card.getByText("acct...6f21")).toBeVisible();
-    expect(errors).toEqual([]);
+    await expect(page.getByTestId("link-error")).toContainText("exceeds");
   });
 
-  test("payment readiness card warns when parents cannot pay at all", async ({ page }) => {
-    await stubAdmin(page);
-    await stubDunning(page);
+  test("the autopay switch-off failures get their only surface", async ({ page }) => {
+    await stubOwner(page);
     await stubConnectReadiness(page, {
-      connected_account: {
-        configured: false,
-        status: null,
-        charges_enabled: false,
-        payouts_enabled: false,
-        ready_for_charges: false,
-        account_id_masked: null,
+      ...HEALTHY,
+      autopay_disable_failures: {
+        count: 2,
+        rows: [
+          {
+            invoice_id: "inv-stuck",
+            parent_id: "parent-9",
+            error: "rate_limited",
+            failed_at: "2026-09-07T09:00:00Z",
+          },
+        ],
+        truncated: true,
       },
-      allow_platform_charge_fallback: false,
-      payments_possible: false,
-      funds_route_to_academy: false,
-      webhook_events: { quarantined: 0, failed: 0 },
+      health: {
+        state: "attention",
+        headline: "Payments work, 1 thing needs attention",
+        reasons: [
+          {
+            code: "autopay_disable_failed",
+            detail: "Autopay switch-off failed for 2 invoices.",
+          },
+        ],
+      },
     });
 
     await page.goto("/admin/billing-health");
 
-    const card = page.getByTestId("payment-readiness");
-    await expect(card).toHaveAttribute("data-tone", "red");
-    await expect(card.getByText("Parents cannot pay right now")).toBeVisible();
+    const line = page.getByTestId("autopay-switch-off-failures");
+    await expect(line).toContainText("Autopay switch-off failed for 2 invoices");
+    await expect(line).toContainText("rate_limited");
+    // Each invoice links to the family page, which owns the rest of the story.
+    await expect(page.getByTestId("switch-off-inv-stuck")).toHaveAttribute(
+      "href",
+      "/admin/families/parent-9",
+    );
   });
 
-  test("payment readiness card flags money landing on the platform account", async ({
+  test("payment readiness still flags money landing on the platform account", async ({
     page,
   }) => {
-    await stubAdmin(page);
-    await stubDunning(page);
+    await stubOwner(page);
     await stubConnectReadiness(page, {
+      ...HEALTHY,
       connected_account: {
         configured: true,
         status: "restricted",
@@ -343,39 +430,20 @@ test.describe("admin billing health", () => {
       allow_platform_charge_fallback: true,
       payments_possible: true,
       funds_route_to_academy: false,
-      webhook_events: { quarantined: 0, failed: 2 },
+      health: {
+        state: "ok",
+        headline: "Stripe is healthy",
+        // fallback_only is informational: it never raises the state.
+        reasons: [{ code: "fallback_only", detail: "Charges land on the platform account." }],
+      },
     });
 
     await page.goto("/admin/billing-health");
 
     const card = page.getByTestId("payment-readiness");
-    // Payments succeed, so this is not red — but the money is not the
-    // academy's, so it must not read as healthy either.
     await expect(card).toHaveAttribute("data-tone", "amber");
     await expect(card.getByText(/landing on the platform account/)).toBeVisible();
-  });
-
-  test("stat tiles report real webhook counts, not a capped page length", async ({
-    page,
-  }) => {
-    await stubAdmin(page);
-    await stubDunning(page);
-    await page.route("**/api/v2/admin/billing/webhooks**", (route) =>
-      fulfillJson(route, { events: [QUARANTINED_EVENT] }),
-    );
-    await stubConnectReadiness(page, {
-      ...READY_CONNECT,
-      webhook_events: { quarantined: 137, failed: 4 },
-    });
-
-    await page.goto("/admin/billing-health");
-
-    // The list route returns one event; the count says 137. Before #432 the
-    // tile counted that list and would have shown 1.
-    await expect(page.getByText("137", { exact: true })).toBeVisible();
-    await expect(page.getByText("Failed Events")).toBeVisible();
-    await expect(page.getByTestId("payment-readiness")).toContainText(
-      "137 quarantined · 4 failed",
-    );
+    // Payments succeed, so the verdict is still ok — the card carries the nuance.
+    await expect(page.getByTestId("billing-health-status")).toHaveAttribute("data-state", "ok");
   });
 });

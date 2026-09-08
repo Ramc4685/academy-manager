@@ -287,8 +287,10 @@ test.describe("billing trust and recovery surfaces", () => {
       });
     });
 
-    // The Collections tab is the default; the table, webhook queue and
-    // reconciliation lookup now live under the All invoices tab.
+    // The Collections tab is the default; the table and the webhook queue
+    // live under the All invoices tab. The reconciliation lookup moved to
+    // Billing Health with the trim (spec 2026-09-07 §6), so All invoices now
+    // only points at it.
     await page.goto("/admin/payments?tab=invoices");
 
     await expect(page.getByTestId("admin-payments")).toBeVisible();
@@ -307,8 +309,36 @@ test.describe("billing trust and recovery surfaces", () => {
       "missing allocation",
     );
 
+    // Payments points at Billing Health rather than carrying the lookup.
+    await expect(page.getByTestId("billing-health-pointer")).toBeVisible();
+
+    // The lookup itself moved to Billing Health (spec 2026-09-07 §6).
+    await page.route("**/api/v2/admin/billing/connect-readiness", (route) =>
+      fulfillJson(route, {
+        connected_account: {
+          configured: true,
+          status: "active",
+          charges_enabled: true,
+          payouts_enabled: true,
+          ready_for_charges: true,
+          account_id_masked: "acct...6f21",
+        },
+        allow_platform_charge_fallback: false,
+        payments_possible: true,
+        funds_route_to_academy: true,
+        webhook_events: { quarantined: 0, failed: 0 },
+        autopay_disable_failures: { count: 0, rows: [], truncated: false },
+        health: { state: "ok", headline: "Stripe is healthy", reasons: [] },
+      }),
+    );
+    await page.route("**/api/v2/admin/billing/reconciliation-runs", (route) =>
+      fulfillJson(route, { runs: [] }),
+    );
+    await page.goto("/admin/billing-health");
+    await expect(page.getByTestId("reconciliation-lookup")).toBeVisible();
+
     await page.getByPlaceholder("in_...").fill("in_test_failed_1");
-    await page.getByPlaceholder("pi_...").fill("pi_test_failed_1");
+    await page.getByPlaceholder("pi_...").first().fill("pi_test_failed_1");
     await page.getByRole("button", { name: "Run report" }).click();
     await expect(page.getByText("MISSING ALLOCATION", { exact: true })).toBeVisible();
     await expect(page.getByText("Ledger payment exists without payment allocation.")).toBeVisible();

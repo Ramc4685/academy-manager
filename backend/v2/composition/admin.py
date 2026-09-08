@@ -130,11 +130,6 @@ from backend.v2.contexts.billing.application.use_cases.issue_refund import (
     IssueRefund,
     IssueRefundCommand,
 )
-from backend.v2.contexts.billing.application.use_cases.match_legacy_invoices import (
-    ConfirmLegacyMatch,
-    ConfirmLegacyMatchCommand,
-    ListLegacyMatchQueue,
-)
 from backend.v2.contexts.billing.application.use_cases.quote_enrollment import (
     QuoteEnrollment,
     QuoteEnrollmentCommand,
@@ -439,7 +434,6 @@ from backend.v2.contexts.identity.application.change_user_role_use_case import C
 from backend.v2.contexts.identity.application.get_academy_fees_use_case import GetAcademyFeesUseCase
 from backend.v2.contexts.identity.application.get_academy_gateway_use_case import (
     GetAcademyGatewayUseCase,
-    mask_stripe_account_id,
 )
 from backend.v2.contexts.identity.application.get_academy_notifications_use_case import (
     GetAcademyNotificationsUseCase,
@@ -1306,35 +1300,8 @@ def compose_admin(
         outbox=outbox,
     )
 
-    # ---- Billing Health (#235): observability + recovery actions ----------- #
-    async def list_reconciliation_runs() -> list[dict[str, Any]]:
-        from backend.v2.contexts.billing.infrastructure.mongo_billing_reconciliation_run_repo import (
-            MongoBillingReconciliationRunRepository,
-        )
-        from backend.v2.shared.tenancy import current_academy_id
-
-        repo = MongoBillingReconciliationRunRepository(db)
-        return await repo.list_runs(current_academy_id(), limit=10)
-
-    async def run_reconciliation() -> dict[str, Any]:
-        from backend.v2.contexts.billing.application.use_cases.reconcile_stripe_payment_intents import (
-            ReconcileStripePaymentIntents,
-        )
-        from backend.v2.contexts.billing.infrastructure.mongo_billing_reconciliation_run_repo import (
-            MongoBillingReconciliationRunRepository,
-        )
-        from backend.v2.shared.tenancy import current_academy_id
-
-        if not hasattr(stripe, "search_app_owned_payment_intents"):
-            raise RuntimeError("Stripe reconciliation not configured")
-        return await ReconcileStripePaymentIntents(
-            stripe=stripe,
-            ledger=billing_ledger_repo,
-            run_recorder=MongoBillingReconciliationRunRepository(db),
-            academy_id=current_academy_id(),
-            connected_accounts=connected_accounts_repo,
-        ).execute(limit=100)
-
+    # ---- Failed autopay reads (#235). The Billing Health plumbing wiring
+    # moved to composition/billing_health.py (spec 2026-09-07 §5.1). ---------- #
     async def list_failed_payment_attempts() -> list[dict[str, Any]]:
         return await billing_ledger_repo.list_open_failed_attempts()
 
@@ -1380,53 +1347,6 @@ def compose_admin(
         if invoice is None:
             raise ValueError("invoice not found")
         return await billing_ledger_repo.list_payment_attempts(invoice_id)
-
-    async def replay_webhook_event(event_id: str) -> bool:
-        from backend.v2.contexts.billing.infrastructure.mongo_stripe_dedup import (
-            MongoStripeEventDedup,
-        )
-        from backend.v2.shared.tenancy import current_academy_id
-
-        dedup = MongoStripeEventDedup(db)
-        replayed = await dedup.replay(event_id, academy_id=current_academy_id())
-        if not replayed:
-            raise ValueError("quarantined event not found")
-        return True
-
-    # ---- Legacy invoice ↔ Stripe charge review queue (#242 WI-3) ----------- #
-    async def list_legacy_match_queue() -> list[dict[str, Any]]:
-        if not hasattr(stripe, "list_charges_for_customer"):
-            raise RuntimeError("Stripe charge matching not configured")
-        rows = await ListLegacyMatchQueue(
-            ledger=billing_ledger_repo,
-            stripe=stripe,
-            parent_customers=parent_customers_repo,
-        ).execute()
-        result = [row.model_dump(mode="python") for row in rows]
-        # Resolve parent display names for the review UI (same lookup the
-        # billing/finance paths use elsewhere in this module).
-        return await _enrich_parent_names(result)
-
-    async def confirm_legacy_match(
-        *,
-        invoice_id: str,
-        stripe_charge_id: str,
-        amount_cents: int,
-        stripe_payment_intent_id: str | None,
-        paid_at: datetime | None,
-        recorded_by: str | None,
-    ) -> dict[str, Any]:
-        result = await ConfirmLegacyMatch(ledger=billing_ledger_repo).execute(
-            ConfirmLegacyMatchCommand(
-                invoice_id=invoice_id,
-                stripe_charge_id=stripe_charge_id,
-                amount_cents=amount_cents,
-                stripe_payment_intent_id=stripe_payment_intent_id,
-                paid_at=paid_at,
-                recorded_by=recorded_by,
-            )
-        )
-        return result.model_dump(mode="python")
 
     async def add_invoice_line(
         *,
@@ -3341,343 +3261,6 @@ def compose_admin(
         rows = sorted(latest.values(), key=lambda r: r["last_paid_at"], reverse=True)
         return await _enrich_parent_names(rows)
 
-    async def get_connect_readiness() -> dict[str, Any]:
-        """Can a parent payment physically succeed right now? (issue #432)
-
-        Every parent payment is gated on one condition — an `active` connected
-        account with `charges_enabled` — or on the platform-charge fallback
-        being switched on. Nothing in the admin UI showed either, so an academy
-        could be unable to take a single payment with no visible signal.
-
-        Webhook counts are real counts, not the length of the capped list the
-        page used to count: that list saturates at 50, so "50 quarantined"
-        could mean 50 or 5,000.
-        """
-        from backend.v2.contexts.billing.infrastructure.mongo_stripe_dedup import (
-            MongoStripeEventDedup,
-        )
-        from backend.v2.shared.tenancy import current_academy_id
-
-        request_academy_id = current_academy_id()
-
-        account = await connected_accounts_repo.get_for_academy()
-        try:
-            settings_doc = await billing_settings_repo.get()
-            fallback_allowed = bool(settings_doc.allow_platform_charge_fallback)
-        except Exception:
-            # Match the charge path, which fails closed on a settings read
-            # error. Reporting "fallback is on" when we do not know would
-            # tell the owner payments are fine when they may not be.
-            log.warning("connect_readiness_settings_read_failed", exc_info=True)
-            fallback_allowed = False
-
-        stuck = await MongoStripeEventDedup(db).count_stuck_by_status(academy_id=request_academy_id)
-
-        ready = bool(account and account.is_ready_for_charges())
-        return {
-            "connected_account": {
-                "configured": account is not None,
-                "status": account.status if account else None,
-                "charges_enabled": bool(account and account.charges_enabled),
-                "payouts_enabled": bool(account and account.payouts_enabled),
-                "ready_for_charges": ready,
-                # Same masking as GET /admin/academy/gateway — the account id
-                # is a Stripe identifier, not a secret, but there is no reason
-                # for two admin surfaces to disagree about showing it.
-                "account_id_masked": mask_stripe_account_id(
-                    account.stripe_account_id if account else None
-                ),
-            },
-            "allow_platform_charge_fallback": fallback_allowed,
-            # The headline the card leads with: charges route to the academy's
-            # account when ready, and otherwise only succeed at all if the
-            # platform fallback is on — in which case the money lands on the
-            # platform account instead of theirs.
-            "payments_possible": ready or fallback_allowed,
-            "funds_route_to_academy": ready,
-            "webhook_events": stuck,
-        }
-
-    async def list_billing_webhook_events(*, status: str | None = None, limit: int = 50):
-        from backend.v2.shared.tenancy import current_academy_id
-
-        request_academy_id = current_academy_id()
-        query: dict[str, Any] = {"academy_id": request_academy_id}
-        if status:
-            query["status"] = status
-        else:
-            query["status"] = {"$in": ["failed", "quarantined"]}
-        rows = []
-        cursor = db["stripe_webhook_events"].find(
-            query,
-            sort=[("last_attempt_at", -1), ("received_at", -1), ("event_id", 1)],
-            limit=max(1, min(int(limit), 100)),
-        )
-        async for doc in cursor:
-            rows.append(
-                {
-                    "event_id": str(doc.get("event_id") or ""),
-                    "event_type": str(doc.get("event_type") or ""),
-                    "status": str(doc.get("status") or ""),
-                    "object_id": doc.get("object_id"),
-                    "object_type": doc.get("object_type"),
-                    "received_at": doc.get("received_at"),
-                    "last_attempt_at": doc.get("last_attempt_at"),
-                    "retry_count": int(doc.get("retry_count") or 0),
-                    "error_message": doc.get("error_message") or doc.get("error"),
-                }
-            )
-        return rows
-
-    async def get_billing_reconciliation_report(
-        *,
-        stripe_invoice_id: str | None = None,
-        payment_intent_id: str | None = None,
-    ) -> dict[str, Any]:
-        from backend.v2.shared.tenancy import current_academy_id
-
-        request_academy_id = current_academy_id()
-        checked_at = datetime.now(UTC)
-        stripe_invoice: dict[str, Any] = {}
-        stripe_payment_intent: dict[str, Any] = {}
-        stripe_customer_id: str | None = None
-
-        retrieve_invoice = getattr(stripe, "retrieve_invoice", None)
-        if stripe_invoice_id and retrieve_invoice is not None:
-            stripe_invoice = await retrieve_invoice(stripe_invoice_id)
-            payment_intent_id = (
-                payment_intent_id or str(stripe_invoice.get("payment_intent") or "") or None
-            )
-            stripe_customer_id = str(stripe_invoice.get("customer") or "") or None
-
-        retrieve_payment_intent = getattr(stripe, "retrieve_payment_intent", None)
-        if payment_intent_id and retrieve_payment_intent is not None:
-            stripe_payment_intent = await retrieve_payment_intent(payment_intent_id)
-            stripe_customer_id = (
-                stripe_customer_id or str(stripe_payment_intent.get("customer") or "") or None
-            )
-
-        local_invoice = None
-        if stripe_invoice_id:
-            local_invoice = await db["invoices"].find_one(
-                {"academy_id": request_academy_id, "stripe_invoice_id": stripe_invoice_id}
-            )
-        stripe_invoice_metadata = (
-            stripe_invoice.get("metadata")
-            if isinstance(stripe_invoice.get("metadata"), dict)
-            else {}
-        ) or {}
-        duplicate_obligation_invoice = None
-        if stripe_invoice_id:
-            matching_invoices = (
-                await db["invoices"]
-                .find(
-                    {
-                        "academy_id": request_academy_id,
-                        "stripe_invoice_id": stripe_invoice_id,
-                    },
-                    {"invoice_id": 1, "stripe_invoice_id": 1},
-                )
-                .to_list(length=2)
-            )
-            if len(matching_invoices) > 1:
-                duplicate_obligation_invoice = matching_invoices[0]
-            elif local_invoice is None:
-                obligation_query: dict[str, Any] = {"academy_id": request_academy_id}
-                for field in ("enrollment_id", "period", "parent_id", "student_id"):
-                    value = stripe_invoice_metadata.get(field)
-                    if value:
-                        obligation_query[field] = str(value)
-                if len(obligation_query) > 1:
-                    obligation_query["status"] = {"$in": ["open", "partially_paid", "paid"]}
-                    obligation_query["stripe_invoice_id"] = {"$ne": stripe_invoice_id}
-                    duplicate_obligation_invoice = await db["invoices"].find_one(
-                        obligation_query,
-                        sort=[("created_at", -1), ("invoice_id", 1)],
-                    )
-                    if duplicate_obligation_invoice is not None:
-                        local_invoice = duplicate_obligation_invoice
-
-        ledger_payment_query: dict[str, Any] = {"academy_id": request_academy_id}
-        if stripe_invoice_id and payment_intent_id:
-            ledger_payment_query["$or"] = [
-                {"stripe_invoice_id": stripe_invoice_id},
-                {"stripe_payment_intent_id": payment_intent_id},
-            ]
-        elif stripe_invoice_id:
-            ledger_payment_query["stripe_invoice_id"] = stripe_invoice_id
-        elif payment_intent_id:
-            ledger_payment_query["stripe_payment_intent_id"] = payment_intent_id
-        ledger_payment = await db["ledger_payments"].find_one(ledger_payment_query)
-
-        allocation = None
-        if ledger_payment is not None:
-            allocation = await db["payment_allocations"].find_one(
-                {
-                    "academy_id": request_academy_id,
-                    "payment_id": ledger_payment.get("payment_id"),
-                }
-            )
-            if local_invoice is None and allocation is not None:
-                local_invoice = await db["invoices"].find_one(
-                    {
-                        "academy_id": request_academy_id,
-                        "invoice_id": allocation.get("invoice_id"),
-                    }
-                )
-
-        mismatches: list[dict[str, Any]] = []
-        if duplicate_obligation_invoice is not None:
-            mismatches.append(
-                {
-                    "code": "DUPLICATE_OBLIGATION",
-                    "message": "Stripe invoice maps to an already-existing local obligation",
-                    "stripe_value": stripe_invoice_id,
-                    "local_value": duplicate_obligation_invoice.get("stripe_invoice_id"),
-                }
-            )
-        elif stripe_invoice_id and local_invoice is None:
-            mismatches.append(
-                {
-                    "code": "MISSING_LOCAL_INVOICE",
-                    "message": "Stripe invoice has no matching LedgerInvoice",
-                    "stripe_value": stripe_invoice_id,
-                    "local_value": None,
-                }
-            )
-        if local_invoice is not None and ledger_payment is None:
-            mismatches.append(
-                {
-                    "code": "MISSING_LEDGER_PAYMENT",
-                    "message": "LedgerInvoice has no matching LedgerPayment",
-                    "stripe_value": stripe_invoice_id or payment_intent_id,
-                    "local_value": None,
-                }
-            )
-        if ledger_payment is not None and allocation is None:
-            mismatches.append(
-                {
-                    "code": "MISSING_ALLOCATION",
-                    "message": "LedgerPayment has no PaymentAllocation",
-                    "stripe_value": stripe_invoice_id or payment_intent_id,
-                    "local_value": ledger_payment.get("payment_id"),
-                }
-            )
-
-        stripe_payment_succeeded = (
-            str(stripe_payment_intent.get("status") or "").lower() == "succeeded"
-        )
-        stripe_amount = int(
-            stripe_invoice.get("amount_paid")
-            or stripe_invoice.get("amount_due")
-            or stripe_payment_intent.get("amount")
-            or 0
-        )
-        stripe_currency = str(
-            stripe_invoice.get("currency") or stripe_payment_intent.get("currency") or "usd"
-        ).lower()
-        manual_review_candidates: list[dict[str, Any]] = []
-        if (
-            payment_intent_id
-            and stripe_payment_succeeded
-            and local_invoice is None
-            and ledger_payment is None
-            and allocation is None
-        ):
-            mismatches.append(
-                {
-                    "code": "ORPHAN_STRIPE_PAYMENT",
-                    "message": "Stripe PaymentIntent succeeded without local ledger records",
-                    "stripe_value": payment_intent_id,
-                    "local_value": None,
-                }
-            )
-            customer_parent = None
-            if stripe_customer_id:
-                customer_parent = await db["parent_billing_customers"].find_one(
-                    {
-                        "academy_id": request_academy_id,
-                        "stripe_customer_id": stripe_customer_id,
-                    },
-                    {"parent_id": 1},
-                )
-            parent_id = str(customer_parent.get("parent_id") or "") if customer_parent else ""
-            if parent_id and stripe_amount > 0:
-                candidate_cursor = db["invoices"].find(
-                    {
-                        "academy_id": request_academy_id,
-                        "parent_id": parent_id,
-                        "status": {"$in": ["open", "partially_paid"]},
-                        "balance_due_cents": stripe_amount,
-                        "currency": stripe_currency,
-                    },
-                    sort=[("created_at", -1), ("invoice_id", 1)],
-                    limit=10,
-                )
-                async for candidate in candidate_cursor:
-                    manual_review_candidates.append(
-                        {
-                            "invoice_id": str(candidate.get("invoice_id") or ""),
-                            "parent_id": parent_id,
-                            "student_id": candidate.get("student_id"),
-                            "enrollment_id": candidate.get("enrollment_id"),
-                            "period": candidate.get("period"),
-                            "amount_cents": int(candidate.get("balance_due_cents") or 0),
-                            "currency": str(candidate.get("currency") or stripe_currency),
-                            "status": str(candidate.get("status") or ""),
-                            "reason": (
-                                "same Stripe customer, open invoice balance, currency, "
-                                "and amount; requires admin confirmation"
-                            ),
-                        }
-                    )
-        if local_invoice is not None and stripe_amount:
-            local_total = int(local_invoice.get("total_cents") or 0)
-            if local_total and local_total != stripe_amount:
-                mismatches.append(
-                    {
-                        "code": "AMOUNT_MISMATCH",
-                        "message": "Stripe amount differs from ledger invoice total",
-                        "stripe_value": stripe_amount,
-                        "local_value": local_total,
-                    }
-                )
-
-        stripe_paid = (
-            str(stripe_invoice.get("status") or "").lower() == "paid"
-            or str(stripe_invoice.get("paid") or "").lower() == "true"
-            or str(stripe_payment_intent.get("status") or "").lower() == "succeeded"
-        )
-        if local_invoice is not None and stripe_paid and local_invoice.get("status") != "paid":
-            mismatches.append(
-                {
-                    "code": "STATUS_MISMATCH",
-                    "message": "Stripe is paid but LedgerInvoice is not paid",
-                    "stripe_value": "paid",
-                    "local_value": local_invoice.get("status"),
-                }
-            )
-
-        result = "MATCH" if not mismatches else str(mismatches[0]["code"])
-        return {
-            "result": result,
-            "stripe_invoice_id": stripe_invoice_id,
-            "payment_intent_id": payment_intent_id,
-            "stripe_customer_id": stripe_customer_id,
-            "local_invoice_id": str(local_invoice.get("invoice_id"))
-            if local_invoice is not None
-            else None,
-            "ledger_payment_id": str(ledger_payment.get("payment_id"))
-            if ledger_payment is not None
-            else None,
-            "payment_allocation_id": str(allocation.get("allocation_id"))
-            if allocation is not None
-            else None,
-            "mismatches": mismatches,
-            "manual_review_candidates": manual_review_candidates,
-            "checked_at": checked_at,
-        }
-
     async def reconcile_stripe_billing(
         *,
         parent_id: str,
@@ -4455,8 +4038,6 @@ def compose_admin(
         send_generated_invoices=send_generated_invoices,
         charge_invoice_via_autopay=charge_invoice_via_autopay,
         charge_invoice_as_admin_action=charge_invoice_as_admin_action,
-        list_reconciliation_runs=list_reconciliation_runs,
-        run_reconciliation=run_reconciliation,
         list_failed_payment_attempts=list_failed_payment_attempts,
         list_invoice_attempts=list_invoice_attempts,
         list_dunning_failures=list_dunning_failures,
@@ -4466,9 +4047,6 @@ def compose_admin(
             for name in ("get_default_payment_method", "create_off_session_payment_intent")
         )
         else None,
-        replay_webhook_event=replay_webhook_event,
-        list_legacy_match_queue=list_legacy_match_queue,
-        confirm_legacy_match=confirm_legacy_match,
         add_invoice_line=add_invoice_line,
         remove_invoice_line=remove_invoice_line,
         void_billing_invoice=void_billing_invoice,
@@ -4504,9 +4082,6 @@ def compose_admin(
         tuition_discounts=tuition_discounts_repo,
         tuition_discount_summary=tuition_discount_summary,
         reconcile_stripe_billing=reconcile_stripe_billing,
-        get_billing_reconciliation_report=get_billing_reconciliation_report,
-        list_billing_webhook_events=list_billing_webhook_events,
-        get_connect_readiness=get_connect_readiness,
         record_expense=record_expense,
         edit_expense=edit_expense,
         delete_expense=delete_expense,
