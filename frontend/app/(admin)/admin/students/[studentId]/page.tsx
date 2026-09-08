@@ -32,8 +32,8 @@ import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
 
 import { BillingEnrollmentsPanel } from "./BillingEnrollmentsPanel";
-import { BillingWorkflowPanel } from "./BillingWorkflowPanel";
 import { DetailList } from "./DetailList";
+import { FamilyBillingLink } from "./FamilyBillingLink";
 import { formatCurrencyCents, formatDate, formatDateTime, formatDateUtc } from "./format";
 import { SessionsPanel } from "./SessionsPanel";
 import { OPEN_BILLING_STATUSES, StatusChip } from "./StatusChip";
@@ -191,6 +191,8 @@ export default function AdminStudentDetailPage() {
         <TabPanel id="sessions">
           <SessionsPanel
             sessions={student.enrolled_sessions ?? []}
+            pastEnrollments={student.past_enrollments ?? []}
+            parentId={student.parent_id}
             studentId={studentId}
             queryClient={queryClient}
           />
@@ -200,15 +202,7 @@ export default function AdminStudentDetailPage() {
       {activeTab === "billing" && (
         <TabPanel id="billing">
           <div className="space-y-6">
-            <BillingWorkflowPanel
-              student={student}
-              active={activeTab === "billing"}
-              onChanged={() => {
-                void queryClient.invalidateQueries({
-                  queryKey: queryKeys.admin.studentDetail(studentId),
-                });
-              }}
-            />
+            <FamilyBillingLink parentId={student.parent_id} parentName={student.parent_name} />
             <BillingEnrollmentsPanel studentId={studentId} active={activeTab === "billing"} />
           </div>
         </TabPanel>

@@ -464,7 +464,9 @@ async def test_generate_monthly_returns_row_level_skip_for_active_billing_deferr
 
 
 @pytest.mark.asyncio
-async def test_generate_monthly_bills_paused_enrollment_when_deferral_expired(db, acad) -> None:
+async def test_generate_monthly_skips_paused_enrollment_even_when_deferral_expired(
+    db, acad
+) -> None:
     ledger_repo = MongoBillingLedgerRepository(db)
     repo = MongoPaymentRepository(
         db,
@@ -500,15 +502,18 @@ async def test_generate_monthly_bills_paused_enrollment_when_deferral_expired(db
 
     result = await repo.generate_monthly_payments("2026-06")
 
-    assert result.created == 1
-    assert result.skipped_paused == 0
-    assert result.skipped_details == []
-    invoice = await db["invoices"].find_one({"academy_id": acad, "enrollment_id": "enroll-stale"})
-    assert invoice is not None
+    # Issue #651 policy: a paused enrollment is never invoiced, even when its
+    # deferral has expired or its review date is stale — that shows up as an
+    # admin warning, not as a surprise invoice.
+    assert result.created == 0
+    assert result.skipped_paused == 1
+    assert result.skipped_details[0].reason_code == "enrollment_paused"
 
 
 @pytest.mark.asyncio
-async def test_generate_monthly_bills_paused_enrollment_when_review_date_is_stale(db, acad) -> None:
+async def test_generate_monthly_skips_paused_enrollment_even_when_review_date_is_stale(
+    db, acad
+) -> None:
     ledger_repo = MongoBillingLedgerRepository(db)
     repo = MongoPaymentRepository(
         db,
@@ -544,13 +549,12 @@ async def test_generate_monthly_bills_paused_enrollment_when_review_date_is_stal
 
     result = await repo.generate_monthly_payments("2026-06")
 
-    assert result.created == 1
-    assert result.skipped_paused == 0
-    assert result.skipped_details == []
-    invoice = await db["invoices"].find_one(
-        {"academy_id": acad, "enrollment_id": "enroll-stale-review"}
-    )
-    assert invoice is not None
+    # Issue #651 policy: a paused enrollment is never invoiced, even when its
+    # deferral has expired or its review date is stale — that shows up as an
+    # admin warning, not as a surprise invoice.
+    assert result.created == 0
+    assert result.skipped_paused == 1
+    assert result.skipped_details[0].reason_code == "enrollment_paused"
 
 
 @pytest.mark.asyncio
@@ -2344,3 +2348,74 @@ async def test_month_end_evening_enrollment_is_not_re_prorated_next_month(db, ac
     assert invoice is not None
     # Full monthly tuition, not a second proration.
     assert invoice["total_cents"] == 10_000
+
+
+@pytest.mark.asyncio
+async def test_generate_monthly_skips_period_after_a_pending_end_of_period_cancel(db, acad) -> None:
+    """Issue #675 follow-up (P1): an ``end_of_period`` self-cancel leaves the
+    enrollment ACTIVE until the hourly worker flips it at month end, and the
+    generation cron can run first (03:00 UTC vs a Chicago 04:59:59 run_at).
+    Without a marker check the family is minted — and emailed — an invoice for
+    the month they cancelled, which the worker then voids hours later.
+
+    The instant is the last microsecond of the academy-LOCAL month, so it must
+    be bucketed in the academy zone: in UTC this September ends in October.
+    """
+    await db["academies"].insert_one(
+        {"academy_id": acad, "name": "Chicago Academy", "timezone": "America/Chicago"}
+    )
+    ledger_repo = MongoBillingLedgerRepository(db)
+    repo = MongoPaymentRepository(
+        db,
+        clock=lambda: datetime(2026, 10, 1, 3, 0, tzinfo=UTC),
+        ledger_repo=ledger_repo,
+    )
+    await _seed_monthly_enrollment(
+        db,
+        acad,
+        enrollment_id="enroll-pending-cancel",
+        session_id="sess-pending-cancel",
+        student_id="student-pending-cancel",
+        parent_id="parent-pending-cancel",
+        # Sep 30 23:59:59.999999 America/Chicago.
+        extra_enrollment={
+            "pending_cancellation_at": datetime(2026, 10, 1, 4, 59, 59, 999999, tzinfo=UTC)
+        },
+    )
+
+    result = await repo.generate_monthly_payments("2026-10")
+
+    assert result.created == 0
+    assert result.skipped_paused == 1
+    assert result.skipped_details[0].reason_code == "pending_cancellation"
+    assert result.skipped_details[0].metadata["pending_cancellation_period"] == "2026-09"
+
+
+@pytest.mark.asyncio
+async def test_generate_monthly_still_bills_the_month_the_cancel_takes_effect_in(db, acad) -> None:
+    """The cancelled month itself stays payable (#651 policy) — only LATER
+    periods are skipped."""
+    await db["academies"].insert_one(
+        {"academy_id": acad, "name": "Chicago Academy", "timezone": "America/Chicago"}
+    )
+    ledger_repo = MongoBillingLedgerRepository(db)
+    repo = MongoPaymentRepository(
+        db,
+        clock=lambda: datetime(2026, 6, 1, 3, 0, tzinfo=UTC),
+        ledger_repo=ledger_repo,
+    )
+    await _seed_monthly_enrollment(
+        db,
+        acad,
+        enrollment_id="enroll-cancel-this-month",
+        session_id="sess-cancel-this-month",
+        student_id="student-cancel-this-month",
+        parent_id="parent-cancel-this-month",
+        extra_enrollment={
+            "pending_cancellation_at": datetime(2026, 7, 1, 4, 59, 59, 999999, tzinfo=UTC)
+        },
+    )
+
+    result = await repo.generate_monthly_payments("2026-06")
+
+    assert result.created == 1

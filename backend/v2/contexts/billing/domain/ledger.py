@@ -67,6 +67,10 @@ class LedgerInvoice(BaseModel):
     checkout_hold_started_at: datetime | None = None
     # audit
     finalized_at: datetime | None = None
+    # Why/when the invoice was voided (issue #651): "admin_void", or the
+    # enrollment transition ("enrollment_cancelled", "enrollment_paused", ...).
+    void_reason: str | None = None
+    voided_at: datetime | None = None
     # optimistic-concurrency token; bumped by the repository on each persisted write
     version: int = Field(default=0, ge=0)
     created_at: datetime
@@ -330,6 +334,8 @@ def void_invoice(invoice: LedgerInvoice, *, reason: str, now: datetime) -> Ledge
     return invoice.model_copy(
         update={
             "status": "void",
+            "void_reason": reason,
+            "voided_at": now,
             "updated_at": now,
         }
     )

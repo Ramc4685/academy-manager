@@ -183,6 +183,15 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         )
         return self._invoice_from_doc(doc) if doc else None
 
+    async def list_invoices_for_enrollment(self, enrollment_id: str) -> list[LedgerInvoice]:
+        """Every invoice ever raised for one enrollment, oldest period first."""
+        academy_id = current_academy_id()
+        cursor = self.collection.find(
+            {"academy_id": academy_id, "enrollment_id": enrollment_id},
+            sort=[("period", 1), ("invoice_id", 1)],
+        )
+        return [self._invoice_from_doc(doc) async for doc in cursor]
+
     async def get_invoice_for_enrollment_period(
         self,
         enrollment_id: str,

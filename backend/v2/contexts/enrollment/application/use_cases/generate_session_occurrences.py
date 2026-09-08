@@ -63,6 +63,7 @@ def _weekly_occurrences(
                 end_at=current + duration,
                 status="scheduled",
                 scheduled_coach_id=session.coach_id,
+                assistant_coach_ids=session.assistant_coach_ids,
             )
         )
         current += timedelta(days=7)

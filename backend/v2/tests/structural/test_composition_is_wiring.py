@@ -20,9 +20,23 @@ V2_ROOT = Path(__file__).resolve().parents[2]
 COMPOSITION_ROOT = V2_ROOT / "composition"
 
 # Ratchet: admin.py was 7,203 lines when the audit was written and 6,870 at the
-# start of MT1 Phase B. Post-extraction it is ~4,400. The budget leaves room
+# start of MT1 Phase B. Post-extraction it is ~4,400, and the Billing Health
+# trim (spec 2026-09-07 §5.1) moved the Stripe-plumbing wiring out to
+# composition/billing_health.py, taking it to ~4,330. The budget leaves room
 # for genuine new wiring without leaving room for another report pipeline.
-ADMIN_COMPOSITION_LINE_BUDGET = 4_800
+ADMIN_COMPOSITION_LINE_BUDGET = 4_500
+
+#: Wiring that must NOT be back inside admin.py: it belongs to the page-scoped
+#: composition modules that exist because admin.py has no room left.
+EXTRACTED_CLOSURES = (
+    "async def get_connect_readiness",
+    "async def list_reconciliation_runs",
+    "async def run_reconciliation",
+    "async def replay_webhook_event",
+    "async def list_billing_webhook_events",
+    "async def get_billing_reconciliation_report",
+    "async def confirm_legacy_match",
+)
 
 
 def test_admin_composition_stays_within_line_budget() -> None:
@@ -34,6 +48,27 @@ def test_admin_composition_stays_within_line_budget() -> None:
         "(see docs/audit/plans/MT1-drain-composition-root.md) rather than "
         "raising this number."
     )
+
+
+def test_billing_health_wiring_left_admin_composition() -> None:
+    """The Billing Health closures live in their own module and are wired there.
+
+    Spec 2026-09-07 §5.1: admin.py had ~49 lines of headroom, so this page's
+    wiring moved out wholesale rather than being trimmed. If it drifts back,
+    the line budget above fails days later on someone else's change — fail here
+    instead, where the cause is obvious.
+    """
+    admin_src = (COMPOSITION_ROOT / "admin.py").read_text(encoding="utf-8")
+    back_inside = [name for name in EXTRACTED_CLOSURES if name in admin_src]
+    assert not back_inside, f"Billing Health wiring is back in admin.py: {back_inside}"
+
+    health_src = (COMPOSITION_ROOT / "billing_health.py").read_text(encoding="utf-8")
+    for name in EXTRACTED_CLOSURES:
+        assert name in health_src, f"{name} is missing from composition/billing_health.py"
+
+    main_src = (V2_ROOT / "main.py").read_text(encoding="utf-8")
+    assert "compose_admin_billing_health" in main_src
+    assert "app.state.admin_billing_health" in main_src
 
 
 def test_no_context_or_shared_module_imports_composition() -> None:

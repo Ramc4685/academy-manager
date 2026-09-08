@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   Bar,
   BarChart,
@@ -13,53 +13,40 @@ import {
   YAxis,
 } from "recharts";
 
+import type { Route } from "next";
 import Link from "next/link";
 
 import {
-  chargeAdminInvoiceAutopay,
   exportAdminReportCsv,
-  fetchFailedPaymentAttempts,
-  getAdminPaymentFeed,
+  getAdminMonthClose,
   getAdminProjectedIncome,
   getAdminReportsDashboard,
   getRevenue,
   sendDuesReminders,
 } from "@/lib/api/admin";
+import { formatCents, formatDateOnly } from "@/lib/money";
+import { invoiceStatusChip } from "@/lib/billing-status";
+import {
+  autopayRunBox,
+  formatCollectionRate,
+  monthCloseTiles,
+  normalizeMonthClose,
+  oddRows,
+  warningLine,
+} from "@/lib/month-close-view";
 import { Card } from "@/components/ds/card";
+import { Chip } from "@/components/ds/chip";
 import { Button } from "@/components/ds/button";
 import { BigNum, Overline } from "@/components/ds/typography";
 import { FunnelPanel } from "@/components/admin/reports/funnel-panel";
 import { AttendanceTrendsPanel } from "@/components/admin/reports/attendance-trends-panel";
 import { CoachUtilizationPanel } from "@/components/admin/reports/coach-utilization-panel";
 
-const REPORTS = [
-  {
-    name: "pending-payments",
-    title: "Pending payments",
-    description: "Invoices still waiting for payment.",
-  },
-  {
-    name: "revenue",
-    title: "Revenue",
-    description: "Monthly collected revenue.",
-  },
-  {
-    name: "attendance",
-    title: "Attendance",
-    description: "Recent attendance marks.",
-  },
-] as const;
-
 const FINANCIAL_REPORTS = [
   {
     href: "/admin/reports/session-economics",
     title: "Session economics",
     description: "Revenue, cost and profit by session.",
-  },
-  {
-    href: "/admin/reports/dues",
-    title: "Dues follow-up",
-    description: "Outstanding balances and reminders.",
   },
   {
     href: "/admin/reports/refunds",
@@ -78,14 +65,18 @@ const FINANCIAL_REPORTS = [
   },
 ] as const;
 
-export default function AdminReportsPage() {
-  const queryClient = useQueryClient();
-  const [preview, setPreview] = useState<{ title: string; csv: string } | null>(null);
+export default function AdminMonthClosePage() {
   const [period, setPeriod] = useState(() => currentPeriod());
   const [expandedBucket, setExpandedBucket] = useState<string | null>(null);
+  const [expandedOdd, setExpandedOdd] = useState<string | null>(null);
   const [actionNote, setActionNote] = useState<{ key: string; text: string; ok: boolean } | null>(
     null,
   );
+
+  const monthCloseQuery = useQuery({
+    queryKey: ["admin", "reports", "month-close", period],
+    queryFn: () => getAdminMonthClose(period),
+  });
 
   const revenueQuery = useQuery({
     queryKey: ["admin", "revenue"],
@@ -97,44 +88,12 @@ export default function AdminReportsPage() {
     queryFn: () => getAdminReportsDashboard(period),
   });
 
-  const paymentFeedQuery = useQuery({
-    queryKey: ["admin", "payments", "feed"],
-    queryFn: () => getAdminPaymentFeed(10),
-  });
-
-  const failedPaymentsQuery = useQuery({
-    queryKey: ["admin", "billing", "failed-payment-attempts"],
-    queryFn: fetchFailedPaymentAttempts,
-  });
-
   const trailingPeriods = useMemo(() => lastThreeMonths(period), [period]);
 
   const projectionPeriod = nextPeriod(period);
   const projectedIncomeQuery = useQuery({
     queryKey: ["admin", "reports", "projected-income", projectionPeriod],
     queryFn: () => getAdminProjectedIncome(projectionPeriod),
-  });
-
-  const retryMutation = useMutation({
-    mutationFn: (invoiceId: string) => chargeAdminInvoiceAutopay(invoiceId),
-    onSuccess: (result, invoiceId) => {
-      setActionNote({
-        key: `retry:${invoiceId}`,
-        text: result.success
-          ? "Charge succeeded."
-          : result.requires_action
-            ? "Charge needs parent action (3DS)."
-            : `Charge declined${result.decline_code ? ` (${result.decline_code})` : ""}.`,
-        ok: Boolean(result.success),
-      });
-      void queryClient.invalidateQueries({
-        queryKey: ["admin", "billing", "failed-payment-attempts"],
-      });
-      void queryClient.invalidateQueries({ queryKey: ["admin", "reports", "dashboard"] });
-    },
-    onError: (_error, invoiceId) => {
-      setActionNote({ key: `retry:${invoiceId}`, text: "Retry failed. Try again.", ok: false });
-    },
   });
 
   const notifyMutation = useMutation({
@@ -155,20 +114,27 @@ export default function AdminReportsPage() {
     },
   });
 
-  const exportMutation = useMutation({
-    mutationFn: async (report: (typeof REPORTS)[number]) => {
-      const csv = await exportAdminReportCsv(report.name);
-      return { title: report.title, csv };
-    },
-    onSuccess: (data) => {
-      setPreview(data);
-    },
-  });
-
   const quickbooksMutation = useMutation({
     mutationFn: () => exportAdminReportCsv("quickbooks", period),
     onSuccess: (csv) => downloadCsv(`quickbooks-${period}`, csv),
   });
+
+  const depositSlipMutation = useMutation({
+    mutationFn: () => exportAdminReportCsv("deposit-slip", period),
+    onSuccess: (csv) => downloadCsv(`deposit-slip-${period}`, csv),
+  });
+
+  // Normalized, so a partial payload renders zeros instead of crashing the page.
+  const close = useMemo(
+    () => normalizeMonthClose(monthCloseQuery.data, period),
+    [monthCloseQuery.data, period],
+  );
+  const tiles = monthCloseTiles(close);
+  const runBox = autopayRunBox(close);
+  const odd = oddRows(close);
+  const warning = warningLine(close);
+  const discounts = close.tuition_discounts;
+  const closeLoading = monthCloseQuery.isLoading;
 
   const revenueData = revenueQuery.data;
   const trendData = useMemo(
@@ -176,135 +142,293 @@ export default function AdminReportsPage() {
     [revenueData, period],
   );
   const dashboard = dashboardQuery.data;
+  // A resolved query only guarantees the envelope, not the objects inside it,
+  // so each group this page reads is guarded on its own rather than on
+  // `dashboard` being truthy. A group that is missing renders "No data" —
+  // the same thing the page already showed before the query resolved.
+  const attendance = dashboard?.attendance;
+  const sessions = dashboard?.sessions;
+  const profitAndLoss = dashboard?.profit_and_loss;
+  const expenses = dashboard?.expenses;
+  const payroll = dashboard?.payroll;
+  const collectionsRisk = dashboard?.collections_risk;
   // The backend decides whether payroll is complete enough for a final P&L;
   // this page only presents the reason it gives.
-  const payrollBlockedBy = dashboard?.payroll.blocked_by ?? null;
-  const failedRows = failedPaymentsQuery.data?.rows ?? [];
-  const failedTotalCents = failedRows.reduce((total, row) => total + row.balance_due_cents, 0);
+  // #667's guards, kept: a resolved query only guarantees the envelope, not
+  // the nested objects. The payment-feed and failed-attempt guards it added
+  // are gone with the sections they protected — the feed lives on the
+  // dashboard and failed autopay is a Payments bucket.
+  const payrollBlockedBy = payroll?.blocked_by ?? null;
+  const dashboardEmptyStates = dashboard?.empty_states ?? [];
+  const agingBuckets = collectionsRisk?.aging_buckets ?? [];
+  const expenseCategories = expenses?.by_category ?? [];
   const projected = projectedIncomeQuery.data;
+  const projectedSessions = projected?.by_session ?? [];
 
   return (
-    <section data-testid="admin-reports" className="space-y-5">
+    <section data-testid="admin-month-close" className="space-y-5">
       <div className="space-y-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <Overline>Owner dashboard</Overline>
+            <Overline>Month close</Overline>
             <p className="mt-1 text-sm text-rally-subtle">
-              Finance and operations for the selected month.
+              What the two monthly runs produced for {formatMonth(period)}, and anything that
+              looks wrong.
             </p>
           </div>
-          <label className="flex flex-col gap-1 text-sm font-medium text-rally-ink">
-            Month
-            <input
-              type="month"
-              value={period}
-              onChange={(event) => setPeriod(event.target.value || currentPeriod())}
-              className="h-10 rounded-md border border-rally-line bg-white px-3 text-sm text-rally-ink shadow-sm focus:border-rally-accent focus:outline-none focus:ring-2 focus:ring-rally-accent/20 dark:bg-neutral-950"
-            />
-          </label>
-        </div>
-        <div data-testid="reports-money-tiles" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <KpiCard
-            label="Billed this month"
-            value={dashboard ? formatCurrency(dashboard.billed_cents) : dashboardQuery.isLoading ? "Loading" : "No data"}
-            description="Tuition and fees invoiced for the selected month."
-          />
-          <KpiCard
-            label="Collected"
-            value={dashboard ? formatCurrency(dashboard.cash_collected_cents) : dashboardQuery.isLoading ? "Loading" : "No data"}
-            description="Cash received this month, net of refunds."
-          />
-          <KpiCard
-            label="Outstanding"
-            value={dashboard ? formatCurrency(dashboard.outstanding_dues_cents) : dashboardQuery.isLoading ? "Loading" : "No data"}
-            description="Open or partially paid dues still requiring follow-up."
-          />
-          <KpiCard
-            label="Collection rate"
-            value={dashboard ? formatNullablePercent(dashboard.collection_rate) : dashboardQuery.isLoading ? "Loading" : "No data"}
-            description="Collected as a share of what was billed this month."
-          />
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="flex flex-col gap-1 text-sm font-medium text-rally-ink">
+              Month
+              <input
+                type="month"
+                value={period}
+                onChange={(event) => setPeriod(event.target.value || currentPeriod())}
+                data-testid="month-close-period"
+                className="h-10 rounded-md border border-rally-line bg-white px-3 text-sm text-rally-ink shadow-sm focus:border-rally-accent focus:outline-none focus:ring-2 focus:ring-rally-accent/20 dark:bg-neutral-950"
+              />
+            </label>
+            <Button
+              variant="secondary"
+              onClick={() => quickbooksMutation.mutate()}
+              disabled={quickbooksMutation.isPending}
+              data-testid="export-quickbooks"
+            >
+              {quickbooksMutation.isPending ? "Exporting..." : "QuickBooks journal"}
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => depositSlipMutation.mutate()}
+              disabled={depositSlipMutation.isPending}
+              data-testid="export-deposit-slip"
+            >
+              {depositSlipMutation.isPending ? "Exporting..." : "Deposit slip"}
+            </Button>
+          </div>
         </div>
 
-        {failedRows.length > 0 && (
-          <Card
-            p={24}
-            data-testid="failed-autopay-alert"
-            className="border-2 border-red-300 bg-red-50/60 dark:border-red-900 dark:bg-red-950/30"
-          >
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <Overline>Failed autopay — action needed</Overline>
-                <div className="mt-1">
-                  <BigNum size={28}>
-                    {formatInteger(failedRows.length)} {failedRows.length === 1 ? "payment" : "payments"} · {formatCurrency(failedTotalCents)}
-                  </BigNum>
-                </div>
-                <p className="mt-1 text-sm text-red-700 dark:text-red-300">
-                  These charges declined and the invoices are still unpaid.
-                </p>
+        {(quickbooksMutation.isError || depositSlipMutation.isError) && (
+          <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+            Could not export that report.
+          </p>
+        )}
+
+        {monthCloseQuery.isError && (
+          <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+            Could not load month close.
+          </p>
+        )}
+
+        {warning && (
+          <p className="text-sm text-rally-subtle" data-testid="month-close-warnings">
+            {warning}
+          </p>
+        )}
+
+        <div data-testid="month-close-tiles" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {tiles.map((tile) => (
+            <Card key={tile.key} p={20} className="flex flex-col">
+              <div data-testid={`month-close-tile-${tile.key}`}>
+                <Overline>{tile.label}</Overline>
+                <BigNum size={28}>
+                  <span data-testid={`month-close-tile-${tile.key}-value`}>
+                    {closeLoading
+                      ? "Loading"
+                      : tile.cents != null
+                        ? formatCents(tile.cents)
+                        : tile.value}
+                  </span>
+                </BigNum>
+                <p className="mt-2 text-[12px] text-rally-muted">{tile.hint}</p>
               </div>
-            </div>
-            <ul className="mt-4 divide-y divide-red-200 dark:divide-red-900">
-              {failedRows.map((row) => (
-                <li
-                  key={row.invoice_id}
-                  className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between"
+            </Card>
+          ))}
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Card p={24} data-testid="autopay-run-box">
+            <Overline>Autopay run</Overline>
+            <p className="mt-1 text-sm text-rally-subtle" data-testid="autopay-run-headline">
+              {runBox.state === "none"
+                ? "No autopay invoices this month."
+                : `${runBox.hasRun ? "Ran" : "Runs on"} ${formatDateOnly(runBox.chargeOn)}${
+                    runBox.chargeOnVaries ? " and later" : ""
+                  }.`}
+            </p>
+            <dl className="mt-4 space-y-2">
+              {runBox.rows.map((row) => (
+                <div
+                  key={row.key}
+                  className="flex items-baseline justify-between gap-3 text-sm"
+                  data-testid={`autopay-run-${row.key}`}
                 >
-                  <div>
-                    <p className="text-sm font-semibold text-rally-ink">
-                      {row.parent_name || row.parent_id}
-                    </p>
-                    <p className="text-xs text-rally-muted">
-                      {formatCurrency(row.balance_due_cents)} due · {row.period}
-                      {row.latest_decline_code ? ` · ${row.latest_decline_code}` : ""}
-                      {row.attempt_count ? ` · ${row.attempt_count} attempts` : ""}
-                    </p>
-                    {actionNote &&
-                    (actionNote.key === `retry:${row.invoice_id}` ||
-                      actionNote.key === `notify:${row.parent_id}`) ? (
-                      <p
-                        className={`mt-1 text-xs ${actionNote.ok ? "text-emerald-700" : "text-red-700"}`}
-                      >
-                        {actionNote.text}
-                      </p>
-                    ) : null}
-                  </div>
-                  <div className="flex shrink-0 gap-2">
-                    <Button
-                      variant="secondary"
-                      onClick={() => retryMutation.mutate(row.invoice_id)}
-                      disabled={retryMutation.isPending}
+                  <dt className="text-rally-muted">{row.label}</dt>
+                  <dd className="font-mono tabular-nums font-semibold text-rally-ink">
+                    {row.countLabel} · {formatCents(row.cents)}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+            {runBox.hasRun && close.autopay_run.failed.count > 0 ? (
+              <Link
+                href="/admin/payments"
+                data-testid="autopay-run-failed-link"
+                className="mt-4 inline-block text-sm font-medium text-rally-accent hover:underline"
+              >
+                Work the Failed autopay bucket
+              </Link>
+            ) : null}
+          </Card>
+
+          <Card p={24} data-testid="anything-odd-box">
+            <Overline>Anything odd</Overline>
+            <p className="mt-1 text-sm text-rally-subtle">
+              Four checks over this month&apos;s invoices. A zero is the answer you want.
+            </p>
+            <ul className="mt-4 space-y-2">
+              {odd.map((row) => (
+                <li
+                  key={row.code}
+                  className="rounded-md border border-rally-line"
+                  data-testid={`odd-${row.code}`}
+                >
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-rally-line/20 disabled:cursor-default"
+                    onClick={() => setExpandedOdd(expandedOdd === row.code ? null : row.code)}
+                    disabled={!row.expandable}
+                    aria-expanded={expandedOdd === row.code}
+                  >
+                    <span className="text-rally-ink">{row.label}</span>
+                    <span className="font-mono tabular-nums font-semibold text-rally-muted">
+                      <span data-testid={`odd-${row.code}-count`}>{row.count}</span>
+                      {row.expandable ? (
+                        <span className="ml-2 text-xs">
+                          {expandedOdd === row.code ? "Hide" : "View"}
+                        </span>
+                      ) : null}
+                    </span>
+                  </button>
+                  {expandedOdd === row.code && row.items.length > 0 ? (
+                    <ul
+                      className="divide-y divide-rally-line border-t border-rally-line"
+                      data-testid={`odd-${row.code}-items`}
                     >
-                      {retryMutation.isPending && retryMutation.variables === row.invoice_id
-                        ? "Retrying..."
-                        : "Retry charge"}
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      onClick={() => notifyMutation.mutate(row.parent_id)}
-                      disabled={notifyMutation.isPending}
-                    >
-                      {notifyMutation.isPending && notifyMutation.variables === row.parent_id
-                        ? "Sending..."
-                        : "Notify parent"}
-                    </Button>
-                  </div>
+                      {row.items.map((item) => (
+                        <li key={`${item.kind}:${item.id}`} className="px-3 py-2 text-sm">
+                          <Link
+                            href={item.href as Route}
+                            className="font-medium text-rally-accent hover:underline"
+                          >
+                            {item.label}
+                          </Link>
+                        </li>
+                      ))}
+                      {row.truncatedNote ? (
+                        <li className="px-3 py-2 text-xs text-rally-subtle">{row.truncatedNote}</li>
+                      ) : null}
+                    </ul>
+                  ) : null}
                 </li>
               ))}
             </ul>
           </Card>
-        )}
+        </div>
+
+        {close.invoices.void_reasons.length > 0 ? (
+          <Card p={20} data-testid="void-reasons">
+            <div className="flex items-center gap-3">
+              <Overline>Why invoices were voided</Overline>
+              <Chip {...invoiceStatusChip("void")} />
+            </div>
+            <ul className="mt-3 space-y-1 text-sm text-rally-subtle">
+              {close.invoices.void_reasons.map((entry) => (
+                <li key={entry.reason}>
+                  {entry.reason} — {entry.count}
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2 text-xs text-rally-muted">
+              {formatCents(close.invoices.voided_cents)} voided in total.
+            </p>
+          </Card>
+        ) : null}
+
+        <Card p={24} data-testid="tuition-discounts-section" className="space-y-4">
+          <div>
+            <Overline>Tuition discounts</Overline>
+            <p className="mt-1 text-sm text-neutral-500">
+              Gross tuition vs. discounts granted in {formatMonth(period)}.
+            </p>
+          </div>
+          {discounts === null ? (
+            <p className="text-sm text-rally-subtle" data-testid="tuition-discounts-unavailable">
+              {closeLoading ? "Loading…" : "The tuition discount summary is not available."}
+            </p>
+          ) : (
+            <>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <DashboardTerm label="Gross tuition" value={formatCents(discounts.gross_cents)} />
+                <DashboardTerm
+                  label="Total discounts"
+                  value={formatCents(discounts.discount_cents)}
+                />
+                <DashboardTerm label="Net tuition" value={formatCents(discounts.net_cents)} />
+              </div>
+              {discounts.by_category.length === 0 ? (
+                <p data-testid="tuition-discounts-empty" className="text-sm text-neutral-500">
+                  No discounts recorded for this month.
+                </p>
+              ) : (
+                <div className="overflow-x-auto rounded-lg border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
+                  <table className="w-full min-w-[480px] text-sm">
+                    <thead>
+                      <tr className="border-b border-neutral-200 text-left text-neutral-500 dark:border-neutral-800">
+                        <th className="px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
+                          Category
+                        </th>
+                        <th className="px-4 py-3 text-right font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
+                          Discount
+                        </th>
+                        <th className="px-4 py-3 text-right font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
+                          % of gross
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {discounts.by_category.map((row) => (
+                        <tr
+                          key={row.category}
+                          data-testid={`tuition-discounts-row-${row.category}`}
+                          className="border-b border-neutral-100 last:border-0 dark:border-neutral-800"
+                        >
+                          <td className="px-4 py-3 font-medium">{row.category}</td>
+                          <td className="px-4 py-3 text-right font-mono tabular-nums">
+                            {formatCents(row.amount_cents)}
+                          </td>
+                          <td className="px-4 py-3 text-right font-mono tabular-nums">
+                            {discounts.gross_cents > 0
+                              ? `${((row.amount_cents / discounts.gross_cents) * 100).toFixed(1)}%`
+                              : "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          )}
+        </Card>
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <KpiCard
             label="Attendance rate"
-            value={dashboard ? formatNullablePercent(dashboard.attendance.attendance_rate) : dashboardQuery.isLoading ? "Loading" : "No data"}
+            value={attendance ? formatNullablePercent(attendance.attendance_rate) : dashboardQuery.isLoading ? "Loading" : "No data"}
             description="Present or late marks out of recorded attendance."
           />
           <KpiCard
             label="Capacity used"
-            value={dashboard ? formatNullablePercent(dashboard.sessions.capacity_utilization) : dashboardQuery.isLoading ? "Loading" : "No data"}
+            value={sessions ? formatNullablePercent(sessions.capacity_utilization) : dashboardQuery.isLoading ? "Loading" : "No data"}
             description="Enrolled seats against scheduled and completed capacity."
           />
           <KpiCard
@@ -312,8 +436,8 @@ export default function AdminReportsPage() {
             value={
               payrollBlockedBy
                 ? "Blocked"
-                : dashboard
-                  ? formatNullableCurrency(dashboard.profit_and_loss.net_profit_cents)
+                : profitAndLoss
+                  ? formatNullableCurrency(profitAndLoss.net_profit_cents)
                   : dashboardQuery.isLoading
                     ? "Loading"
                     : "No data"
@@ -326,17 +450,17 @@ export default function AdminReportsPage() {
           />
           <KpiCard
             label="Expenses"
-            value={dashboard ? formatCurrency(dashboard.expenses.total_cents) : dashboardQuery.isLoading ? "Loading" : "No data"}
+            value={expenses ? formatCents(expenses.total_cents) : dashboardQuery.isLoading ? "Loading" : "No data"}
             description="Recorded rent, equipment, salary, marketing, and other spend."
           />
           <KpiCard
             label="Payroll unpaid"
-            value={dashboard ? formatNullableCurrency(dashboard.payroll.unpaid_cents) : dashboardQuery.isLoading ? "Loading" : "No data"}
+            value={payroll ? formatNullableCurrency(payroll.unpaid_cents) : dashboardQuery.isLoading ? "Loading" : "No data"}
             description="Approved coach payout amount not yet marked paid."
           />
           <KpiCard
             label="Waitlist"
-            value={dashboard ? formatInteger(dashboard.sessions.waitlist_count) : dashboardQuery.isLoading ? "Loading" : "No data"}
+            value={sessions ? formatInteger(sessions.waitlist_count) : dashboardQuery.isLoading ? "Loading" : "No data"}
             description="Families waiting on sessions in the selected month."
           />
         </div>
@@ -347,65 +471,16 @@ export default function AdminReportsPage() {
           </p>
         )}
 
-        {dashboard?.empty_states.length ? (
+        {dashboardEmptyStates.length ? (
           <Card p={20}>
             <Overline>Empty states</Overline>
             <ul className="mt-3 space-y-2 text-sm text-rally-subtle">
-              {dashboard.empty_states.map((state) => (
+              {dashboardEmptyStates.map((state) => (
                 <li key={state}>{state}</li>
               ))}
             </ul>
           </Card>
         ) : null}
-
-        <Card p={24} data-testid="recent-payments-card">
-          <div className="flex items-center justify-between gap-3">
-            <Overline>Recent payments</Overline>
-            <Link
-              href="/admin/payments"
-              className="text-sm font-medium text-rally-accent hover:underline"
-            >
-              View all payments
-            </Link>
-          </div>
-          {paymentFeedQuery.isError ? (
-            <p className="mt-3 text-sm text-red-700">Could not load recent payments.</p>
-          ) : paymentFeedQuery.isLoading ? (
-            <p className="mt-3 text-sm text-rally-subtle">Loading…</p>
-          ) : (paymentFeedQuery.data?.payments.length ?? 0) === 0 ? (
-            <p className="mt-3 text-sm text-rally-subtle">No payments received yet.</p>
-          ) : (
-            <div className="mt-4 divide-y divide-rally-line">
-              {paymentFeedQuery.data?.payments.map((item) => (
-                <div
-                  key={item.payment_id}
-                  className="flex flex-wrap items-center justify-between gap-2 py-2.5 text-sm"
-                >
-                  <div>
-                    <span className="font-medium text-rally-ink">
-                      {item.parent_name || "Family on file"}
-                    </span>
-                    <span className="ml-2 text-xs text-rally-subtle">
-                      {item.payment_method || "—"}
-                      {item.refunded_cents > 0 ? " · partially refunded" : ""}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="font-mono font-semibold tabular-nums text-rally-ink">
-                      {formatCurrency(item.amount_cents)}
-                    </span>
-                    <span className="text-xs text-rally-subtle">
-                      {new Date(item.paid_at).toLocaleDateString(undefined, {
-                        month: "short",
-                        day: "numeric",
-                      })}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
 
         <Card p={24} className="flex flex-col gap-6">
           <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
@@ -413,7 +488,7 @@ export default function AdminReportsPage() {
               <Overline>Operations summary</Overline>
               <div className="mt-2">
                 <BigNum size={32}>
-                  {dashboard ? formatInteger(dashboard.sessions.scheduled_count + dashboard.sessions.completed_count) : "No data"}
+                  {sessions ? formatInteger(sessions.scheduled_count + sessions.completed_count) : "No data"}
                 </BigNum>
               </div>
               <p className="text-sm text-neutral-500 mt-1">
@@ -421,16 +496,16 @@ export default function AdminReportsPage() {
               </p>
             </div>
             <dl className="grid min-w-64 gap-3 sm:grid-cols-2">
-              <DashboardTerm label="Completed" value={dashboard ? formatInteger(dashboard.sessions.completed_count) : "No data"} />
-              <DashboardTerm label="Cancelled" value={dashboard ? formatInteger(dashboard.sessions.cancelled_count) : "No data"} />
-              <DashboardTerm label="Seats" value={dashboard ? `${formatInteger(dashboard.sessions.enrolled_seats)} / ${formatInteger(dashboard.sessions.capacity)}` : "No data"} />
-              <DashboardTerm label="Attendance marks" value={dashboard ? formatInteger(dashboard.attendance.recorded_count) : "No data"} />
-              <DashboardTerm label="Waitlist" value={dashboard ? formatInteger(dashboard.sessions.waitlist_count) : "No data"} />
+              <DashboardTerm label="Completed" value={sessions ? formatInteger(sessions.completed_count) : "No data"} />
+              <DashboardTerm label="Cancelled" value={sessions ? formatInteger(sessions.cancelled_count) : "No data"} />
+              <DashboardTerm label="Seats" value={sessions ? `${formatInteger(sessions.enrolled_seats)} / ${formatInteger(sessions.capacity)}` : "No data"} />
+              <DashboardTerm label="Attendance marks" value={attendance ? formatInteger(attendance.recorded_count) : "No data"} />
+              <DashboardTerm label="Waitlist" value={sessions ? formatInteger(sessions.waitlist_count) : "No data"} />
             </dl>
           </div>
           <dl className="grid gap-3 border-t border-neutral-100 pt-4 sm:grid-cols-3">
-            <DashboardTerm label="Present / late" value={dashboard ? formatInteger(dashboard.attendance.present_count) : "No data"} />
-            <DashboardTerm label="Recorded attendance" value={dashboard ? formatInteger(dashboard.attendance.recorded_count) : "No data"} />
+            <DashboardTerm label="Present / late" value={attendance ? formatInteger(attendance.present_count) : "No data"} />
+            <DashboardTerm label="Recorded attendance" value={attendance ? formatInteger(attendance.recorded_count) : "No data"} />
             <DashboardTerm label="Period" value={formatMonth(period)} />
           </dl>
         </Card>
@@ -439,12 +514,12 @@ export default function AdminReportsPage() {
           <Card p={24}>
             <Overline>Profit and loss</Overline>
             <dl className="mt-4 grid gap-3 sm:grid-cols-2">
-              <DashboardTerm label="Revenue" value={dashboard ? formatCurrency(dashboard.profit_and_loss.revenue_cents) : "No data"} />
-              <DashboardTerm label="Coach payroll" value={dashboard ? formatNullableCurrency(dashboard.profit_and_loss.coach_payroll_cents) : "No data"} />
-              <DashboardTerm label="Rent" value={dashboard ? formatCurrency(dashboard.profit_and_loss.rent_cents) : "No data"} />
-              <DashboardTerm label="Misc expenses" value={dashboard ? formatCurrency(dashboard.profit_and_loss.misc_expenses_cents) : "No data"} />
-              <DashboardTerm label="Net profit" value={dashboard ? formatNullableCurrency(dashboard.profit_and_loss.net_profit_cents) : "No data"} />
-              <DashboardTerm label="Margin" value={dashboard ? formatNullablePercent(dashboard.profit_and_loss.profit_margin) : "No data"} />
+              <DashboardTerm label="Revenue" value={profitAndLoss ? formatCents(profitAndLoss.revenue_cents) : "No data"} />
+              <DashboardTerm label="Coach payroll" value={profitAndLoss ? formatNullableCurrency(profitAndLoss.coach_payroll_cents) : "No data"} />
+              <DashboardTerm label="Rent" value={profitAndLoss ? formatCents(profitAndLoss.rent_cents) : "No data"} />
+              <DashboardTerm label="Misc expenses" value={profitAndLoss ? formatCents(profitAndLoss.misc_expenses_cents) : "No data"} />
+              <DashboardTerm label="Net profit" value={profitAndLoss ? formatNullableCurrency(profitAndLoss.net_profit_cents) : "No data"} />
+              <DashboardTerm label="Margin" value={profitAndLoss ? formatNullablePercent(profitAndLoss.profit_margin) : "No data"} />
             </dl>
             {payrollBlockedBy ? (
               <p
@@ -459,14 +534,14 @@ export default function AdminReportsPage() {
           <Card p={24}>
             <Overline>Collections risk</Overline>
             <dl className="mt-4 grid gap-3 sm:grid-cols-2">
-              <DashboardTerm label="Families due" value={dashboard ? formatInteger(dashboard.collections_risk.overdue_family_count) : "No data"} />
-              <DashboardTerm label="Amount due" value={dashboard ? formatCurrency(dashboard.collections_risk.overdue_cents) : "No data"} />
-              <DashboardTerm label="Failed payments" value={dashboard ? formatInteger(dashboard.collections_risk.failed_payment_count) : "No data"} />
-              <DashboardTerm label="Partial payments" value={dashboard ? formatInteger(dashboard.collections_risk.partial_payment_count) : "No data"} />
+              <DashboardTerm label="Families due" value={collectionsRisk ? formatInteger(collectionsRisk.overdue_family_count) : "No data"} />
+              <DashboardTerm label="Amount due" value={collectionsRisk ? formatCents(collectionsRisk.overdue_cents) : "No data"} />
+              <DashboardTerm label="Failed payments" value={collectionsRisk ? formatInteger(collectionsRisk.failed_payment_count) : "No data"} />
+              <DashboardTerm label="Partial payments" value={collectionsRisk ? formatInteger(collectionsRisk.partial_payment_count) : "No data"} />
             </dl>
-            {dashboard?.collections_risk.aging_buckets.length ? (
+            {agingBuckets.length ? (
               <div className="mt-5 space-y-2" data-testid="ar-aging-widget">
-                {dashboard.collections_risk.aging_buckets.map((bucket) => (
+                {agingBuckets.map((bucket) => (
                   <div key={bucket.label} className="rounded-md border border-rally-line">
                     <button
                       type="button"
@@ -479,7 +554,7 @@ export default function AdminReportsPage() {
                     >
                       <span className="font-medium text-rally-ink">{bucket.label}</span>
                       <span className="text-rally-muted">
-                        {formatCurrency(bucket.amount_cents)} · {formatInteger(bucket.family_count)}{" "}
+                        {formatCents(bucket.amount_cents)} · {formatInteger(bucket.family_count)}{" "}
                         {bucket.family_count === 1 ? "family" : "families"}
                         {bucket.family_count > 0 ? (
                           <span className="ml-2 text-xs">
@@ -500,7 +575,7 @@ export default function AdminReportsPage() {
                                 {family.family_name || family.family_id}
                               </span>
                               <span className="ml-2 text-rally-muted">
-                                {formatCurrency(family.amount_cents)}
+                                {formatCents(family.amount_cents)}
                               </span>
                               {actionNote && actionNote.key === `notify:${family.family_id}` ? (
                                 <p
@@ -534,7 +609,7 @@ export default function AdminReportsPage() {
         <div className="grid gap-4 lg:grid-cols-2">
           <Card p={24}>
             <Overline>Expenses</Overline>
-            {dashboard?.expenses.by_category.length ? (
+            {expenseCategories.length ? (
               <div className="mt-4 overflow-x-auto">
                 <table className="w-full min-w-[360px] text-left text-sm">
                   <thead className="text-xs uppercase text-rally-muted">
@@ -545,10 +620,10 @@ export default function AdminReportsPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-rally-line">
-                    {dashboard.expenses.by_category.map((category) => (
+                    {expenseCategories.map((category) => (
                       <tr key={category.category}>
                         <td className="px-2 py-2 font-medium text-rally-ink">{category.category}</td>
-                        <td className="px-2 py-2 text-rally-muted">{formatCurrency(category.amount_cents)}</td>
+                        <td className="px-2 py-2 text-rally-muted">{formatCents(category.amount_cents)}</td>
                         <td className="px-2 py-2 text-rally-muted">{formatInteger(category.count)}</td>
                       </tr>
                     ))}
@@ -563,14 +638,14 @@ export default function AdminReportsPage() {
           <Card p={24}>
             <Overline>Coach payroll</Overline>
             <dl className="mt-4 grid gap-3 sm:grid-cols-2">
-              <DashboardTerm label="Estimated" value={dashboard ? formatNullableCurrency(dashboard.payroll.estimated_cents) : "No data"} />
-              <DashboardTerm label="Approved" value={dashboard ? formatNullableCurrency(dashboard.payroll.approved_cents) : "No data"} />
-              <DashboardTerm label="Paid" value={dashboard ? formatNullableCurrency(dashboard.payroll.paid_cents) : "No data"} />
-              <DashboardTerm label="Unpaid" value={dashboard ? formatNullableCurrency(dashboard.payroll.unpaid_cents) : "No data"} />
+              <DashboardTerm label="Estimated" value={payroll ? formatNullableCurrency(payroll.estimated_cents) : "No data"} />
+              <DashboardTerm label="Approved" value={payroll ? formatNullableCurrency(payroll.approved_cents) : "No data"} />
+              <DashboardTerm label="Paid" value={payroll ? formatNullableCurrency(payroll.paid_cents) : "No data"} />
+              <DashboardTerm label="Unpaid" value={payroll ? formatNullableCurrency(payroll.unpaid_cents) : "No data"} />
             </dl>
-            {dashboard?.payroll.blocked_by ? (
+            {payrollBlockedBy ? (
               <p className="mt-4 rounded-md border border-dashed border-rally-line px-3 py-2 text-sm text-rally-subtle">
-                {dashboard.payroll.blocked_by}
+                {payrollBlockedBy}
               </p>
             ) : null}
           </Card>
@@ -581,7 +656,7 @@ export default function AdminReportsPage() {
           <div className="mt-2">
             <BigNum size={32}>
               {projected
-                ? formatCurrency(projected.total_cents)
+                ? formatCents(projected.total_cents)
                 : projectedIncomeQuery.isLoading
                   ? "Loading"
                   : "No data"}
@@ -614,11 +689,11 @@ export default function AdminReportsPage() {
                 <dl className="mt-3 grid gap-3 sm:grid-cols-2">
                   <DashboardTerm
                     label={`Autopay (${formatInteger(projected.autopay_enrollment_count)})`}
-                    value={formatCurrency(projected.autopay_cents)}
+                    value={formatCents(projected.autopay_cents)}
                   />
                   <DashboardTerm
                     label={`Manual (${formatInteger(projected.manual_enrollment_count)})`}
-                    value={formatCurrency(projected.manual_cents)}
+                    value={formatCents(projected.manual_cents)}
                   />
                 </dl>
               </div>
@@ -633,12 +708,12 @@ export default function AdminReportsPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-rally-line">
-                    {projected.by_session.map((row) => (
+                    {projectedSessions.map((row) => (
                       <tr key={row.session_id}>
                         <td className="px-2 py-2 font-medium text-rally-ink">{row.title || row.session_id}</td>
                         <td className="px-2 py-2 text-rally-muted">{formatInteger(row.enrollment_count)}</td>
-                        <td className="px-2 py-2 text-rally-muted">{formatCurrency(row.monthly_fee_cents)}</td>
-                        <td className="px-2 py-2 text-rally-muted">{formatCurrency(row.expected_cents)}</td>
+                        <td className="px-2 py-2 text-rally-muted">{formatCents(row.monthly_fee_cents)}</td>
+                        <td className="px-2 py-2 text-rally-muted">{formatCents(row.expected_cents)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -674,9 +749,7 @@ export default function AdminReportsPage() {
                     fontSize={12}
                     width={56}
                   />
-                  <Tooltip
-                    formatter={(value) => formatCurrency(Number(value ?? 0) * 100)}
-                  />
+                  <Tooltip formatter={(value) => formatCents(Number(value ?? 0) * 100)} />
                   <Legend />
                   <Bar
                     dataKey="prior"
@@ -719,7 +792,7 @@ export default function AdminReportsPage() {
         <div>
           <Overline>Financial reports</Overline>
           <p className="mt-1 text-sm text-neutral-500">
-            Monthly reports over the billing ledger, with CSV export on each page.
+            Monthly reports over the billing ledger.
           </p>
         </div>
         <div className="grid gap-4 lg:grid-cols-3">
@@ -732,84 +805,8 @@ export default function AdminReportsPage() {
               </Card>
             </Link>
           ))}
-          <Card p={20} className="flex flex-col">
-            <h2 className="font-semibold text-lg">QuickBooks export</h2>
-            <p className="mt-1 min-h-[3rem] text-sm text-neutral-500 flex-1">
-              Monthly summary journal entries for {formatMonth(period)}, ready to import into
-              QuickBooks Online.
-            </p>
-            <div className="mt-4">
-              <Button
-                variant="secondary"
-                onClick={() => quickbooksMutation.mutate()}
-                disabled={quickbooksMutation.isPending}
-                full
-              >
-                {quickbooksMutation.isPending ? "Exporting..." : "Export journal CSV"}
-              </Button>
-            </div>
-          </Card>
-        </div>
-        {quickbooksMutation.isError && (
-          <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
-            Could not export the QuickBooks journal.
-          </p>
-        )}
-      </div>
-
-      <div className="space-y-3">
-        <div>
-          <Overline>Exports</Overline>
-          <p className="mt-1 text-sm text-neutral-500">
-            Download CSV only after reviewing the in-app dashboard above.
-          </p>
-        </div>
-        <div className="grid gap-4 lg:grid-cols-3">
-          {REPORTS.map((report) => (
-            <Card
-              key={report.name}
-              p={20}
-              className="flex flex-col"
-            >
-              <h2 className="font-semibold text-lg">{report.title}</h2>
-              <p className="mt-1 min-h-[3rem] text-sm text-neutral-500 flex-1">{report.description}</p>
-              <div className="mt-4">
-                <Button
-                  variant="secondary"
-                  onClick={() => exportMutation.mutate(report)}
-                  disabled={exportMutation.isPending}
-                  full
-                >
-                  {exportMutation.isPending && exportMutation.variables?.name === report.name ? "Exporting..." : "Export CSV"}
-                </Button>
-              </div>
-            </Card>
-          ))}
         </div>
       </div>
-
-      {exportMutation.isError && (
-        <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
-          Could not export that report.
-        </p>
-      )}
-
-      {preview && (
-        <Card p={20}>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <h2 className="text-lg font-semibold">{preview.title} preview</h2>
-            <Button
-              variant="primary"
-              onClick={() => downloadCsv(preview.title, preview.csv)}
-            >
-              Download
-            </Button>
-          </div>
-          <pre className="mt-4 max-h-80 overflow-auto rounded-md bg-neutral-950 p-3 text-xs text-neutral-100">
-            {preview.csv}
-          </pre>
-        </Card>
-      )}
     </section>
   );
 }
@@ -845,23 +842,13 @@ function formatInteger(value: number): string {
   return new Intl.NumberFormat("en-US").format(value);
 }
 
-function formatPercent(value: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "percent",
-    maximumFractionDigits: 0,
-  }).format(value);
-}
-
+/** A share the backend already computed; `null` means "no records", not 0%. */
 function formatNullablePercent(value: number | null): string {
-  return value == null ? "No records" : formatPercent(value);
-}
-
-function formatCurrency(cents: number) {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
+  return value == null ? "No records" : formatCollectionRate(value);
 }
 
 function formatNullableCurrency(cents: number | null) {
-  return cents == null ? "Not available" : formatCurrency(cents);
+  return cents == null ? "Not available" : formatCents(cents);
 }
 
 function formatMonth(value: string) {

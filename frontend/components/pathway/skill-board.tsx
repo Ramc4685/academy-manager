@@ -258,6 +258,7 @@ function LevelGroupSection({
             {group.students.map((student) => (
               <li
                 key={student.student_id}
+                data-testid={`skill-card-${student.student_id}`}
                 className="rounded-xl border border-neutral-200 bg-white p-3 dark:border-neutral-800 dark:bg-neutral-900"
               >
                 <div className="mb-2 flex items-center justify-between">
@@ -290,7 +291,7 @@ function LevelGroupSection({
               value={activeSkill?.skill_id ?? ""}
               onChange={(e) => setSkillId(e.target.value)}
               aria-label="Skill to assess"
-              className="mb-3 min-h-[44px] w-full rounded-lg border border-neutral-300 px-3 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+              className="mb-3 h-11 min-h-[44px] w-full rounded-lg border border-neutral-300 px-3 text-sm dark:border-neutral-700 dark:bg-neutral-900"
             >
               {group.skills.map((skill) => (
                 <option key={skill.skill_id} value={skill.skill_id}>

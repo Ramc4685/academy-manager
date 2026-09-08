@@ -120,7 +120,6 @@ def _minimal_admin_use_cases(
         list_billing_deferral_warnings=mock,
         send_dues_reminders=mock,  # type: ignore[arg-type]
         export_report_csv=mock,
-        get_reports_kpis=mock,
         list_enrollment_events=mock,
         comms=mock,  # type: ignore[arg-type]
         list_admin_waivers=mock,  # type: ignore[arg-type]
@@ -148,7 +147,7 @@ def _admin_claims() -> AuthClaims:
         user_id="adm-1",
         email="admin@example.com",
         academy_id="acad",
-        roles=("admin",),
+        roles=("admin", "owner"),  # pre-split admin: migration 0165 grants owner
     )
 
 

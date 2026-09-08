@@ -375,6 +375,7 @@ class MongoStudentRepository(TenantScopedRepository):
         parent_email: str | None = None,
         parent_phone: str | None = None,
         enrolled_sessions: list[AdminStudentSessionSummary] | None = None,
+        past_enrollments: list[AdminStudentSessionSummary] | None = None,
         payment_history: list[AdminStudentPaymentSummary] | None = None,
         current_payment: AdminStudentCurrentPaymentSummary | None = None,
         outstanding_balance_cents: int = 0,
@@ -429,6 +430,7 @@ class MongoStudentRepository(TenantScopedRepository):
             waiver_version=waiver_version,
             recent_attendance=recent_attendance or [],
             enrolled_sessions=sessions,
+            past_enrollments=past_enrollments or [],
             payment_history=payment_history or [],
             current_payment=current_payment,
             outstanding_balance_cents=outstanding_balance_cents,
@@ -447,6 +449,10 @@ class MongoStudentRepository(TenantScopedRepository):
         attendance = await self._attendance_summaries(academy_id, [resolved_id])
         dues = await self._dues_statuses(academy_id, [resolved_id])
         enrolled_sessions = await self._admin_student_enrolled_sessions(
+            academy_id=academy_id,
+            student_id=resolved_id,
+        )
+        past_enrollments = await self._admin_student_past_enrollments(
             academy_id=academy_id,
             student_id=resolved_id,
         )
@@ -482,6 +488,7 @@ class MongoStudentRepository(TenantScopedRepository):
             parent_email=parent_info.get("email"),
             parent_phone=parent_info.get("phone"),
             enrolled_sessions=enrolled_sessions,
+            past_enrollments=past_enrollments,
             payment_history=payment_history,
             current_payment=current_payment,
             outstanding_balance_cents=outstanding_balance_cents,
@@ -810,34 +817,100 @@ class MongoStudentRepository(TenantScopedRepository):
             str(doc.get("session_id")) for doc in enrollments if doc.get("session_id") is not None
         ]
         sessions_by_id = await self._sessions_by_id(academy_id, session_ids)
-        rows: list[AdminStudentSessionSummary] = []
-        for enrollment in enrollments:
-            session_id = str(enrollment.get("session_id") or "")
-            session = sessions_by_id.get(session_id) or {}
-            rows.append(
-                AdminStudentSessionSummary(
-                    enrollment_id=str(enrollment.get("enrollment_id") or enrollment.get("_id")),
-                    session_id=session_id,
-                    session_title=str(
-                        session.get("title") or session.get("name") or "Academy session"
-                    ),
-                    location=str(session.get("location") or "") or None,
-                    start_at=self._coerce_datetime(session.get("start_at")),
-                    end_at=self._coerce_datetime(session.get("end_at")),
-                    status=str(enrollment.get("status") or "active"),
-                    payment_mode=self._optional_str(enrollment.get("payment_mode")),
-                    subscription_status=self._optional_str(
-                        enrollment.get("subscription_status")
-                        or enrollment.get("billing_status")
-                        or enrollment.get("stripe_subscription_status")
-                    ),
-                    amount_cents=self._enrollment_session_amount_cents(enrollment, session),
-                )
-            )
+        rows = [
+            self._admin_student_session_row(enrollment, sessions_by_id)
+            for enrollment in enrollments
+        ]
         rows.sort(
             key=lambda row: (row.start_at or datetime.max.replace(tzinfo=UTC), row.session_id)
         )
         return rows
+
+    # Statuses an enrollment lands in once attendance has stopped for good.
+    # "paused" is deliberately NOT here: it stays in the current list (#651).
+    # A transfer moves the row to the new session in place (no status change),
+    # so it never appears here.
+    PAST_ENROLLMENT_STATUSES = ("cancelled", "withdrawn")
+
+    async def _admin_student_past_enrollments(
+        self,
+        *,
+        academy_id: str,
+        student_id: str,
+    ) -> list[AdminStudentSessionSummary]:
+        """Issue #674: cancelled / withdrawn enrollments with the lifecycle
+        facts the writers persist (``cancelled_at`` from an admin or parent
+        cancel, ``withdrawal_date`` from a withdraw, ``cancelled_by`` and
+        ``cancellation_reason`` from both). Newest ended first; rows with no
+        date sort last so a legacy row cannot hide a recent cancellation.
+        """
+        enrollments = [
+            doc
+            async for doc in self._db["enrollments"].find(
+                {
+                    "academy_id": academy_id,
+                    "student_id": student_id,
+                    "status": {"$in": list(self.PAST_ENROLLMENT_STATUSES)},
+                    "is_deleted": {"$ne": True},
+                }
+            )
+        ]
+        session_ids = [
+            str(doc.get("session_id")) for doc in enrollments if doc.get("session_id") is not None
+        ]
+        sessions_by_id = await self._sessions_by_id(academy_id, session_ids)
+        rows: list[AdminStudentSessionSummary] = []
+        for enrollment in enrollments:
+            row = self._admin_student_session_row(enrollment, sessions_by_id)
+            cancelled_at = self._coerce_datetime(enrollment.get("cancelled_at"))
+            withdrawal_date = self._coerce_datetime(enrollment.get("withdrawal_date"))
+            ended_at = withdrawal_date if row.status == "withdrawn" else cancelled_at
+            ended_at = ended_at or cancelled_at or withdrawal_date
+            rows.append(
+                row.model_copy(
+                    update={
+                        "cancelled_at": cancelled_at,
+                        "withdrawal_date": withdrawal_date,
+                        "ended_at": ended_at,
+                        "cancelled_by": self._optional_str(enrollment.get("cancelled_by")),
+                        "reason": self._optional_str(enrollment.get("cancellation_reason")),
+                    }
+                )
+            )
+        rows.sort(
+            key=lambda row: (
+                -(row.ended_at.timestamp() if row.ended_at else float("-inf")),
+                row.enrollment_id,
+            )
+        )
+        return rows
+
+    def _admin_student_session_row(
+        self,
+        enrollment: dict[str, object],
+        sessions_by_id: dict[str, dict[str, object]],
+    ) -> AdminStudentSessionSummary:
+        session_id = str(enrollment.get("session_id") or "")
+        session = sessions_by_id.get(session_id) or {}
+        return AdminStudentSessionSummary(
+            enrollment_id=str(enrollment.get("enrollment_id") or enrollment.get("_id")),
+            session_id=session_id,
+            session_title=str(session.get("title") or session.get("name") or "Academy session"),
+            location=str(session.get("location") or "") or None,
+            start_at=self._coerce_datetime(session.get("start_at")),
+            end_at=self._coerce_datetime(session.get("end_at")),
+            status=str(enrollment.get("status") or "active"),
+            pending_cancellation_at=self._coerce_datetime(
+                enrollment.get("pending_cancellation_at")
+            ),
+            payment_mode=self._optional_str(enrollment.get("payment_mode")),
+            subscription_status=self._optional_str(
+                enrollment.get("subscription_status")
+                or enrollment.get("billing_status")
+                or enrollment.get("stripe_subscription_status")
+            ),
+            amount_cents=self._enrollment_session_amount_cents(enrollment, session),
+        )
 
     async def _sessions_by_id(
         self,

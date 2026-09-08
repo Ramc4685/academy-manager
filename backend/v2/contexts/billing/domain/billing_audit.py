@@ -26,10 +26,19 @@ BillingAuditAction = Literal[
     "platform_fallback_toggled",
     "admin_charge_initiated",
     "autopay_resumed",
+    # Family billing page: the owner/admin switched autopay OFF for every
+    # active enrollment of one parent (spec 2026-09-05-family-billing §5).
+    "autopay_paused",
     # Invoicing config, not money movement: billing_day/invoice_due_days decide
     # when invoices are generated and when the dunning ladder's first autopay
     # charge fires, so changes get the same actor/before/after trail.
     "invoice_schedule_changed",
+    # Settings -> Billing rules: one owner write that can touch the invoice
+    # schedule, the academy late-fee values and the cancellation policy at
+    # once. Fee changes were previously unaudited entirely
+    # (UpdateAcademyFeesUseCase writes no entry), so this is the trail for
+    # them (spec 2026-09-07-billing-rules-design SS4.1).
+    "billing_rules_changed",
 ]
 
 
@@ -43,6 +52,9 @@ class BillingAuditEntry(BaseModel):
     at: datetime
     invoice_id: str | None = None
     payment_id: str | None = None
+    # Family-level actions (autopay_paused) have no invoice; the family
+    # timeline finds them by parent instead.
+    parent_id: str | None = None
     reason: str | None = None
     before: dict[str, Any] | None = None
     after: dict[str, Any] | None = None

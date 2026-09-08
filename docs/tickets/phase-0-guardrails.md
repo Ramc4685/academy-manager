@@ -125,7 +125,7 @@
   - Background poller (asyncio task) publishes to in-process handlers.
   - Per-handler idempotency on `(event_id, handler_name)` via `event_handler_runs`.
   - Retry with exponential backoff (1, 4, 16, 64, 256s); after 5 failures move to `dead_letter_events`.
-  - `event_audit` collection with 90-day TTL.
+  - `event_audit` collection with 90-day TTL (extended to 400 days by migration 0166).
   - CLI tool `backend/v2/scripts/replay_event.py` to requeue a dead-letter event.
 - **Acceptance:**
   - Integration test: simulated handler that fails 3× then succeeds — outbox marks processed, audit has 4 rows, dead-letter empty.

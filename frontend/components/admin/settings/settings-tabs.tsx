@@ -5,7 +5,7 @@ import type { UrlObject } from "url";
 
 export type SettingsPanelKey =
   | "academy"
-  | "fees"
+  | "billing-rules"
   | "gateway"
   | "notify"
   | "roles"
@@ -16,7 +16,7 @@ export type SettingsPanelKey =
 
 export const SETTINGS_TABS: Array<{ key: SettingsPanelKey; label: string }> = [
   { key: "academy", label: "Academy" },
-  { key: "fees", label: "Fees" },
+  { key: "billing-rules", label: "Billing rules" },
   { key: "gateway", label: "Gateway" },
   { key: "notify", label: "Notify" },
   { key: "roles", label: "Roles" },
@@ -26,16 +26,35 @@ export const SETTINGS_TABS: Array<{ key: SettingsPanelKey; label: string }> = [
   { key: "session-types", label: "Session types" },
 ];
 
+/**
+ * Panels that change what the academy charges or where the money lands.
+ * Owner-only: the BFF 404s their writes for anyone without the owner scope.
+ */
+export const OWNER_ONLY_SETTINGS_PANELS: ReadonlySet<SettingsPanelKey> = new Set<SettingsPanelKey>([
+  "billing-rules",
+  "gateway",
+]);
+
+/**
+ * Retired panel keys that still resolve, so an old bookmark lands somewhere
+ * sensible: `?panel=fees` renders Billing rules (spec SS5).
+ */
+export const RETIRED_SETTINGS_PANELS: Readonly<Record<string, SettingsPanelKey>> = {
+  fees: "billing-rules",
+};
+
 interface SettingsTabsProps {
   active: SettingsPanelKey;
   hrefFor: (key: SettingsPanelKey) => UrlObject;
+  /** Tabs to render; defaults to every panel. */
+  tabs?: ReadonlyArray<{ key: SettingsPanelKey; label: string }>;
 }
 
-export function SettingsTabs({ active, hrefFor }: SettingsTabsProps) {
+export function SettingsTabs({ active, hrefFor, tabs = SETTINGS_TABS }: SettingsTabsProps) {
   return (
     <div className="overflow-x-auto">
       <div className="inline-flex min-w-max gap-1 rounded-lg bg-rally-paper p-1">
-        {SETTINGS_TABS.map((tab) => {
+        {tabs.map((tab) => {
           const isActive = tab.key === active;
           return (
             <Link

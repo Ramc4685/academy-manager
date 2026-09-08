@@ -20,13 +20,13 @@ class AdminUserView(BaseModel):
     user_id: str
     email: EmailStr
     display_name: str
-    role: Literal["admin", "coach", "parent", "owner"]
+    role: Literal["admin", "coach", "assistant_coach", "parent", "owner"]
     status: str
 
 
 class AdminUserDetailView(AdminUserView):
     phone: str | None = None
-    roles: list[Literal["admin", "coach", "parent", "owner"]] = []
+    roles: list[Literal["admin", "coach", "assistant_coach", "parent", "owner"]] = []
     linked_student_count: int = 0
     session_count: int = 0
     login_invite_sent_at: datetime | None = None
@@ -55,7 +55,7 @@ class AdminUserList(BaseModel):
 
 
 class ModifyUserRoleRequest(BaseModel):
-    role: Literal["admin", "coach", "parent", "owner"]
+    role: Literal["admin", "coach", "assistant_coach", "parent", "owner"]
     reason: str = Field(default="Admin role change", min_length=1, max_length=500)
 
 
@@ -99,10 +99,18 @@ class AdminStudentSessionSummaryView(BaseModel):
     start_at: datetime | None = None
     end_at: datetime | None = None
     status: str
+    pending_cancellation_at: datetime | None = None
     payment_mode: str | None = None
     subscription_status: str | None = None
     amount_cents: int | None = None
     discount: AdminStudentSessionDiscountView | None = None
+    # Issue #674: billing autopay axis on current rows; lifecycle facts on past rows.
+    autopay_status: str | None = None
+    cancelled_at: datetime | None = None
+    withdrawal_date: datetime | None = None
+    ended_at: datetime | None = None
+    cancelled_by: str | None = None
+    reason: str | None = None
 
 
 class AdminStudentPaymentSummaryView(BaseModel):
@@ -154,6 +162,7 @@ class AdminStudentDetailView(AdminStudentView):
     waiver_version: str | None = None
     recent_attendance: list[AdminStudentRecentAttendanceView] = Field(default_factory=list)
     enrolled_sessions: list[AdminStudentSessionSummaryView] = Field(default_factory=list)
+    past_enrollments: list[AdminStudentSessionSummaryView] = Field(default_factory=list)
     payment_history: list[AdminStudentPaymentSummaryView] = Field(default_factory=list)
     current_payment: AdminStudentCurrentPaymentSummaryView | None = None
     outstanding_balance_cents: int = 0
@@ -207,12 +216,12 @@ class UpdateAdminUserRequest(BaseModel):
 
 
 class UpdateAdminUserRoleRequest(BaseModel):
-    role: Literal["admin", "coach", "parent", "owner"]
+    role: Literal["admin", "coach", "assistant_coach", "parent", "owner"]
     reason: str = Field(default="admin role change", min_length=1, max_length=500)
 
 
 class CreateAdminUserRequest(BaseModel):
-    role: Literal["admin", "coach", "parent", "owner"]
+    role: Literal["admin", "coach", "assistant_coach", "parent", "owner"]
     display_name: str = Field(min_length=1, max_length=120)
     email: str = Field(min_length=1, max_length=254)
     phone: str | None = Field(default=None, max_length=40)
@@ -345,6 +354,9 @@ class AdminSessionView(BaseModel):
     session_id: str
     coach_id: str
     coach_name: str | None = None
+    # Assistant coaches (role ``assistant_coach``), resolved like coach_name.
+    assistant_coach_ids: list[str] = Field(default_factory=list)
+    assistant_coach_names: list[str] = Field(default_factory=list)
     title: str
     location: str
     start_at: datetime
@@ -391,6 +403,10 @@ class AdminSessionOccurrenceView(BaseModel):
     start_at: datetime
     end_at: datetime
     status: Literal["scheduled", "cancelled", "completed"]
+    # Issue #671: why this date is off, and when it was called off. Both stay
+    # None for a live date; a whole-session cancel (#467) sets the reason only.
+    cancellation_reason: str | None = None
+    cancelled_at: datetime | None = None
     scheduled_coach_id: str
     actual_coach_id: str | None = None
     substitute_coach_id: str | None = None
@@ -480,6 +496,7 @@ class CreateSessionRequest(CommunicationPackFields):
     start_time: str | None = None
     end_time: str | None = None
     timezone: str | None = None
+    assistant_coach_ids: list[str] = Field(default_factory=list)
 
 
 class EditSessionRequest(CommunicationPackFields):
@@ -494,7 +511,37 @@ class EditSessionRequest(CommunicationPackFields):
     start_time: str | None = None
     end_time: str | None = None
     timezone: str | None = None
+    # None = unchanged; [] = clear every assistant.
+    assistant_coach_ids: list[str] | None = None
     reason: str | None = None
+
+
+class SetSessionAssistantsRequest(BaseModel):
+    """Body of ``PUT /admin/sessions/{id}/assistants`` (dedicated editor)."""
+
+    assistant_coach_ids: list[str] = Field(default_factory=list, max_length=20)
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class CancelSessionOccurrenceRequest(BaseModel):
+    """Admin "cancel this date" body (#671)."""
+
+    reason: str = Field(min_length=1, max_length=500)
+    #: ``False`` records the cancellation without emailing anyone — for a date
+    #: the academy has already announced by WhatsApp or in person.
+    notify: bool = True
+
+
+class CancelSessionOccurrenceResponse(BaseModel):
+    occurrence: AdminSessionOccurrenceView
+    affected_enrollment_ids: list[str] = Field(default_factory=list)
+    roster_entries_removed: int = 0
+    makeups_reopened: int = 0
+    #: Approved trials that were assigned to this date and are pending again (#671).
+    trials_reopened: int = 0
+    credits_issued: int = 0
+    billing_result: str | None = None
+    notified: bool = False
 
 
 class UpdateOccurrenceReplacementRequest(BaseModel):
@@ -519,6 +566,8 @@ class AdminEnrollmentView(BaseModel):
     full_name: str
     parent_id: str
     status: str
+    # Issue #675: parent end-of-period cancel pending; still on the roster.
+    pending_cancellation_at: datetime | None = None
     enrolled_at: datetime | None = None
     level: str | None = None
     pathway_program_id: str | None = None
@@ -1001,6 +1050,18 @@ class SendInvoiceResponse(BaseModel):
     checkout_failure_code: str | None = None
 
 
+class ChargeAutopayRequest(BaseModel):
+    """Optional body for an admin-initiated charge.
+
+    ``reason`` is what the admin typed into the confirmation dialog; it travels
+    with the charge so the family timeline can say why the card was run.
+    """
+
+    reason: str | None = None
+    # Client-supplied so a retried submit is the same charge, not a second one.
+    request_id: str | None = None
+
+
 class ChargeAutopayResponse(BaseModel):
     invoice_id: str
     success: bool
@@ -1332,22 +1393,6 @@ class AdminAuditLogList(BaseModel):
     logs: list[AdminAuditLogView]
 
 
-class DuesFollowupParentView(BaseModel):
-    parent_id: str
-    parent_name: str | None = None
-    email: str | None = None
-    phone: str | None = None
-    pending_count: int
-    total_due_cents: int
-    # Pre-filled wa.me link the admin clicks to open WhatsApp; None when the
-    # parent has no usable phone on file.
-    whatsapp_url: str | None = None
-
-
-class DuesFollowupResponse(BaseModel):
-    parents: list[DuesFollowupParentView]
-
-
 class SendDuesRemindersResponse(BaseModel):
     sent: int
     blocked: bool
@@ -1540,6 +1585,7 @@ AdminAttentionKind = Literal[
     "overdue_dues",
     "pause_requests",
     "scheduled_resume_blocked",
+    "scheduled_action_failed",
     "billing_deferrals",
     "waivers",
     "session_pressure",
@@ -1661,13 +1707,11 @@ class UpdateAdminAcademyRequest(BaseModel):
 
 
 class AdminFeesView(BaseModel):
-    default_monthly_cents: int | None = None
     late_fee_cents: int | None = None
     grace_days: int | None = None
 
 
 class UpdateAdminFeesRequest(BaseModel):
-    default_monthly_cents: int | None = None
     late_fee_cents: int | None = None
     grace_days: int | None = None
 
@@ -1730,13 +1774,6 @@ class AdminGatewayView(BaseModel):
 
 class AdminGatewayConnectLinkView(BaseModel):
     url: str
-
-
-class ReportsKpiResponse(BaseModel):
-    active_students: int = 0
-    attendance_rate_30d: float = 0.0
-    dues_collected_mtd_cents: int = 0
-    pending_waivers: int = 0
 
 
 class AdminRefundRow(BaseModel):

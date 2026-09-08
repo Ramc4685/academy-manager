@@ -32,6 +32,7 @@ class GetSessionRoster:
                     student_id=s.student_id,
                     full_name=s.full_name,
                     status=e.status,
+                    pending_cancellation_at=e.pending_cancellation_at,
                 )
             )
         return out

@@ -5,7 +5,8 @@ Validates:
 - Occurrence is in the coach's assigned set for the occurrence date
   (``SessionNotAssigned``).
 - Session is not cancelled (``SessionCancelled``).
-- Student is currently enrolled (``StudentNotEnrolled``).
+- Student is eligible for this occurrence: actively enrolled, or holding an
+  approved make-up / trial roster entry for it (``StudentNotEnrolled``).
 - No prior attendance with a different ``mutation_id`` for the same
   (occurrence, student) (``ConflictAttendanceExists``).
 
@@ -112,11 +113,10 @@ class MarkAttendance:
         """
         # 1. Occurrence + cancellation check.
         occurrence = await self._occurrences.get(cmd.occurrence_id)
-        session_id_matches = occurrence is not None and (
-            occurrence.session_id == cmd.session_id
-            or occurrence.template_session_id == cmd.session_id
-        )
-        if not session_id_matches:
+        if occurrence is None or (
+            occurrence.session_id != cmd.session_id
+            and occurrence.template_session_id != cmd.session_id
+        ):
             raise SessionNotAssigned(
                 "session occurrence not found or not assigned",
                 session_id=cmd.session_id,
@@ -129,10 +129,13 @@ class MarkAttendance:
                 session_id=cmd.session_id,
                 occurrence_id=cmd.occurrence_id,
             )
+        # Assistant coaches listed on the occurrence mark attendance like an
+        # assigned coach (they are never paid for it; payroll ignores the list).
         if not supervisor and coach_id not in {
             occurrence.scheduled_coach_id,
             occurrence.actual_coach_id,
             occurrence.substitute_coach_id,
+            *occurrence.assistant_coach_ids,
         }:
             raise SessionNotAssigned(
                 "session occurrence not assigned to this coach",
@@ -141,16 +144,21 @@ class MarkAttendance:
                 coach_id=coach_id,
             )
 
-        # 2. Student enrollment check.
-        enrolled = await self._enrollments.is_active(cmd.session_id, cmd.student_id)
-        if not enrolled and occurrence.template_session_id:
-            enrolled = await self._enrollments.is_active(
-                occurrence.template_session_id, cmd.student_id
-            )
-        if not enrolled:
+        # 2. Student eligibility: an active enrollment in the session (or its
+        # recurring template) OR an approved one-time make-up / trial roster
+        # entry for exactly this occurrence (issue #672). Paused, cancelled
+        # and withdrawn enrollments remain ineligible.
+        eligibility = await self._enrollments.attendance_eligibility(
+            occurrence_id=cmd.occurrence_id,
+            session_id=cmd.session_id,
+            template_session_id=occurrence.template_session_id,
+            student_id=cmd.student_id,
+        )
+        if eligibility is None:
             raise StudentNotEnrolled(
-                "student not actively enrolled in session",
+                "student not actively enrolled in session and not on the occurrence roster",
                 session_id=cmd.session_id,
+                occurrence_id=cmd.occurrence_id,
                 student_id=cmd.student_id,
             )
 
@@ -181,6 +189,7 @@ class MarkAttendance:
             marked_at_client=cmd.marked_at_client,
             status=cmd.status,
             client_app_version=cmd.client_app_version,
+            entry_source=eligibility.source,
         )
         await self._attendance.save(attendance)
         await self._outbox.append(
@@ -195,6 +204,7 @@ class MarkAttendance:
                     marked_by=attendance.marked_by,
                     marked_at=attendance.marked_at,
                     status=attendance.status,
+                    entry_source=attendance.entry_source,
                 ),
             )
         )

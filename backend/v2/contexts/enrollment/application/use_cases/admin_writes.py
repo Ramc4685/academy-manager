@@ -13,18 +13,21 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, date, datetime, time, timedelta
-from typing import Literal, NoReturn, Protocol
+from typing import Any, Literal, NoReturn, Protocol
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, Field
 from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.enrollment.application.ports import (
+    EnrollmentBillingSync,
     EnrollmentEventRepository,
     EnrollmentLifecycleBillingPort,
+    EnrollmentMoveBillingSync,
     EnrollmentQuery,
     EnrollmentWelcomeNotifier,
     EnrollmentWriter,
+    OccurrenceRosterCleanup,
     RosterChangeKind,
     RosterChangeNotifier,
     SessionWriter,
@@ -35,6 +38,10 @@ from backend.v2.contexts.enrollment.application.ports import (
 from backend.v2.contexts.enrollment.application.use_cases.billing_deferrals import (
     BillingDeferral,
     BillingDeferralRepository,
+    paused_billing_periods,
+)
+from backend.v2.contexts.enrollment.application.use_cases.scheduled_actions import (
+    ScheduledEnrollmentActionRepository,
 )
 from backend.v2.contexts.enrollment.domain.errors import (
     # Explicitly re-exported: the interface layer raises 422 on this but may not
@@ -45,6 +52,7 @@ from backend.v2.contexts.enrollment.domain.errors import (
     CapacityExceeded,
     DuplicateSessionSeries,
     EnrollmentNotFound,
+    EnrollmentNotTransferable,
     SeatCounterDrift,
     SessionNotEnrollable,
     SessionNotFound,
@@ -143,6 +151,16 @@ def _has_recurring_mapping(values: dict[str, object]) -> bool:
 
 def _normalize_series_text(value: str) -> str:
     return " ".join(value.strip().casefold().split())
+
+
+def _normalize_assistant_ids(values: list[str]) -> tuple[str, ...]:
+    """Trim, drop blanks, dedupe preserving order (tuple: the domain field)."""
+    seen: dict[str, None] = {}
+    for value in values:
+        cleaned = str(value or "").strip()
+        if cleaned:
+            seen.setdefault(cleaned, None)
+    return tuple(seen)
 
 
 def _normalize_days(days_of_week: list[str]) -> list[str]:
@@ -266,6 +284,34 @@ async def _notify_roster_change(
         )
 
 
+async def _drop_future_occurrence_roster(
+    cleanup: OccurrenceRosterCleanup | None,
+    *,
+    session_id: str,
+    student_id: str,
+    after: datetime,
+) -> None:
+    """Remove the student's future make-up/trial roster rows (issue #651).
+
+    INVARIANT — every transition that stops attendance in a session (cancel,
+    withdraw, session cancelled) calls this after the status write, so a
+    coach's day sheet never lists a student whose enrollment is gone. Never
+    raises: the enrollment write has already committed and a stale one-time
+    row is recoverable, a cancel reported as failed is not.
+    """
+    if cleanup is None:
+        return
+    try:
+        await cleanup.remove_future_for_student(
+            session_id=session_id, student_id=student_id, after=after
+        )
+    except Exception:
+        log.exception(
+            "enrollment.occurrence_roster_cleanup_failed",
+            extra={"session_id": session_id, "student_id": student_id},
+        )
+
+
 class CreateSessionCommand(BaseModel):
     model_config = {"frozen": True}
     coach_id: str
@@ -279,6 +325,7 @@ class CreateSessionCommand(BaseModel):
     start_time: str | None = None
     end_time: str | None = None
     timezone: str | None = None
+    assistant_coach_ids: list[str] = Field(default_factory=list)
     whatsapp_group_link: str | None = None
     venue_address: str | None = None
     parking_notes: str | None = None
@@ -343,6 +390,7 @@ class CreateSession:
             days_of_week=cmd.days_of_week,
             start_time=cmd.start_time,
             end_time=cmd.end_time,
+            assistant_coach_ids=_normalize_assistant_ids(cmd.assistant_coach_ids),
             # Persist the EFFECTIVE zone, never None. `start_at`/`end_at` above
             # were already computed with this zone, and every downstream reader
             # (occurrence synthesis, monthly billing, payroll) re-derives
@@ -399,6 +447,8 @@ class EditSessionCommand(BaseModel):
     arrival_minutes_before: int | None = Field(default=None, ge=0, le=120)
     coach_contact_policy: str | None = None
     absence_policy: str | None = None
+    # None = unchanged, [] = clear (same convention as the PATCH body).
+    assistant_coach_ids: list[str] | None = None
     actor_id: str | None = None
     reason: str | None = None
 
@@ -457,6 +507,11 @@ class EditSession:
                 update["whatsapp_group_link"],  # type: ignore[arg-type]
                 field_label="WhatsApp group link",
             )
+        # Same skipped-validator caveat: the domain field is a tuple, and the
+        # occurrence re-sync for this list is the route's job
+        # (`maintain_session_occurrences` re-stamps clean future rows).
+        if cmd.assistant_coach_ids is not None:
+            update["assistant_coach_ids"] = _normalize_assistant_ids(cmd.assistant_coach_ids)
 
         recurring_values = {
             "days_of_week": update.get("days_of_week", current.days_of_week),
@@ -521,12 +576,22 @@ class CancelSessionCommand(BaseModel):
 
 
 class CancelSession:
-    """Cancels a session + emits EnrollmentCancelled for each active enrollment.
+    """Cancels a session + emits EnrollmentCancelled for each active or
+    paused enrollment.
 
     The waitlist-promotion handler reacts per cancellation. For session-wide
     cancellation we keep this simple — admin gets a confirmation modal in
     the UI before triggering this.
+
+    Issue #651: paused rows are cancelled too. They already released their
+    seat when they paused, so no ``release_seat`` for them — but their open
+    billing deferrals are closed and any pending scheduled resume is
+    cancelled, otherwise the resume would later reserve a seat in a class
+    that no longer runs.
     """
+
+    #: Rows a cancelled class must sweep up (issue #651).
+    _CANCELLABLE_STATUSES = ("active", "paused")
 
     def __init__(
         self,
@@ -536,12 +601,26 @@ class CancelSession:
         enrollments_writer: EnrollmentWriter,
         outbox: Outbox,
         academy_id: str,
+        enrollment_events: EnrollmentEventRepository | None = None,
+        roster_notifier: RosterChangeNotifier | None = None,
+        billing_sync: EnrollmentBillingSync | None = None,
+        billing_deferrals: BillingDeferralRepository | None = None,
+        scheduled_actions: ScheduledEnrollmentActionRepository | None = None,
+        occurrence_roster: OccurrenceRosterCleanup | None = None,
+        clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._sessions = sessions
         self._enrollments_q = enrollments_query
         self._enrollments_w = enrollments_writer
         self._outbox = outbox
         self._academy_id = academy_id
+        self._enrollment_events = enrollment_events
+        self._roster_notifier = roster_notifier
+        self._billing_sync = billing_sync
+        self._billing_deferrals = billing_deferrals
+        self._scheduled_actions = scheduled_actions
+        self._occurrence_roster = occurrence_roster
+        self._now = clock
 
     async def execute(self, cmd: CancelSessionCommand) -> Session | None:
         """Cancel the session and return the post-cancel aggregate.
@@ -553,10 +632,68 @@ class CancelSession:
         write in the composition layer that owns that collection instead of
         adding a second occurrence writer here.
         """
-        active = await self._enrollments_q.active_for_session(cmd.session_id)
+        rows = await self._enrollments_q.for_session_in_statuses(
+            cmd.session_id, list(self._CANCELLABLE_STATUSES)
+        )
         await self._sessions.update_status(cmd.session_id, "cancelled")
-        for e in active:
+        now = self._now()
+        for e in rows:
+            was_paused = e.status == "paused"
             await self._enrollments_w.update_status(e.enrollment_id, "cancelled")
+            await _persist_lifecycle_dates(
+                self._enrollments_w,
+                e.enrollment_id,
+                cancelled_at=now,
+                cancelled_by="admin",
+                cancellation_reason="session_cancelled",
+            )
+            # Issue #651: a cancelled class must release its seats, leave an
+            # audit trail per student, and stop billing for every family.
+            # A paused row released its seat when it paused; releasing again
+            # would drive `reserved_seats` below the truth.
+            if not was_paused:
+                await self._sessions.release_seat(e.session_id)
+                # Issue #675: a pending end-of-period self-cancel dies with
+                # the class too; the paused branch below already does this.
+                await _retire_scheduled_actions(
+                    self._scheduled_actions, e.enrollment_id, reason="session_cancelled"
+                )
+            else:
+                await self._close_paused_followups(e.enrollment_id, now=now)
+            await _drop_future_occurrence_roster(
+                self._occurrence_roster,
+                session_id=e.session_id,
+                student_id=e.student_id,
+                after=now,
+            )
+            billing = await _sync_billing(
+                self._billing_sync,
+                enrollment_id=e.enrollment_id,
+                transition="session_cancelled",
+                effective_at=now,
+                reason="session_cancelled",
+                actor_id=None,
+            )
+            await _record_lifecycle_event(
+                self._enrollment_events,
+                academy_id=self._academy_id,
+                event_type="cancelled",
+                enrollment_id=e.enrollment_id,
+                session_id=e.session_id,
+                student_id=e.student_id,
+                reason="session_cancelled",
+                effective_at=now,
+                occurred_at=now,
+                billing_policy="current_period_payable_future_voided",
+                billing_result=_billing_result(billing),
+            )
+            await _notify_roster_change(
+                self._roster_notifier,
+                change="session_cancelled",
+                session_id=e.session_id,
+                student_id=e.student_id,
+                enrollment_id=e.enrollment_id,
+            )
             await self._outbox.append(
                 EnrollmentCancelled(
                     aggregate_id=e.enrollment_id,
@@ -570,6 +707,33 @@ class CancelSession:
                 )
             )
         return await self._sessions.get(cmd.session_id)
+
+    async def _close_paused_followups(self, enrollment_id: str, *, now: datetime) -> None:
+        """A paused family's deferral and scheduled resume die with the class
+        (issue #651). Best-effort: the cancel has already committed."""
+        if self._billing_deferrals is not None:
+            try:
+                await self._billing_deferrals.close_active_for_enrollment(
+                    enrollment_id,
+                    closed_at=now,
+                    closed_by="system",
+                    reason="session_cancelled",
+                )
+            except Exception:
+                log.exception(
+                    "enrollment.paused_deferral_close_failed",
+                    extra={"enrollment_id": enrollment_id},
+                )
+        if self._scheduled_actions is not None:
+            try:
+                await self._scheduled_actions.cancel_pending_for_enrollment(
+                    enrollment_id, reason="session_cancelled"
+                )
+            except Exception:
+                log.exception(
+                    "enrollment.scheduled_resume_cancel_failed",
+                    extra={"enrollment_id": enrollment_id},
+                )
 
 
 # -- Roster + enrollment writes -----------------------------------------
@@ -846,6 +1010,133 @@ class EditRosterAdd:
         )
 
 
+async def _sync_billing(
+    billing_sync: EnrollmentBillingSync | None,
+    *,
+    enrollment_id: str,
+    transition: str,
+    effective_at: datetime,
+    reason: str | None,
+    actor_id: str | None,
+) -> dict[str, object]:
+    """Tell billing attendance stopped/resumed (issue #651). Never raises.
+
+    The enrollment write has already committed when this runs; a billing
+    failure must not report the cancel/pause as failed. It IS logged at
+    error level, and the lifecycle event carries ``billing_result`` so an
+    admin can see that billing did not follow.
+    """
+    if billing_sync is None:
+        log.error(
+            "enrollment_billing_sync_unwired: %s for enrollment_id=%s reached billing "
+            "nowhere — future invoices stay open and autopay keeps charging",
+            transition,
+            enrollment_id,
+        )
+        return {"billing_result": "billing_sync_unwired"}
+    try:
+        return await billing_sync.apply(
+            enrollment_id=enrollment_id,
+            transition=transition,
+            effective_at=effective_at,
+            reason=reason or "",
+            actor_id=actor_id,
+        )
+    except Exception:
+        log.exception(
+            "enrollment_billing_sync_failed",
+            extra={"enrollment_id": enrollment_id, "transition": transition},
+        )
+        return {"billing_result": "billing_sync_failed"}
+
+
+async def _retire_scheduled_actions(
+    scheduled_actions: ScheduledEnrollmentActionRepository | None,
+    enrollment_id: str,
+    *,
+    reason: str,
+) -> None:
+    """Issue #675: an enrollment that just ended must not have a pending
+    ``cancel_at_period_end`` (or ``resume_from_pause``) fire later against a
+    row that is already cancelled / withdrawn. Best-effort — the status
+    write has committed, and the processor's CAS refuses an ended row anyway;
+    this keeps the blocked-actions list honest."""
+    if scheduled_actions is None:
+        return
+    try:
+        await scheduled_actions.cancel_pending_for_enrollment(enrollment_id, reason=reason)
+    except Exception:
+        log.exception(
+            "enrollment.scheduled_action_retire_failed",
+            extra={"enrollment_id": enrollment_id, "reason": reason},
+        )
+
+
+async def _sync_move_billing(
+    billing_sync: EnrollmentMoveBillingSync | None,
+    *,
+    enrollment_id: str,
+    from_session_id: str,
+    to_session_id: str,
+    effective_at: datetime,
+    reason: str | None,
+    actor_id: str | None,
+    effective_date: date | None = None,
+    move_seq: int = 0,
+) -> dict[str, object]:
+    """Tell billing the enrollment moved sessions (issue #669). Never raises.
+
+    Mirrors ``_sync_billing``: the enrollment already points at the new
+    session, so a billing failure is logged and reported on the lifecycle
+    event rather than failing the move.
+    """
+    if billing_sync is None:
+        log.error(
+            "enrollment_billing_sync_unwired: move for enrollment_id=%s reached billing "
+            "nowhere — the current period keeps the old session's price",
+            enrollment_id,
+        )
+        return {"billing_policy": "move_proration", "billing_result": "billing_sync_unwired"}
+    try:
+        return await billing_sync.apply_move(
+            enrollment_id=enrollment_id,
+            from_session_id=from_session_id,
+            to_session_id=to_session_id,
+            effective_at=effective_at,
+            reason=reason or "",
+            actor_id=actor_id,
+            effective_date=effective_date,
+            move_seq=move_seq,
+        )
+    except Exception:
+        log.exception(
+            "enrollment_move_billing_sync_failed",
+            extra={
+                "enrollment_id": enrollment_id,
+                "from_session_id": from_session_id,
+                "to_session_id": to_session_id,
+            },
+        )
+        return {"billing_policy": "move_proration", "billing_result": "billing_sync_failed"}
+
+
+async def _persist_lifecycle_dates(
+    enrollments: EnrollmentWriter, enrollment_id: str, **fields: datetime | str | None
+) -> None:
+    """Stamp cancelled_at / withdrawal_date — and, issue #674, cancelled_by /
+    cancellation_reason — on the enrollment when the writer supports it (the
+    Mongo writer does; test fakes may not)."""
+    setter = getattr(enrollments, "set_lifecycle_dates", None)
+    if setter is None:
+        return
+    await setter(enrollment_id, **fields)
+
+
+def _billing_result(sync: dict[str, object]) -> str | None:
+    value = sync.get("billing_result")
+    return str(value) if value is not None else None
+
+
 class CancelEnrollmentCommand(BaseModel):
     model_config = {"frozen": True}
     enrollment_id: str
@@ -865,6 +1156,9 @@ class CancelEnrollment:
         academy_id: str,
         enrollment_events: EnrollmentEventRepository | None = None,
         roster_notifier: RosterChangeNotifier | None = None,
+        billing_sync: EnrollmentBillingSync | None = None,
+        occurrence_roster: OccurrenceRosterCleanup | None = None,
+        scheduled_actions: ScheduledEnrollmentActionRepository | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._enrollments = enrollments
@@ -873,7 +1167,16 @@ class CancelEnrollment:
         self._academy_id = academy_id
         self._enrollment_events = enrollment_events
         self._roster_notifier = roster_notifier
+        self._billing_sync = billing_sync
+        self._occurrence_roster = occurrence_roster
+        self._scheduled_actions = scheduled_actions
         self._now = clock
+
+    #: Statuses that no longer hold a seat (issue #651): a paused row released
+    #: its seat when it paused and a withdrawn row when it withdrew, so a later
+    #: cancel must not release it again and drive `reserved_seats` under the
+    #: real roster count.
+    _SEATLESS_STATUSES = frozenset({"paused", "withdrawn"})
 
     async def execute(self, cmd: CancelEnrollmentCommand) -> None:
         e = await self._enrollments.get(cmd.enrollment_id)
@@ -883,6 +1186,29 @@ class CancelEnrollment:
             return
         await self._enrollments.update_status(e.enrollment_id, "cancelled")
         now = self._now()
+        effective_at = cmd.effective_at or now
+        # Issue #674: the past-enrollment row reads actor + reason off the
+        # enrollment doc, so stamp them here rather than only on the event.
+        await _persist_lifecycle_dates(
+            self._enrollments,
+            e.enrollment_id,
+            cancelled_at=effective_at,
+            cancelled_by="admin",
+            cancellation_reason=cmd.reason,
+        )
+        await _retire_scheduled_actions(
+            self._scheduled_actions, e.enrollment_id, reason=f"enrollment_{cmd.event_type}"
+        )
+        # Issue #651: billing must follow the cancel (void future invoices,
+        # disable autopay) BEFORE the lifecycle event records the outcome.
+        billing = await _sync_billing(
+            self._billing_sync,
+            enrollment_id=e.enrollment_id,
+            transition="session_cancelled" if cmd.reason == "session_cancelled" else "cancelled",
+            effective_at=effective_at,
+            reason=cmd.reason,
+            actor_id=cmd.actor_id,
+        )
         await _record_lifecycle_event(
             self._enrollment_events,
             academy_id=self._academy_id,
@@ -892,10 +1218,19 @@ class CancelEnrollment:
             student_id=e.student_id,
             actor_id=cmd.actor_id,
             reason=cmd.reason,
-            effective_at=cmd.effective_at or now,
+            effective_at=effective_at,
             occurred_at=now,
+            billing_policy="current_period_payable_future_voided",
+            billing_result=_billing_result(billing),
         )
-        await self._sessions.release_seat(e.session_id)
+        if e.status not in self._SEATLESS_STATUSES:
+            await self._sessions.release_seat(e.session_id)
+        await _drop_future_occurrence_roster(
+            self._occurrence_roster,
+            session_id=e.session_id,
+            student_id=e.student_id,
+            after=effective_at,
+        )
         cancel_reason: Literal["admin_cancel", "parent_cancel", "session_cancelled"]
         if cmd.reason in {"admin_cancel", "parent_cancel", "session_cancelled"}:
             cancel_reason = cmd.reason  # type: ignore[assignment]
@@ -928,6 +1263,10 @@ class TransferEnrollmentCommand(BaseModel):
     enrollment_id: str
     target_session_id: str
     effective_at: datetime | None = None
+    #: The admin-chosen effective DATE, passed straight through to billing so
+    #: the "classes still to come" boundary is local midnight rather than
+    #: midnight UTC (which is the previous evening locally — issue #669 review).
+    effective_date: date | None = None
     actor_id: str | None = None
     reason: str | None = None
 
@@ -945,22 +1284,38 @@ class TransferEnrollment:
         enrollments: EnrollmentWriter,
         sessions: SessionWriter,
         enrollment_events: EnrollmentEventRepository | None = None,
-        billing: EnrollmentLifecycleBillingPort | None = None,
+        billing_sync: EnrollmentMoveBillingSync | None = None,
         roster_notifier: RosterChangeNotifier | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._enrollments = enrollments
         self._sessions = sessions
         self._enrollment_events = enrollment_events
-        self._billing = billing
+        self._billing_sync = billing_sync
         self._roster_notifier = roster_notifier
         self._now = clock
+
+    #: Only these rows still hold a seat and still attend (see the docstring).
+    _TRANSFERABLE_STATUSES = frozenset({"active", "paused"})
 
     async def execute(self, cmd: TransferEnrollmentCommand) -> Enrollment:
         enrollment = await self._enrollments.get(cmd.enrollment_id)
         if enrollment is None:
             raise EnrollmentNotFound("enrollment missing", enrollment_id=cmd.enrollment_id)
+        if enrollment.status not in self._TRANSFERABLE_STATUSES:
+            # A cancelled/withdrawn row would otherwise consume a target seat,
+            # double-release the old one and get billed a move proration.
+            raise EnrollmentNotTransferable(
+                "only an active or paused enrollment can be transferred",
+                enrollment_id=cmd.enrollment_id,
+                status=enrollment.status,
+            )
+        move_seq = await self._prior_move_count(cmd.enrollment_id)
         if enrollment.session_id == cmd.target_session_id:
+            # Not a move — but if the LAST move's billing sync failed this is
+            # the only way an admin has to re-drive it, so retry it here rather
+            # than dead-ending (issue #669 review).
+            await self._retry_failed_move_billing(enrollment, cmd)
             return enrollment
         reserved = await self._sessions.try_reserve_seat(cmd.target_session_id)
         if not reserved:
@@ -970,20 +1325,23 @@ class TransferEnrollment:
         await self._enrollments.update_session(enrollment.enrollment_id, cmd.target_session_id)
         now = self._now()
         effective_at = cmd.effective_at or now
-        billing_decision = {
-            "billing_policy": None,
-            "billing_result": None,
-            "metadata": {},
-        }
-        if self._billing is not None and cmd.actor_id is not None:
-            billing_decision = await self._billing.record_move_proration(
-                enrollment=enrollment,
-                from_session_id=enrollment.session_id,
-                to_session_id=cmd.target_session_id,
-                effective_at=effective_at,
-                actor_id=cmd.actor_id,
-                reason=cmd.reason,
-            )
+        # Issue #669: the session changed in place, so the current period's
+        # invoice must follow the new price. Never raises; the audit event
+        # carries whatever billing reported (or why it could not run).
+        billing_decision = await _sync_move_billing(
+            self._billing_sync,
+            enrollment_id=enrollment.enrollment_id,
+            from_session_id=enrollment.session_id,
+            to_session_id=cmd.target_session_id,
+            effective_at=effective_at,
+            reason=cmd.reason,
+            actor_id=cmd.actor_id,
+            effective_date=cmd.effective_date,
+            move_seq=move_seq,
+        )
+        metadata = self._move_metadata(
+            billing_decision, move_seq=move_seq, effective_date=cmd.effective_date
+        )
         await _record_lifecycle_event(
             self._enrollment_events,
             academy_id=enrollment.academy_id,
@@ -997,9 +1355,10 @@ class TransferEnrollment:
             reason=cmd.reason,
             effective_at=effective_at,
             occurred_at=now,
-            billing_policy=billing_decision.get("billing_policy"),
-            billing_result=billing_decision.get("billing_result"),
-            metadata=billing_decision.get("metadata", {}),
+            billing_policy=str(billing_decision.get("billing_policy") or "move_proration"),
+            billing_result=str(billing_decision.get("billing_result") or "unknown"),
+            credit_id=metadata.get("credit_id"),
+            metadata=metadata,
         )
         await self._sessions.release_seat(enrollment.session_id)
         await _notify_roster_change(
@@ -1016,6 +1375,100 @@ class TransferEnrollment:
             actor_id=cmd.actor_id,
         )
         return enrollment.model_copy(update={"session_id": cmd.target_session_id})
+
+    # -- move bookkeeping (issue #669) ------------------------------------
+
+    @staticmethod
+    def _move_metadata(
+        billing_decision: dict[str, object], *, move_seq: int, effective_date: date | None
+    ) -> dict[str, str]:
+        """Audit metadata for a `moved` event, including what a retry needs."""
+        raw = billing_decision.get("metadata")
+        out = {str(k): str(v) for k, v in raw.items()} if isinstance(raw, dict) else {}
+        out["move_seq"] = str(move_seq)
+        if effective_date is not None:
+            out["effective_date"] = effective_date.isoformat()
+        return out
+
+    async def _moved_events(self, enrollment_id: str) -> list[EnrollmentLifecycleEvent]:
+        if self._enrollment_events is None:
+            return []
+        try:
+            events = await self._enrollment_events.list_for_enrollment(enrollment_id)
+        except Exception:
+            log.exception("enrollment_move_history_unreadable", extra={"e": enrollment_id})
+            return []
+        return [event for event in events if event.event_type == "moved"]
+
+    async def _prior_move_count(self, enrollment_id: str) -> int:
+        """How many moves this enrollment has already been through.
+
+        Feeds the billing idempotency key so a repeated A→B move inside one
+        period is a distinct, billable move rather than a cached no-op.
+        Retries of ONE move reuse the seq stored on its lifecycle event.
+        """
+        return len(await self._moved_events(enrollment_id))
+
+    async def _retry_failed_move_billing(
+        self, enrollment: Enrollment, cmd: TransferEnrollmentCommand
+    ) -> None:
+        """Re-drive billing for a move whose sync failed, on a repeat transfer.
+
+        `_sync_move_billing` never raises, so a Mongo blip leaves the roster
+        moved and the period un-repriced with `billing_result=billing_sync_*`.
+        Nothing else re-drives it, and the plain repeat transfer used to return
+        immediately — so the money was silently never collected.
+        """
+        moved = await self._moved_events(enrollment.enrollment_id)
+        if not moved:
+            return
+        last = moved[-1]
+        if str(last.billing_result or "") not in {"billing_sync_failed", "billing_sync_unwired"}:
+            return
+        if not last.from_session_id or last.to_session_id != cmd.target_session_id:
+            return
+        stored_seq = last.metadata.get("move_seq")
+        move_seq = (
+            int(stored_seq) if stored_seq and stored_seq.isdigit() else max(len(moved) - 1, 0)
+        )
+        stored_date = last.metadata.get("effective_date")
+        try:
+            effective_date = date.fromisoformat(stored_date) if stored_date else None
+        except ValueError:
+            effective_date = None
+        billing_decision = await _sync_move_billing(
+            self._billing_sync,
+            enrollment_id=enrollment.enrollment_id,
+            from_session_id=last.from_session_id,
+            to_session_id=cmd.target_session_id,
+            effective_at=last.effective_at,
+            reason=cmd.reason or last.reason,
+            actor_id=cmd.actor_id,
+            effective_date=effective_date,
+            move_seq=move_seq,
+        )
+        metadata = self._move_metadata(
+            billing_decision, move_seq=move_seq, effective_date=effective_date
+        )
+        metadata["retry_of_event_id"] = last.event_id
+        await _record_lifecycle_event(
+            self._enrollment_events,
+            academy_id=enrollment.academy_id,
+            event_type="moved",
+            enrollment_id=enrollment.enrollment_id,
+            session_id=cmd.target_session_id,
+            from_session_id=last.from_session_id,
+            to_session_id=cmd.target_session_id,
+            student_id=enrollment.student_id,
+            actor_id=cmd.actor_id,
+            reason=cmd.reason or last.reason,
+            effective_at=last.effective_at,
+            occurred_at=self._now(),
+            billing_policy=str(billing_decision.get("billing_policy") or "move_proration"),
+            billing_result=str(billing_decision.get("billing_result") or "unknown"),
+            credit_id=metadata.get("credit_id"),
+            metadata=metadata,
+        )
 
 
 class OverrideEnrollmentFeeCommand(BaseModel):
@@ -1067,9 +1520,16 @@ class EnrollmentAutopayStatusGateway(Protocol):
 
 
 class PauseEnrollment:
-    """Pause keeps the seat but marks the enrollment paused (no attendance
-    expected). Resume returns to active without re-reserving a seat (the
-    seat was held the whole time).
+    """Pause releases the seat, parks the student at the back of the
+    waitlist and stops billing. Resume re-reserves a seat (or fails with
+    CapacityExceeded) and returns the row to active.
+
+    Issue #651: the released seat is offered to families that were ALREADY
+    waiting via the same ``EnrollmentCancelled`` signal a cancel emits. The
+    paused student's own waitlist entry is written first with ``joined_at =
+    now`` so FIFO promotion (``next_waiting`` orders by ``joined_at``) can
+    never hand the seat straight back to the family that just paused; when
+    nobody else is waiting the signal is not sent at all.
     """
 
     def __init__(
@@ -1081,6 +1541,9 @@ class PauseEnrollment:
         enrollment_events: EnrollmentEventRepository | None = None,
         billing_deferrals: BillingDeferralRepository | None = None,
         autopay_status: EnrollmentAutopayStatusGateway | None = None,
+        billing_sync: EnrollmentBillingSync | None = None,
+        roster_notifier: RosterChangeNotifier | None = None,
+        outbox: Outbox | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._enrollments = enrollments
@@ -1090,6 +1553,9 @@ class PauseEnrollment:
         self._enrollment_events = enrollment_events
         self._billing_deferrals = billing_deferrals
         self._autopay_status = autopay_status
+        self._billing_sync = billing_sync
+        self._roster_notifier = roster_notifier
+        self._outbox = outbox
         self._now = clock
 
     async def execute(self, cmd: PauseEnrollmentCommand) -> None:
@@ -1109,7 +1575,13 @@ class PauseEnrollment:
         waitlist_id: str | None = None
         if self._sessions is not None:
             await self._sessions.release_seat(e.session_id)
+        someone_else_waiting = False
         if self._waitlist is not None:
+            # Issue #651: read the head of the queue BEFORE adding the paused
+            # student, so the seat-released signal below only fires when a
+            # different family is actually ahead of them.
+            head = await self._waitlist.next_waiting(e.session_id)
+            someone_else_waiting = head is not None and head.student_id != e.student_id
             existing_waitlist = await self._waitlist.find_waiting_for_session_student(
                 e.session_id, e.student_id
             )
@@ -1144,8 +1616,11 @@ class PauseEnrollment:
             metadata={"seat_policy": "released_to_waitlist"},
         )
         if self._billing_deferrals is not None and cmd.create_billing_deferral:
-            bounded_date = cmd.resume_on or cmd.review_on
-            if bounded_date is not None:
+            # Issue #651: one deferral per PAUSED month. The old single row
+            # named the resume month, which the generator never matched.
+            for billing_period in paused_billing_periods(
+                effective_at=effective_at, resume_on=cmd.resume_on, review_on=cmd.review_on
+            ):
                 await self._billing_deferrals.add(
                     BillingDeferral(
                         deferral_id=str(new_ulid()),
@@ -1156,7 +1631,7 @@ class PauseEnrollment:
                         source="admin_direct_pause",
                         actor_id=cmd.actor_id,
                         actor_type="admin" if cmd.actor_id else "system",
-                        billing_period=bounded_date.strftime("%Y-%m"),
+                        billing_period=billing_period,
                         resume_on=cmd.resume_on,
                         review_on=cmd.review_on,
                         created_at=now,
@@ -1183,6 +1658,44 @@ class PauseEnrollment:
                 "autopay pause skipped: autopay_status gateway unwired for enrollment_id=%s",
                 cmd.enrollment_id,
             )
+        if cmd.pause_stripe_collection:
+            # Issue #651: void unpaid invoices for the paused months and stop
+            # their ladders (autopay status is re-applied idempotently).
+            await _sync_billing(
+                self._billing_sync,
+                enrollment_id=e.enrollment_id,
+                transition="paused",
+                effective_at=effective_at,
+                reason=cmd.reason,
+                actor_id=cmd.actor_id,
+            )
+        if self._outbox is not None and self._sessions is not None and someone_else_waiting:
+            # Issue #651: the released seat goes to the family that was
+            # already waiting. Appended AFTER the paused student's own waitlist
+            # entry (joined last) so FIFO promotion cannot pick them. Reason
+            # `admin_cancel` is the payload vocabulary for "a seat opened";
+            # the only consumer is the waitlist-promotion handler.
+            await self._outbox.append(
+                EnrollmentCancelled(
+                    aggregate_id=e.enrollment_id,
+                    academy_id=e.academy_id,
+                    payload=EnrollmentCancelledPayload(
+                        enrollment_id=e.enrollment_id,
+                        session_id=e.session_id,
+                        student_id=e.student_id,
+                        reason="admin_cancel",
+                    ),
+                )
+            )
+        # Issue #651: staff alert last, after every write has settled.
+        await _notify_roster_change(
+            self._roster_notifier,
+            change="paused",
+            session_id=e.session_id,
+            student_id=e.student_id,
+            enrollment_id=e.enrollment_id,
+            actor_id=cmd.actor_id,
+        )
 
 
 class WithdrawEnrollmentCommand(BaseModel):
@@ -1195,6 +1708,12 @@ class WithdrawEnrollmentCommand(BaseModel):
 
 
 class WithdrawEnrollment:
+    """Mid-term withdrawal: records the credit/refund decision, stops
+    billing, and — issue #651 — releases the seat and offers it to the
+    waitlist exactly as a cancel does. A withdrawn row that still counted
+    against ``reserved_seats`` kept a class "full" for the next family.
+    """
+
     def __init__(
         self,
         *,
@@ -1202,12 +1721,22 @@ class WithdrawEnrollment:
         enrollment_events: EnrollmentEventRepository | None = None,
         billing: EnrollmentLifecycleBillingPort | None = None,
         roster_notifier: RosterChangeNotifier | None = None,
+        billing_sync: EnrollmentBillingSync | None = None,
+        sessions: SessionWriter | None = None,
+        outbox: Outbox | None = None,
+        occurrence_roster: OccurrenceRosterCleanup | None = None,
+        scheduled_actions: ScheduledEnrollmentActionRepository | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._enrollments = enrollments
         self._enrollment_events = enrollment_events
         self._billing = billing
         self._roster_notifier = roster_notifier
+        self._billing_sync = billing_sync
+        self._sessions = sessions
+        self._outbox = outbox
+        self._occurrence_roster = occurrence_roster
+        self._scheduled_actions = scheduled_actions
         self._now = clock
 
     async def execute(self, cmd: WithdrawEnrollmentCommand) -> None:
@@ -1217,9 +1746,11 @@ class WithdrawEnrollment:
         if e.status == "withdrawn":
             return
         now = self._now()
-        billing_decision = {
+        # The audit row must not claim a credit/refund decision was recorded
+        # when no decision port is wired (issue #651).
+        billing_decision: dict[str, Any] = {
             "billing_policy": f"withdrawal_{cmd.outcome}",
-            "billing_result": "recorded",
+            "billing_result": "decision_not_recorded",
             "metadata": {"outcome": cmd.outcome},
         }
         if self._billing is not None:
@@ -1231,6 +1762,42 @@ class WithdrawEnrollment:
                 reason=cmd.reason,
             )
         await self._enrollments.update_status(e.enrollment_id, "withdrawn")
+        # Issue #674: withdrawals stamp the actor and reason too, so the
+        # student's past-enrollment row is not blank for every withdrawal.
+        await _persist_lifecycle_dates(
+            self._enrollments,
+            e.enrollment_id,
+            withdrawal_date=cmd.effective_at,
+            cancelled_by="admin",
+            cancellation_reason=cmd.reason,
+        )
+        await _retire_scheduled_actions(
+            self._scheduled_actions, e.enrollment_id, reason="enrollment_withdrawn"
+        )
+        # Issue #651: a withdrawn student no longer holds a seat. A paused row
+        # released its seat when it paused, so only an active row releases.
+        if self._sessions is not None and e.status != "paused":
+            await self._sessions.release_seat(e.session_id)
+        await _drop_future_occurrence_roster(
+            self._occurrence_roster,
+            session_id=e.session_id,
+            student_id=e.student_id,
+            after=cmd.effective_at,
+        )
+        billing = await _sync_billing(
+            self._billing_sync,
+            enrollment_id=e.enrollment_id,
+            transition="withdrawn",
+            effective_at=cmd.effective_at,
+            reason=cmd.reason,
+            actor_id=cmd.actor_id,
+        )
+        sync_result = _billing_result(billing)
+        if self._billing_sync is not None and sync_result is not None:
+            billing_decision = {
+                **billing_decision,
+                "billing_result": f"{billing_decision.get('billing_result')};{sync_result}",
+            }
         await _record_lifecycle_event(
             self._enrollment_events,
             academy_id=e.academy_id,
@@ -1248,6 +1815,22 @@ class WithdrawEnrollment:
             refund_id=billing_decision.get("refund_id"),
             metadata=billing_decision.get("metadata", {"outcome": cmd.outcome}),
         )
+        if self._outbox is not None:
+            # Issue #651: the same seat-released signal a cancel emits, so the
+            # waitlist-promotion handler fills the seat. `admin_cancel` is the
+            # payload's vocabulary for an admin-initiated seat release.
+            await self._outbox.append(
+                EnrollmentCancelled(
+                    aggregate_id=e.enrollment_id,
+                    academy_id=e.academy_id,
+                    payload=EnrollmentCancelledPayload(
+                        enrollment_id=e.enrollment_id,
+                        session_id=e.session_id,
+                        student_id=e.student_id,
+                        reason="admin_cancel",
+                    ),
+                )
+            )
         await _notify_roster_change(
             self._roster_notifier,
             change="withdrawn",
@@ -1259,6 +1842,14 @@ class WithdrawEnrollment:
 
 
 class ResumeEnrollment:
+    """Paused -> active. Reserves a seat first (CapacityExceeded when full).
+
+    Issue #651: refuses to resume into a cancelled session with
+    ``SessionNotEnrollable`` BEFORE touching the seat counter — the atomic
+    reserve would refuse anyway, but reporting that as "session full" sent
+    admins hunting a capacity problem that was not there (#610).
+    """
+
     def __init__(
         self,
         enrollments: EnrollmentWriter,
@@ -1268,6 +1859,8 @@ class ResumeEnrollment:
         enrollment_events: EnrollmentEventRepository | None = None,
         billing_deferrals: BillingDeferralRepository | None = None,
         autopay_status: EnrollmentAutopayStatusGateway | None = None,
+        billing_sync: EnrollmentBillingSync | None = None,
+        roster_notifier: RosterChangeNotifier | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._enrollments = enrollments
@@ -1277,6 +1870,8 @@ class ResumeEnrollment:
         self._enrollment_events = enrollment_events
         self._billing_deferrals = billing_deferrals
         self._autopay_status = autopay_status
+        self._billing_sync = billing_sync
+        self._roster_notifier = roster_notifier
         self._now = clock
 
     async def execute(
@@ -1294,10 +1889,15 @@ class ResumeEnrollment:
         if e.status != "paused":
             return
         if self._sessions is not None:
+            session = await self._sessions.get(e.session_id)
+            if session is not None and session.status == "cancelled":
+                raise SessionNotEnrollable(
+                    f"Session {e.session_id} is cancelled; the enrollment cannot resume.",
+                    session_id=e.session_id,
+                    status=session.status,
+                )
             reserved = await self._sessions.try_reserve_seat(e.session_id)
             if not reserved:
-                from backend.v2.contexts.enrollment.domain.errors import CapacityExceeded
-
                 raise CapacityExceeded("session full", session_id=e.session_id)
         await self._enrollments.update_status(e.enrollment_id, "active")
         if self._waitlist is not None:
@@ -1329,10 +1929,21 @@ class ResumeEnrollment:
                     "or no billing enrollment (MEDIUM/BLOCKING#2 observability)",
                     e.enrollment_id,
                 )
-        elif resume_autopay_collection and self._autopay_status is None:
+        if resume_autopay_collection and self._autopay_status is None:
+            # Issue #651: standalone so it is reachable — it was an `elif`
+            # behind `if resume_autopay_collection:` and could never fire.
             log.warning(
                 "autopay resume skipped: autopay_status gateway unwired for enrollment_id=%s",
                 enrollment_id,
+            )
+        if resume_autopay_collection:
+            await _sync_billing(
+                self._billing_sync,
+                enrollment_id=e.enrollment_id,
+                transition="resumed",
+                effective_at=now,
+                reason=reason,
+                actor_id=actor_id,
             )
         if self._billing_deferrals is not None and close_billing_deferral:
             await self._billing_deferrals.close_active_for_enrollment(
@@ -1341,6 +1952,16 @@ class ResumeEnrollment:
                 closed_by=actor_id or "system",
                 reason="resume_succeeded",
             )
+        # Issue #651: staff alert + the family's "you're back on the roster"
+        # email, last, after every write has settled.
+        await _notify_roster_change(
+            self._roster_notifier,
+            change="resumed",
+            session_id=e.session_id,
+            student_id=e.student_id,
+            enrollment_id=e.enrollment_id,
+            actor_id=actor_id,
+        )
 
 
 # -- Waitlist writes ----------------------------------------------------

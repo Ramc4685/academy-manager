@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import datetime
 
-from backend.v2.contexts.coaching.application.ports import OccurrenceDetails
+from backend.v2.contexts.coaching.application.ports import (
+    AttendanceEligibility,
+    OccurrenceDetails,
+)
 from backend.v2.contexts.coaching.application.use_cases.mark_attendance import (
     MarkAttendance,
     MarkAttendanceCommand,
@@ -79,6 +82,17 @@ class _FakeEnrollmentBySession:
 
     async def is_active(self, session_id: str, student_id: str) -> bool:
         return session_id == self._enrolled_in
+
+    async def attendance_eligibility(
+        self, *, occurrence_id, session_id, template_session_id, student_id
+    ):
+        # Mirrors composition.coaching_lookups.EnrollmentLookupAdapter's
+        # session-then-template fallback; no one-time roster here.
+        if await self.is_active(session_id, student_id):
+            return AttendanceEligibility(source="enrollment")
+        if template_session_id and await self.is_active(template_session_id, student_id):
+            return AttendanceEligibility(source="enrollment")
+        return None
 
 
 class _FakeOutbox:

@@ -8,6 +8,7 @@ from typing import Any
 
 from bson import ObjectId as BsonObjectId
 from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     GenerateMonthlyPaymentsResult,
@@ -636,6 +637,25 @@ class MongoPaymentRepository(TenantScopedRepository):
         )
         return str(snapshot.snapshot_id)
 
+    async def occurrences_for_period(
+        self, *, session_id: str, period: str, timezone_name: str
+    ) -> list[ClassOccurrence]:
+        """The generator's own view of one session's classes in ``period`` (#671).
+
+        Public because cancelling a single date has to reason about exactly
+        the rows the monthly generator would price — synthesised from the
+        session template and then overlaid with ``session_occurrence_overrides``
+        — and must not re-implement that synthesis and drift from it.
+        """
+        session_doc = await self._db["sessions"].find_one(
+            {"academy_id": current_academy_id(), "session_id": session_id}
+        )
+        if session_doc is None:
+            return []
+        return await self._occurrences_for_session(
+            session_doc, BillingPeriod.from_label(period, timezone_name=timezone_name)
+        )
+
     async def _occurrences_for_session(
         self,
         session_doc: dict[str, object],
@@ -767,26 +787,51 @@ class MongoPaymentRepository(TenantScopedRepository):
                 }
             )
             if existing_credit is None:
-                await self._credit_ledger.create(
-                    CreditLedgerEntry(
-                        credit_id=str(new_ulid()),
-                        academy_id=current_academy_id(),
-                        parent_id=str(doc.get("parent_id") or doc.get("parent_user_id") or ""),
-                        student_id=doc.get("student_id"),
-                        enrollment_id=doc.get("enrollment_id"),
-                        invoice_id=payment_id,
-                        type="MANUAL_CREDIT",
-                        status="APPROVED",
+                # The check above is not atomic — two concurrent (or retried)
+                # manual-payment recordings for the same payment can both
+                # reach here. The payment doc's own $set has ALREADY
+                # committed, so a DuplicateKeyError escaping this call would
+                # 500 a money path with the payment half-recorded. The credit
+                # is keyed on (source_type, source_id), so losing the race
+                # means the credit already exists: log and carry on (#671).
+                try:
+                    await self._create_overpayment_credit(
+                        doc=doc,
+                        payment_id=payment_id,
                         amount_cents=new_credit_cents,
-                        remaining_amount_cents=new_credit_cents,
-                        currency=str(doc.get("currency", "usd")),
-                        reason=f"Overpayment on payment {payment_id}",
-                        source_type="OVERPAYMENT",
-                        source_id=payment_id,
-                        created_at=now,
-                        updated_at=now,
+                        now=now,
                     )
-                )
+                except DuplicateKeyError:
+                    log.info(
+                        "overpayment_credit_already_recorded",
+                        extra={"payment_id": payment_id},
+                    )
+
+    async def _create_overpayment_credit(
+        self, *, doc: dict[str, Any], payment_id: str, amount_cents: int, now: datetime
+    ) -> None:
+        if self._credit_ledger is None:  # pragma: no cover - guarded by the caller
+            return
+        await self._credit_ledger.create(
+            CreditLedgerEntry(
+                credit_id=str(new_ulid()),
+                academy_id=current_academy_id(),
+                parent_id=str(doc.get("parent_id") or doc.get("parent_user_id") or ""),
+                student_id=doc.get("student_id"),
+                enrollment_id=doc.get("enrollment_id"),
+                invoice_id=payment_id,
+                type="MANUAL_CREDIT",
+                status="APPROVED",
+                amount_cents=amount_cents,
+                remaining_amount_cents=amount_cents,
+                currency=str(doc.get("currency", "usd")),
+                reason=f"Overpayment on payment {payment_id}",
+                source_type="OVERPAYMENT",
+                source_id=payment_id,
+                created_at=now,
+                updated_at=now,
+            )
+        )
 
     async def apply_payment_discount(
         self, payment_id: str, discount_cents: int, *, reason: str

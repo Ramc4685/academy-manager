@@ -16,6 +16,11 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel
 
+from backend.v2.contexts.billing.application.autopay_eligibility import (
+    AUTOPAY_ACTIVE_STATUS,
+    CHARGEABLE_INVOICE_STATUSES,
+    invoice_is_chargeable,
+)
 from backend.v2.contexts.billing.application.ports import (
     BillingSettingsRepository,
     ConnectedAccountRepository,
@@ -45,9 +50,8 @@ _ATTEMPT_STATUS_TO_OUTCOME = {
     "requires_action": "requires_action",
 }
 
-# Only an actively-autopaying enrollment may be auto-charged. paused / disabled
-# / not_offered / offered / setup_started are all ineligible (Security P2).
-_AUTOPAY_ELIGIBLE_STATUS = "active"
+# Only an actively-autopaying enrollment may be auto-charged (see
+# ``autopay_eligibility.AUTOPAY_ACTIVE_STATUS``).
 
 
 class EnrollmentAutopayGateway(Protocol):
@@ -138,8 +142,6 @@ class ChargeResult(BaseModel):
 # Use case
 # ---------------------------------------------------------------------------
 
-_CHARGEABLE_STATUSES = frozenset({"open", "partially_paid"})
-
 
 class ChargeInvoiceViaAutopay:
     """Charge an invoice balance via an off-session Stripe PaymentIntent.
@@ -182,10 +184,10 @@ class ChargeInvoiceViaAutopay:
             raise ValueError(f"invoice {invoice_id!r} not found")
 
         # 2. Guard: invoice must be chargeable
-        if invoice.status not in _CHARGEABLE_STATUSES:
+        if invoice.status not in CHARGEABLE_INVOICE_STATUSES:
             raise ValueError(
                 f"invoice {invoice_id!r} is not chargeable (status={invoice.status!r}); "
-                f"only {sorted(_CHARGEABLE_STATUSES)} are allowed"
+                f"only {sorted(CHARGEABLE_INVOICE_STATUSES)} are allowed"
             )
         if invoice.balance_due_cents <= 0:
             raise ValueError(f"invoice {invoice_id!r} has no balance due (balance_due_cents=0)")
@@ -193,7 +195,7 @@ class ChargeInvoiceViaAutopay:
         fresh = await self._ledger.get_invoice(invoice_id)
         if fresh is None:
             raise ValueError(f"invoice {invoice_id!r} not found")
-        if fresh.status not in _CHARGEABLE_STATUSES or fresh.balance_due_cents <= 0:
+        if not invoice_is_chargeable(fresh.status, fresh.balance_due_cents):
             raise ValueError(f"invoice {invoice_id!r} no longer chargeable")
         invoice = fresh
 
@@ -244,14 +246,14 @@ class ChargeInvoiceViaAutopay:
             autopay_status = await self._enrollment_autopay.get_autopay_enrollment_status(
                 enrollment_id=invoice.enrollment_id
             )
-            if autopay_status != _AUTOPAY_ELIGIBLE_STATUS:
+            if autopay_status != AUTOPAY_ACTIVE_STATUS:
                 log.warning(
                     "charge_autopay: refusing to charge invoice=%s enrollment=%s — "
                     "autopay_enrollment_status=%s (must be %s)",
                     invoice_id,
                     invoice.enrollment_id,
                     autopay_status,
-                    _AUTOPAY_ELIGIBLE_STATUS,
+                    AUTOPAY_ACTIVE_STATUS,
                 )
                 return ChargeResult(
                     success=False,

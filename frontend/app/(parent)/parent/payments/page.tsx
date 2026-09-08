@@ -505,7 +505,8 @@ export default function ParentPaymentsPage() {
               const payable =
                 invoice.balance_due_cents > 0 &&
                 (invoice.status === "open" || invoice.status === "partially_paid");
-              const isPaid = invoice.status === "paid" || invoice.status === "void";
+              const isVoid = invoice.status === "void";
+              const isPaid = invoice.status === "paid" || isVoid;
               return (
                 <div
                   key={invoice.invoice_id}
@@ -515,11 +516,18 @@ export default function ParentPaymentsPage() {
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <p className="text-sm font-medium text-rally-ink">{formatPeriodLabel(invoice.period)}</p>
-                      <StatusPill status={invoice.status} />
+                      <StatusPill status={invoice.status} label={isVoid ? "Cancelled" : undefined} />
+                      {isVoid && invoice.void_reason && (
+                        <p className="mt-1 text-xs text-rally-subtle">
+                          {voidReasonText(invoice.void_reason)}
+                        </p>
+                      )}
                     </div>
                     <p className="text-base font-semibold tabular-nums text-rally-ink">
+                      {/* A voided invoice keeps its historical balance_due_cents on the
+                          ledger; the parent owes nothing on it (#651). */}
                       {money(
-                        invoice.balance_due_cents > 0 ? invoice.balance_due_cents : paid,
+                        isVoid ? 0 : invoice.balance_due_cents > 0 ? invoice.balance_due_cents : paid,
                         invoice.currency.toUpperCase(),
                       )}
                     </p>
@@ -952,10 +960,17 @@ function statusPillClasses(status: string): string {
   return classes[status] ?? classes.expired;
 }
 
-function StatusPill({ status }: { status: string }) {
+function StatusPill({ status, label }: { status: string; label?: string }) {
   return (
     <span className={`mt-0.5 inline-block rounded-full px-2 py-0.5 text-xs font-medium ${statusPillClasses(status)}`}>
-      {status.replace(/_/g, " ")}
+      {label ?? status.replace(/_/g, " ")}
     </span>
   );
+}
+
+/** "enrollment_cancelled" -> "Enrollment cancelled"; unknown reasons render humanised. */
+function voidReasonText(reason: string): string {
+  const text = reason.replace(/_/g, " ").trim();
+  if (text === "admin void") return "Cancelled by the academy";
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }

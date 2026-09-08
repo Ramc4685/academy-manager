@@ -2,6 +2,8 @@
 
 import { useEffect } from "react";
 
+import { captureError } from "@/lib/observability/sentry";
+
 /**
  * Root-layout error boundary. Replaces the whole document when the root layout
  * itself fails, so it renders its own <html>/<body> with inline styles (global
@@ -16,6 +18,7 @@ export default function GlobalError({
 }) {
   useEffect(() => {
     console.error(error);
+    captureError(error, { digest: error.digest, tags: { boundary: "global" } });
   }, [error]);
 
   return (

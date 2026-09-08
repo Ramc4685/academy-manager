@@ -6,31 +6,48 @@ import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 
 import { usePersonaAuth } from "@/lib/auth/use-persona-auth";
-import { COACH_SUPERVISOR_ROLES, canSuperviseCoaching } from "@/lib/api/me";
+import { COACH_SURFACE_ROLES, canSuperviseCoaching, isAssistantCoach } from "@/lib/api/me";
 import { useOnline } from "@/lib/pwa/online";
 import { useServiceWorkerUpdate } from "@/lib/pwa/update-flow";
 import { startAutoSync } from "@/lib/offline/sync";
 import { CoachInstallCard } from "@/components/coach/install-card";
+import { CoachSurfaceProvider } from "@/components/coach/coach-surface-context";
 import { ToastProvider } from "@/components/ds/toast";
 import { PersonaSwitcher } from "@/components/persona/persona-switcher";
 import { AccessDeniedNotice } from "@/components/persona/access-denied-notice";
 import { AuthUnavailableScreen } from "@/components/persona/auth-unavailable";
 import { PersonaLogoutButton } from "@/components/persona/logout-button";
+import { ShellBackButton } from "@/components/persona/back-button";
 import { listCoachMessages } from "@/lib/api/v2/messages";
 import { queryKeys } from "@/lib/query/keys";
+
+const COACH_TOP_LEVEL_ROUTES = [
+  "/coach/dashboard",
+  "/coach/today",
+  "/coach/sessions",
+  "/coach/profile",
+  "/coach/calendar",
+  "/coach/messages",
+  "/coach/needs-review",
+] as const;
+const COACH_HOME = "/coach/dashboard";
 
 export default function CoachLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const online = useOnline();
   const { hasUpdate, applyUpdate } = useServiceWorkerUpdate();
-  // Academy admins/owners may open the coach shell to cover any session (#632).
-  const auth = usePersonaAuth("coach", { alsoAllow: COACH_SUPERVISOR_ROLES });
+  // Academy admins/owners may open the coach shell to cover any session
+  // (#632); assistant coaches get it scoped to the sessions that list them.
+  const auth = usePersonaAuth("coach", { alsoAllow: COACH_SURFACE_ROLES });
   const supervising = auth.authorized && canSuperviseCoaching(auth.user.roles);
+  const assistant = auth.authorized && isAssistantCoach(auth.user.roles);
 
   const { data: messagesData } = useQuery({
     queryKey: queryKeys.coach.messages(),
     queryFn: listCoachMessages,
-    enabled: auth.authorized,
+    // Assistants are not a messaging audience: the BFF 404s the inbox for
+    // them, so never poll it.
+    enabled: auth.authorized && !assistant,
     refetchInterval: 30_000,
   });
   const unreadCount = (messagesData?.messages ?? []).filter((m) => !m.read).length;
@@ -51,6 +68,11 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
 
   return (
     <ToastProvider>
+    <CoachSurfaceProvider
+      assistant={assistant}
+      userId={auth.authorized ? auth.user.user_id : null}
+      supervisor={supervising}
+    >
     <div
       className="min-h-screen flex flex-col"
       style={
@@ -61,18 +83,21 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
       }
     >
       <header
-        className="sticky top-0 z-10 flex items-center justify-between px-4 py-3"
+        className="sticky top-0 z-10 flex items-center justify-between px-4 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top,0px))]"
         style={{ background: "#0a0f1c", borderBottom: "1px solid #1e293b" }}
       >
-        <Link href="/coach/dashboard" className="flex items-center gap-2">
-          <div
-            className="h-7 w-7 rounded-md flex items-center justify-center font-bold text-xs"
-            style={{ background: "#facc15", color: "#0a0f1c" }}
-          >
-            C
-          </div>
-          <span className="font-semibold text-white text-[15px] tracking-tight">Academy</span>
-        </Link>
+        <div className="flex items-center gap-2">
+          <ShellBackButton known={COACH_TOP_LEVEL_ROUTES} home={COACH_HOME} variant="dark" />
+          <Link href="/coach/dashboard" className="flex items-center gap-2">
+            <div
+              className="h-7 w-7 rounded-md flex items-center justify-center font-bold text-xs"
+              style={{ background: "#facc15", color: "#0a0f1c" }}
+            >
+              C
+            </div>
+            <span className="font-semibold text-white text-[15px] tracking-tight">Academy</span>
+          </Link>
+        </div>
         <div className="flex items-center gap-2">
           <Link
             href="/coach/calendar"
@@ -82,21 +107,23 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
           >
             <CalendarIcon />
           </Link>
-          <Link
-            href="/coach/messages"
-            data-testid="nav-messages"
-            aria-label="Messages"
-            className="relative min-h-touch min-w-touch flex items-center justify-center rounded-md p-2 text-slate-300 hover:bg-white/10"
-          >
-            <MessagesIcon />
-            {unreadCount > 0 && (
-              <span
-                data-testid="messages-unread-badge"
-                className="absolute top-1 right-1 h-2 w-2 rounded-full"
-                style={{ background: "#facc15" }}
-              />
-            )}
-          </Link>
+          {!assistant && (
+            <Link
+              href="/coach/messages"
+              data-testid="nav-messages"
+              aria-label="Messages"
+              className="relative min-h-touch min-w-touch flex items-center justify-center rounded-md p-2 text-slate-300 hover:bg-white/10"
+            >
+              <MessagesIcon />
+              {unreadCount > 0 && (
+                <span
+                  data-testid="messages-unread-badge"
+                  className="absolute top-1 right-1 h-2 w-2 rounded-full"
+                  style={{ background: "#facc15" }}
+                />
+              )}
+            </Link>
+          )}
           <PersonaSwitcher current="coach" variant="dark" />
           {!online && (
             <span className="rounded-full px-2 py-0.5 text-xs font-medium text-amber-300" style={{ background: "rgba(251,191,36,0.15)" }}>
@@ -131,6 +158,20 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
             the academy and mark attendance for any of them. Marks are recorded under your name.
           </p>
         )}
+        {assistant && (
+          <p
+            data-testid="coach-assistant-banner"
+            className="mb-4 rounded-md border px-3 py-2 text-[13px]"
+            style={{
+              background: "rgba(250,204,21,0.12)",
+              borderColor: "rgba(250,204,21,0.5)",
+              color: "var(--rally-ink)",
+            }}
+          >
+            <span className="font-semibold">Assistant coach.</span> You see the sessions
+            you&apos;re assigned to and can mark attendance, update skills and add notes.
+          </p>
+        )}
         <CoachInstallCard />
         {children}
       </main>
@@ -147,6 +188,7 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
         </div>
       </nav>
     </div>
+    </CoachSurfaceProvider>
     </ToastProvider>
   );
 }

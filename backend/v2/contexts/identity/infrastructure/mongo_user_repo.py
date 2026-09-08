@@ -53,9 +53,10 @@ _log = logging.getLogger(__name__)
 _ROLE_PRIVILEGE: dict[str, int] = {
     "student": 0,
     "parent": 0,
-    "coach": 1,
-    "admin": 2,
-    "owner": 3,
+    "assistant_coach": 1,
+    "coach": 2,
+    "admin": 3,
+    "owner": 4,
 }
 
 

@@ -5,9 +5,14 @@
  *
  * Preserves: broadcast composer, recent broadcasts list, DM thread list,
  * thread view, DM composer.
+ *
+ * `/admin/messages?dm=<parent_id>` opens the DM composer for that parent
+ * (the Payments buckets "Message" action, spec §4), even when no thread with
+ * them exists yet.
  */
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -29,8 +34,17 @@ import { Card } from "@/components/ds/card";
 import { LaneHeader } from "@/components/ds/lane";
 
 export default function AdminMessagesPage() {
+  return (
+    <Suspense fallback={<section data-testid="admin-messages" className="space-y-5" />}>
+      <AdminMessagesContent />
+    </Suspense>
+  );
+}
+
+function AdminMessagesContent() {
   const queryClient = useQueryClient();
-  const [dmRecipientId, setDmRecipientId] = useState<string | null>(null);
+  const dmParam = useSearchParams().get("dm");
+  const [dmRecipientId, setDmRecipientId] = useState<string | null>(dmParam);
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: queryKeys.admin.messages(),
@@ -133,6 +147,11 @@ export default function AdminMessagesPage() {
 
               {dmRecipientId && (
                 <>
+                  {threadMessages.length === 0 && (
+                    <p className="mb-2 text-sm text-rally-subtle" data-testid="dm-new-conversation">
+                      New conversation — no messages with this family yet.
+                    </p>
+                  )}
                   <ul
                     className="mb-4 space-y-2 max-h-64 overflow-y-auto"
                     data-testid="dm-thread-messages"

@@ -579,3 +579,48 @@ async def test_a_parked_invoice_cannot_consume_the_whole_tick() -> None:
     assert result.parked == 1
     assert dunning.state.suppression_reason == "checkout_session_open"
     assert dunning.state.attempt_count == 0
+
+
+class _ReceiptNotifier(_FakeNotifier):
+    def __init__(self, *, raises: Exception | None = None) -> None:
+        super().__init__()
+        self.receipts: list[dict] = []
+        self._raises = raises
+
+    async def send_autopay_receipt(self, **kwargs) -> None:
+        if self._raises is not None:
+            raise self._raises
+        self.receipts.append(kwargs)
+
+
+@pytest.mark.asyncio
+async def test_successful_charge_sends_a_receipt() -> None:
+    """Issue #651: the parent hears that the card was charged."""
+    invoice = _invoice()
+    notifier = _ReceiptNotifier()
+    result = await ProcessDunningRetries(
+        dunning=_FakeDunningRepo(invoice),
+        charge_invoice=_FakeCharge(success=True),
+        notifier=notifier,
+        enrollment_autopay=_FakeEnrollmentAutopay(),
+        clock=lambda: NOW,
+    ).execute(limit=5, worker_id="worker-1")
+
+    assert result.succeeded == 1
+    assert len(notifier.receipts) == 1
+    assert notifier.receipts[0]["invoice_id"] == invoice.invoice_id
+    assert notifier.receipts[0]["parent_id"] == invoice.parent_id
+    assert notifier.calls == []  # no failure notice for a success
+
+
+@pytest.mark.asyncio
+async def test_receipt_failure_never_fails_the_charge() -> None:
+    invoice = _invoice()
+    result = await ProcessDunningRetries(
+        dunning=_FakeDunningRepo(invoice),
+        charge_invoice=_FakeCharge(success=True),
+        notifier=_ReceiptNotifier(raises=RuntimeError("resend down")),
+        enrollment_autopay=_FakeEnrollmentAutopay(),
+        clock=lambda: NOW,
+    ).execute(limit=5, worker_id="worker-1")
+    assert result.succeeded == 1

@@ -278,6 +278,7 @@ class MongoSessionRepository(TenantScopedRepository):
             start_time=None if doc.get("start_time") is None else str(doc.get("start_time")),
             end_time=None if doc.get("end_time") is None else str(doc.get("end_time")),
             timezone=None if doc.get("timezone") is None else str(doc.get("timezone")),
+            assistant_coach_ids=_string_tuple(doc.get("assistant_coach_ids")),
             # Communication pack (#613). This constructor is explicit, so a
             # field missing here is dropped on EVERY domain read — the admin
             # detail route, the coach views, and the welcome email's own
@@ -294,13 +295,21 @@ class MongoSessionRepository(TenantScopedRepository):
     async def for_coach_on_date(self, coach_id: str, on_date: date) -> list[Session]:
         start, end = _day_bounds_utc(on_date)
         cursor = self._find_many(
-            {"coach_id": coach_id, "start_at": {"$gte": start, "$lte": end}},
+            {**_coach_or_assistant_filter(coach_id), "start_at": {"$gte": start, "$lte": end}},
             sort=[("start_at", 1)],
         )
         return [self._to_domain(doc) async for doc in cursor]
 
-    async def assigned_session_ids_for_coach(self, coach_id: str) -> list[str]:
+    async def assigned_session_ids_for_coach(
+        self, coach_id: str, *, include_assistant: bool = True
+    ) -> list[str]:
         """Every session assigned to this coach, with no date window at all.
+
+        ``include_assistant`` (default) also counts sessions whose
+        ``assistant_coach_ids`` list the user, matching
+        ``CoachAssignedSessionLookup``. Pass ``False`` for audiences an
+        assistant is NOT part of — the coach messages inbox (#614) — so a
+        helper never receives family messages for a class they only assist.
 
         `for_coach` answers "what is coming up" (`start_at >= now`) and is the
         wrong question for anything about *assignment*: a recurring template
@@ -311,15 +320,16 @@ class MongoSessionRepository(TenantScopedRepository):
         `coach_id` alone — otherwise a coach can post to a session whose
         announcements they can never read.
         """
-        cursor = self._find_many_in_collection(
-            self.collection_name, {"coach_id": coach_id}, {"session_id": 1}
+        query = (
+            _coach_or_assistant_filter(coach_id) if include_assistant else {"coach_id": coach_id}
         )
+        cursor = self._find_many_in_collection(self.collection_name, query, {"session_id": 1})
         return sorted({str(doc["session_id"]) async for doc in cursor if doc.get("session_id")})
 
     async def for_coach(self, coach_id: str) -> list[Session]:
         now = datetime.now(UTC)
         cursor = self._find_many(
-            {"coach_id": coach_id, "start_at": {"$gte": now}},
+            {**_coach_or_assistant_filter(coach_id), "start_at": {"$gte": now}},
             sort=[("start_at", 1)],
         )
         return [self._to_domain(doc) async for doc in cursor]
@@ -413,6 +423,21 @@ def _amount_cents(doc: dict[str, object], default_amount_cents: int) -> int:
     return default_amount_cents
 
 
+def _coach_or_assistant_filter(coach_id: str) -> dict[str, object]:
+    """Sessions this user coaches: primary coach OR listed assistant coach.
+
+    Mongo matches an array field against a scalar when any element equals it,
+    so ``{"assistant_coach_ids": coach_id}`` is the membership test.
+    """
+    return {"$or": [{"coach_id": coach_id}, {"assistant_coach_ids": coach_id}]}
+
+
+def _string_tuple(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list | tuple):
+        return ()
+    return tuple(str(item) for item in value if item)
+
+
 def _optional_str(value: object) -> str | None:
     """Communication-pack text as stored, with blank treated as unset.
 
@@ -453,6 +478,8 @@ def admin_session_projection_fields(doc: dict[str, object]) -> dict[str, object 
         # Legacy docs carry monthly_price_cents / monthly_price, so a bare
         # doc.get("amount_cents") is NOT equivalent (#609).
         "amount_cents": _optional_amount_cents(doc),
+        # Assistant coaches; names are resolved by the admin composition.
+        "assistant_coach_ids": list(_string_tuple(doc.get("assistant_coach_ids"))),
         # Communication pack (#613).
         "whatsapp_group_link": _optional_str(doc.get("whatsapp_group_link")),
         "venue_address": _optional_str(doc.get("venue_address")),

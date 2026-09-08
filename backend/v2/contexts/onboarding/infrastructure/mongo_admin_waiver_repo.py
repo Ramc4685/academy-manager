@@ -15,6 +15,9 @@ from backend.v2.contexts.onboarding.application.use_cases.admin_waivers import (
     AdminWaiverStudent,
     AdminWaiverTemplateDetail,
 )
+from backend.v2.contexts.onboarding.infrastructure.mongo_parent_waiver_repo import (
+    student_ids_with_live_enrollment,
+)
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 
 
@@ -158,8 +161,18 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
                 ],
             }
         )
+        docs = [doc async for doc in cursor]
+        # issue #651: mirror the parent waiver prompt — only students with an
+        # active-or-paused enrollment owe a waiver, so the admin report must
+        # not list withdrawn / cancelled children as "pending signature".
+        live = await student_ids_with_live_enrollment(
+            self._db,
+            academy_id,
+            [str(doc.get("student_id") or doc.get("_id")) for doc in docs],
+        )
+        docs = [doc for doc in docs if str(doc.get("student_id") or doc.get("_id")) in live]
         return sorted(
-            [doc async for doc in cursor],
+            docs,
             key=lambda doc: (
                 self._student_name(doc).lower(),
                 str(doc.get("student_id") or doc.get("_id")),

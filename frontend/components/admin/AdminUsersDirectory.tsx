@@ -18,6 +18,7 @@ import { queryKeys } from "@/lib/query/keys";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { roleToChipVariant } from "@/lib/admin/role-chip";
+import { roleLabel } from "@/lib/admin/role-label";
 import { Avatar } from "@/components/ds/avatar";
 import { Button } from "@/components/ds/button";
 import { CoachEngagementStatsStrip } from "@/components/admin/CoachEngagementStatsStrip";
@@ -25,12 +26,19 @@ import { CoachEngagementStatsStrip } from "@/components/admin/CoachEngagementSta
 const roles: Array<{ label: string; value: AdminUserRole | undefined }> = [
   { label: "All", value: undefined },
   { label: "Coaches", value: "coach" },
+  { label: "Assistant coaches", value: "assistant_coach" },
   { label: "Parents", value: "parent" },
   { label: "Admins", value: "admin" },
 ];
 
+/** Roles the directory's create form may mint: the operations roles. */
+type CreatableRole = Extract<AdminUserRole, "coach" | "assistant_coach" | "parent">;
+
 function parseRoleParam(value: string | null): AdminUserRole | undefined {
-  return value === "coach" || value === "parent" || value === "admin"
+  return value === "coach" ||
+    value === "assistant_coach" ||
+    value === "parent" ||
+    value === "admin"
     ? value
     : undefined;
 }
@@ -140,9 +148,7 @@ function CreateUserDialog({
   fixedRole?: Extract<AdminUserRole, "coach" | "parent">;
   onCreated: () => void;
 }) {
-  const [role, setRole] = useState<Extract<AdminUserRole, "coach" | "parent">>(
-    fixedRole ?? "parent",
-  );
+  const [role, setRole] = useState<CreatableRole>(fixedRole ?? "parent");
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
@@ -192,11 +198,12 @@ function CreateUserDialog({
                 <select
                   id="create-user-role"
                   value={role}
-                  onChange={(event) => setRole(event.target.value as Extract<AdminUserRole, "coach" | "parent">)}
+                  onChange={(event) => setRole(event.target.value as CreatableRole)}
                   className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
                 >
                   <option value="parent">Parent</option>
                   <option value="coach">Coach</option>
+                  <option value="assistant_coach">Assistant coach</option>
                 </select>
               </Field>
             )}
@@ -310,7 +317,7 @@ function UsersTable({ users }: { users: AdminUserView[] }) {
               <td className="px-2 py-3 text-rally-base">{user.email}</td>
               <td className="px-2 py-3 text-rally-muted">{user.phone || "-"}</td>
               <td className="px-2 py-3">
-                <Chip variant={roleToChipVariant(user.role)} label={user.role.toUpperCase()} />
+                <Chip variant={roleToChipVariant(user.role)} label={roleLabel(user.role).toUpperCase()} />
               </td>
               <td className="px-2 py-3">
                 <Chip variant={user.status === "active" ? "enrolled" : "expired"} label={user.status.toUpperCase()} />

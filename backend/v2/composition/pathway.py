@@ -7,6 +7,7 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from backend.v2.composition.level_up_lifecycle import enrollment_status_lookup
 from backend.v2.contexts.curriculum.application.use_cases.get_pathway import GetFullPathway
 from backend.v2.contexts.curriculum.application.use_cases.manage_criteria import AddSkillCriterion
 from backend.v2.contexts.curriculum.application.use_cases.manage_lesson_cards import (
@@ -299,6 +300,8 @@ def compose_student_progress(
         skill_repo=MongoSkillRepository(db),
         level_repo=MongoLevelRepository(db),
     )
+    # Issue #673: recommend / approve / queue consult enrollment lifecycle.
+    enrollment_lookup = enrollment_status_lookup(db)
 
     return StudentProgressComposition(
         place_student=PlaceStudentInLevel(
@@ -325,6 +328,7 @@ def compose_student_progress(
             skill_progress=skill_progress_repo,
             recommendations=recommendation_repo,
             skill_lookup=skill_lookup,
+            enrollment_lookup=enrollment_lookup,
             outbox=outbox,
         ),
         review_level_up=ReviewLevelUpRecommendation(
@@ -333,6 +337,7 @@ def compose_student_progress(
             skill_progress=skill_progress_repo,
             certificates=certificate_repo,
             skill_lookup=skill_lookup,
+            enrollment_lookup=enrollment_lookup,
             outbox=outbox,
         ),
         get_pathway_placement=GetStudentPathwayPlacement(
@@ -365,6 +370,7 @@ def compose_student_progress(
             skill_progress=skill_progress_repo,
             recommendations=recommendation_repo,
             skill_lookup=skill_lookup,
+            enrollment_lookup=enrollment_lookup,
         ),
         get_certificates=GetStudentCertificates(certificates=certificate_repo),
         get_skill_board=GetSkillBoard(

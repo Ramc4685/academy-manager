@@ -71,6 +71,17 @@ COACH_ID = "coach-001"
 SESSION_ID = "session-001"
 
 
+class _AlwaysEnrolled:
+    """EnrollmentStatusLookup fake: every student is live (issue #673 guard is
+    exercised in test_level_up_lifecycle.py; the coach route 404s first)."""
+
+    async def has_active_or_paused_enrollment(self, student_id: str) -> bool:
+        return True
+
+    async def students_with_active_or_paused_enrollment(self, student_ids: list[str]) -> set[str]:
+        return set(student_ids)
+
+
 class _FakeLevelProgressRepo:
     def __init__(self) -> None:
         self._store: dict[str, StudentLevelProgress] = {}
@@ -310,6 +321,7 @@ def _build_coach_app() -> FastAPI:
         skill_progress=skill_progress_repo,
         recommendations=level_up_repo,
         skill_lookup=skill_lookup,
+        enrollment_lookup=_AlwaysEnrolled(),
     )
 
     app = FastAPI()
@@ -593,6 +605,9 @@ def _build_real_router_app(
         recommend_level_up=_SpyUseCase(_Dumpable(student_id=STUDENT_ID)),
         create_skill_note=_SpyUseCase(_Dumpable(student_id=STUDENT_ID, skill_id=SKILL_ID)),
         list_skill_notes=_SpyUseCase([_Dumpable(student_id=STUDENT_ID, skill_id=SKILL_ID)]),
+        set_skill_note_visibility=_SpyUseCase(
+            _Dumpable(student_id=STUDENT_ID, note_id="note-1", visibility="shared")
+        ),
         get_progress_summary=_SpyUseCase(
             StudentProgressOverview(
                 student_id=STUDENT_ID,
@@ -663,6 +678,7 @@ def _build_real_router_app(
         student_progress=student_progress,  # type: ignore[arg-type]
         create_skill_note=spies.create_skill_note,
         list_skill_notes=spies.list_skill_notes,
+        set_skill_note_visibility=spies.set_skill_note_visibility,
     )
     use_cases.curriculum = curriculum
 
@@ -680,6 +696,7 @@ def _assert_no_skill_spies_called(spies: SimpleNamespace) -> None:
     assert spies.recommend_level_up.calls == 0
     assert spies.create_skill_note.calls == 0
     assert spies.list_skill_notes.calls == 0
+    assert spies.set_skill_note_visibility.calls == 0
     assert spies.get_progress_summary.calls == 0
 
 
@@ -718,6 +735,11 @@ _SKILL_ENDPOINTS = [
         "GET",
         f"/api/v2/coach/students/{STUDENT_ID}/skill-notes?skill_id={SKILL_ID}",
         None,
+    ),
+    (
+        "PATCH",
+        f"/api/v2/coach/students/{STUDENT_ID}/skill-notes/note-1",
+        {"visibility": "shared"},
     ),
 ]
 
@@ -775,6 +797,14 @@ _ASSIGNED_SKILL_ENDPOINTS = [
         200,
         "list_skill_notes",
         {"notes": [{"student_id": STUDENT_ID, "skill_id": SKILL_ID}]},
+    ),
+    (
+        "PATCH",
+        f"/api/v2/coach/students/{STUDENT_ID}/skill-notes/note-1",
+        {"visibility": "shared"},
+        200,
+        "set_skill_note_visibility",
+        {"student_id": STUDENT_ID, "note_id": "note-1", "visibility": "shared"},
     ),
 ]
 
@@ -901,7 +931,252 @@ def test_real_skill_note_create_passes_command_and_academy_id_for_assigned_coach
     assert spies.create_skill_note.args[0].skill_id == SKILL_ID
     assert spies.create_skill_note.args[0].coach_id == COACH_ID
     assert spies.create_skill_note.args[0].session_id == SESSION_ID
+    assert spies.create_skill_note.args[0].visibility == "private", "default is private"
+    assert spies.create_skill_note.args[0].is_assistant is False
     assert spies.create_skill_note.kwargs == {"academy_id": ACADEMY_ID}
+
+
+def test_real_skill_note_create_carries_visibility_into_the_command() -> None:
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids={SESSION_ID},
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        f"/api/v2/coach/students/{STUDENT_ID}/skill-notes",
+        json={"skill_id": SKILL_ID, "body": "share me", "visibility": "shared"},
+    )
+
+    assert response.status_code == 201, response.text
+    assert spies.create_skill_note.args[0].visibility == "shared"
+
+
+def test_real_skill_note_create_rejects_unknown_visibility() -> None:
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids={SESSION_ID},
+    )
+    client = TestClient(app)
+    response = client.post(
+        f"/api/v2/coach/students/{STUDENT_ID}/skill-notes",
+        json={"skill_id": SKILL_ID, "body": "x", "visibility": "public"},
+    )
+    assert response.status_code == 422, response.text
+    assert spies.create_skill_note.calls == 0
+
+
+def test_real_skill_note_patch_passes_author_and_supervisor_flags() -> None:
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids={SESSION_ID},
+    )
+    client = TestClient(app)
+
+    response = client.patch(
+        f"/api/v2/coach/students/{STUDENT_ID}/skill-notes/note-1",
+        json={"visibility": "shared"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "student_id": STUDENT_ID,
+        "note_id": "note-1",
+        "visibility": "shared",
+    }
+    (command,) = spies.set_skill_note_visibility.args
+    assert command.student_id == STUDENT_ID
+    assert command.note_id == "note-1"
+    assert command.visibility == "shared"
+    assert command.coach_id == COACH_ID
+    assert command.is_assistant is False
+    assert command.is_supervisor is False
+
+
+def test_real_skill_note_patch_marks_supervisor_for_admin_claims() -> None:
+    """An owner/admin caller must reach the use case with is_supervisor=True
+    (and is_assistant=False); swapping or hard-coding the flags in the route
+    would leave the plain-coach test above green."""
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids={SESSION_ID},
+    )
+    app.dependency_overrides[get_auth_claims] = lambda: AuthClaims(
+        user_id=COACH_ID,
+        email="owner@example.com",
+        academy_id=ACADEMY_ID,
+        roles=("admin", "owner"),
+    )
+    client = TestClient(app)
+
+    response = client.patch(
+        f"/api/v2/coach/students/{STUDENT_ID}/skill-notes/note-1",
+        json={"visibility": "shared"},
+    )
+
+    assert response.status_code == 200, response.text
+    (command,) = spies.set_skill_note_visibility.args
+    assert command.coach_id == COACH_ID
+    assert command.is_supervisor is True
+    assert command.is_assistant is False
+
+
+def test_real_skill_note_patch_is_503_when_service_not_configured() -> None:
+    app, _spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids={SESSION_ID},
+    )
+    app.dependency_overrides[get_coach_use_cases]().set_skill_note_visibility = None
+    client = TestClient(app)
+    response = client.patch(
+        f"/api/v2/coach/students/{STUDENT_ID}/skill-notes/note-1",
+        json={"visibility": "shared"},
+    )
+    assert response.status_code == 503
+
+
+class _InMemorySkillNoteRepo:
+    def __init__(self) -> None:
+        self.saved: list[object] = []
+
+    async def save(self, note: object) -> None:
+        self.saved.append(note)
+
+    async def list_for_student_skill(self, student_id: str, skill_id: str) -> list[object]:
+        return list(self.saved)
+
+    async def get(self, student_id: str, note_id: str) -> object | None:
+        return next((n for n in self.saved if getattr(n, "note_id", None) == note_id), None)
+
+    async def set_visibility(self, student_id: str, note_id: str, visibility: str) -> object:
+        note = await self.get(student_id, note_id)
+        assert note is not None
+        updated = note.model_copy(update={"visibility": visibility})  # type: ignore[attr-defined]
+        self.saved = [updated if n is note else n for n in self.saved]
+        return updated
+
+
+def _real_note_use_cases_app(
+    *, roles: tuple[str, ...], email: str
+) -> tuple[FastAPI, _InMemorySkillNoteRepo]:
+    """Real skill router with the real note use cases over an in-memory repo.
+
+    The caller always has ``COACH_ID`` so the fake assignment lookup admits
+    them; ``roles`` decides whether the note rules treat them as an
+    assistant, a lead coach or a supervisor.
+    """
+    from backend.v2.contexts.coaching.application.use_cases.skill_notes import (
+        CreateSkillNote,
+        SetSkillNoteVisibility,
+    )
+    from backend.v2.shared.http import register_exception_handlers
+
+    app, _spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids={SESSION_ID},
+    )
+    register_exception_handlers(app)
+    repo = _InMemorySkillNoteRepo()
+    use_cases = app.dependency_overrides[get_coach_use_cases]()
+    use_cases.create_skill_note = CreateSkillNote(notes=repo)  # type: ignore[arg-type]
+    use_cases.set_skill_note_visibility = SetSkillNoteVisibility(notes=repo)  # type: ignore[arg-type]
+    app.dependency_overrides[get_auth_claims] = lambda: AuthClaims(
+        user_id=COACH_ID,
+        email=email,
+        academy_id=ACADEMY_ID,
+        roles=roles,
+    )
+    return app, repo
+
+
+def _assistant_only_app() -> tuple[FastAPI, _InMemorySkillNoteRepo]:
+    """Real skill router with the real note use cases, called by an
+    assistant-only user assigned (as assistant) to the student's session."""
+    return _real_note_use_cases_app(roles=("assistant_coach",), email="helper@example.com")
+
+
+def _seed_stranger_note(repo: _InMemorySkillNoteRepo, note_id: str) -> None:
+    """Put a private note authored by a *different* coach into the repo."""
+    from backend.v2.contexts.coaching.domain.models import CoachSkillNote
+
+    repo.saved.append(
+        CoachSkillNote(
+            note_id=note_id,
+            academy_id=ACADEMY_ID,
+            student_id=STUDENT_ID,
+            skill_id=SKILL_ID,
+            coach_id="coach-someone-else",
+            session_id=SESSION_ID,
+            body="written by another coach",
+            created_at=datetime(2026, 6, 19, 14, 30, tzinfo=UTC),
+        )
+    )
+
+
+def test_assistant_skill_note_defaults_private_and_cannot_be_shared() -> None:
+    app, repo = _assistant_only_app()
+    client = TestClient(app)
+
+    created = client.post(
+        f"/api/v2/coach/students/{STUDENT_ID}/skill-notes",
+        json={"skill_id": SKILL_ID, "body": "needs work on grip"},
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["visibility"] == "private"
+    note_id = created.json()["note_id"]
+
+    shared = client.post(
+        f"/api/v2/coach/students/{STUDENT_ID}/skill-notes",
+        json={"skill_id": SKILL_ID, "body": "tell parent", "visibility": "shared"},
+    )
+    assert shared.status_code == 403, shared.text
+    assert shared.json()["error"]["code"] == "Coaching.NoteShareForbidden"
+    assert len(repo.saved) == 1, "a refused share writes nothing"
+
+    patched = client.patch(
+        f"/api/v2/coach/students/{STUDENT_ID}/skill-notes/{note_id}",
+        json={"visibility": "shared"},
+    )
+    assert patched.status_code == 403, patched.text
+    assert patched.json()["error"]["code"] == "Coaching.NoteShareForbidden"
+    assert repo.saved[0].visibility == "private"
+
+
+def test_supervisor_can_share_another_coachs_skill_note_via_real_use_case() -> None:
+    """Owner/admin reach SetSkillNoteVisibility with is_supervisor=True end to
+    end: a note they did not author flips to shared and comes back 200."""
+    app, repo = _real_note_use_cases_app(roles=("admin", "owner"), email="owner@example.com")
+    _seed_stranger_note(repo, "note-stranger")
+    client = TestClient(app)
+
+    patched = client.patch(
+        f"/api/v2/coach/students/{STUDENT_ID}/skill-notes/note-stranger",
+        json={"visibility": "shared"},
+    )
+
+    assert patched.status_code == 200, patched.text
+    body = patched.json()
+    assert body["note_id"] == "note-stranger"
+    assert body["coach_id"] == "coach-someone-else"
+    assert body["visibility"] == "shared"
+    assert repo.saved[0].visibility == "shared"
+
+
+def test_plain_coach_cannot_see_another_coachs_skill_note_to_share_it() -> None:
+    """Contrast for the supervisor test: the same PATCH from a lead coach who
+    is not the author is a 404 (the note is not theirs to see)."""
+    app, repo = _real_note_use_cases_app(roles=("coach",), email="coach@example.com")
+    _seed_stranger_note(repo, "note-stranger")
+    client = TestClient(app)
+
+    patched = client.patch(
+        f"/api/v2/coach/students/{STUDENT_ID}/skill-notes/note-stranger",
+        json={"visibility": "shared"},
+    )
+
+    assert patched.status_code == 404, patched.text
+    assert patched.json()["error"]["code"] == "Coaching.NoteNotFound"
+    assert repo.saved[0].visibility == "private"
 
 
 def test_real_skill_router_session_students_progress_returns_rows_for_assigned_coach() -> None:
@@ -1447,3 +1722,28 @@ def test_real_skill_router_rejects_success_count_above_attempts_count() -> None:
 
     assert response.status_code == 422, response.text
     assert spies.record_test_attempt.calls == 0
+
+
+def test_real_skill_router_allows_assigned_coach_to_reach_paused_student() -> None:
+    """Issue #651: the authorisation read returns active-or-paused enrollments
+    (paused students keep their roster seat, #641). The route must not
+    re-filter on status, so a paused student on an assigned session is 200."""
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids={SESSION_ID},
+    )
+
+    async def paused_enrollments(student_id: str) -> list[SimpleNamespace]:
+        if student_id != STUDENT_ID:
+            return []
+        return [SimpleNamespace(session_id=SESSION_ID, status="paused")]
+
+    use_cases = app.dependency_overrides[get_coach_use_cases]()
+    use_cases.get_active_session_enrollments_for_student = paused_enrollments
+    client = TestClient(app)
+
+    response = client.get(f"/api/v2/coach/students/{STUDENT_ID}/passport?program_id={PROGRAM_ID}")
+
+    assert response.status_code == 200, response.text
+    assert spies.get_passport.calls == 1
+    assert spies.assigned_sessions.calls == [(COACH_ID, SESSION_ID)]

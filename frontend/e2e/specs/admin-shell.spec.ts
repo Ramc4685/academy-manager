@@ -1,14 +1,25 @@
 import { test, expect, type Page, type Route } from "@playwright/test";
 
+import { billingRulesFixture } from "../fixtures/billing-rules";
 import { openAdminNav } from "../helpers/nav";
 import {
   stubCoachMessages,
   stubParentMessages,
 } from "../fixtures/saas-stubs";
 
+// Every pre-split admin was granted `owner` by migration 0165, so the default
+// admin fixture is an owner: it exercises the full shell (money nav, revenue,
+// governance actions). ADMIN_ONLY_ME is an admin invited after the split.
 const ADMIN_ME = {
   user_id: "user-admin-e2e",
   email: "admin@example.com",
+  academy_id: "academy-e2e",
+  roles: ["admin", "owner"],
+};
+
+const ADMIN_ONLY_ME = {
+  user_id: "user-ops-e2e",
+  email: "ops@example.com",
   academy_id: "academy-e2e",
   roles: ["admin"],
 };
@@ -25,6 +36,44 @@ const PARENT_ME = {
   email: "parent@example.com",
   academy_id: "academy-e2e",
   roles: ["parent"],
+};
+
+/**
+ * An empty Month close payload. Route stubs must name
+ * `/api/v2/admin/reports/month-close` explicitly: a `*` glob stops at `/`, so
+ * `admin/reports*` does NOT match it (lesson from the payments buckets spec).
+ */
+const MONTH_CLOSE_EMPTY = {
+  generated_at: "2026-09-30T14:00:00Z",
+  timezone: "America/Chicago",
+  period: "2026-09",
+  invoices: {
+    generated: 0,
+    emailed: 0,
+    autopay_notices: 0,
+    not_sent: 0,
+    voided: 0,
+    voided_cents: 0,
+    void_reasons: [],
+  },
+  money: {
+    billed_cents: 0,
+    collected_cents: 0,
+    outstanding_cents: 0,
+    collection_rate: null,
+  },
+  autopay_run: {
+    charge_on: null,
+    charge_on_varies: false,
+    has_run: false,
+    scheduled: { count: 0, cents: 0 },
+    succeeded: { count: 0, cents: 0 },
+    failed: { count: 0, cents: 0 },
+    pending: { count: 0, cents: 0 },
+  },
+  odd: [],
+  tuition_discounts: { gross_cents: 0, discount_cents: 0, net_cents: 0, by_category: [] },
+  warnings: [],
 };
 
 const REPORTS_DASHBOARD_EMPTY = {
@@ -86,9 +135,8 @@ const ADMIN_ROUTES = [
   { href: "/admin/registrations?tab=level-ups", testid: "admin-level-up-queue-tab" },
   { href: "/admin/requests?tab=pauses", testid: "admin-pause-requests" },
   { href: "/admin/payments", testid: "admin-payments" },
-  { href: "/admin/reports/dues", testid: "admin-dues" },
   { href: "/admin/reports/session-economics", testid: "admin-session-economics" },
-  { href: "/admin/reports", testid: "admin-reports" },
+  { href: "/admin/reports", testid: "admin-month-close" },
   { href: "/admin/coach-payslip", testid: "admin-coach-payslip" },
   { href: "/admin/expenses", testid: "admin-expenses" },
   { href: "/admin/payouts", testid: "admin-payouts" },
@@ -99,7 +147,7 @@ const ADMIN_ROUTES = [
 
 const SETTINGS_PANELS = [
   { key: "academy", label: "Academy", testid: "admin-settings-academy" },
-  { key: "fees", label: "Fees", testid: "admin-settings-fees" },
+  { key: "billing-rules", label: "Billing rules", testid: "admin-settings-billing-rules" },
   { key: "gateway", label: "Gateway", testid: "admin-settings-gateway" },
   { key: "notify", label: "Notify", testid: "admin-settings-notify" },
   { key: "roles", label: "Roles", testid: "admin-settings-roles" },
@@ -265,8 +313,12 @@ async function stubMemberships(page: Page, body = SINGLE_MEMBERSHIP) {
   });
 }
 
-async function stubAdminBff(page: Page, memberships = SINGLE_MEMBERSHIP) {
-  await stubMe(page, ADMIN_ME);
+async function stubAdminBff(
+  page: Page,
+  memberships = SINGLE_MEMBERSHIP,
+  me: typeof ADMIN_ME = ADMIN_ME,
+) {
+  await stubMe(page, me);
   await stubMemberships(page, memberships);
   // Catch-all FIRST. Playwright route handlers match in LIFO order
   // (later-registered = higher priority), so registering this first means
@@ -368,9 +420,6 @@ async function stubAdminBff(page: Page, memberships = SINGLE_MEMBERSHIP) {
   await page.route("**/api/v2/admin/audit-logs*", (route) =>
     fulfillJson(route, { logs: [] }),
   );
-  await page.route("**/api/v2/admin/dues-followup*", (route) =>
-    fulfillJson(route, { parents: [] }),
-  );
   const financeBff = "**/api/v2/admin/" + "finance/";
   await page.route(`${financeBff}payouts*`, (route) =>
     fulfillJson(route, { payouts: [] }),
@@ -380,6 +429,9 @@ async function stubAdminBff(page: Page, memberships = SINGLE_MEMBERSHIP) {
   );
   await page.route(`${financeBff}revenue*`, (route) =>
     fulfillJson(route, { by_month: {} }),
+  );
+  await page.route("**/api/v2/admin/reports/month-close*", (route) =>
+    fulfillJson(route, MONTH_CLOSE_EMPTY),
   );
   await page.route("**/api/v2/admin/reports/dashboard*", (route) =>
     fulfillJson(route, REPORTS_DASHBOARD_EMPTY),
@@ -428,10 +480,12 @@ async function stubAdminBff(page: Page, memberships = SINGLE_MEMBERSHIP) {
   );
   await page.route(/\/api\/v2\/admin\/academy\/fees(?:\?.*)?$/, (route) =>
     fulfillJson(route, {
-      default_monthly_cents: null,
       late_fee_cents: null,
       grace_days: null,
     }),
+  );
+  await page.route(/\/api\/v2\/admin\/billing\/rules(?:\?.*)?$/, (route) =>
+    fulfillJson(route, billingRulesFixture()),
   );
   await page.route(
     /\/api\/v2\/admin\/academy\/notifications(?:\?.*)?$/,
@@ -476,11 +530,16 @@ async function expectShellLogout(
   path: string,
   readyTestId: string,
   stubBff: (page: Page) => Promise<void>,
+  // The admin shell keeps its logout inside the nav surface (sidebar or
+  // drawer), so it has to be revealed first; the other shells keep it in
+  // the header.
+  openNav = false,
 ) {
   await stubBff(page);
   await page.goto(path);
   await expect(page.getByTestId(readyTestId)).toBeVisible();
-  const logout = page.getByTestId("persona-logout-button");
+  const surface = openNav ? await openAdminNav(page) : page;
+  const logout = surface.getByTestId("persona-logout-button");
   await expect(logout).toBeEnabled();
   await logout.scrollIntoViewIfNeeded();
   // WebKit mobile in CI is slow to settle the post-logout redirect; a 10s cap
@@ -499,16 +558,17 @@ test.describe("Rally admin shell", () => {
     await stubAdminBff(page);
     await page.goto("/admin");
     await expect(page.getByTestId("admin-dashboard")).toBeVisible();
-    await expect(page.getByTestId("tenant-switcher-single")).toContainText(
+    const nav = await openAdminNav(page);
+    await expect(nav.getByTestId("tenant-switcher-single")).toContainText(
       "Academy E2E",
       {
         timeout: 10_000,
       },
     );
-    const nav = await openAdminNav(page);
-    await expect(nav.getByText("Academy E2E")).toBeVisible();
+    await expect(nav.getByText("Academy E2E").first()).toBeVisible();
     await expect(nav.getByText("admin@example.com")).toBeVisible();
-    await expect(nav.getByText("Admin", { exact: true })).toBeVisible();
+    // The default fixture holds the owner scope, so the pill reads Owner.
+    await expect(nav.getByText("Owner", { exact: true })).toBeVisible();
     await expect(page.getByText("Rally Academy")).toHaveCount(0);
     await expect(page.getByText("COURT 7")).toHaveCount(0);
     await expect(page.getByText("academy-e2e")).toHaveCount(0);
@@ -527,34 +587,41 @@ test.describe("Rally admin shell", () => {
     await page.goto("/admin");
     await expect(page.getByTestId("admin-dashboard")).toBeVisible();
 
-    const switcherButton = page.getByTestId("tenant-switcher-button");
+    let nav = await openAdminNav(page);
+    const switcherButton = nav.getByTestId("tenant-switcher-button");
     await expect(switcherButton).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByTestId("tenant-switcher-single")).toHaveCount(0);
+    await expect(nav.getByTestId("tenant-switcher-single")).toHaveCount(0);
     await expect(switcherButton).toContainText("Academy E2E");
 
     await switcherButton.click();
-    const menu = page.getByTestId("tenant-switcher-menu");
+    const menu = nav.getByTestId("tenant-switcher-menu");
     await expect(menu).toBeVisible();
     await expect(
-      page.getByTestId("tenant-switcher-option-academy-e2e"),
+      nav.getByTestId("tenant-switcher-option-academy-e2e"),
     ).toContainText("ACTIVE");
     await expect(
-      page.getByTestId("tenant-switcher-option-academy-e2e-2"),
+      nav.getByTestId("tenant-switcher-option-academy-e2e-2"),
     ).toContainText("Academy E2E Two");
 
-    await page.getByTestId("tenant-switcher-option-academy-e2e-2").click();
+    await nav.getByTestId("tenant-switcher-option-academy-e2e-2").click();
     await expect(menu).toBeHidden();
+    // Switching academies does not navigate, so the layout closes the
+    // mobile drawer on the tenant-changed event instead. On desktop the
+    // sidebar stays mounted and there is no drawer to hide.
+    await expect(page.getByTestId("admin-mobile-drawer")).toBeHidden();
 
-    // Re-open and confirm the ACTIVE marker moved to the newly selected
-    // academy — the switcher pill label itself is driven by a separate
-    // `/admin/academy` query stubbed statically in this spec.
-    await switcherButton.click();
-    await expect(menu).toBeVisible();
+    // Re-open the nav (a no-op on desktop) and confirm the ACTIVE marker
+    // moved to the newly selected academy — the switcher pill label itself
+    // is driven by a separate `/admin/academy` query stubbed statically in
+    // this spec.
+    nav = await openAdminNav(page);
+    await nav.getByTestId("tenant-switcher-button").click();
+    await expect(nav.getByTestId("tenant-switcher-menu")).toBeVisible();
     await expect(
-      page.getByTestId("tenant-switcher-option-academy-e2e-2"),
+      nav.getByTestId("tenant-switcher-option-academy-e2e-2"),
     ).toContainText("ACTIVE");
     await expect(
-      page.getByTestId("tenant-switcher-option-academy-e2e"),
+      nav.getByTestId("tenant-switcher-option-academy-e2e"),
     ).not.toContainText("ACTIVE");
 
     expect(
@@ -571,10 +638,11 @@ test.describe("Rally admin shell", () => {
     await expect(page.getByTestId("admin-dashboard")).toBeVisible();
 
     // Admin in both academies, owner in neither — no rollup entry.
-    await page.getByTestId("tenant-switcher-button").click();
-    await expect(page.getByTestId("tenant-switcher-menu")).toBeVisible();
+    const nav = await openAdminNav(page);
+    await nav.getByTestId("tenant-switcher-button").click();
+    await expect(nav.getByTestId("tenant-switcher-menu")).toBeVisible();
     await expect(
-      page.getByTestId("tenant-switcher-all-academies"),
+      nav.getByTestId("tenant-switcher-all-academies"),
     ).toHaveCount(0);
   });
 
@@ -616,8 +684,9 @@ test.describe("Rally admin shell", () => {
     await page.goto("/admin");
     await expect(page.getByTestId("admin-dashboard")).toBeVisible();
 
-    await page.getByTestId("tenant-switcher-button").click();
-    const entry = page.getByTestId("tenant-switcher-all-academies");
+    const nav = await openAdminNav(page);
+    await nav.getByTestId("tenant-switcher-button").click();
+    const entry = nav.getByTestId("tenant-switcher-all-academies");
     await expect(entry).toBeVisible();
     await entry.click();
 
@@ -675,12 +744,14 @@ test.describe("Rally admin shell", () => {
       // Even with a 15s budget these mounts intermittently blow their deadline
       // on webkit-mobile during full-suite runs; they pass in isolation in ~3s.
       // Same webkit-under-load pattern as "session detail page mounts" below.
+      // /admin/reports (the heaviest page) still tripped 15s under the local
+      // gate's full shard with failOnFlakyTests — 30s is the mount budget.
       test.slow();
       const errors = collectConsoleErrors(page);
       await stubAdminBff(page);
       await page.goto(route.href);
       await expect(page.getByTestId(route.testid)).toBeVisible({
-        timeout: 15000,
+        timeout: 30000,
       });
       expect(
         errors,
@@ -688,6 +759,157 @@ test.describe("Rally admin shell", () => {
       ).toEqual([]);
     });
   }
+
+
+  test.describe("owner / admin split", () => {
+    test("admin without the owner scope sees no money-governance nav, revenue, or owner-only pages", async ({
+      page,
+    }) => {
+      test.slow();
+      const errors = collectConsoleErrors(page);
+      await stubAdminBff(page, SINGLE_MEMBERSHIP, ADMIN_ONLY_ME);
+      await page.goto("/admin");
+      await expect(page.getByTestId("admin-dashboard")).toBeVisible();
+
+      // Dashboard: operations tiles stay, revenue tile and chart are gone.
+      await expect(page.getByText("Sessions today")).toBeVisible();
+      await expect(page.getByTestId("admin-dashboard-revenue")).toHaveCount(0);
+      await expect(page.getByTestId("admin-dashboard-revenue-chart")).toHaveCount(0);
+      await expect(page.getByText("Revenue (month to date)")).toHaveCount(0);
+
+      // Nav: owner-only items are not rendered; operations items are.
+      const nav = await openAdminNav(page);
+      await expect(nav.getByTestId("admin-nav-payments")).toBeVisible();
+      await expect(nav.getByTestId("admin-nav-expenses")).toBeVisible();
+      await expect(nav.getByTestId("admin-nav-month-close")).toHaveCount(0);
+      await expect(nav.getByTestId("admin-nav-coach-payouts")).toHaveCount(0);
+      await expect(nav.getByTestId("admin-nav-audit-logs")).toHaveCount(0);
+      // Stripe plumbing became owner-only with the Billing Health trim.
+      await expect(nav.getByTestId("admin-nav-billing-health")).toHaveCount(0);
+      await expect(nav.getByText("Admin", { exact: true })).toBeVisible();
+      await expect(nav.getByText("Owner", { exact: true })).toHaveCount(0);
+
+      // Deep link to an owner-only page shows the panel, not the page. The
+      // shell hard-navigates seconds after paint, which can abort `page.goto`
+      // itself ("interrupted by another navigation"); the panel below is the
+      // assertion, so the aborted navigation is expected rather than a failure.
+      await page.goto("/admin/reports", { waitUntil: "commit" }).catch(() => undefined);
+      // The shell either swaps in the Owner only panel or bounces the non-owner
+      // back to /admin. Both mean "you do not get this page"; which one wins is
+      // a race in the shell that predates Month close, and pinning the test to
+      // the panel alone is what made it flaky. The assertion that matters —
+      // the page itself never renders — is checked either way.
+      await expect
+        .poll(
+          async () =>
+            (await page.getByTestId("owner-only-panel").count()) > 0 ||
+            new URL(page.url()).pathname === "/admin",
+          { timeout: 30_000 },
+        )
+        .toBe(true);
+      await expect(page.getByTestId("admin-month-close")).toHaveCount(0);
+
+      // Billing Health too — its BFF 404s for a non-owner, so the page would
+      // have nothing to show even without the panel. Same shell race as
+      // /admin/reports above: arm for either outcome rather than pinning the
+      // test to the panel, which is what made this flake on webkit.
+      await page.goto("/admin/billing-health", { waitUntil: "commit" }).catch(() => undefined);
+      await expect
+        .poll(
+          async () =>
+            (await page.getByTestId("owner-only-panel").count()) > 0 ||
+            new URL(page.url()).pathname === "/admin",
+          { timeout: 30_000 },
+        )
+        .toBe(true);
+      await expect(page.getByTestId("billing-health-page")).toHaveCount(0);
+
+      // The Dues page is gone (#687), so there is no longer an owner-only
+      // exception to check here. Chasing balances is Payments work, which
+      // admins keep; the old bookmarks forward there, covered by UIC3.
+
+      expect(
+        errors,
+        `App console errors on admin-only shell: ${errors.join("\n")}`,
+      ).toEqual([]);
+    });
+
+    test("owner keeps the money-governance nav, revenue, and reports", async ({
+      page,
+    }) => {
+      test.slow();
+      const errors = collectConsoleErrors(page);
+      await stubAdminBff(page);
+      await page.goto("/admin");
+      await expect(page.getByTestId("admin-dashboard")).toBeVisible();
+      await expect(page.getByTestId("admin-dashboard-revenue")).toBeVisible();
+      await expect(page.getByTestId("admin-dashboard-revenue-chart")).toBeVisible();
+
+      const nav = await openAdminNav(page);
+      await expect(nav.getByTestId("admin-nav-month-close")).toBeVisible();
+      await expect(nav.getByTestId("admin-nav-coach-payouts")).toBeVisible();
+      await expect(nav.getByTestId("admin-nav-audit-logs")).toBeVisible();
+      await expect(nav.getByTestId("admin-nav-billing-health")).toBeVisible();
+
+      await page.goto("/admin/reports");
+      await expect(page.getByTestId("admin-month-close")).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByTestId("owner-only-panel")).toHaveCount(0);
+
+      expect(
+        errors,
+        `App console errors on owner shell: ${errors.join("\n")}`,
+      ).toEqual([]);
+    });
+
+    test("admin without the owner scope cannot pick admin or owner when adding a user", async ({
+      page,
+    }) => {
+      const errors = collectConsoleErrors(page);
+      await stubAdminBff(page, SINGLE_MEMBERSHIP, ADMIN_ONLY_ME);
+      await page.goto("/admin/users/new");
+      const roleSelect = page.getByTestId("new-user-role");
+      await expect(roleSelect).toBeVisible();
+      const options = await roleSelect.locator("option").allTextContents();
+      // Operations roles only: assistant_coach is grantable by any admin.
+      expect(options.sort()).toEqual(["Assistant coach", "Coach", "Parent"]);
+      expect(
+        errors,
+        `App console errors on admin-only add user: ${errors.join("\n")}`,
+      ).toEqual([]);
+    });
+
+    test("owner can pick every academy role when adding a user", async ({ page }) => {
+      await stubAdminBff(page);
+      await page.goto("/admin/users/new");
+      const roleSelect = page.getByTestId("new-user-role");
+      await expect(roleSelect).toBeVisible();
+      const options = await roleSelect.locator("option").allTextContents();
+      expect(options.sort()).toEqual(["Admin", "Assistant coach", "Coach", "Owner", "Parent"]);
+    });
+
+    test("admin without the owner scope sees no Billing rules or Gateway settings", async ({
+      page,
+    }) => {
+      const errors = collectConsoleErrors(page);
+      await stubAdminBff(page, SINGLE_MEMBERSHIP, ADMIN_ONLY_ME);
+      await page.goto("/admin/settings");
+      await expect(page.getByTestId("admin-settings-academy")).toBeVisible();
+      await expect(page.getByRole("link", { name: "Billing rules", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("link", { name: "Gateway", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("link", { name: "Notify", exact: true })).toBeVisible();
+
+      // A deep link to an owner-only panel shows the notice, not the form.
+      // A retired deep link (?panel=fees) resolves to Billing rules, which is
+      // still owner-only, so the notice shows rather than the form.
+      await page.goto("/admin/settings?panel=fees");
+      await expect(page.getByTestId("owner-only-panel")).toBeVisible();
+      await expect(page.getByTestId("admin-settings-billing-rules")).toHaveCount(0);
+      expect(
+        errors,
+        `App console errors on admin-only settings: ${errors.join("\n")}`,
+      ).toEqual([]);
+    });
+  });
 
   test("coach payslip redirects into Payouts → Payslips tab (UIC4)", async ({ page }) => {
     const errors = collectConsoleErrors(page);
@@ -702,15 +924,20 @@ test.describe("Rally admin shell", () => {
     ).toEqual([]);
   });
 
-  test("/admin/dues redirects into Reports → Dues follow-up (UIC3)", async ({
-    page,
-  }) => {
+  test("both dues bookmarks redirect to Payments (UIC3)", async ({ page }) => {
     const errors = collectConsoleErrors(page);
     await stubAdminBff(page);
     // The destination's own rendering is covered by the ADMIN_ROUTES mount
-    // loop; this asserts only that the old bookmark still lands there.
-    await page.goto("/admin/dues");
-    await expect(page).toHaveURL(/\/admin\/reports\/dues$/);
+    // loop; this asserts only that the old bookmarks still land somewhere real.
+    // The stubs redirect during load, which aborts `page.goto` itself on
+    // webkit ("interrupted by another navigation"). Landing on the target is
+    // the assertion; the aborted navigation is expected, not a failure. 30s,
+    // not the 5s default, because a cold `next dev` compile can outlast it.
+    for (const bookmark of ["/admin/dues", "/admin/reports/dues"]) {
+      const landed = page.waitForURL(/\/admin\/payments$/, { timeout: 30_000 });
+      await page.goto(bookmark, { waitUntil: "commit" }).catch(() => undefined);
+      await landed;
+    }
     expect(
       errors,
       `App console errors on dues redirect: ${errors.join("\n")}`,
@@ -722,8 +949,12 @@ test.describe("Rally admin shell", () => {
   }) => {
     const errors = collectConsoleErrors(page);
     await stubAdminBff(page);
-    await page.goto("/admin/session-economics");
-    await expect(page).toHaveURL(/\/admin\/reports\/session-economics$/);
+    // Same redirect race as the dues bookmark above.
+    const landedEconomics = page.waitForURL(/\/admin\/reports\/session-economics$/, {
+      timeout: 30_000,
+    });
+    await page.goto("/admin/session-economics", { waitUntil: "commit" }).catch(() => undefined);
+    await landedEconomics;
     expect(
       errors,
       `App console errors on session economics redirect: ${errors.join("\n")}`,
@@ -735,8 +966,12 @@ test.describe("Rally admin shell", () => {
   }) => {
     const errors = collectConsoleErrors(page);
     await stubAdminBff(page);
-    await page.goto("/admin/coaches");
-    await expect(page).toHaveURL(/\/admin\/users\?role=coach$/);
+    // Arm before navigating: the redirect fires during load and can abort
+    // `page.goto` itself, and the 5s expect default is shorter than a cold
+    // compile — the same race #683 armed for the other bookmark redirects.
+    const landed = page.waitForURL(/\/admin\/users\?role=coach$/, { timeout: 30_000 });
+    await page.goto("/admin/coaches", { waitUntil: "commit" }).catch(() => undefined);
+    await landed;
     await expect(page.getByTestId("admin-users")).toBeVisible();
     // The coach engagement strip only renders while the Coaches tab is active.
     await expect(page.getByTestId("coach-engagement-stats")).toBeVisible();
@@ -751,8 +986,12 @@ test.describe("Rally admin shell", () => {
   }) => {
     const errors = collectConsoleErrors(page);
     await stubAdminBff(page);
-    await page.goto("/admin/parents");
-    await expect(page).toHaveURL(/\/admin\/users\?role=parent$/);
+    // Arm before navigating: the redirect fires during load and can abort
+    // `page.goto` itself, and the 5s expect default is shorter than a cold
+    // compile — the same race #683 armed for the other bookmark redirects.
+    const landed = page.waitForURL(/\/admin\/users\?role=parent$/, { timeout: 30_000 });
+    await page.goto("/admin/parents", { waitUntil: "commit" }).catch(() => undefined);
+    await landed;
     await expect(page.getByTestId("admin-users")).toBeVisible();
     // Parent tab must NOT show the coach-only engagement strip.
     await expect(page.getByTestId("coach-engagement-stats")).toHaveCount(0);
@@ -868,7 +1107,7 @@ test.describe("Rally admin shell", () => {
       }),
     );
 
-    await page.goto("/admin/payments");
+    await page.goto("/admin/payments?tab=invoices");
 
     await expect(page.getByTestId("payment-row-legacy-paid")).toBeVisible();
     await expect(
@@ -876,7 +1115,7 @@ test.describe("Rally admin shell", () => {
     ).toBeVisible();
     await expect(page.getByTestId("payment-row-legacy-waived")).toBeVisible();
     await expect(
-      page.getByTestId("payment-row-legacy-waived").getByText("WAIVED"),
+      page.getByTestId("payment-row-legacy-waived").getByText("VOID"),
     ).toBeVisible();
     expect(
       errors,
@@ -1112,6 +1351,77 @@ test.describe("Rally admin shell", () => {
     expect(
       errors,
       `Console errors on session detail: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  test("session detail shows coaching staff and the assistants editor saves", async ({
+    page,
+  }) => {
+    test.slow();
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+
+    // The assistants editor merges two role-filtered directory reads
+    // (coach + assistant_coach); mirror the backend's `?role=` filter.
+    const USERS = [
+      { user_id: "coach-e2e", email: "coach@example.com", display_name: "Coach E2E", role: "coach", status: "active" },
+      { user_id: "coach-2-e2e", email: "coach2@example.com", display_name: "Second Coach", role: "coach", status: "active" },
+      { user_id: "asst-e2e", email: "helper@example.com", display_name: "Asha Assistant", role: "assistant_coach", status: "active" },
+    ];
+    await page.route("**/api/v2/admin/users*", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      const role = new URL(route.request().url()).searchParams.get("role");
+      return fulfillJson(route, {
+        users: role ? USERS.filter((user) => user.role === role) : USERS,
+      });
+    });
+
+    let assistantIds = ["asst-e2e"];
+    const nameOf = (id: string) => USERS.find((user) => user.user_id === id)?.display_name ?? id;
+    const sessionBody = () => ({
+      ...SESSION_DETAIL_E2E,
+      assistant_coach_ids: assistantIds,
+      assistant_coach_names: assistantIds.map(nameOf),
+    });
+    const puts: Array<Record<string, unknown>> = [];
+    await page.route("**/api/v2/admin/sessions/*/assistants", (route) => {
+      if (route.request().method() !== "PUT") return route.fallback();
+      const body = JSON.parse(route.request().postData() ?? "{}") as {
+        assistant_coach_ids: string[];
+      };
+      puts.push(body);
+      assistantIds = body.assistant_coach_ids;
+      return fulfillJson(route, sessionBody());
+    });
+    await page.route("**/api/v2/admin/sessions/*", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, sessionBody());
+    });
+
+    await page.goto("/admin/sessions/some-session-id");
+    await expect(page.getByTestId("admin-session-detail")).toBeVisible();
+    await expect(page.getByTestId("session-lead-coach")).toContainText("Coach E2E");
+    await expect(page.getByTestId("session-assistants")).toContainText("Asha Assistant");
+
+    await page.getByTestId("edit-assistants").click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByTestId("assistant-option-asst-e2e")).toBeChecked();
+    // The lead coach is never offered as their own assistant.
+    await expect(dialog.getByTestId("assistant-option-coach-e2e")).toHaveCount(0);
+    await dialog.getByTestId("assistant-option-coach-2-e2e").check();
+    await dialog.getByRole("button", { name: "Save" }).click();
+
+    await expect.poll(() => puts.length).toBe(1);
+    expect(puts[0]).toEqual({
+      assistant_coach_ids: ["asst-e2e", "coach-2-e2e"],
+      reason: null,
+    });
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.getByTestId("session-assistants")).toContainText("Second Coach");
+    await expect(page.getByTestId("admin-session-detail")).toBeVisible();
+    expect(
+      errors,
+      `Console errors on session assistants: ${errors.join("\n")}`,
     ).toEqual([]);
   });
 
@@ -1405,9 +1715,94 @@ test.describe("Rally admin shell", () => {
     ).toEqual([]);
   });
 
-  test("admin, coach, and parent shells expose logout", async ({ page }) => {
-    await expectShellLogout(page, "/admin", "admin-dashboard", stubAdminBff);
-    await expectShellLogout(page, "/coach/today", "coach-today", stubCoachBff);
-    await expectShellLogout(page, "/parent/dashboard", "parent-dashboard", stubParentBff);
+  test("admin topbar keeps account controls out of the header at every width", async ({
+    page,
+    isMobile,
+  }) => {
+    // Multi-membership so the tenant switcher is a live button, and an admin
+    // user gets the Coach view, so the persona switcher renders too. Both
+    // would appear in the topbar if the controls had not moved.
+    await stubAdminBff(page, MULTI_MEMBERSHIP);
+    await page.goto("/admin");
+    await expect(page.getByTestId("admin-dashboard")).toBeVisible();
+    if (isMobile) {
+      await expect(page.getByTestId("admin-open-drawer")).toBeVisible();
+      // Drawer closed: nothing in the DOM carries the switcher testids.
+      await expect(page.getByTestId("persona-switcher-button")).toHaveCount(0);
+      await expect(page.getByTestId("tenant-switcher-button")).toHaveCount(0);
+      await expect(page.getByTestId("persona-logout-button")).toHaveCount(0);
+    }
+    // Sidebar on desktop, drawer on phones: the controls live there.
+    const nav = await openAdminNav(page);
+    await expect(nav.getByTestId("persona-switcher-button")).toBeVisible();
+    await expect(nav.getByTestId("tenant-switcher-button")).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(nav.getByTestId("persona-logout-button")).toBeVisible();
+    // The topbar has none of them at any width (spec B2).
+    const header = page.locator("header");
+    await expect(header.getByTestId("persona-switcher-button")).toHaveCount(0);
+    await expect(header.getByTestId("tenant-switcher-button")).toHaveCount(0);
+    await expect(header.getByTestId("persona-logout-button")).toHaveCount(0);
+  });
+
+  test("coach session detail shows a back button that falls back to the parent route", async ({
+    page,
+    baseURL,
+  }) => {
+    await stubCoachBff(page);
+    // A deep-linked PWA launch has history depth 1, so the button pushes the
+    // nearest known parent route instead of calling history.back(). A
+    // Playwright tab starts on about:blank and `page.goto` would add a
+    // second entry, so replace that initial entry instead.
+    const target = new URL("/coach/sessions/some-session-id", baseURL).toString();
+    await page.evaluate((url) => window.location.replace(url), target);
+    await page.waitForURL(target);
+    expect(await page.evaluate(() => window.history.length)).toBe(1);
+    await expect(page.getByText("Session not found.")).toBeVisible();
+    const back = page.getByTestId("shell-back-button");
+    await expect(back).toBeVisible();
+    await back.click();
+    await expect(page).toHaveURL(/\/coach\/sessions$/, { timeout: 20_000 });
+  });
+
+  test("coach top-level route shows no back button", async ({ page }) => {
+    await stubCoachBff(page);
+    await page.goto("/coach/today");
+    await expect(page.getByTestId("coach-today")).toBeVisible();
+    await expect(page.getByTestId("shell-back-button")).toHaveCount(0);
+  });
+
+  test("admin session detail shows the back button and the dashboard does not", async ({
+    page,
+  }) => {
+    test.slow();
+    await stubAdminBff(page);
+    await page.goto("/admin/sessions/some-session-id");
+    await expect(page.getByTestId("admin-session-detail")).toBeVisible();
+    await expect(page.getByTestId("shell-back-button")).toBeVisible();
+
+    await page.goto("/admin");
+    await expect(page.getByTestId("admin-dashboard")).toBeVisible();
+    await expect(page.getByTestId("shell-back-button")).toHaveCount(0);
+  });
+
+  test("admin, coach, and parent shells expose logout", async ({ context }) => {
+    // One page per persona. The persona auth hook's `replaceLocation` arms a
+    // 1s hard `window.location.replace("/login")` fallback; on WebKit that
+    // timer from the previous persona's page interrupted the next persona's
+    // `page.goto` ("interrupted by another navigation to /login", #650).
+    for (const [path, readyTestId, stubBff, openNav] of [
+      ["/admin", "admin-dashboard", stubAdminBff, true],
+      ["/coach/today", "coach-today", stubCoachBff, false],
+      ["/parent/dashboard", "parent-dashboard", stubParentBff, false],
+    ] as const) {
+      const personaPage = await context.newPage();
+      try {
+        await expectShellLogout(personaPage, path, readyTestId, stubBff, openNav);
+      } finally {
+        await personaPage.close();
+      }
+    }
   });
 });

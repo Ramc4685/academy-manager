@@ -1,9 +1,8 @@
 import type { AdminPaymentStatus, AdminPaymentView } from "@/lib/api/admin";
 import type { ChipVariant } from "@/components/ds/chip";
+import { INVOICE_STATUS_FILTER_OPTIONS, invoiceStatusChip } from "@/lib/billing-status";
 
-export function formatCents(cents: number): string {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
-}
+export { formatCents } from "@/lib/money";
 
 export function formatDate(value: string): string {
   return new Date(`${value}T00:00:00`).toLocaleDateString(undefined, {
@@ -38,33 +37,40 @@ export function adminPaymentStatus(payment: AdminPaymentView): string {
 
 export type PaymentStatusChip = { variant: ChipVariant; label: string };
 
-export const STATUS_CHIP: Record<AdminPaymentStatus, PaymentStatusChip> = {
-  succeeded: { variant: "paid", label: "PAID" },
-  paid: { variant: "paid", label: "PAID" },
-  pending: { variant: "pending", label: "PENDING" },
-  partially_paid: { variant: "partial", label: "PARTIAL" },
-  refunded: { variant: "refunded", label: "REFUNDED" },
-  partially_refunded: { variant: "partial", label: "PARTIAL" },
-  failed: { variant: "failed", label: "FAILED" },
-  expired: { variant: "expired", label: "EXPIRED" },
-  waived: { variant: "waived", label: "WAIVED" },
-};
-
+/**
+ * Status chip for an invoice/payment row, in the one UI vocabulary
+ * (draft / open / partially paid / paid / void) — see lib/billing-status.ts.
+ */
 export function statusChip(status: string | null | undefined): PaymentStatusChip {
-  if (status && status in STATUS_CHIP) {
-    return STATUS_CHIP[status as AdminPaymentStatus];
-  }
-  return {
-    variant: "pending",
-    label: (status || "unknown").replaceAll("_", " ").toUpperCase(),
-  };
+  return invoiceStatusChip(status);
 }
 
+/**
+ * Human label for a settlement method. Every `stripe_*` variant
+ * (stripe_checkout, stripe_autopay, stripe_subscription, stripe_legacy) MUST
+ * read as "Stripe" — the backend stamps the specific variant on ledger rows
+ * and the admin UI is expected to show one consistent label (PR #645).
+ */
+export function paymentMethodLabel(method: string | null | undefined): string | null {
+  if (!method) return null;
+  if (method.startsWith("stripe")) return "STRIPE";
+  return method.replaceAll("_", " ").toUpperCase();
+}
+
+/**
+ * Method chip. The real settlement method wins: an invoice can carry a Stripe
+ * invoice id (stripe_linked) and still have been paid by Zelle or cash, and
+ * that manual method must not be relabelled "Stripe". stripe_linked is only a
+ * fallback when the row has no method beyond the "invoice" placeholder.
+ */
 export function methodChip(payment: AdminPaymentView): { variant: ChipVariant; label: string } | null {
-  if (payment.stripe_linked) return { variant: "autopayOn", label: "STRIPE" };
-  if (payment.payment_method) {
-    return { variant: "manual", label: payment.payment_method.toUpperCase() };
+  const method = payment.payment_method && payment.payment_method !== "invoice" ? payment.payment_method : null;
+  if (method) {
+    const label = paymentMethodLabel(method);
+    if (!label) return null;
+    return label === "STRIPE" ? { variant: "autopayOn", label } : { variant: "manual", label };
   }
+  if (payment.stripe_linked) return { variant: "autopayOn", label: "STRIPE" };
   return null;
 }
 
@@ -92,8 +98,14 @@ export function reconciliationLabel(payment: AdminPaymentView): string | null {
   return null;
 }
 
+/**
+ * Invoice rows are keyed by their invoice id (payment_id === invoice_id). Do
+ * NOT key this off payment_method: since PR #645 an invoice row carries the
+ * method it was settled with (stripe_checkout, zelle, ...), so a method check
+ * would hide invoice actions on every paid invoice.
+ */
 export function isLedgerInvoiceRow(payment: AdminPaymentView): boolean {
-  return payment.payment_method === "invoice" || payment.payment_method === "stripe";
+  return Boolean(payment.invoice_id) && payment.payment_id === payment.invoice_id;
 }
 
 export function invoiceActionId(payment: AdminPaymentView | null): string {
@@ -110,14 +122,11 @@ export function sessionFilterLabel(value: string): string {
 
 export const PAGE_SIZE = 50;
 
-export const STATUS_FILTER_OPTIONS: { value: string; label: string }[] = [
-  { value: "pending", label: "Pending" },
-  { value: "partially_paid", label: "Partially paid" },
-  { value: "paid", label: "Paid" },
-  { value: "succeeded", label: "Succeeded" },
-  { value: "failed", label: "Failed" },
-  { value: "refunded", label: "Refunded" },
-  { value: "partially_refunded", label: "Partially refunded" },
-  { value: "expired", label: "Expired" },
-  { value: "waived", label: "Waived" },
-];
+/**
+ * Status filter in the chip vocabulary (draft / open / partially paid / paid /
+ * void). Applied client-side via `matchesInvoiceStatusFilter` because the
+ * backend list filter is an exact raw-status match and the list still emits
+ * raw statuses such as `succeeded` that render as PAID.
+ */
+export const STATUS_FILTER_OPTIONS: readonly { value: string; label: string }[] =
+  INVOICE_STATUS_FILTER_OPTIONS;

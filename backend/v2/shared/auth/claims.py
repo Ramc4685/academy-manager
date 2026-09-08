@@ -37,7 +37,7 @@ from backend.v2.shared.http.errors import DomainError
 # not import contexts/ — that would invert the dependency direction) —
 # when a role is added there, it must be added here too, or membership rows
 # holding it fail to deserialize into AuthClaims (see UIM12 postmortem).
-Role = Literal["admin", "coach", "parent", "student", "owner"]
+Role = Literal["admin", "coach", "assistant_coach", "parent", "student", "owner"]
 PlatformRoleName = Literal["platform_admin", "platform_support"]
 
 

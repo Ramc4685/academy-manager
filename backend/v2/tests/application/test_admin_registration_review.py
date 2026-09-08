@@ -1390,3 +1390,110 @@ async def test_approval_survives_a_failing_welcome_email() -> None:
 
     assert detail.status == "APPROVED"
     assert apps.saved[-1].status == "APPROVED"
+
+
+class EnrollmentsKeyedById(InMemoryEnrollments):
+    """Mirror Mongo: ``create_if_absent`` is keyed by enrollment_id, and a
+    session/student pair may hold historical (cancelled) rows next to a live
+    one. ``find_for_session_student`` prefers the live row, like the writer."""
+
+    def __init__(self, existing: list[Enrollment] | None = None) -> None:
+        super().__init__()
+        self.rows: list[Enrollment] = list(existing or [])
+
+    async def create(self, enrollment: Enrollment) -> None:
+        self.created.append(enrollment)
+        self.rows.append(enrollment)
+
+    async def create_if_absent(self, enrollment: Enrollment) -> bool:
+        if any(row.enrollment_id == enrollment.enrollment_id for row in self.rows):
+            return False
+        await self.create(enrollment)
+        return True
+
+    async def get(self, enrollment_id: str) -> Enrollment | None:
+        return next((row for row in self.rows if row.enrollment_id == enrollment_id), None)
+
+    async def find_for_session_student(self, session_id: str, student_id: str) -> Enrollment | None:
+        matches = [
+            row for row in self.rows if (row.session_id, row.student_id) == (session_id, student_id)
+        ]
+        for status in ("active", "paused"):
+            for row in matches:
+                if row.status == status:
+                    return row
+        return matches[0] if matches else None
+
+
+@pytest.mark.asyncio
+async def test_approve_ignores_cancelled_prior_enrollment_and_creates_a_fresh_one() -> None:
+    """Issue #651: a child who left a session and re-registers for it must be
+    approvable. The old cancelled row is history, not a conflict, and the
+    approval reserves a seat and creates a brand-new enrollment."""
+    app = _application(student_id="student-1", application_id="app-2")
+    sessions = InMemorySessions([_session()])
+    cancelled = Enrollment(
+        enrollment_id=stable_ulid("registration-enrollment", "app-1", "student-1", "sess-1"),
+        academy_id=ACADEMY_ID,
+        session_id="sess-1",
+        student_id="student-1",
+        status="cancelled",
+        registration_application_id="app-1",
+    )
+    enrollments = EnrollmentsKeyedById([cancelled])
+
+    review = AdminRegistrationReview(
+        apps=InMemoryApplications(app),
+        sessions=sessions,
+        students=InMemoryStudents(),
+        enrollments=enrollments,
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        clock=lambda: NOW,
+    )
+
+    detail = await review.approve(
+        ApproveRegistrationCommand(application_id="app-2", actor_id="admin-1")
+    )
+
+    assert sessions.reserve_calls == 1
+    assert len(enrollments.created) == 1
+    fresh = enrollments.created[0]
+    assert fresh.enrollment_id != cancelled.enrollment_id
+    assert fresh.status == "active"
+    assert fresh.registration_application_id == "app-2"
+    assert detail.enrollment_id == fresh.enrollment_id
+    # The historical row is untouched.
+    assert (await enrollments.get(cancelled.enrollment_id)).status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_approve_still_rejects_when_a_paused_enrollment_exists_in_the_session() -> None:
+    """Issue #651 counterpart: paused is live (seat kept, #641), so it is
+    still a conflict."""
+    app = _application(student_id="student-1", application_id="app-2")
+    sessions = InMemorySessions([_session()])
+    paused = Enrollment(
+        enrollment_id="enr-paused",
+        academy_id=ACADEMY_ID,
+        session_id="sess-1",
+        student_id="student-1",
+        status="paused",
+        registration_application_id="app-1",
+    )
+    enrollments = EnrollmentsKeyedById([paused])
+    review = AdminRegistrationReview(
+        apps=InMemoryApplications(app),
+        sessions=sessions,
+        students=InMemoryStudents(),
+        enrollments=enrollments,
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(ApplicationNotEditable, match="already enrolled"):
+        await review.approve(ApproveRegistrationCommand(application_id="app-2", actor_id="admin-1"))
+
+    assert sessions.reserve_calls == 0
+    assert enrollments.created == []

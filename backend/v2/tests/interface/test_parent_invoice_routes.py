@@ -301,6 +301,40 @@ def test_wrong_persona_cannot_list_invoices() -> None:
     assert response.status_code == 404
 
 
+def test_parent_invoice_list_and_detail_expose_void_reason() -> None:
+    # Issue #651: a voided invoice tells the parent WHY (enrollment cancelled,
+    # paused, ...); every other status carries None.
+    voided = _invoice(
+        invoice_id="inv-void", parent_id="parent-1", created_at=datetime(2026, 6, 1, tzinfo=UTC)
+    ).model_copy(
+        update={
+            "status": "void",
+            "void_reason": "enrollment_cancelled",
+            "voided_at": datetime(2026, 6, 2, tzinfo=UTC),
+        }
+    )
+    open_invoice = _invoice(
+        invoice_id="inv-open", parent_id="parent-1", created_at=datetime(2026, 5, 1, tzinfo=UTC)
+    )
+    repo = _FakeInvoiceRepo({"inv-void": voided, "inv-open": open_invoice}, {})
+    app = FastAPI()
+    register_exception_handlers(app)
+    app.include_router(parent_router, prefix="/api/v2")
+    app.dependency_overrides[get_auth_claims] = lambda: _claims("parent", "parent-1")
+    app.dependency_overrides[get_parent_use_cases] = lambda: _ParentUseCases(repo)
+    with TestClient(app) as client:
+        list_response = client.get("/api/v2/parent/invoices")
+        detail_response = client.get("/api/v2/parent/invoices/inv-void")
+
+    assert list_response.status_code == 200
+    by_id = {inv["invoice_id"]: inv for inv in list_response.json()["invoices"]}
+    assert by_id["inv-void"]["status"] == "void"
+    assert by_id["inv-void"]["void_reason"] == "enrollment_cancelled"
+    assert by_id["inv-open"]["void_reason"] is None
+    assert detail_response.status_code == 200
+    assert detail_response.json()["void_reason"] == "enrollment_cancelled"
+
+
 def test_parent_invoice_list_and_detail_expose_enrollment_id() -> None:
     with _make_client() as client:
         list_response = client.get("/api/v2/parent/invoices")

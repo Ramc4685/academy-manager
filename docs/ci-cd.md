@@ -12,11 +12,14 @@ Production deployment is handled by one GitHub Actions workflow:
 
 ## Validation Jobs
 
-- **Backend** installs Python dependencies, runs `pip-audit`, compiles backend
+- **Backend** installs Python dependencies, runs `pip-audit` (via
+  `scripts/ci/dependency_audit.sh`: findings block, an unreachable advisory
+  registry only warns; `nightly-e2e.yml` re-runs both audits strictly), compiles backend
   code, checks v2 import-linter boundaries, and runs `backend/v2/tests` in
   parallel (`pytest -n auto`) with an 86% coverage floor over `v2`.
-- **Backend Lint** runs `ruff check v2`, `ruff format --check v2`, and advisory
-  `mypy --config-file pyproject.toml v2`.
+- **Backend Lint** runs `ruff check v2`, `ruff format --check v2`, and mypy
+  filtered through `mypy-baseline`: pre-existing errors are frozen, any NEW
+  error fails the job (it is blocking, despite the job id `backend-advisory`).
 - **Frontend** installs `frontend/` with pnpm, runs
   `pnpm audit --audit-level=high`, then runs typecheck, `pnpm test:unit`
   (vitest), `pnpm test:node` (node --test), lint, build, OpenAPI
@@ -73,9 +76,10 @@ REACT_APP_FIREBASE_APP_ID=1:953230788846:web:1f2819c11418ecf5860bff
 REACT_APP_FIREBASE_MEASUREMENT_ID=G-Z6GS6WRZY8
 ```
 
-Use a protected GitHub Environment named `production` with required reviewers
-before launch. Protect the `main` branch with required status checks for the
-`Backend` and `Frontend` jobs from the `Production` workflow.
+The `production` GitHub Environment requires a reviewer before the deploy
+jobs run. The `main` ruleset requires the `CI Gate` (this workflow) and
+`Release Notes Gate` (`release-notes.yml`) checks; individual jobs are not
+listed so path-filtered skips count as pass.
 
 ## Manual Deploy
 

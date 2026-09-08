@@ -49,10 +49,12 @@ from backend.v2.contexts.coaching.application.use_cases.session_notes import (
     CreateProgressNote,
     ListLessonPlans,
     ListProgressNotes,
+    SetProgressNoteVisibility,
 )
 from backend.v2.contexts.coaching.application.use_cases.skill_notes import (
     CreateSkillNote,
     ListSkillNotes,
+    SetSkillNoteVisibility,
 )
 from backend.v2.contexts.coaching.infrastructure.mongo_attendance_repo import (
     MongoAttendanceRepository,
@@ -194,13 +196,19 @@ class CoachComposition:
     # resolution for admins/owners covering the coach surface.
     list_all_sessions_for_academy: object = None  # Callable[[], Awaitable[list[...]]]
     resolve_user_names: object = None  # Callable[[Sequence[str]], Awaitable[dict[str, str]]]
+    # Note visibility (coach phone slice 3). Optional defaults keep hand-built
+    # test compositions working; real composition always sets both.
+    set_progress_note_visibility: SetProgressNoteVisibility | None = None
+    set_skill_note_visibility: SetSkillNoteVisibility | None = None
 
 
 class CoachAssignedSessionLookup:
     """Answers "may this user act as the coach of this session?".
 
     The single choke point for every assignment check on the coach surface
-    (roster, notes, feedback, announcements, skills, teaching plan). A coach
+    (roster, notes, feedback, announcements, skills, teaching plan). An
+    assistant coach listed in the session's ``assistant_coach_ids`` counts as
+    assigned to that session (and only that session). A coach
     supervisor — an academy admin/owner covering any session (#632) — passes
     for every session *in this tenant*: the tenant-scoped session lookup
     runs first, so a supervisor still cannot reach another academy's
@@ -221,7 +229,7 @@ class CoachAssignedSessionLookup:
         session = await self._sessions.get(session_id)
         if session is None:
             return False
-        if session.coach_id == coach_id:
+        if session.coach_id == coach_id or coach_id in session.assistant_coach_ids:
             return True
         if self._is_supervisor is None:
             return False
@@ -320,12 +328,15 @@ def compose_coach(
         that has been running for months would drop out of the coach's inbox
         while the route still lets that same coach *post* to it. A replacement
         coach covering one occurrence is still not an audience, consistent
-        with every other coach session route.
+        with every other coach session route. Neither is an assistant coach:
+        the sessions that merely list the user in ``assistant_coach_ids`` are
+        excluded (``include_assistant=False``) — assistants never message or
+        receive messages from families.
 
         Read at execution time; the tenant comes from ``current_academy_id()``
         inside the closure, never from a composition-time capture.
         """
-        return await sessions_repo.assigned_session_ids_for_coach(coach_id)
+        return await sessions_repo.assigned_session_ids_for_coach(coach_id, include_assistant=False)
 
     async def list_messages(coach_id: str) -> list[Message]:
         return await messages_repo.for_recipient(
@@ -442,6 +453,8 @@ def compose_coach(
     )
 
     get_roster = GetSessionRoster(enrollments=enrollments_repo, students=students_repo)
+    # Attendance eligibility reads the same one-time roster the coach sees (#672).
+    enrollment_lookup = EnrollmentLookupAdapter(enrollments_repo, occurrence_roster_repo)
 
     return CoachComposition(
         list_today=ListCoachOccurrencesForDate(
@@ -457,7 +470,7 @@ def compose_coach(
         mark_attendance=MarkAttendance(
             attendance_repo=attendance_repo,
             occurrence_lookup=EnrollmentOccurrenceLookup(occurrences_repo),
-            enrollment_lookup=EnrollmentLookupAdapter(enrollments_repo),
+            enrollment_lookup=enrollment_lookup,
             outbox=outbox,
             idempotency_store=idempotency_store,
             academy_id=request_academy_id,
@@ -471,7 +484,7 @@ def compose_coach(
         bulk_mark_attendance=BulkMarkAttendance(
             attendance_repo=attendance_repo,
             occurrence_lookup=EnrollmentOccurrenceLookup(occurrences_repo),
-            enrollment_lookup=EnrollmentLookupAdapter(enrollments_repo),
+            enrollment_lookup=enrollment_lookup,
             outbox=outbox,
             idempotency_store=idempotency_store,
             academy_id=request_academy_id,
@@ -486,6 +499,9 @@ def compose_coach(
             enrollments=enrollments_repo,
         ),
         list_progress_notes=ListProgressNotes(notes=notes_repo, sessions=assigned_sessions),
+        set_progress_note_visibility=SetProgressNoteVisibility(
+            notes=notes_repo, sessions=assigned_sessions
+        ),
         assigned_sessions=assigned_sessions,
         add_student_to_roster=CoachAddStudentToRoster(
             sessions=sessions_repo,
@@ -518,7 +534,9 @@ def compose_coach(
         ),
         list_session_types=ListSessionTypes(session_types=session_type_repo),
         get_billing_enrollment=billing_enrollment_repo.get,
-        get_active_session_enrollments_for_student=enrollments_repo.active_for_student,
+        # issue #651: paused students stay on the roster, so coach
+        # authorisation reads active-or-paused, not active only.
+        get_active_session_enrollments_for_student=enrollments_repo.active_or_paused_for_student,
         list_all_sessions=ListCoachUpcomingOccurrences(
             occurrences=occurrences_repo,
             sessions=sessions_repo,
@@ -533,6 +551,7 @@ def compose_coach(
         # Skill pathway
         create_skill_note=CreateSkillNote(notes=skill_note_repo),
         list_skill_notes=ListSkillNotes(notes=skill_note_repo),
+        set_skill_note_visibility=SetSkillNoteVisibility(notes=skill_note_repo),
         student_progress=student_progress_comp,
         curriculum=compose_curriculum(db),
         generate_daily_teaching_plan=generate_daily_teaching_plan,

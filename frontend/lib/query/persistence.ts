@@ -50,6 +50,11 @@ export function shouldPersistQuery(queryKey: unknown, status: string): boolean {
   // Student pricing is not offline-critical; keep proration/pricing out
   // of localStorage so shared coach devices do not retain it.
   if (queryKey[1] === "billing-enrollments") return false;
+  // Coach notes about children default to PRIVATE (slice 3) and are
+  // online-only reads; their bodies must not sit in localStorage for 24h
+  // on a shared device any more than message bodies may.
+  if (queryKey[1] === "progress-notes") return false;
+  if (queryKey[1] === "skill-notes") return false;
   return status === "success";
 }
 

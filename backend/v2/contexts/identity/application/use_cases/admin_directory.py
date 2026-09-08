@@ -121,7 +121,7 @@ class ListAdminUsers:
 
     async def execute(
         self,
-        role: Literal["admin", "coach", "parent", "owner"] | None = None,
+        role: Literal["admin", "coach", "assistant_coach", "parent", "owner"] | None = None,
         academy_id: str | None = None,
     ) -> list[AdminUserSummary]:
         return await self._users.list_users(role, academy_id=academy_id)

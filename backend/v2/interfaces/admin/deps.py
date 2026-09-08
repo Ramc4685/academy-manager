@@ -245,7 +245,6 @@ class AdminUseCases:
     list_dues_followup: object  # callable
     send_dues_reminders: SendDuesReminders
     export_report_csv: object  # callable
-    get_reports_kpis: object  # async () -> dict[str, int | float]
     list_enrollment_events: object  # async (enrollment_id: str) -> list[dict]
     list_billing_deferral_warnings: object  # async (*, today: date, limit: int)
     # comms
@@ -271,11 +270,6 @@ class AdminUseCases:
     tuition_discounts: object | None = None  # MongoTuitionDiscountRepository
     tuition_discount_summary: object | None = None  # MongoTuitionDiscountSummaryQuery
     reconcile_stripe_billing: object | None = None  # callable
-    get_billing_reconciliation_report: object | None = None  # callable
-    list_billing_webhook_events: object | None = None  # callable
-    # Issue #432: async () -> dict — Connect readiness + webhook backlog for
-    # the admin Billing Health card.
-    get_connect_readiness: object | None = None
     get_admin_user: GetAdminUser | None = None
     update_admin_user: UpdateAdminUser | None = None
     create_admin_user: CreateAdminUser | None = None
@@ -289,6 +283,8 @@ class AdminUseCases:
     change_admin_student_parent: ChangeAdminStudentParent | None = None
     get_admin_session: object | None = None  # async (session_id: str) -> dict | None
     maintain_session_occurrences: object | None = None  # async (session) -> None
+    # Assistant coaches editor (composition/admin_session_staff.py).
+    set_session_assistants: object | None = None  # SetSessionAssistants
     add_session_replacement: object | None = None  # async (...) -> dict | None
     update_session_occurrence_replacement: object | None = None  # async (...) -> dict | None
     manage_admin_waiver_templates: ManageAdminWaiverTemplates | None = None
@@ -316,7 +312,11 @@ class AdminUseCases:
     move_student_session_type: MoveStudentSessionType | None = None
     override_student_price: OverrideStudentPrice | None = None
     process_scheduled_resume_actions: ProcessScheduledResumeActions | None = None
-    list_blocked_scheduled_resume_actions: object | None = None
+    # Issue #675: month-end parent self-cancels (hourly scheduler job).
+    process_scheduled_cancellation_actions: object | None = None
+    #: Scheduled enrollment actions that stopped moving on their own:
+    #: ``blocked_capacity`` resumes and ``failed`` month-end cancels (#675).
+    list_stuck_scheduled_actions: object | None = None
     get_enrollment_funnel: object | None = (
         None  # async (period: str | None) -> EnrollmentFunnelResult
     )
@@ -336,6 +336,10 @@ class AdminUseCases:
     student_progress: StudentProgressComposition | None = None
     generate_daily_teaching_plan: GenerateDailyTeachingPlan | None = None
     get_session_occurrence: object | None = None  # async (occurrence_id: str) -> occurrence | None
+    # Issue #671: CancelSessionOccurrence — "cancel this date". Optional so
+    # older admin fixtures still construct AdminUseCases; the route 503s
+    # rather than 500s when a composition root forgets to wire it.
+    cancel_session_occurrence: object | None = None
     get_coach_engagement_stats: GetCoachEngagementStats | None = None
     send_campaign: SendCampaign | None = None
     start_stripe_connect_use_case: StartStripeConnectUseCase | None = None
@@ -352,17 +356,13 @@ class AdminUseCases:
     # exposes it — the monthly generation job calls it directly.
     send_generated_invoices: object | None = None
     charge_invoice_via_autopay: object | None = None
-    # Billing Health (#235): observability + recovery actions.
-    list_reconciliation_runs: object | None = None  # async () -> list[dict]
-    run_reconciliation: object | None = None  # async () -> dict
+    charge_invoice_as_admin_action: object | None = None
+    # Billing Health (#235). The Stripe-plumbing half moved to
+    # composition/billing_health.py + admin_billing_health (spec 2026-09-07 §5.1).
     list_failed_payment_attempts: object | None = None  # async () -> list[dict]
     list_invoice_attempts: object | None = None  # async (invoice_id) -> list[dict]
     list_dunning_failures: object | None = None  # async () -> list[dict]
     process_dunning_retries: object | None = None  # ProcessDunningRetries
-    replay_webhook_event: object | None = None  # async (event_id) -> bool
-    # Legacy invoice ↔ Stripe charge review queue (#242 WI-3).
-    list_legacy_match_queue: object | None = None  # async () -> list[dict]
-    confirm_legacy_match: object | None = None  # async (**kwargs) -> dict
     # Payment visibility (Phase 1): filtered list, money-received feed, last payment per family.
     list_payments_filtered: object | None = None  # async (**filters) -> dict
     list_payment_feed: object | None = None  # async (limit: int) -> list[dict]

@@ -195,7 +195,7 @@ function BySkillWorkspace({
             setSkillId(event.target.value);
             setSelected([]);
           }}
-          className="mt-1 min-h-touch w-full rounded-md border border-neutral-300 bg-white px-3"
+          className="mt-1 h-11 min-h-touch w-full rounded-md border border-neutral-300 bg-white px-3"
         >
           {groups.map((item) => (
             <option key={item.skill_id} value={item.skill_id}>
@@ -230,7 +230,7 @@ function BySkillWorkspace({
         <select
           value={status}
           onChange={(event) => setStatus(event.target.value as SkillStatus)}
-          className="mt-1 min-h-touch w-full rounded-md border border-neutral-300 bg-white px-3"
+          className="mt-1 h-11 min-h-touch w-full rounded-md border border-neutral-300 bg-white px-3"
         >
           {STATUS_OPTIONS.map((option) => (
             <option key={option} value={option}>
@@ -282,7 +282,7 @@ function ByStudentWorkspace({
         <select
           value={student.student_id}
           onChange={(event) => setStudentId(event.target.value)}
-          className="mt-1 min-h-touch w-full rounded-md border border-neutral-300 bg-white px-3"
+          className="mt-1 h-11 min-h-touch w-full rounded-md border border-neutral-300 bg-white px-3"
         >
           {students.map((item) => (
             <option key={item.student_id} value={item.student_id}>
@@ -333,7 +333,7 @@ function StudentSkillRow({
         <select
           value={status}
           onChange={(event) => setStatus(event.target.value as SkillStatus)}
-          className="min-h-touch min-w-0 rounded-md border border-neutral-300 bg-white px-2 text-sm"
+          className="h-11 min-h-touch min-w-0 rounded-md border border-neutral-300 bg-white px-2 text-sm"
         >
           {STATUS_OPTIONS.map((option) => (
             <option key={option} value={option}>

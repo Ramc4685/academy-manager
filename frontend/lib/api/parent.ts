@@ -114,6 +114,8 @@ export interface ParentEnrollment {
   session_id: string;
   session_title: string;
   status: string;
+  /** Issue #675: set while a parent's end-of-period cancel is pending; the enrollment stays active until then. */
+  pending_cancellation_at?: string | null;
   payment_mode: string | null;
   /** @deprecated Not populated by the v2 BFF; autopay state lives in autopay_enrollment_status. Do not read. */
   subscription_status: string | null;
@@ -139,6 +141,8 @@ export interface ParentInvoice {
   created_at: string;
   /** Enrollment covered by this invoice; null/absent for legacy or non-enrollment invoices. */
   enrollment_id?: string | null;
+  /** Why a "void" invoice was voided (e.g. "enrollment_cancelled"); null for every other status. */
+  void_reason?: string | null;
 }
 
 export interface ParentInvoiceLine {
@@ -607,6 +611,8 @@ export interface CancellationPreview {
   effective_timing: string;
   policy: Record<string, unknown>;
   blocked_reason: string | null;
+  /** Issue #675: when the cancel takes effect (now, or the academy-local month end). */
+  effective_at?: string | null;
 }
 
 export function getCancellationPreview(
@@ -620,10 +626,12 @@ export function getCancellationPreview(
 
 export interface SelfCancelResult {
   enrollment_id: string;
+  /** "cancelled" (immediate) or "pending_cancellation" (end of period, issue #675). */
   status: string;
   fee_cents: number;
   effective_timing: string;
   cancelled_at: string;
+  pending_cancellation_at?: string | null;
 }
 
 export function selfCancelEnrollment(

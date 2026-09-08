@@ -11,6 +11,7 @@ import {
   coachDayHubPath,
   coachSessionBulkSkillStatusPath,
   coachSessionSkillsPath,
+  coachSkillNotePath,
   coachSkillNotesPath,
 } from "./coach-paths";
 
@@ -21,6 +22,8 @@ export interface CoachRosterEntry {
   student_id: string;
   full_name: string;
   enrollment_status: EnrollmentStatus;
+  /** Issue #675: parent end-of-period cancel pending; the student still attends until then. */
+  pending_cancellation_at?: string | null;
   /** Mark already recorded for this occurrence (hydrates state on reload). */
   attendance_status?: AttendanceStatus | null;
   /** True when a parent submitted an absence notice for this occurrence. */
@@ -182,6 +185,14 @@ export interface LessonPlan {
   created_at: string;
 }
 
+/**
+ * Who a coach note is for. Notes default to `private` (coaches, assistants
+ * and supervisors only); `shared` notes also reach the student's parents.
+ * Assistant coaches may write notes but never share them (the BFF answers
+ * 403 `Coaching.NoteShareForbidden`).
+ */
+export type NoteVisibility = "private" | "shared";
+
 export interface ProgressNote {
   note_id: string;
   session_id: string;
@@ -189,16 +200,19 @@ export interface ProgressNote {
   coach_id: string;
   body: string;
   created_at: string;
+  visibility: NoteVisibility;
 }
 
 export interface SkillNote {
   note_id: string;
+  academy_id?: string;
   student_id: string;
   skill_id: string;
   coach_id: string;
   session_id: string | null;
   body: string;
   created_at: string;
+  visibility: NoteVisibility;
 }
 
 export interface CoachScheduleEntry {
@@ -275,6 +289,35 @@ export async function markAttendance(
   });
 }
 
+export interface CorrectAttendanceRequest {
+  status: AttendanceStatus;
+  reason?: string | null;
+}
+
+export interface CorrectAttendanceResponse {
+  attendance_id: string;
+  occurrence_id: string;
+  session_id: string;
+  student_id: string;
+  status: AttendanceStatus;
+  previous_status: AttendanceStatus | null;
+  corrected_by: string | null;
+  corrected_at: string | null;
+}
+
+/** Change an already-recorded mark (#517). Coaches have a 48h window;
+ *  supervisors have none. Keyed by occurrence + student, not attendance_id. */
+export async function correctAttendance(
+  occurrenceId: string,
+  studentId: string,
+  payload: CorrectAttendanceRequest,
+): Promise<CorrectAttendanceResponse> {
+  return apiFetch<CorrectAttendanceResponse>(
+    `/coach/occurrences/${encodeURIComponent(occurrenceId)}/attendance/${encodeURIComponent(studentId)}`,
+    { method: "PATCH", body: JSON.stringify(payload) },
+  );
+}
+
 export async function bulkMarkAttendance(
   occurrenceId: string,
   payload: BulkMarkAttendanceRequest,
@@ -321,13 +364,28 @@ export function listProgressNotes(
 
 export function createProgressNote(
   sessionId: string,
-  payload: { student_id: string; body: string },
+  payload: { student_id: string; body: string; visibility?: NoteVisibility },
 ): Promise<ProgressNote> {
   return apiFetch(
     `/coach/sessions/${encodeURIComponent(sessionId)}/progress-notes`,
     {
       method: "POST",
       body: JSON.stringify(payload),
+    },
+  );
+}
+
+/** Flip a progress note between private and shared-with-parent. */
+export function setProgressNoteVisibility(
+  sessionId: string,
+  noteId: string,
+  visibility: NoteVisibility,
+): Promise<ProgressNote> {
+  return apiFetch(
+    `/coach/sessions/${encodeURIComponent(sessionId)}/progress-notes/${encodeURIComponent(noteId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ visibility }),
     },
   );
 }
@@ -341,11 +399,23 @@ export function listSkillNotes(
 
 export function createSkillNote(
   studentId: string,
-  payload: { skill_id: string; body: string },
+  payload: { skill_id: string; body: string; visibility?: NoteVisibility },
 ): Promise<SkillNote> {
   return apiFetch(coachSkillNotesPath(studentId), {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+/** Flip a skill note between private and shared-with-parent. */
+export function setSkillNoteVisibility(
+  studentId: string,
+  noteId: string,
+  visibility: NoteVisibility,
+): Promise<SkillNote> {
+  return apiFetch(coachSkillNotePath(studentId, noteId), {
+    method: "PATCH",
+    body: JSON.stringify({ visibility }),
   });
 }
 

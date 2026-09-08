@@ -3,18 +3,32 @@
 /**
  * Admin dashboard landing — Rally restyle.
  *
- * Real data only: sessions today + monthly revenue + recent payments +
- * dashboard attention BFF signals.
+ * Real data only: sessions today + monthly revenue + collections totals
+ * (owed / autopay scheduled / needs action) + recent payments + dashboard
+ * attention BFF signals.
+ * Revenue (tile + chart) is owner-only: `/finance/revenue` 404s for admins
+ * without the owner scope, so the query is not even issued for them.
  * Recharts is dynamic-imported to keep the admin landing chunk small.
  */
 
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 
-import { listAdminSessions, listAdminPayments, getRevenue, listAdminAttention } from "@/lib/api/admin";
-import type { AdminAttentionSeverity, AdminPaymentStatus } from "@/lib/api/admin";
+import {
+  listAdminSessions,
+  getAdminCollections,
+  getAdminPaymentFeed,
+  getRevenue,
+  listAdminAttention,
+} from "@/lib/api/admin";
+import type { AdminAttentionSeverity } from "@/lib/api/admin";
+import { formatCents } from "@/lib/money";
 import { queryKeys } from "@/lib/query/keys";
+import { paymentMethodLabel, statusChip } from "@/app/(admin)/admin/payments/format";
+import { normalizeCollections } from "@/app/(admin)/admin/payments/buckets/bucket-view";
 
+import { useIsOwner } from "@/components/admin/owner-context";
 import { Card } from "@/components/ds/card";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { LaneHeader } from "@/components/ds/lane";
@@ -40,54 +54,40 @@ function prevMonthKey(): string {
   return d.toISOString().slice(0, 7);
 }
 
-function formatCents(cents: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  }).format(cents / 100);
-}
-
-const PAYMENT_CHIP: Record<AdminPaymentStatus, ChipVariant> = {
-  succeeded: "paid",
-  paid: "paid",
-  pending: "pending",
-  partially_paid: "partial",
-  refunded: "refunded",
-  partially_refunded: "partial",
-  failed: "failed",
-  expired: "expired",
-  waived: "waived",
-};
-
-const PAYMENT_LABEL: Record<AdminPaymentStatus, string> = {
-  succeeded: "PAID",
-  paid: "PAID",
-  pending: "PENDING",
-  partially_paid: "PARTIAL",
-  refunded: "REFUNDED",
-  partially_refunded: "PARTIAL",
-  failed: "FAILED",
-  expired: "EXPIRED",
-  waived: "WAIVED",
-};
+const RECENT_PAYMENTS_LIMIT = 5;
 
 export default function AdminDashboardPage() {
   const today = todayISO();
+  const isOwner = useIsOwner();
 
   const sessionsQuery = useQuery({
     queryKey: queryKeys.admin.sessions(today),
     queryFn: () => listAdminSessions(today),
   });
 
-  const paymentsQuery = useQuery({
-    queryKey: queryKeys.admin.payments(),
-    queryFn: () => listAdminPayments(),
+  // Money tiles read the same six-bucket view as the Payments page, so the
+  // dashboard and the bucket list can never disagree about who owes what.
+  // "current" is the key for the unpinned (this month) period.
+  const collectionsQuery = useQuery({
+    queryKey: queryKeys.admin.collections("current"),
+    queryFn: () => getAdminCollections(),
+  });
+
+  // INVARIANT (PR #645): "Recent payments" MUST read the paid-only feed, not
+  // listAdminPayments(). The list is invoice-centric — Stripe/Zelle settlements
+  // are folded into invoice rows dated by invoice creation, and expired/failed
+  // attempts sit alongside real money. Sorting that list by created_at hid every
+  // Stripe payment behind registration checkouts (the prod defect). The feed
+  // returns money actually received, newest settlement first.
+  const paymentFeedQuery = useQuery({
+    queryKey: queryKeys.admin.paymentFeed(RECENT_PAYMENTS_LIMIT),
+    queryFn: () => getAdminPaymentFeed(RECENT_PAYMENTS_LIMIT),
   });
 
   const revenueQuery = useQuery({
     queryKey: queryKeys.admin.revenue(),
     queryFn: () => getRevenue(),
+    enabled: isOwner,
   });
 
   const attentionQuery = useQuery({
@@ -97,18 +97,16 @@ export default function AdminDashboardPage() {
 
   // Normalize once. Treat absent/partial responses as empty rather than
   // sprinkling optional chains throughout the JSX.
+  // `normalizeCollections` also absorbs e2e stubs that answer every
+  // `/admin/payments*` URL with `{ payments: [] }` — the tiles render zeros.
   const sessions = sessionsQuery.data?.sessions ?? [];
-  const payments = paymentsQuery.data?.payments ?? [];
+  const collectionsTotals = normalizeCollections(collectionsQuery.data).totals;
   const revenueByMonth = revenueQuery.data?.by_month ?? {};
 
   const todayCount = sessions.length;
-  const paymentsTracked = payments.length;
   const monthRevenue = revenueByMonth[currentMonthKey()] ?? 0;
 
-  const recentPayments = payments
-    .slice()
-    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-    .slice(0, 5);
+  const recentPayments = (paymentFeedQuery.data?.payments ?? []).slice(0, RECENT_PAYMENTS_LIMIT);
 
   const chartData = (Object.entries(revenueByMonth) as Array<[string, number]>)
     .sort(([a], [b]) => a.localeCompare(b))
@@ -118,27 +116,72 @@ export default function AdminDashboardPage() {
   return (
     <section data-testid="admin-dashboard" className="space-y-6">
       {/* KPI strip */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         <KpiCard
           label="Sessions today"
           value={sessionsQuery.isLoading ? "—" : String(todayCount)}
           loading={sessionsQuery.isLoading}
         />
-        <KpiCard
-          label="Revenue (month to date)"
-          value={revenueQuery.isLoading ? "—" : formatCents(monthRevenue)}
-          loading={revenueQuery.isLoading}
-          hint={
-            revenueQuery.isLoading
-              ? undefined
-              : `Last month ${formatCents(revenueByMonth[prevMonthKey()] ?? 0)}`
-          }
-        />
-        <KpiCard
-          label="Payments tracked"
-          value={paymentsQuery.isLoading ? "—" : String(paymentsTracked)}
-          loading={paymentsQuery.isLoading}
-        />
+        {isOwner && (
+          <KpiCard
+            label="Revenue (month to date)"
+            value={revenueQuery.isLoading ? "—" : formatCents(monthRevenue, { whole: true })}
+            loading={revenueQuery.isLoading}
+            hint={
+              revenueQuery.isLoading
+                ? undefined
+                : `Last month ${formatCents(revenueByMonth[prevMonthKey()] ?? 0, { whole: true })}`
+            }
+            testId="admin-dashboard-revenue"
+          />
+        )}
+        <Link
+          href="/admin/payments#bucket-past_due"
+          className="block rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-rally-cobalt"
+          data-testid="dashboard-tile-owed"
+        >
+          <KpiCard
+            label="Owed this month"
+            value={collectionsQuery.isLoading ? "—" : formatCents(collectionsTotals.owed_cents)}
+            loading={collectionsQuery.isLoading}
+          />
+        </Link>
+        <Link
+          href="/admin/payments#bucket-autopay_scheduled"
+          className="block rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-rally-cobalt"
+          data-testid="dashboard-tile-autopay"
+        >
+          <KpiCard
+            label="Autopay scheduled"
+            value={
+              collectionsQuery.isLoading
+                ? "—"
+                : formatCents(collectionsTotals.autopay_scheduled_cents)
+            }
+            loading={collectionsQuery.isLoading}
+            hint={
+              collectionsQuery.isLoading
+                ? undefined
+                : `${collectionsTotals.autopay_scheduled_count} ${
+                    collectionsTotals.autopay_scheduled_count === 1 ? "family" : "families"
+                  }`
+            }
+          />
+        </Link>
+        <Link
+          href="/admin/payments#bucket-failed_autopay"
+          className="block rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-rally-cobalt"
+          data-testid="dashboard-tile-needs-action"
+        >
+          <KpiCard
+            label="Needs action"
+            value={
+              collectionsQuery.isLoading ? "—" : String(collectionsTotals.needs_action_count)
+            }
+            loading={collectionsQuery.isLoading}
+            hint={collectionsQuery.isLoading ? undefined : "failed autopay · past due"}
+          />
+        </Link>
       </div>
 
       <Card p={20}>
@@ -175,25 +218,27 @@ export default function AdminDashboardPage() {
         )}
       </Card>
 
-      {/* Revenue chart */}
-      <Card p={20}>
-        <LaneHeader index="01" title="Monthly revenue (last 6 months)" />
-        {revenueQuery.isLoading ? (
-          <div className="h-48 animate-pulse rounded-xl bg-rally-line/40" />
-        ) : chartData.length > 0 ? (
-          <RevenueChart data={chartData} />
-        ) : (
-          <EmptyState message="No revenue data yet." />
-        )}
-      </Card>
+      {/* Revenue chart (owner only) */}
+      {isOwner && (
+        <Card p={20} data-testid="admin-dashboard-revenue-chart">
+          <LaneHeader index="01" title="Monthly revenue (last 6 months)" />
+          {revenueQuery.isLoading ? (
+            <div className="h-48 animate-pulse rounded-xl bg-rally-line/40" />
+          ) : chartData.length > 0 ? (
+            <RevenueChart data={chartData} />
+          ) : (
+            <EmptyState message="No revenue data yet." />
+          )}
+        </Card>
+      )}
 
       {/* Recent payments */}
       <Card p={20}>
-        <LaneHeader index="02" title="Recent payments" />
-        {paymentsQuery.isLoading ? (
+        <LaneHeader index={isOwner ? "02" : "01"} title="Recent payments" />
+        {paymentFeedQuery.isLoading ? (
           <TableSkeleton rows={3} />
         ) : recentPayments.length === 0 ? (
-          <EmptyState message="No payments yet." />
+          <EmptyState message="No payments received yet." />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm" data-testid="admin-dashboard-recent-payments">
@@ -208,39 +253,46 @@ export default function AdminDashboardPage() {
                   <th className="pb-2 pr-4 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
                     Status
                   </th>
+                  <th className="pb-2 pr-4 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
+                    Method
+                  </th>
                   <th className="pb-2 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
-                    Date
+                    Paid on
                   </th>
                 </tr>
               </thead>
               <tbody>
                 {recentPayments.map((p) => {
-                  const variant = PAYMENT_CHIP[p.status];
-                  const label = PAYMENT_LABEL[p.status];
-                  const primary = p.student_name ?? p.parent_name ?? p.invoice_number ?? "Payment";
-                  const secondary = [
-                    p.invoice_number,
-                    p.student_name ? p.parent_name : null,
-                    p.period,
-                  ].filter(Boolean);
+                  const chip = statusChip(p.status);
+                  const method = paymentMethodLabel(p.payment_method);
+                  const netCents = Math.max(p.amount_cents - p.refunded_cents, 0);
                   return (
                     <tr key={p.payment_id} className="border-b border-rally-line/60 last:border-0">
                       <td className="py-2.5 pr-4">
-                        <div className="font-medium text-rally-ink">{primary}</div>
-                        {secondary.length > 0 && (
+                        <div className="font-medium text-rally-ink">
+                          {p.parent_name ?? "Family on file"}
+                        </div>
+                        {p.refunded_cents > 0 && (
                           <div className="mt-0.5 text-xs text-rally-muted">
-                            {secondary.join(" · ")}
+                            {formatCents(p.refunded_cents)} refunded
                           </div>
                         )}
                       </td>
                       <td className="py-2.5 pr-4 font-mono font-semibold tabular-nums text-rally-ink">
-                        {formatCents(p.amount_cents)}
+                        {formatCents(netCents)}
                       </td>
                       <td className="py-2.5 pr-4">
-                        <Chip variant={variant} label={label} />
+                        <Chip variant={chip.variant} label={chip.label} />
+                      </td>
+                      <td className="py-2.5 pr-4">
+                        {method ? (
+                          <Chip variant={method === "STRIPE" ? "autopayOn" : "manual"} label={method} />
+                        ) : (
+                          <span className="text-rally-subtle">—</span>
+                        )}
                       </td>
                       <td className="py-2.5 text-rally-muted">
-                        {new Date(p.created_at).toLocaleDateString()}
+                        {new Date(p.paid_at).toLocaleDateString()}
                       </td>
                     </tr>
                   );
@@ -265,14 +317,16 @@ function KpiCard({
   value,
   loading,
   hint,
+  testId,
 }: {
   label: string;
   value: string;
   loading: boolean;
   hint?: string;
+  testId?: string;
 }) {
   return (
-    <Card p={20}>
+    <Card p={20} data-testid={testId}>
       <Overline>{label}</Overline>
       {loading ? (
         <div className="mt-2 h-9 w-28 animate-pulse rounded bg-rally-line/40" />

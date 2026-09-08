@@ -33,6 +33,7 @@ from backend.v2.contexts.identity.application.use_cases.provision_student_login 
     ProvisionStudentLoginCommand,
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
+from backend.v2.interfaces.admin.owner_gate import ensure_can_assign_role
 from backend.v2.interfaces.admin.views import (
     AdminStudentDetailView,
     AdminStudentList,
@@ -75,7 +76,9 @@ async def _attach_tuition_discounts(data: dict, use_cases: AdminUseCases) -> Non
 
 @router.get("/users", response_model=AdminUserList)
 async def list_users(
-    role: Literal["admin", "coach", "parent", "owner"] | None = Query(default=None),
+    role: Literal["admin", "coach", "assistant_coach", "parent", "owner"] | None = Query(
+        default=None
+    ),
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminUserList:
@@ -102,6 +105,7 @@ async def create_user(
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminUserDetailView:
+    ensure_can_assign_role(claims, payload.role)
     use_case = use_cases.create_admin_user
     if use_case is None:
         raise HTTPException(status_code=503, detail="Admin user creation is not configured")
@@ -188,8 +192,7 @@ async def add_user_role(
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminUserDetailView:
-    if payload.role == "owner" and not get_settings().enable_owner_role:
-        raise HTTPException(status_code=404, detail="Not found")
+    ensure_can_assign_role(claims, payload.role)
     use_case = use_cases.add_user_role
     if use_case is None:
         raise HTTPException(status_code=503, detail="Role management is not configured")
@@ -204,13 +207,14 @@ async def add_user_role(
 @router.delete("/users/{user_id}/roles/{role}", response_model=AdminUserDetailView)
 async def remove_user_role(
     user_id: str,
-    role: Literal["admin", "coach", "parent", "owner"],
+    role: Literal["admin", "coach", "assistant_coach", "parent", "owner"],
     reason: str = Query(default="Admin role change", min_length=1, max_length=500),
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminUserDetailView:
-    if claims.user_id == user_id and role == "admin":
-        raise HTTPException(status_code=409, detail="You cannot remove your own admin role")
+    if claims.user_id == user_id and role in ("admin", "owner"):
+        raise HTTPException(status_code=409, detail=f"You cannot remove your own {role} role")
+    ensure_can_assign_role(claims, role)
     use_case = use_cases.remove_user_role
     if use_case is None:
         raise HTTPException(status_code=503, detail="Role management is not configured")
@@ -276,6 +280,15 @@ async def update_user_role(
             status_code = 400
 
         raise SelfRoleChangeForbidden("cannot change your own role")
+    ensure_can_assign_role(claims, payload.role)
+    # Replacing a role also revokes every role the target holds today, so an
+    # admin-only caller must not be able to demote an owner/admin by setting
+    # their role to "parent". Check the held roles, not just the requested one.
+    detail_use_case = use_cases.get_admin_user
+    if detail_use_case is not None:
+        current = await detail_use_case.execute(user_id, academy_id=claims.academy_id)
+        for held in getattr(current, "roles", None) or ():
+            ensure_can_assign_role(claims, held)
     user = await use_cases.change_user_role.execute(
         user_id,
         ChangeUserRoleCommand(

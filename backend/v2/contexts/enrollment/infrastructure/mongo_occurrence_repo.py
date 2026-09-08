@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
@@ -29,7 +30,10 @@ class MongoSessionOccurrenceRepository(TenantScopedRepository):
             is_billable=bool(doc.get("is_billable", True)),
             is_payable=bool(doc.get("is_payable", True)),
             cancellation_reason=_optional_str(doc.get("cancellation_reason")),
+            cancelled_at=doc.get("cancelled_at"),
+            cancelled_by=_optional_str(doc.get("cancelled_by")),
             template_session_id=_optional_str(doc.get("template_session_id")),
+            assistant_coach_ids=_string_tuple(doc.get("assistant_coach_ids")),
         )
 
     async def get(self, occurrence_id: str) -> SessionOccurrence | None:
@@ -68,6 +72,7 @@ class MongoSessionOccurrenceRepository(TenantScopedRepository):
                     {"scheduled_coach_id": coach_id},
                     {"actual_coach_id": coach_id},
                     {"substitute_coach_id": coach_id},
+                    {"assistant_coach_ids": coach_id},
                 ],
             },
             sort=[("start_at", 1)],
@@ -90,6 +95,7 @@ class MongoSessionOccurrenceRepository(TenantScopedRepository):
                     {"scheduled_coach_id": coach_id},
                     {"actual_coach_id": coach_id},
                     {"substitute_coach_id": coach_id},
+                    {"assistant_coach_ids": coach_id},
                 ],
             },
             sort=[("start_at", 1)],
@@ -226,6 +232,74 @@ class MongoSessionOccurrenceRepository(TenantScopedRepository):
         )
         return await self.get(occurrence_id)
 
+    async def cancel_scheduled(
+        self,
+        *,
+        occurrence_id: str,
+        reason: str,
+        actor_id: str | None,
+        now: datetime,
+    ) -> SessionOccurrence | None:
+        """CAS one dated class from ``scheduled`` to ``cancelled`` (issue #671).
+
+        The filter carries ``status: "scheduled"`` so two admins cancelling the
+        same date cannot both win, and a class that was completed or already
+        cancelled in between is left alone. Returns the post-write row, or
+        ``None`` when nothing matched (missing, or no longer scheduled) — the
+        use case turns that into the right 404/409.
+
+        ``is_billable``/``is_payable`` flip together: the family is not charged
+        for the date and the coach is not paid for it. Never deletes: the row
+        is the audit trail that the class was scheduled.
+        """
+        doc = await self._find_one_and_update(
+            {"occurrence_id": occurrence_id, "status": "scheduled"},
+            {
+                "$set": {
+                    "status": "cancelled",
+                    "is_billable": False,
+                    "is_payable": False,
+                    "cancellation_reason": reason,
+                    "cancelled_at": now,
+                    "cancelled_by": actor_id,
+                    "updated_at": now,
+                }
+            },
+        )
+        return self._to_domain(doc) if doc else None
+
+    async def sync_assistant_coach_ids_for_session(
+        self,
+        *,
+        session_id: str,
+        assistant_coach_ids: Sequence[str],
+        since: datetime,
+    ) -> int:
+        """Re-stamp ``assistant_coach_ids`` on every FUTURE occurrence of a session.
+
+        Past occurrences keep the list they were run with (who actually
+        helped that day is history); the session's current list only shapes
+        classes still to come. Returns the number of documents modified.
+        """
+        result = await self.collection.update_many(
+            self._scoped(
+                {
+                    "$or": [
+                        {"session_id": session_id},
+                        {"template_session_id": session_id},
+                    ],
+                    "start_at": {"$gte": since},
+                }
+            ),
+            {
+                "$set": {
+                    "assistant_coach_ids": list(assistant_coach_ids),
+                    "updated_at": datetime.now(UTC),
+                }
+            },
+        )
+        return int(result.modified_count)
+
 
 def _to_doc(occurrence: SessionOccurrence) -> dict[str, Any]:
     return {
@@ -240,7 +314,10 @@ def _to_doc(occurrence: SessionOccurrence) -> dict[str, Any]:
         "is_billable": occurrence.is_billable,
         "is_payable": occurrence.is_payable,
         "cancellation_reason": occurrence.cancellation_reason,
+        "cancelled_at": occurrence.cancelled_at,
+        "cancelled_by": occurrence.cancelled_by,
         "template_session_id": occurrence.template_session_id,
+        "assistant_coach_ids": list(occurrence.assistant_coach_ids),
     }
 
 
@@ -257,3 +334,9 @@ def _candidate_day_bounds_utc(on_date: date) -> tuple[datetime, datetime]:
 
 def _optional_str(value: object | None) -> str | None:
     return None if value is None else str(value)
+
+
+def _string_tuple(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list | tuple):
+        return ()
+    return tuple(str(item) for item in value if item)

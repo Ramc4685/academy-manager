@@ -8,7 +8,7 @@
  */
 import { apiFetch } from "../client";
 
-export type MembershipRole = "admin" | "coach" | "parent" | "owner";
+export type MembershipRole = "admin" | "coach" | "assistant_coach" | "parent" | "owner";
 
 export interface AcademyMembershipSummary {
   academy_id: string;

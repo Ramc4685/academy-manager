@@ -65,6 +65,22 @@ test.describe("billing trust and recovery surfaces", () => {
             pdf_url: null,
             created_at: "2026-06-01T00:00:00Z",
           },
+          {
+            // Final invoice of a cancelled enrollment (#651): the ledger keeps
+            // the historical balance, but the parent owes nothing and must
+            // not be offered a Pay button or an autopay opt-in for it.
+            invoice_id: "inv-void",
+            period: "2026-07",
+            status: "void",
+            total_cents: 9000,
+            balance_due_cents: 9000,
+            currency: "usd",
+            due_date: "2026-07-15",
+            pdf_url: null,
+            created_at: "2026-07-01T00:00:00Z",
+            enrollment_id: "enr-gone",
+            void_reason: "enrollment_cancelled",
+          },
         ],
       });
     });
@@ -139,6 +155,16 @@ test.describe("billing trust and recovery surfaces", () => {
     await expect(page.getByText("open", { exact: true })).toBeVisible();
     await expect(page.getByText("$45.00").first()).toBeVisible();
     await expect(page.getByRole("button", { name: "Pay $45.00", exact: true })).toBeVisible();
+    // Voided invoice renders $0 / Cancelled with its reason, and no Pay button
+    // or autopay opt-in — the stale $90.00 ledger balance never surfaces.
+    await expect(page.getByText("Cancelled", { exact: true })).toBeVisible();
+    await expect(page.getByText("Enrollment cancelled")).toBeVisible();
+    await expect(page.getByText("$0.00").first()).toBeVisible();
+    await expect(page.getByText("$90.00")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /^Pay \$90/ })).toHaveCount(0);
+    await expect(page.getByTestId("invoice-autopay-optin-inv-void")).toHaveCount(0);
+    // Balance hero excludes the voided invoice.
+    await expect(page.getByRole("button", { name: "Pay balance · $45.00" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Billing portal" })).toBeVisible();
     await expect(page.getByText("Autopay active, payment issue")).toBeVisible();
     await expect(
@@ -147,7 +173,7 @@ test.describe("billing trust and recovery surfaces", () => {
     await page.getByRole("button", { name: "Payment history" }).click();
     await expect(page.getByText("Invoice in_test_paid_1")).toBeVisible();
 
-    await page.getByRole("button", { name: "View" }).click();
+    await page.getByRole("button", { name: "View", exact: true }).click();
     await expect(page.getByText("Alice Chen monthly tuition × 1")).toBeVisible();
 
     await page.getByRole("button", { name: "Pay $45.00", exact: true }).click();
@@ -161,7 +187,7 @@ test.describe("billing trust and recovery surfaces", () => {
     expect(errors, `Console errors: ${errors.join("\n")}`).toEqual([]);
   });
 
-  test("admin payments expose failed-payment, webhook, Stripe, and reconciliation evidence", async ({
+  test("admin All invoices tab exposes webhook, Stripe, and reconciliation evidence", async ({
     page,
   }) => {
     const guard = installTenantGuard(page);
@@ -261,11 +287,14 @@ test.describe("billing trust and recovery surfaces", () => {
       });
     });
 
-    await page.goto("/admin/payments");
+    // The Collections tab is the default; the table and the webhook queue
+    // live under the All invoices tab. The reconciliation lookup moved to
+    // Billing Health with the trim (spec 2026-09-07 §6), so All invoices now
+    // only points at it.
+    await page.goto("/admin/payments?tab=invoices");
 
     await expect(page.getByTestId("admin-payments")).toBeVisible();
-    await expect(page.getByText("Failed payments")).toBeVisible();
-    await expect(page.getByText("1").first()).toBeVisible();
+    await expect(page.getByTestId("payments-all-invoices")).toBeVisible();
     await expect(page.getByText("Failed webhook queue")).toBeVisible();
     await expect(page.getByText("invoice.payment_failed")).toBeVisible();
     await expect(page.getByText("QUARANTINED")).toBeVisible();
@@ -280,8 +309,36 @@ test.describe("billing trust and recovery surfaces", () => {
       "missing allocation",
     );
 
+    // Payments points at Billing Health rather than carrying the lookup.
+    await expect(page.getByTestId("billing-health-pointer")).toBeVisible();
+
+    // The lookup itself moved to Billing Health (spec 2026-09-07 §6).
+    await page.route("**/api/v2/admin/billing/connect-readiness", (route) =>
+      fulfillJson(route, {
+        connected_account: {
+          configured: true,
+          status: "active",
+          charges_enabled: true,
+          payouts_enabled: true,
+          ready_for_charges: true,
+          account_id_masked: "acct...6f21",
+        },
+        allow_platform_charge_fallback: false,
+        payments_possible: true,
+        funds_route_to_academy: true,
+        webhook_events: { quarantined: 0, failed: 0 },
+        autopay_disable_failures: { count: 0, rows: [], truncated: false },
+        health: { state: "ok", headline: "Stripe is healthy", reasons: [] },
+      }),
+    );
+    await page.route("**/api/v2/admin/billing/reconciliation-runs", (route) =>
+      fulfillJson(route, { runs: [] }),
+    );
+    await page.goto("/admin/billing-health");
+    await expect(page.getByTestId("reconciliation-lookup")).toBeVisible();
+
     await page.getByPlaceholder("in_...").fill("in_test_failed_1");
-    await page.getByPlaceholder("pi_...").fill("pi_test_failed_1");
+    await page.getByPlaceholder("pi_...").first().fill("pi_test_failed_1");
     await page.getByRole("button", { name: "Run report" }).click();
     await expect(page.getByText("MISSING ALLOCATION", { exact: true })).toBeVisible();
     await expect(page.getByText("Ledger payment exists without payment allocation.")).toBeVisible();
