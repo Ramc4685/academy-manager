@@ -72,6 +72,32 @@ class EarlyWithdrawalCreditPolicy:
         )
 
 
+#: ``source_type`` stamped on every class-cancellation credit. Together with
+#: ``source_id`` (``"<occurrence_id>:<enrollment_id>"``) it is the idempotency
+#: key: migration 0168 makes the pair unique per academy, so a retried cancel
+#: can never credit the same family twice for the same date.
+CLASS_CANCELLATION_SOURCE_TYPE = "occurrence_cancellation"
+
+
+def class_cancellation_source_id(*, occurrence_id: str, enrollment_id: str) -> str:
+    return f"{occurrence_id}:{enrollment_id}"
+
+
+def class_cancellation_credit_cents(*, period_charge_cents: int, billable_classes: int) -> int:
+    """One cancelled date's share of what the family was (or will be) charged
+    for the month (issue #671).
+
+    ``period_charge_cents`` is the tuition the family owes for the period
+    before any account credit — the invoice's subtotal net of tuition discount
+    when it exists, else the monthly price net of discount. ``billable_classes``
+    is how many classes that charge bought, INCLUDING the one being cancelled.
+    Half-up rounding on the final cent, like every other tuition split here.
+    """
+    if period_charge_cents <= 0 or billable_classes <= 0:
+        return 0
+    return _round_half_up_rational(period_charge_cents, billable_classes)
+
+
 def _round_half_up_rational(numerator: int, denominator: int) -> int:
     if denominator <= 0:
         return 0

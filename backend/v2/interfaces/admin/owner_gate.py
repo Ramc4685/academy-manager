@@ -40,6 +40,9 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         # billing_routes.py — money governance
         ("PUT", f"{_ADMIN}/billing/settings/platform-fallback"),
         ("PUT", f"{_ADMIN}/billing/settings/invoice-schedule"),
+        # billing_rules_routes.py — the merged Settings panel write
+        # (GET /billing/rules stays admin).
+        ("PUT", f"{_ADMIN}/billing/rules"),
         ("POST", f"{_ADMIN}/enrollments/{{enrollment_id}}/withdrawal-credit/approve"),
         ("POST", f"{_ADMIN}/payments/refund"),
         ("POST", f"{_ADMIN}/payments/{{payment_id}}/discount"),
@@ -52,6 +55,16 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("POST", f"{_ADMIN}/billing/invoices/{{invoice_id}}/adjustments"),
         ("POST", f"{_ADMIN}/billing/invoices/{{invoice_id}}/void"),
         ("POST", f"{_ADMIN}/billing/invoices/{{invoice_id}}/refund"),
+        # billing_health_routes.py — Stripe plumbing is governance, the same
+        # tier as Reports and Payouts (spec 2026-09-07 §2). Admins who could
+        # open Billing Health before this change now get a 404.
+        ("GET", f"{_ADMIN}/billing/connect-readiness"),
+        ("GET", f"{_ADMIN}/billing/webhooks"),
+        ("POST", f"{_ADMIN}/billing/webhook-events/{{event_id}}/replay"),
+        ("GET", f"{_ADMIN}/billing/reconciliation-runs"),
+        ("POST", f"{_ADMIN}/billing/reconcile-now"),
+        ("GET", f"{_ADMIN}/billing/reconciliation"),
+        ("POST", f"{_ADMIN}/billing/legacy-match/confirm"),
         # billing_products_routes.py — pricing (GET stays admin)
         ("POST", f"{_ADMIN}/billing/products"),
         ("PATCH", f"{_ADMIN}/billing/products/{{product_id}}"),
@@ -78,9 +91,9 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("POST", f"{_ADMIN}/coaches/{{coach_id}}/pay-rates/repair"),
         # reports_routes.py — financial reports (dashboard, enrollment-funnel,
         # attendance-trends, coach-utilization stay admin)
+        ("GET", f"{_ADMIN}/reports/month-close"),
         ("GET", f"{_ADMIN}/reports/session-economics"),
         ("GET", f"{_ADMIN}/reports/projected-income"),
-        ("GET", f"{_ADMIN}/reports/kpis"),
         ("GET", f"{_ADMIN}/reports/refunds"),
         ("GET", f"{_ADMIN}/reports/revenue-by-category"),
         ("GET", f"{_ADMIN}/reports/deposit-slip"),

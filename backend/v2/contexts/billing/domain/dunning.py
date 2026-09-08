@@ -10,6 +10,13 @@ from pydantic import BaseModel, Field
 DUNNING_SCHEDULE_DAYS = (0, 3, 5, 7)
 MAX_DUNNING_ATTEMPTS = len(DUNNING_SCHEDULE_DAYS)
 
+#: Local hour (academy timezone) before which no NEW ladder is prepared on its
+#: due date, so the first autopay attempt lands in the morning of the due date
+#: instead of 00:00 UTC — 7pm the evening before in Chicago (#651). It lives
+#: here, beside the ladder it belongs to, so the application layer can read the
+#: rule without importing the Mongo repository that obeys it.
+FIRST_ATTEMPT_LOCAL_HOUR = 9
+
 DunningStatus = Literal["active", "processing", "resolved", "dunned", "suppressed"]
 AutopayDisableStatus = Literal["pending", "succeeded", "failed", "not_required"]
 

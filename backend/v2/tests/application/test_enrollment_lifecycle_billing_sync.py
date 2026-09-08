@@ -158,8 +158,8 @@ def _paused_enrollment(enrollment_id: str = "enr-2", student_id: str = "stu-2") 
 class DatedEnrollments(FakeEnrollments):
     dates: list[dict[str, Any]] = field(default_factory=list)
 
-    async def set_lifecycle_dates(self, enrollment_id: str, **dates: datetime) -> None:
-        self.dates.append({"enrollment_id": enrollment_id, **dates})
+    async def set_lifecycle_dates(self, enrollment_id: str, **fields: object) -> None:
+        self.dates.append({"enrollment_id": enrollment_id, **fields})
 
 
 @pytest.mark.asyncio
@@ -190,7 +190,14 @@ async def test_cancel_enrollment_syncs_billing_persists_date_and_records_result(
             "actor_id": "admin-1",
         }
     ]
-    assert enrollments.dates == [{"enrollment_id": "enr-1", "cancelled_at": EFFECTIVE}]
+    assert enrollments.dates == [
+        {
+            "enrollment_id": "enr-1",
+            "cancelled_at": EFFECTIVE,
+            "cancelled_by": "admin",
+            "cancellation_reason": "admin_cancel",
+        }
+    ]
     assert events.rows[0].billing_policy == "current_period_payable_future_voided"
     assert events.rows[0].billing_result == "voided=1,autopay=disabled"
 
@@ -261,7 +268,14 @@ async def test_withdraw_syncs_billing_and_never_claims_a_decision_was_recorded()
     )
     assert sync.calls[0]["transition"] == "withdrawn"
     assert sync.calls[0]["effective_at"] == EFFECTIVE
-    assert enrollments.dates == [{"enrollment_id": "enr-1", "withdrawal_date": EFFECTIVE}]
+    assert enrollments.dates == [
+        {
+            "enrollment_id": "enr-1",
+            "withdrawal_date": EFFECTIVE,
+            "cancelled_by": "admin",
+            "cancellation_reason": "moving",
+        }
+    ]
     assert events.rows[0].billing_result == "decision_not_recorded;voided=1,autopay=disabled"
 
 
@@ -493,7 +507,12 @@ async def test_cancel_session_sweeps_paused_rows_without_double_releasing() -> N
     # Only the active row released a seat: 1 -> 0, never negative / drifted.
     assert sessions.reserved["sess-1"] == 0
     assert deferrals.closed == [("enr-2", "session_cancelled")]
-    assert scheduled.cancelled == [("enr-2", "session_cancelled")]
+    # Issue #675: every row's pending actions die with the class — the
+    # active row's possible end-of-period self-cancel included.
+    assert scheduled.cancelled == [
+        ("enr-1", "session_cancelled"),
+        ("enr-2", "session_cancelled"),
+    ]
     assert {(c["enrollment_id"], c["transition"]) for c in sync.calls} == {
         ("enr-1", "session_cancelled"),
         ("enr-2", "session_cancelled"),
@@ -787,3 +806,59 @@ async def test_resume_warns_when_autopay_gateway_is_unwired(
             clock=_now,
         ).execute("enr-1")
     assert any("autopay resume skipped" in rec.getMessage() for rec in caplog.records)
+
+
+# --- Issue #675: admin transitions retire a pending end-of-period self-cancel
+
+
+@pytest.mark.asyncio
+async def test_admin_cancel_retires_pending_scheduled_actions() -> None:
+    scheduled = RecordingScheduledActions()
+    await CancelEnrollment(
+        enrollments=FakeEnrollments(rows={"enr-1": _enrollment()}),
+        sessions=FakeSessions(),
+        outbox=FakeOutbox(),
+        academy_id="acad",
+        scheduled_actions=scheduled,
+        clock=_now,
+    ).execute(CancelEnrollmentCommand(enrollment_id="enr-1", reason="admin_cancel"))
+    assert scheduled.cancelled == [("enr-1", "enrollment_cancelled")]
+
+
+@pytest.mark.asyncio
+async def test_admin_withdraw_retires_pending_scheduled_actions() -> None:
+    scheduled = RecordingScheduledActions()
+    await WithdrawEnrollment(
+        enrollments=FakeEnrollments(rows={"enr-1": _enrollment()}),
+        sessions=FakeSessions(),
+        outbox=FakeOutbox(),
+        scheduled_actions=scheduled,
+        clock=_now,
+    ).execute(
+        WithdrawEnrollmentCommand(
+            enrollment_id="enr-1",
+            effective_at=EFFECTIVE,
+            outcome="credit",
+            reason="moving",
+            actor_id="admin-1",
+        )
+    )
+    assert scheduled.cancelled == [("enr-1", "enrollment_withdrawn")]
+
+
+@pytest.mark.asyncio
+async def test_admin_cancel_survives_a_failing_scheduled_action_repo() -> None:
+    class _Broken:
+        async def cancel_pending_for_enrollment(self, enrollment_id: str, *, reason: str) -> int:
+            raise RuntimeError("mongo down")
+
+    enrollments = FakeEnrollments(rows={"enr-1": _enrollment()})
+    await CancelEnrollment(
+        enrollments=enrollments,
+        sessions=FakeSessions(),
+        outbox=FakeOutbox(),
+        academy_id="acad",
+        scheduled_actions=_Broken(),
+        clock=_now,
+    ).execute(CancelEnrollmentCommand(enrollment_id="enr-1", reason="admin_cancel"))
+    assert enrollments.rows["enr-1"].status == "cancelled"

@@ -15,23 +15,46 @@ error when the port is missing, but nothing else stops the charge.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from backend.v2.contexts.billing.application.use_cases.apply_enrollment_lifecycle import (
     ApplyEnrollmentLifecycle,
     ApplyEnrollmentLifecycleCommand,
 )
+from backend.v2.contexts.billing.application.use_cases.apply_enrollment_move import (
+    BILLING_POLICY as MOVE_BILLING_POLICY,
+)
+from backend.v2.contexts.billing.application.use_cases.apply_enrollment_move import (
+    ApplyEnrollmentMove,
+    ApplyEnrollmentMoveCommand,
+)
 from backend.v2.contexts.billing.domain.ledger import void_invoice
+from backend.v2.contexts.billing.infrastructure.mongo_billing_counter_repo import (
+    MongoBillingCounterRepository,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
     MongoBillingLedgerRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo import (
+    MongoBillingSettingsRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import (
+    MongoCreditLedgerRepository,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_dunning_state_repo import (
     MongoDunningStateRepository,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_move_schedule_reader import (
+    MongoMoveScheduleReader,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_student_billing_enrollment_repo import (
     MongoStudentBillingEnrollmentRepository,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_tuition_discount_repo import (
+    MongoTuitionDiscountRepository,
+)
+from backend.v2.shared.idempotency import IdempotencyStore
 from backend.v2.shared.tenancy import current_academy_id
 from backend.v2.shared.time.academy_timezone import academy_timezone_lookup
 
@@ -104,6 +127,72 @@ def compose_enrollment_billing_sync(
         academy_timezone=request_academy_timezone,
     )
     return EnrollmentBillingSyncAdapter(use_case)
+
+
+class EnrollmentMoveBillingSyncAdapter:
+    """``EnrollmentMoveBillingSync`` implementation backed by ``ApplyEnrollmentMove``."""
+
+    def __init__(self, use_case: ApplyEnrollmentMove) -> None:
+        self._use_case = use_case
+
+    async def apply_move(
+        self,
+        *,
+        enrollment_id: str,
+        from_session_id: str,
+        to_session_id: str,
+        effective_at: datetime,
+        reason: str,
+        actor_id: str | None,
+        effective_date: date | None = None,
+        move_seq: int = 0,
+    ) -> dict[str, Any]:
+        result = await self._use_case.execute(
+            ApplyEnrollmentMoveCommand(
+                enrollment_id=enrollment_id,
+                from_session_id=from_session_id,
+                to_session_id=to_session_id,
+                effective_at=effective_at,
+                effective_date=effective_date,
+                move_seq=move_seq,
+                reason=reason[:500],
+                actor_id=actor_id,
+            )
+        )
+        return {
+            "billing_policy": MOVE_BILLING_POLICY,
+            "billing_result": result.billing_result,
+            "metadata": result.metadata,
+        }
+
+
+def compose_enrollment_move_billing_sync(
+    db: Any,
+    *,
+    idempotency: IdempotencyStore,
+    ledger: MongoBillingLedgerRepository | None = None,
+    credits: MongoCreditLedgerRepository | None = None,
+) -> EnrollmentMoveBillingSyncAdapter:
+    """Build the move adapter (issue #669). Repos may be shared with the caller."""
+    timezone_lookup = academy_timezone_lookup(db)
+
+    async def request_academy_timezone() -> str | None:
+        # Resolved per request from the tenant context, never captured here.
+        return await timezone_lookup(current_academy_id())
+
+    use_case = ApplyEnrollmentMove(
+        ledger=ledger or MongoBillingLedgerRepository(db),
+        credits=credits or MongoCreditLedgerRepository(db),
+        schedules=MongoMoveScheduleReader(db),
+        # Price the delta net of the same recurring tuition discount the
+        # monthly generator priced the invoice with (issue #669 review).
+        discounts=MongoTuitionDiscountRepository(db),
+        idempotency_store=idempotency,
+        academy_timezone=request_academy_timezone,
+        counters=MongoBillingCounterRepository(db),
+        settings=MongoBillingSettingsRepository(db),
+    )
+    return EnrollmentMoveBillingSyncAdapter(use_case)
 
 
 def build_void_billing_invoice(*, ledger: Any, dunning: Any) -> Callable[..., Awaitable[None]]:

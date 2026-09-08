@@ -83,6 +83,95 @@ const adminInvoiceDetail = {
   receipt_artifact_id: null,
 };
 
+const REPORTS_DASHBOARD_EMPTY = {
+  period: "2026-06",
+  billed_cents: 0,
+  cash_collected_cents: 0,
+  outstanding_dues_cents: 0,
+  collection_rate: null,
+  attendance: { present_count: 0, recorded_count: 0, attendance_rate: null, empty: true },
+  sessions: {
+    scheduled_count: 0,
+    completed_count: 0,
+    cancelled_count: 0,
+    enrolled_seats: 0,
+    capacity: 0,
+    capacity_utilization: null,
+    waitlist_count: 0,
+    empty: true,
+  },
+  expenses: { total_cents: 0, by_category: [], empty: true },
+  payroll: {
+    estimated_cents: null,
+    approved_cents: null,
+    paid_cents: null,
+    unpaid_cents: null,
+    blocked_by: null,
+    empty: true,
+  },
+  profit_and_loss: {
+    revenue_cents: 0,
+    coach_payroll_cents: null,
+    rent_cents: 0,
+    misc_expenses_cents: 0,
+    net_profit_cents: null,
+    profit_margin: null,
+  },
+  collections_risk: {
+    overdue_family_count: 0,
+    overdue_cents: 0,
+    failed_payment_count: 0,
+    partial_payment_count: 0,
+    aging_buckets: [],
+  },
+  empty_states: [],
+};
+
+/**
+ * Month close carries the tuition discount card now (spec §5). The figures are
+ * the same two discounts the admin set above, summed for the month.
+ */
+const MONTH_CLOSE_WITH_DISCOUNTS = {
+  generated_at: "2026-06-30T14:00:00Z",
+  timezone: "America/Chicago",
+  period: "2026-06",
+  invoices: {
+    generated: 1,
+    emailed: 0,
+    autopay_notices: 0,
+    not_sent: 1,
+    voided: 0,
+    voided_cents: 0,
+    void_reasons: [],
+  },
+  money: {
+    billed_cents: 9_600,
+    collected_cents: 0,
+    outstanding_cents: 9_600,
+    collection_rate: 0,
+  },
+  autopay_run: {
+    charge_on: null,
+    charge_on_varies: false,
+    has_run: false,
+    scheduled: { count: 0, cents: 0 },
+    succeeded: { count: 0, cents: 0 },
+    failed: { count: 0, cents: 0 },
+    pending: { count: 0, cents: 0 },
+  },
+  odd: [],
+  tuition_discounts: {
+    gross_cents: 22_000,
+    discount_cents: 12_400,
+    net_cents: 9_600,
+    by_category: [
+      { category: "scholarship", amount_cents: 10_000 },
+      { category: "coach_child", amount_cents: 2_400 },
+    ],
+  },
+  warnings: [],
+};
+
 function baseStudentFixture(): StudentDetail {
   return {
     student_id: "student-discounts",
@@ -192,6 +281,18 @@ async function stubAdminStudentDiscounts(page: Page, student: StudentDetail) {
   await page.route("**/api/v2/admin/programs*", (route) => {
     if (route.request().method() !== "GET") return route.fallback();
     return fulfillJson(route, { programs: [] });
+  });
+  // The student page's Billing tab reads these two. Unstubbed they 500, and
+  // this spec asserts an empty console, so the failure surfaces as two opaque
+  // "Failed to load resource" lines rather than a missing mock.
+  // `admin-students.spec.ts` already stubs the same pair for the same reason.
+  await page.route("**/api/v2/admin/billing-enrollments*", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, { enrollments: [] });
+  });
+  await page.route("**/api/v2/admin/session-types*", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, { session_types: [] });
   });
   await page.route("**/api/v2/admin/students/student-discounts", (route) => {
     if (route.request().method() !== "GET") return route.fallback();
@@ -395,6 +496,60 @@ test.describe("tuition discounts", () => {
     await expect(lines).toContainText("Coach child discount");
     await expect(lines).toContainText("-$100");
     await expect(lines).toContainText("-$24");
+
+    guard.assertNoLegacyApiCalls();
+    expect(errors, `Console errors: ${errors.join("\n")}`).toEqual([]);
+  });
+
+  test("the tuition discount summary now lives on Month close", async ({ page }) => {
+    const guard = installTenantGuard(page);
+    const errors = collectConsoleErrors(page);
+
+    await stubMe(page, ADMIN_USER_A);
+    await stubMemberships(page, [
+      { academy_id: ACADEMY_A, academy_name: "Aces Academy", role: "admin" },
+    ]);
+    await stubAcademy(page, ACADEMY_A);
+    // Catch-all first (Playwright matches LIFO), so the page's other feeds
+    // answer `{}` and only the assertions below depend on real shapes.
+    await page.route("**/api/v2/admin/**", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, {});
+    });
+    // The page's other feeds need their real shapes: the catch-all `{}` would
+    // put `dashboard.payroll` at undefined and send the page to the error
+    // boundary before the discount card ever renders.
+    await page.route("**/api/v2/admin/reports/dashboard*", (route) =>
+      fulfillJson(route, REPORTS_DASHBOARD_EMPTY),
+    );
+    await page.route("**/api/v2/admin/reports/projected-income*", (route) =>
+      fulfillJson(route, {
+        period: "2026-07",
+        total_cents: 0,
+        autopay_cents: 0,
+        manual_cents: 0,
+        autopay_enrollment_count: 0,
+        manual_enrollment_count: 0,
+        by_session: [],
+        empty: true,
+      }),
+    );
+    await page.route("**/api/v2/admin/finance/revenue*", (route) =>
+      fulfillJson(route, { by_month: {} }),
+    );
+    // Named in full: a `*` glob stops at `/`, so `admin/reports*` would miss it.
+    await page.route("**/api/v2/admin/reports/month-close*", (route) =>
+      fulfillJson(route, MONTH_CLOSE_WITH_DISCOUNTS),
+    );
+
+    await page.goto("/admin/reports");
+    const card = page.getByTestId("tuition-discounts-section");
+    await expect(card).toBeVisible({ timeout: 45_000 });
+    await expect(card).toContainText("$220.00");
+    await expect(card).toContainText("$124.00");
+    await expect(card).toContainText("$96.00");
+    await expect(page.getByTestId("tuition-discounts-row-scholarship")).toContainText("$100.00");
+    await expect(page.getByTestId("tuition-discounts-row-coach_child")).toContainText("$24.00");
 
     guard.assertNoLegacyApiCalls();
     expect(errors, `Console errors: ${errors.join("\n")}`).toEqual([]);

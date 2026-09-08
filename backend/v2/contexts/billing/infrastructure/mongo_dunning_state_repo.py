@@ -15,6 +15,7 @@ from backend.v2.contexts.billing.application.autopay_eligibility import (
     ladder_eligibility,
 )
 from backend.v2.contexts.billing.domain.dunning import (
+    FIRST_ATTEMPT_LOCAL_HOUR,
     DunningState,
     open_initial_dunning_state,
     record_dunning_attempt_result,
@@ -47,7 +48,9 @@ class MongoDunningStateRepository(TenantScopedRepository):
     #: Local hour (academy timezone) before which no NEW ladder is prepared on
     #: its due date, so the first autopay attempt lands in the morning of the
     #: due date instead of 00:00 UTC — 7pm the evening before in Chicago (#651).
-    first_attempt_local_hour: ClassVar[int] = 9
+    #: The value is the domain constant; this alias keeps the existing call
+    #: sites working while the rule itself lives with the ladder.
+    first_attempt_local_hour: ClassVar[int] = FIRST_ATTEMPT_LOCAL_HOUR
 
     def __init__(
         self,
@@ -445,6 +448,42 @@ class MongoDunningStateRepository(TenantScopedRepository):
         if doc is None:
             raise ValueError("dunning state not found")
         return self._state_from_doc(doc)
+
+    async def list_autopay_disable_failures(self, *, limit: int = 20) -> dict[str, Any]:
+        """Ladders whose terminal autopay switch-off failed (spec 2026-09-07 §4.4).
+
+        When the ladder runs out the worker switches autopay off, and that
+        Stripe call can itself fail. Nothing else in the product shows this: a
+        failed switch-off means the worker believes autopay is off while the
+        card may still be attached in Stripe, so it is plumbing, not family
+        work, and it belongs on Billing Health.
+
+        ``count`` is the true count from an aggregate; ``rows`` is capped at
+        ``limit`` so a large backlog cannot make the page unusable, and
+        ``truncated`` says when the two disagree.
+        """
+        academy_id = current_academy_id()
+        query: dict[str, Any] = {
+            "academy_id": academy_id,
+            "autopay_disable_status": "failed",
+        }
+        count = await self.collection.count_documents(query)
+        cursor = self.collection.find(
+            query,
+            sort=[("updated_at", -1), ("invoice_id", 1)],
+            limit=max(1, min(int(limit), 100)),
+        )
+        rows: list[dict[str, Any]] = []
+        async for doc in cursor:
+            rows.append(
+                {
+                    "invoice_id": str(doc.get("invoice_id") or ""),
+                    "parent_id": str(doc.get("parent_id") or ""),
+                    "error": doc.get("autopay_disable_error") or None,
+                    "failed_at": doc.get("updated_at"),
+                }
+            )
+        return {"count": int(count), "rows": rows, "truncated": len(rows) < int(count)}
 
     async def list_admin_rows(self) -> list[dict[str, Any]]:
         academy_id = current_academy_id()

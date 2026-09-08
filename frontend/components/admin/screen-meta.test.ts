@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   ADMIN_NAV,
+  OWNER_ONLY_ROUTE_EXCEPTIONS,
   isOwnerOnlyRoute,
   metaForPath,
   navForRoles,
@@ -48,11 +49,18 @@ describe("navForRoles", () => {
     expect(navForRoles(nav, true).map((group) => group.group)).toEqual(["MONEY", "WORK"]);
   });
 
-  it("marks exactly the three money-governance destinations as owner-only", () => {
+  it("marks exactly the money-governance destinations as owner-only", () => {
     const ownerOnly = ADMIN_NAV.flatMap((group) =>
       group.items.filter((item) => item.ownerOnly).map((item) => item.href),
     );
-    expect(ownerOnly.sort()).toEqual(["/admin/audit-logs", "/admin/payouts", "/admin/reports"]);
+    // Billing Health joined this list with the trim (spec 2026-09-07 §2):
+    // Stripe plumbing is governance, the same tier as Reports and Payouts.
+    expect(ownerOnly.sort()).toEqual([
+      "/admin/audit-logs",
+      "/admin/billing-health",
+      "/admin/payouts",
+      "/admin/reports",
+    ]);
   });
 });
 
@@ -64,13 +72,19 @@ describe("isOwnerOnlyRoute", () => {
     expect(isOwnerOnlyRoute("/admin/reports/session-economics")).toBe(true);
     expect(isOwnerOnlyRoute("/admin/reports/refunds")).toBe(true);
     expect(isOwnerOnlyRoute("/admin/audit-logs")).toBe(true);
+    expect(isOwnerOnlyRoute("/admin/billing-health")).toBe(true);
     expect(isOwnerOnlyRoute("/admin/coach-payslip")).toBe(true);
     expect(isOwnerOnlyRoute("/admin/session-economics")).toBe(true);
   });
 
-  it("keeps dues follow-up open to admins even though it lives under /admin/reports", () => {
+  it("keeps the old Dues path reachable so its redirect can run for admins", () => {
+    // The page is gone, but the path is now a redirect to `/admin/payments` —
+    // a page admins may use. Dropping the exception would meet an admin
+    // following an old bookmark with an owner-only wall instead of forwarding
+    // them (month close spec §6).
+    expect(OWNER_ONLY_ROUTE_EXCEPTIONS).toEqual(["/admin/reports/dues"]);
     expect(isOwnerOnlyRoute("/admin/reports/dues")).toBe(false);
-    expect(isOwnerOnlyRoute("/admin/reports/dues/parent-1")).toBe(false);
+    expect(isOwnerOnlyRoute("/admin/reports")).toBe(true);
   });
 
   it("does not match on a shared string prefix", () => {
@@ -83,7 +97,6 @@ describe("isOwnerOnlyRoute", () => {
       "/admin",
       "/admin/payments",
       "/admin/expenses",
-      "/admin/billing-health",
       "/admin/settings",
       "/admin/users/new",
       "/admin/dues",
@@ -96,6 +109,15 @@ describe("isOwnerOnlyRoute", () => {
 describe("metaForPath", () => {
   it("titles the Families list", () => {
     expect(metaForPath("/admin/families").title).toBe("Families");
+    // Reports is Month close now (spec §5); the sub-reports say so too.
+    expect(metaForPath("/admin/reports").title).toBe("Month close");
+    expect(metaForPath("/admin/reports").breadcrumbs).toEqual(["Admin", "Money", "Month close"]);
+    expect(metaForPath("/admin/reports/deposit-slip").breadcrumbs).toEqual([
+      "Admin",
+      "Money",
+      "Month close",
+      "Deposit slip",
+    ]);
     expect(metaForPath("/admin/families").breadcrumbs).toEqual(["Admin", "Money", "Families"]);
   });
 

@@ -51,6 +51,25 @@ class MongoOccurrenceRosterRepository(TenantScopedRepository):
         doc = await self._find_one({"occurrence_id": occurrence_id, "student_id": student_id})
         return doc is not None
 
+    async def remove_for_occurrence(self, occurrence_id: str) -> list[OccurrenceRosterEntry]:
+        """Drop every one-time (make-up / trial) row for one occurrence and
+        return what was removed (issue #671).
+
+        A cancelled class has no roster: the make-up seat a family was given
+        for that date is gone, and the caller re-opens the make-up request so
+        the admin can offer another date. Tenant-scoped on both the read and
+        the delete.
+        """
+        entries = await self.list_for_occurrence(occurrence_id)
+        if not entries:
+            return []
+        await self.collection.delete_many(
+            self._scoped(
+                {"entry_id": {"$in": [entry.entry_id for entry in entries]}},
+            )
+        )
+        return entries
+
     async def remove_future_for_student(
         self, *, session_id: str, student_id: str, after: datetime
     ) -> int:

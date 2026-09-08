@@ -100,6 +100,37 @@ class MongoTrialRequestRepository(TenantScopedRepository):
             {"$set": self._to_doc(request)},
         )
 
+    async def reopen_for_assigned_occurrence(self, occurrence_id: str) -> list[str]:
+        """Put approved trials assigned to a now-cancelled date back to
+        ``pending`` and return the affected student ids (issue #671).
+
+        The mirror of ``MongoMakeupRequestRepository.reopen_for_target_occurrence``.
+        Without it a trial stays ``approved`` against an occurrence that will
+        never run, with its roster seat already deleted: no admin queue shows
+        it, nothing re-offers it, and the trial is silently lost. Student ids
+        are returned so the caller can tell the family (a trial family has no
+        enrollment on the session and is invisible to the roster notifier).
+        """
+        cursor = self._find_many(
+            {"status": "approved", "assigned_occurrence_id": occurrence_id},
+            sort=[("created_at", 1)],
+        )
+        docs = [doc async for doc in cursor]
+        if not docs:
+            return []
+        await self.collection.update_many(
+            self._scoped({"request_id": {"$in": [str(doc["request_id"]) for doc in docs]}}),
+            {
+                "$set": {
+                    "status": "pending",
+                    "assigned_occurrence_id": None,
+                    "decided_by": None,
+                    "decided_at": None,
+                }
+            },
+        )
+        return [str(doc["student_id"]) for doc in docs if doc.get("student_id")]
+
     async def transition_from_pending(
         self, request_id: str, updates: dict[str, object]
     ) -> TrialRequest | None:

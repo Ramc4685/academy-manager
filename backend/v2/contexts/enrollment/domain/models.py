@@ -92,6 +92,12 @@ class SessionOccurrence(BaseModel):
     is_billable: bool = True
     is_payable: bool = True
     cancellation_reason: str | None = None
+    # Issue #671: stamped by ``CancelSessionOccurrence`` when ONE dated class
+    # is called off (rain-out, coach sick). ``cancelled_by`` is the admin's
+    # user id; a whole-session cancel (#467) leaves both unset and writes
+    # ``cancellation_reason="session_cancelled"`` instead.
+    cancelled_at: datetime | None = None
+    cancelled_by: str | None = None
     template_session_id: str | None = None
     # Snapshot of the session's assistants when the occurrence was generated
     # or last re-synced; the attendance use cases treat these ids like an
@@ -152,6 +158,14 @@ class Enrollment(BaseModel):
     cancellation_reason: str | None = None
     cancellation_policy_snapshot: dict[str, Any] | None = None
     cancelled_at: datetime | None = None
+    # Issue #675: an ``end_of_period`` parent self-cancel does NOT flip
+    # ``status`` — the family keeps the seat, roster and schedule through the
+    # month they paid for. It stamps the date the scheduled
+    # ``cancel_at_period_end`` action will run instead; the processor clears
+    # it when it performs the real cancel. Rosters stay status-only and read
+    # this marker only to show "ends <date>".
+    pending_cancellation_at: datetime | None = None
+    pending_cancellation_requested_at: datetime | None = None
 
 
 class RosterEntry(BaseModel):
@@ -163,3 +177,5 @@ class RosterEntry(BaseModel):
     student_id: str
     full_name: str
     status: EnrollmentStatus
+    # Issue #675: set while a parent's end-of-period cancel is pending.
+    pending_cancellation_at: datetime | None = None

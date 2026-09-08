@@ -284,9 +284,11 @@ export function CollectionsTab() {
         />
         <Tile
           testKey="collected"
-          label="Collected"
+          // Not "collected this month": this sums allocations against THIS
+          // month's invoices whenever the money arrived (month close spec §3.2).
+          label="Paid toward this month's invoices"
           value={formatCents(view.totals.collected_cents)}
-          hint="paid this month"
+          hint="allocated to this month's invoices"
           loading={query.isLoading}
         />
       </div>
@@ -579,6 +581,22 @@ function ActionControl({
 }): ReactNode {
   const label = ACTION_LABEL[action];
   const testId = `action-${action}-${family.parent_id}`;
+  if (action === "whatsapp") {
+    // A link, not a mutation: the backend only lists this action when it built
+    // a wa.me URL for the family (month close spec §7).
+    if (!family.whatsapp_url) return null;
+    return (
+      <a
+        href={family.whatsapp_url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex h-[30px] items-center rounded-md border border-rally-line bg-white px-3 text-xs font-semibold text-emerald-700 hover:bg-rally-paper dark:text-emerald-400"
+        data-testid={testId}
+      >
+        {label}
+      </a>
+    );
+  }
   if (action === "message") {
     return (
       <Link

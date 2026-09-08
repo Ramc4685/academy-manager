@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import OperationFailure
 
+from backend.v2.composition.level_up_lifecycle import compose_expire_level_up_recommendations
 from backend.v2.composition.lifecycle_billing import compose_enrollment_billing_sync
 from backend.v2.composition.pathway import (
     CurriculumComposition,
@@ -167,6 +168,9 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_roster_repo 
 from backend.v2.contexts.enrollment.infrastructure.mongo_pause_request_repo import (
     MongoPauseRequestRepository,
 )
+from backend.v2.contexts.enrollment.infrastructure.mongo_scheduled_action_repo import (
+    MongoScheduledEnrollmentActionRepository,
+)
 from backend.v2.contexts.enrollment.infrastructure.mongo_self_service_policy_repo import (
     MongoSelfServicePolicyRepository,
 )
@@ -233,6 +237,7 @@ from backend.v2.shared.tenancy import (
     current_tenant_origins,
     tenant_scope,
 )
+from backend.v2.shared.time.academy_timezone import academy_timezone_lookup
 
 from .event_handlers import HandlerDeps, install_handlers
 
@@ -877,11 +882,19 @@ def compose_parent(
     # the waitlist promotion it frees a seat for.
     roster_notifier = compose_roster_notifier(db, settings)
 
+    # Issue #675: the end-of-period date is the academy-local month end —
+    # the same boundary billing's ``period_of`` uses. Resolved per request.
+    _self_cancel_timezone_lookup = academy_timezone_lookup(db)
+
+    async def self_cancel_academy_timezone() -> str | None:
+        return await _self_cancel_timezone_lookup(current_academy_id())
+
     preview_self_cancel = PreviewSelfCancel(
         enrollments=enrollments_writer,
         students=students_query,
         policies=self_service_policies_repo,
         occurrences=occurrences_query,
+        academy_timezone=self_cancel_academy_timezone,
     )
     self_cancel_enrollment = SelfCancelEnrollment(
         enrollments=enrollments_writer,
@@ -895,6 +908,10 @@ def compose_parent(
         billing_sync=compose_enrollment_billing_sync(db),
         enrollment_events=enrollment_events,
         roster_notifier=roster_notifier,
+        # Issue #675: end_of_period enqueues a month-end cancel instead of
+        # flipping status now.
+        scheduled_actions=MongoScheduledEnrollmentActionRepository(db),
+        academy_timezone=self_cancel_academy_timezone,
     )
 
     confirm_enrollment = ConfirmEnrollment(
@@ -959,6 +976,7 @@ def compose_parent(
             promote_from_waitlist=promote,
             issue_refund=issue_refund,
             transition_application=transition,
+            expire_level_up_recommendations=compose_expire_level_up_recommendations(db),
         )
     )
 
@@ -1285,6 +1303,8 @@ def compose_parent(
                     "session_id": str(enrollment["session_id"]),
                     "session_title": str(session.get("title") if session else "Session"),
                     "status": str(enrollment.get("status") or "active"),
+                    # Issue #675: still active; ends at this instant.
+                    "pending_cancellation_at": enrollment.get("pending_cancellation_at"),
                     "payment_mode": enrollment.get("payment_mode"),
                     "subscription_status": enrollment.get("subscription_status"),
                     "autopay_enrollment_status": (

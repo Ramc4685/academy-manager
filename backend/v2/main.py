@@ -27,6 +27,8 @@ from pymongo.errors import DuplicateKeyError
 from starlette.middleware.cors import CORSMiddleware
 
 from backend.v2.composition.admin import compose_admin
+from backend.v2.composition.billing_health import compose_admin_billing_health
+from backend.v2.composition.billing_rules import compose_admin_billing_rules
 from backend.v2.composition.coach import compose_coach
 from backend.v2.composition.collections import compose_admin_collections
 from backend.v2.composition.digests import (
@@ -47,6 +49,7 @@ from backend.v2.composition.digests import (
 )
 from backend.v2.composition.email_adapters import build_user_facing_invite_sender
 from backend.v2.composition.families import compose_admin_families
+from backend.v2.composition.month_close import compose_admin_month_close
 from backend.v2.composition.owner import compose_owner
 from backend.v2.composition.parent import compose_parent, compose_parent_webhook_handler
 from backend.v2.composition.student import compose_student
@@ -224,6 +227,11 @@ log = logging.getLogger(__name__)
 SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
     "process_scheduled_resume_actions": {
         "schedule": {"type": "crontab", "value": "0 2 * * *"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
+    },
+    "process_scheduled_cancellation_actions": {
+        "schedule": {"type": "crontab", "value": "15 * * * *"},
         "checkin_margin": 30,
         "max_runtime": 30,
     },
@@ -515,7 +523,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.admin = compose_admin(db, outbox, idempotency_store, stripe_gw)
     # Payments bucket view (composition/admin.py is at its line budget).
     app.state.admin_collections = compose_admin_collections(db)
+    app.state.admin_billing_rules = compose_admin_billing_rules(db, app.state.admin)
     app.state.admin_families = compose_admin_families(db)
+    # Billing Health plumbing, owner-only (spec 2026-09-07 §5.1).
+    app.state.admin_billing_health = compose_admin_billing_health(db, stripe_gw)
+    app.state.admin_month_close = compose_admin_month_close(db)
 
     # Owner (franchise) BFF wiring — UIM11. Left unset when the flag is off so
     # the routes 404 even if something mounts them.
@@ -576,6 +588,39 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             totals["failed"] += result.failed
         if totals["processed"]:
             log.info("scheduled_resume_actions_processed", extra=totals)
+
+    async def _process_scheduled_cancellations() -> None:
+        await _run_leased_job(
+            "process_scheduled_cancellation_actions",
+            timedelta(minutes=5),
+            _process_scheduled_cancellations_body,
+        )
+
+    async def _process_scheduled_cancellations_body() -> None:
+        # Issue #675: month-end parent self-cancels. Hourly, so the flip lands
+        # within the hour after the academy-local month ends.
+        totals = {
+            "processed": 0,
+            "succeeded": 0,
+            "skipped_already_ended": 0,
+            "failed": 0,
+            "academy_count": 0,
+        }
+        for academy_id in await _scheduler_academy_ids(
+            MongoAcademyRepository(db),
+            runtime_academy_id,
+        ):
+            with tenant_scope(academy_id):
+                result = await app.state.admin.process_scheduled_cancellation_actions.execute(
+                    limit=100
+                )
+            totals["academy_count"] += 1
+            totals["processed"] += result.processed
+            totals["succeeded"] += result.succeeded
+            totals["skipped_already_ended"] += result.skipped_already_ended
+            totals["failed"] += result.failed
+        if totals["processed"]:
+            log.info("scheduled_cancellation_actions_processed", extra=totals)
 
     async def _expire_makeup_requests() -> None:
         await _run_leased_job(
@@ -1016,6 +1061,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Parity with the other jobs: prevent a slow run from overlapping the
         # next tick within this process. (Cross-machine exclusivity still
         # depends on a single Fly machine — see deferred leader-election note.)
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _process_scheduled_cancellations,
+        "cron",
+        minute=15,
+        id="process_scheduled_cancellation_actions",
+        replace_existing=True,
         max_instances=1,
     )
     scheduler.add_job(

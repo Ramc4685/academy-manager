@@ -95,6 +95,7 @@ export const queryKeys = {
     academy: () => ["admin", "academy"] as const,
     fees: () => ["admin", "academy", "fees"] as const,
     invoiceSchedule: () => ["admin", "billing", "invoice-schedule"] as const,
+    billingRules: () => ["admin", "billing", "rules"] as const,
     notifications: () => ["admin", "academy", "notifications"] as const,
     gateway: () => ["admin", "academy", "gateway"] as const,
     platformFallback: () => ["admin", "billing", "platform-fallback"] as const,
@@ -119,8 +120,6 @@ export const queryKeys = {
     billingSetupAll: () => ["admin", "billing", "setup"] as const,
     billingSetup: (params?: { status?: string; q?: string }) =>
       [...queryKeys.admin.billingSetupAll(), params?.status ?? "all", params?.q ?? ""] as const,
-    legacyMatchQueue: () =>
-      ["admin", "billing", "legacy-match-queue"] as const,
     selfServicePolicy: () => ["admin", "self-service", "policy"] as const,
     selfServiceAbsences: () => ["admin", "self-service", "absences"] as const,
     selfServiceMakeupsAll: () => ["admin", "self-service", "makeups"] as const,

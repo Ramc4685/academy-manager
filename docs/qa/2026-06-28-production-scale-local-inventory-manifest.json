@@ -157,50 +157,72 @@
       "role": "admin",
       "source": "frontend/app/(admin)/admin/billing-health/page.tsx",
       "workflows": [
+        "Read the health verdict",
         "Inspect webhook queue",
-        "Retry autopay",
         "Replay webhook",
-        "Legacy match"
+        "Reconcile now",
+        "Look up a Stripe id",
+        "Link a Stripe charge"
       ],
       "controls": {
         "buttons": [
-          "Retry",
+          "Reconcile now",
           "Replay",
-          "Match",
-          "Refresh"
+          "Run report",
+          "Review",
+          "Link the charge",
+          "Try again"
         ],
         "inputs": [
-          "Event id",
-          "Filters"
+          "Stripe invoice ID",
+          "PaymentIntent ID",
+          "Invoice ID",
+          "Stripe charge ID",
+          "Amount",
+          "Paid at"
         ],
         "modals": [
-          "Replay confirmation",
-          "Legacy match confirmation"
+          "Link-a-charge confirmation"
         ]
       },
       "states": [
         "loading",
-        "healthy",
-        "degraded",
+        "ok",
+        "attention",
+        "blocked",
+        "readiness unavailable",
         "failed replay",
         "quarantine",
+        "truncated webhook list",
+        "validation",
         "error state",
         "empty state"
       ],
       "risk_edges": [
+        "Green pill above a red readiness card",
         "Webhook queue stalls",
         "Replay does not converge",
-        "Wrong legacy candidate"
+        "Quarantine count read from the capped list",
+        "Charge linked to the wrong invoice",
+        "Admin without owner reaches Stripe plumbing"
       ],
       "acceptance": [
-        "Admin can see unrecovered billing failures",
+        "Owner can see whether parents can pay, and why not",
+        "An admin without the owner role gets 404 on every Billing Health route",
+        "The header pill never reads healthy while payments are impossible",
+        "The quarantine tile shows the aggregate count, not the length of the 50-capped list",
+        "Workflow evidence: \"Read the health verdict\" completes for the admin route /admin/billing-health with real-user evidence and no framework or runtime errors.",
         "Workflow evidence: \"Inspect webhook queue\" completes for the admin route /admin/billing-health with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Retry autopay\" completes for the admin route /admin/billing-health with real-user evidence and no framework or runtime errors.",
         "Workflow evidence: \"Replay webhook\" completes for the admin route /admin/billing-health with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Legacy match\" completes for the admin route /admin/billing-health with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Reconcile now\" completes for the admin route /admin/billing-health with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Look up a Stripe id\" completes for the admin route /admin/billing-health with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Link a Stripe charge\" completes for the admin route /admin/billing-health with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Green pill above a red readiness card\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"Webhook queue stalls\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"Replay does not converge\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Wrong legacy candidate\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+        "Risk evidence: \"Quarantine count read from the capped list\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Charge linked to the wrong invoice\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Admin without owner reaches Stripe plumbing\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     },
     {
@@ -420,38 +442,23 @@
       "role": "admin",
       "source": "frontend/app/(admin)/admin/dues/page.tsx",
       "workflows": [
-        "Review dues",
-        "Send reminders"
+        "Redirect to Payments"
       ],
       "controls": {
-        "buttons": [
-          "Select all",
-          "Send reminders",
-          "Refresh"
-        ],
-        "inputs": [
-          "Family checkboxes",
-          "Period"
-        ],
-        "modals": [
-          "Reminder confirmation"
-        ]
+        "buttons": [],
+        "inputs": [],
+        "modals": []
       },
       "states": [
-        "loading",
-        "empty",
-        "email disabled",
-        "send failed",
-        "error state"
+        "redirect"
       ],
       "risk_edges": [
-        "Local email disabled but UI claims sent"
+        "Redirect loops or lands on a 404"
       ],
       "acceptance": [
-        "Disabled email state is truthful",
-        "Workflow evidence: \"Review dues\" completes for the admin route /admin/dues with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Send reminders\" completes for the admin route /admin/dues with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Local email disabled but UI claims sent\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+        "The Dues page is gone; this route only forwards to /admin/payments.",
+        "Workflow evidence: \"Redirect to Payments\" completes for the admin route /admin/dues with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Redirect loops or lands on a 404\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     },
     {
@@ -459,38 +466,23 @@
       "role": "admin",
       "source": "frontend/app/(admin)/admin/reports/dues/page.tsx",
       "workflows": [
-        "Review dues",
-        "Send reminders"
+        "Redirect to Payments"
       ],
       "controls": {
-        "buttons": [
-          "Select all",
-          "Send reminders",
-          "Refresh"
-        ],
-        "inputs": [
-          "Family checkboxes",
-          "Period"
-        ],
-        "modals": [
-          "Reminder confirmation"
-        ]
+        "buttons": [],
+        "inputs": [],
+        "modals": []
       },
       "states": [
-        "loading",
-        "empty",
-        "email disabled",
-        "send failed",
-        "error state"
+        "redirect"
       ],
       "risk_edges": [
-        "Local email disabled but UI claims sent"
+        "Redirect loops or lands on a 404"
       ],
       "acceptance": [
-        "Disabled email state is truthful",
-        "Workflow evidence: \"Review dues\" completes for the admin route /admin/reports/dues with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Send reminders\" completes for the admin route /admin/reports/dues with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Local email disabled but UI claims sent\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+        "The Dues page is gone; this route only forwards to /admin/payments.",
+        "Workflow evidence: \"Redirect to Payments\" completes for the admin route /admin/reports/dues with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Redirect loops or lands on a 404\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     },
     {
@@ -546,7 +538,8 @@
       "role": "admin",
       "source": "frontend/app/(admin)/admin/level-up-queue/page.tsx",
       "workflows": [
-        "Approve/reject level-up"
+        "Approve/reject level-up",
+        "Reject a withdrawn student's level-up"
       ],
       "controls": {
         "buttons": [
@@ -563,17 +556,21 @@
       "states": [
         "loading",
         "empty",
-        "mutation error"
+        "mutation error",
+        "withdrawn student flagged (enrollment ended)"
       ],
       "risk_edges": [
         "Reject without reason",
-        "Already-approved conflict"
+        "Already-approved conflict",
+        "Approve after withdrawal (stale queue, 409 EnrollmentEnded)"
       ],
       "acceptance": [
         "Level-up decisions require valid reason when rejected",
         "Workflow evidence: \"Approve/reject level-up\" completes for the admin route /admin/level-up-queue with real-user evidence and no framework or runtime errors.",
         "Risk evidence: \"Reject without reason\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Already-approved conflict\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+        "Risk evidence: \"Already-approved conflict\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Workflow evidence: \"Reject a withdrawn student's level-up\" completes for the admin route /admin/level-up-queue: the row carries the Withdrawn chip, Approve is disabled, Reject clears it.",
+        "Risk evidence: \"Approve after withdrawal (stale queue, 409 EnrollmentEnded)\" has an explicit pass, fail, or blocked result — the backend refuses with StudentProgress.EnrollmentEnded and no certificate is issued."
       ]
     },
     {
@@ -1046,33 +1043,42 @@
       "role": "admin",
       "source": "frontend/app/(admin)/admin/reports/page.tsx",
       "workflows": [
-        "Review finance/attendance reports",
-        "Export",
+        "Review the month's invoice and autopay runs",
+        "Investigate anything odd",
+        "Export the QuickBooks journal and the deposit slip",
         "Review enrollment funnel, attendance trends, and coach utilization"
       ],
       "controls": {
         "buttons": [
-          "Refresh",
-          "Export"
+          "QuickBooks journal",
+          "Deposit slip",
+          "Anything odd row expander",
+          "AR aging bucket expander",
+          "Send reminder"
         ],
         "inputs": [
-          "Period"
+          "Month"
         ],
         "modals": []
       },
       "states": [
         "loading",
-        "empty",
+        "empty month",
         "partial unavailable",
         "export error"
       ],
       "risk_edges": [
-        "Tenant data leakage in export"
+        "Tenant data leakage in export",
+        "Collection rate shown as 0% for a month with nothing billed",
+        "A degraded source is silently dropped instead of warned about"
       ],
       "acceptance": [
         "Exports are tenant-scoped and failures are visible",
-        "Workflow evidence: \"Review finance/attendance reports\" completes for the admin route /admin/reports with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Export\" completes for the admin route /admin/reports with real-user evidence and no framework or runtime errors.",
+        "A month with nothing billed shows an em dash, never 0%.",
+        "Every degraded source names itself in the warnings line.",
+        "Workflow evidence: \"Review the month's invoice and autopay runs\" completes for the admin route /admin/reports with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Investigate anything odd\" completes for the admin route /admin/reports with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Export the QuickBooks journal and the deposit slip\" completes for the admin route /admin/reports with real-user evidence and no framework or runtime errors.",
         "Workflow evidence: \"Review enrollment funnel, attendance trends, and coach utilization\" completes for the admin route /admin/reports with real-user evidence and no framework or runtime errors.",
         "Risk evidence: \"Tenant data leakage in export\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
@@ -1359,7 +1365,8 @@
         "Transfer/withdrawal",
         "Waitlist actions",
         "Teaching plan",
-        "Post session announcement"
+        "Post session announcement",
+        "Cancel one class date"
       ],
       "controls": {
         "buttons": [
@@ -1377,7 +1384,9 @@
           "Save roster action",
           "Close roster action",
           "Post announcement",
-          "Delete announcement"
+          "Delete announcement",
+          "Cancel this date",
+          "Keep the class"
         ],
         "inputs": [
           "Student search",
@@ -1387,12 +1396,14 @@
           "Schedule date",
           "Replacement coach",
           "Announcement body",
-          "Urgent"
+          "Urgent",
+          "Cancellation reason"
         ],
         "modals": [
           "Roster action",
           "Withdrawal credit",
-          "Replacement coach"
+          "Replacement coach",
+          "Cancel class date"
         ]
       },
       "states": [
@@ -1401,14 +1412,16 @@
         "empty roster",
         "mutation error",
         "conflict",
-        "validation error"
+        "validation error",
+        "cancelled date"
       ],
       "risk_edges": [
         "Seat/waitlist race",
         "Withdrawal credit preview failure",
         "Stale session id",
         "Announcement leaks to non-enrolled family",
-        "Urgent announcement emailed twice"
+        "Urgent announcement emailed twice",
+        "Double cancel double-credits the family"
       ],
       "acceptance": [
         "Roster actions preserve tenant scope and show conflict states",
@@ -1423,7 +1436,9 @@
         "Workflow evidence: \"Post session announcement\" completes for the admin route /admin/sessions/[id] with real-user evidence and no framework or runtime errors.",
         "Risk evidence: \"Announcement leaks to non-enrolled family\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"Urgent announcement emailed twice\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Announcements cannot be edited: the UI offers delete-and-repost only, and the copy says an already-emailed announcement cannot be recalled."
+        "Announcements cannot be edited: the UI offers delete-and-repost only, and the copy says an already-emailed announcement cannot be recalled.",
+        "Workflow evidence: \"Cancel one class date\" completes for the admin route /admin/sessions/[id] with real-user evidence and no framework or runtime errors.",
+        "Cancelling a date twice is refused (409) and issues exactly one credit per family"
       ]
     },
     {
@@ -1469,7 +1484,7 @@
       "source": "frontend/app/(admin)/admin/settings/page.tsx",
       "workflows": [
         "Edit academy settings",
-        "Fees",
+        "Billing rules",
         "Gateway",
         "Notifications",
         "Branding",
@@ -1480,13 +1495,19 @@
         "buttons": [
           "Save",
           "Cancel",
+          "Save <changed billing rules>",
           "Connect Stripe",
           "New session type",
           "Archive"
         ],
         "inputs": [
           "Academy name",
-          "Fees",
+          "Invoice day of month",
+          "Days until due",
+          "Grace days after due",
+          "Late fee",
+          "Cancellation notice",
+          "Late-cancellation fee",
           "Notification toggles",
           "Branding",
           "Session type name",
@@ -1506,23 +1527,29 @@
         "saved",
         "validation error",
         "provider unavailable",
-        "empty"
+        "empty",
+        "no changes to save (billing rules save button disabled)"
       ],
       "risk_edges": [
         "CORS/origin mismatch",
         "Stripe connect unavailable",
-        "Archiving a session type referenced by active billing enrollments"
+        "Archiving a session type referenced by active billing enrollments",
+        "Partial billing-rules save: an early write lands and a later one fails",
+        "Non-owner admin reaching the owner-only billing rules panel, including the legacy ?panel=fees deep link"
       ],
       "acceptance": [
         "Each panel saves or shows specific failure",
+        "Fixed billing rules (autopay charge time, retry ladder, cancel/join/pause policy, parent messages) render as stated values with no input, and the late-fee box carries its \"not applied automatically yet\" note above the inputs.",
         "Workflow evidence: \"Edit academy settings\" completes for the admin route /admin/settings with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Fees\" completes for the admin route /admin/settings with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Billing rules\" completes for the admin route /admin/settings with real-user evidence and no framework or runtime errors.",
         "Workflow evidence: \"Gateway\" completes for the admin route /admin/settings with real-user evidence and no framework or runtime errors.",
         "Workflow evidence: \"Notifications\" completes for the admin route /admin/settings with real-user evidence and no framework or runtime errors.",
         "Workflow evidence: \"Branding\" completes for the admin route /admin/settings with real-user evidence and no framework or runtime errors.",
         "Workflow evidence: \"Data\" completes for the admin route /admin/settings with real-user evidence and no framework or runtime errors.",
         "Risk evidence: \"CORS/origin mismatch\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"Stripe connect unavailable\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Partial billing-rules save: an early write lands and a later one fails\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Non-owner admin reaching the owner-only billing rules panel, including the legacy ?panel=fees deep link\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Workflow evidence: \"Manage session types\" completes for the admin route /admin/settings with real-user evidence and no framework or runtime errors.",
         "Risk evidence: \"Archiving a session type referenced by active billing enrollments\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
@@ -1826,10 +1853,10 @@
         "submitting",
         "validation error",
         "create failed (email exists)",
-        "created → redirect to user detail"
+        "created \u2192 redirect to user detail"
       ],
       "risk_edges": [
-        "duplicate email → creation fails, surfaced inline",
+        "duplicate email \u2192 creation fails, surfaced inline",
         "parent auto-invite send failure is best-effort (user created, invite re-sendable)"
       ],
       "acceptance": [
@@ -3305,7 +3332,7 @@
         "error"
       ],
       "risk_edges": [
-        "Nothing may change on page load — a mail scanner's link prefetch must not unsubscribe anyone",
+        "Nothing may change on page load \u2014 a mail scanner's link prefetch must not unsubscribe anyone",
         "Transactional email must not be offered as something to switch off",
         "A token from another academy must be refused, not silently applied"
       ],
@@ -3319,7 +3346,7 @@
         "Workflow evidence: \"Open the emailed unsubscribe link\" completes for the public route /unsubscribe with real-user evidence and no framework or runtime errors.",
         "Workflow evidence: \"Save opt-out choices\" completes for the public route /unsubscribe with real-user evidence and no framework or runtime errors.",
         "Workflow evidence: \"Re-open the link and opt back in\" completes for the public route /unsubscribe with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Nothing may change on page load — a mail scanner's link prefetch must not unsubscribe anyone\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Nothing may change on page load \u2014 a mail scanner's link prefetch must not unsubscribe anyone\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"Transactional email must not be offered as something to switch off\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"A token from another academy must be refused, not silently applied\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]

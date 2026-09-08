@@ -60,7 +60,7 @@ class LevelUpRecommendationRepository(Protocol):
         rec_id: str,
         status: str,
         reviewed_by: str | None,
-        reviewed_at: object | None,
+        reviewed_at: datetime | None,
         rejection_reason: str | None,
         *,
         expected_status: str,
@@ -84,6 +84,7 @@ class LevelUpRecommendationRepository(Protocol):
         self, student_ids: list[str], program_id: str
     ) -> list[LevelUpRecommendation]: ...
     async def list_pending(self) -> list[LevelUpRecommendation]: ...
+    async def list_pending_for_student(self, student_id: str) -> list[LevelUpRecommendation]: ...
 
 
 class CertificateRepository(Protocol):
@@ -99,3 +100,18 @@ class SkillLookup(Protocol):
     async def get_level(self, level_id: str) -> object | None: ...
     async def list_skills_for_level(self, level_id: str) -> list[object]: ...
     async def get_next_level(self, program_id: str, current_sequence: int) -> object | None: ...
+
+
+class EnrollmentStatusLookup(Protocol):
+    """Cross-context port: does the student still attend (issue #673)?
+
+    "Live" means an enrollment in ``active`` or ``paused`` status — the same
+    predicate the coach passport uses (issue #651). Cancelled and withdrawn
+    students are not live: they must not be recommended, approved, or
+    certified, and their pending recommendations are expired.
+    """
+
+    async def has_active_or_paused_enrollment(self, student_id: str) -> bool: ...
+    async def students_with_active_or_paused_enrollment(self, student_ids: list[str]) -> set[str]:
+        """Batch form for the queue: the subset of ``student_ids`` that is live."""
+        ...

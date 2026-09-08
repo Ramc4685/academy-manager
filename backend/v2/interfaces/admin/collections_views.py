@@ -21,7 +21,16 @@ BucketKey = Literal[
     "paid",
 ]
 
-FamilyAction = Literal["send_reminder", "record_payment", "message", "skip_month", "resume"]
+FamilyAction = Literal[
+    "send_reminder",
+    "record_payment",
+    "message",
+    "skip_month",
+    "resume",
+    # A link, not a mutation: present only on Past due / Awaiting rows whose
+    # family has a dialable phone (month close spec §7).
+    "whatsapp",
+]
 
 
 class _View(BaseModel):
@@ -102,6 +111,9 @@ class AdminCollectionsFamily(_View):
     pause: AdminCollectionsPause | None = None
     paid: AdminCollectionsPaid | None = None
     last_reminder_at: str | None = None
+    # ``wa.me`` deep link with the dues reminder text pre-filled; Past due and
+    # Awaiting payment rows only, and only when the phone is dialable.
+    whatsapp_url: str | None = None
     actions: list[FamilyAction] = []
 
 

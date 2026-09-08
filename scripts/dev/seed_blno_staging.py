@@ -1129,7 +1129,6 @@ def main() -> None:
                 "updated_at": ts,
                 "primary_domain": ACADEMY_DOMAIN,
                 "fees": {
-                    "default_monthly_cents": 6000,
                     "late_fee_cents": 500,
                     "grace_days": 5,
                 },

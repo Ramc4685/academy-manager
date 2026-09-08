@@ -21,6 +21,7 @@ class MongoEnrollmentRepository(TenantScopedRepository):
             created_at=doc.get("created_at"),
             registration_application_id=doc.get("registration_application_id"),
             registration_student_lock=doc.get("registration_student_lock"),
+            pending_cancellation_at=doc.get("pending_cancellation_at"),
         )
 
     async def active_for_session(self, session_id: str) -> list[Enrollment]:
@@ -78,3 +79,18 @@ class MongoEnrollmentRepository(TenantScopedRepository):
             sort=[("enrollment_id", 1)],
         )
         return [self._to_domain(doc) async for doc in cursor]
+
+    async def student_ids_with_active_or_paused_enrollment(
+        self, student_ids: list[str]
+    ) -> set[str]:
+        """Batch twin of ``active_or_paused_for_student`` (issue #673).
+
+        One query for the whole level-up queue: returns the subset of
+        ``student_ids`` that still holds a live (active or paused) enrollment.
+        """
+        if not student_ids:
+            return set()
+        cursor = self._find_many(
+            {"student_id": {"$in": list(student_ids)}, "status": {"$in": ["active", "paused"]}},
+        )
+        return {str(doc["student_id"]) async for doc in cursor}
