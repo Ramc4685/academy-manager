@@ -120,8 +120,17 @@ class _FakeScheduledActions:
     statuses: list[tuple[str, str]] = field(default_factory=list)
     last_error: str | None = None
 
-    async def list_due(self, *, now: datetime, limit: int = 50) -> list[ScheduledEnrollmentAction]:
-        return self.due[:limit]
+    async def list_due(
+        self,
+        *,
+        now: datetime,
+        limit: int = 50,
+        action_type: str | None = None,
+    ) -> list[ScheduledEnrollmentAction]:
+        # Mirrors the Mongo repo: the type filter is applied by the STORE, so
+        # a worker that forgets to pass its type is caught here too.
+        rows = [a for a in self.due if action_type is None or a.action_type == action_type]
+        return rows[:limit]
 
     async def mark_succeeded(self, action_id: str, *, attempted_at: datetime) -> None:
         self.statuses.append((action_id, "succeeded"))
@@ -171,3 +180,35 @@ class _FakeBillingDeferrals:
         if self.fail:
             raise RuntimeError("deferral close unavailable")
         self.closed.append((enrollment_id, reason))
+
+
+@pytest.mark.asyncio
+async def test_due_cancel_at_period_end_action_is_left_for_the_cancellation_worker() -> None:
+    """Issue #675 follow-up (P1). Both workers drain one collection. Before the
+    fix this worker took the due cancel row, `ResumeEnrollment` no-opped it (the
+    enrollment is not paused) and it was marked `succeeded` — the parent's
+    cancellation was destroyed with no error anywhere."""
+    cancel_row = ScheduledEnrollmentAction(
+        action_id="action-cancel",
+        academy_id="acad-1",
+        action_type="cancel_at_period_end",
+        enrollment_id="enr-9",
+        pause_request_id=None,
+        run_at=_now(),
+        created_at=_now(),
+        updated_at=_now(),
+    )
+    actions = _FakeScheduledActions([cancel_row, _action()])
+    resume = _FakeResumeEnrollment()
+    use_case = ProcessScheduledResumeActions(
+        scheduled_actions=actions,
+        resume_enrollment=resume,
+        clock=_now,
+    )
+
+    result = await use_case.execute()
+
+    assert result.processed == 1
+    assert resume.enrollment_ids == ["enr-1"]
+    assert actions.statuses == [("action-1", "succeeded")]
+    assert all(action_id != "action-cancel" for action_id, _ in actions.statuses)

@@ -99,6 +99,7 @@ class AdminStudentSessionSummaryView(BaseModel):
     start_at: datetime | None = None
     end_at: datetime | None = None
     status: str
+    pending_cancellation_at: datetime | None = None
     payment_mode: str | None = None
     subscription_status: str | None = None
     amount_cents: int | None = None
@@ -565,6 +566,8 @@ class AdminEnrollmentView(BaseModel):
     full_name: str
     parent_id: str
     status: str
+    # Issue #675: parent end-of-period cancel pending; still on the roster.
+    pending_cancellation_at: datetime | None = None
     enrolled_at: datetime | None = None
     level: str | None = None
     pathway_program_id: str | None = None
@@ -1582,6 +1585,7 @@ AdminAttentionKind = Literal[
     "overdue_dues",
     "pause_requests",
     "scheduled_resume_blocked",
+    "scheduled_action_failed",
     "billing_deferrals",
     "waivers",
     "session_pressure",

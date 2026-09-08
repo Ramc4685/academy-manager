@@ -54,6 +54,9 @@ class CoachRosterEntry(BaseModel):
     # "enrollment" for regular roster rows; "makeup" / "trial" for one-time
     # entries (Tasks 5/7) added just for this occurrence.
     entry_source: Literal["enrollment", "makeup", "trial"] = "enrollment"
+    # Issue #675: set while a parent's end-of-period cancel is pending — the
+    # student still attends; the UI may show "ends <date>".
+    pending_cancellation_at: datetime | None = None
 
 
 class CoachSession(BaseModel):

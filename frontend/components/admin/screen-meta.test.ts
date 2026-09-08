@@ -49,11 +49,18 @@ describe("navForRoles", () => {
     expect(navForRoles(nav, true).map((group) => group.group)).toEqual(["MONEY", "WORK"]);
   });
 
-  it("marks exactly the three money-governance destinations as owner-only", () => {
+  it("marks exactly the money-governance destinations as owner-only", () => {
     const ownerOnly = ADMIN_NAV.flatMap((group) =>
       group.items.filter((item) => item.ownerOnly).map((item) => item.href),
     );
-    expect(ownerOnly.sort()).toEqual(["/admin/audit-logs", "/admin/payouts", "/admin/reports"]);
+    // Billing Health joined this list with the trim (spec 2026-09-07 §2):
+    // Stripe plumbing is governance, the same tier as Reports and Payouts.
+    expect(ownerOnly.sort()).toEqual([
+      "/admin/audit-logs",
+      "/admin/billing-health",
+      "/admin/payouts",
+      "/admin/reports",
+    ]);
   });
 });
 
@@ -65,6 +72,7 @@ describe("isOwnerOnlyRoute", () => {
     expect(isOwnerOnlyRoute("/admin/reports/session-economics")).toBe(true);
     expect(isOwnerOnlyRoute("/admin/reports/refunds")).toBe(true);
     expect(isOwnerOnlyRoute("/admin/audit-logs")).toBe(true);
+    expect(isOwnerOnlyRoute("/admin/billing-health")).toBe(true);
     expect(isOwnerOnlyRoute("/admin/coach-payslip")).toBe(true);
     expect(isOwnerOnlyRoute("/admin/session-economics")).toBe(true);
   });
@@ -89,7 +97,6 @@ describe("isOwnerOnlyRoute", () => {
       "/admin",
       "/admin/payments",
       "/admin/expenses",
-      "/admin/billing-health",
       "/admin/settings",
       "/admin/users/new",
       "/admin/dues",
