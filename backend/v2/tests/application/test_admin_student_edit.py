@@ -10,6 +10,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_directory import
     AdminStudentDetail,
     AdminStudentParentChangeResult,
     AdminStudentParentSummary,
+    AdminStudentSessionSummary,
     ChangeAdminStudentParent,
     ChangeAdminStudentParentCommand,
     GetAdminStudent,
@@ -115,6 +116,62 @@ async def test_get_admin_student_returns_parent_contact_details() -> None:
     assert result.t_shirt_size == "M"
     assert result.waiver_status == "signed"
     assert result.waiver_version == "2026-v1"
+
+
+class FakeAutopayLookup:
+    def __init__(self, statuses: dict[str, str | None]) -> None:
+        self.statuses = statuses
+        self.calls: list[list[str]] = []
+
+    async def autopay_status_by_enrollment(
+        self, enrollment_ids: list[str]
+    ) -> dict[str, str | None]:
+        self.calls.append(list(enrollment_ids))
+        return {k: v for k, v in self.statuses.items() if k in enrollment_ids}
+
+
+def _session(enrollment_id: str, status: str = "active") -> AdminStudentSessionSummary:
+    return AdminStudentSessionSummary(
+        enrollment_id=enrollment_id,
+        session_id=f"sess-{enrollment_id}",
+        session_title="Advanced Footwork",
+        status=status,
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_admin_student_enriches_current_rows_with_autopay_status() -> None:
+    """Issue #674: autopay comes from billing through the port; current rows
+    get it, past rows are left alone, and an unknown id stays None."""
+    repo = FakeStudentEditor()
+    repo.student = repo.student.model_copy(
+        update={
+            "enrolled_sessions": [_session("enr-on"), _session("enr-unknown", status="paused")],
+            "past_enrollments": [_session("enr-old", status="cancelled")],
+        }
+    )
+    autopay = FakeAutopayLookup({"enr-on": "active", "enr-old": "disabled"})
+
+    result = await GetAdminStudent(repo, autopay=autopay).execute("st-1")
+
+    assert autopay.calls == [["enr-on", "enr-unknown"]]
+    assert [(r.enrollment_id, r.autopay_status) for r in result.enrolled_sessions] == [
+        ("enr-on", "active"),
+        ("enr-unknown", None),
+    ]
+    assert result.past_enrollments[0].autopay_status is None
+    # Everything else on the detail is untouched by the enrichment copy.
+    assert result.parent_email == "parent@example.com"
+
+
+@pytest.mark.asyncio
+async def test_get_admin_student_without_autopay_port_keeps_rows_unchanged() -> None:
+    repo = FakeStudentEditor()
+    repo.student = repo.student.model_copy(update={"enrolled_sessions": [_session("enr-on")]})
+
+    result = await GetAdminStudent(repo).execute("st-1")
+
+    assert result.enrolled_sessions[0].autopay_status is None
 
 
 @pytest.mark.asyncio

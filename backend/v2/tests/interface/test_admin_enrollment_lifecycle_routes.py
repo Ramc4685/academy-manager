@@ -92,11 +92,23 @@ def test_move_route_accepts_effective_date_and_returns_proration_result(admin_cl
 
     assert response.status_code == 200, response.text
     assert response.json()["session_id"] == target
+    # Issue #669: the move reached billing with the real from/to/effective date...
+    calls = admin_client.seed["move_billing_sync"].calls
+    assert len(calls) == 1
+    assert calls[0]["enrollment_id"] == enrollment_id
+    assert calls[0]["from_session_id"] == "sess-1"
+    assert calls[0]["to_session_id"] == target
+    assert calls[0]["effective_at"].date().isoformat() == "2026-05-25"
+    assert calls[0]["reason"] == "Schedule change"
+    assert calls[0]["actor_id"]
+    # ...and the audit event carries billing's answer, not a dead-port value.
     event = admin_client.seed["enrollment_events"].rows[-1]
     assert event.event_type == "moved"
     assert event.effective_at.date().isoformat() == "2026-05-25"
-    assert event.billing_policy == "move_proration"
-    assert event.billing_result == "recorded"
+    assert event.billing_policy == "move_proration_current_period"
+    assert event.billing_result == "debit:4000"
+    assert event.metadata["invoice_id"] == "inv-move-target"
+    assert event.metadata["delta_cents"] == "4000"
 
 
 def test_withdraw_route_defaults_to_credit_and_accepts_refund_or_adjustment(admin_client):

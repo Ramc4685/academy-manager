@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from backend.v2.contexts.coaching.domain.models import (
     Attendance,
+    AttendanceEntrySource,
     CoachAttendance,
     CoachSkillNote,
     NoteVisibility,
@@ -72,8 +73,31 @@ class SessionLookup(Protocol):
     async def session_date(self, session_id: str) -> date | None: ...
 
 
+class AttendanceEligibility(BaseModel):
+    """Why a student may be marked on one occurrence (issue #672)."""
+
+    model_config = {"frozen": True}
+
+    source: AttendanceEntrySource
+
+
 class EnrollmentLookup(Protocol):
     async def is_active(self, session_id: str, student_id: str) -> bool: ...
+
+    async def attendance_eligibility(
+        self,
+        *,
+        occurrence_id: str,
+        session_id: str,
+        template_session_id: str | None,
+        student_id: str,
+    ) -> AttendanceEligibility | None:
+        """Occurrence-aware eligibility: an ``active`` enrollment in the
+        session (or its recurring template), or an approved one-time
+        make-up / trial roster entry for exactly this occurrence. ``None``
+        when the student may not be marked — paused, cancelled and
+        withdrawn enrollments stay ineligible."""
+        ...
 
 
 class SkillNoteRepository(Protocol):

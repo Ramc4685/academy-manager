@@ -453,6 +453,8 @@ def compose_coach(
     )
 
     get_roster = GetSessionRoster(enrollments=enrollments_repo, students=students_repo)
+    # Attendance eligibility reads the same one-time roster the coach sees (#672).
+    enrollment_lookup = EnrollmentLookupAdapter(enrollments_repo, occurrence_roster_repo)
 
     return CoachComposition(
         list_today=ListCoachOccurrencesForDate(
@@ -468,7 +470,7 @@ def compose_coach(
         mark_attendance=MarkAttendance(
             attendance_repo=attendance_repo,
             occurrence_lookup=EnrollmentOccurrenceLookup(occurrences_repo),
-            enrollment_lookup=EnrollmentLookupAdapter(enrollments_repo),
+            enrollment_lookup=enrollment_lookup,
             outbox=outbox,
             idempotency_store=idempotency_store,
             academy_id=request_academy_id,
@@ -482,7 +484,7 @@ def compose_coach(
         bulk_mark_attendance=BulkMarkAttendance(
             attendance_repo=attendance_repo,
             occurrence_lookup=EnrollmentOccurrenceLookup(occurrences_repo),
-            enrollment_lookup=EnrollmentLookupAdapter(enrollments_repo),
+            enrollment_lookup=enrollment_lookup,
             outbox=outbox,
             idempotency_store=idempotency_store,
             academy_id=request_academy_id,

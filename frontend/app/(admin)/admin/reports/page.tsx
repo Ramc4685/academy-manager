@@ -178,12 +178,33 @@ export default function AdminReportsPage() {
     [revenueData, period],
   );
   const dashboard = dashboardQuery.data;
+  // A resolved query only guarantees the envelope, not the objects inside it,
+  // so each group this page reads is guarded on its own rather than on
+  // `dashboard` being truthy. A group that is missing renders "No data" —
+  // the same thing the page already showed before the query resolved.
+  const attendance = dashboard?.attendance;
+  const sessions = dashboard?.sessions;
+  const profitAndLoss = dashboard?.profit_and_loss;
+  const expenses = dashboard?.expenses;
+  const payroll = dashboard?.payroll;
+  const collectionsRisk = dashboard?.collections_risk;
   // The backend decides whether payroll is complete enough for a final P&L;
   // this page only presents the reason it gives.
-  const payrollBlockedBy = dashboard?.payroll.blocked_by ?? null;
+  const payrollBlockedBy = payroll?.blocked_by ?? null;
+  const dashboardEmptyStates = dashboard?.empty_states ?? [];
+  const agingBuckets = collectionsRisk?.aging_buckets ?? [];
+  const expenseCategories = expenses?.by_category ?? [];
+  // A feed that came back without a `payments` array is unknown, not empty:
+  // saying "no payments received" about a money ledger we could not read
+  // would be a false statement of fact, so that case renders as a failure.
+  const paymentFeed = paymentFeedQuery.data?.payments;
+  const recentPayments = Array.isArray(paymentFeed) ? paymentFeed : [];
+  const paymentFeedUnreadable =
+    paymentFeedQuery.isError || (!paymentFeedQuery.isLoading && !Array.isArray(paymentFeed));
   const failedRows = failedPaymentsQuery.data?.rows ?? [];
   const failedTotalCents = failedRows.reduce((total, row) => total + row.balance_due_cents, 0);
   const projected = projectedIncomeQuery.data;
+  const projectedSessions = projected?.by_session ?? [];
 
   return (
     <section data-testid="admin-reports" className="space-y-5">
@@ -208,17 +229,17 @@ export default function AdminReportsPage() {
         <div data-testid="reports-money-tiles" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <KpiCard
             label="Billed this month"
-            value={dashboard ? formatCurrency(dashboard.billed_cents) : dashboardQuery.isLoading ? "Loading" : "No data"}
+            value={dashboard?.billed_cents != null ? formatCurrency(dashboard.billed_cents) : dashboardQuery.isLoading ? "Loading" : "No data"}
             description="Tuition and fees invoiced for the selected month."
           />
           <KpiCard
             label="Collected"
-            value={dashboard ? formatCurrency(dashboard.cash_collected_cents) : dashboardQuery.isLoading ? "Loading" : "No data"}
+            value={dashboard?.cash_collected_cents != null ? formatCurrency(dashboard.cash_collected_cents) : dashboardQuery.isLoading ? "Loading" : "No data"}
             description="Cash received this month, net of refunds."
           />
           <KpiCard
             label="Outstanding"
-            value={dashboard ? formatCurrency(dashboard.outstanding_dues_cents) : dashboardQuery.isLoading ? "Loading" : "No data"}
+            value={dashboard?.outstanding_dues_cents != null ? formatCurrency(dashboard.outstanding_dues_cents) : dashboardQuery.isLoading ? "Loading" : "No data"}
             description="Open or partially paid dues still requiring follow-up."
           />
           <KpiCard
@@ -301,12 +322,12 @@ export default function AdminReportsPage() {
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <KpiCard
             label="Attendance rate"
-            value={dashboard ? formatNullablePercent(dashboard.attendance.attendance_rate) : dashboardQuery.isLoading ? "Loading" : "No data"}
+            value={attendance ? formatNullablePercent(attendance.attendance_rate) : dashboardQuery.isLoading ? "Loading" : "No data"}
             description="Present or late marks out of recorded attendance."
           />
           <KpiCard
             label="Capacity used"
-            value={dashboard ? formatNullablePercent(dashboard.sessions.capacity_utilization) : dashboardQuery.isLoading ? "Loading" : "No data"}
+            value={sessions ? formatNullablePercent(sessions.capacity_utilization) : dashboardQuery.isLoading ? "Loading" : "No data"}
             description="Enrolled seats against scheduled and completed capacity."
           />
           <KpiCard
@@ -314,8 +335,8 @@ export default function AdminReportsPage() {
             value={
               payrollBlockedBy
                 ? "Blocked"
-                : dashboard
-                  ? formatNullableCurrency(dashboard.profit_and_loss.net_profit_cents)
+                : profitAndLoss
+                  ? formatNullableCurrency(profitAndLoss.net_profit_cents)
                   : dashboardQuery.isLoading
                     ? "Loading"
                     : "No data"
@@ -328,17 +349,17 @@ export default function AdminReportsPage() {
           />
           <KpiCard
             label="Expenses"
-            value={dashboard ? formatCurrency(dashboard.expenses.total_cents) : dashboardQuery.isLoading ? "Loading" : "No data"}
+            value={expenses ? formatCurrency(expenses.total_cents) : dashboardQuery.isLoading ? "Loading" : "No data"}
             description="Recorded rent, equipment, salary, marketing, and other spend."
           />
           <KpiCard
             label="Payroll unpaid"
-            value={dashboard ? formatNullableCurrency(dashboard.payroll.unpaid_cents) : dashboardQuery.isLoading ? "Loading" : "No data"}
+            value={payroll ? formatNullableCurrency(payroll.unpaid_cents) : dashboardQuery.isLoading ? "Loading" : "No data"}
             description="Approved coach payout amount not yet marked paid."
           />
           <KpiCard
             label="Waitlist"
-            value={dashboard ? formatInteger(dashboard.sessions.waitlist_count) : dashboardQuery.isLoading ? "Loading" : "No data"}
+            value={sessions ? formatInteger(sessions.waitlist_count) : dashboardQuery.isLoading ? "Loading" : "No data"}
             description="Families waiting on sessions in the selected month."
           />
         </div>
@@ -349,11 +370,11 @@ export default function AdminReportsPage() {
           </p>
         )}
 
-        {dashboard?.empty_states.length ? (
+        {dashboardEmptyStates.length ? (
           <Card p={20}>
             <Overline>Empty states</Overline>
             <ul className="mt-3 space-y-2 text-sm text-rally-subtle">
-              {dashboard.empty_states.map((state) => (
+              {dashboardEmptyStates.map((state) => (
                 <li key={state}>{state}</li>
               ))}
             </ul>
@@ -370,15 +391,15 @@ export default function AdminReportsPage() {
               View all payments
             </Link>
           </div>
-          {paymentFeedQuery.isError ? (
+          {paymentFeedUnreadable ? (
             <p className="mt-3 text-sm text-red-700">Could not load recent payments.</p>
           ) : paymentFeedQuery.isLoading ? (
             <p className="mt-3 text-sm text-rally-subtle">Loading…</p>
-          ) : (paymentFeedQuery.data?.payments.length ?? 0) === 0 ? (
+          ) : recentPayments.length === 0 ? (
             <p className="mt-3 text-sm text-rally-subtle">No payments received yet.</p>
           ) : (
             <div className="mt-4 divide-y divide-rally-line">
-              {paymentFeedQuery.data?.payments.map((item) => (
+              {recentPayments.map((item) => (
                 <div
                   key={item.payment_id}
                   className="flex flex-wrap items-center justify-between gap-2 py-2.5 text-sm"
@@ -415,7 +436,7 @@ export default function AdminReportsPage() {
               <Overline>Operations summary</Overline>
               <div className="mt-2">
                 <BigNum size={32}>
-                  {dashboard ? formatInteger(dashboard.sessions.scheduled_count + dashboard.sessions.completed_count) : "No data"}
+                  {sessions ? formatInteger(sessions.scheduled_count + sessions.completed_count) : "No data"}
                 </BigNum>
               </div>
               <p className="text-sm text-neutral-500 mt-1">
@@ -423,16 +444,16 @@ export default function AdminReportsPage() {
               </p>
             </div>
             <dl className="grid min-w-64 gap-3 sm:grid-cols-2">
-              <DashboardTerm label="Completed" value={dashboard ? formatInteger(dashboard.sessions.completed_count) : "No data"} />
-              <DashboardTerm label="Cancelled" value={dashboard ? formatInteger(dashboard.sessions.cancelled_count) : "No data"} />
-              <DashboardTerm label="Seats" value={dashboard ? `${formatInteger(dashboard.sessions.enrolled_seats)} / ${formatInteger(dashboard.sessions.capacity)}` : "No data"} />
-              <DashboardTerm label="Attendance marks" value={dashboard ? formatInteger(dashboard.attendance.recorded_count) : "No data"} />
-              <DashboardTerm label="Waitlist" value={dashboard ? formatInteger(dashboard.sessions.waitlist_count) : "No data"} />
+              <DashboardTerm label="Completed" value={sessions ? formatInteger(sessions.completed_count) : "No data"} />
+              <DashboardTerm label="Cancelled" value={sessions ? formatInteger(sessions.cancelled_count) : "No data"} />
+              <DashboardTerm label="Seats" value={sessions ? `${formatInteger(sessions.enrolled_seats)} / ${formatInteger(sessions.capacity)}` : "No data"} />
+              <DashboardTerm label="Attendance marks" value={attendance ? formatInteger(attendance.recorded_count) : "No data"} />
+              <DashboardTerm label="Waitlist" value={sessions ? formatInteger(sessions.waitlist_count) : "No data"} />
             </dl>
           </div>
           <dl className="grid gap-3 border-t border-neutral-100 pt-4 sm:grid-cols-3">
-            <DashboardTerm label="Present / late" value={dashboard ? formatInteger(dashboard.attendance.present_count) : "No data"} />
-            <DashboardTerm label="Recorded attendance" value={dashboard ? formatInteger(dashboard.attendance.recorded_count) : "No data"} />
+            <DashboardTerm label="Present / late" value={attendance ? formatInteger(attendance.present_count) : "No data"} />
+            <DashboardTerm label="Recorded attendance" value={attendance ? formatInteger(attendance.recorded_count) : "No data"} />
             <DashboardTerm label="Period" value={formatMonth(period)} />
           </dl>
         </Card>
@@ -441,12 +462,12 @@ export default function AdminReportsPage() {
           <Card p={24}>
             <Overline>Profit and loss</Overline>
             <dl className="mt-4 grid gap-3 sm:grid-cols-2">
-              <DashboardTerm label="Revenue" value={dashboard ? formatCurrency(dashboard.profit_and_loss.revenue_cents) : "No data"} />
-              <DashboardTerm label="Coach payroll" value={dashboard ? formatNullableCurrency(dashboard.profit_and_loss.coach_payroll_cents) : "No data"} />
-              <DashboardTerm label="Rent" value={dashboard ? formatCurrency(dashboard.profit_and_loss.rent_cents) : "No data"} />
-              <DashboardTerm label="Misc expenses" value={dashboard ? formatCurrency(dashboard.profit_and_loss.misc_expenses_cents) : "No data"} />
-              <DashboardTerm label="Net profit" value={dashboard ? formatNullableCurrency(dashboard.profit_and_loss.net_profit_cents) : "No data"} />
-              <DashboardTerm label="Margin" value={dashboard ? formatNullablePercent(dashboard.profit_and_loss.profit_margin) : "No data"} />
+              <DashboardTerm label="Revenue" value={profitAndLoss ? formatCurrency(profitAndLoss.revenue_cents) : "No data"} />
+              <DashboardTerm label="Coach payroll" value={profitAndLoss ? formatNullableCurrency(profitAndLoss.coach_payroll_cents) : "No data"} />
+              <DashboardTerm label="Rent" value={profitAndLoss ? formatCurrency(profitAndLoss.rent_cents) : "No data"} />
+              <DashboardTerm label="Misc expenses" value={profitAndLoss ? formatCurrency(profitAndLoss.misc_expenses_cents) : "No data"} />
+              <DashboardTerm label="Net profit" value={profitAndLoss ? formatNullableCurrency(profitAndLoss.net_profit_cents) : "No data"} />
+              <DashboardTerm label="Margin" value={profitAndLoss ? formatNullablePercent(profitAndLoss.profit_margin) : "No data"} />
             </dl>
             {payrollBlockedBy ? (
               <p
@@ -461,14 +482,14 @@ export default function AdminReportsPage() {
           <Card p={24}>
             <Overline>Collections risk</Overline>
             <dl className="mt-4 grid gap-3 sm:grid-cols-2">
-              <DashboardTerm label="Families due" value={dashboard ? formatInteger(dashboard.collections_risk.overdue_family_count) : "No data"} />
-              <DashboardTerm label="Amount due" value={dashboard ? formatCurrency(dashboard.collections_risk.overdue_cents) : "No data"} />
-              <DashboardTerm label="Failed payments" value={dashboard ? formatInteger(dashboard.collections_risk.failed_payment_count) : "No data"} />
-              <DashboardTerm label="Partial payments" value={dashboard ? formatInteger(dashboard.collections_risk.partial_payment_count) : "No data"} />
+              <DashboardTerm label="Families due" value={collectionsRisk ? formatInteger(collectionsRisk.overdue_family_count) : "No data"} />
+              <DashboardTerm label="Amount due" value={collectionsRisk ? formatCurrency(collectionsRisk.overdue_cents) : "No data"} />
+              <DashboardTerm label="Failed payments" value={collectionsRisk ? formatInteger(collectionsRisk.failed_payment_count) : "No data"} />
+              <DashboardTerm label="Partial payments" value={collectionsRisk ? formatInteger(collectionsRisk.partial_payment_count) : "No data"} />
             </dl>
-            {dashboard?.collections_risk.aging_buckets.length ? (
+            {agingBuckets.length ? (
               <div className="mt-5 space-y-2" data-testid="ar-aging-widget">
-                {dashboard.collections_risk.aging_buckets.map((bucket) => (
+                {agingBuckets.map((bucket) => (
                   <div key={bucket.label} className="rounded-md border border-rally-line">
                     <button
                       type="button"
@@ -536,7 +557,7 @@ export default function AdminReportsPage() {
         <div className="grid gap-4 lg:grid-cols-2">
           <Card p={24}>
             <Overline>Expenses</Overline>
-            {dashboard?.expenses.by_category.length ? (
+            {expenseCategories.length ? (
               <div className="mt-4 overflow-x-auto">
                 <table className="w-full min-w-[360px] text-left text-sm">
                   <thead className="text-xs uppercase text-rally-muted">
@@ -547,7 +568,7 @@ export default function AdminReportsPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-rally-line">
-                    {dashboard.expenses.by_category.map((category) => (
+                    {expenseCategories.map((category) => (
                       <tr key={category.category}>
                         <td className="px-2 py-2 font-medium text-rally-ink">{category.category}</td>
                         <td className="px-2 py-2 text-rally-muted">{formatCurrency(category.amount_cents)}</td>
@@ -565,14 +586,14 @@ export default function AdminReportsPage() {
           <Card p={24}>
             <Overline>Coach payroll</Overline>
             <dl className="mt-4 grid gap-3 sm:grid-cols-2">
-              <DashboardTerm label="Estimated" value={dashboard ? formatNullableCurrency(dashboard.payroll.estimated_cents) : "No data"} />
-              <DashboardTerm label="Approved" value={dashboard ? formatNullableCurrency(dashboard.payroll.approved_cents) : "No data"} />
-              <DashboardTerm label="Paid" value={dashboard ? formatNullableCurrency(dashboard.payroll.paid_cents) : "No data"} />
-              <DashboardTerm label="Unpaid" value={dashboard ? formatNullableCurrency(dashboard.payroll.unpaid_cents) : "No data"} />
+              <DashboardTerm label="Estimated" value={payroll ? formatNullableCurrency(payroll.estimated_cents) : "No data"} />
+              <DashboardTerm label="Approved" value={payroll ? formatNullableCurrency(payroll.approved_cents) : "No data"} />
+              <DashboardTerm label="Paid" value={payroll ? formatNullableCurrency(payroll.paid_cents) : "No data"} />
+              <DashboardTerm label="Unpaid" value={payroll ? formatNullableCurrency(payroll.unpaid_cents) : "No data"} />
             </dl>
-            {dashboard?.payroll.blocked_by ? (
+            {payrollBlockedBy ? (
               <p className="mt-4 rounded-md border border-dashed border-rally-line px-3 py-2 text-sm text-rally-subtle">
-                {dashboard.payroll.blocked_by}
+                {payrollBlockedBy}
               </p>
             ) : null}
           </Card>
@@ -635,7 +656,7 @@ export default function AdminReportsPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-rally-line">
-                    {projected.by_session.map((row) => (
+                    {projectedSessions.map((row) => (
                       <tr key={row.session_id}>
                         <td className="px-2 py-2 font-medium text-rally-ink">{row.title || row.session_id}</td>
                         <td className="px-2 py-2 text-rally-muted">{formatInteger(row.enrollment_count)}</td>

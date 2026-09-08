@@ -862,8 +862,15 @@ test.describe("Rally admin shell", () => {
     await stubAdminBff(page);
     // The destination's own rendering is covered by the ADMIN_ROUTES mount
     // loop; this asserts only that the old bookmark still lands there.
-    await page.goto("/admin/dues");
-    await expect(page).toHaveURL(/\/admin\/reports\/dues$/);
+    //
+    // Arm the wait BEFORE navigating: the redirect fires during load and can
+    // abort `page.goto` itself ("interrupted by another navigation"), and the
+    // default 5s expect timeout is shorter than a cold `next dev` compile.
+    // Landing on the target is the assertion; the aborted navigation is
+    // expected, not a failure.
+    const landedDues = page.waitForURL(/\/admin\/reports\/dues$/, { timeout: 30_000 });
+    await page.goto("/admin/dues", { waitUntil: "commit" }).catch(() => undefined);
+    await landedDues;
     expect(
       errors,
       `App console errors on dues redirect: ${errors.join("\n")}`,
@@ -875,8 +882,12 @@ test.describe("Rally admin shell", () => {
   }) => {
     const errors = collectConsoleErrors(page);
     await stubAdminBff(page);
-    await page.goto("/admin/session-economics");
-    await expect(page).toHaveURL(/\/admin\/reports\/session-economics$/);
+    // Same redirect race as the dues bookmark above.
+    const landedEconomics = page.waitForURL(/\/admin\/reports\/session-economics$/, {
+      timeout: 30_000,
+    });
+    await page.goto("/admin/session-economics", { waitUntil: "commit" }).catch(() => undefined);
+    await landedEconomics;
     expect(
       errors,
       `App console errors on session economics redirect: ${errors.join("\n")}`,
