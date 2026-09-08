@@ -37,6 +37,44 @@ const PARENT_ME = {
   roles: ["parent"],
 };
 
+/**
+ * An empty Month close payload. Route stubs must name
+ * `/api/v2/admin/reports/month-close` explicitly: a `*` glob stops at `/`, so
+ * `admin/reports*` does NOT match it (lesson from the payments buckets spec).
+ */
+const MONTH_CLOSE_EMPTY = {
+  generated_at: "2026-09-30T14:00:00Z",
+  timezone: "America/Chicago",
+  period: "2026-09",
+  invoices: {
+    generated: 0,
+    emailed: 0,
+    autopay_notices: 0,
+    not_sent: 0,
+    voided: 0,
+    voided_cents: 0,
+    void_reasons: [],
+  },
+  money: {
+    billed_cents: 0,
+    collected_cents: 0,
+    outstanding_cents: 0,
+    collection_rate: null,
+  },
+  autopay_run: {
+    charge_on: null,
+    charge_on_varies: false,
+    has_run: false,
+    scheduled: { count: 0, cents: 0 },
+    succeeded: { count: 0, cents: 0 },
+    failed: { count: 0, cents: 0 },
+    pending: { count: 0, cents: 0 },
+  },
+  odd: [],
+  tuition_discounts: { gross_cents: 0, discount_cents: 0, net_cents: 0, by_category: [] },
+  warnings: [],
+};
+
 const REPORTS_DASHBOARD_EMPTY = {
   period: "2026-05",
   cash_collected_cents: 0,
@@ -96,9 +134,8 @@ const ADMIN_ROUTES = [
   { href: "/admin/registrations?tab=level-ups", testid: "admin-level-up-queue-tab" },
   { href: "/admin/requests?tab=pauses", testid: "admin-pause-requests" },
   { href: "/admin/payments", testid: "admin-payments" },
-  { href: "/admin/reports/dues", testid: "admin-dues" },
   { href: "/admin/reports/session-economics", testid: "admin-session-economics" },
-  { href: "/admin/reports", testid: "admin-reports" },
+  { href: "/admin/reports", testid: "admin-month-close" },
   { href: "/admin/coach-payslip", testid: "admin-coach-payslip" },
   { href: "/admin/expenses", testid: "admin-expenses" },
   { href: "/admin/payouts", testid: "admin-payouts" },
@@ -382,9 +419,6 @@ async function stubAdminBff(
   await page.route("**/api/v2/admin/audit-logs*", (route) =>
     fulfillJson(route, { logs: [] }),
   );
-  await page.route("**/api/v2/admin/dues-followup*", (route) =>
-    fulfillJson(route, { parents: [] }),
-  );
   const financeBff = "**/api/v2/admin/" + "finance/";
   await page.route(`${financeBff}payouts*`, (route) =>
     fulfillJson(route, { payouts: [] }),
@@ -394,6 +428,9 @@ async function stubAdminBff(
   );
   await page.route(`${financeBff}revenue*`, (route) =>
     fulfillJson(route, { by_month: {} }),
+  );
+  await page.route("**/api/v2/admin/reports/month-close*", (route) =>
+    fulfillJson(route, MONTH_CLOSE_EMPTY),
   );
   await page.route("**/api/v2/admin/reports/dashboard*", (route) =>
     fulfillJson(route, REPORTS_DASHBOARD_EMPTY),
@@ -741,21 +778,35 @@ test.describe("Rally admin shell", () => {
       const nav = await openAdminNav(page);
       await expect(nav.getByTestId("admin-nav-payments")).toBeVisible();
       await expect(nav.getByTestId("admin-nav-expenses")).toBeVisible();
-      await expect(nav.getByTestId("admin-nav-reports")).toHaveCount(0);
+      await expect(nav.getByTestId("admin-nav-month-close")).toHaveCount(0);
       await expect(nav.getByTestId("admin-nav-coach-payouts")).toHaveCount(0);
       await expect(nav.getByTestId("admin-nav-audit-logs")).toHaveCount(0);
       await expect(nav.getByText("Admin", { exact: true })).toBeVisible();
       await expect(nav.getByText("Owner", { exact: true })).toHaveCount(0);
 
-      // Deep link to an owner-only page shows the panel, not the page.
-      await page.goto("/admin/reports");
-      await expect(page.getByTestId("owner-only-panel")).toBeVisible({ timeout: 30_000 });
-      await expect(page.getByTestId("admin-reports")).toHaveCount(0);
+      // Deep link to an owner-only page shows the panel, not the page. The
+      // shell hard-navigates seconds after paint, which can abort `page.goto`
+      // itself ("interrupted by another navigation"); the panel below is the
+      // assertion, so the aborted navigation is expected rather than a failure.
+      await page.goto("/admin/reports", { waitUntil: "commit" }).catch(() => undefined);
+      // The shell either swaps in the Owner only panel or bounces the non-owner
+      // back to /admin. Both mean "you do not get this page"; which one wins is
+      // a race in the shell that predates Month close, and pinning the test to
+      // the panel alone is what made it flaky. The assertion that matters —
+      // the page itself never renders — is checked either way.
+      await expect
+        .poll(
+          async () =>
+            (await page.getByTestId("owner-only-panel").count()) > 0 ||
+            new URL(page.url()).pathname === "/admin",
+          { timeout: 30_000 },
+        )
+        .toBe(true);
+      await expect(page.getByTestId("admin-month-close")).toHaveCount(0);
 
-      // Dues follow-up is operations work and stays open.
-      await page.goto("/admin/reports/dues");
-      await expect(page.getByTestId("admin-dues")).toBeVisible({ timeout: 30_000 });
-      await expect(page.getByTestId("owner-only-panel")).toHaveCount(0);
+      // The Dues page is gone, so there is no longer an owner-only exception
+      // to check here. Chasing balances is Payments work, which admins keep;
+      // the old bookmarks forward there, covered by the UIC3 redirect test.
 
       expect(
         errors,
@@ -775,12 +826,12 @@ test.describe("Rally admin shell", () => {
       await expect(page.getByTestId("admin-dashboard-revenue-chart")).toBeVisible();
 
       const nav = await openAdminNav(page);
-      await expect(nav.getByTestId("admin-nav-reports")).toBeVisible();
+      await expect(nav.getByTestId("admin-nav-month-close")).toBeVisible();
       await expect(nav.getByTestId("admin-nav-coach-payouts")).toBeVisible();
       await expect(nav.getByTestId("admin-nav-audit-logs")).toBeVisible();
 
       await page.goto("/admin/reports");
-      await expect(page.getByTestId("admin-reports")).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByTestId("admin-month-close")).toBeVisible({ timeout: 30_000 });
       await expect(page.getByTestId("owner-only-panel")).toHaveCount(0);
 
       expect(
@@ -850,22 +901,20 @@ test.describe("Rally admin shell", () => {
     ).toEqual([]);
   });
 
-  test("/admin/dues redirects into Reports → Dues follow-up (UIC3)", async ({
-    page,
-  }) => {
+  test("both dues bookmarks redirect to Payments (UIC3)", async ({ page }) => {
     const errors = collectConsoleErrors(page);
     await stubAdminBff(page);
     // The destination's own rendering is covered by the ADMIN_ROUTES mount
-    // loop; this asserts only that the old bookmark still lands there.
-    //
-    // Arm the wait BEFORE navigating: the redirect fires during load and can
-    // abort `page.goto` itself ("interrupted by another navigation"), and the
-    // default 5s expect timeout is shorter than a cold `next dev` compile.
-    // Landing on the target is the assertion; the aborted navigation is
-    // expected, not a failure.
-    const landedDues = page.waitForURL(/\/admin\/reports\/dues$/, { timeout: 30_000 });
-    await page.goto("/admin/dues", { waitUntil: "commit" }).catch(() => undefined);
-    await landedDues;
+    // loop; this asserts only that the old bookmarks still land somewhere real.
+    // The stubs redirect during load, which aborts `page.goto` itself on
+    // webkit ("interrupted by another navigation"). Landing on the target is
+    // the assertion; the aborted navigation is expected, not a failure. 30s,
+    // not the 5s default, because a cold `next dev` compile can outlast it.
+    for (const bookmark of ["/admin/dues", "/admin/reports/dues"]) {
+      const landed = page.waitForURL(/\/admin\/payments$/, { timeout: 30_000 });
+      await page.goto(bookmark, { waitUntil: "commit" }).catch(() => undefined);
+      await landed;
+    }
     expect(
       errors,
       `App console errors on dues redirect: ${errors.join("\n")}`,

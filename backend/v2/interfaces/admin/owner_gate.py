@@ -78,9 +78,9 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("POST", f"{_ADMIN}/coaches/{{coach_id}}/pay-rates/repair"),
         # reports_routes.py — financial reports (dashboard, enrollment-funnel,
         # attendance-trends, coach-utilization stay admin)
+        ("GET", f"{_ADMIN}/reports/month-close"),
         ("GET", f"{_ADMIN}/reports/session-economics"),
         ("GET", f"{_ADMIN}/reports/projected-income"),
-        ("GET", f"{_ADMIN}/reports/kpis"),
         ("GET", f"{_ADMIN}/reports/refunds"),
         ("GET", f"{_ADMIN}/reports/revenue-by-category"),
         ("GET", f"{_ADMIN}/reports/deposit-slip"),

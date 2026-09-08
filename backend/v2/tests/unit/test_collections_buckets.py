@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from urllib.parse import quote
 
 from backend.v2.contexts.billing.application.collections_buckets import (
     BUCKET_ACTIONS,
@@ -11,6 +12,7 @@ from backend.v2.contexts.billing.application.collections_buckets import (
     InvoiceFacts,
     PauseFacts,
     StudentFacts,
+    WhatsAppContext,
     build_collections_view,
     classify_family,
 )
@@ -620,3 +622,66 @@ def test_action_invoice_id_names_the_invoice_the_rule_fired_on() -> None:
         _family(invoices=(_invoice(status="paid", balance_due_cents=0),)), today=TODAY
     )
     assert paid_only is not None and paid_only.payload["action_invoice_id"] is None
+
+
+# --------------------------------------------------------------- WhatsApp (§7)
+
+
+_WA = WhatsAppContext(pay_url="https://blno.example.com/parent/payments", academy_name="BLNO")
+
+
+def test_whatsapp_link_on_past_due_row_carries_the_dues_reminder_text() -> None:
+    family = _family(
+        parent_phone="(555) 010-0100",
+        invoices=(_invoice(due_date=date(2026, 9, 1)),),
+    )
+    row = classify_family(family, today=TODAY, whatsapp=_WA)
+    assert row is not None and row.bucket == "past_due"
+    url = row.payload["whatsapp_url"]
+    assert url is not None and url.startswith("https://wa.me/15550100100?text=")
+    # The message body is the Dues page's, moved not rewritten.
+    assert quote("You have 1 open invoice totaling $120.00") in url
+    assert quote("https://blno.example.com/parent/payments") in url
+    assert "whatsapp" in row.payload["actions"]
+
+
+def test_whatsapp_link_on_awaiting_row_and_not_on_other_buckets() -> None:
+    awaiting = classify_family(
+        _family(parent_phone="5550100100", invoices=(_invoice(due_date=date(2026, 9, 20)),)),
+        today=TODAY,
+        whatsapp=_WA,
+    )
+    assert awaiting is not None and awaiting.bucket == "awaiting"
+    assert awaiting.payload["whatsapp_url"] is not None
+
+    scheduled = classify_family(
+        _family(
+            parent_phone="5550100100",
+            invoices=(_autopay_invoice(due_date=date(2026, 9, 20)),),
+        ),
+        today=TODAY,
+        whatsapp=_WA,
+    )
+    assert scheduled is not None and scheduled.bucket == "autopay_scheduled"
+    assert scheduled.payload["whatsapp_url"] is None
+    assert "whatsapp" not in scheduled.payload["actions"]
+
+
+def test_family_without_a_dialable_phone_simply_gets_no_whatsapp_action() -> None:
+    row = classify_family(
+        _family(parent_phone=None, invoices=(_invoice(due_date=date(2026, 9, 1)),)),
+        today=TODAY,
+        whatsapp=_WA,
+    )
+    assert row is not None and row.bucket == "past_due"
+    assert row.payload["whatsapp_url"] is None
+    assert "whatsapp" not in row.payload["actions"]
+
+
+def test_no_whatsapp_context_means_no_link_anywhere() -> None:
+    row = classify_family(
+        _family(parent_phone="5550100100", invoices=(_invoice(due_date=date(2026, 9, 1)),)),
+        today=TODAY,
+    )
+    assert row is not None
+    assert row.payload["whatsapp_url"] is None

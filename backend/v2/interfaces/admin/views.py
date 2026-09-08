@@ -1365,22 +1365,6 @@ class AdminAuditLogList(BaseModel):
     logs: list[AdminAuditLogView]
 
 
-class DuesFollowupParentView(BaseModel):
-    parent_id: str
-    parent_name: str | None = None
-    email: str | None = None
-    phone: str | None = None
-    pending_count: int
-    total_due_cents: int
-    # Pre-filled wa.me link the admin clicks to open WhatsApp; None when the
-    # parent has no usable phone on file.
-    whatsapp_url: str | None = None
-
-
-class DuesFollowupResponse(BaseModel):
-    parents: list[DuesFollowupParentView]
-
-
 class SendDuesRemindersResponse(BaseModel):
     sent: int
     blocked: bool
@@ -1763,13 +1747,6 @@ class AdminGatewayView(BaseModel):
 
 class AdminGatewayConnectLinkView(BaseModel):
     url: str
-
-
-class ReportsKpiResponse(BaseModel):
-    active_students: int = 0
-    attendance_rate_30d: float = 0.0
-    dues_collected_mtd_cents: int = 0
-    pending_waivers: int = 0
 
 
 class AdminRefundRow(BaseModel):

@@ -32,6 +32,7 @@ from backend.v2.contexts.billing.application.collections_buckets import (
     InvoiceFacts,
     PauseFacts,
     StudentFacts,
+    WhatsAppContext,
     build_collections_view_from_rows,
     classify_family,
 )
@@ -128,6 +129,7 @@ class MongoCollectionsReadModel:
         billing_settings: Any,
         customers: Any,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        parent_payments_link: Callable[[str], Awaitable[tuple[str | None, str]]] | None = None,
     ) -> None:
         self._db = db
         self._academy_timezone = academy_timezone
@@ -135,6 +137,10 @@ class MongoCollectionsReadModel:
         self._billing_settings = billing_settings
         self._customers = customers
         self._clock = clock
+        # Resolves the academy's own parent-payments URL and display name for
+        # the WhatsApp reminder text (spec §7). Optional: without it the rows
+        # simply carry no WhatsApp link.
+        self._parent_payments_link = parent_payments_link
 
     # ------------------------------------------------------------------ entry
 
@@ -221,6 +227,7 @@ class MongoCollectionsReadModel:
                         parent_name=_opt_str(user.get("display_name"))
                         or _opt_str(user.get("name")),
                         parent_email=_opt_str(user.get("email")),
+                        parent_phone=_opt_str(user.get("phone")),
                         students=students,
                         invoices=invoice_facts,
                         leftover_balance_cents=leftover_by_parent.get(parent_id, 0),
@@ -244,8 +251,13 @@ class MongoCollectionsReadModel:
                 }
             )
 
+        whatsapp = await self._whatsapp_context(academy_id)
         rows = self._classify(
-            families, today=today, zone=ZoneInfo(tz_name), unclassified=unclassified
+            families,
+            today=today,
+            zone=ZoneInfo(tz_name),
+            unclassified=unclassified,
+            whatsapp=whatsapp,
         )
         if unclassified:
             log.warning(
@@ -271,12 +283,13 @@ class MongoCollectionsReadModel:
         today: date,
         zone: tzinfo,
         unclassified: list[dict[str, Any]],
+        whatsapp: WhatsAppContext | None = None,
     ) -> list[FamilyRow]:
         """Classify once; a family whose classification raises is reported, not fatal."""
         kept: list[FamilyRow] = []
         for family in families:
             try:
-                row = classify_family(family, today=today, zone=zone)
+                row = classify_family(family, today=today, zone=zone, whatsapp=whatsapp)
             except Exception as exc:
                 log.warning(
                     "collections read model: family %s unclassifiable: %s",
@@ -289,6 +302,21 @@ class MongoCollectionsReadModel:
             if row is not None:
                 kept.append(row)
         return kept
+
+    async def _whatsapp_context(self, academy_id: str) -> WhatsAppContext | None:
+        """One lookup per build for the reminder's pay link and academy name.
+
+        A failure here must not cost the owner the whole Payments page, so the
+        rows just lose their WhatsApp link.
+        """
+        if self._parent_payments_link is None:
+            return None
+        try:
+            pay_url, academy_name = await self._parent_payments_link(academy_id)
+        except Exception:
+            log.warning("collections read model: parent payments link lookup failed", exc_info=True)
+            return None
+        return WhatsAppContext(pay_url=pay_url, academy_name=academy_name)
 
     async def _resolve_timezone(self, academy_id: str) -> str:
         try:
@@ -596,7 +624,15 @@ class MongoCollectionsReadModel:
                     {"_id": {"$in": raw_ids}},
                 ]
             },
-            {"user_id": 1, "auth_uid": 1, "display_name": 1, "name": 1, "email": 1},
+            {
+                "user_id": 1,
+                "auth_uid": 1,
+                "display_name": 1,
+                "name": 1,
+                "email": 1,
+                # The WhatsApp deep link on the chase buckets (spec §7).
+                "phone": 1,
+            },
         )
         wanted = set(ids)
         users: dict[str, dict[str, Any]] = {}

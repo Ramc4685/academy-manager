@@ -184,7 +184,6 @@ from backend.v2.contexts.billing.infrastructure.admin_reports_read_model import 
     make_projected_income_report,
     make_refunds_report,
     make_reports_dashboard,
-    make_reports_kpis,
     make_revenue_by_category_report,
     make_session_economics_report,
 )
@@ -4566,7 +4565,6 @@ def compose_admin(
         get_refunds_report=get_refunds_report,
         get_revenue_by_category_report=get_revenue_by_category_report,
         get_deposit_slip_report=get_deposit_slip_report,
-        get_reports_kpis=make_reports_kpis(db),
         get_session_economics=make_session_economics_report(db),
         get_projected_income=make_projected_income_report(db),
         list_enrollment_events=make_list_enrollment_events(db),
