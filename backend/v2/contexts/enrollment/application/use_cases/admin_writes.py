@@ -638,7 +638,13 @@ class CancelSession:
         for e in rows:
             was_paused = e.status == "paused"
             await self._enrollments_w.update_status(e.enrollment_id, "cancelled")
-            await _persist_lifecycle_dates(self._enrollments_w, e.enrollment_id, cancelled_at=now)
+            await _persist_lifecycle_dates(
+                self._enrollments_w,
+                e.enrollment_id,
+                cancelled_at=now,
+                cancelled_by="admin",
+                cancellation_reason="session_cancelled",
+            )
             # Issue #651: a cancelled class must release its seats, leave an
             # audit trail per student, and stop billing for every family.
             # A paused row released its seat when it paused; releasing again
@@ -1038,14 +1044,15 @@ async def _sync_billing(
 
 
 async def _persist_lifecycle_dates(
-    enrollments: EnrollmentWriter, enrollment_id: str, **dates: datetime
+    enrollments: EnrollmentWriter, enrollment_id: str, **fields: datetime | str | None
 ) -> None:
-    """Stamp cancelled_at / withdrawal_date on the enrollment when the writer
-    supports it (the Mongo writer does; test fakes may not)."""
+    """Stamp cancelled_at / withdrawal_date — and, issue #674, cancelled_by /
+    cancellation_reason — on the enrollment when the writer supports it (the
+    Mongo writer does; test fakes may not)."""
     setter = getattr(enrollments, "set_lifecycle_dates", None)
     if setter is None:
         return
-    await setter(enrollment_id, **dates)
+    await setter(enrollment_id, **fields)
 
 
 def _billing_result(sync: dict[str, object]) -> str | None:
@@ -1101,8 +1108,14 @@ class CancelEnrollment:
         await self._enrollments.update_status(e.enrollment_id, "cancelled")
         now = self._now()
         effective_at = cmd.effective_at or now
+        # Issue #674: the past-enrollment row reads actor + reason off the
+        # enrollment doc, so stamp them here rather than only on the event.
         await _persist_lifecycle_dates(
-            self._enrollments, e.enrollment_id, cancelled_at=effective_at
+            self._enrollments,
+            e.enrollment_id,
+            cancelled_at=effective_at,
+            cancelled_by="admin",
+            cancellation_reason=cmd.reason,
         )
         # Issue #651: billing must follow the cancel (void future invoices,
         # disable autopay) BEFORE the lifecycle event records the outcome.
@@ -1547,8 +1560,14 @@ class WithdrawEnrollment:
                 reason=cmd.reason,
             )
         await self._enrollments.update_status(e.enrollment_id, "withdrawn")
+        # Issue #674: withdrawals stamp the actor and reason too, so the
+        # student's past-enrollment row is not blank for every withdrawal.
         await _persist_lifecycle_dates(
-            self._enrollments, e.enrollment_id, withdrawal_date=cmd.effective_at
+            self._enrollments,
+            e.enrollment_id,
+            withdrawal_date=cmd.effective_at,
+            cancelled_by="admin",
+            cancellation_reason=cmd.reason,
         )
         # Issue #651: a withdrawn student no longer holds a seat. A paused row
         # released its seat when it paused, so only an active row releases.
