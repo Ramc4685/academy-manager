@@ -150,7 +150,9 @@ async def test_dedup_spans_ledger_payments_from_other_months(db: Any) -> None:
         paid_at=datetime(2026, 8, 12, tzinfo=UTC),
         paid_amount_cents=6_000,
     )
-    await _legacy(db, payment_id="leg-1", stripe_payment_intent_id="pi_old", paid_amount_cents=6_000)
+    await _legacy(
+        db, payment_id="leg-1", stripe_payment_intent_id="pi_old", paid_amount_cents=6_000
+    )
 
     result = await _read(db)
 
@@ -240,9 +242,7 @@ def test_legacy_row_netting_still_equals_payment_collected_cents(
 
 
 @pytest.mark.asyncio
-async def test_the_dashboard_reports_exactly_what_the_reader_returns(
-    db: Any, acad: str
-) -> None:
+async def test_the_dashboard_reports_exactly_what_the_reader_returns(db: Any, acad: str) -> None:
     """Spec §3.2: the dashboard's ``cash_collected_cents`` is unchanged by the
     extraction. Seeds one month of mixed ledger, legacy and deduped rows."""
     await db["invoices"].insert_one(
