@@ -21,7 +21,10 @@ from backend.v2.contexts.billing.application.use_cases.session_type_ops import (
     MoveStudentSessionType,
     PreviewStudentSessionTypeMove,
 )
-from backend.v2.contexts.coaching.application.ports import OccurrenceDetails
+from backend.v2.contexts.coaching.application.ports import (
+    AttendanceEligibility,
+    OccurrenceDetails,
+)
 from backend.v2.contexts.coaching.application.use_cases.bulk_mark_attendance import (
     BulkMarkAttendance,
 )
@@ -43,6 +46,7 @@ from backend.v2.contexts.coaching.application.use_cases.session_notes import (
     ListProgressNotes,
     SetProgressNoteVisibility,
 )
+from backend.v2.contexts.coaching.domain.errors import ConflictAttendanceExists
 from backend.v2.contexts.coaching.domain.models import Attendance, CoachAttendance
 from backend.v2.contexts.enrollment.application.use_cases.coach_roster_writes import (
     CoachAddStudentToRoster,
@@ -129,6 +133,13 @@ class FakeEnrollmentQuery:
             for e in self._enrollments
         )
 
+    async def active_or_paused_for_student(self, student_id: str) -> list[Enrollment]:
+        return [
+            e
+            for e in self._enrollments
+            if e.student_id == student_id and e.status in ("active", "paused")
+        ]
+
 
 class FakeStudentQuery:
     def __init__(self, students: list[Student]) -> None:
@@ -213,6 +224,19 @@ class FakeAttendanceRepo:
         self.saved: list = []
 
     async def save(self, attendance) -> None:
+        # Mirrors the real repo: migration 0081's unique
+        # (academy_id, occurrence_id, student_id) index makes a second row
+        # for the same occurrence+student a ConflictAttendanceExists, never a
+        # silent overwrite or duplicate.
+        existing = await self.find_existing(attendance.occurrence_id, attendance.student_id)
+        if existing is not None:
+            raise ConflictAttendanceExists(
+                "another mutation raced ahead and recorded attendance",
+                session_id=attendance.session_id,
+                occurrence_id=attendance.occurrence_id,
+                student_id=attendance.student_id,
+                existing_attendance_id=existing.attendance_id,
+            )
         self.saved.append(attendance)
 
     async def find_existing(self, occurrence_id, student_id):
@@ -682,8 +706,30 @@ def _build_use_cases(seed_data) -> CoachUseCases:
             )
 
     class _EL:
+        # Mirrors composition.coaching_lookups.EnrollmentLookupAdapter: an
+        # active enrollment in the session or its template, else an approved
+        # one-time make-up / trial entry for exactly this occurrence (#672);
+        # a make-up row also needs a live enrollment somewhere in the academy.
         async def is_active(self, sid, student_id):
             return await enrollments.is_active(sid, student_id)
+
+        async def attendance_eligibility(
+            self, *, occurrence_id, session_id, template_session_id, student_id
+        ):
+            if await enrollments.is_active(session_id, student_id):
+                return AttendanceEligibility(source="enrollment")
+            if template_session_id and template_session_id != session_id:
+                if await enrollments.is_active(template_session_id, student_id):
+                    return AttendanceEligibility(source="enrollment")
+            for entry in await occurrence_roster.list_for_occurrence(occurrence_id):
+                if entry.student_id != student_id:
+                    continue
+                if entry.source == "makeup" and not await enrollments.active_or_paused_for_student(
+                    student_id
+                ):
+                    return None
+                return AttendanceEligibility(source=entry.source)
+            return None
 
     async def _dashboard(_coach_id):
         return {
