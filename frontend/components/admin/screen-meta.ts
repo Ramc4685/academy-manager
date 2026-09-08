@@ -62,14 +62,17 @@ export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
   {
     group: "MONEY",
     items: [
+      // Ordered by how often the job is done: work the money list, check a
+      // family, close the month, then the plumbing and the outgoings.
       {
         href: "/admin/payments",
         label: "Payments",
         icon: "pay",
         match: startsWith("/admin/payments"),
       },
-      { href: "/admin/billing-health", label: "Billing Health", icon: "signal", match: startsWith("/admin/billing-health") },
       { href: "/admin/families", label: "Families", icon: "user", match: startsWith("/admin/families") },
+      { href: "/admin/reports", label: "Month close", icon: "chart", match: startsWith("/admin/reports"), ownerOnly: true },
+      { href: "/admin/billing-health", label: "Billing Health", icon: "signal", match: startsWith("/admin/billing-health") },
       {
         href: "/admin/expenses",
         label: "Expenses",
@@ -77,7 +80,6 @@ export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
         match: startsWith("/admin/expenses"),
       },
       { href: "/admin/payouts", label: "Coach payouts", icon: "whistle", match: startsWith("/admin/payouts"), ownerOnly: true },
-      { href: "/admin/reports", label: "Month close", icon: "chart", match: startsWith("/admin/reports"), ownerOnly: true },
     ],
   },
   {
