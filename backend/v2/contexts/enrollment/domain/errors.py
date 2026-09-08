@@ -120,6 +120,19 @@ class EnrollmentNotFound(DomainError):
     status_code = 404
 
 
+class EnrollmentNotTransferable(DomainError):
+    """Only an active or paused enrollment can be moved to another session.
+
+    A cancelled or withdrawn row holds no seat and is not attending: moving it
+    would consume a seat on the target session, release the old seat a second
+    time, and (since issue #669) bill the family a proration for classes they
+    will not attend.
+    """
+
+    code = "Enrollment.NotTransferable"
+    status_code = 409
+
+
 class WaitlistEmpty(DomainError):
     code = "Enrollment.WaitlistEmpty"
     status_code = 404

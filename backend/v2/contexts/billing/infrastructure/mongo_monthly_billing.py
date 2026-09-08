@@ -24,6 +24,7 @@ from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
 from backend.v2.contexts.billing.domain.ledger import InvoiceLine, LedgerInvoice
 from backend.v2.contexts.billing.domain.models import AppliedCreditState
 from backend.v2.contexts.billing.domain.proration import (
+    MOVE_SOURCE_TYPE,
     BillingCalculationSnapshot,
     BillingPeriod,
     ClassOccurrence,
@@ -34,6 +35,7 @@ from backend.v2.contexts.billing.domain.tuition_discount import (
     TuitionDiscount,
     display_label,
     monthly_discount_cents,
+    policy_applies_to_period,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo import (
     MongoBillingSettingsRepository,
@@ -508,6 +510,12 @@ class MongoMonthlyBillingGenerator:
                 "period": period,
                 "is_deleted": {"$ne": True},
                 "status": {"$ne": "void"},
+                # A mid-period move adjustment (issue #669) carries the same
+                # (enrollment_id, period) but is NOT the month's tuition
+                # invoice. It is created later, so newest-first would hand it
+                # back here and the recovery pass would mark the period
+                # complete with the tuition invoice still missing.
+                "source_type": {"$ne": MOVE_SOURCE_TYPE},
             },
             sort=[("created_at", -1), ("invoice_id", -1)],
         )
@@ -1224,10 +1232,10 @@ async def _resolve_charge_for_enrollment(
 
 def _policy_applies(policy: TuitionDiscount, billing_period: BillingPeriod) -> bool:
     """True when the policy's effective window overlaps the billing period."""
-    p_start = billing_period.start_at.date()
-    p_end = billing_period.end_at.date()
-    return policy.effective_start <= p_end and (
-        policy.effective_end is None or policy.effective_end >= p_start
+    return policy_applies_to_period(
+        policy,
+        period_start=billing_period.start_at.date(),
+        period_end=billing_period.end_at.date(),
     )
 
 
