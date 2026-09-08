@@ -1543,7 +1543,6 @@ async def main() -> None:
                 "display_name": ACADEMY_NAME,
                 "timezone": ACADEMY_TZ,
                 "fees": {
-                    "default_monthly_cents": 6000,
                     "late_fee_cents": 500,
                     "grace_days": 5,
                 },

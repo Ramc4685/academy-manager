@@ -8,6 +8,7 @@ from .academy_routes import router as academy_router
 from .audit_routes import router as audit_router
 from .billing_products_routes import router as billing_products_router
 from .billing_routes import router as billing_router
+from .billing_rules_routes import router as billing_rules_router
 from .billing_setup_routes import router as billing_setup_router
 from .coach_pay_rate_routes import router as coach_pay_rate_router
 from .collections_routes import router as collections_router
@@ -50,6 +51,7 @@ router.include_router(families_router)
 router.include_router(billing_router)
 router.include_router(billing_setup_router)
 router.include_router(billing_products_router)
+router.include_router(billing_rules_router)
 router.include_router(payout_period_router)
 router.include_router(payroll_router)
 router.include_router(coach_pay_rate_router)

@@ -5,6 +5,11 @@
  * the openapi-typescript generator produces lib/api/generated/v2.d.ts.
  */
 
+import type {
+  BillingRulesView,
+  UpdateBillingRulesRequest,
+} from "@/lib/billing-rules-form";
+
 import { apiFetch } from "./client";
 
 // ---------------------------------------------------------------------------
@@ -1403,7 +1408,6 @@ export type UpdateAdminAcademyRequest = Partial<{
 }>;
 
 export interface AdminFeesView {
-  default_monthly_cents: number | null;
   late_fee_cents: number | null;
   grace_days: number | null;
 }
@@ -1925,6 +1929,25 @@ export function getInvoiceSchedule(): Promise<InvoiceScheduleView> {
 
 export function setInvoiceSchedule(payload: SetInvoiceScheduleRequest): Promise<InvoiceScheduleView> {
   return apiFetch<InvoiceScheduleView>("/admin/billing/settings/invoice-schedule", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+/**
+ * Settings -> Billing rules. One read and one owner-only write covering
+ * numbers that live in three stores (spec 2026-09-07-billing-rules-design).
+ * Row shapes are re-exported from `lib/billing-rules-form` so the panel and
+ * its view model agree on one type.
+ */
+export function getBillingRules(): Promise<BillingRulesView> {
+  return apiFetch<BillingRulesView>("/admin/billing/rules", { method: "GET" });
+}
+
+export function updateBillingRules(
+  payload: UpdateBillingRulesRequest,
+): Promise<BillingRulesView> {
+  return apiFetch<BillingRulesView>("/admin/billing/rules", {
     method: "PUT",
     body: JSON.stringify(payload),
   });

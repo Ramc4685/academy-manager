@@ -1678,13 +1678,11 @@ class UpdateAdminAcademyRequest(BaseModel):
 
 
 class AdminFeesView(BaseModel):
-    default_monthly_cents: int | None = None
     late_fee_cents: int | None = None
     grace_days: int | None = None
 
 
 class UpdateAdminFeesRequest(BaseModel):
-    default_monthly_cents: int | None = None
     late_fee_cents: int | None = None
     grace_days: int | None = None
 
