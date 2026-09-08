@@ -297,7 +297,11 @@ def _build_coach_app() -> FastAPI:
         completed_at=None,
         created_at=now,
     )
-    asyncio.get_event_loop().run_until_complete(level_progress_repo.save(active_level))
+    _loop = asyncio.new_event_loop()
+    try:
+        _loop.run_until_complete(level_progress_repo.save(active_level))
+    finally:
+        _loop.close()
 
     # Use cases
     get_passport = GetStudentPassport(
