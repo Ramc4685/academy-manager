@@ -30,6 +30,7 @@ import {
   replayWebhookEvent,
   triggerReconciliation,
   type AutopayDisableFailures,
+  type ConnectedAccountReadiness,
   type ConnectReadiness,
   type ReconciliationRun,
 } from "@/lib/api/admin";
@@ -160,7 +161,7 @@ export default function BillingHealthPage() {
   const pill = healthPillTone(health?.state);
   const truncationNotice = truncationLine(
     quarantined.length,
-    readiness?.webhook_events.quarantined ?? 0,
+    readiness?.webhook_events?.quarantined ?? 0,
   );
 
   return (
@@ -228,8 +229,8 @@ export default function BillingHealthPage() {
         />
         <Metric
           label="Quarantined events"
-          value={String(readiness?.webhook_events.quarantined ?? 0)}
-          hint={`${readiness?.webhook_events.failed ?? 0} failed`}
+          value={String(readiness?.webhook_events?.quarantined ?? 0)}
+          hint={`${readiness?.webhook_events?.failed ?? 0} failed`}
           accent="#d97706"
         />
         <Metric
@@ -637,7 +638,20 @@ function PaymentReadinessCard({ query }: { query: UseQueryResult<ConnectReadines
   if (!query.data) return null;
 
   const data = query.data;
-  const account = data.connected_account;
+  // A resolved query still only guarantees the envelope, not every nested
+  // object in it, so the two the card dereferences get their own defaults (#667).
+  const account: ConnectedAccountReadiness = data.connected_account ?? {
+    configured: false,
+    status: null,
+    charges_enabled: false,
+    payouts_enabled: false,
+    ready_for_charges: false,
+    account_id_masked: null,
+  };
+  // Missing counts are unknown, not healthy. Rendering "0 quarantined · 0
+  // failed" for a response that simply omitted them would hide unrecovered
+  // Stripe failures on the one page whose job is to surface them.
+  const webhookEvents = data.webhook_events ?? null;
   const tone = !data.payments_possible ? "red" : data.funds_route_to_academy ? "green" : "amber";
 
   // "Ready to take payments", not "payments are working": this card checks the
@@ -683,7 +697,11 @@ function PaymentReadinessCard({ query }: { query: UseQueryResult<ConnectReadines
           />
           <Row
             label="Stuck webhook events"
-            value={`${data.webhook_events.quarantined} quarantined · ${data.webhook_events.failed} failed`}
+            value={
+              webhookEvents
+                ? `${webhookEvents.quarantined} quarantined · ${webhookEvents.failed} failed`
+                : "Unavailable"
+            }
           />
         </dl>
       </div>
