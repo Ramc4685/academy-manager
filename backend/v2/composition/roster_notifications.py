@@ -31,8 +31,11 @@ from __future__ import annotations
 
 import html
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Protocol
+from zoneinfo import ZoneInfo
 
 from backend.v2.composition.digests import (
     _build_email_sender,
@@ -101,7 +104,11 @@ _HEADLINES: dict[RosterChangeKind, str] = {
     "promoted": "{student} moved off the waitlist into {session}",
     "moved": "{student} moved to {session}",
     "cancelled": "{student} left {session}",
+    "cancellation_scheduled": "{student} will leave {session} at the end of the month",
     "withdrawn": "{student} withdrew from {session}",
+    "paused": "{student} paused {session}",
+    "resumed": "{student} is back in {session}",
+    "session_cancelled": "{session} was cancelled for {student}",
 }
 
 
@@ -139,6 +146,83 @@ def format_session_schedule(session: Session, *, academy_timezone: str | None = 
     when = format_session_when(session, academy_timezone=academy_timezone)
     zone = (session.timezone or academy_timezone or "").strip() or _NO_TIMEZONE
     return f"{when} ({zone})"
+
+
+def format_occurrence_when(
+    start_at: datetime,
+    *,
+    session_timezone: str | None,
+    academy_timezone: str | None,
+) -> str:
+    """One dated class, in the SESSION's clock, with the zone named (#671).
+
+    Unlike ``format_session_schedule`` this is a single instant, not a
+    recurrence, so the stored UTC moment is always converted. The zone name is
+    printed for the same reason it is there: prod holds sessions stamped
+    ``UTC`` under an America/Chicago academy, and a silently shifted class
+    time in a cancellation notice is worse than a visibly odd one.
+    """
+    zone = (session_timezone or academy_timezone or "").strip()
+    try:
+        tz = ZoneInfo(zone) if zone else None
+    except Exception:
+        tz = None
+    if tz is None:
+        return f"{start_at.astimezone(UTC).strftime('%A, %B %-d at %-I:%M %p')} ({_NO_TIMEZONE})"
+    return f"{start_at.astimezone(tz).strftime('%A, %B %-d at %-I:%M %p')} ({zone})"
+
+
+def render_occurrence_cancelled_email(
+    *,
+    session: Session,
+    academy_name: str,
+    when: str,
+    reason: str,
+    portal_url: str | None,
+    credited: bool = False,
+    staff_warning: str | None = None,
+) -> tuple[str, str]:
+    """``(subject, html_body)`` for "this one class will not run" (#671).
+
+    ``credited`` gates the money sentence, and it is OFF by default. Billing
+    runs after the occurrence write and can fail wholesale or skip an
+    individual family (void invoice, before their billing start, a date their
+    charge never covered), and a make-up or trial family is not billed for
+    the date at all. Promising "credited automatically" to those families
+    sends them chasing a credit the ledger does not hold.
+    """
+    safe_session = html.escape(session.title)
+    parts = [
+        f"<h2 style='color: {_BRAND_HEADING}; font-size: 18px; margin: 0 0 12px;'>"
+        f"Class cancelled — {safe_session}</h2>",
+        _para(f"The {safe_session} class on <strong>{html.escape(when)}</strong> will not run."),
+    ]
+    if reason.strip():
+        parts.append(_para(f"Reason: {html.escape(reason.strip())}"))
+    if credited:
+        parts.append(
+            _para(
+                "Every other date in the schedule is unchanged, and the cancelled "
+                "date has been credited to your account."
+            )
+        )
+    else:
+        parts.append(
+            _para(
+                "Every other date in the schedule is unchanged. Contact the "
+                "academy if you have a question about this date."
+            )
+        )
+    if staff_warning:
+        parts.append(_para(f"<strong>{html.escape(staff_warning)}</strong>"))
+    if session.location:
+        parts.append(_para(f"<strong>Usual location:</strong> {html.escape(session.location)}"))
+    if portal_url:
+        parts.append(_branded_button(label="Open the parent portal", url=portal_url))
+    return (
+        f"Class cancelled: {session.title} — {when}",
+        _branded_shell(academy_name=academy_name, inner_html="".join(parts)),
+    )
 
 
 def render_roster_alert(
@@ -191,8 +275,69 @@ _SUBJECT_VERBS: dict[RosterChangeKind, str] = {
     "promoted": "promoted into",
     "moved": "moved to",
     "cancelled": "left",
+    "cancellation_scheduled": "leaving at month end:",
     "withdrawn": "withdrew from",
+    "paused": "paused",
+    "resumed": "resumed",
+    "session_cancelled": "class cancelled:",
 }
+
+
+_PARENT_STATUS_CHANGES: frozenset[str] = frozenset(
+    {"cancelled", "withdrawn", "paused", "resumed", "session_cancelled"}
+)
+
+_PARENT_STATUS_COPY: dict[str, tuple[str, str]] = {
+    "cancelled": (
+        "Enrollment cancelled",
+        "{student}'s enrollment in {session} has been cancelled. The current month "
+        "stays as invoiced; no further months will be billed.",
+    ),
+    "withdrawn": (
+        "Enrollment withdrawn",
+        "{student} has been withdrawn from {session}. The current month stays as "
+        "invoiced; no further months will be billed.",
+    ),
+    "paused": (
+        "Enrollment paused",
+        "{student}'s enrollment in {session} is paused. Billing stops for the "
+        "paused months and the seat is released; ask the academy to resume any time.",
+    ),
+    "resumed": (
+        "Enrollment resumed",
+        "{student} is back in {session}. Monthly billing resumes from the next billing day.",
+    ),
+    "session_cancelled": (
+        "Class cancelled",
+        "{session} has been cancelled by the academy, so {student}'s enrollment has "
+        "ended. No further months will be billed.",
+    ),
+}
+
+
+def render_parent_status_email(
+    *,
+    change: RosterChangeKind,
+    session: Session,
+    academy_name: str,
+    student_name: str,
+    portal_url: str | None,
+    academy_timezone: str | None,
+) -> tuple[str, str]:
+    """``(subject, html_body)`` telling a family their child's status changed (#651)."""
+    heading, template = _PARENT_STATUS_COPY[change]
+    text = template.format(student=html.escape(student_name), session=html.escape(session.title))
+    parts = [
+        f"<h2 style='font-size: 18px; margin: 0 0 12px;'>{heading}</h2>",
+        _para(text),
+        _para(
+            f"Schedule: {html.escape(format_session_schedule(session, academy_timezone=academy_timezone))}"
+        ),
+    ]
+    if portal_url:
+        parts.append(_para(f"<a href='{html.escape(portal_url)}'>Open the parent portal</a>"))
+    subject = f"{heading}: {student_name} — {session.title}"
+    return subject, _branded_shell(academy_name=academy_name, inner_html="".join(parts))
 
 
 def render_seat_opened_email(
@@ -327,6 +472,21 @@ class RosterAlertAdapter:
                 context={"change": change, "session_id": session_id},
             )
 
+        if change in _PARENT_STATUS_CHANGES:
+            # Issue #651: the family hears about their own child's status
+            # change (cancel, withdraw, pause, resume, class cancelled).
+            parent_id = parent_user_id or await self._parent_id_for_student(student_id)
+            if parent_id:
+                await self._notify_parent_status(
+                    change=change,
+                    session=session,
+                    academy_name=academy_name,
+                    academy_timezone=academy_timezone,
+                    academy_slug=academy_slug,
+                    student_name=resolved_name,
+                    parent_user_id=parent_id,
+                )
+
         if change == "promoted" and parent_user_id:
             await self._notify_parent_seat_opened(
                 session=session,
@@ -336,6 +496,237 @@ class RosterAlertAdapter:
                 student_name=resolved_name,
                 parent_user_id=parent_user_id,
             )
+
+    async def _parent_id_for_student(self, student_id: str) -> str | None:
+        try:
+            students = await self._students.by_ids([student_id])
+        except Exception:  # pragma: no cover - defensive
+            return None
+        for student in students:
+            parent_id = str(getattr(student, "parent_id", "") or "").strip()
+            if parent_id:
+                return parent_id
+        return None
+
+    async def _notify_parent_status(
+        self,
+        *,
+        change: RosterChangeKind,
+        session: Session,
+        academy_name: str,
+        academy_timezone: str | None,
+        academy_slug: str | None,
+        student_name: str,
+        parent_user_id: str,
+    ) -> None:
+        """TRANSACTIONAL: a status change to your own enrollment is never a digest."""
+        parent = await self._resolve_users([parent_user_id])
+        recipient = parent[0] if parent else None
+        if recipient is None or not recipient.email:
+            logger.warning(
+                "enrollment.status_change_no_recipient",
+                extra={"session_id": session.session_id, "parent_user_id": parent_user_id},
+            )
+            return
+        base = academy_frontend_url(
+            frontend_url=self._unsubscribe_links.frontend_url, academy_slug=academy_slug
+        )
+        subject, body = render_parent_status_email(
+            change=change,
+            session=session,
+            academy_name=academy_name,
+            student_name=student_name,
+            portal_url=f"{base.rstrip('/')}/parent" if base else None,
+            academy_timezone=academy_timezone,
+        )
+        await self._send_one(
+            recipient=recipient,
+            subject=subject,
+            body=body,
+            category=EmailCategory.TRANSACTIONAL,
+            context={"change": change, "session_id": session.session_id},
+        )
+
+    async def occurrence_cancelled(
+        self,
+        *,
+        session_id: str,
+        occurrence_id: str,
+        start_at: datetime,
+        reason: str,
+        actor_id: str | None,
+        extra_student_ids: Sequence[str] = (),
+        credited_student_ids: Sequence[str] = (),
+        billing_warning: str | None = None,
+    ) -> None:
+        """One dated class is off: tell every affected family and the staff (#671).
+
+        Implements enrollment's ``OccurrenceCancellationNotifier``. Family
+        mail is TRANSACTIONAL — "your child's class on Thursday will not run"
+        is a record of that family's own enrollment, not a marketing ping, and
+        a family that switched roster alerts off must still be told. The staff
+        copy reuses ``_staff_recipients``, so it is unsubscribable and carries
+        the footer like every other roster alert.
+
+        Never raises: the occurrence is already cancelled by the time this
+        runs, and a mail outage may not undo that.
+        """
+        academy_id = current_academy_id()
+        session = await self._sessions.get(session_id)
+        if session is None:
+            logger.warning(
+                "enrollment.occurrence_cancelled_session_missing",
+                extra={"session_id": session_id, "occurrence_id": occurrence_id},
+            )
+            return
+        academy_doc = await self._academies.find_by_id(academy_id) or {}
+        academy_name = (
+            str(academy_doc.get("display_name") or academy_doc.get("name") or "") or "Your academy"
+        )
+        academy_timezone = str(academy_doc.get("timezone") or "") or None
+        academy_slug = str(academy_doc.get("slug") or "") or None
+        when = format_occurrence_when(
+            start_at,
+            session_timezone=session.timezone,
+            academy_timezone=academy_timezone,
+        )
+        base = academy_frontend_url(
+            frontend_url=self._unsubscribe_links.frontend_url, academy_slug=academy_slug
+        )
+        portal_url = f"{base.rstrip('/')}/parent" if base else None
+
+        def _body(*, credited: bool, staff_warning: str | None = None) -> tuple[str, str]:
+            return render_occurrence_cancelled_email(
+                session=session,
+                academy_name=academy_name,
+                when=when,
+                reason=reason,
+                portal_url=portal_url,
+                credited=credited,
+                staff_warning=staff_warning,
+            )
+
+        context = {"change": "occurrence_cancelled", "session_id": session_id}
+        credited = {str(value) for value in credited_student_ids if value}
+
+        for parent_id, was_credited in await self._occurrence_audience(
+            session_id=session_id,
+            extra_student_ids=extra_student_ids,
+            credited_student_ids=credited,
+        ):
+            subject, body = _body(credited=was_credited)
+            for recipient in await self._resolve_users([parent_id]):
+                if not (recipient.email or "").strip():
+                    continue
+                await self._send_one(
+                    recipient=recipient,
+                    subject=subject,
+                    body=body,
+                    category=EmailCategory.TRANSACTIONAL,
+                    context=context,
+                )
+
+        # The staff copy states the money outcome plainly, including when
+        # billing did not run: an admin must not learn about a missing credit
+        # from a parent (#671).
+        staff_subject, staff_body = _body(credited=False, staff_warning=billing_warning)
+        for recipient in await self._staff_recipients(
+            session_id=session_id, from_session_id=None, actor_id=actor_id
+        ):
+            await self._send_one(
+                recipient=recipient,
+                subject=staff_subject,
+                body=append_unsubscribe_footer(
+                    staff_body,
+                    self._unsubscribe_links.build(
+                        academy_id=academy_id,
+                        user_id=recipient.user_id,
+                        academy_slug=academy_slug,
+                    ),
+                ),
+                category=EmailCategory.NOTIFICATION,
+                context=context,
+            )
+
+    async def _occurrence_audience(
+        self,
+        *,
+        session_id: str,
+        extra_student_ids: Sequence[str],
+        credited_student_ids: set[str],
+    ) -> list[tuple[str, bool]]:
+        """``(parent_id, was_credited)`` for everyone who loses this date.
+
+        The session's active roster PLUS the make-up and trial students whose
+        one-time seat was just deleted — they hold no enrollment on the
+        session, so the roster read alone leaves them to turn up at a closed
+        gym (#671). ``was_credited`` is true only when billing actually
+        issued that family a credit, so the email never promises one that
+        does not exist. Order preserved, one entry per parent.
+        """
+        student_ids: list[str] = []
+        try:
+            rows = await self._enrollments.active_for_session(session_id)
+        except Exception:  # pragma: no cover - defensive
+            logger.exception(
+                "enrollment.occurrence_cancelled_roster_failed",
+                extra={"session_id": session_id},
+            )
+            rows = []
+        for row in rows:
+            student_ids.append(str(getattr(row, "student_id", "") or ""))
+        student_ids.extend(str(value or "") for value in extra_student_ids)
+
+        seen: dict[str, bool] = {}
+        order: list[str] = []
+        for student_id in student_ids:
+            if not student_id:
+                continue
+            parent_id = await self._parent_id_for_student(student_id)
+            if not parent_id:
+                continue
+            was_credited = student_id in credited_student_ids
+            if parent_id not in seen:
+                seen[parent_id] = was_credited
+                order.append(parent_id)
+            elif was_credited:
+                seen[parent_id] = True
+        return [(parent_id, seen[parent_id]) for parent_id in order]
+
+    async def pause_request_declined(
+        self,
+        *,
+        parent_id: str,
+        enrollment_id: str,
+        session_id: str | None,
+        reason: str | None,
+    ) -> None:
+        """Issue #651: tell the parent their pause request was declined."""
+        parent = await self._resolve_users([parent_id])
+        recipient = parent[0] if parent else None
+        if recipient is None or not recipient.email:
+            return
+        session = await self._sessions.get(session_id) if session_id else None
+        academy_id = current_academy_id()
+        academy_doc = await self._academies.find_by_id(academy_id) or {}
+        academy_name = str(academy_doc.get("display_name") or academy_doc.get("name") or "") or (
+            "Your academy"
+        )
+        title = html.escape(session.title if session else "your class")
+        note = f"<p>Reason: {html.escape(reason)}</p>" if reason else ""
+        inner = (
+            f"<h2 style='font-size: 18px; margin: 0 0 12px;'>Pause request declined</h2>"
+            f"<p>The academy could not approve the pause you requested for {title}. "
+            "The enrollment stays active and billing continues as usual.</p>"
+            f"{note}<p>Reply to this email or contact the academy if you have questions.</p>"
+        )
+        await self._send_one(
+            recipient=recipient,
+            subject=f"Pause request declined — {session.title if session else 'your class'}",
+            body=_branded_shell(academy_name=academy_name, inner_html=inner),
+            category=EmailCategory.TRANSACTIONAL,
+            context={"change": "pause_declined", "enrollment_id": enrollment_id},
+        )
 
     async def _notify_parent_seat_opened(
         self,

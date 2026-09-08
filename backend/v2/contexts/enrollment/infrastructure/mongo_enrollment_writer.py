@@ -34,8 +34,44 @@ class MongoEnrollmentWriter(TenantScopedRepository):
             return False
         return result.upserted_id is not None
 
+    #: Statuses that END an enrollment. Reaching one retires any scheduled
+    #: end-of-period cancel marker: an admin who cancels or withdraws on the
+    #: 20th must not leave the roster showing "Ends Sep 30" for a student who
+    #: is already off it (issue #675 follow-up).
+    _TERMINAL_STATUSES = frozenset({"cancelled", "withdrawn"})
+
     async def update_status(self, enrollment_id: str, status: str) -> None:
-        await self._update_one({"enrollment_id": enrollment_id}, {"$set": {"status": status}})
+        fields: dict[str, object] = {"status": status}
+        if status in self._TERMINAL_STATUSES:
+            fields["pending_cancellation_at"] = None
+        await self._update_one({"enrollment_id": enrollment_id}, {"$set": fields})
+
+    async def set_lifecycle_dates(
+        self,
+        enrollment_id: str,
+        *,
+        cancelled_at: datetime | None = None,
+        withdrawal_date: datetime | None = None,
+        cancelled_by: str | None = None,
+        cancellation_reason: str | None = None,
+    ) -> None:
+        """Persist the effective date of a cancel/withdraw (issue #651) and,
+        issue #674, who ended it and why, so the student's past-enrollment row
+        can show the actor and reason without a join on the event log. The
+        actor defaults to "admin" when a cancel date is stamped (the parent
+        self-cancel path has its own writer and never comes through here).
+        """
+        fields: dict[str, object] = {"updated_at": datetime.now(UTC)}
+        if cancelled_at is not None:
+            fields["cancelled_at"] = cancelled_at
+            fields["cancelled_by"] = cancelled_by or "admin"
+        elif cancelled_by is not None:
+            fields["cancelled_by"] = cancelled_by
+        if withdrawal_date is not None:
+            fields["withdrawal_date"] = withdrawal_date
+        if cancellation_reason is not None and cancellation_reason.strip():
+            fields["cancellation_reason"] = cancellation_reason.strip()
+        await self._update_one({"enrollment_id": enrollment_id}, {"$set": fields})
 
     async def mark_withdrawn(self, enrollment_id: str, *, withdrawal_date: datetime) -> None:
         await self._update_one(
@@ -77,6 +113,71 @@ class MongoEnrollmentWriter(TenantScopedRepository):
                     "updated_at": datetime.now(UTC),
                 }
             },
+        )
+        return self._to_domain(doc) if doc else None
+
+    async def mark_pending_cancellation_by_parent(
+        self,
+        enrollment_id: str,
+        *,
+        cancellation_reason: str,
+        cancellation_policy_snapshot: dict[str, object],
+        pending_cancellation_at: datetime,
+        requested_at: datetime,
+    ) -> Enrollment | None:
+        """Issue #675 (``end_of_period`` timing): record that a parent asked
+        to cancel at month end WITHOUT flipping ``status``. CAS on
+        ``status: "active"`` AND no pending cancellation, so a double-submit
+        (or a second request after the first was accepted) loses and the use
+        case raises ``EnrollmentNotCancellable`` instead of enqueueing twice.
+        The reason and policy snapshot are stamped now (they are the
+        decision's audit trail); ``cancelled_by`` / ``cancelled_at`` are
+        stamped by ``complete_pending_cancellation`` when the flip happens.
+        """
+        doc = await self._find_one_and_update(
+            {
+                "enrollment_id": enrollment_id,
+                "status": "active",
+                "pending_cancellation_at": None,
+            },
+            {
+                "$set": {
+                    "cancellation_reason": cancellation_reason,
+                    "cancellation_policy_snapshot": cancellation_policy_snapshot,
+                    "pending_cancellation_at": pending_cancellation_at,
+                    "pending_cancellation_requested_at": requested_at,
+                    "updated_at": datetime.now(UTC),
+                }
+            },
+        )
+        return self._to_domain(doc) if doc else None
+
+    async def complete_pending_cancellation(
+        self, enrollment_id: str, *, cancelled_at: datetime
+    ) -> Enrollment | None:
+        """Issue #675: the scheduled ``cancel_at_period_end`` action fires.
+        CAS on "still pending and not yet ended" (active — or paused, since an
+        admin pause keeps the pending cancellation) so an admin cancel /
+        withdraw that landed first wins and this returns ``None``. Returns
+        the PRE-image so the processor knows whether the row still held a
+        seat (an active row does, a paused row released it when it paused).
+        """
+        doc = await self._find_one_and_update(
+            {
+                "enrollment_id": enrollment_id,
+                "status": {"$in": ["active", "paused"]},
+                "pending_cancellation_at": {"$ne": None},
+            },
+            {
+                "$set": {
+                    "status": "cancelled",
+                    "cancelled_by": "parent",
+                    "cancelled_at": cancelled_at,
+                    "pending_cancellation_at": None,
+                    "updated_at": datetime.now(UTC),
+                }
+            },
+            return_document_after=False,
         )
         return self._to_domain(doc) if doc else None
 
@@ -173,6 +274,8 @@ class MongoEnrollmentWriter(TenantScopedRepository):
             cancellation_reason=doc.get("cancellation_reason"),
             cancellation_policy_snapshot=doc.get("cancellation_policy_snapshot"),
             cancelled_at=doc.get("cancelled_at"),
+            pending_cancellation_at=doc.get("pending_cancellation_at"),
+            pending_cancellation_requested_at=doc.get("pending_cancellation_requested_at"),
         )
 
     async def get(self, enrollment_id: str) -> Enrollment | None:

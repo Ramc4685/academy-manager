@@ -11,6 +11,7 @@ import {
   type CurrentUser,
   type UserRole,
 } from "@/lib/api/me";
+import { isOwner as holdsOwnerScope } from "@/lib/auth/coach-supervisor";
 import { onAuthChange } from "@/lib/auth/firebase";
 import { loginPathForError } from "@/lib/auth/login-error";
 import { isAuthRejection, withTransientRetry } from "@/lib/auth/me-failure";
@@ -41,6 +42,11 @@ export function usePersonaAuth(
   options: PersonaAuthOptions = {},
 ): PersonaAuthState & {
   retry: () => void;
+  /**
+   * Academy owner scope (money governance). False until the /me check
+   * resolves, so owner-only UI never flashes for a non-owner.
+   */
+  isOwner: boolean;
 } {
   const router = useRouter();
   const allowedRoles = [requiredRole, ...(options.alsoAllow ?? [])];
@@ -110,7 +116,11 @@ export function usePersonaAuth(
     };
   }, [requiredRole, allowedKey, router, attempt]);
 
-  return { ...state, retry };
+  return {
+    ...state,
+    retry,
+    isOwner: state.authorized ? holdsOwnerScope(state.user.roles) : false,
+  };
 }
 
 export type PlatformAuthState =

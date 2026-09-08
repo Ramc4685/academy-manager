@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect } from "react";
 
+import { captureError } from "@/lib/observability/sentry";
+
 /**
  * Route-segment error boundary. Renders a friendly recovery screen and logs the
  * real error to the console for diagnostics — the raw error text (which may
@@ -17,6 +19,7 @@ export default function Error({
 }) {
   useEffect(() => {
     console.error(error);
+    captureError(error, { digest: error.digest, tags: { boundary: "route" } });
   }, [error]);
 
   return (

@@ -38,7 +38,7 @@ from backend.v2.interfaces.admin.views import (
     ReopenPayoutPeriodRequest,
 )
 from backend.v2.shared.auth.claims import AuthClaims
-from backend.v2.shared.http import DomainError, require_persona
+from backend.v2.shared.http import DomainError, require_owner
 
 router = APIRouter(tags=["admin.payout-periods"])
 
@@ -296,7 +296,7 @@ async def _load_period(use_cases: AdminUseCases, period_id: str) -> Any:
 @router.post("/payout-periods/generate", response_model=AdminPayoutPeriodView)
 async def generate_payout_period(
     body: GeneratePayoutPeriodRequest,
-    claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminPayoutPeriodView:
     try:
@@ -314,7 +314,7 @@ async def generate_payout_period(
 @router.get("/payout-periods/{period_id}", response_model=AdminPayoutPeriodView)
 async def get_payout_period(
     period_id: str,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminPayoutPeriodView:
     return await _enriched_period_view(use_cases, await _load_period(use_cases, period_id))
@@ -323,7 +323,7 @@ async def get_payout_period(
 @router.post("/payout-periods/{period_id}/approve", response_model=AdminPayoutPeriodView)
 async def approve_payout_period(
     period_id: str,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminPayoutPeriodView:
     try:
@@ -339,7 +339,7 @@ async def approve_payout_period(
 async def mark_payout_period_paid(
     period_id: str,
     body: MarkPayoutPeriodPaidRequest,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminPayoutPeriodView:
     try:
@@ -362,7 +362,7 @@ async def mark_payout_period_paid(
 @router.post("/payout-periods/{period_id}/recompute", response_model=AdminPayoutPeriodView)
 async def recompute_payout_period(
     period_id: str,
-    claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminPayoutPeriodView:
     try:
@@ -380,7 +380,7 @@ async def recompute_payout_period(
 async def reopen_payout_period(
     period_id: str,
     body: ReopenPayoutPeriodRequest,
-    claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminPayoutPeriodView:
     try:
@@ -402,7 +402,7 @@ async def override_payout_period_line(
     period_id: str,
     occurrence_id: str,
     body: OverridePayoutLineRequest,
-    claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminPayoutPeriodView:
     try:
@@ -423,7 +423,7 @@ async def override_payout_period_line(
 @router.get("/payout-periods/{period_id}/audit", response_model=PayoutAuditTrailView)
 async def get_payout_period_audit(
     period_id: str,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> PayoutAuditTrailView:
     entries = await _list_payout_audit_entries(use_cases).execute(period_id=period_id)
@@ -448,7 +448,7 @@ async def get_payout_period_audit(
 @router.get("/payout-periods/{period_id}/export")
 async def export_payout_period_xlsx(
     period_id: str,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ):
     """Download the payout period as an Excel workbook.
@@ -546,7 +546,7 @@ async def export_payout_period_xlsx(
 @router.get("/payout-periods/{period_id}/payslip", response_model=AdminPayoutPayslipView)
 async def get_printable_payout_payslip(
     period_id: str,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminPayoutPayslipView:
     period = await _load_period(use_cases, period_id)

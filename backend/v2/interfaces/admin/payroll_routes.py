@@ -15,7 +15,7 @@ from backend.v2.interfaces.admin.views import (
     BulkPayrollResultView,
 )
 from backend.v2.shared.auth.claims import AuthClaims
-from backend.v2.shared.http import require_persona
+from backend.v2.shared.http import require_owner
 
 log = logging.getLogger(__name__)
 
@@ -59,7 +59,7 @@ async def _academy_month_window(
 @router.get("/payroll/{month}", response_model=AdminMonthlyPayrollView)
 async def get_monthly_payroll(
     month: str,
-    claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminMonthlyPayrollView:
     start, end = await _academy_month_window(
@@ -100,7 +100,7 @@ async def get_monthly_payroll(
 @router.post("/payroll/{month}/generate", response_model=BulkPayrollResultView)
 async def bulk_generate_payroll(
     month: str,
-    claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> BulkPayrollResultView:
     start, end = await _academy_month_window(
@@ -116,7 +116,7 @@ async def bulk_generate_payroll(
 @router.post("/payroll/{month}/recompute", response_model=BulkPayrollResultView)
 async def bulk_recompute_payroll(
     month: str,
-    claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> BulkPayrollResultView:
     start, end = await _academy_month_window(
@@ -137,7 +137,7 @@ async def bulk_recompute_payroll(
 @router.get("/payroll/{month}/export")
 async def export_monthly_payroll_xlsx(
     month: str,
-    claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ):
     """Download all payout periods for a month as an Excel workbook."""

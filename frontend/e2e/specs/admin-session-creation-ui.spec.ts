@@ -1,10 +1,13 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 
+import { billingRulesFixture } from "../fixtures/billing-rules";
+
 const ADMIN_ME = {
   user_id: "user-admin-session-ui-e2e",
   email: "admin@example.com",
   academy_id: "academy-e2e",
-  roles: ["admin"],
+  // Pre-split admin: migration 0165 grants owner to every existing admin.
+  roles: ["admin", "owner"],
 };
 
 function fulfillJson(route: Route, body: unknown, status = 200) {
@@ -28,7 +31,7 @@ async function stubAdminShell(page: Page) {
           academy_id: "academy-e2e",
           academy_name: "BLNO Badminton Academy",
           academy_slug: "academy-e2e",
-          roles: ["admin"],
+          roles: ["admin", "owner"],
           status: "active",
           is_default: true,
         },
@@ -66,7 +69,7 @@ function nextWednesdayDateInput(): string {
   return formatDateInput(value);
 }
 
-test.describe("admin session creation and fee settings UI", () => {
+test.describe("admin session creation and billing-rules settings UI", () => {
   test.describe.configure({ mode: "serial" });
 
   test("create session dialog opens, fills form, and preserves the API payload", async ({
@@ -147,74 +150,76 @@ test.describe("admin session creation and fee settings UI", () => {
     });
   });
 
-  test("fee settings focus on late-payment policy instead of session tuition", async ({ page }) => {
+  test("billing rules save the late fee and the invoice schedule from one panel", async ({
+    page,
+  }) => {
     await stubAdminShell(page);
-    let feePatch: unknown = null;
+    let rulesPut: unknown = null;
 
-    await page.route("**/api/v2/admin/academy/fees", (route) => {
+    await page.route("**/api/v2/admin/billing/rules", (route) => {
       const request = route.request();
-      if (request.method() === "GET") {
-        return fulfillJson(route, {
-          default_monthly_cents: 12000,
-          late_fee_cents: 1500,
-          grace_days: 5,
-        });
-      }
-      if (request.method() === "PATCH") {
-        feePatch = request.postDataJSON();
-        return fulfillJson(route, {
-          default_monthly_cents: 12550,
-          late_fee_cents: 1500,
-          grace_days: 5,
-        });
+      if (request.method() === "GET") return fulfillJson(route, billingRulesFixture());
+      if (request.method() === "PUT") {
+        rulesPut = request.postDataJSON();
+        return fulfillJson(
+          route,
+          billingRulesFixture(request.postDataJSON() as Record<string, number>),
+        );
       }
       return route.fallback();
     });
 
-    await page.goto("/admin/settings?panel=fees");
+    await page.goto("/admin/settings?panel=billing-rules");
 
+    // The dead per-session tuition field is gone for good.
     await expect(page.getByLabel("Monthly cents")).toHaveCount(0);
-    await expect(page.getByLabel("Late fee ($)")).toHaveValue("15.00");
-    await expect(page.getByLabel("Grace days")).toHaveValue("5");
+    await expect(page.getByTestId("billing-rules-input-late_fee_cents")).toHaveValue("15.00");
+    await expect(page.getByTestId("billing-rules-input-grace_days")).toHaveValue("5");
+    await expect(page.getByTestId("billing-rules-input-billing_day")).toHaveValue("1");
+    await expect(page.getByTestId("billing-rules-input-invoice_due_days")).toHaveValue("7");
+    await expect(page.getByTestId("billing-rules-save")).toBeDisabled();
 
-    await page.getByLabel("Late fee ($)").fill("17.50");
-    await page.getByRole("button", { name: "Save changes" }).click();
+    await page.getByTestId("billing-rules-input-late_fee_cents").fill("17.50");
+    await page.getByTestId("billing-rules-input-invoice_due_days").fill("10");
+    await page.getByTestId("billing-rules-save").click();
 
-    await expect.poll(() => feePatch).toEqual({ late_fee_cents: 1750 });
+    await expect.poll(() => rulesPut).toEqual({ invoice_due_days: 10, late_fee_cents: 1750 });
+    await expect(page.getByTestId("billing-rules-saved")).toBeVisible();
   });
 
-  test("dashboard recent payments show student and parent context", async ({ page }) => {
+  test("dashboard recent payments show money received with method", async ({ page }) => {
     await stubAdminShell(page);
 
     await page.route("**/api/v2/admin/sessions*", (route) =>
       fulfillJson(route, { sessions: [] }),
     );
     await page.route("**/api/v2/admin/payments", (route) =>
+      fulfillJson(route, { payments: [] }),
+    );
+    await page.route("**/api/v2/admin/payments/feed*", (route) =>
       fulfillJson(route, {
         payments: [
           {
             payment_id: "pay_65bd7fae",
             parent_id: "parent-1",
             parent_name: "Abhishek Ajithkumar",
-            student_id: "stu-1",
-            student_name: "Aadhya Abhishek",
-            enrollment_id: "enr-1",
-            session_id: "session-1",
-            period: "2026-06",
             amount_cents: 6000,
-            discount_cents: 0,
-            final_amount_cents: 6000,
-            amount_received_cents: 6000,
-            paid_amount_cents: 6000,
-            balance_due_cents: 0,
-            overpayment_credit_cents: 0,
-            currency: "usd",
-            status: "paid",
             refunded_cents: 0,
-            invoice_number: "INV-2026-06-001",
-            payment_method: "cash",
-            stripe_linked: false,
-            created_at: "2026-06-01T12:00:00Z",
+            currency: "usd",
+            status: "succeeded",
+            payment_method: "stripe_checkout",
+            paid_at: "2026-06-03T12:00:00Z",
+          },
+          {
+            payment_id: "pay_zelle_01",
+            parent_id: "parent-2",
+            parent_name: "Murugesan KP",
+            amount_cents: 6000,
+            refunded_cents: 0,
+            currency: "usd",
+            status: "succeeded",
+            payment_method: "zelle",
+            paid_at: "2026-06-02T12:00:00Z",
           },
         ],
       }),
@@ -229,9 +234,10 @@ test.describe("admin session creation and fee settings UI", () => {
     await page.goto("/admin");
 
     const recentPayments = page.getByTestId("admin-dashboard-recent-payments");
-    await expect(recentPayments).toContainText("Aadhya Abhishek");
     await expect(recentPayments).toContainText("Abhishek Ajithkumar");
-    await expect(recentPayments).toContainText("INV-2026-06-001");
+    await expect(recentPayments).toContainText("STRIPE");
+    await expect(recentPayments).toContainText("Murugesan KP");
+    await expect(recentPayments).toContainText("ZELLE");
     await expect(recentPayments).not.toContainText("pay_65bd");
   });
 
@@ -346,9 +352,10 @@ test.describe("admin session creation and fee settings UI", () => {
 
     await page.goto("/admin/sessions/series-wed");
 
-    await expect(page.getByRole("heading", { name: "Replacement coaches" })).toBeVisible();
+    // #671 merged "Replacement coaches" into the single "Class dates" card.
+    await expect(page.getByRole("heading", { name: "Class dates" })).toBeVisible();
     await expect(page.getByText("Occurrences")).toHaveCount(0);
-    await expect(page.getByText("No replacement coaches added.")).toBeVisible();
+    await expect(page.getByRole("cell", { name: "Replacement Coach" })).toHaveCount(0);
 
     await page.getByRole("button", { name: "Add replacement" }).click();
     await page.getByLabel("Date").fill(replacementDate);
@@ -365,7 +372,8 @@ test.describe("admin session creation and fee settings UI", () => {
       replacement_coach_id: "coach-replacement",
       reason: null,
     });
-    await expect(page.getByText("No replacement coaches added.")).toHaveCount(0);
-    await expect(page.getByRole("cell", { name: "Replacement Coach" })).toBeVisible();
+    // Issue #671 folded the replacement-coach table into the single "Class
+    // dates" card, so a replaced date is listed exactly ONCE.
+    await expect(page.getByRole("cell", { name: "Replacement Coach" })).toHaveCount(1);
   });
 });

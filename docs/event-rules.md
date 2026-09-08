@@ -142,7 +142,7 @@ Every dispatch attempt writes to `event_audit`:
 }
 ```
 
-Retention: 90 days via Mongo TTL on `completed_at`.
+Retention: 400 days via Mongo TTL on `completed_at` (migration 0166 extended it from the original 90 days: this collection is the financial audit trail once Sentry's 30-day logs are gone).
 
 ## Handler Registration
 
@@ -168,7 +168,7 @@ Per [plan §0.7](../../../../.claude/plans/write-a-detailed-plan-curried-trinket
 | `outbox_events` | `(processed, created_at)` | Dispatcher polling |
 | `event_handler_runs` | `(event_id, handler_name)` unique | Idempotency lookup |
 | `dead_letter_events` | `(created_at)` | Operator review by time |
-| `event_audit` | `(completed_at)` TTL 90d | Retention |
+| `event_audit` | `(completed_at)` TTL 400d | Retention (was 90d until migration 0166) |
 | `event_audit` | `(academy_id, name, completed_at)` | Per-tenant per-event timeline |
 
 ## Anti-Patterns

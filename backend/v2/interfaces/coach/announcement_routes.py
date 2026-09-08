@@ -35,7 +35,7 @@ from backend.v2.interfaces.coach.views import (
     CoachSessionAnnouncementView,
 )
 from backend.v2.shared.auth.claims import AuthClaims
-from backend.v2.shared.http import require_coach_surface
+from backend.v2.shared.http import require_coach_lead_surface
 
 router = APIRouter(tags=["coach.announcements"])
 
@@ -85,7 +85,7 @@ def _view(message: object, viewer_id: str) -> CoachSessionAnnouncementView:
 )
 async def list_announcements(
     session_id: str,
-    claims: AuthClaims = Depends(require_coach_surface()),
+    claims: AuthClaims = Depends(require_coach_lead_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> CoachSessionAnnouncementList:
     await _require_assigned(use_cases, claims.user_id, session_id)
@@ -105,7 +105,7 @@ async def list_announcements(
 async def post_announcement(
     session_id: str,
     body: CoachSessionAnnouncementPostRequest,
-    claims: AuthClaims = Depends(require_coach_surface()),
+    claims: AuthClaims = Depends(require_coach_lead_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> CoachSessionAnnouncementPostResponse:
     await _require_assigned(use_cases, claims.user_id, session_id)
@@ -136,7 +136,7 @@ async def post_announcement(
 async def delete_announcement(
     session_id: str,
     message_id: str,
-    claims: AuthClaims = Depends(require_coach_surface()),
+    claims: AuthClaims = Depends(require_coach_lead_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> None:
     await _require_assigned(use_cases, claims.user_id, session_id)

@@ -20,6 +20,8 @@ class AttendanceMarkedPayload(BaseModel):
     marked_by: str
     marked_at: datetime
     status: Literal["present", "absent", "late"]
+    # Defaulted so events written before #672 still deserialise.
+    entry_source: Literal["enrollment", "makeup", "trial"] = "enrollment"
 
 
 class AttendanceMarked(DomainEvent):

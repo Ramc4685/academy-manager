@@ -195,6 +195,57 @@ else
   FAILURES=$((FAILURES + 1))
 fi
 
+# ── e2e_gate_shard_list: mirror CI's PR vs nightly split ─────────────────────
+assert_gate_shards() {
+  local name="$1" full="$2" want="$3"
+  CASES=$((CASES + 1))
+  local tmp got
+  tmp="$(mktemp)"
+  printf '      name: "chromium-mobile",\n      name: "webkit-mobile",\n      name: "chromium-desktop",\n' > "$tmp"
+  got="$(e2e_gate_shard_list "$tmp" "$full" || true)"
+  rm -f "$tmp"
+  if [ "$got" = "$want" ]; then
+    echo "ok   $name"
+  else
+    echo "FAIL $name"
+    echo "     want: $want"
+    echo "     got:  $got"
+    FAILURES=$((FAILURES + 1))
+  fi
+}
+assert_gate_shards "gate skips the nightly-only webkit shard by default" "" \
+  'chromium-mobile
+chromium-desktop'
+assert_gate_shards "gate keeps every shard under --full" "--full" \
+  'chromium-mobile
+webkit-mobile
+chromium-desktop'
+
+CASES=$((CASES + 1))
+ALL_CONFIG="$(mktemp)"
+printf '      name: "chromium-mobile",\n      name: "webkit-mobile",\n' > "$ALL_CONFIG"
+GOT_ALL="$(PRE_PUSH_E2E_ALL=1 e2e_gate_shard_list "$ALL_CONFIG" "" || true)"
+rm -f "$ALL_CONFIG"
+if [ "$GOT_ALL" = 'chromium-mobile
+webkit-mobile' ]; then
+  echo "ok   PRE_PUSH_E2E_ALL=1 keeps the nightly-only shard"
+else
+  echo "FAIL PRE_PUSH_E2E_ALL=1 keeps the nightly-only shard"
+  echo "     got:  $GOT_ALL"
+  FAILURES=$((FAILURES + 1))
+fi
+
+CASES=$((CASES + 1))
+ONLY_NIGHTLY_CONFIG="$(mktemp)"
+printf '      name: "webkit-mobile",\n' > "$ONLY_NIGHTLY_CONFIG"
+if e2e_gate_shard_list "$ONLY_NIGHTLY_CONFIG" "" >/dev/null 2>&1; then
+  echo "FAIL e2e_gate_shard_list refuses zero shards when every project is nightly-only"
+  FAILURES=$((FAILURES + 1))
+else
+  echo "ok   e2e_gate_shard_list refuses zero shards when every project is nightly-only"
+fi
+rm -f "$ONLY_NIGHTLY_CONFIG"
+
 # The real config must expose every project CI runs as its own job, or the
 # local gate would skip a browser CI still enforces.
 CASES=$((CASES + 1))

@@ -1,17 +1,21 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 
 import {
   addSessionReplacement,
+  cancelSessionOccurrence,
   listAdminUsers,
+  setSessionAssistants,
   updateAdminSession,
   updateSessionOccurrenceReplacement,
   type AdminSessionOccurrenceView,
   type AdminSessionView,
+  type AdminUserView,
   type EditSessionRequest,
 } from "@/lib/api/admin";
+import { roleLabel } from "@/lib/admin/role-label";
 import { queryKeys } from "@/lib/query/keys";
 
 import { Button } from "@/components/ds/button";
@@ -45,17 +49,47 @@ import {
   resolveAcademyTimeZone,
 } from "@/lib/format/academy-time";
 
+/**
+ * A date the server will refuse to cancel (#671).
+ *
+ * `assert_occurrence_cancellable` rejects any occurrence whose `start_at` has
+ * passed and any `completed` one, so offering the action there only ever
+ * produces a raw 409 in the dialog. Module-level, not computed in the
+ * component body: reading the clock during render is impure.
+ */
+function hasStarted(occurrence: AdminSessionOccurrenceView): boolean {
+  return parseAcademyInstant(occurrence.start_at).getTime() <= Date.now();
+}
+
+function isCancellable(occurrence: AdminSessionOccurrenceView): boolean {
+  return occurrence.status === "scheduled" && !hasStarted(occurrence);
+}
+
 export function ReplacementCoachTable({
   occurrences,
   userNameById,
   timezone,
   onEdit,
+  onCancel,
+  showStatus = false,
+  emptyLabel,
 }: {
   occurrences: AdminSessionOccurrenceView[];
   userNameById: Map<string, string>;
   /** The parent session's IANA zone; occurrence instants render in it. */
   timezone: string | null;
   onEdit: (occurrence: AdminSessionOccurrenceView) => void;
+  /**
+   * Issue #671. When given, each still-scheduled FUTURE date offers "Cancel
+   * this date". Past and completed dates never do: the domain guard
+   * (`assert_occurrence_cancellable`) refuses any occurrence whose `start_at`
+   * has passed, so offering the button there only ever produces a raw 409 in
+   * the dialog for an action that was never possible.
+   */
+  onCancel?: (occurrence: AdminSessionOccurrenceView) => void;
+  /** Show the Cancelled chip column (#671). */
+  showStatus?: boolean;
+  emptyLabel?: string;
 }) {
   // Occurrence start/end are UTC instants. Formatting them without an explicit
   // timeZone renders the viewer's browser zone, which shows the wrong hour for
@@ -73,6 +107,7 @@ export function ReplacementCoachTable({
             <Th>Time</Th>
             <Th>Scheduled coach</Th>
             <Th>Replacement coach</Th>
+            {showStatus && <Th>Status</Th>}
             <Th className={actionHeaderClass}>Action</Th>
           </tr>
         </thead>
@@ -119,20 +154,172 @@ export function ReplacementCoachTable({
               <td className="py-3 pr-4 text-rally-muted">
                 {coachLabel(occurrence.actual_coach_id, "Replacement coach")}
               </td>
+              {showStatus && (
+                <td className="py-3 pr-4">
+                  {occurrence.status === "cancelled" ? (
+                    <span
+                      data-testid="occurrence-cancelled-chip"
+                      title={occurrence.cancellation_reason ?? undefined}
+                      className="inline-flex items-center rounded-full bg-rally-line px-2 py-0.5 text-xs font-medium text-rally-muted"
+                    >
+                      Cancelled
+                    </span>
+                  ) : occurrence.status === "completed" ? (
+                    <span className="text-xs text-rally-subtle">Completed</span>
+                  ) : hasStarted(occurrence) ? (
+                    // A date that ran but was never marked completed still
+                    // reads "scheduled" in the database; calling it Scheduled
+                    // here is what made an admin try to cancel last week.
+                    <span className="text-xs text-rally-subtle">Past</span>
+                  ) : (
+                    <span className="text-xs text-rally-subtle">Scheduled</span>
+                  )}
+                </td>
+              )}
               <td className={actionCellClass}>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => onEdit(occurrence)}
-                >
-                  Change replacement
-                </Button>
+                <div className="flex justify-end gap-2">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => onEdit(occurrence)}
+                  >
+                    Change replacement
+                  </Button>
+                  {onCancel && isCancellable(occurrence) && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      data-testid={`cancel-occurrence-${occurrence.occurrence_id}`}
+                      onClick={() => onCancel(occurrence)}
+                    >
+                      Cancel this date
+                    </Button>
+                  )}
+                </div>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
+      {occurrences.length === 0 && emptyLabel && (
+        <p className="pt-2 text-sm text-rally-subtle">{emptyLabel}</p>
+      )}
     </div>
+  );
+}
+
+/**
+ * "Cancel this date" (issue #671).
+ *
+ * A rain-out, a sick coach or a holiday calls off ONE class. The reason is
+ * required because it reaches the families verbatim, and the copy states the
+ * money consequence up front: everyone enrolled that month is credited the
+ * date's share automatically, so an admin is never guessing whether they also
+ * have to issue a refund by hand.
+ */
+export function CancelOccurrenceDialog({
+  occurrence,
+  timezone,
+  onClose,
+  onCancelled,
+}: {
+  occurrence: AdminSessionOccurrenceView | null;
+  timezone: string | null;
+  onClose: () => void;
+  onCancelled: () => void;
+}) {
+  const [reason, setReason] = useState("");
+  const [notify, setNotify] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const open = Boolean(occurrence);
+  const { timeZone } = resolveAcademyTimeZone(timezone);
+
+  useEffect(() => {
+    if (!open) return;
+    setReason("");
+    setNotify(true);
+    setError(null);
+  }, [open, occurrence]);
+
+  const mutation = useMutation({
+    mutationFn: () => {
+      if (!occurrence) throw new Error("No class date selected.");
+      return cancelSessionOccurrence(occurrence.occurrence_id, {
+        reason: reason.trim(),
+        notify,
+      });
+    },
+    onSuccess: onCancelled,
+    onError: (err: Error) =>
+      setError(err.message ?? "Failed to cancel this class date."),
+  });
+
+  const when = occurrence
+    ? parseAcademyInstant(occurrence.start_at).toLocaleString("en-US", {
+        weekday: "long",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        timeZone,
+      })
+    : "";
+
+  return (
+    <RallyDialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+      title="Cancel this date"
+      description={
+        when
+          ? `${when} will not run. Everyone enrolled is credited this date's share of the month automatically, and the coach is not paid for it.`
+          : ""
+      }
+      overline="Class date"
+    >
+      {error && <DialogError message={error} />}
+      <form
+        className="space-y-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          mutation.mutate();
+        }}
+      >
+        <Field label="Reason">
+          <input
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            className={inputClass}
+            placeholder="Gym flooded"
+            maxLength={500}
+          />
+        </Field>
+        <label className="flex items-center gap-2 text-sm text-rally-muted">
+          <input
+            type="checkbox"
+            checked={notify}
+            onChange={(event) => setNotify(event.target.checked)}
+          />
+          Email the families and the coach
+        </label>
+        <DialogActions>
+          <Button variant="secondary" size="sm" type="button" onClick={onClose}>
+            Keep the class
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            type="submit"
+            data-testid="confirm-cancel-occurrence"
+            disabled={mutation.isPending || reason.trim().length === 0}
+          >
+            {mutation.isPending ? "Cancelling..." : "Cancel this date"}
+          </Button>
+        </DialogActions>
+      </form>
+    </RallyDialog>
   );
 }
 
@@ -262,6 +449,192 @@ export function OccurrenceReplacementDialog({
             size="sm"
             type="submit"
             disabled={mutation.isPending || !canSave}
+          >
+            {mutation.isPending ? "Saving..." : "Save"}
+          </Button>
+        </DialogActions>
+      </form>
+    </RallyDialog>
+  );
+}
+
+/**
+ * Per-session assistant coaches. Candidates are every academy user holding
+ * `coach` or `assistant_coach` (two role-filtered directory reads, merged),
+ * minus the lead coach — a coach cannot assist their own session. Saves
+ * through the dedicated PUT so the edit dialog's PATCH never has to carry the
+ * list (there `undefined` means unchanged and `[]` clears, which is easy to
+ * get wrong from a form).
+ */
+export function SessionAssistantsDialog({
+  open,
+  session,
+  onOpenChange,
+  onSaved,
+}: {
+  open: boolean;
+  session: AdminSessionView | null;
+  onOpenChange: (open: boolean) => void;
+  onSaved: (session: AdminSessionView) => void;
+}) {
+  const [selected, setSelected] = useState<string[]>([]);
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const coachesQuery = useQuery({
+    queryKey: queryKeys.admin.users("coach"),
+    queryFn: () => listAdminUsers("coach"),
+    enabled: open,
+  });
+  const assistantsQuery = useQuery({
+    queryKey: queryKeys.admin.users("assistant_coach"),
+    queryFn: () => listAdminUsers("assistant_coach"),
+    enabled: open,
+  });
+  const loading = coachesQuery.isLoading || assistantsQuery.isLoading;
+
+  useEffect(() => {
+    if (!open || !session) return;
+    setSelected([...(session.assistant_coach_ids ?? [])]);
+    setReason("");
+    setError(null);
+  }, [open, session]);
+
+  const candidates = useMemo(() => {
+    const byId = new Map<string, AdminUserView>();
+    for (const user of [
+      ...(coachesQuery.data?.users ?? []),
+      ...(assistantsQuery.data?.users ?? []),
+    ]) {
+      if (user.user_id === session?.coach_id) continue;
+      if (!byId.has(user.user_id)) byId.set(user.user_id, user);
+    }
+    return [...byId.values()].sort((a, b) =>
+      (a.display_name || a.email).localeCompare(b.display_name || b.email),
+    );
+  }, [coachesQuery.data, assistantsQuery.data, session?.coach_id]);
+
+  // Assistants already on the session whose membership no longer appears in
+  // the directory (role removed, account disabled) stay visible so an admin
+  // can un-tick them instead of silently dropping them on save.
+  const orphaned = useMemo(() => {
+    const known = new Set(candidates.map((user) => user.user_id));
+    const ids = session?.assistant_coach_ids ?? [];
+    const names = session?.assistant_coach_names ?? [];
+    return ids
+      .map((assistantId, index) => ({ user_id: assistantId, label: names[index] ?? assistantId }))
+      .filter((entry) => !known.has(entry.user_id));
+  }, [candidates, session?.assistant_coach_ids, session?.assistant_coach_names]);
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      setSessionAssistants(session!.session_id, selected, reason.trim() || null),
+    onSuccess: (savedSession) => {
+      setError(null);
+      onSaved(savedSession);
+    },
+    onError: (err: Error) =>
+      setError(err.message || "Failed to update assistant coaches."),
+  });
+
+  const toggle = (userId: string) =>
+    setSelected((prev) =>
+      prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId],
+    );
+
+  const optionClass =
+    "flex items-start gap-3 rounded-md border border-rally-line px-3 py-2 text-sm";
+
+  return (
+    <RallyDialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) setError(null);
+        onOpenChange(nextOpen);
+      }}
+      title="Edit assistants"
+      description="Assistants see this session in their coach app and can mark attendance, update skills and add notes. They are never paid by payroll."
+      overline="Coaching staff"
+    >
+      {error && <DialogError message={error} />}
+      <form
+        className="space-y-3"
+        data-testid="session-assistants-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          mutation.mutate();
+        }}
+      >
+        <Field label="Assistant coaches">
+          {loading ? (
+            <p className="text-sm text-rally-subtle">Loading coaches...</p>
+          ) : candidates.length === 0 && orphaned.length === 0 ? (
+            <p className="text-sm text-rally-subtle" data-testid="assistant-options-empty">
+              No coaches or assistant coaches to choose from. Grant the Assistant
+              coach role from a user&apos;s page first.
+            </p>
+          ) : (
+            <div className="max-h-72 space-y-2 overflow-y-auto">
+              {candidates.map((user) => (
+                <label key={user.user_id} className={optionClass}>
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={selected.includes(user.user_id)}
+                    onChange={() => toggle(user.user_id)}
+                    data-testid={`assistant-option-${user.user_id}`}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-medium text-rally-ink">
+                      {user.display_name || user.email}
+                    </span>
+                    <span className="block truncate font-mono text-[11px] text-rally-muted">
+                      {user.email} · {roleLabel(user.role)}
+                    </span>
+                  </span>
+                </label>
+              ))}
+              {orphaned.map((entry) => (
+                <label key={entry.user_id} className={optionClass}>
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={selected.includes(entry.user_id)}
+                    onChange={() => toggle(entry.user_id)}
+                    data-testid={`assistant-option-${entry.user_id}`}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-medium text-rally-ink">{entry.label}</span>
+                    <span className="block text-[11px] text-amber-700">
+                      No longer holds a coaching role — un-tick to remove.
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
+        </Field>
+        <Field label="Reason">
+          <input
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            className={inputClass}
+            placeholder="Optional"
+          />
+        </Field>
+        <DialogActions>
+          <Button
+            variant="secondary"
+            size="sm"
+            type="button"
+            onClick={() => onOpenChange(false)}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            type="submit"
+            disabled={mutation.isPending || !session}
           >
             {mutation.isPending ? "Saving..." : "Save"}
           </Button>

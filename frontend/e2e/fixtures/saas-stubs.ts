@@ -8,7 +8,7 @@
 
 import type { Page, Route } from "@playwright/test";
 
-export type RoleName = "admin" | "coach" | "parent";
+export type RoleName = "admin" | "coach" | "assistant_coach" | "parent" | "owner";
 
 export interface MockUser {
   user_id: string;
@@ -24,7 +24,8 @@ export const ADMIN_USER_A: MockUser = {
   user_id: "user-admin-w5",
   email: "admin@example.com",
   academy_id: ACADEMY_A,
-  roles: ["admin"],
+  // Pre-split admin: migration 0165 grants owner to every existing admin.
+  roles: ["admin", "owner"],
 };
 
 export const COACH_USER_B: MockUser = {
@@ -32,6 +33,17 @@ export const COACH_USER_B: MockUser = {
   email: "coach@example.com",
   academy_id: ACADEMY_B,
   roles: ["coach"],
+};
+
+/**
+ * Per-session assistant coach: rides the coach shell scoped to the sessions
+ * that list them (attendance, skills, notes) and is never on payroll.
+ */
+export const ASSISTANT_USER: MockUser = {
+  user_id: "user-assistant-w5",
+  email: "helper@example.com",
+  academy_id: ACADEMY_A,
+  roles: ["assistant_coach"],
 };
 
 export const PARENT_USER: MockUser = {

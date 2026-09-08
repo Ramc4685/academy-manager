@@ -5,6 +5,11 @@
  * the openapi-typescript generator produces lib/api/generated/v2.d.ts.
  */
 
+import type {
+  BillingRulesView,
+  UpdateBillingRulesRequest,
+} from "@/lib/billing-rules-form";
+
 import { apiFetch } from "./client";
 
 // ---------------------------------------------------------------------------
@@ -15,6 +20,13 @@ export interface AdminSessionView {
   session_id: string;
   coach_id: string;
   coach_name: string | null;
+  /**
+   * Per-session assistant coaches (`assistant_coach` role). They get the coach
+   * shell scoped to this session — attendance, skills, notes — and are never
+   * paid by payroll. `assistant_coach_names` is resolved like `coach_name`.
+   */
+  assistant_coach_ids: string[];
+  assistant_coach_names: string[];
   title: string;
   location: string;
   start_at: string; // ISO 8601
@@ -48,6 +60,9 @@ export interface AdminSessionOccurrenceView {
   start_at: string;
   end_at: string;
   status: "scheduled" | "cancelled" | "completed";
+  /** Why this date is off (#671); a live date carries null. */
+  cancellation_reason: string | null;
+  cancelled_at: string | null;
   scheduled_coach_id: string;
   actual_coach_id: string | null;
   substitute_coach_id: string | null;
@@ -101,6 +116,7 @@ export interface UpdateOccurrenceCoachAttendanceRequest {
 
 export interface CreateSessionRequest {
   coach_id: string;
+  assistant_coach_ids?: string[];
   title: string;
   location: string;
   start_at?: string | null;
@@ -122,6 +138,8 @@ export interface CreateSessionRequest {
 
 export interface EditSessionRequest {
   coach_id?: string;
+  /** Omit (or undefined) to leave unchanged; `[]` clears every assistant. */
+  assistant_coach_ids?: string[] | null;
   title?: string;
   location?: string;
   start_at?: string | null;
@@ -151,6 +169,8 @@ export interface AdminEnrollmentView {
   parent_id: string;
   full_name: string;
   status: EnrollmentStatus;
+  /** Issue #675: parent end-of-period cancel pending; still on the roster until then. */
+  pending_cancellation_at?: string | null;
   enrolled_at: string | null;
   level?: string | null;
   pathway_program_id?: string | null;
@@ -331,6 +351,96 @@ export interface AdminPaymentFeedItem {
 
 export interface AdminPaymentFeedResponse {
   payments: AdminPaymentFeedItem[];
+}
+
+// ---- Payments buckets (GET /admin/payments/collections) -------------------
+
+export type CollectionsBucketKey =
+  | "failed_autopay"
+  | "past_due"
+  | "awaiting"
+  | "autopay_scheduled"
+  | "paused"
+  | "paid";
+
+export type CollectionsAction =
+  | "send_reminder"
+  | "record_payment"
+  | "message"
+  | "skip_month"
+  | "resume"
+  /** A link, not a mutation — Past due and Awaiting payment rows only. */
+  | "whatsapp";
+
+export interface AdminCollectionsFamily {
+  parent_id: string;
+  parent_name: string | null;
+  parent_email: string | null;
+  /** Invoice the bucket rule fired on: the target for Skip this month / Record payment. */
+  action_invoice_id?: string | null;
+  students: { student_id: string; name: string; session_title: string | null }[];
+  invoices: {
+    invoice_id: string;
+    invoice_number: string | null;
+    period: string;
+    status: string;
+    total_cents: number;
+    balance_due_cents: number;
+    due_date: string;
+    delivery_status: string;
+  }[];
+  balance_cents: number;
+  leftover_balance_cents: number;
+  autopay: {
+    status: string;
+    card_last4: string | null;
+    charge_on: string | null;
+    notice_sent_at: string | null;
+  } | null;
+  failure: {
+    reason: string | null;
+    attempt_count: number;
+    max_attempts: number;
+    next_retry_on: string | null;
+    disabled: boolean;
+  } | null;
+  pause: {
+    enrollment_id: string;
+    resume_on: string | null;
+    review_on: string | null;
+    session_title: string | null;
+    student_name: string;
+  } | null;
+  paid: { amount_cents: number; method: string | null; paid_at: string | null } | null;
+  last_reminder_at: string | null;
+  /**
+   * Pre-filled `wa.me` link carrying the dues reminder text. Present on Past
+   * due and Awaiting payment rows whose family has a dialable phone; the
+   * `whatsapp` action is only listed when this is non-null.
+   */
+  whatsapp_url?: string | null;
+  actions: CollectionsAction[];
+}
+
+export interface AdminCollectionsBucket {
+  key: CollectionsBucketKey;
+  count: number;
+  total_cents: number;
+  families: AdminCollectionsFamily[];
+}
+
+export interface AdminCollectionsView {
+  period: string;
+  generated_at: string;
+  timezone: string;
+  totals: {
+    owed_cents: number;
+    autopay_scheduled_cents: number;
+    autopay_scheduled_count: number;
+    needs_action_count: number;
+    collected_cents: number;
+  };
+  buckets: AdminCollectionsBucket[];
 }
 
 export interface AdminFamilyLastPaymentRow {
@@ -808,13 +918,6 @@ export interface AdminRevenueResponse {
   by_month: Record<string, number>; // "YYYY-MM": cents
 }
 
-export interface AdminReportsKpiResponse {
-  active_students: number;
-  attendance_rate_30d: number;
-  dues_collected_mtd_cents: number;
-  pending_waivers: number;
-}
-
 export interface AdminReportsAttendanceSummary {
   present_count: number;
   recorded_count: number;
@@ -1097,6 +1200,7 @@ export type AdminAttentionKind =
   | "overdue_dues"
   | "pause_requests"
   | "scheduled_resume_blocked"
+  | "scheduled_action_failed"
   | "billing_deferrals"
   | "waivers"
   | "session_pressure";
@@ -1126,7 +1230,12 @@ export interface DmRequest {
   body: string;
 }
 
-export type AdminUserRole = "admin" | "coach" | "parent";
+/**
+ * Roles an academy admin surface can grant. `owner` is the money-governance
+ * scope; granting or revoking `admin`/`owner` is itself owner-only (the BFF
+ * 403s anyone else), so the pages offer those options only to owners.
+ */
+export type AdminUserRole = "admin" | "coach" | "assistant_coach" | "parent" | "owner";
 
 export interface AdminUserView {
   user_id: string;
@@ -1263,21 +1372,6 @@ export interface AdminAuditLogList {
   logs: AdminAuditLogView[];
 }
 
-export interface DuesFollowupParentView {
-  parent_id: string;
-  parent_name: string | null;
-  email: string | null;
-  phone: string | null;
-  pending_count: number;
-  total_due_cents: number;
-  /** Pre-filled wa.me link; null when the parent has no usable phone on file. */
-  whatsapp_url: string | null;
-}
-
-export interface DuesFollowupResponse {
-  parents: DuesFollowupParentView[];
-}
-
 export interface SendDuesRemindersResponse {
   sent: number;
   blocked: boolean;
@@ -1320,7 +1414,6 @@ export type UpdateAdminAcademyRequest = Partial<{
 }>;
 
 export interface AdminFeesView {
-  default_monthly_cents: number | null;
   late_fee_cents: number | null;
   grace_days: number | null;
 }
@@ -1508,6 +1601,31 @@ export function updateAdminSession(
   });
 }
 
+export interface SetSessionAssistantsRequest {
+  assistant_coach_ids: string[];
+  reason?: string | null;
+}
+
+/**
+ * Replace the session's assistant coaches. The BFF validates every id holds an
+ * active `coach` or `assistant_coach` membership (422 otherwise) and re-syncs
+ * the list onto the session's future occurrences.
+ */
+export function setSessionAssistants(
+  sessionId: string,
+  assistantCoachIds: string[],
+  reason?: string | null,
+): Promise<AdminSessionView> {
+  const payload: SetSessionAssistantsRequest = {
+    assistant_coach_ids: assistantCoachIds,
+    reason: reason ?? null,
+  };
+  return apiFetch<AdminSessionView>(
+    `/admin/sessions/${encodeURIComponent(sessionId)}/assistants`,
+    { method: "PUT", body: JSON.stringify(payload) },
+  );
+}
+
 export function deleteAdminSession(sessionId: string): Promise<void> {
   return apiFetch<void>(`/admin/sessions/${sessionId}`, { method: "DELETE" });
 }
@@ -1542,6 +1660,41 @@ export function updateSessionOccurrenceReplacement(
     `/admin/session-occurrences/${encodeURIComponent(occurrenceId)}/replacement`,
     {
       method: "PATCH",
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+/** Body of "cancel this date" (#671). */
+export interface CancelSessionOccurrenceRequest {
+  reason: string;
+  /** false records the cancellation without emailing families or the coach. */
+  notify?: boolean;
+}
+
+export interface CancelSessionOccurrenceResponse {
+  occurrence: AdminSessionOccurrenceView;
+  affected_enrollment_ids: string[];
+  roster_entries_removed: number;
+  makeups_reopened: number;
+  credits_issued: number;
+  billing_result: string | null;
+  notified: boolean;
+}
+
+/**
+ * Call off ONE class date (#671). The families enrolled that month are
+ * credited the date's share automatically; the coach is not paid for it.
+ * 409 when the date is already cancelled or has already started.
+ */
+export function cancelSessionOccurrence(
+  occurrenceId: string,
+  payload: CancelSessionOccurrenceRequest
+): Promise<CancelSessionOccurrenceResponse> {
+  return apiFetch<CancelSessionOccurrenceResponse>(
+    `/admin/session-occurrences/${encodeURIComponent(occurrenceId)}/cancel`,
+    {
+      method: "POST",
       body: JSON.stringify(payload),
     }
   );
@@ -1726,6 +1879,17 @@ export function getAdminPaymentFeed(limit = 20): Promise<AdminPaymentFeedRespons
   });
 }
 
+/**
+ * Six-bucket collections view for the Payments page and dashboard tiles.
+ * `period` is YYYY-MM; omitted → the backend picks the current billing month.
+ */
+export function getAdminCollections(period?: string): Promise<AdminCollectionsView> {
+  const query = period ? `?period=${encodeURIComponent(period)}` : "";
+  return apiFetch<AdminCollectionsView>(`/admin/payments/collections${query}`, {
+    method: "GET",
+  });
+}
+
 export function getAdminLastPaymentByFamily(): Promise<AdminFamilyLastPaymentsResponse> {
   return apiFetch<AdminFamilyLastPaymentsResponse>("/admin/payments/last-by-family", {
     method: "GET",
@@ -1787,6 +1951,49 @@ export interface SetPlatformChargeFallbackRequest {
   reason?: string | null;
 }
 
+export interface InvoiceScheduleView {
+  billing_day: number;
+  invoice_due_days: number;
+}
+
+export interface SetInvoiceScheduleRequest {
+  billing_day: number;
+  invoice_due_days: number;
+  reason?: string | null;
+}
+
+export function getInvoiceSchedule(): Promise<InvoiceScheduleView> {
+  return apiFetch<InvoiceScheduleView>("/admin/billing/settings/invoice-schedule", {
+    method: "GET",
+  });
+}
+
+export function setInvoiceSchedule(payload: SetInvoiceScheduleRequest): Promise<InvoiceScheduleView> {
+  return apiFetch<InvoiceScheduleView>("/admin/billing/settings/invoice-schedule", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+/**
+ * Settings -> Billing rules. One read and one owner-only write covering
+ * numbers that live in three stores (spec 2026-09-07-billing-rules-design).
+ * Row shapes are re-exported from `lib/billing-rules-form` so the panel and
+ * its view model agree on one type.
+ */
+export function getBillingRules(): Promise<BillingRulesView> {
+  return apiFetch<BillingRulesView>("/admin/billing/rules", { method: "GET" });
+}
+
+export function updateBillingRules(
+  payload: UpdateBillingRulesRequest,
+): Promise<BillingRulesView> {
+  return apiFetch<BillingRulesView>("/admin/billing/rules", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function getPlatformChargeFallback(): Promise<PlatformChargeFallbackView> {
   return apiFetch<PlatformChargeFallbackView>("/admin/billing/settings/platform-fallback", {
     method: "GET",
@@ -1846,6 +2053,41 @@ export interface ConnectReadiness {
    */
   funds_route_to_academy: boolean;
   webhook_events: { quarantined: number; failed: number };
+  /**
+   * The one health verdict, composed on the backend (billing-health trim spec
+   * §4.2). The page renders it and computes nothing: the old page-side
+   * `healthy` flag read backlog counts alone and could show a green pill above
+   * a red "Parents cannot pay right now" card.
+   */
+  health: BillingHealthVerdict;
+  autopay_disable_failures: AutopayDisableFailures;
+}
+
+export type BillingHealthState = "blocked" | "attention" | "ok";
+
+export interface BillingHealthReason {
+  code: string;
+  detail: string;
+}
+
+export interface BillingHealthVerdict {
+  state: BillingHealthState;
+  headline: string;
+  reasons: BillingHealthReason[];
+}
+
+export interface AutopayDisableFailure {
+  invoice_id: string;
+  parent_id: string;
+  error: string | null;
+  failed_at: string | null;
+}
+
+/** Terminal autopay switch-offs the dunning worker could not complete (§4.4). */
+export interface AutopayDisableFailures {
+  count: number;
+  rows: AutopayDisableFailure[];
+  truncated: boolean;
 }
 
 export function fetchConnectReadiness(): Promise<ConnectReadiness> {
@@ -1951,6 +2193,17 @@ export function fetchDunningFailures(): Promise<DunningResponse> {
 export function fetchInvoiceAttempts(invoiceId: string): Promise<InvoiceAttemptsResponse> {
   return apiFetch<InvoiceAttemptsResponse>(
     `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/attempts`,
+    { method: "GET" },
+  );
+}
+
+export interface InvoiceAuditResponse {
+  entries: Array<Record<string, unknown>>;
+}
+
+export function fetchInvoiceAudit(invoiceId: string): Promise<InvoiceAuditResponse> {
+  return apiFetch<InvoiceAuditResponse>(
+    `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/audit`,
     { method: "GET" },
   );
 }
@@ -2075,42 +2328,15 @@ export function enableBillingSetupAutopay(
   );
 }
 
-// --- Legacy invoice ↔ Stripe charge review queue (#242 WI-3) --------------- //
-export interface LegacyMatchCandidate {
-  stripe_charge_id: string;
-  stripe_payment_intent_id: string | null;
-  amount_cents: number;
-  currency: string;
-  created_at: string | null;
-  description: string | null;
-  confidence: "high" | "medium" | string;
-}
-
-export interface LegacyMatchRow {
-  invoice_id: string;
-  parent_id: string;
-  parent_name: string | null;
-  period: string;
-  status: string;
-  total_cents: number;
-  balance_due_cents: number;
-  currency: string;
-  due_date: string | null;
-  created_at: string | null;
-  stripe_invoice_id: string | null;
-  stripe_customer_id: string | null;
-  candidates: LegacyMatchCandidate[];
-}
-
-export interface LegacyMatchQueueResponse {
-  rows: LegacyMatchRow[];
-}
-
+// --- Link a legacy Stripe charge to an invoice (#242 WI-3) ----------------- //
+// The list half was deleted by the Billing Health trim (spec 2026-09-07 §2):
+// it recomputed "every open invoice with no allocation" per load and fanned
+// out a Stripe call per row, so it presented ordinary unpaid invoices as
+// migrated ones. Only the explicit, admin-named confirm remains.
 export interface ConfirmLegacyMatchRequest {
   invoice_id: string;
   stripe_charge_id: string;
   amount_cents: number;
-  stripe_payment_intent_id?: string | null;
   paid_at?: string | null;
 }
 
@@ -2119,12 +2345,6 @@ export interface ConfirmLegacyMatchResult {
   payment_id: string;
   invoice_status: string;
   balance_due_cents: number;
-}
-
-export function fetchLegacyMatchQueue(): Promise<LegacyMatchQueueResponse> {
-  return apiFetch<LegacyMatchQueueResponse>("/admin/billing/legacy-match-queue", {
-    method: "GET",
-  });
 }
 
 export function confirmLegacyMatch(
@@ -2219,10 +2439,18 @@ export function sendAdminInvoice(invoiceId: string): Promise<SendInvoiceResponse
 
 export function chargeAdminInvoiceAutopay(
   invoiceId: string,
+  reason?: string,
 ): Promise<ChargeAutopayResponse> {
+  // request_id makes a retried submit the same charge rather than a second one.
   return apiFetch<ChargeAutopayResponse>(
     `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/charge-autopay`,
-    { method: "POST" },
+    {
+      method: "POST",
+      body: JSON.stringify({
+        ...(reason ? { reason } : {}),
+        request_id: crypto.randomUUID(),
+      }),
+    },
   );
 }
 
@@ -2362,10 +2590,6 @@ export function deleteExpense(expenseId: string, payload: { reason: string }): P
 
 export function getRevenue(): Promise<AdminRevenueResponse> {
   return apiFetch<AdminRevenueResponse>("/admin/finance/revenue", { method: "GET" });
-}
-
-export function getAdminReportKpis(): Promise<AdminReportsKpiResponse> {
-  return apiFetch<AdminReportsKpiResponse>("/admin/reports/kpis", { method: "GET" });
 }
 
 export interface AdminProjectedIncomeSessionRow {
@@ -2818,10 +3042,6 @@ export function listAuditLogs(): Promise<AdminAuditLogList> {
   return apiFetch<AdminAuditLogList>("/admin/audit-logs", { method: "GET" });
 }
 
-export function listDuesFollowup(): Promise<DuesFollowupResponse> {
-  return apiFetch<DuesFollowupResponse>("/admin/dues-followup", { method: "GET" });
-}
-
 export function sendDuesReminders(payload: { parent_ids?: string[] } = {}): Promise<SendDuesRemindersResponse> {
   return apiFetch<SendDuesRemindersResponse>("/admin/dues-reminders", {
     method: "POST",
@@ -2847,6 +3067,84 @@ export function getTuitionDiscountSummary(period: string): Promise<AdminTuitionD
     `/admin/finance/tuition-discounts?period=${encodeURIComponent(period)}`,
     { method: "GET" },
   );
+}
+
+/**
+ * `GET /admin/reports/month-close` — the Month close view.
+ *
+ * Field names mirror `AdminMonthCloseView` in
+ * `backend/v2/interfaces/admin/month_close_views.py` (month close spec §4.2).
+ * Owner only: an admin without the owner scope gets a 404, never a 403.
+ */
+export type MonthCloseOddCode =
+  | "invoice_without_enrollment"
+  | "paused_family_invoiced"
+  | "autopay_no_card"
+  | "autopay_on_dead_enrollment";
+
+export interface AdminMonthCloseTally {
+  count: number;
+  cents: number;
+}
+
+export interface AdminMonthCloseOddItem {
+  kind: "family" | "invoice";
+  id: string;
+  label: string;
+  href: string;
+}
+
+export interface AdminMonthCloseOdd {
+  code: MonthCloseOddCode;
+  label: string;
+  /** The true count; `items` is capped at 20 so the page can say "showing 20 of N". */
+  count: number;
+  items: AdminMonthCloseOddItem[];
+}
+
+export interface AdminMonthCloseView {
+  generated_at: string;
+  timezone: string;
+  period: string;
+  invoices: {
+    generated: number;
+    emailed: number;
+    autopay_notices: number;
+    not_sent: number;
+    voided: number;
+    voided_cents: number;
+    void_reasons: { reason: string; count: number }[];
+  };
+  money: {
+    billed_cents: number;
+    collected_cents: number;
+    outstanding_cents: number;
+    /** Null, never 0, when nothing was billed — the page renders "—". */
+    collection_rate: number | null;
+  };
+  autopay_run: {
+    charge_on: string | null;
+    charge_on_varies: boolean;
+    has_run: boolean;
+    scheduled: AdminMonthCloseTally;
+    succeeded: AdminMonthCloseTally;
+    failed: AdminMonthCloseTally;
+    pending: AdminMonthCloseTally;
+  };
+  odd: AdminMonthCloseOdd[];
+  /** Null when the discount query was unavailable (see `warnings`). */
+  tuition_discounts: {
+    gross_cents: number;
+    discount_cents: number;
+    net_cents: number;
+    by_category: { category: string; amount_cents: number }[];
+  } | null;
+  warnings: string[];
+}
+
+export function getAdminMonthClose(period?: string): Promise<AdminMonthCloseView> {
+  const query = period ? `?period=${encodeURIComponent(period)}` : "";
+  return apiFetch<AdminMonthCloseView>(`/admin/reports/month-close${query}`, { method: "GET" });
 }
 
 export function exportAdminReportCsv(reportName: string, period?: string): Promise<string> {

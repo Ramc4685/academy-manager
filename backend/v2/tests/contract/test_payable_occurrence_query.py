@@ -217,3 +217,59 @@ async def test_expected_revenue_prorates_by_billing_month_not_query_window(db, a
     assert len(rows) == 1
     # $200/mo x 10 enrollments / 4 July occurrences = $500, NOT $2000.
     assert rows[0].expected_revenue_minor == 50000
+
+
+@pytest.mark.asyncio
+async def test_assistant_coaches_are_never_paid(db) -> None:
+    """Payroll contract: an occurrence's ``assistant_coach_ids`` is invisible
+    to payroll. The paying coach is ``actual_coach_id`` else
+    ``scheduled_coach_id``; an assistant listed on the occurrence gets no
+    payout period and no payable row of their own."""
+    from backend.v2.contexts.coaching.infrastructure.mongo_payout_read_models import (
+        MonthlyCoachOccurrenceReaderAdapter,
+    )
+
+    await db["session_occurrences"].insert_many(
+        [
+            {
+                "academy_id": "acad",
+                "occurrence_id": "occ-scheduled",
+                "session_id": "sess-1",
+                "start_at": _dt("2026-05-06T18:00:00"),
+                "end_at": _dt("2026-05-06T19:00:00"),
+                "status": "completed",
+                "scheduled_coach_id": "coach-1",
+                "assistant_coach_ids": ["asst-1"],
+                "is_payable": True,
+            },
+            {
+                "academy_id": "acad",
+                "occurrence_id": "occ-replaced",
+                "session_id": "sess-1",
+                "start_at": _dt("2026-05-13T18:00:00"),
+                "end_at": _dt("2026-05-13T19:00:00"),
+                "status": "completed",
+                "scheduled_coach_id": "coach-1",
+                "actual_coach_id": "coach-2",
+                "assistant_coach_ids": ["asst-1", "asst-2"],
+                "is_payable": True,
+            },
+        ]
+    )
+    period_start, period_end = _dt("2026-05-01T00:00:00"), _dt("2026-06-01T00:00:00")
+
+    grouped = await MonthlyCoachOccurrenceReaderAdapter(
+        db["session_occurrences"]
+    ).coaches_with_occurrences(academy_id="acad", period_start=period_start, period_end=period_end)
+    by_coach = {row.coach_id: row.session_count for row in grouped}
+    assert by_coach == {"coach-1": 1, "coach-2": 1}
+    assert "asst-1" not in by_coach and "asst-2" not in by_coach
+
+    rows = await MongoPayableOccurrenceQuery(db).list_in_period(
+        academy_id="acad", period_start=period_start, period_end=period_end
+    )
+    assert [(r.scheduled_coach_id, r.actual_coach_id) for r in rows] == [
+        ("coach-1", None),
+        ("coach-1", "coach-2"),
+    ]
+    assert all(not hasattr(r, "assistant_coach_ids") for r in rows)

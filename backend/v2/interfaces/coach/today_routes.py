@@ -126,6 +126,7 @@ async def get_today(
                     ),
                     expected_absence=getattr(r, "expected_absence", False),
                     entry_source=getattr(r, "entry_source", "enrollment"),
+                    pending_cancellation_at=getattr(r, "pending_cancellation_at", None),
                 )
                 for r in roster
             ],

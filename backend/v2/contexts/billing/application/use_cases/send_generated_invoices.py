@@ -15,10 +15,13 @@ Design notes:
 * **Failures retry on the next tick for free.** A send that fails leaves the
   invoice at ``delivery_failed``, which the same query still selects
   tomorrow.
-* **Autopay enrollments are skipped.** Their invoice gets charged by the
-  dunning/autopay worker; emailing "here is your bill, pay here" alongside an
-  automatic charge invites a double payment. Eligibility mirrors the charge
-  path exactly (``autopay_enrollment_status == "active"``).
+* **Autopay enrollments get a pre-charge notice, not a pay link.** Their
+  invoice gets charged by the dunning/autopay worker; emailing "here is your
+  bill, pay here" alongside an automatic charge invites a double payment.
+  Instead (issue #651) they receive "X will be charged on <due date>" through
+  ``notify_autopay``; when that hook is unwired they are skipped as before.
+  Eligibility mirrors the charge path exactly
+  (``autopay_enrollment_status == "active"``).
 """
 
 from __future__ import annotations
@@ -65,6 +68,8 @@ class SendGeneratedInvoicesResult(BaseModel):
     emailed: int = 0
     email_failed: int = 0
     skipped_autopay: int = 0
+    #: Autopay parents told what will be charged and when (issue #651).
+    autopay_notified: int = 0
     #: True when the pass hit ``limit`` and left invoices for the next tick.
     truncated: bool = False
 
@@ -76,10 +81,14 @@ class SendGeneratedInvoices:
         ledger: UndeliveredInvoiceReader,
         autopay: AutopayStatusReader | None = None,
         send: Callable[[str], Awaitable[object]],
+        notify_autopay: Callable[[str], Awaitable[object]] | None = None,
     ) -> None:
         self._ledger = ledger
         self._autopay = autopay
         self._send = send
+        # Issue #651: autopay parents get a pre-charge notice (amount + charge
+        # date) instead of silence. When unwired, the old skip behaviour holds.
+        self._notify_autopay = notify_autopay
 
     async def execute(
         self, period: str, *, limit: int = DEFAULT_SEND_LIMIT
@@ -89,10 +98,23 @@ class SendGeneratedInvoices:
         emailed = 0
         email_failed = 0
         skipped_autopay = 0
+        autopay_notified = 0
 
         for invoice in invoices:
             if await self._is_autopaying(invoice):
-                skipped_autopay += 1
+                if self._notify_autopay is None:
+                    skipped_autopay += 1
+                    continue
+                try:
+                    await self._notify_autopay(invoice.invoice_id)
+                except Exception:
+                    email_failed += 1
+                    log.exception(
+                        "autopay_notice_email_failed",
+                        extra={"invoice_id": invoice.invoice_id, "period": period},
+                    )
+                    continue
+                autopay_notified += 1
                 continue
             try:
                 await self._send(invoice.invoice_id)
@@ -120,6 +142,7 @@ class SendGeneratedInvoices:
             emailed=emailed,
             email_failed=email_failed,
             skipped_autopay=skipped_autopay,
+            autopay_notified=autopay_notified,
             truncated=truncated,
         )
 

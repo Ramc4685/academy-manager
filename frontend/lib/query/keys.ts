@@ -23,6 +23,8 @@ export const queryKeys = {
       ["coach", "session", sessionId, "skills", date, programId ?? "default"] as const,
     skillNotes: (studentId: string, skillId: string) =>
       ["coach", "skill-notes", studentId, skillId] as const,
+    progressNotes: (sessionId: string) =>
+      ["coach", "progress-notes", sessionId] as const,
     messages: () => ["coach", "messages"] as const,
     calendar: () => ["coach", "calendar"] as const,
     billingEnrollments: (sessionId: string) =>
@@ -63,10 +65,18 @@ export const queryKeys = {
       ["admin", "enrollments", sessionId] as const,
     waitlist: (sessionId: string) => ["admin", "waitlist", sessionId] as const,
     globalWaitlist: () => ["admin", "waitlist", "global"] as const,
+    families: () => ["admin", "families"] as const,
+    familyBilling: (parentId: string) =>
+      ["admin", "families", parentId, "billing"] as const,
     registrations: () => ["admin", "registrations"] as const,
     registrationDetail: (applicationId: string) =>
       ["admin", "registrations", applicationId] as const,
     payments: () => ["admin", "payments"] as const,
+    paymentFeed: (limit: number) => ["admin", "payments", "feed", limit] as const,
+    // Prefix for every collections view (any period, dashboard "current").
+    collectionsAll: () => ["admin", "payments", "collections"] as const,
+    collections: (period: string) =>
+      ["admin", "payments", "collections", period] as const,
     invoiceDetail: (invoiceId: string) =>
       ["admin", "billing", "invoice", invoiceId] as const,
     payouts: () => ["admin", "finance", "payouts"] as const,
@@ -84,6 +94,8 @@ export const queryKeys = {
     attention: () => ["admin", "dashboard", "attention"] as const,
     academy: () => ["admin", "academy"] as const,
     fees: () => ["admin", "academy", "fees"] as const,
+    invoiceSchedule: () => ["admin", "billing", "invoice-schedule"] as const,
+    billingRules: () => ["admin", "billing", "rules"] as const,
     notifications: () => ["admin", "academy", "notifications"] as const,
     gateway: () => ["admin", "academy", "gateway"] as const,
     platformFallback: () => ["admin", "billing", "platform-fallback"] as const,
@@ -108,8 +120,6 @@ export const queryKeys = {
     billingSetupAll: () => ["admin", "billing", "setup"] as const,
     billingSetup: (params?: { status?: string; q?: string }) =>
       [...queryKeys.admin.billingSetupAll(), params?.status ?? "all", params?.q ?? ""] as const,
-    legacyMatchQueue: () =>
-      ["admin", "billing", "legacy-match-queue"] as const,
     selfServicePolicy: () => ["admin", "self-service", "policy"] as const,
     selfServiceAbsences: () => ["admin", "self-service", "absences"] as const,
     selfServiceMakeupsAll: () => ["admin", "self-service", "makeups"] as const,

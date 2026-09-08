@@ -133,6 +133,9 @@ VALIDATORS: dict[str, dict[str, Any]] = {
             "is_billable": {"bsonType": OPT_BOOL},
             "is_payable": {"bsonType": OPT_BOOL},
             "cancellation_reason": {"bsonType": OPT_STRING},
+            # Issue #671: stamped when ONE dated class is cancelled by an admin.
+            "cancelled_at": {"bsonType": OPT_DATE},
+            "cancelled_by": {"bsonType": OPT_STRING},
             "created_at": {"bsonType": OPT_DATE},
             "updated_at": {"bsonType": OPT_DATE},
         },
@@ -185,7 +188,12 @@ VALIDATORS: dict[str, dict[str, Any]] = {
             "effective_at": {"bsonType": "date"},
             "occurred_at": {"bsonType": "date"},
             "billing_policy": {"bsonType": OPT_STRING},
-            "billing_result": {"bsonType": OPT_OBJECT},
+            # The domain model (`EnrollmentLifecycleEvent.billing_result: str | None`)
+            # and every writer emit a short string ("voided=0,autopay=disabled",
+            # "future_billing_stopped", "recorded"). OPT_OBJECT here made every
+            # admin remove/withdraw/pause 500 in prod once the validator was
+            # applied (#657). Migration 0165 re-applies this corrected schema.
+            "billing_result": {"bsonType": ["object", "string", "null"]},
             "credit_id": {"bsonType": OPT_STRING},
             "refund_id": {"bsonType": OPT_STRING},
             "metadata": {"bsonType": OPT_OBJECT},
@@ -197,7 +205,6 @@ VALIDATORS: dict[str, dict[str, Any]] = {
             "academy_id",
             "action_type",
             "enrollment_id",
-            "pause_request_id",
             "run_at",
             "status",
             "created_at",
@@ -206,9 +213,12 @@ VALIDATORS: dict[str, dict[str, Any]] = {
         {
             "action_id": {"bsonType": "string"},
             "academy_id": {"bsonType": "string"},
-            "action_type": {"bsonType": "string"},
+            # Issue #675: ``cancel_at_period_end`` has no pause request. The
+            # original schema required ``pause_request_id`` as a string;
+            # migration 0169 re-applies this corrected definition.
+            "action_type": {"enum": ["resume_from_pause", "cancel_at_period_end"]},
             "enrollment_id": {"bsonType": "string"},
-            "pause_request_id": {"bsonType": "string"},
+            "pause_request_id": {"bsonType": OPT_STRING},
             "run_at": {"bsonType": "date"},
             "status": {"bsonType": "string"},
             "attempt_count": {"bsonType": ["int", "long", "null"]},

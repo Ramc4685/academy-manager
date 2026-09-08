@@ -79,20 +79,22 @@ only one concurrent call can win that transition; the loser raises
 ``EnrollmentNotCancellable`` before ever reaching the billing port, so the
 fee-line idempotency key is defense in depth, not the primary guard.
 
-end_of_period mechanism (v1 simplification, documented per the task brief):
-the existing scheduled-action machinery (``ScheduledEnrollmentAction`` /
-``ScheduledEnrollmentActionRepository`` / ``ProcessScheduledResumeActions``)
-is tightly coupled to pause/resume — ``ScheduledActionType`` is a closed
-``Literal["resume_from_pause"]`` and the record requires a
-``pause_request_id``. Generalizing it for cancellation would mean widening a
-model built for a different purpose plus a new processor/job wiring — real
-scope creep for what the brief explicitly allows simplifying. So
-``"end_of_period"`` here does NOT keep the enrollment ``active`` pending a
-background job; it sets ``status="cancelled"`` immediately, with
-``cancelled_at`` computed as the end of the current calendar month (UTC) —
-still a fully auditable state change (R4), just with a future-dated
-``cancelled_at`` instead of a deferred status flip. ``"immediate"`` timing
-sets ``cancelled_at`` to now.
+end_of_period mechanism (issue #675, owner decision 2026-09-07, Option A):
+``"end_of_period"`` does NOT flip ``status``. The enrollment stays
+``active`` — so every status-only roster, schedule, seat and capacity read
+keeps the child exactly where the family paid for them to be — and gains a
+``pending_cancellation_at`` marker (end of the academy-local calendar month,
+the same period boundary billing's ``period_of`` uses). A durable
+``ScheduledEnrollmentAction`` of type ``cancel_at_period_end`` is enqueued
+for that instant; ``ProcessScheduledCancellationActions`` (hourly job)
+performs the real cancel — status CAS, seat release, ``EnrollmentCancelled``
+outbox event, lifecycle row — when the month actually ends. What still
+happens at request time: the fee line, the billing sync (the current month
+stays payable; later invoices are voided and autopay is disabled — correct
+today and unchanged), a ``"cancellation_scheduled"`` lifecycle row and the
+staff notification. A second cancel request while one is pending is refused
+(``EnrollmentNotCancellable``) — the marker is part of the CAS. ``"immediate"``
+timing is unchanged: status flips now, seat is released now.
 """
 
 from __future__ import annotations
@@ -100,13 +102,21 @@ from __future__ import annotations
 import asyncio
 import calendar
 import logging
-from collections.abc import Callable
-from datetime import UTC, datetime
-from typing import Any, Protocol
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, tzinfo
+from typing import Any, Literal, Protocol
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
 
-from backend.v2.contexts.enrollment.application.ports import RosterChangeNotifier
+from backend.v2.contexts.enrollment.application.ports import (
+    EnrollmentBillingSync,
+    RosterChangeNotifier,
+)
+from backend.v2.contexts.enrollment.application.use_cases.scheduled_actions import (
+    ScheduledEnrollmentAction,
+    ScheduledEnrollmentActionRepository,
+)
 from backend.v2.contexts.enrollment.domain.errors import EnrollmentNotFound
 from backend.v2.contexts.enrollment.domain.events import (
     EnrollmentCancelled,
@@ -126,12 +136,38 @@ from backend.v2.shared.ids import new_ulid
 log = logging.getLogger(__name__)
 
 Clock = Callable[[], datetime]
+AcademyTimezoneReader = Callable[[], Awaitable[str | None]]
 
 
-def _end_of_month_utc(now: datetime) -> datetime:
-    """Last instant (23:59:59.999999 UTC) of ``now``'s calendar month."""
-    last_day = calendar.monthrange(now.year, now.month)[1]
-    return datetime(now.year, now.month, last_day, 23, 59, 59, 999999, tzinfo=UTC)
+def _end_of_month(now: datetime, timezone_name: str | None) -> datetime:
+    """Last instant of ``now``'s calendar month on the academy's wall clock,
+    returned in UTC.
+
+    Issue #675: this is the ``pending_cancellation_at`` the scheduled cancel
+    runs at and the ``effective_at`` billing keys the payable period off, so
+    it must agree with billing's ``period_of`` (academy-local month). A
+    Chicago parent cancelling at 8pm on the 30th is still in THIS month
+    locally even though UTC has rolled over. Unknown / unset zones fall back
+    to UTC, exactly as ``period_of`` does.
+    """
+    zone: tzinfo = UTC
+    if timezone_name:
+        try:
+            zone = ZoneInfo(timezone_name)
+        except (KeyError, ValueError):
+            log.warning("self_cancel_bad_timezone", extra={"tz": timezone_name})
+    local_now = now.astimezone(zone)
+    last_day = calendar.monthrange(local_now.year, local_now.month)[1]
+    local_end = datetime(local_now.year, local_now.month, last_day, 23, 59, 59, 999999, tzinfo=zone)
+    return local_end.astimezone(UTC)
+
+
+def _cancel_effective_at(
+    policy: ParentSelfServicePolicy, now: datetime, tz: str | None
+) -> datetime:
+    if policy.cancellation_effective_timing == "immediate":
+        return now
+    return _end_of_month(now, tz)
 
 
 def _policy_snapshot(policy: ParentSelfServicePolicy, terms: SelfCancelTerms) -> dict[str, Any]:
@@ -170,6 +206,16 @@ class SelfCancelEnrollmentWriter(SelfCancelEnrollmentQuery, Protocol):
         cancellation_reason: str,
         cancellation_policy_snapshot: dict[str, Any],
         cancelled_at: datetime,
+    ) -> Enrollment | None: ...
+
+    async def mark_pending_cancellation_by_parent(
+        self,
+        enrollment_id: str,
+        *,
+        cancellation_reason: str,
+        cancellation_policy_snapshot: dict[str, Any],
+        pending_cancellation_at: datetime,
+        requested_at: datetime,
     ) -> Enrollment | None: ...
 
     async def mark_fee_billing_error(self, enrollment_id: str, *, error: str) -> None: ...
@@ -226,6 +272,23 @@ class SelfCancelBillingPort(Protocol):
     ) -> dict[str, Any]: ...
 
 
+def _not_cancellable_reason(enrollment: Enrollment) -> str | None:
+    """Why a parent may not (re-)cancel this enrollment, or ``None``.
+
+    Issue #675: an accepted end-of-period cancel leaves ``status="active"``,
+    so the status check alone would let the parent enqueue a second
+    cancellation. The pending marker is the second guard.
+    """
+    if enrollment.status != "active":
+        return f"enrollment is not active (status={enrollment.status})"
+    if enrollment.pending_cancellation_at is not None:
+        return (
+            "cancellation already scheduled for "
+            f"{enrollment.pending_cancellation_at.date().isoformat()}"
+        )
+    return None
+
+
 # --- Preview ------------------------------------------------------------
 
 
@@ -238,6 +301,9 @@ class PreviewSelfCancelView(BaseModel):
     effective_timing: str
     policy: dict[str, Any]
     blocked_reason: str | None = None
+    #: Issue #675: when the cancel would take effect (now, or the academy-local
+    #: month end) so the parent UI can say "keeps their place through …".
+    effective_at: datetime | None = None
 
 
 class PreviewSelfCancel:
@@ -254,19 +320,22 @@ class PreviewSelfCancel:
         students: SelfCancelStudentQuery,
         policies: SelfCancelPolicyRepository,
         occurrences: SelfCancelOccurrenceQuery,
+        academy_timezone: AcademyTimezoneReader | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._enrollments = enrollments
         self._students = students
         self._policies = policies
         self._occurrences = occurrences
+        self._academy_timezone = academy_timezone
         self._now = clock
 
     async def execute(self, *, enrollment_id: str, parent_id: str) -> PreviewSelfCancelView:
         enrollment = await self._owned_enrollment(enrollment_id, parent_id)
         policy = await self._policies.get_or_default()
 
-        if enrollment.status != "active":
+        blocked = _not_cancellable_reason(enrollment)
+        if blocked is not None:
             terms = SelfCancelTerms(notice_met=True, fee_cents=0)
             return PreviewSelfCancelView(
                 allowed=False,
@@ -274,7 +343,8 @@ class PreviewSelfCancel:
                 fee_cents=terms.fee_cents,
                 effective_timing=policy.cancellation_effective_timing,
                 policy=_policy_snapshot(policy, terms),
-                blocked_reason=f"enrollment is not active (status={enrollment.status})",
+                blocked_reason=blocked,
+                effective_at=enrollment.pending_cancellation_at,
             )
 
         now = self._now()
@@ -282,6 +352,7 @@ class PreviewSelfCancel:
             enrollment.session_id, now=now
         )
         terms = compute_self_cancel_terms(policy, next_start, now)
+        tz = await self._academy_timezone() if self._academy_timezone else None
         return PreviewSelfCancelView(
             allowed=True,
             notice_met=terms.notice_met,
@@ -289,6 +360,7 @@ class PreviewSelfCancel:
             effective_timing=policy.cancellation_effective_timing,
             policy=_policy_snapshot(policy, terms),
             blocked_reason=None,
+            effective_at=_cancel_effective_at(policy, now, tz),
         )
 
     async def _owned_enrollment(self, enrollment_id: str, parent_id: str) -> Enrollment:
@@ -316,11 +388,18 @@ class SelfCancelEnrollmentResult(BaseModel):
     model_config = {"frozen": True}
 
     enrollment_id: str
-    status: str
+    #: ``"cancelled"`` for immediate timing; ``"pending_cancellation"`` for
+    #: end-of-period (issue #675) — the enrollment row itself stays
+    #: ``active`` until ``cancelled_at``.
+    status: Literal["cancelled", "pending_cancellation"]
     fee_cents: int
     notice_met: bool
     effective_timing: str
+    #: The date the cancellation takes effect — now, or the academy-local
+    #: month end. For a pending cancellation this is also
+    #: ``pending_cancellation_at``.
     cancelled_at: datetime
+    pending_cancellation_at: datetime | None = None
 
 
 class SelfCancelEnrollment:
@@ -342,8 +421,11 @@ class SelfCancelEnrollment:
         sessions: SelfCancelSessionWriter,
         outbox: Outbox,
         billing: SelfCancelBillingPort | None = None,
+        billing_sync: EnrollmentBillingSync | None = None,
         enrollment_events: SelfCancelLifecycleEventRecorder | None = None,
         roster_notifier: RosterChangeNotifier | None = None,
+        scheduled_actions: ScheduledEnrollmentActionRepository | None = None,
+        academy_timezone: AcademyTimezoneReader | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._enrollments = enrollments
@@ -353,8 +435,11 @@ class SelfCancelEnrollment:
         self._sessions = sessions
         self._outbox = outbox
         self._billing = billing
+        self._billing_sync = billing_sync
         self._enrollment_events = enrollment_events
         self._roster_notifier = roster_notifier
+        self._scheduled_actions = scheduled_actions
+        self._academy_timezone = academy_timezone
         self._now = clock
 
     async def execute(self, cmd: SelfCancelEnrollmentCommand) -> SelfCancelEnrollmentResult:
@@ -364,9 +449,10 @@ class SelfCancelEnrollment:
         student = await self._students.get_for_parent(cmd.parent_id, enrollment.student_id)
         if student is None:
             raise EnrollmentNotFound("enrollment missing", enrollment_id=cmd.enrollment_id)
-        if enrollment.status != "active":
+        blocked = _not_cancellable_reason(enrollment)
+        if blocked is not None:
             raise EnrollmentNotCancellable(
-                "enrollment is not active",
+                blocked,
                 enrollment_id=cmd.enrollment_id,
                 status=enrollment.status,
             )
@@ -377,20 +463,27 @@ class SelfCancelEnrollment:
             enrollment.session_id, now=now
         )
         terms = compute_self_cancel_terms(policy, next_start, now)
-
-        if policy.cancellation_effective_timing == "immediate":
-            cancelled_at = now
-        else:
-            cancelled_at = _end_of_month_utc(now)
+        tz = await self._academy_timezone() if self._academy_timezone else None
+        cancelled_at = _cancel_effective_at(policy, now, tz)
+        deferred = policy.cancellation_effective_timing != "immediate"
 
         snapshot = _policy_snapshot(policy, terms)
 
-        updated = await self._enrollments.mark_cancelled_by_parent(
-            cmd.enrollment_id,
-            cancellation_reason=cmd.reason,
-            cancellation_policy_snapshot=snapshot,
-            cancelled_at=cancelled_at,
-        )
+        if deferred:
+            updated = await self._enrollments.mark_pending_cancellation_by_parent(
+                cmd.enrollment_id,
+                cancellation_reason=cmd.reason,
+                cancellation_policy_snapshot=snapshot,
+                pending_cancellation_at=cancelled_at,
+                requested_at=now,
+            )
+        else:
+            updated = await self._enrollments.mark_cancelled_by_parent(
+                cmd.enrollment_id,
+                cancellation_reason=cmd.reason,
+                cancellation_policy_snapshot=snapshot,
+                cancelled_at=cancelled_at,
+            )
         if updated is None:
             # Lost the CAS: someone else cancelled this enrollment first
             # (double-submit / two tabs). Never append a second fee line.
@@ -398,27 +491,70 @@ class SelfCancelEnrollment:
                 "enrollment is no longer active", enrollment_id=cmd.enrollment_id
             )
 
-        # Capacity compensation, mirroring the admin cancel path
-        # (``admin_writes.CancelEnrollment``). Reached only when the CAS above
-        # actually transitioned this enrollment, so a double-submitted cancel
-        # (whose loser raises just above) can never double-release a seat or
-        # promote twice. It runs BEFORE the best-effort fee billing below, and
-        # under ``asyncio.shield``, for the same reason: once the cancel is
-        # committed the seat must come back. Ordering alone is not enough —
-        # a client disconnect cancels the request task, and the resulting
-        # ``CancelledError`` is a ``BaseException`` that the billing block's
-        # ``except Exception`` would not contain either. The shield lets the
-        # compensation run to completion even as the request is torn down;
-        # failures inside it still propagate (see module ERROR HANDLING).
-        await asyncio.shield(
-            self._compensate_capacity(
-                updated,
-                actor_id=cmd.parent_id,
-                reason=cmd.reason,
-                effective_at=cancelled_at,
-                now=now,
+        if deferred:
+            # Issue #675: the seat, roster and schedule are untouched until
+            # month end. The durable action is what makes the later flip
+            # happen, so it is the one write here that must not be lost —
+            # shielded for the same client-disconnect reason as the
+            # immediate path's compensation. Everything after it is
+            # best-effort or idempotent on retry.
+            await asyncio.shield(
+                self._schedule_period_end_cancel(
+                    updated,
+                    actor_id=cmd.parent_id,
+                    reason=cmd.reason,
+                    run_at=cancelled_at,
+                    now=now,
+                )
             )
-        )
+        else:
+            # Capacity compensation, mirroring the admin cancel path
+            # (``admin_writes.CancelEnrollment``). Reached only when the CAS
+            # above actually transitioned this enrollment, so a
+            # double-submitted cancel (whose loser raises just above) can
+            # never double-release a seat or promote twice. It runs BEFORE
+            # the best-effort fee billing below, and under ``asyncio.shield``,
+            # for the same reason: once the cancel is committed the seat must
+            # come back. Ordering alone is not enough — a client disconnect
+            # cancels the request task, and the resulting ``CancelledError``
+            # is a ``BaseException`` that the billing block's ``except
+            # Exception`` would not contain either. The shield lets the
+            # compensation run to completion even as the request is torn
+            # down; failures inside it still propagate (see module ERROR
+            # HANDLING).
+            await asyncio.shield(
+                self._compensate_capacity(
+                    updated,
+                    actor_id=cmd.parent_id,
+                    reason=cmd.reason,
+                    effective_at=cancelled_at,
+                    now=now,
+                )
+            )
+
+        # Issue #651: the month of ``cancelled_at`` stays payable; later
+        # invoices are voided and autopay is disabled. Best-effort like the
+        # fee below — the CAS has already committed.
+        if self._billing_sync is not None:
+            try:
+                await self._billing_sync.apply(
+                    enrollment_id=updated.enrollment_id,
+                    transition="cancelled",
+                    effective_at=cancelled_at,
+                    reason=cmd.reason,
+                    actor_id=cmd.parent_id,
+                )
+            except Exception:
+                log.exception(
+                    "self_cancel_billing_sync_failed",
+                    extra={"enrollment_id": cmd.enrollment_id},
+                )
+        else:
+            log.error(
+                "enrollment_billing_sync_unwired: self-cancel for enrollment_id=%s "
+                "reached billing nowhere",
+                cmd.enrollment_id,
+            )
 
         if terms.fee_cents > 0 and self._billing is not None:
             try:
@@ -456,12 +592,98 @@ class SelfCancelEnrollment:
 
         return SelfCancelEnrollmentResult(
             enrollment_id=updated.enrollment_id,
-            status=updated.status,
+            status="pending_cancellation" if deferred else "cancelled",
             fee_cents=terms.fee_cents,
             notice_met=terms.notice_met,
             effective_timing=policy.cancellation_effective_timing,
             cancelled_at=cancelled_at,
+            pending_cancellation_at=cancelled_at if deferred else None,
         )
+
+    async def _schedule_period_end_cancel(
+        self,
+        enrollment: Enrollment,
+        *,
+        actor_id: str,
+        reason: str,
+        run_at: datetime,
+        now: datetime,
+    ) -> None:
+        """Issue #675: enqueue the month-end cancel, write the
+        ``cancellation_scheduled`` timeline row, tell staff.
+
+        The enqueue is load-bearing and propagates (a marker with no action
+        behind it would leave the child attending forever); it is idempotent
+        — the repo upserts on (enrollment, type, pending) — so a retry after a
+        transient failure converges. The timeline row and the staff alert
+        are cosmetic and swallowed.
+        """
+        if self._scheduled_actions is None:
+            log.error(
+                "scheduled_actions_unwired: end-of-period self-cancel for enrollment_id=%s "
+                "has no action to flip it at month end",
+                enrollment.enrollment_id,
+            )
+        else:
+            await self._scheduled_actions.add(
+                ScheduledEnrollmentAction(
+                    action_id=str(new_ulid()),
+                    academy_id=enrollment.academy_id,
+                    action_type="cancel_at_period_end",
+                    enrollment_id=enrollment.enrollment_id,
+                    pause_request_id=None,
+                    run_at=run_at,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        if self._enrollment_events is not None:
+            try:
+                await self._enrollment_events.record(
+                    EnrollmentLifecycleEvent(
+                        event_id=str(new_ulid()),
+                        academy_id=enrollment.academy_id,
+                        event_type="cancellation_scheduled",
+                        enrollment_id=enrollment.enrollment_id,
+                        session_id=enrollment.session_id,
+                        student_id=enrollment.student_id,
+                        actor_id=actor_id,
+                        reason=reason,
+                        effective_at=run_at,
+                        occurred_at=now,
+                    )
+                )
+            except Exception:
+                log.warning(
+                    "self_cancel_lifecycle_row_failed",
+                    extra={
+                        "enrollment_id": enrollment.enrollment_id,
+                        "session_id": enrollment.session_id,
+                    },
+                )
+        if self._roster_notifier is not None:
+            try:
+                # NOT ``cancelled``: the child is still enrolled and attending
+                # until month end, and the scheduled worker sends the real
+                # ``cancelled`` alert when it flips. Two identical "student
+                # cancelled" alerts three weeks apart had coaches dropping a
+                # student who was still on the roster.
+                await self._roster_notifier.roster_changed(
+                    change="cancellation_scheduled",
+                    session_id=enrollment.session_id,
+                    student_id=enrollment.student_id,
+                    enrollment_id=enrollment.enrollment_id,
+                    actor_id=actor_id,
+                )
+            except Exception:
+                log.warning(
+                    "enrollment.roster_notification_failed",
+                    extra={
+                        "change": "cancellation_scheduled",
+                        "enrollment_id": enrollment.enrollment_id,
+                        "session_id": enrollment.session_id,
+                    },
+                )
 
     async def _compensate_capacity(
         self,

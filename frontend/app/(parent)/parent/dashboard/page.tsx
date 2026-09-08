@@ -27,6 +27,7 @@ import {
   listParentChildren,
   listParentCredits,
   listParentEnrollments,
+  listParentInvoices,
   listParentPayments,
   listParentProgress,
   type ParentAcademy,
@@ -70,6 +71,10 @@ export default function ParentDashboardPage() {
     queryKey: ["parent", "payments"],
     queryFn: listParentPayments,
   });
+  const invoicesQuery = useQuery({
+    queryKey: ["parent", "invoices"],
+    queryFn: listParentInvoices,
+  });
   const creditsQuery = useQuery({
     queryKey: ["parent", "credits"],
     queryFn: listParentCredits,
@@ -94,6 +99,7 @@ export default function ParentDashboardPage() {
         attendance: attendanceQuery.data?.records ?? [],
         notes: progressNotesQuery.data?.notes ?? [],
         payments: paymentsQuery.data?.payments ?? [],
+        invoices: invoicesQuery.data?.invoices ?? [],
         credits: creditsQuery.data ?? null,
         waiver: waiverQuery.data ?? null,
         progressRows: progressSummaryQuery.data ?? [],
@@ -103,6 +109,7 @@ export default function ParentDashboardPage() {
       childrenQuery.data,
       creditsQuery.data,
       enrollmentsQuery.data,
+      invoicesQuery.data,
       paymentsQuery.data,
       progressNotesQuery.data,
       progressSummaryQuery.data,

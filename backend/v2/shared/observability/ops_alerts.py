@@ -11,6 +11,11 @@ Two entry points:
   ``EVENT_JOB_ERROR | EVENT_JOB_MISSED`` in ``main.py``.
 * :func:`capture_exception` / :func:`capture_message` — thin, always-safe
   wrappers used by the dispatcher loop guard.
+* :func:`cron_checkin` — Sentry Crons check-ins around a scheduled job's
+  body, opt-in per job id (``settings.sentry_cron_jobs``) because the free
+  plan includes a single monitor. This is the layer that notices a job that
+  *stopped firing*, which no exception listener can see; the ops digest's
+  stale-job section is the zero-cost counterpart for every other job.
 
 Sentry availability is guarded exactly the way ``errors.py`` does it: the
 import is optional, and with no DSN configured ``sentry_sdk`` was never
@@ -21,6 +26,9 @@ happens regardless of Sentry.
 from __future__ import annotations
 
 import logging
+import time
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -116,3 +124,63 @@ def handle_scheduler_job_event(event: Any) -> None:
             capture_message(f"Scheduler job missed: {job_id}", level="warning")
     except Exception:  # pragma: no cover - defensive; listeners must not raise
         log.exception("scheduler_job_event_listener_failed")
+
+
+@asynccontextmanager
+async def cron_checkin(
+    job_id: str, *, schedule: Mapping[str, Any], settings: Any
+) -> AsyncIterator[None]:
+    """Bracket a scheduled job body with Sentry Crons check-ins.
+
+    ``schedule`` is the job's Sentry ``monitor_config`` minus the timezone
+    (``{"schedule": {...}, "checkin_margin": ..., "max_runtime": ...}``); the
+    timezone is stamped from ``settings.scheduler_tz`` so the monitor's
+    expectation matches the APScheduler clock. Sending the config with every
+    check-in keeps the monitor upserted from code — nothing to click together
+    in the Sentry UI, and a changed schedule follows the next deploy.
+
+    A no-op unless Sentry is initialised AND ``job_id`` is allowlisted in
+    ``settings.sentry_cron_jobs``. A failing check-in (transport error, bad
+    config) is logged and never reaches the job: the switch must not be able
+    to break the thing it watches.
+    """
+    sentry_sdk = _active_sentry()
+    if sentry_sdk is None or job_id not in tuple(getattr(settings, "sentry_cron_jobs", ())):
+        yield
+        return
+    monitor_config = {**schedule, "timezone": settings.scheduler_tz}
+    check_in_id = _checkin(sentry_sdk, job_id, None, "in_progress", monitor_config)
+    if check_in_id is None:
+        yield
+        return
+    started = time.monotonic()
+    try:
+        yield
+    except BaseException:
+        _checkin(sentry_sdk, job_id, check_in_id, "error", monitor_config, started)
+        raise
+    else:
+        _checkin(sentry_sdk, job_id, check_in_id, "ok", monitor_config, started)
+
+
+def _checkin(
+    sentry_sdk: Any,
+    job_id: str,
+    check_in_id: str | None,
+    status: str,
+    monitor_config: dict[str, Any],
+    started: float | None = None,
+) -> str | None:
+    try:
+        return str(
+            sentry_sdk.crons.capture_checkin(
+                monitor_slug=job_id,
+                check_in_id=check_in_id,
+                status=status,
+                duration=None if started is None else time.monotonic() - started,
+                monitor_config=monitor_config,
+            )
+        )
+    except Exception:
+        log.warning("sentry_cron_checkin_failed job_id=%s status=%s", job_id, status, exc_info=True)
+        return None

@@ -20,7 +20,7 @@ from backend.v2.interfaces.admin.views import (
 )
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.config.settings import get_settings
-from backend.v2.shared.http import require_persona
+from backend.v2.shared.http import require_owner, require_persona
 
 router = APIRouter(tags=["admin.academy"])
 
@@ -72,7 +72,7 @@ async def get_academy_gateway(
 
 @router.post("/academy/gateway/stripe/connect-link", response_model=AdminGatewayConnectLinkView)
 async def start_stripe_connect(
-    claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminGatewayConnectLinkView:
     if use_cases.start_connect_onboarding_use_case is None:
@@ -118,7 +118,7 @@ async def stripe_connect_callback(
 
 @router.delete("/academy/gateway/stripe/connect", status_code=204)
 async def disconnect_stripe(
-    claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> None:
     if use_cases.disconnect_stripe_use_case is None:
@@ -132,7 +132,7 @@ async def disconnect_stripe(
 @router.patch("/academy/fees", response_model=AdminFeesView)
 async def update_academy_fees(
     payload: UpdateAdminFeesRequest,
-    claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminFeesView:
     out = await use_cases.update_academy_fees_use_case.execute(

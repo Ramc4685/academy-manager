@@ -294,6 +294,12 @@ class AdminRegistrationReview:
             )
             await self._assert_no_other_active_enrollment(student_id, expected_enrollment_id)
             existing = await self._enrollments.find_for_session_student(session_id, student_id)
+            # issue #651: only a live (active / paused) enrollment is a
+            # conflict. A cancelled or withdrawn row from an earlier stint in
+            # the same session is history and must not permanently block a
+            # fresh registration for that child; it gets a new enrollment.
+            if existing is not None and existing.status not in {"active", "paused"}:
+                existing = None
             if existing is not None and (
                 existing.enrollment_id != expected_enrollment_id
                 or existing.registration_application_id != app.application_id

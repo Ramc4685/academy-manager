@@ -183,75 +183,77 @@ function PayoutsContent() {
             {isLoading ? (
               <p className="text-sm text-muted-foreground">Loading…</p>
             ) : (
-              <table className="w-full text-sm border-collapse">
-                <thead>
-                  <tr className="border-b text-left text-muted-foreground">
-                    <th className="py-2 pr-4 font-medium">Coach</th>
-                    <th className="py-2 pr-4 font-medium">Sessions</th>
-                    <th className="py-2 pr-4 font-medium">Unpaid</th>
-                    <th className="py-2 pr-4 font-medium">Total</th>
-                    <th className="py-2 pr-4 font-medium">Warnings</th>
-                    <th className="py-2 pr-4 font-medium">Status</th>
-                    <th className="py-2 font-medium" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row) => (
-                    <tr key={row.coach_id} className="border-b hover:bg-muted/30">
-                      <td className="py-2 pr-4">{row.coach_name ?? row.coach_id}</td>
-                      <td className="py-2 pr-4">{row.session_count}</td>
-                      <td className="py-2 pr-4">
-                        {row.unresolved_unpaid_count > 0 ? (
-                          <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
-                            {row.unresolved_unpaid_count} unresolved
-                          </span>
-                        ) : (
-                          "0"
-                        )}
-                      </td>
-                      <td className="py-2 pr-4">
-                        {(row.total_amount_cents / 100).toFixed(2)} {row.currency}
-                      </td>
-                      <td className="py-2 pr-4">
-                        {row.warning_count > 0 ? (
-                          <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
-                            {row.warning_count} unresolved
-                          </span>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">Clear</span>
-                        )}
-                      </td>
-                      <td className="py-2 pr-4">
-                        <StatusChip status={row.status} />
-                      </td>
-                      <td className="py-2">
-                        {row.period_id ? (
-                          <a
-                            href={`/admin/payouts/${row.period_id}`}
-                            className="text-primary underline"
-                          >
-                            Open
-                          </a>
-                        ) : (
-                          <button
-                            className="text-primary underline disabled:opacity-50"
-                            disabled={generateOne.isPending}
-                            onClick={() =>
-                              generateOne.mutate({
-                                coach_id: row.coach_id,
-                                period_start: data!.period_start,
-                                period_end: data!.period_end,
-                              })
-                            }
-                          >
-                            Generate
-                          </button>
-                        )}
-                      </td>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm border-collapse">
+                  <thead>
+                    <tr className="border-b text-left text-muted-foreground">
+                      <th className="py-2 pr-4 font-medium">Coach</th>
+                      <th className="py-2 pr-4 font-medium">Sessions</th>
+                      <th className="py-2 pr-4 font-medium">Unpaid</th>
+                      <th className="py-2 pr-4 font-medium">Total</th>
+                      <th className="py-2 pr-4 font-medium">Warnings</th>
+                      <th className="py-2 pr-4 font-medium">Status</th>
+                      <th className="py-2 font-medium" />
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {rows.map((row) => (
+                      <tr key={row.coach_id} className="border-b hover:bg-muted/30">
+                        <td className="py-2 pr-4">{row.coach_name ?? row.coach_id}</td>
+                        <td className="py-2 pr-4">{row.session_count}</td>
+                        <td className="py-2 pr-4">
+                          {row.unresolved_unpaid_count > 0 ? (
+                            <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                              {row.unresolved_unpaid_count} unresolved
+                            </span>
+                          ) : (
+                            "0"
+                          )}
+                        </td>
+                        <td className="py-2 pr-4">
+                          {(row.total_amount_cents / 100).toFixed(2)} {row.currency}
+                        </td>
+                        <td className="py-2 pr-4">
+                          {row.warning_count > 0 ? (
+                            <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                              {row.warning_count} unresolved
+                            </span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">Clear</span>
+                          )}
+                        </td>
+                        <td className="py-2 pr-4">
+                          <StatusChip status={row.status} />
+                        </td>
+                        <td className="py-2">
+                          {row.period_id ? (
+                            <a
+                              href={`/admin/payouts/${row.period_id}`}
+                              className="text-primary underline"
+                            >
+                              Open
+                            </a>
+                          ) : (
+                            <button
+                              className="text-primary underline disabled:opacity-50"
+                              disabled={generateOne.isPending}
+                              onClick={() =>
+                                generateOne.mutate({
+                                  coach_id: row.coach_id,
+                                  period_start: data!.period_start,
+                                  period_end: data!.period_end,
+                                })
+                              }
+                            >
+                              Generate
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </>
         )}

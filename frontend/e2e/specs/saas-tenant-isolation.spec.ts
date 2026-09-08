@@ -105,7 +105,6 @@ test.describe("SaaS v2 — login + tenant resolution", () => {
     // These match the academy settings BFFs hit by /admin/settings.
     await page.route(/\/api\/v2\/admin\/academy\/fees(?:\?.*)?$/, (route) =>
       fulfillJson(route, {
-        default_monthly_cents: null,
         late_fee_cents: null,
         grace_days: null,
       })

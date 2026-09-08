@@ -11,15 +11,16 @@ import {
   type AdminUserRole,
   type AdminUserView,
 } from "@/lib/api/admin";
+import { roleLabel } from "@/lib/admin/role-label";
+import { assignableRoles } from "@/lib/auth/assignable-roles";
 import { queryKeys } from "@/lib/query/keys";
+import { useIsOwner } from "@/components/admin/owner-context";
 import { Avatar } from "@/components/ds/avatar";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Overline } from "@/components/ds/typography";
 import { ComingNextCard } from "./coming-next-card";
-
-const ROLE_OPTIONS: AdminUserRole[] = ["admin", "coach", "parent"];
 
 export function RolesPanel() {
   const queryClient = useQueryClient();
@@ -110,7 +111,7 @@ function RoleRow({
           </div>
         </td>
         <td className="px-2 py-3">
-          <Chip variant={roleVariant(user.role)} label={user.role.toUpperCase()} />
+          <Chip variant={roleVariant(user.role)} label={roleLabel(user.role).toUpperCase()} />
         </td>
         <td className="px-2 py-3">
           <Button size="sm" variant="ghost" onClick={onToggleEdit}>
@@ -130,6 +131,9 @@ function RoleRow({
 }
 
 function RoleEditor({ user, onSaved }: { user: AdminUserView; onSaved: () => void }) {
+  // Admin/owner grants are owner-only (the BFF 403s anyone else), so an
+  // admin without the scope only sees coach and parent here.
+  const ROLE_OPTIONS = assignableRoles(useIsOwner());
   const detailQuery = useQuery({
     queryKey: queryKeys.admin.userDetail(user.user_id),
     queryFn: () => getAdminUser(user.user_id),
@@ -205,7 +209,7 @@ function RoleEditor({ user, onSaved }: { user: AdminUserView; onSaved: () => voi
               onChange={() => toggle(role)}
               data-testid={`admin-settings-role-checkbox-${user.user_id}-${role}`}
             />
-            <span className="capitalize">{role}</span>
+            <span>{roleLabel(role)}</span>
           </label>
         ))}
       </div>
@@ -232,7 +236,8 @@ function RoleEditor({ user, onSaved }: { user: AdminUserView; onSaved: () => voi
 }
 
 function roleVariant(role: AdminUserRole) {
-  if (role === "admin") return "enrolled";
+  if (role === "admin" || role === "owner") return "enrolled";
   if (role === "coach") return "autopayOn";
+  if (role === "assistant_coach") return "makeup";
   return "manual";
 }

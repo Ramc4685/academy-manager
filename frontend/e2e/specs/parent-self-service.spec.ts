@@ -371,6 +371,8 @@ test.describe("parent self-service — self-cancel enrollment", () => {
             effective_timing: "end_of_period",
             policy: { notice_days: 14, fee_cents: 2500 },
             blocked_reason: null,
+            // Issue #675: the academy-local month end (Sept 30, Chicago).
+            effective_at: "2026-10-01T04:59:59.999Z",
           }),
         });
       },
@@ -385,10 +387,12 @@ test.describe("parent self-service — self-cancel enrollment", () => {
           contentType: "application/json",
           body: JSON.stringify({
             enrollment_id: ENROLLMENT_ID,
-            status: "cancelled",
+            // Issue #675: end_of_period keeps the enrollment active until month end.
+            status: "pending_cancellation",
             fee_cents: 2500,
             effective_timing: "end_of_period",
-            cancelled_at: new Date().toISOString(),
+            cancelled_at: "2026-10-01T04:59:59.999Z",
+            pending_cancellation_at: "2026-10-01T04:59:59.999Z",
           }),
         });
       },
@@ -403,14 +407,19 @@ test.describe("parent self-service — self-cancel enrollment", () => {
 
     // Fee and timing must be visible before the parent confirms.
     await expect(dialog.getByText("Cancellation fee: $25.00")).toBeVisible();
-    await expect(dialog.getByText("Effective timing: end_of_period")).toBeVisible();
+    // Issue #675: human copy, never the raw policy token.
+    const timing = dialog.getByTestId("cancellation-timing-copy");
+    await expect(timing).toContainText("keeps their place through");
+    await expect(timing).toContainText("30");
+    await expect(timing).toContainText("October will not be billed");
+    await expect(dialog.getByText("end_of_period")).toHaveCount(0);
     await expect(dialog.getByRole("button", { name: "Confirm cancellation" })).toBeVisible();
 
     await dialog.getByPlaceholder("Why are you cancelling?").fill("Schedule conflict");
     await dialog.getByRole("button", { name: "Confirm cancellation" }).click();
 
     // Success is surfaced as a toast; the dialog closes.
-    const toast = page.getByRole("status").filter({ hasText: "Enrollment cancelled" });
+    const toast = page.getByRole("status").filter({ hasText: "Cancellation scheduled" });
     await expect(toast).toBeVisible();
     await expect(toast).toContainText("$25.00");
     await expect(dialog).not.toBeVisible();

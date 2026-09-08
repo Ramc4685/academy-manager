@@ -5,7 +5,7 @@ from __future__ import annotations
 import ipaddress
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from backend.v2.interfaces.parent.deps import ParentUseCases, get_parent_use_cases
 from backend.v2.interfaces.parent.views import (
@@ -97,12 +97,17 @@ async def start_autopay(
     claims: AuthClaims = Depends(require_persona("parent")),
     use_cases: ParentUseCases = Depends(get_parent_use_cases),
 ) -> StartAutopayResponse:
-    result = await use_cases.start_autopay_for_enrollment(  # type: ignore[operator]
-        parent_id=claims.user_id,
-        enrollment_id=body.enrollment_id,
-        success_url=body.success_url,
-        cancel_url=body.cancel_url,
-    )
+    try:
+        result = await use_cases.start_autopay_for_enrollment(  # type: ignore[operator]
+            parent_id=claims.user_id,
+            enrollment_id=body.enrollment_id,
+            success_url=body.success_url,
+            cancel_url=body.cancel_url,
+        )
+    except ValueError as exc:
+        # Same shape as a non-payable invoice on /invoices/{id}/pay: the
+        # enrollment is not active, so there is nothing to put on autopay.
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return StartAutopayResponse(
         subscription_id=result.subscription_id,
         checkout_session_id=result.checkout_session_id,

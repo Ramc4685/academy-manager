@@ -5,9 +5,12 @@ from __future__ import annotations
 import logging
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 log = logging.getLogger(__name__)
+# Unhandled-500 lines are emitted under a stable name so they can be searched
+# and alerted on independently of this module's location.
+unhandled_log = logging.getLogger("backend.v2.http")
 
 
 class DomainError(Exception):
@@ -52,3 +55,22 @@ def register_exception_handlers(app: FastAPI) -> None:
                 }
             },
         )
+
+    @app.exception_handler(Exception)
+    async def _log_unhandled_error(request: Request, exc: Exception) -> Response:
+        # Runs inside Starlette's ServerErrorMiddleware. Log one structured
+        # line (request_id/academy_id arrive via ContextLogFilter) and re-raise:
+        # the middleware then keeps its 500 semantics and Sentry's FastAPI
+        # integration still captures the exception.
+        unhandled_log.error(
+            "unhandled_error %s %s",
+            request.method,
+            request.url.path,
+            exc_info=True,
+            extra={
+                "method": request.method,
+                "path": request.url.path,
+                "exception_type": type(exc).__name__,
+            },
+        )
+        raise exc

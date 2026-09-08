@@ -121,3 +121,28 @@ def test_mark_attendance_non_ulid_mutation_id_rejected(coach_client):
     for bad in ("m1", "x" * 300, "01HXMVTATTENDANCE00000000!", "01hxmvtattendance000000001"):
         r = coach_client.post("/api/v2/coach/attendance", json=_payload(mutation_id=bad))
         assert r.status_code == 422, (bad, r.text)
+
+
+# --- issue #672: a single tap on a MAKE-UP row ---
+
+
+def test_mark_attendance_makeup_row_on_this_occurrence_succeeds(seed):
+    from backend.v2.tests.interface.test_coach_bulk_attendance import (
+        _client_for,
+        _seed_with_one_time_rows,
+    )
+
+    client, use_cases = _client_for(_seed_with_one_time_rows(seed))
+    with client:
+        r = client.post("/api/v2/coach/attendance", json=_payload(student_id="st-makeup"))
+        # The same student's make-up for another day does not make them
+        # eligible for today's other session either.
+        paused = client.post(
+            "/api/v2/coach/attendance",
+            json=_payload(mutation_id="01HXMVTATTENDANCE000000002", student_id="st-paused"),
+        )
+    assert r.status_code == 200, r.text
+    assert r.json()["student_id"] == "st-makeup"
+    assert use_cases.mark_attendance._attendance.saved[0].entry_source == "makeup"
+    assert paused.status_code == 409, paused.text
+    assert paused.json()["error"]["code"] == "Coaching.StudentNotEnrolled"

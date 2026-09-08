@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from backend.v2.contexts.coaching.application.ports import AttendanceEligibility
 from backend.v2.contexts.coaching.application.use_cases.mark_attendance import (
     MarkAttendance,
     MarkAttendanceCommand,
@@ -87,11 +88,50 @@ class FakeOccurrenceLookup:
 
 
 class FakeEnrollmentLookup:
-    def __init__(self, active: bool = True) -> None:
+    """Mirrors the composition adapter: ``active`` answers the standing
+    enrollment; ``roster`` maps (occurrence_id, student_id) to an approved
+    one-time make-up / trial source (issue #672); ``live`` says whether the
+    student still holds an active-or-paused enrollment anywhere, which a
+    make-up row (but not a trial) requires."""
+
+    def __init__(
+        self,
+        active: bool = True,
+        roster: dict[tuple[str, str], str] | None = None,
+        live: bool = True,
+    ) -> None:
         self.active = active
+        self.roster = roster or {}
+        self.live = live
+        self.calls: list[dict[str, Any]] = []
 
     async def is_active(self, session_id: str, student_id: str) -> bool:
         return self.active
+
+    async def attendance_eligibility(
+        self,
+        *,
+        occurrence_id: str,
+        session_id: str,
+        template_session_id: str | None,
+        student_id: str,
+    ) -> AttendanceEligibility | None:
+        self.calls.append(
+            {
+                "occurrence_id": occurrence_id,
+                "session_id": session_id,
+                "template_session_id": template_session_id,
+                "student_id": student_id,
+            }
+        )
+        if self.active:
+            return AttendanceEligibility(source="enrollment")
+        source = self.roster.get((occurrence_id, student_id))
+        if source is None:
+            return None
+        if source == "makeup" and not self.live:
+            return None
+        return AttendanceEligibility(source=source)  # type: ignore[arg-type]
 
 
 class FakeOutbox:
@@ -284,3 +324,78 @@ async def test_same_student_can_be_marked_again_for_different_occurrence() -> No
     )
 
     assert [row.occurrence_id for row in repo.saved] == ["occ-2026-05-16", "occ-2026-05-23"]
+
+
+@pytest.mark.asyncio
+async def test_approved_makeup_row_is_eligible_and_recorded_as_makeup() -> None:
+    # Issue #672: a make-up attendee has no enrollment in this session by
+    # construction; an approved roster entry for this occurrence is enough.
+    repo = FakeAttendanceRepo()
+    outbox = FakeOutbox()
+    lookup = FakeEnrollmentLookup(active=False, roster={("occ-2026-05-16", "st1"): "makeup"})
+    uc = _build(attendance_repo=repo, outbox=outbox, enrollment_lookup=lookup)
+    result = await uc.execute(_cmd(), coach_id="coach-1")
+    assert result.student_id == "st1"
+    assert repo.saved[0].entry_source == "makeup"
+    assert outbox.appended[0].payload.entry_source == "makeup"
+    assert lookup.calls == [
+        {
+            "occurrence_id": "occ-2026-05-16",
+            "session_id": "sess-1",
+            "template_session_id": None,
+            "student_id": "st1",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_makeup_row_of_a_student_with_no_live_enrollment_is_refused() -> None:
+    # The family cancelled / withdrew after approval: the roster row survived
+    # (cleanup only prunes the cancelled session) but earns nothing now.
+    repo = FakeAttendanceRepo()
+    lookup = FakeEnrollmentLookup(
+        active=False, roster={("occ-2026-05-16", "st1"): "makeup"}, live=False
+    )
+    uc = _build(attendance_repo=repo, enrollment_lookup=lookup)
+    with pytest.raises(StudentNotEnrolled):
+        await uc.execute(_cmd(), coach_id="coach-1")
+    assert repo.saved == []
+
+
+@pytest.mark.asyncio
+async def test_approved_trial_row_needs_no_live_enrollment() -> None:
+    repo = FakeAttendanceRepo()
+    lookup = FakeEnrollmentLookup(
+        active=False, roster={("occ-2026-05-16", "st1"): "trial"}, live=False
+    )
+    uc = _build(attendance_repo=repo, enrollment_lookup=lookup)
+    await uc.execute(_cmd(), coach_id="coach-1")
+    assert repo.saved[0].entry_source == "trial"
+
+
+@pytest.mark.asyncio
+async def test_approved_trial_row_is_eligible_and_recorded_as_trial() -> None:
+    repo = FakeAttendanceRepo()
+    lookup = FakeEnrollmentLookup(active=False, roster={("occ-2026-05-16", "st1"): "trial"})
+    uc = _build(attendance_repo=repo, enrollment_lookup=lookup)
+    await uc.execute(_cmd(), coach_id="coach-1")
+    assert repo.saved[0].entry_source == "trial"
+
+
+@pytest.mark.asyncio
+async def test_enrolled_student_is_recorded_as_enrollment_source() -> None:
+    repo = FakeAttendanceRepo()
+    uc = _build(attendance_repo=repo)
+    await uc.execute(_cmd(), coach_id="coach-1")
+    assert repo.saved[0].entry_source == "enrollment"
+
+
+@pytest.mark.asyncio
+async def test_makeup_on_a_different_occurrence_is_still_rejected() -> None:
+    # The roster entry is for another date: not eligible here.
+    lookup = FakeEnrollmentLookup(active=False, roster={("occ-2026-05-23", "st1"): "makeup"})
+    uc = _build(enrollment_lookup=lookup)
+    with pytest.raises(StudentNotEnrolled) as exc_info:
+        await uc.execute(_cmd(), coach_id="coach-1")
+    assert exc_info.value.details["student_id"] == "st1"
+    assert exc_info.value.details["occurrence_id"] == "occ-2026-05-16"

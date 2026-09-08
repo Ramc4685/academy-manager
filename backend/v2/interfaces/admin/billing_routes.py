@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Annotated, Any
+from typing import Annotated
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field, StringConstraints
 
-from backend.v2.contexts.billing.application.ports import StripeResourceNotFound
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     ApplyPaymentDiscountCommand,
     GenerateMonthlyPaymentsCommand,
@@ -52,8 +52,7 @@ from backend.v2.interfaces.admin.views import (
     AdminRevenueResponse,
     AdminTuitionDiscountSummaryResponse,
     ApplyPaymentDiscountRequest,
-    BillingReconciliationReportResponse,
-    BillingWebhookQueueResponse,
+    ChargeAutopayRequest,
     ChargeAutopayResponse,
     DeleteExpenseRequest,
     EditExpenseRequest,
@@ -80,7 +79,7 @@ from backend.v2.interfaces.admin.views import (
     WithdrawalCreditPreviewResponse,
 )
 from backend.v2.shared.auth.claims import AuthClaims
-from backend.v2.shared.http import require_persona
+from backend.v2.shared.http import require_owner, require_persona
 from backend.v2.shared.ids import new_ulid
 
 router = APIRouter(tags=["admin.billing"])
@@ -126,7 +125,7 @@ async def get_platform_charge_fallback(
 )
 async def set_platform_charge_fallback(
     body: SetPlatformChargeFallbackRequest,
-    claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> PlatformChargeFallbackResponse:
     use_case = _required_callable(
@@ -179,7 +178,7 @@ async def get_invoice_schedule(
 )
 async def set_invoice_schedule(
     body: SetInvoiceScheduleRequest,
-    claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> InvoiceScheduleResponse:
     use_case = _required_callable(use_cases.set_invoice_schedule, "set_invoice_schedule")
@@ -392,7 +391,7 @@ async def preview_withdrawal_credit(
 async def approve_withdrawal_credit(
     enrollment_id: str,
     body: WithdrawalCreditApproveRequest,
-    claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> WithdrawalCreditApproveResponse:
     result = await use_cases.approve_withdrawal_credit.execute(
@@ -470,7 +469,7 @@ async def last_payment_by_family(
 @router.post("/payments/refund", summary="Issue a refund")
 async def refund(
     body: IssueRefundRequest,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> dict[str, object]:
     result = await use_cases.issue_refund.execute(
@@ -520,7 +519,7 @@ async def mark_payment_paid(
 async def apply_payment_discount(
     payment_id: str,
     body: ApplyPaymentDiscountRequest,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> dict[str, bool]:
     await use_cases.apply_payment_discount.execute(
@@ -537,7 +536,7 @@ async def apply_payment_discount(
 async def set_tuition_discount(
     enrollment_id: str,
     body: SetTuitionDiscountRequest,
-    claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> dict[str, bool]:
     await use_cases.set_tuition_discount.execute(
@@ -563,7 +562,7 @@ async def set_tuition_discount(
 @router.delete("/enrollments/{enrollment_id}/tuition-discount")
 async def remove_tuition_discount(
     enrollment_id: str,
-    claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> dict[str, bool]:
     await use_cases.remove_tuition_discount.execute(
@@ -575,7 +574,7 @@ async def remove_tuition_discount(
 @router.post("/payments/{payment_id}/undo-paid")
 async def undo_payment_paid(
     payment_id: str,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> dict[str, bool]:
     await use_cases.undo_payment_paid.execute(UndoPaymentPaidCommand(payment_id=payment_id))
@@ -607,49 +606,6 @@ async def reconcile_stripe_billing(
     return ReconcileStripeBillingResponse(**result)
 
 
-@router.get("/billing/reconciliation", response_model=BillingReconciliationReportResponse)
-async def get_billing_reconciliation_report(
-    stripe_invoice_id: str | None = None,
-    payment_intent_id: str | None = None,
-    _claims: AuthClaims = Depends(require_persona("admin")),
-    use_cases: AdminUseCases = Depends(get_admin_use_cases),
-) -> BillingReconciliationReportResponse:
-    if not stripe_invoice_id and not payment_intent_id:
-        raise HTTPException(
-            status_code=422,
-            detail="stripe_invoice_id or payment_intent_id is required",
-        )
-    report = _required_callable(
-        use_cases.get_billing_reconciliation_report,
-        "Billing reconciliation report",
-    )
-    try:
-        result = await report(
-            stripe_invoice_id=stripe_invoice_id,
-            payment_intent_id=payment_intent_id,
-        )
-    except StripeResourceNotFound as exc:
-        # str(exc) carries the raw provider error and the internal id — surface
-        # a generic message instead.
-        raise HTTPException(
-            status_code=404,
-            detail="That billing record could not be found. Check the ID and try again.",
-        ) from exc
-    return BillingReconciliationReportResponse(**result)
-
-
-@router.get("/billing/webhooks", response_model=BillingWebhookQueueResponse)
-async def list_billing_webhook_events(
-    status: str | None = None,
-    limit: int = 50,
-    _claims: AuthClaims = Depends(require_persona("admin")),
-    use_cases: AdminUseCases = Depends(get_admin_use_cases),
-) -> BillingWebhookQueueResponse:
-    queue = _required_callable(use_cases.list_billing_webhook_events, "Billing webhook queue")
-    rows = await queue(status=status, limit=max(1, min(limit, 100)))
-    return BillingWebhookQueueResponse(events=rows)
-
-
 # --- # FINANCE ---
 
 
@@ -658,7 +614,7 @@ async def list_billing_webhook_events(
 # No UI surface should call this route once Phase 2 is merged.
 @router.get("/finance/payouts", response_model=AdminPayoutList)  # FINANCE
 async def list_payouts(
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminPayoutList:
     payouts = await use_cases.payouts.list_all()
@@ -758,7 +714,7 @@ async def delete_expense(
 
 @router.get("/finance/revenue", response_model=AdminRevenueResponse)  # FINANCE
 async def revenue(
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminRevenueResponse:
     # Wave 3 stub aggregates across all parents — replace with Mongo
@@ -774,7 +730,7 @@ async def revenue(
 )  # FINANCE
 async def tuition_discount_summary(
     period: str,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminTuitionDiscountSummaryResponse:
     query = _required_callable(use_cases.tuition_discount_summary, "Tuition discount summary")
@@ -888,7 +844,8 @@ async def send_billing_invoice(
 )
 async def charge_invoice_via_autopay(
     invoice_id: str,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    body: ChargeAutopayRequest | None = None,
+    claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> ChargeAutopayResponse:
     """Charge the invoice balance via the parent's saved Stripe payment method (off-session).
@@ -901,12 +858,21 @@ async def charge_invoice_via_autopay(
     - Raises 409 when the invoice is not chargeable (paid/void/draft with zero balance)
       or the parent has no saved payment method.
     """
-    charge_autopay = _required_callable(
-        use_cases.charge_invoice_via_autopay,
+    # Every charge through this route is an admin pressing a button, not the
+    # dunning worker, so it goes through the audited admin path: attributed in
+    # Stripe and written to the trail as `admin_charge_initiated` with the
+    # reason, which is the entry the family timeline renders.
+    charge_as_admin = _required_callable(
+        use_cases.charge_invoice_as_admin_action,
         "Stripe autopay",
     )
     try:
-        result = await charge_autopay(invoice_id)  # type: ignore[operator]
+        result = await charge_as_admin(  # type: ignore[operator]
+            invoice_id=invoice_id,
+            actor_id=claims.user_id,
+            reason=(body.reason if body and body.reason else "Charged by admin"),
+            request_id=(body.request_id if body and body.request_id else str(uuid4())),
+        )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
@@ -971,7 +937,7 @@ async def add_invoice_line(
 async def add_invoice_adjustment(
     invoice_id: str,
     body: AddInvoiceAdjustmentRequest,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> InvoiceLineResponse:
     add_line = _required_callable(use_cases.add_invoice_line, "Invoice adjustment management")
@@ -1028,7 +994,7 @@ async def remove_invoice_line(
 async def void_invoice_route(
     invoice_id: str,
     body: VoidInvoiceRequest,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> dict[str, bool]:
     void_invoice_ = _required_callable(use_cases.void_billing_invoice, "Invoice voiding")
@@ -1127,7 +1093,7 @@ async def record_manual_payment(
 async def refund_invoice(
     invoice_id: str,
     body: InvoiceRefundRequest,
-    claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> InvoiceRefundResponse:
     issue_refund = _required_callable(use_cases.issue_invoice_refund, "Invoice refund")
@@ -1231,25 +1197,6 @@ def _format_cents(cents: int) -> str:
 # --------------------------------------------------------------------------- #
 # Billing Health (#235): reconciliation runs, failed payments, webhook replay
 # --------------------------------------------------------------------------- #
-class ReconciliationRunDto(BaseModel):
-    model_config = {"extra": "ignore"}
-
-    run_id: str
-    started_at: datetime | None = None
-    finished_at: datetime | None = None
-    scanned: int = 0
-    repaired: int = 0
-    skipped: int = 0
-    quarantined: int = 0
-    failed: int = 0
-    errors: list[Any] = Field(default_factory=list)
-    notes: list[str] = Field(default_factory=list)
-
-
-class ReconciliationRunsResponse(BaseModel):
-    runs: list[ReconciliationRunDto]
-
-
 class FailedPaymentRowDto(BaseModel):
     model_config = {"extra": "ignore"}
 
@@ -1310,83 +1257,6 @@ class InvoiceAttemptsResponse(BaseModel):
     attempts: list[PaymentAttemptDto]
 
 
-class ReplayWebhookResponse(BaseModel):
-    replayed: bool
-    event_id: str
-
-
-class ConnectedAccountReadinessDto(BaseModel):
-    model_config = {"extra": "ignore"}
-
-    configured: bool = False
-    status: str | None = None
-    charges_enabled: bool = False
-    payouts_enabled: bool = False
-    ready_for_charges: bool = False
-    account_id_masked: str | None = None
-
-
-class WebhookBacklogDto(BaseModel):
-    model_config = {"extra": "ignore"}
-
-    quarantined: int = 0
-    failed: int = 0
-
-
-class ConnectReadinessResponse(BaseModel):
-    model_config = {"extra": "ignore"}
-
-    connected_account: ConnectedAccountReadinessDto
-    allow_platform_charge_fallback: bool = False
-    #: Can a parent payment succeed at all right now.
-    payments_possible: bool = False
-    #: Whether a succeeding payment reaches the academy's own Stripe account
-    #: rather than the platform's. `funds_route_to_academy` False while
-    #: `payments_possible` is True means money is landing on the platform
-    #: account through the fallback.
-    funds_route_to_academy: bool = False
-    webhook_events: WebhookBacklogDto
-
-
-@router.get("/billing/connect-readiness", response_model=ConnectReadinessResponse)
-async def get_connect_readiness(
-    _claims: AuthClaims = Depends(require_persona("admin")),
-    use_cases: AdminUseCases = Depends(get_admin_use_cases),
-) -> ConnectReadinessResponse:
-    """Whether parent payments can physically succeed, and where money lands.
-
-    Issue #432: no admin surface showed the single condition that gates every
-    parent payment, so an academy could be unable to take money with nothing
-    on screen saying so.
-    """
-    read = _required_callable(use_cases.get_connect_readiness, "Connect readiness")
-    data = await read()  # type: ignore[operator]
-    return ConnectReadinessResponse(**data)
-
-
-@router.get("/billing/reconciliation-runs", response_model=ReconciliationRunsResponse)
-async def list_reconciliation_runs(
-    _claims: AuthClaims = Depends(require_persona("admin")),
-    use_cases: AdminUseCases = Depends(get_admin_use_cases),
-) -> ReconciliationRunsResponse:
-    list_runs = _required_callable(use_cases.list_reconciliation_runs, "Reconciliation runs")
-    rows = await list_runs()  # type: ignore[operator]
-    return ReconciliationRunsResponse(runs=[ReconciliationRunDto(**r) for r in rows])
-
-
-@router.post("/billing/reconcile-now", response_model=ReconciliationRunDto)
-async def run_reconciliation_now(
-    _claims: AuthClaims = Depends(require_persona("admin")),
-    use_cases: AdminUseCases = Depends(get_admin_use_cases),
-) -> ReconciliationRunDto:
-    run = _required_callable(use_cases.run_reconciliation, "Reconciliation")
-    try:
-        result = await run()  # type: ignore[operator]
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return ReconciliationRunDto(**result)
-
-
 @router.get("/billing/failed-payment-attempts", response_model=FailedPaymentsResponse)
 async def list_failed_payment_attempts(
     _claims: AuthClaims = Depends(require_persona("admin")),
@@ -1424,106 +1294,3 @@ async def list_invoice_attempts(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return InvoiceAttemptsResponse(attempts=[PaymentAttemptDto(**a) for a in rows])
-
-
-@router.post(
-    "/billing/webhook-events/{event_id}/replay",
-    response_model=ReplayWebhookResponse,
-)
-async def replay_webhook_event(
-    event_id: str,
-    _claims: AuthClaims = Depends(require_persona("admin")),
-    use_cases: AdminUseCases = Depends(get_admin_use_cases),
-) -> ReplayWebhookResponse:
-    replay = _required_callable(use_cases.replay_webhook_event, "Webhook replay")
-    try:
-        await replay(event_id)  # type: ignore[operator]
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return ReplayWebhookResponse(replayed=True, event_id=event_id)
-
-
-# --------------------------------------------------------------------------- #
-# Legacy invoice ↔ Stripe charge review queue (#242 WI-3)
-# --------------------------------------------------------------------------- #
-class LegacyMatchCandidateDto(BaseModel):
-    model_config = {"extra": "ignore"}
-
-    stripe_charge_id: str
-    stripe_payment_intent_id: str | None = None
-    amount_cents: int
-    currency: str = "usd"
-    created_at: datetime | None = None
-    description: str | None = None
-    confidence: str
-
-
-class LegacyMatchRowDto(BaseModel):
-    model_config = {"extra": "ignore"}
-
-    invoice_id: str
-    parent_id: str
-    parent_name: str | None = None
-    period: str
-    status: str
-    total_cents: int
-    balance_due_cents: int
-    currency: str = "usd"
-    due_date: date | None = None
-    created_at: datetime | None = None
-    stripe_invoice_id: str | None = None
-    stripe_customer_id: str | None = None
-    candidates: list[LegacyMatchCandidateDto] = Field(default_factory=list)
-
-
-class LegacyMatchQueueResponse(BaseModel):
-    rows: list[LegacyMatchRowDto]
-
-
-class ConfirmLegacyMatchRequest(BaseModel):
-    invoice_id: str
-    stripe_charge_id: str
-    amount_cents: int = Field(gt=0)
-    stripe_payment_intent_id: str | None = None
-    paid_at: datetime | None = None
-
-
-class ConfirmLegacyMatchResponse(BaseModel):
-    invoice_id: str
-    payment_id: str
-    invoice_status: str
-    balance_due_cents: int
-
-
-@router.get("/billing/legacy-match-queue", response_model=LegacyMatchQueueResponse)
-async def list_legacy_match_queue(
-    _claims: AuthClaims = Depends(require_persona("admin")),
-    use_cases: AdminUseCases = Depends(get_admin_use_cases),
-) -> LegacyMatchQueueResponse:
-    list_queue = _required_callable(use_cases.list_legacy_match_queue, "Legacy match queue")
-    try:
-        rows = await list_queue()  # type: ignore[operator]
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return LegacyMatchQueueResponse(rows=[LegacyMatchRowDto(**r) for r in rows])
-
-
-@router.post("/billing/legacy-match/confirm", response_model=ConfirmLegacyMatchResponse)
-async def confirm_legacy_match(
-    body: ConfirmLegacyMatchRequest,
-    claims: AuthClaims = Depends(require_persona("admin")),
-    use_cases: AdminUseCases = Depends(get_admin_use_cases),
-) -> ConfirmLegacyMatchResponse:
-    confirm = _required_callable(use_cases.confirm_legacy_match, "Legacy match confirm")
-    try:
-        result = await confirm(  # type: ignore[operator]
-            invoice_id=body.invoice_id,
-            stripe_charge_id=body.stripe_charge_id,
-            amount_cents=body.amount_cents,
-            stripe_payment_intent_id=body.stripe_payment_intent_id,
-            paid_at=body.paid_at,
-            recorded_by=claims.user_id,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return ConfirmLegacyMatchResponse(**result)

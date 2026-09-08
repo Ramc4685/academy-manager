@@ -24,6 +24,7 @@ from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
 from backend.v2.contexts.billing.domain.ledger import InvoiceLine, LedgerInvoice
 from backend.v2.contexts.billing.domain.models import AppliedCreditState
 from backend.v2.contexts.billing.domain.proration import (
+    MOVE_SOURCE_TYPE,
     BillingCalculationSnapshot,
     BillingPeriod,
     ClassOccurrence,
@@ -34,6 +35,7 @@ from backend.v2.contexts.billing.domain.tuition_discount import (
     TuitionDiscount,
     display_label,
     monthly_discount_cents,
+    policy_applies_to_period,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo import (
     MongoBillingSettingsRepository,
@@ -66,6 +68,25 @@ class MongoMonthlyBillingGenerator:
         # every invoice in a run shares one grace window even if the run
         # straddles midnight or an admin edits the setting mid-run.
         self._invoice_due_days = BillingSettings.default("").invoice_due_days
+
+    async def _load_academy_timezone(self) -> str | None:
+        """The academy's wall clock, resolved once per generation run.
+
+        Issue #675 follow-up: ``pending_cancellation_at`` is the last instant
+        of the academy-LOCAL month, so bucketing it into a ``YYYY-MM`` period
+        needs that zone — in UTC a Chicago September ends in October and the
+        skip below would be off by a month. Unreadable/unset degrades to UTC,
+        matching ``self_cancel._end_of_month`` and ``period_of``.
+        """
+        try:
+            doc = await self._db["academies"].find_one({"academy_id": current_academy_id()})
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "monthly_generation_academy_timezone_unreadable; using UTC",
+                exc_info=True,
+            )
+            return None
+        return str((doc or {}).get("timezone") or "") or None
 
     async def _load_invoice_due_days(self) -> int:
         """Read this academy's grace window, falling back to the model default.
@@ -174,6 +195,46 @@ class MongoMonthlyBillingGenerator:
                 if deferral.get("deferral_id") is not None
                 else {}
             ),
+        )
+
+    def _paused_status_detail(
+        self,
+        *,
+        enrollment: dict[str, object],
+        student_doc: dict[str, object] | None,
+        period: str,
+    ) -> MonthlyGenerationSkippedDetail:
+        return MonthlyGenerationSkippedDetail(
+            enrollment_id=str(enrollment.get("enrollment_id") or enrollment.get("_id")),
+            student_id=str(enrollment.get("student_id") or ""),
+            student_name=str((student_doc or {}).get("full_name") or "") or None,
+            reason_code="enrollment_paused",
+            source="enrollment.status",
+            billing_period=period,
+            needs_review=False,
+            metadata={"policy": "paused enrollments are not invoiced (#651)"},
+        )
+
+    def _pending_cancellation_detail(
+        self,
+        *,
+        enrollment: dict[str, object],
+        student_doc: dict[str, object] | None,
+        period: str,
+        pending_period: str,
+    ) -> MonthlyGenerationSkippedDetail:
+        return MonthlyGenerationSkippedDetail(
+            enrollment_id=str(enrollment.get("enrollment_id") or enrollment.get("_id")),
+            student_id=str(enrollment.get("student_id") or ""),
+            student_name=str((student_doc or {}).get("full_name") or "") or None,
+            reason_code="pending_cancellation",
+            source="enrollment.pending_cancellation_at",
+            billing_period=period,
+            needs_review=False,
+            metadata={
+                "policy": "a scheduled end-of-period cancel is not billed past its month (#675)",
+                "pending_cancellation_period": pending_period,
+            },
         )
 
     def _legacy_skip_period_detail(
@@ -490,6 +551,12 @@ class MongoMonthlyBillingGenerator:
                 "period": period,
                 "is_deleted": {"$ne": True},
                 "status": {"$ne": "void"},
+                # A mid-period move adjustment (issue #669) carries the same
+                # (enrollment_id, period) but is NOT the month's tuition
+                # invoice. It is created later, so newest-first would hand it
+                # back here and the recovery pass would mark the period
+                # complete with the tuition invoice still missing.
+                "source_type": {"$ne": MOVE_SOURCE_TYPE},
             },
             sort=[("created_at", -1), ("invoice_id", -1)],
         )
@@ -768,6 +835,7 @@ class MongoMonthlyBillingGenerator:
     async def generate_monthly_payments(self, period: str) -> GenerateMonthlyPaymentsResult:
         academy_id = current_academy_id()
         self._invoice_due_days = await self._load_invoice_due_days()
+        academy_timezone = await self._load_academy_timezone() or "UTC"
         cursor = self._db["enrollments"].find(
             {
                 "academy_id": academy_id,
@@ -803,6 +871,37 @@ class MongoMonthlyBillingGenerator:
                 skipped_paused += 1
                 skipped_details.append(deferral_detail)
                 continue
+            if str(enrollment.get("status") or "") == "paused":
+                # Issue #651: a paused enrollment is never invoiced, deferral
+                # row or not. A deferral (above) explains the skip when present;
+                # otherwise the status itself is the reason.
+                skipped_paused += 1
+                skipped_details.append(
+                    self._paused_status_detail(
+                        enrollment=enrollment, student_doc=student_doc, period=period
+                    )
+                )
+                continue
+            pending_cancellation_at = _coerce_datetime(enrollment.get("pending_cancellation_at"))
+            if pending_cancellation_at is not None:
+                # Issue #675 follow-up: an ``end_of_period`` self-cancel leaves
+                # the row ``active`` until the hourly worker flips it at month
+                # end, and the generation cron can run first (03:00 UTC vs a
+                # Chicago 04:59:59 run_at). Without this the family is minted —
+                # and emailed — an invoice for the month they cancelled, which
+                # the worker then voids hours later.
+                pending_period = _local_period_label(pending_cancellation_at, academy_timezone)
+                if period > pending_period:
+                    skipped_paused += 1
+                    skipped_details.append(
+                        self._pending_cancellation_detail(
+                            enrollment=enrollment,
+                            student_doc=student_doc,
+                            period=period,
+                            pending_period=pending_period,
+                        )
+                    )
+                    continue
             if period in set(enrollment.get("skip_periods") or []):
                 skipped_paused += 1
                 skipped_details.append(
@@ -976,7 +1075,16 @@ class MongoMonthlyBillingGenerator:
         )
 
 
-def _session_amount_cents(doc: dict[str, object]) -> int:
+def session_amount_cents(doc: dict[str, object]) -> int:
+    """The monthly price the generator bills a session at.
+
+    Public because the cancellation reader must price a session EXACTLY as
+    the generator does (#671): a bare ``amount_cents`` read is not
+    equivalent — legacy/imported session docs carry only
+    ``monthly_price_cents`` or ``monthly_price`` and would price at zero,
+    crediting nobody for a date the family is still billed for in full
+    (see the #609 warning in ``mongo_session_repo``).
+    """
     if doc.get("amount_cents") is not None:
         return int(doc["amount_cents"])
     if doc.get("monthly_price_cents") is not None:
@@ -1100,7 +1208,7 @@ async def _resolve_charge_for_enrollment(
     effective for the period, is applied at monthly scale and threaded through the
     existing proration policy so discounted invoices stay consistent with proration.
     """
-    amount_cents = _session_amount_cents(session_doc)
+    amount_cents = session_amount_cents(session_doc)
     billing_start = _coerce_datetime(
         enrollment.get("billing_start_at")
         or enrollment.get("enrolled_at")
@@ -1195,10 +1303,10 @@ async def _resolve_charge_for_enrollment(
 
 def _policy_applies(policy: TuitionDiscount, billing_period: BillingPeriod) -> bool:
     """True when the policy's effective window overlaps the billing period."""
-    p_start = billing_period.start_at.date()
-    p_end = billing_period.end_at.date()
-    return policy.effective_start <= p_end and (
-        policy.effective_end is None or policy.effective_end >= p_start
+    return policy_applies_to_period(
+        policy,
+        period_start=billing_period.start_at.date(),
+        period_end=billing_period.end_at.date(),
     )
 
 

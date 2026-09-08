@@ -482,3 +482,38 @@ async def test_makeup_request_repo_isolates_tenants(db) -> None:
         active_c = await repo.find_active_for_missed_occurrence("occ-1", "student-1")
 
     assert active_c is None
+
+
+@pytest.mark.asyncio
+async def test_enrollment_repo_active_or_paused_for_student_excludes_ended_rows(db) -> None:
+    """Issue #651: the coach authorisation read must see paused enrollments
+    (roster seat kept, #641) but never cancelled / withdrawn ones, and only
+    within the tenant."""
+    await db["enrollments"].insert_many(
+        [
+            {
+                "enrollment_id": f"e-{status}",
+                "academy_id": "academy-a",
+                "session_id": f"sess-{status}",
+                "student_id": "st1",
+                "status": status,
+            }
+            for status in ("active", "paused", "cancelled", "withdrawn")
+        ]
+        + [
+            {
+                "enrollment_id": "e-other-tenant",
+                "academy_id": "academy-b",
+                "session_id": "sess-b",
+                "student_id": "st1",
+                "status": "active",
+            }
+        ]
+    )
+    repo = MongoEnrollmentRepository(db)
+    with tenant_scope("academy-a"):
+        live = await repo.active_or_paused_for_student("st1")
+        active_only = await repo.active_for_student("st1")
+
+    assert sorted(e.session_id for e in live) == ["sess-active", "sess-paused"]
+    assert [e.session_id for e in active_only] == ["sess-active"]

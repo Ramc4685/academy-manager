@@ -4,6 +4,8 @@ set -euo pipefail
 API_URL="${API_URL:-https://api.academy.courtmastr.com}"
 FRONTEND_URL="${FRONTEND_URL:-https://academy.courtmastr.com}"
 EXPECTED_FIREBASE_PROJECT_ID="${EXPECTED_FIREBASE_PROJECT_ID:-academy-courtmastr}"
+# Space-separated extra tenant origins served by the same Worker and API.
+TENANT_FRONTEND_URLS="${TENANT_FRONTEND_URLS:-}"
 CURL_RETRY_ATTEMPTS="${CURL_RETRY_ATTEMPTS:-6}"
 CURL_RETRY_DELAY_SECONDS="${CURL_RETRY_DELAY_SECONDS:-5}"
 CURL_CONNECT_TIMEOUT_SECONDS="${CURL_CONNECT_TIMEOUT_SECONDS:-10}"
@@ -38,46 +40,58 @@ if ! grep -q '"status"[[:space:]]*:[[:space:]]*"ok"' <<<"${health_body}"; then
   exit 1
 fi
 
-echo "Checking API CORS preflight..."
-cors_headers="$(curl_smoke -D - -o /dev/null -X OPTIONS \
-  -H "Origin: ${FRONTEND_URL}" \
-  -H "Access-Control-Request-Method: GET" \
-  "${API_URL}/api/v2/me")"
+check_cors_for_origin() {
+  local origin="$1"
+  echo "Checking API CORS preflight for ${origin}..."
+  local cors_headers allow_origin allow_origin_lower origin_lower
+  cors_headers="$(curl_smoke -D - -o /dev/null -X OPTIONS \
+    -H "Origin: ${origin}" \
+    -H "Access-Control-Request-Method: GET" \
+    "${API_URL}/api/v2/me")"
+  allow_origin="$(awk 'tolower($0) ~ /^access-control-allow-origin:/ {
+    sub(/^[^:]*:[[:space:]]*/, "")
+    sub(/\r$/, "")
+    print
+    exit
+  }' <<<"${cors_headers}")"
+  allow_origin_lower="$(printf '%s' "${allow_origin}" | tr '[:upper:]' '[:lower:]')"
+  origin_lower="$(printf '%s' "${origin}" | tr '[:upper:]' '[:lower:]')"
+  if [[ "${allow_origin_lower}" != "${origin_lower}" ]]; then
+    echo "CORS preflight failed: expected access-control-allow-origin ${origin}, got ${allow_origin:-<missing>}" >&2
+    exit 1
+  fi
+}
 
-allow_origin="$(awk 'tolower($0) ~ /^access-control-allow-origin:/ {
-  sub(/^[^:]*:[[:space:]]*/, "")
-  sub(/\r$/, "")
-  print
-  exit
-}' <<<"${cors_headers}")"
+check_frontend_origin() {
+  local origin="$1"
+  echo "Checking frontend ${origin}..."
+  local headers html bff
+  headers="$(curl_smoke -I "${origin}")"
+  if ! grep -qi '^content-type:.*text/html' <<<"${headers}"; then
+    echo "Frontend check failed: expected HTML response from ${origin}" >&2
+    exit 1
+  fi
+  html="$(curl_smoke "${origin}")"
+  if ! grep -qiE 'CourtMastr|Academy Manager|badminton|Run your' <<<"${html}"; then
+    echo "Frontend check failed: expected CourtMastr/Academy content from ${origin}" >&2
+    exit 1
+  fi
+  echo "Checking frontend BFF proxy for ${origin}..."
+  bff="$(curl_smoke "${origin}/api/v2/healthz")"
+  if ! grep -q '"status"[[:space:]]*:[[:space:]]*"ok"' <<<"${bff}"; then
+    echo "Frontend BFF proxy check failed: expected \"status\":\"ok\" from ${origin}/api/v2/healthz" >&2
+    exit 1
+  fi
+}
 
-allow_origin_lower="$(printf '%s' "${allow_origin}" | tr '[:upper:]' '[:lower:]')"
-frontend_url_lower="$(printf '%s' "${FRONTEND_URL}" | tr '[:upper:]' '[:lower:]')"
+check_cors_for_origin "${FRONTEND_URL}"
 
-if [[ "${allow_origin_lower}" != "${frontend_url_lower}" ]]; then
-  echo "CORS preflight failed: expected access-control-allow-origin ${FRONTEND_URL}, got ${allow_origin:-<missing>}" >&2
-  exit 1
-fi
+check_frontend_origin "${FRONTEND_URL}"
 
-echo "Checking frontend..."
-frontend_headers="$(curl_smoke -I "${FRONTEND_URL}")"
-if ! grep -qi '^content-type:.*text/html' <<<"${frontend_headers}"; then
-  echo "Frontend check failed: expected HTML response from ${FRONTEND_URL}" >&2
-  exit 1
-fi
-
-frontend_html="$(curl_smoke "${FRONTEND_URL}")"
-if ! grep -qiE 'CourtMastr|Academy Manager|badminton|Run your' <<<"${frontend_html}"; then
-  echo "Frontend check failed: expected CourtMastr/Academy content from ${FRONTEND_URL}" >&2
-  exit 1
-fi
-
-echo "Checking frontend BFF proxy..."
-frontend_v2_health_body="$(curl_smoke "${FRONTEND_URL}/api/v2/healthz")"
-if ! grep -q '"status"[[:space:]]*:[[:space:]]*"ok"' <<<"${frontend_v2_health_body}"; then
-  echo "Frontend BFF proxy check failed: expected \"status\":\"ok\" from ${FRONTEND_URL}/api/v2/healthz" >&2
-  exit 1
-fi
+for tenant_url in ${TENANT_FRONTEND_URLS}; do
+  check_cors_for_origin "${tenant_url}"
+  check_frontend_origin "${tenant_url}"
+done
 
 echo "Checking built Firebase config in login chunks..."
 

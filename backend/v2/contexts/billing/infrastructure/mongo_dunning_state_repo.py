@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any, ClassVar
+from zoneinfo import ZoneInfo
 
 from pymongo import ASCENDING, ReturnDocument
 
+from backend.v2.contexts.billing.application.autopay_eligibility import (
+    AUTOPAY_ACTIVE_STATUS,
+    invoice_is_chargeable,
+    ladder_eligibility,
+)
 from backend.v2.contexts.billing.domain.dunning import (
+    FIRST_ATTEMPT_LOCAL_HOUR,
     DunningState,
     open_initial_dunning_state,
     record_dunning_attempt_result,
@@ -36,6 +44,33 @@ class MongoDunningStateRepository(TenantScopedRepository):
         "checkout_session_open",
         "stripe_not_configured",
     }
+
+    #: Local hour (academy timezone) before which no NEW ladder is prepared on
+    #: its due date, so the first autopay attempt lands in the morning of the
+    #: due date instead of 00:00 UTC — 7pm the evening before in Chicago (#651).
+    #: The value is the domain constant; this alias keeps the existing call
+    #: sites working while the rule itself lives with the ladder.
+    first_attempt_local_hour: ClassVar[int] = FIRST_ATTEMPT_LOCAL_HOUR
+
+    def __init__(
+        self,
+        db: Any,
+        *,
+        academy_timezone: Callable[[str], Awaitable[str | None]] | None = None,
+    ) -> None:
+        super().__init__(db)
+        self._academy_timezone = academy_timezone
+
+    async def _local_now(self, *, academy_id: str, now: datetime) -> datetime:
+        """``now`` on the academy's wall clock (UTC when no zone is configured)."""
+        aware = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
+        if self._academy_timezone is None:
+            return aware
+        try:
+            zone = await self._academy_timezone(academy_id)
+            return aware.astimezone(ZoneInfo(zone)) if zone else aware
+        except Exception:  # pragma: no cover - defensive: never block collection
+            return aware
 
     @staticmethod
     def _state_from_doc(doc: dict[str, object]) -> DunningState:
@@ -76,6 +111,14 @@ class MongoDunningStateRepository(TenantScopedRepository):
     async def prepare_due_states(self, *, now: datetime, limit: int) -> int:
         academy_id = current_academy_id()
         created = 0
+        local_now = await self._local_now(academy_id=academy_id, now=now)
+        if local_now.hour < self.first_attempt_local_hour:
+            # Too early on the academy's clock: leave today's due invoices
+            # for a later tick. Existing ladders still retry on schedule.
+            return 0
+        # due_date is stored as a naive midnight; anything due on or before
+        # the academy's local calendar day is ready.
+        due_cutoff = datetime.combine(local_now.date(), time.max)
         cursor = (
             self._db["invoices"]
             .find(
@@ -83,10 +126,17 @@ class MongoDunningStateRepository(TenantScopedRepository):
                     "academy_id": academy_id,
                     "status": {"$in": ["open", "partially_paid"]},
                     "balance_due_cents": {"$gt": 0},
-                    "due_date": {"$lte": now},
+                    "due_date": {"$lte": due_cutoff},
                     "enrollment_id": {"$exists": True, "$ne": None},
                 },
-                {"invoice_id": 1, "parent_id": 1, "enrollment_id": 1, "due_date": 1},
+                {
+                    "invoice_id": 1,
+                    "parent_id": 1,
+                    "enrollment_id": 1,
+                    "due_date": 1,
+                    "status": 1,
+                    "balance_due_cents": 1,
+                },
             )
             .sort([("due_date", ASCENDING), ("invoice_id", ASCENDING)])
         )
@@ -146,7 +196,7 @@ class MongoDunningStateRepository(TenantScopedRepository):
                 {
                     "academy_id": academy_id,
                     "enrollment_id": {"$in": enrollment_ids},
-                    "autopay_enrollment_status": "active",
+                    "autopay_enrollment_status": AUTOPAY_ACTIVE_STATUS,
                 },
                 {"enrollment_id": 1},
             )
@@ -156,7 +206,15 @@ class MongoDunningStateRepository(TenantScopedRepository):
             if created >= remaining:
                 break
             enrollment_id = str(invoice_doc["enrollment_id"])
-            if enrollment_id not in autopay_active:
+            eligibility = ladder_eligibility(
+                invoice_status=invoice_doc.get("status"),
+                balance_due_cents=int(invoice_doc.get("balance_due_cents") or 0),
+                enrollment_id=enrollment_id,
+                autopay_enrollment_status=(
+                    AUTOPAY_ACTIVE_STATUS if enrollment_id in autopay_active else None
+                ),
+            )
+            if not eligibility.eligible:
                 continue
             invoice_id = str(invoice_doc["invoice_id"])
             due_at = _as_datetime(invoice_doc.get("due_date"), now=now)
@@ -236,7 +294,10 @@ class MongoDunningStateRepository(TenantScopedRepository):
                     "enrollment_id": str(invoice_doc.get("enrollment_id") or ""),
                 }
             )
-            if enrollment is None or enrollment.get("autopay_enrollment_status") != "active":
+            if (
+                enrollment is None
+                or enrollment.get("autopay_enrollment_status") != AUTOPAY_ACTIVE_STATUS
+            ):
                 await self._store_state(state.suppress(reason="autopay_not_active", now=now))
                 continue
             latest_status = await self._latest_payment_attempt_status(state.invoice_id)
@@ -388,6 +449,42 @@ class MongoDunningStateRepository(TenantScopedRepository):
             raise ValueError("dunning state not found")
         return self._state_from_doc(doc)
 
+    async def list_autopay_disable_failures(self, *, limit: int = 20) -> dict[str, Any]:
+        """Ladders whose terminal autopay switch-off failed (spec 2026-09-07 §4.4).
+
+        When the ladder runs out the worker switches autopay off, and that
+        Stripe call can itself fail. Nothing else in the product shows this: a
+        failed switch-off means the worker believes autopay is off while the
+        card may still be attached in Stripe, so it is plumbing, not family
+        work, and it belongs on Billing Health.
+
+        ``count`` is the true count from an aggregate; ``rows`` is capped at
+        ``limit`` so a large backlog cannot make the page unusable, and
+        ``truncated`` says when the two disagree.
+        """
+        academy_id = current_academy_id()
+        query: dict[str, Any] = {
+            "academy_id": academy_id,
+            "autopay_disable_status": "failed",
+        }
+        count = await self.collection.count_documents(query)
+        cursor = self.collection.find(
+            query,
+            sort=[("updated_at", -1), ("invoice_id", 1)],
+            limit=max(1, min(int(limit), 100)),
+        )
+        rows: list[dict[str, Any]] = []
+        async for doc in cursor:
+            rows.append(
+                {
+                    "invoice_id": str(doc.get("invoice_id") or ""),
+                    "parent_id": str(doc.get("parent_id") or ""),
+                    "error": doc.get("autopay_disable_error") or None,
+                    "failed_at": doc.get("updated_at"),
+                }
+            )
+        return {"count": int(count), "rows": rows, "truncated": len(rows) < int(count)}
+
     async def list_admin_rows(self) -> list[dict[str, Any]]:
         academy_id = current_academy_id()
         rows: list[dict[str, Any]] = []
@@ -407,6 +504,11 @@ class MongoDunningStateRepository(TenantScopedRepository):
                 {"academy_id": academy_id, "invoice_id": state_doc["invoice_id"]}
             )
             if invoice is None:
+                continue
+            # issue #651: a voided or paid invoice has nothing left to collect,
+            # so its ladder must not surface as a live autopay failure on
+            # billing-health even if the state row was never suppressed.
+            if str(invoice.get("status") or "") in {"void", "paid"}:
                 continue
             rows.append(
                 {
@@ -428,6 +530,30 @@ class MongoDunningStateRepository(TenantScopedRepository):
                 }
             )
         return rows
+
+    async def suppress_for_invoice(self, *, invoice_id: str, reason: str, now: datetime) -> bool:
+        """Stop the ladder for one invoice (voided / no longer collectable).
+
+        Returns True when an active/processing/parked state was suppressed;
+        False when the invoice has no ladder or it is already terminal.
+
+        issue #651: a ``dunned`` (exhausted) ladder may still move to
+        ``suppressed`` when ``reason == "invoice_voided"`` — voiding removes
+        the debt, so the row must stop reading as an outstanding failure.
+        ``resolved`` and already-``suppressed`` states are always left alone.
+        """
+        doc = await self.collection.find_one(
+            {"academy_id": current_academy_id(), "invoice_id": invoice_id}
+        )
+        if doc is None:
+            return False
+        state = self._state_from_doc(doc)
+        if state.status in {"suppressed", "resolved"}:
+            return False
+        if state.status == "dunned" and reason != "invoice_voided":
+            return False
+        await self._store_state(state.suppress(reason=reason, now=now))
+        return True
 
     async def _store_state(self, state: DunningState) -> DunningState:
         await self.collection.update_one(
@@ -491,7 +617,6 @@ def _mongo_doc(model: DunningState) -> dict[str, Any]:
 def _invoice_chargeable(invoice_doc: dict[str, Any] | None) -> bool:
     if invoice_doc is None:
         return False
-    return (
-        invoice_doc.get("status") in {"open", "partially_paid"}
-        and int(invoice_doc.get("balance_due_cents") or 0) > 0
+    return invoice_is_chargeable(
+        invoice_doc.get("status"), int(invoice_doc.get("balance_due_cents") or 0)
     )

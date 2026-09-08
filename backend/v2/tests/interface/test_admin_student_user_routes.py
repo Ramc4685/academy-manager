@@ -67,6 +67,19 @@ class StudentDetailStub:
                     payment_mode="monthly",
                     subscription_status="active",
                     amount_cents=15_000,
+                    autopay_status="active",
+                )
+            ],
+            past_enrollments=[
+                AdminStudentSessionSummary(
+                    enrollment_id="enr-0",
+                    session_id="sess-0",
+                    session_title="Beginner Basics",
+                    status="cancelled",
+                    cancelled_at=datetime(2026, 8, 20, 15, 0, tzinfo=UTC),
+                    ended_at=datetime(2026, 8, 20, 15, 0, tzinfo=UTC),
+                    cancelled_by="parent",
+                    reason="Schedule conflict",
                 )
             ],
             payment_history=[
@@ -192,12 +205,24 @@ def test_admin_can_get_and_update_student_detail(admin_client):
             "start_at": "2026-06-02T21:00:00Z",
             "end_at": "2026-06-02T22:00:00Z",
             "status": "active",
+            "pending_cancellation_at": None,
             "payment_mode": "monthly",
             "subscription_status": "active",
             "amount_cents": 15000,
             "discount": None,
+            "autopay_status": "active",
+            "cancelled_at": None,
+            "withdrawal_date": None,
+            "ended_at": None,
+            "cancelled_by": None,
+            "reason": None,
         }
     ]
+    # Issue #674: past enrollments ride along with their lifecycle facts.
+    assert [
+        (p["enrollment_id"], p["status"], p["ended_at"], p["cancelled_by"], p["reason"])
+        for p in detail_body["past_enrollments"]
+    ] == [("enr-0", "cancelled", "2026-08-20T15:00:00Z", "parent", "Schedule conflict")]
     assert detail_body["payment_history"][0]["balance_due_cents"] == 11000
     assert detail_body["current_payment"] == {
         "amount_cents": 11000,

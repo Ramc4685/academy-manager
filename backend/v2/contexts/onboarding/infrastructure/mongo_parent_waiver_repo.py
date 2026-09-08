@@ -18,6 +18,31 @@ from backend.v2.contexts.onboarding.infrastructure.mongo_waiver_template_repo im
 )
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 
+LIVE_ENROLLMENT_STATUSES: tuple[str, ...] = ("active", "paused")
+
+
+async def student_ids_with_live_enrollment(
+    db: Any, academy_id: str, student_ids: list[str]
+) -> set[str]:
+    """Return the subset of ``student_ids`` holding an active-or-paused enrollment.
+
+    issue #651 invariant: waiver obligations follow live enrollments. A student
+    whose every enrollment is cancelled / withdrawn owes no signature, while a
+    paused student (still on the roster, issue #641) does. Shared by the parent
+    waiver prompt and the admin waiver report so the two can never disagree.
+    """
+    if not student_ids:
+        return set()
+    cursor = db["enrollments"].find(
+        {
+            "academy_id": academy_id,
+            "student_id": {"$in": student_ids},
+            "status": {"$in": list(LIVE_ENROLLMENT_STATUSES)},
+        },
+        {"student_id": 1},
+    )
+    return {str(doc.get("student_id")) async for doc in cursor}
+
 
 class MongoParentWaiverRepository(TenantScopedRepository):
     collection_name = "waiver_signatures"
@@ -73,6 +98,11 @@ class MongoParentWaiverRepository(TenantScopedRepository):
             if k not in seen:
                 seen.add(k)
                 merged.append(doc)
+        # issue #651: a waiver is only owed for a child who still attends.
+        # Withdrawn / cancelled families were still being nagged to sign, so
+        # keep only students with at least one active-or-paused enrollment
+        # (the same join `MongoStudentRepository.has_active_enrollment` uses).
+        merged = await self._with_live_enrollment(academy_id, merged)
         return [
             ParentWaiverStudent(
                 student_id=str(doc.get("student_id") or doc.get("_id")),
@@ -80,6 +110,14 @@ class MongoParentWaiverRepository(TenantScopedRepository):
             )
             for doc in merged
         ]
+
+    async def _with_live_enrollment(self, academy_id: str, student_docs: list[Any]) -> list[Any]:
+        live = await student_ids_with_live_enrollment(
+            self._db,
+            academy_id,
+            [str(doc.get("student_id") or doc.get("_id")) for doc in student_docs],
+        )
+        return [doc for doc in student_docs if str(doc.get("student_id") or doc.get("_id")) in live]
 
     async def latest_signatures_for_students(
         self, student_ids: list[str]

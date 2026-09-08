@@ -1,47 +1,71 @@
 /**
  * Mobile smoke spec for the coach session skill board.
  *
- * SKIPPED: The project's e2e suite has no seeded-auth path for coach pages.
- * The existing fixture (`frontend/e2e/fixtures/mock-api.ts`) stubs network at
- * the Playwright route layer and patches `__fakeFirebaseUser` via initScript,
- * but it does not provide:
- *   - A real (or seeded-fake) Firebase ID token that the Next.js middleware
- *     accepts for coach routes.
- *   - A known seeded session ID with a placed roster for asserting board data.
- *
- * To un-skip this spec you need:
- *   1. A `storageState` or token-injection helper that authenticates a coach
- *      user against the local Firebase emulator (or a test-only bypass in the
- *      Next.js middleware).
- *   2. The local stack seeded with `seed_badminton_pathway` and at least one
- *      session whose roster has students placed in a level
- *      (see `scripts/local_test_stack.sh`).
- *   3. Replace `SESSION_ID_FROM_SEED` below with the actual session ID
- *      produced by that seed.
- *
- * The backend contract is fully covered by interface tests:
- *   backend/v2/tests/interface/test_coach_skill_routes.py
- *   backend/v2/tests/interface/test_admin_skill_board.py
+ * Runs against the route-layer BFF mock (`e2e/fixtures/mock-api.ts`, which
+ * also bypasses Firebase auth): the board endpoint is stubbed with one level,
+ * two skills and both roster students placed. Below `md:` the board renders
+ * as cards (`skill-card-<studentId>`) with 44px skill chips; the cell editor
+ * opens as a bottom sheet. The backend contract is covered by
+ * backend/v2/tests/interface/test_coach_skill_routes.py.
  */
 
-import { expect, test } from "@playwright/test";
+import type { Locator } from "@playwright/test";
 
-test.use({ viewport: { width: 390, height: 844 } });
+import { test, expect } from "../fixtures/mock-api";
+
+async function expectTouchHeight(locator: Locator): Promise<void> {
+  await expect(locator).toBeVisible();
+  const box = await locator.boundingBox();
+  expect(box, "element has a layout box").not.toBeNull();
+  expect(box!.height).toBeGreaterThanOrEqual(44);
+}
 
 test.describe("coach skill board (mobile)", () => {
-  test.skip(
-    true,
-    "Requires seeded local stack + coach auth helper — see file comment for prerequisites",
-  );
+  test("by-student cards have 44px chips, open the cell editor, and never overflow", async ({
+    page,
+    mock,
+  }) => {
+    void mock;
+    await page.goto("/coach/sessions/s-today-1/progress");
+    await expect(page.getByTestId("skill-board")).toBeVisible();
+    await expect(page.getByTestId("skill-board-level-1")).toBeVisible();
 
-  test("by-skill mode renders and opens the cell editor", async ({ page }) => {
-    // Prerequisite: local stack running with seed_badminton_pathway applied,
-    // coach authenticated, and SESSION_ID_FROM_SEED replaced with a real ID.
-    await page.goto("/coach/sessions/SESSION_ID_FROM_SEED/progress");
+    const card = page.getByTestId("skill-card-st1");
+    await expect(card).toContainText("Alice");
+    const chips = card.getByRole("button");
+    await expect(chips).toHaveCount(2);
+    await expectTouchHeight(chips.nth(0));
+    await expectTouchHeight(chips.nth(1));
+
+    const noOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+    );
+    expect(noOverflow).toBe(true);
+
+    await chips.nth(0).click();
+    const editor = page.getByTestId("skill-cell-editor");
+    await expect(editor).toBeVisible();
+    await expect(editor).toContainText("Backhand clear");
+    await expectTouchHeight(page.getByTestId("quick-pass"));
+    const editorBox = await editor.boundingBox();
+    const viewport = page.viewportSize();
+    expect(editorBox).not.toBeNull();
+    expect(viewport).not.toBeNull();
+    expect(editorBox!.x).toBeGreaterThanOrEqual(0);
+    expect(editorBox!.x + editorBox!.width).toBeLessThanOrEqual(viewport!.width + 1);
+    await page.getByRole("button", { name: "Close" }).click();
+    await expect(editor).toHaveCount(0);
+  });
+
+  test("by-skill mode lists students and opens the cell editor", async ({ page, mock }) => {
+    void mock;
+    await page.goto("/coach/sessions/s-today-1/progress");
     await expect(page.getByTestId("skill-board")).toBeVisible();
 
     await page.getByRole("button", { name: "By skill" }).click();
-    await page.getByTestId(/by-skill-student-/).first().click();
+    const row = page.getByTestId("by-skill-student-st2");
+    await expectTouchHeight(row);
+    await row.click();
     await expect(page.getByTestId("skill-cell-editor")).toBeVisible();
     await expect(page.getByTestId("quick-pass")).toBeVisible();
   });

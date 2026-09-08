@@ -208,7 +208,7 @@ scripts/dev/pre-push-checks.sh --full   # force E2E
 ```
 
 The script is change-aware and fail-fast (PR #477): it classifies the
-outgoing diff and runs only the tier that matches. The full 2,719-test
+outgoing diff and runs only the tier that matches. The full 3,600-test
 backend suite and all frontend suites remain the enforced CI merge gate —
 the required **CI Gate** status check on `main` — so the local hook is a
 fast first filter, not the last line of defense.

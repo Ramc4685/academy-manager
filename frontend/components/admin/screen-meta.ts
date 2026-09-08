@@ -24,6 +24,12 @@ export interface AdminNavItem {
   urgent?: boolean;
   /** True if pathname `p` should highlight this item. */
   match: (p: string) => boolean;
+  /**
+   * Money-governance destination: rendered only for academy owners. The
+   * backend 404s the underlying routes for admin-only users, so the nav must
+   * not advertise them (`navForRoles`).
+   */
+  ownerOnly?: true;
 }
 
 export interface AdminNavGroup {
@@ -56,22 +62,24 @@ export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
   {
     group: "MONEY",
     items: [
+      // Ordered by how often the job is done: work the money list, check a
+      // family, close the month, then the plumbing and the outgoings.
       {
         href: "/admin/payments",
         label: "Payments",
         icon: "pay",
         match: startsWith("/admin/payments"),
       },
-      { href: "/admin/billing-health", label: "Billing Health", icon: "signal", match: startsWith("/admin/billing-health") },
-      { href: "/admin/billing-setup", label: "Billing Setup", icon: "user", match: startsWith("/admin/billing-setup") },
+      { href: "/admin/families", label: "Families", icon: "user", match: startsWith("/admin/families") },
+      { href: "/admin/reports", label: "Month close", icon: "chart", match: startsWith("/admin/reports"), ownerOnly: true },
+      { href: "/admin/billing-health", label: "Billing Health", icon: "signal", match: startsWith("/admin/billing-health"), ownerOnly: true },
       {
         href: "/admin/expenses",
         label: "Expenses",
         icon: "card",
         match: startsWith("/admin/expenses"),
       },
-      { href: "/admin/payouts", label: "Coach payouts", icon: "whistle", match: startsWith("/admin/payouts") },
-      { href: "/admin/reports", label: "Reports", icon: "chart", match: startsWith("/admin/reports") },
+      { href: "/admin/payouts", label: "Coach payouts", icon: "whistle", match: startsWith("/admin/payouts"), ownerOnly: true },
     ],
   },
   {
@@ -80,10 +88,75 @@ export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
       { href: "/admin/messages", label: "Messages", icon: "msg", match: startsWith("/admin/messages") },
       { href: "/admin/waivers", label: "Waivers", icon: "check", match: startsWith("/admin/waivers") },
       { href: "/admin/settings", label: "Settings", icon: "cog", match: startsWith("/admin/settings") },
-      { href: "/admin/audit-logs", label: "Audit logs", icon: "filter", match: startsWith("/admin/audit-logs") },
+      { href: "/admin/audit-logs", label: "Audit logs", icon: "filter", match: startsWith("/admin/audit-logs"), ownerOnly: true },
     ],
   },
 ];
+
+/**
+ * Every nav `href` plus the `/admin/dashboard` alias — the routes the shell
+ * back button treats as top-level (it renders nothing on them).
+ */
+export function adminTopLevelRoutes(): string[] {
+  return [...ADMIN_NAV.flatMap((group) => group.items.map((item) => item.href)), "/admin/dashboard"];
+}
+
+/**
+ * Nav as seen by the current user: owner-only items are removed for admins
+ * without the owner scope, and a group left empty disappears with them.
+ * Pure so it can be unit-tested under plain Node.
+ */
+export function navForRoles(
+  nav: ReadonlyArray<AdminNavGroup>,
+  isOwner: boolean,
+): ReadonlyArray<AdminNavGroup> {
+  if (isOwner) return nav;
+  return nav
+    .map((group) => ({ ...group, items: group.items.filter((item) => !item.ownerOnly) }))
+    .filter((group) => group.items.length > 0);
+}
+
+/**
+ * Route prefixes whose pages are owner-only. The layout swaps the page for an
+ * "Owner only" panel when an admin without the owner scope lands here — the
+ * BFF 404s their data anyway, so this is the honest state, not a guard.
+ * `/admin/coach-payslip` and `/admin/session-economics` are legacy redirects
+ * into owner-only destinations and are listed so the redirect frame is not
+ * shown to a non-owner either.
+ */
+export const OWNER_ONLY_ROUTE_PREFIXES: ReadonlyArray<string> = [
+  // Stripe plumbing is governance, the same tier as Reports and Payouts
+  // (billing-health trim spec §2).
+  "/admin/billing-health",
+  "/admin/payouts",
+  "/admin/reports",
+  "/admin/audit-logs",
+  "/admin/coach-payslip",
+  "/admin/session-economics",
+];
+
+/**
+ * Exceptions carved out of `OWNER_ONLY_ROUTE_PREFIXES`.
+ *
+ * `/admin/reports/dues` stays listed even though the Dues page is gone (month
+ * close spec §6). It is now a redirect to `/admin/payments`, and `/admin/reports`
+ * is owner-only, so removing the exception would meet an admin following an old
+ * bookmark with an owner-only wall instead of forwarding them to a page they are
+ * allowed to use. The exception keeps the redirect reachable by whoever the
+ * target is reachable by.
+ */
+export const OWNER_ONLY_ROUTE_EXCEPTIONS: ReadonlyArray<string> = ["/admin/reports/dues"];
+
+const matchesPrefix = (pathname: string, prefix: string) =>
+  pathname === prefix || pathname.startsWith(prefix + "/");
+
+/** True when `pathname` is an owner-only page (see the prefix list above). */
+export function isOwnerOnlyRoute(pathname: string): boolean {
+  if (OWNER_ONLY_ROUTE_EXCEPTIONS.some((prefix) => matchesPrefix(pathname, prefix))) {
+    return false;
+  }
+  return OWNER_ONLY_ROUTE_PREFIXES.some((prefix) => matchesPrefix(pathname, prefix));
+}
 
 export interface AdminScreenMeta {
   title: string;
@@ -105,17 +178,17 @@ export const SCREEN_META: Record<string, AdminScreenMeta> = {
   "/admin/users": { title: "Users", subtitle: "Coaches, parents, and admins", breadcrumbs: ["Admin", "Users"] },
   "/admin/registrations": { title: "Admissions", subtitle: "Registrations, waitlist, level-ups", breadcrumbs: ["Admin", "Admissions"] },
   "/admin/requests": { title: "Requests", subtitle: "Makeups, trials, absences, cancellations, pauses", breadcrumbs: ["Admin", "Requests"] },
-  "/admin/payments": { title: "Payments", subtitle: "Transactions and refunds", breadcrumbs: ["Admin", "Money", "Payments"] },
-  "/admin/billing-health": { title: "Billing Health", subtitle: "Reconciliation, failed payments, webhook recovery", breadcrumbs: ["Admin", "Money", "Billing Health"] },
-  "/admin/billing-setup": { title: "Billing Setup", subtitle: "Stripe registration status, invites, and charging", breadcrumbs: ["Admin", "Money", "Billing Setup"] },
+  "/admin/payments": { title: "Payments", subtitle: "Who owes, who is charged, who paid", breadcrumbs: ["Admin", "Money", "Payments"] },
+  "/admin/billing-health": { title: "Billing Health", subtitle: "Connect readiness, webhooks, reconciliation", breadcrumbs: ["Admin", "Money", "Billing Health"] },
+  "/admin/families": { title: "Families", subtitle: "Every parent: balance, card on file, autopay", breadcrumbs: ["Admin", "Money", "Families"] },
+  "/admin/families/[parentId]": { title: "Family billing", subtitle: "Balance, autopay, invoices and what the system did", breadcrumbs: ["Admin", "Money", "Families", "Family"] },
   "/admin/expenses": { title: "Expenses", subtitle: "Categorised academy spend", breadcrumbs: ["Admin", "Money", "Expenses"] },
   "/admin/payouts": { title: "Payroll & payouts", subtitle: "Payout cycles and coach payslips", breadcrumbs: ["Admin", "Money", "Payouts"] },
-  "/admin/reports": { title: "Reports", subtitle: "Exports and summaries", breadcrumbs: ["Admin", "Money", "Reports"] },
-  "/admin/reports/session-economics": { title: "Session economics", subtitle: "Revenue, cost, and profit by session", breadcrumbs: ["Admin", "Money", "Reports", "Session economics"] },
-  "/admin/reports/dues": { title: "Dues follow-up", subtitle: "Outstanding balances", breadcrumbs: ["Admin", "Money", "Reports", "Dues"] },
-  "/admin/reports/refunds": { title: "Refunds & credits", subtitle: "Money returned and account credits by month", breadcrumbs: ["Admin", "Money", "Reports", "Refunds & credits"] },
-  "/admin/reports/revenue-by-category": { title: "Revenue by category", subtitle: "Collected revenue split by program and fee category", breadcrumbs: ["Admin", "Money", "Reports", "Revenue by category"] },
-  "/admin/reports/deposit-slip": { title: "Deposit slip", subtitle: "Payments received by day and method for bank reconciliation", breadcrumbs: ["Admin", "Money", "Reports", "Deposit slip"] },
+  "/admin/reports": { title: "Month close", subtitle: "The month's two runs, its money, and anything odd", breadcrumbs: ["Admin", "Money", "Month close"] },
+  "/admin/reports/session-economics": { title: "Session economics", subtitle: "Revenue, cost, and profit by session", breadcrumbs: ["Admin", "Money", "Month close", "Session economics"] },
+  "/admin/reports/refunds": { title: "Refunds & credits", subtitle: "Money returned and account credits by month", breadcrumbs: ["Admin", "Money", "Month close", "Refunds & credits"] },
+  "/admin/reports/revenue-by-category": { title: "Revenue by category", subtitle: "Collected revenue split by program and fee category", breadcrumbs: ["Admin", "Money", "Month close", "Revenue by category"] },
+  "/admin/reports/deposit-slip": { title: "Deposit slip", subtitle: "Payments received by day and method for bank reconciliation", breadcrumbs: ["Admin", "Money", "Month close", "Deposit slip"] },
   "/admin/messages": { title: "Messages", subtitle: "Inbox and broadcasts", breadcrumbs: ["Admin", "Comms", "Messages"] },
   "/admin/waivers": { title: "Waivers", subtitle: "Student signatures and expiry", breadcrumbs: ["Admin", "Comms", "Waivers"] },
   "/admin/settings": { title: "Settings", subtitle: "Academy preferences", breadcrumbs: ["Admin", "Settings"] },
@@ -128,12 +201,33 @@ const FALLBACK_META: AdminScreenMeta = {
   breadcrumbs: ["Admin"],
 };
 
+const isDynamicSegment = (segment: string) => segment.startsWith("[") && segment.endsWith("]");
+
+/**
+ * True when a SCREEN_META key with bracketed segments (e.g.
+ * `/admin/families/[parentId]`) matches `pathname` segment for segment.
+ */
+function matchesDynamicKey(key: string, pathname: string): boolean {
+  const keyParts = key.split("/");
+  const pathParts = pathname.split("/");
+  if (keyParts.length !== pathParts.length) return false;
+  return keyParts.every(
+    (part, i) => (isDynamicSegment(part) ? pathParts[i].length > 0 : part === pathParts[i]),
+  );
+}
+
 /** Resolve topbar metadata for a pathname. Falls back to a safe default. */
 export function metaForPath(pathname: string): AdminScreenMeta {
   if (SCREEN_META[pathname]) return SCREEN_META[pathname];
-  // Dynamic segments (e.g. /admin/sessions/[id]) — match by longest prefix.
   const keys = Object.keys(SCREEN_META).sort((a, b) => b.length - a.length);
+  // Explicit dynamic keys (e.g. /admin/families/[parentId]) carry their own
+  // title and breadcrumbs.
   for (const key of keys) {
+    if (key.includes("[") && matchesDynamicKey(key, pathname)) return SCREEN_META[key];
+  }
+  // Otherwise match by longest static prefix and append "Detail".
+  for (const key of keys) {
+    if (key.includes("[")) continue;
     if (pathname.startsWith(key + "/")) {
       const base = SCREEN_META[key];
       return { ...base, breadcrumbs: [...base.breadcrumbs, "Detail"] };

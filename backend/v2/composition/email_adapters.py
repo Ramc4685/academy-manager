@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import html
 import logging
+from datetime import date
 
 from backend.v2.contexts.billing.application.ports import (
     InviteEmailOutcome as AddCardReminderEmailOutcome,
@@ -296,6 +297,100 @@ class InvoiceEmailAdapter:
         )
         if not outcome.ok:
             raise ValueError(outcome.failed_reason or "dunning email delivery failed")
+
+    async def _parent_recipient(self, parent_id: str, *, what: str) -> ResolvedRecipient:
+        academy_id = current_academy_id()
+        membership = await self._memberships.get_membership(academy_id, parent_id)
+        if membership is None or not membership.is_active() or "parent" not in membership.roles:
+            raise ValueError(f"{what} parent has no active membership in request academy")
+        user = await self._users.get_by_id(parent_id)
+        email = str(user.email if user else "").strip()
+        if not email:
+            raise ValueError(f"{what} parent email not found")
+        return ResolvedRecipient(
+            user_id=parent_id,
+            email=email,
+            display_name=str(user.display_name if user else "") or None,
+        )
+
+    async def send_autopay_notice(
+        self,
+        *,
+        parent_id: str,
+        invoice_id: str,
+        period: str,
+        amount_cents: int,
+        currency: str,
+        charge_on: date,
+        portal_url: str | None,
+    ) -> str | None:
+        """Pre-charge notice for autopay parents (issue #651): what, when, how
+        to pay early or update the card. Sent once per generated invoice."""
+        recipient = await self._parent_recipient(parent_id, what="autopay notice")
+        academy_name = await self._academies.get_academy_name(current_academy_id()) or (
+            "Your academy"
+        )
+        amount = format_money(amount_cents, currency)
+        safe_amount = html.escape(amount)
+        safe_period = html.escape(period)
+        safe_invoice = html.escape(invoice_id)
+        safe_date = html.escape(charge_on.strftime("%B %d, %Y"))
+        action = (
+            _branded_button(label="View or pay now", url=portal_url)
+            if portal_url
+            else (
+                f"<p style='color: {_BRAND_MUTED};'>Contact the academy to pay early "
+                "or update your card.</p>"
+            )
+        )
+        inner = (
+            f"<h2 style='color: {_BRAND_HEADING}; font-size: 18px; margin: 0 0 12px;'>"
+            f"Upcoming autopay charge</h2>"
+            f"<p>Your {safe_period} invoice <strong>{safe_invoice}</strong> is "
+            f"<strong>{safe_amount}</strong>.</p>"
+            f"<p>Your saved card will be charged on <strong>{safe_date}</strong>. "
+            "Nothing to do if that works for you. Pay early or update your card "
+            "before then if not.</p>"
+            f"{action}"
+        )
+        outcome = await self._sender.send(
+            recipient=recipient,
+            subject=f"{amount} will be charged on {charge_on.strftime('%b %d')} for {period}",
+            body=_branded_shell(academy_name=academy_name, inner_html=inner),
+        )
+        if not outcome.ok:
+            raise ValueError(outcome.failed_reason or "autopay notice delivery failed")
+        return outcome.provider_message_id
+
+    async def send_autopay_receipt(
+        self,
+        *,
+        parent_id: str,
+        invoice_id: str,
+        period: str,
+        amount_cents: int,
+        currency: str,
+    ) -> None:
+        """Receipt after a successful autopay charge (issue #651)."""
+        recipient = await self._parent_recipient(parent_id, what="autopay receipt")
+        academy_name = await self._academies.get_academy_name(current_academy_id()) or (
+            "Your academy"
+        )
+        amount = format_money(amount_cents, currency)
+        inner = (
+            f"<h2 style='color: {_BRAND_HEADING}; font-size: 18px; margin: 0 0 12px;'>"
+            f"Payment received</h2>"
+            f"<p>We charged <strong>{html.escape(amount)}</strong> to your saved card for "
+            f"invoice <strong>{html.escape(invoice_id)}</strong> ({html.escape(period)}).</p>"
+            f"<p style='color: {_BRAND_MUTED};'>Thank you. No action is needed.</p>"
+        )
+        outcome = await self._sender.send(
+            recipient=recipient,
+            subject=f"Receipt: {amount} paid for {period}",
+            body=_branded_shell(academy_name=academy_name, inner_html=inner),
+        )
+        if not outcome.ok:
+            raise ValueError(outcome.failed_reason or "autopay receipt delivery failed")
 
 
 class DuesReminderEmailAdapter:

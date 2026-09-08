@@ -14,7 +14,7 @@ from backend.v2.contexts.enrollment.application.use_cases.billing_deferrals impo
 from backend.v2.contexts.enrollment.application.use_cases.scheduled_actions import (
     ScheduledEnrollmentActionRepository,
 )
-from backend.v2.contexts.enrollment.domain.errors import CapacityExceeded
+from backend.v2.contexts.enrollment.domain.errors import CapacityExceeded, SessionNotEnrollable
 
 
 class ResumeEnrollmentRunner(Protocol):
@@ -34,6 +34,7 @@ class ProcessScheduledResumeActionsResult(BaseModel):
     processed: int = 0
     succeeded: int = 0
     blocked_capacity: int = 0
+    blocked_session_cancelled: int = 0
     failed: int = 0
 
 
@@ -65,9 +66,21 @@ class ProcessScheduledResumeActions:
         limit: int = 50,
     ) -> ProcessScheduledResumeActionsResult:
         attempted_at = now or self._now()
-        actions = await self._scheduled_actions.list_due(now=attempted_at, limit=limit)
+        # Issue #675 follow-up: ask Mongo for OUR type only, and re-check in
+        # Python as defence in depth. A `cancel_at_period_end` row taken by
+        # this worker would be no-opped by `ResumeEnrollment` (the enrollment
+        # is not paused) and then marked succeeded, permanently destroying the
+        # parent's cancellation.
+        actions = [
+            a
+            for a in await self._scheduled_actions.list_due(
+                now=attempted_at, limit=limit, action_type="resume_from_pause"
+            )
+            if a.action_type == "resume_from_pause"
+        ]
         succeeded = 0
         blocked_capacity = 0
+        blocked_session_cancelled = 0
         failed = 0
 
         for action in actions:
@@ -84,6 +97,18 @@ class ProcessScheduledResumeActions:
                     attempted_at=attempted_at,
                 )
                 blocked_capacity += 1
+                continue
+            except SessionNotEnrollable:
+                # Issue #651: the class was cancelled while the family was
+                # paused. Terminal, and recorded under its own reason rather
+                # than as "blocked_capacity" — an admin reading "session is
+                # full" would go looking for a capacity problem (#610).
+                await self._scheduled_actions.mark_failed(
+                    action.action_id,
+                    attempted_at=attempted_at,
+                    error="session_cancelled",
+                )
+                blocked_session_cancelled += 1
                 continue
 
             try:
@@ -111,5 +136,6 @@ class ProcessScheduledResumeActions:
             processed=len(actions),
             succeeded=succeeded,
             blocked_capacity=blocked_capacity,
+            blocked_session_cancelled=blocked_session_cancelled,
             failed=failed,
         )

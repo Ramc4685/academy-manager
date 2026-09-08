@@ -124,6 +124,8 @@ class _ParentUseCases:
                 "cancel_url": cancel_url,
             }
         )
+        if enrollment_id == "enr-cancelled":
+            raise ValueError("enrollment is not active (status=cancelled)")
         return _AutopayResult()
 
     async def open_billing_portal(self, *, parent_id: str, return_url: str):
@@ -284,6 +286,22 @@ def test_parent_starts_autopay_for_enrollment() -> None:
             "cancel_url": "https://app/cancel",
         }
     ]
+
+
+def test_parent_autopay_start_on_inactive_enrollment_returns_409() -> None:
+    # Issue #651: same shape as a non-payable invoice on /invoices/{id}/pay.
+    with _make_client() as (client, _):
+        response = client.post(
+            "/api/v2/parent/autopay/start",
+            json={
+                "enrollment_id": "enr-cancelled",
+                "success_url": "https://app/success",
+                "cancel_url": "https://app/cancel",
+            },
+        )
+
+    assert response.status_code == 409, response.text
+    assert response.json() == {"detail": "enrollment is not active (status=cancelled)"}
 
 
 def test_parent_opens_billing_portal() -> None:

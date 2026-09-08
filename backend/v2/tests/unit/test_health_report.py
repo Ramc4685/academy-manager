@@ -176,7 +176,49 @@ async def test_a_stale_job_heartbeat_is_reported_but_stays_healthy() -> None:
     )
 
     assert healthy is True
+    assert report["status"] == "ok"
     assert report["jobs"]["generate_monthly_invoices"]["last_tick_age_seconds"] == 2_592_000
+    assert report["jobs"]["generate_monthly_invoices"]["stale"] is True
+
+
+@pytest.mark.asyncio
+async def test_stale_flag_uses_the_digest_thresholds_and_lists_missing_jobs() -> None:
+    """Informational dead-man flag: the same table the ops digest alerts on, so
+    an external monitor can key off `stale` instead of guessing at ages. A job
+    with no heartbeat at all is listed as stale rather than omitted."""
+    db = _FakeDb(
+        job_docs=[
+            {"_id": "process_stripe_webhook_events", "last_tick_at": NOW - timedelta(minutes=6)},
+            {"_id": "send_ops_digest", "last_tick_at": NOW - timedelta(hours=20)},
+        ]
+    )
+
+    report, healthy = await build_health_report(
+        db=db, scheduler=_FakeScheduler(), dispatcher=_FakeDispatcher(), now=NOW
+    )
+
+    assert healthy is True
+    assert report["status"] == "ok"
+    assert report["jobs"]["process_stripe_webhook_events"]["stale"] is True
+    assert report["jobs"]["send_ops_digest"]["stale"] is False
+    assert report["jobs"]["generate_monthly_invoices"] == {
+        "last_tick_age_seconds": None,
+        "last_run_age_seconds": None,
+        "stale": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_every_job_stale_still_passes_the_production_smoke_check() -> None:
+    """Rule 1: Fly restarts on 503 and a restart cannot make a cron fire, so
+    even a fully stale job table must not flip the verdict."""
+    report, healthy = await build_health_report(
+        db=_FakeDb(job_docs=[]), scheduler=_FakeScheduler(), dispatcher=_FakeDispatcher(), now=NOW
+    )
+
+    assert healthy is True
+    assert all(entry["stale"] for entry in report["jobs"].values())
+    assert SMOKE_PATTERN.search(json.dumps(report, separators=(",", ":")))
 
 
 @pytest.mark.asyncio
@@ -189,6 +231,7 @@ async def test_naive_mongo_timestamps_do_not_break_the_endpoint() -> None:
     assert report["jobs"]["send_ops_digest"] == {
         "last_tick_age_seconds": 0,
         "last_run_age_seconds": None,
+        "stale": False,
     }
 
 

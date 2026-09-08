@@ -21,7 +21,10 @@ from backend.v2.contexts.billing.application.use_cases.session_type_ops import (
     MoveStudentSessionType,
     PreviewStudentSessionTypeMove,
 )
-from backend.v2.contexts.coaching.application.ports import OccurrenceDetails
+from backend.v2.contexts.coaching.application.ports import (
+    AttendanceEligibility,
+    OccurrenceDetails,
+)
 from backend.v2.contexts.coaching.application.use_cases.bulk_mark_attendance import (
     BulkMarkAttendance,
 )
@@ -41,7 +44,9 @@ from backend.v2.contexts.coaching.application.use_cases.session_notes import (
     CreateProgressNote,
     ListLessonPlans,
     ListProgressNotes,
+    SetProgressNoteVisibility,
 )
+from backend.v2.contexts.coaching.domain.errors import ConflictAttendanceExists
 from backend.v2.contexts.coaching.domain.models import Attendance, CoachAttendance
 from backend.v2.contexts.enrollment.application.use_cases.coach_roster_writes import (
     CoachAddStudentToRoster,
@@ -72,13 +77,20 @@ from backend.v2.shared.http import register_exception_handlers
 # --- in-memory fakes ---
 
 
+def _coaches_session(session: Session, coach_id: str) -> bool:
+    """Mirrors the Mongo `$or`: primary coach OR listed assistant coach."""
+    return session.coach_id == coach_id or coach_id in session.assistant_coach_ids
+
+
 class FakeSessionQuery:
     def __init__(self, sessions: list[Session]) -> None:
         self._sessions = sessions
 
     async def for_coach_on_date(self, coach_id: str, on_date: date) -> list[Session]:
         return [
-            s for s in self._sessions if s.coach_id == coach_id and s.start_at.date() == on_date
+            s
+            for s in self._sessions
+            if _coaches_session(s, coach_id) and s.start_at.date() == on_date
         ]
 
     async def get(self, session_id: str) -> Session | None:
@@ -88,10 +100,19 @@ class FakeSessionQuery:
         return None
 
     async def for_coach(self, coach_id: str) -> list[Session]:
-        return [s for s in self._sessions if s.coach_id == coach_id]
+        return [s for s in self._sessions if _coaches_session(s, coach_id)]
 
-    async def assigned_session_ids_for_coach(self, coach_id: str) -> list[str]:
-        return sorted({s.session_id for s in self._sessions if s.coach_id == coach_id})
+    async def assigned_session_ids_for_coach(
+        self, coach_id: str, *, include_assistant: bool = True
+    ) -> list[str]:
+        return sorted(
+            {
+                s.session_id
+                for s in self._sessions
+                if s.coach_id == coach_id
+                or (include_assistant and coach_id in s.assistant_coach_ids)
+            }
+        )
 
 
 class FakeEnrollmentQuery:
@@ -101,11 +122,23 @@ class FakeEnrollmentQuery:
     async def active_for_session(self, session_id: str) -> list[Enrollment]:
         return [e for e in self._enrollments if e.session_id == session_id and e.status == "active"]
 
+    async def for_session_in_statuses(
+        self, session_id: str, statuses: list[str]
+    ) -> list[Enrollment]:
+        return [e for e in self._enrollments if e.session_id == session_id and e.status in statuses]
+
     async def is_active(self, session_id: str, student_id: str) -> bool:
         return any(
             e.session_id == session_id and e.student_id == student_id and e.status == "active"
             for e in self._enrollments
         )
+
+    async def active_or_paused_for_student(self, student_id: str) -> list[Enrollment]:
+        return [
+            e
+            for e in self._enrollments
+            if e.student_id == student_id and e.status in ("active", "paused")
+        ]
 
 
 class FakeStudentQuery:
@@ -139,6 +172,7 @@ class FakeOccurrenceQuery:
                 occurrence.scheduled_coach_id,
                 occurrence.actual_coach_id,
                 occurrence.substitute_coach_id,
+                *occurrence.assistant_coach_ids,
             }
         ]
 
@@ -160,6 +194,7 @@ class FakeOccurrenceQuery:
                 occurrence.scheduled_coach_id,
                 occurrence.actual_coach_id,
                 occurrence.substitute_coach_id,
+                *occurrence.assistant_coach_ids,
             }
         ]
         return sorted(rows, key=lambda occurrence: occurrence.start_at)[:limit]
@@ -189,6 +224,19 @@ class FakeAttendanceRepo:
         self.saved: list = []
 
     async def save(self, attendance) -> None:
+        # Mirrors the real repo: migration 0081's unique
+        # (academy_id, occurrence_id, student_id) index makes a second row
+        # for the same occurrence+student a ConflictAttendanceExists, never a
+        # silent overwrite or duplicate.
+        existing = await self.find_existing(attendance.occurrence_id, attendance.student_id)
+        if existing is not None:
+            raise ConflictAttendanceExists(
+                "another mutation raced ahead and recorded attendance",
+                session_id=attendance.session_id,
+                occurrence_id=attendance.occurrence_id,
+                student_id=attendance.student_id,
+                existing_attendance_id=existing.attendance_id,
+            )
         self.saved.append(attendance)
 
     async def find_existing(self, occurrence_id, student_id):
@@ -227,7 +275,25 @@ class FakeCoachingNotesRepo:
         self.notes.append(note)
 
     async def list_progress_notes(self, session_id, coach_id):
-        return [n for n in self.notes if n.session_id == session_id and n.coach_id == coach_id]
+        # ``coach_id=None`` = every author (supervisor listing).
+        return [
+            n
+            for n in self.notes
+            if n.session_id == session_id and (coach_id is None or n.coach_id == coach_id)
+        ]
+
+    async def get_progress_note(self, session_id, note_id):
+        for n in self.notes:
+            if n.session_id == session_id and n.note_id == note_id:
+                return n
+        return None
+
+    async def set_progress_note_visibility(self, session_id, note_id, visibility):
+        for i, n in enumerate(self.notes):
+            if n.session_id == session_id and n.note_id == note_id:
+                self.notes[i] = n.model_copy(update={"visibility": visibility})
+                return self.notes[i]
+        return None
 
     async def find_by_attendance_id(self, attendance_id):
         for a in self.saved:
@@ -527,9 +593,31 @@ def _parent_claims() -> AuthClaims:
 
 
 def _admin_claims() -> AuthClaims:
+    # Every admin membership that existed before the owner/admin split also
+    # holds `owner` (migration 0165), so the default admin fixture does too.
     return AuthClaims(
         user_id="adm",
         email="admin@example.com",
+        academy_id="test-academy",
+        roles=("admin", "owner"),
+    )
+
+
+def _assistant_coach_claims() -> AuthClaims:
+    """A bare assistant coach: coach surface, scoped to sessions listing them."""
+    return AuthClaims(
+        user_id="asst-1",
+        email="helper@example.com",
+        academy_id="test-academy",
+        roles=("assistant_coach",),
+    )
+
+
+def _admin_only_claims() -> AuthClaims:
+    """An admin invited after the split: operations only, no `owner`."""
+    return AuthClaims(
+        user_id="adm-ops",
+        email="ops@example.com",
         academy_id="test-academy",
         roles=("admin",),
     )
@@ -578,16 +666,17 @@ def _build_use_cases(seed_data) -> CoachUseCases:
 
     # Adapters wiring coach lookups to enrollment queries.
     class _SL:
-        # Mirrors composition.coach.CoachAssignedSessionLookup: a coach
-        # supervisor (the admin fixture's user id) passes for any session
-        # that exists; unknown sessions still fail for everyone.
+        # Mirrors composition.coach.CoachAssignedSessionLookup: the primary
+        # coach, a listed assistant coach, or a coach supervisor (the admin
+        # fixture's user id) passes for a session that exists; unknown
+        # sessions still fail for everyone.
         supervisor_ids = frozenset({"adm"})
 
         async def is_coach_assigned(self, coach_id, sid, on_date=None):
             s = await sessions.get(sid)
             if s is None:
                 return False
-            if s.coach_id != coach_id and coach_id not in self.supervisor_ids:
+            if not _coaches_session(s, coach_id) and coach_id not in self.supervisor_ids:
                 return False
             return on_date is None or s.start_at.date() == on_date
 
@@ -613,11 +702,34 @@ def _build_use_cases(seed_data) -> CoachUseCases:
                 actual_coach_id=occurrence.actual_coach_id,
                 substitute_coach_id=occurrence.substitute_coach_id,
                 template_session_id=occurrence.template_session_id,
+                assistant_coach_ids=occurrence.assistant_coach_ids,
             )
 
     class _EL:
+        # Mirrors composition.coaching_lookups.EnrollmentLookupAdapter: an
+        # active enrollment in the session or its template, else an approved
+        # one-time make-up / trial entry for exactly this occurrence (#672);
+        # a make-up row also needs a live enrollment somewhere in the academy.
         async def is_active(self, sid, student_id):
             return await enrollments.is_active(sid, student_id)
+
+        async def attendance_eligibility(
+            self, *, occurrence_id, session_id, template_session_id, student_id
+        ):
+            if await enrollments.is_active(session_id, student_id):
+                return AttendanceEligibility(source="enrollment")
+            if template_session_id and template_session_id != session_id:
+                if await enrollments.is_active(template_session_id, student_id):
+                    return AttendanceEligibility(source="enrollment")
+            for entry in await occurrence_roster.list_for_occurrence(occurrence_id):
+                if entry.student_id != student_id:
+                    continue
+                if entry.source == "makeup" and not await enrollments.active_or_paused_for_student(
+                    student_id
+                ):
+                    return None
+                return AttendanceEligibility(source=entry.source)
+            return None
 
     async def _dashboard(_coach_id):
         return {
@@ -747,6 +859,9 @@ def _build_use_cases(seed_data) -> CoachUseCases:
             enrollments=enrollments,
         ),
         list_progress_notes=ListProgressNotes(notes=notes, sessions=session_lookup),
+        set_progress_note_visibility=SetProgressNoteVisibility(
+            notes=notes, sessions=session_lookup
+        ),
         assigned_sessions=session_lookup,
         add_student_to_roster=CoachAddStudentToRoster(
             sessions=rw_store,
@@ -843,6 +958,20 @@ def coach_admin_client(seed) -> Iterator[TestClient]:
 
 
 @pytest.fixture()
+def assistant_client(seed) -> Iterator[TestClient]:
+    """Coach routes mounted, token represents an assistant coach (``asst-1``).
+
+    The shared seed lists nobody as assistant; tests that need one override
+    ``seed`` (see ``test_assistant_coach.py``).
+    """
+    use_cases = _build_use_cases(seed)
+    app = _make_app(_assistant_coach_claims(), use_cases)
+    with TestClient(app) as client:
+        client.coach_use_cases = use_cases  # type: ignore[attr-defined]
+        yield client
+
+
+@pytest.fixture()
 def anon_client(seed) -> Iterator[TestClient]:
     """No auth claims; the dependency raises 401."""
     use_cases = _build_use_cases(seed)
@@ -921,6 +1050,9 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     SkipFromWaitlist,
     TransferEnrollment,
     WithdrawEnrollment,
+)
+from backend.v2.contexts.enrollment.application.use_cases.cancel_session_occurrence import (
+    CancelSessionOccurrence,
 )
 from backend.v2.contexts.enrollment.application.use_cases.pause_requests import (
     ApprovePauseRequest,
@@ -1067,6 +1199,30 @@ class FakeAdminOccurrenceRepo:
     async def get(self, occurrence_id: str) -> SessionOccurrence | None:
         return self.rows.get(occurrence_id)
 
+    async def cancel_scheduled(
+        self,
+        *,
+        occurrence_id: str,
+        reason: str,
+        actor_id: str | None,
+        now: datetime,
+    ) -> SessionOccurrence | None:
+        """Mirrors the Mongo CAS: only a row still ``scheduled`` matches."""
+        occurrence = self.rows.get(occurrence_id)
+        if occurrence is None or occurrence.status != "scheduled":
+            return None
+        self.rows[occurrence_id] = occurrence.model_copy(
+            update={
+                "status": "cancelled",
+                "is_billable": False,
+                "is_payable": False,
+                "cancellation_reason": reason,
+                "cancelled_at": now,
+                "cancelled_by": actor_id,
+            }
+        )
+        return self.rows[occurrence_id]
+
     async def update_coach_assignment(
         self,
         *,
@@ -1145,6 +1301,13 @@ class FakeEnrollmentWriter:
             if enrollment.session_id == session_id and enrollment.status == "active"
         ]
 
+    async def for_session_in_statuses(self, session_id, statuses):
+        return [
+            enrollment
+            for enrollment in self.rows.values()
+            if enrollment.session_id == session_id and enrollment.status in statuses
+        ]
+
     async def count_active_for_session(self, session_id):
         return len(await self.active_for_session(session_id))
 
@@ -1185,6 +1348,11 @@ class _AdminFakeEnrollmentQuery:
     async def active_for_session(self, session_id):
         return [
             e for e in self.rows.values() if e.session_id == session_id and e.status == "active"
+        ]
+
+    async def for_session_in_statuses(self, session_id, statuses):
+        return [
+            e for e in self.rows.values() if e.session_id == session_id and e.status in statuses
         ]
 
     async def is_active(self, session_id, student_id):
@@ -1288,24 +1456,56 @@ class FakeWaitlistRepo:
         }
 
 
-class FakeLifecycleBilling:
-    async def record_move_proration(
-        self,
-        *,
-        enrollment,
-        from_session_id,
-        to_session_id,
-        effective_at,
-        actor_id,
-        reason,
-    ):
-        _ = (enrollment, from_session_id, to_session_id, effective_at, actor_id, reason)
+class FakeOccurrenceBilling:
+    """``OccurrenceBillingSync`` stand-in (#671).
+
+    Records the call and reports one credit per affected family, so the route
+    test can assert the response carries the billing outcome rather than
+    quietly dropping it.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def apply(self, *, occurrence_id, session_id, start_at, reason, actor_id):
+        self.calls.append(
+            {
+                "occurrence_id": occurrence_id,
+                "session_id": session_id,
+                "start_at": start_at,
+                "reason": reason,
+                "actor_id": actor_id,
+            }
+        )
         return {
-            "billing_policy": "move_proration",
-            "billing_result": "recorded",
-            "metadata": {},
+            "billing_policy": "cancelled_date_credited",
+            "billing_result": "credited=1,override=written",
+            "credits": {"enr-1": "credit-671"},
         }
 
+
+@dataclass
+class FakeMoveBillingSync:
+    """``EnrollmentMoveBillingSync`` (issue #669): records what the transfer
+    route hands billing and answers like the production adapter."""
+
+    calls: list[dict[str, Any]] = field(default_factory=list)
+
+    async def apply_move(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(kwargs)
+        return {
+            "billing_policy": "move_proration_current_period",
+            "billing_result": "debit:4000",
+            "metadata": {
+                "outcome": "debited",
+                "delta_cents": "4000",
+                "invoice_id": "inv-move-target",
+                "line_id": "line-move-1",
+            },
+        }
+
+
+class FakeLifecycleBilling:
     async def record_withdrawal_decision(
         self,
         *,
@@ -1756,6 +1956,7 @@ def admin_seed():
         "enrollments": enrollments,
         "enrollment_query": enrollments,
         "enrollment_events": FakeEnrollmentEvents(),
+        "move_billing_sync": FakeMoveBillingSync(),
         "students": FakeStudentWriter(),
         "waitlist": FakeWaitlistRepo(),
         "pause_requests": FakePauseRequestRepo(),
@@ -1807,6 +2008,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
     billing_deferrals = seed["billing_deferrals"]
     autopay_status = seed["autopay_status"]
     lifecycle_billing = FakeLifecycleBilling()
+    _occurrence_billing = FakeOccurrenceBilling()
     payments = seed["payments"]
     tuition_discounts = seed["tuition_discounts"]
     outbox = seed["outbox"]
@@ -1845,7 +2047,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         enrollments=enrollments_w,
         sessions=sessions,
         enrollment_events=enrollment_events,
-        billing=lifecycle_billing,
+        billing_sync=seed["move_billing_sync"],
     )
     override_enrollment_fee = OverrideEnrollmentFee(enrollments=enrollments_w)
     pause_enrollment = PauseEnrollment(
@@ -1961,6 +2163,8 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
             "start_at": occurrence.start_at,
             "end_at": occurrence.end_at,
             "status": occurrence.status,
+            "cancellation_reason": occurrence.cancellation_reason,
+            "cancelled_at": occurrence.cancelled_at,
             "scheduled_coach_id": occurrence.scheduled_coach_id,
             "actual_coach_id": occurrence.actual_coach_id,
             "substitute_coach_id": occurrence.substitute_coach_id,
@@ -2189,7 +2393,18 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
             self.roles: dict[str, list[str]] = {
                 "coach-1": ["coach"],
                 "u-admin": ["admin"],
+                # An owner other than the caller, for demotion-rule tests.
+                "o-1": ["owner", "admin"],
             }
+
+        async def execute(self, user_id: str, *, academy_id: str) -> AdminUserDetail:
+            """`GetAdminUser`-shaped lookup so routes can read a target's held roles."""
+            _ = academy_id
+            if user_id not in self.roles:
+                # Unknown target: the route treats "no detail" as "no held
+                # roles" and lets the real use case report the missing user.
+                return None
+            return self._detail(user_id)
 
         def _detail(self, user_id: str) -> AdminUserDetail:
             roles = self.roles[user_id]
@@ -2276,6 +2491,15 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
 
     _admin_user_editor = _FakeAdminUserEditor()
 
+    cancel_session_occurrence = CancelSessionOccurrence(
+        occurrences=occurrences,
+        sessions=sessions,
+        enrollments=enrollments_q,
+        enrollment_events=enrollment_events,
+        billing_sync=_occurrence_billing,
+        clock=lambda: datetime(2026, 5, 15, 12, 0, tzinfo=UTC),
+    )
+
     return AdminUseCases(
         list_admin_users=_ListAdminUsers(),  # type: ignore[arg-type]
         send_login_invite=_login_invite_sender,  # type: ignore[arg-type]
@@ -2288,6 +2512,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         create_session=create_session,
         edit_session=edit_session,
         cancel_session=cancel_session,
+        cancel_session_occurrence=cancel_session_occurrence,
         edit_roster_add=edit_roster_add,
         cancel_enrollment=cancel_enrollment,
         transfer_enrollment=transfer_enrollment,
@@ -2332,14 +2557,6 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         list_billing_deferral_warnings=billing_deferrals.list_admin_warnings,
         send_dues_reminders=send_dues_reminders,
         export_report_csv=export_report_csv,
-        get_reports_kpis=AsyncMock(
-            return_value={
-                "active_students": 0,
-                "attendance_rate_30d": 0.0,
-                "dues_collected_mtd_cents": 0,
-                "pending_waivers": 0,
-            }
-        ),
         list_enrollment_events=enrollment_events.list_for_enrollment,
         comms=comms,
         list_admin_waivers=waivers,  # type: ignore[arg-type]
@@ -2352,6 +2569,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         update_academy_notifications_use_case=AsyncMock(),
         get_academy_gateway_use_case=AsyncMock(),
         change_user_role=AsyncMock(),
+        get_admin_user=_role_modifier,  # type: ignore[arg-type]
         add_user_role=AddUserRole(_role_modifier),  # type: ignore[arg-type]
         remove_user_role=RemoveUserRole(_role_modifier),  # type: ignore[arg-type]
         set_tuition_discount=set_tuition_discount,
@@ -2367,15 +2585,25 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
 
 
 def _claims(role: str) -> AuthClaims:
+    # "admin" mirrors a pre-split admin membership, which migration 0165 also
+    # grants `owner`; use `_claims("admin-only")` for a post-split admin.
+    if role == "admin-only":
+        roles: tuple[str, ...] = ("admin",)
+    elif role == "admin":
+        roles = ("admin", "owner")
+    else:
+        roles = (role,)
     return AuthClaims(
         user_id=f"u-{role}",
         email=f"{role}@example.com",
         academy_id="acad",
-        roles=(role,),  # type: ignore[arg-type]
+        roles=roles,  # type: ignore[arg-type]
     )
 
 
-def _make_admin_app(claims: AuthClaims, use_cases: AdminUseCases) -> FastAPI:
+def _make_admin_app(claims: AuthClaims | None, use_cases: AdminUseCases) -> FastAPI:
+    if claims is None:
+        claims = _claims("admin")
     app = FastAPI()
     register_exception_handlers(app)
     app.include_router(admin_router, prefix="/api/v2")
@@ -2388,6 +2616,17 @@ def _make_admin_app(claims: AuthClaims, use_cases: AdminUseCases) -> FastAPI:
 def admin_client(admin_seed) -> Iterator[TestClient]:
     uc = _build_admin_use_cases(admin_seed)
     app = _make_admin_app(_claims("admin"), uc)
+    with TestClient(app) as client:
+        client.seed = admin_seed  # type: ignore[attr-defined]
+        client.use_cases = uc  # type: ignore[attr-defined]
+        yield client
+
+
+@pytest.fixture
+def admin_only_client(admin_seed) -> Iterator[TestClient]:
+    """Admin without `owner`: operations work, money governance 404s."""
+    uc = _build_admin_use_cases(admin_seed)
+    app = _make_admin_app(_claims("admin-only"), uc)
     with TestClient(app) as client:
         client.seed = admin_seed  # type: ignore[attr-defined]
         client.use_cases = uc  # type: ignore[attr-defined]

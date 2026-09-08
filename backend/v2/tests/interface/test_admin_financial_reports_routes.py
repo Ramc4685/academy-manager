@@ -31,7 +31,7 @@ def reports_client() -> Iterator[TestClient]:
         user_id="admin-1",
         email="admin@example.com",
         academy_id="acad",
-        roles=("admin",),
+        roles=("admin", "owner"),  # pre-split admin: migration 0165 grants owner
     )
     app.dependency_overrides[get_admin_use_cases] = lambda: use_cases
     with TestClient(app) as client:

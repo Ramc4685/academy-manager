@@ -1,8 +1,9 @@
 # Edge Routing Runbook
 
-**Status:** Retired for production. Historical routing logic remains in
-[`edge/router.ts`](../edge/router.ts) for reference and local experiments.
-**Last reviewed:** 2026-05-18
+**Status:** Retired for production. The `edge/` Worker source and its
+per-deploy cleanup steps were deleted on 2026-09-03; the routing logic is
+recoverable from git history (`git show 21afa5164:edge/router.ts`).
+**Last reviewed:** 2026-09-03
 
 Production browser traffic now goes directly to the `academy-next` Cloudflare
 Worker through the custom domain in

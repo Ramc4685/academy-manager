@@ -48,7 +48,13 @@ import {
   sessionTimeRange,
 } from "./format";
 import { RosterMetrics, RosterTable } from "./RosterPanel";
-import { OccurrenceReplacementDialog, ReplacementCoachTable, SessionEditDialog } from "./SessionEditing";
+import {
+  CancelOccurrenceDialog,
+  OccurrenceReplacementDialog,
+  ReplacementCoachTable,
+  SessionAssistantsDialog,
+  SessionEditDialog,
+} from "./SessionEditing";
 import { WaitlistTable } from "./WaitlistTable";
 
 const DETAIL_TABS = [
@@ -77,6 +83,9 @@ export default function AdminSessionDetailPage() {
   const [withdrawalTarget, setWithdrawalTarget] = useState<AdminEnrollmentView | null>(null);
   const [occurrenceTarget, setOccurrenceTarget] = useState<AdminSessionOccurrenceView | null>(null);
   const [replacementOpen, setReplacementOpen] = useState(false);
+  // Issue #671: the date an admin is calling off, or null.
+  const [cancelTarget, setCancelTarget] = useState<AdminSessionOccurrenceView | null>(null);
+  const [assistantsOpen, setAssistantsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<DetailTab>("roster");
   const [cancelError, setCancelError] = useState<string | null>(null);
 
@@ -165,7 +174,6 @@ export default function AdminSessionDetailPage() {
     [enrollmentsQuery.data?.enrollments],
   );
   const occurrences = occurrencesQuery.data?.occurrences ?? [];
-  const replacementOccurrences = occurrences.filter((occurrence) => Boolean(occurrence.actual_coach_id));
   const userNameById = new Map(
     (usersQuery.data?.users ?? []).map((user) => [user.user_id, user.display_name || user.email])
   );
@@ -283,11 +291,35 @@ export default function AdminSessionDetailPage() {
         </Card>
       )}
 
-      {/* Replacement coaches */}
+      {/* Coaching staff: the lead coach plus per-session assistant coaches */}
       <Card p={20} className="min-w-0">
         <LaneHeader
           index="01"
-          title="Replacement coaches"
+          title="Coaching staff"
+          action={
+            session && (
+              <Button
+                variant="secondary"
+                size="sm"
+                data-testid="edit-assistants"
+                onClick={() => setAssistantsOpen(true)}
+              >
+                Edit assistants
+              </Button>
+            )
+          }
+        />
+        {session ? <CoachingStaffCard session={session} /> : <TableSkeleton />}
+      </Card>
+
+      {/* Class dates (#671) — one table. It already carries the replacement
+          column, the replacement action and the cancel action, so a separate
+          "Replacement coaches" card would list every replaced date twice with
+          two identical buttons (ambiguous for the admin and for locators). */}
+      <Card p={20} className="min-w-0">
+        <LaneHeader
+          index="02"
+          title="Class dates"
           action={
             <Button
               variant="primary"
@@ -301,14 +333,15 @@ export default function AdminSessionDetailPage() {
         />
         {occurrencesQuery.isLoading ? (
           <TableSkeleton />
-        ) : replacementOccurrences.length === 0 ? (
-          <p className="text-sm text-rally-subtle">No replacement coaches added.</p>
         ) : (
           <ReplacementCoachTable
-            occurrences={replacementOccurrences}
+            occurrences={occurrences}
             userNameById={userNameById}
             timezone={session?.timezone ?? null}
             onEdit={setOccurrenceTarget}
+            onCancel={setCancelTarget}
+            showStatus
+            emptyLabel="No dates scheduled yet."
           />
         )}
       </Card>
@@ -316,7 +349,7 @@ export default function AdminSessionDetailPage() {
       {/* Communication pack (#613) */}
       <Card p={20} className="min-w-0">
         <LaneHeader
-          index="02"
+          index="03"
           title="Communication pack"
           action={
             // Distinct accessible name from the header's "Edit session": both
@@ -350,7 +383,7 @@ export default function AdminSessionDetailPage() {
       {activeTab === "roster" && (
         <Card p={20} className="min-w-0">
           <LaneHeader
-            index="03"
+            index="04"
             title="Roster"
             action={
               session && (
@@ -371,6 +404,7 @@ export default function AdminSessionDetailPage() {
             <RosterTable
               enrollments={enrollments}
               sessionId={sessionId}
+              academyTimezone={session?.timezone ?? null}
               pathwayLevels={pathwayLevels}
               updatingPlacementStudentId={
                 placementMutation.isPending ? placementMutation.variables?.studentId : null
@@ -394,7 +428,7 @@ export default function AdminSessionDetailPage() {
 
       {activeTab === "roster" && (
         <Card p={20} className="min-w-0">
-          <LaneHeader index="04" title="Announcements" />
+          <LaneHeader index="05" title="Announcements" />
           <AnnouncementsPanel persona="admin" sessionId={sessionId} />
         </Card>
       )}
@@ -402,7 +436,7 @@ export default function AdminSessionDetailPage() {
       {activeTab === "waitlist" && (
         <Card p={20} className="min-w-0">
           <LaneHeader
-            index="05"
+            index="06"
             title="Waitlist"
             action={
               <Button
@@ -435,7 +469,7 @@ export default function AdminSessionDetailPage() {
 
       {activeTab === "teaching-plan" && (
         <Card p={20} className="min-w-0">
-          <LaneHeader index="06" title="Teaching plan" />
+          <LaneHeader index="07" title="Teaching plan" />
           <AdminTeachingPlan sessionId={sessionId} programId={rosterProgramId || null} />
         </Card>
       )}
@@ -471,6 +505,32 @@ export default function AdminSessionDetailPage() {
           );
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessionDetail(sessionId) });
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
+        }}
+      />
+      <SessionAssistantsDialog
+        open={assistantsOpen}
+        session={session}
+        onOpenChange={setAssistantsOpen}
+        onSaved={(savedSession) => {
+          setAssistantsOpen(false);
+          queryClient.setQueryData(queryKeys.admin.sessionDetail(sessionId), savedSession);
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessionDetail(sessionId) });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
+          // Assistants are re-synced onto future occurrences server-side.
+          void queryClient.invalidateQueries({
+            queryKey: queryKeys.admin.sessionOccurrences(sessionId),
+          });
+        }}
+      />
+      <CancelOccurrenceDialog
+        occurrence={cancelTarget}
+        timezone={session?.timezone ?? null}
+        onClose={() => setCancelTarget(null)}
+        onCancelled={() => {
+          setCancelTarget(null);
+          void queryClient.invalidateQueries({
+            queryKey: queryKeys.admin.sessionOccurrences(sessionId),
+          });
         }}
       />
       <OccurrenceReplacementDialog
@@ -530,6 +590,42 @@ export default function AdminSessionDetailPage() {
         }}
       />
     </section>
+  );
+}
+
+/**
+ * Who runs this session: the lead coach and the assistant coaches listed on
+ * it. Assistants see the session in their coach app (attendance, skills,
+ * notes) and are never on payroll, so they are shown as staff, not as a
+ * replacement or a pay line. Older cached rows predate the field, hence the
+ * `?? []` guards.
+ */
+function CoachingStaffCard({ session }: { session: AdminSessionView }) {
+  const ids = session.assistant_coach_ids ?? [];
+  const names = session.assistant_coach_names ?? [];
+  return (
+    <dl className="grid gap-3 sm:grid-cols-[200px_minmax(0,1fr)]">
+      <dt className="text-sm font-medium text-rally-muted">Lead coach</dt>
+      <dd className="text-sm text-rally-ink" data-testid="session-lead-coach">
+        {session.coach_name ?? session.coach_id}
+      </dd>
+      <dt className="text-sm font-medium text-rally-muted">Assistants</dt>
+      <dd className="flex flex-wrap items-center gap-2" data-testid="session-assistants">
+        {ids.length === 0 ? (
+          <span className="text-sm text-rally-subtle">No assistant coaches.</span>
+        ) : (
+          ids.map((assistantId, index) => (
+            <span
+              key={assistantId}
+              data-testid={`session-assistant-${assistantId}`}
+              className="inline-flex items-center rounded-full border border-rally-line bg-rally-paper px-2.5 py-0.5 text-xs font-medium text-rally-ink"
+            >
+              {names[index] ?? assistantId}
+            </span>
+          ))
+        )}
+      </dd>
+    </dl>
   );
 }
 

@@ -401,3 +401,30 @@ async def test_autopay_status_writes_are_tenant_isolated(db, acad) -> None:
 
     # Academy A's enrollment is unchanged by the cross-tenant attempt.
     assert await repo.get_autopay_enrollment_status(enrollment_id="shared") == "active"
+
+
+@pytest.mark.asyncio
+async def test_autopay_status_by_enrollment_batches_and_stays_tenant_scoped(db, acad) -> None:
+    """Issue #674: the admin student page reads the autopay axis for many
+    enrollments in one query; ids without a billing record are absent and a
+    same-id row in another tenant is invisible."""
+    await db["student_billing_enrollments"].insert_many(
+        [
+            {"academy_id": acad, "enrollment_id": "e-on", "autopay_enrollment_status": "active"},
+            {"academy_id": acad, "enrollment_id": "e-off", "autopay_enrollment_status": "paused"},
+            {"academy_id": acad, "enrollment_id": "e-blank", "autopay_enrollment_status": ""},
+            {
+                "academy_id": "other-academy",
+                "enrollment_id": "e-foreign",
+                "autopay_enrollment_status": "active",
+            },
+        ]
+    )
+    repo = MongoStudentBillingEnrollmentRepository(db)
+
+    result = await repo.autopay_status_by_enrollment(
+        ["e-on", "e-off", "e-blank", "e-foreign", "e-missing"]
+    )
+
+    assert result == {"e-on": "active", "e-off": "paused", "e-blank": None}
+    assert await repo.autopay_status_by_enrollment([]) == {}

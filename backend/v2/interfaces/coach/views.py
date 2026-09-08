@@ -16,6 +16,7 @@ from backend.v2.contexts.coaching.application.use_cases.generate_daily_teaching_
     LevelTeachingGroup,
     UnplacedStudent,
 )
+from backend.v2.contexts.coaching.application.use_cases.session_notes import NoteVisibility
 from backend.v2.shared.comms import MAX_ANNOUNCEMENT_BODY
 
 # Client-generated ULID (Crockford base32, 26 chars). Constrained because it is
@@ -53,6 +54,9 @@ class CoachRosterEntry(BaseModel):
     # "enrollment" for regular roster rows; "makeup" / "trial" for one-time
     # entries (Tasks 5/7) added just for this occurrence.
     entry_source: Literal["enrollment", "makeup", "trial"] = "enrollment"
+    # Issue #675: set while a parent's end-of-period cancel is pending — the
+    # student still attends; the UI may show "ends <date>".
+    pending_cancellation_at: datetime | None = None
 
 
 class CoachSession(BaseModel):
@@ -144,6 +148,8 @@ class ProgressNoteView(BaseModel):
     coach_id: str
     body: str
     created_at: datetime
+    # "shared" = the student's parent sees it; "private" stays with coaches.
+    visibility: NoteVisibility = "private"
 
 
 class ProgressNoteList(BaseModel):
@@ -153,6 +159,13 @@ class ProgressNoteList(BaseModel):
 class CreateProgressNoteRequest(BaseModel):
     student_id: str
     body: str
+    visibility: NoteVisibility = "private"
+
+
+class SetNoteVisibilityRequest(BaseModel):
+    """PATCH body for both progress notes and skill notes."""
+
+    visibility: NoteVisibility
 
 
 class RosterEntryView(BaseModel):

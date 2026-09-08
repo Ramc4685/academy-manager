@@ -2,7 +2,9 @@
 
 Validates:
 - Coach is assigned to the occurrence (SessionNotAssigned → 403 via route).
-- All student_ids are enrolled in the session (fail-whole-batch on any miss).
+- All student_ids are eligible for the occurrence — actively enrolled or
+  holding an approved make-up / trial roster entry (fail-whole-batch on any
+  miss; ``BulkStudentNotEnrolled.details["student_ids"]`` names them).
 
 Idempotent on ``mutation_id`` (batch-level): replays return the cached result.
 Writes ``Coaching.AttendanceMarked`` to the outbox per entry.
@@ -31,7 +33,7 @@ from backend.v2.contexts.coaching.domain.events import (
     AttendanceMarked,
     AttendanceMarkedPayload,
 )
-from backend.v2.contexts.coaching.domain.models import Attendance
+from backend.v2.contexts.coaching.domain.models import Attendance, AttendanceEntrySource
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore, idempotent
 
@@ -106,11 +108,10 @@ class BulkMarkAttendance:
         # (academy admin/owner covering the session) skips only the
         # assignment membership test; see MarkAttendance.execute.
         occurrence = await self._occurrences.get(cmd.occurrence_id)
-        session_id_matches = occurrence is not None and (
-            occurrence.session_id == cmd.session_id
-            or occurrence.template_session_id == cmd.session_id
-        )
-        if not session_id_matches:
+        if occurrence is None or (
+            occurrence.session_id != cmd.session_id
+            and occurrence.template_session_id != cmd.session_id
+        ):
             raise BulkSessionNotAssigned(
                 "session occurrence not found or not assigned",
                 session_id=cmd.session_id,
@@ -121,6 +122,7 @@ class BulkMarkAttendance:
             occurrence.scheduled_coach_id,
             occurrence.actual_coach_id,
             occurrence.substitute_coach_id,
+            *occurrence.assistant_coach_ids,
         }:
             raise BulkSessionNotAssigned(
                 "session occurrence not assigned to this coach",
@@ -138,19 +140,32 @@ class BulkMarkAttendance:
                 coach_id=coach_id,
             )
 
-        # 2. Validate all students are enrolled (fail whole batch on any miss).
+        # 2. Validate every student is eligible for this occurrence — an
+        # active enrollment, or an approved make-up / trial roster entry
+        # (issue #672). The whole batch fails on any miss, and the error
+        # names every ineligible student so the coach can act on it.
+        sources: dict[str, AttendanceEntrySource] = {}
+        ineligible: list[str] = []
         for entry in cmd.entries:
-            enrolled = await self._enrollments.is_active(cmd.session_id, entry.student_id)
-            if not enrolled and occurrence.template_session_id:
-                enrolled = await self._enrollments.is_active(
-                    occurrence.template_session_id, entry.student_id
-                )
-            if not enrolled:
-                raise BulkStudentNotEnrolled(
-                    "student not actively enrolled in session",
-                    session_id=cmd.session_id,
-                    student_id=entry.student_id,
-                )
+            if entry.student_id in sources or entry.student_id in ineligible:
+                continue
+            eligibility = await self._enrollments.attendance_eligibility(
+                occurrence_id=cmd.occurrence_id,
+                session_id=cmd.session_id,
+                template_session_id=occurrence.template_session_id,
+                student_id=entry.student_id,
+            )
+            if eligibility is None:
+                ineligible.append(entry.student_id)
+            else:
+                sources[entry.student_id] = eligibility.source
+        if ineligible:
+            raise BulkStudentNotEnrolled(
+                "students not actively enrolled in session and not on the occurrence roster",
+                session_id=cmd.session_id,
+                occurrence_id=cmd.occurrence_id,
+                student_ids=ineligible,
+            )
 
         # 2b. Reject duplicate student_ids within the batch.
         if len({e.student_id for e in cmd.entries}) != len(cmd.entries):
@@ -189,6 +204,7 @@ class BulkMarkAttendance:
                 marked_at_client=None,
                 status=entry.status,
                 client_app_version="bulk",
+                entry_source=sources[entry.student_id],
             )
             await self._attendance.save(attendance)
             await self._outbox.append(
@@ -203,6 +219,7 @@ class BulkMarkAttendance:
                         marked_by=attendance.marked_by,
                         marked_at=attendance.marked_at,
                         status=attendance.status,
+                        entry_source=attendance.entry_source,
                     ),
                 )
             )

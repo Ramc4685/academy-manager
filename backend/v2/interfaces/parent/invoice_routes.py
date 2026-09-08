@@ -44,6 +44,7 @@ def _invoice_view(invoice) -> ParentInvoiceView:
         pdf_url=_pdf_url(invoice),
         created_at=invoice.created_at,
         enrollment_id=invoice.enrollment_id,
+        void_reason=getattr(invoice, "void_reason", None),
     )
 
 

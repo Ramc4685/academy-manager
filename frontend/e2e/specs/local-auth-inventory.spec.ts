@@ -31,7 +31,9 @@ type ManifestRole =
 /**
  * Roles this sweep cannot sign in as. `proxy` routes are BFF handlers with no
  * UI; `platform` needs a cross-tenant operator, and the local-auth dataset
- * seeds only admin/coach/parent. Revisit once the seed grows a platform_admin.
+ * seeds admin (who also holds owner), an admin-only ops user, coach, an
+ * assistant coach (rides the coach shell, no manifest role of its own) and
+ * parent. Revisit once the seed grows a platform_admin.
  */
 const UNSEEDED_ROLES = new Set<ManifestRole>(["proxy", "platform"]);
 
@@ -114,6 +116,9 @@ const DYNAMIC_ROUTE_ENV_CONTRACT: Record<string, DynamicRouteEnvContract> = {
   },
   "/admin/pathway/[programId]": {
     replacements: [["[programId]", "LOCAL_AUTH_ADMIN_PROGRAM_ID"]],
+  },
+  "/admin/families/[parentId]": {
+    replacements: [["[parentId]", "LOCAL_AUTH_ADMIN_USER_ID"]],
   },
   "/coach/sessions/[id]": {
     replacements: [["[id]", "LOCAL_AUTH_COACH_SESSION_ID"]],

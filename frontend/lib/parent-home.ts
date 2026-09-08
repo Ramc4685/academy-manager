@@ -3,6 +3,7 @@ import type {
   ParentChild,
   ParentCreditBalance,
   ParentEnrollment,
+  ParentInvoice,
   ParentPayment,
   ParentProgressNote,
   ParentWaiverCurrentView,
@@ -53,6 +54,12 @@ export interface ParentHomeInput {
   attendance: ParentAttendanceRecord[];
   notes: ParentProgressNote[];
   payments: ParentPayment[];
+  /**
+   * Ledger invoices, used to drop a stale "Payment needs attention" for a
+   * failed payment whose invoice has since been voided or paid (#651).
+   * Optional: callers without invoice data keep the payment-only behaviour.
+   */
+  invoices?: ParentInvoice[];
   credits: ParentCreditBalance | null;
   waiver: ParentWaiverCurrentView | null;
   progressRows: StudentProgressOverview[];
@@ -145,8 +152,12 @@ export function buildParentHomeModel(input: ParentHomeInput): ParentHomeModel {
       selectedChild,
       progressRow,
       activeEnrollment,
+      hasActiveEnrollment: input.enrollments.some(
+        (enrollment) => enrollment.status === "active",
+      ),
       credits: input.credits,
       payments: input.payments,
+      invoices: input.invoices ?? [],
       waiver: input.waiver,
     }),
     recentActivity: buildActivity({
@@ -214,19 +225,56 @@ function buildMetrics(
   ];
 }
 
+const PAYMENT_ISSUE_STATUSES = new Set(["failed", "past_due", "requires_payment_method"]);
+/** Invoice states where a failed attempt no longer needs the parent's attention. */
+const SETTLED_INVOICE_STATUSES = new Set(["void", "paid"]);
+
+/**
+ * A failed/past-due payment still needs attention unless its invoice has
+ * since been voided (enrollment cancelled/paused, #651) or paid, or the
+ * parent has no active enrollment left to keep uninterrupted.
+ */
+export function findPaymentNeedingAttention({
+  payments,
+  invoices,
+  hasActiveEnrollment,
+}: {
+  payments: ParentPayment[];
+  invoices: ParentInvoice[];
+  hasActiveEnrollment: boolean;
+}): ParentPayment | null {
+  if (!hasActiveEnrollment) return null;
+  const invoiceStatusById = new Map(
+    invoices.map((invoice) => [invoice.invoice_id, invoice.status] as const),
+  );
+  return (
+    payments.find((payment) => {
+      if (!PAYMENT_ISSUE_STATUSES.has(payment.status)) return false;
+      const invoiceStatus = payment.invoice_id
+        ? invoiceStatusById.get(payment.invoice_id)
+        : undefined;
+      return !(invoiceStatus && SETTLED_INVOICE_STATUSES.has(invoiceStatus));
+    }) ?? null
+  );
+}
+
 function choosePrimaryAction({
   selectedChild,
   progressRow,
   activeEnrollment,
+  hasActiveEnrollment,
   credits,
   payments,
+  invoices,
   waiver,
 }: {
   selectedChild: ParentChild;
   progressRow: StudentProgressOverview | null;
   activeEnrollment: ParentEnrollment | null;
+  hasActiveEnrollment: boolean;
   credits: ParentCreditBalance | null;
   payments: ParentPayment[];
+  invoices: ParentInvoice[];
   waiver: ParentWaiverCurrentView | null;
 }): ParentHomeAction {
   const waiverStudent = waiver?.students.find(
@@ -250,9 +298,11 @@ function choosePrimaryAction({
     };
   }
 
-  const paymentIssue = payments.find((payment) =>
-    ["failed", "past_due", "requires_payment_method"].includes(payment.status),
-  );
+  const paymentIssue = findPaymentNeedingAttention({
+    payments,
+    invoices,
+    hasActiveEnrollment,
+  });
   if (paymentIssue) {
     return {
       kind: "payment",

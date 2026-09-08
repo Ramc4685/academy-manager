@@ -3,9 +3,147 @@ import { test } from "node:test";
 
 import {
   buildParentHomeModel,
+  findPaymentNeedingAttention,
   formatMoney,
   progressPercent,
 } from "./parent-home.ts";
+
+function failedPayment(overrides = {}) {
+  return {
+    payment_id: "p-failed",
+    amount_cents: 9000,
+    currency: "usd",
+    status: "failed",
+    refunded_cents: 0,
+    created_at: "2026-06-06T12:00:00Z",
+    session_id: "session-1",
+    invoice_id: "inv-1",
+    ...overrides,
+  };
+}
+
+function invoiceRow(status, overrides = {}) {
+  return {
+    invoice_id: "inv-1",
+    period: "2026-06",
+    status,
+    total_cents: 9000,
+    balance_due_cents: status === "paid" ? 0 : 9000,
+    currency: "usd",
+    due_date: "2026-06-15",
+    pdf_url: null,
+    created_at: "2026-06-01T00:00:00Z",
+    ...overrides,
+  };
+}
+
+function homeInputWithFailedPayment({ enrollments, invoices, payments = [failedPayment()] }) {
+  return {
+    children: [
+      {
+        student_id: "s1",
+        full_name: "Rohan Rao",
+        status: "active",
+        active_session_count: 1,
+        attended_count: 0,
+        absent_count: 0,
+      },
+    ],
+    enrollments,
+    attendance: [],
+    notes: [],
+    payments,
+    invoices,
+    credits: { balance_cents: 0, credits: [] },
+    waiver: null,
+    progressRows: [],
+  };
+}
+
+const activeEnrollment = {
+  enrollment_id: "e1",
+  student_id: "s1",
+  student_name: "Rohan Rao",
+  session_id: "session-1",
+  session_title: "Intermediate Badminton",
+  status: "active",
+  payment_mode: "monthly",
+  subscription_status: null,
+};
+
+test("failed payment on an open invoice still needs attention", () => {
+  const model = buildParentHomeModel(
+    homeInputWithFailedPayment({
+      enrollments: [activeEnrollment],
+      invoices: [invoiceRow("open")],
+    }),
+  );
+  assert.equal(model.primaryAction.kind, "payment");
+  // Without invoice data the payment-only behaviour is unchanged.
+  const legacy = buildParentHomeModel(
+    homeInputWithFailedPayment({ enrollments: [activeEnrollment], invoices: undefined }),
+  );
+  assert.equal(legacy.primaryAction.kind, "payment");
+});
+
+test("failed payment whose invoice was voided or paid no longer needs attention (#651)", () => {
+  for (const status of ["void", "paid"]) {
+    const model = buildParentHomeModel(
+      homeInputWithFailedPayment({
+        enrollments: [activeEnrollment],
+        invoices: [invoiceRow(status, { void_reason: status === "void" ? "enrollment_cancelled" : null })],
+      }),
+    );
+    assert.notEqual(model.primaryAction.kind, "payment", status);
+    assert.equal(model.primaryAction.kind, "next_class", status);
+  }
+});
+
+test("failed payment is not surfaced when the parent has no active enrollment", () => {
+  const cancelled = { ...activeEnrollment, status: "cancelled" };
+  const model = buildParentHomeModel(
+    homeInputWithFailedPayment({
+      enrollments: [cancelled],
+      invoices: [invoiceRow("open")],
+    }),
+  );
+  assert.equal(model.primaryAction.kind, "register");
+  assert.equal(
+    findPaymentNeedingAttention({
+      payments: [failedPayment()],
+      invoices: [],
+      hasActiveEnrollment: false,
+    }),
+    null,
+  );
+});
+
+test("findPaymentNeedingAttention matches by invoice_id and ignores unlinked payments' invoices", () => {
+  const voided = invoiceRow("void");
+  // Same failed payment, but linked to a different (still open) invoice.
+  const stillOpen = findPaymentNeedingAttention({
+    payments: [failedPayment({ invoice_id: "inv-other" })],
+    invoices: [voided, invoiceRow("open", { invoice_id: "inv-other" })],
+    hasActiveEnrollment: true,
+  });
+  assert.equal(stillOpen?.payment_id, "p-failed");
+  // A failed payment with no invoice linkage cannot be cleared by the ledger.
+  const unlinked = findPaymentNeedingAttention({
+    payments: [failedPayment({ invoice_id: null })],
+    invoices: [voided],
+    hasActiveEnrollment: true,
+  });
+  assert.equal(unlinked?.payment_id, "p-failed");
+  // Non-issue statuses are never surfaced.
+  assert.equal(
+    findPaymentNeedingAttention({
+      payments: [failedPayment({ status: "succeeded" })],
+      invoices: [],
+      hasActiveEnrollment: true,
+    }),
+    null,
+  );
+});
 
 test("builds selected child progress hero and latest note", () => {
   const model = buildParentHomeModel({

@@ -11,9 +11,17 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 AttendanceStatus = Literal["present", "absent", "late"]
+# How the student got onto the occurrence's roster: a standing enrollment, or
+# an approved one-time make-up / trial entry (issue #672). Missing on
+# documents written before the field existed, which read as ``enrollment``.
+AttendanceEntrySource = Literal["enrollment", "makeup", "trial"]
 CoachAttendanceStatus = Literal["present", "absent"]
 CoachAttendanceRole = Literal["lead", "assistant"]
 CoachAttendanceSource = Literal["coach_self", "admin"]
+# Who may read a coach-authored note: ``private`` stays with coaches and
+# supervisors, ``shared`` is visible to the student's parent. Missing on
+# legacy documents, which read as private (migration 0167 backfills them).
+NoteVisibility = Literal["private", "shared"]
 
 
 class Attendance(BaseModel):
@@ -31,6 +39,7 @@ class Attendance(BaseModel):
     marked_at_client: datetime | None = None
     status: AttendanceStatus
     client_app_version: str = Field(default="unknown")
+    entry_source: AttendanceEntrySource = "enrollment"
     # Correction audit trail (#517) — set only when a coach/admin corrects a
     # previously recorded mark. `previous_status` is the status the last
     # correction replaced.
@@ -87,3 +96,4 @@ class CoachSkillNote(BaseModel):
     session_id: str | None = None
     body: str
     created_at: datetime
+    visibility: NoteVisibility = "private"

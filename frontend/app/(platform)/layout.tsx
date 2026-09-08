@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { ToastProvider } from "@/components/ds/toast";
 import { AuthUnavailableScreen } from "@/components/persona/auth-unavailable";
 import { PersonaLogoutButton } from "@/components/persona/logout-button";
+import { ShellBackButton } from "@/components/persona/back-button";
 import { usePlatformAuth } from "@/lib/auth/use-persona-auth";
 
 /**
@@ -16,6 +17,9 @@ import { usePlatformAuth } from "@/lib/auth/use-persona-auth";
  * gating is cosmetic only: every `/platform/*` route independently 404s for
  * non-platform callers.
  */
+const PLATFORM_TOP_LEVEL_ROUTES = ["/platform", "/platform/tenants"] as const;
+const PLATFORM_HOME = "/platform/tenants";
+
 export default function PlatformLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const auth = usePlatformAuth();
@@ -53,13 +57,14 @@ export default function PlatformLayout({ children }: { children: React.ReactNode
     <ToastProvider>
       <div className="min-h-screen flex flex-col" style={{ background: "var(--rally-paper)" }}>
         <header
-          className="sticky top-0 z-10 flex items-center justify-between px-4 py-3"
+          className="sticky top-0 z-10 flex items-center justify-between px-4 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top,0px))]"
           style={{
             background: "linear-gradient(135deg, #0a0f1c 0%, #0f1d38 100%)",
             borderBottom: "1px solid rgba(250,204,21,0.12)",
           }}
         >
           <div className="flex items-center gap-4">
+            <ShellBackButton known={PLATFORM_TOP_LEVEL_ROUTES} home={PLATFORM_HOME} variant="dark" />
             <Link href="/platform/tenants" className="flex items-center gap-2.5">
               <div
                 className="h-8 w-8 rounded-lg flex items-center justify-center font-bold text-sm shadow-lg"

@@ -23,7 +23,7 @@ async def up(db: AsyncIOMotorDatabase) -> None:
     await dead.create_index([("created_at", 1)], name="created_at")
 
     audit = db["event_audit"]
-    # 90-day TTL on completed_at.
+    # 90-day TTL on completed_at (extended to 400 days by migration 0166).
     await audit.create_index(
         "completed_at", expireAfterSeconds=90 * 24 * 60 * 60, name="completed_at_ttl"
     )

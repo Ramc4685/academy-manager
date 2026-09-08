@@ -284,6 +284,48 @@ test.describe("admin students", () => {
           payment_mode: "monthly",
           subscription_status: "active",
           amount_cents: 15000,
+          autopay_status: "active",
+        },
+        {
+          enrollment_id: "enr-2",
+          session_id: "sess-2",
+          session_title: "Doubles Drills",
+          location: "Court 3",
+          start_at: "2026-06-03T21:00:00Z",
+          end_at: "2026-06-03T22:00:00Z",
+          status: "active",
+          payment_mode: "monthly",
+          subscription_status: "active",
+          amount_cents: 12000,
+          // The billing repository default: nothing was ever set up.
+          autopay_status: "not_offered",
+        },
+      ],
+      // Issue #674: ended enrollments stay on the record with their facts.
+      past_enrollments: [
+        {
+          enrollment_id: "enr-0",
+          session_id: "sess-0",
+          session_title: "Beginner Basics",
+          location: "Court 2",
+          status: "cancelled",
+          cancelled_at: "2026-08-20T15:00:00Z",
+          ended_at: "2026-08-20T15:00:00Z",
+          cancelled_by: "parent",
+          reason: "Schedule conflict",
+        },
+        {
+          // Admin cancel stamps a UTC-midnight calendar day; it must render
+          // as 9/1 in any viewer timezone, not 8/31.
+          enrollment_id: "enr-9",
+          session_id: "sess-9",
+          session_title: "Summer Clinic",
+          location: "Court 4",
+          status: "cancelled",
+          cancelled_at: "2026-09-01T00:00:00Z",
+          ended_at: "2026-09-01T00:00:00Z",
+          cancelled_by: "admin",
+          reason: "Moved away",
         },
       ],
       payment_history: [
@@ -338,40 +380,6 @@ test.describe("admin students", () => {
     await page.route("**/api/v2/admin/session-types*", (route) => {
       if (route.request().method() !== "GET") return route.fallback();
       return fulfillJson(route, { session_types: [] });
-    });
-    await page.route("**/api/v2/admin/billing/invoices/pay-1", (route) => {
-      if (route.request().method() !== "GET") return route.fallback();
-      return fulfillJson(route, {
-        invoice_number: "INV-2026-06-001",
-        period: "2026-06",
-        lines: [
-          {
-            description: "June tuition",
-            amount_cents: 15000,
-            line_type: "tuition",
-            quantity: 1,
-            unit_amount_cents: 15000,
-            source_type: "enrollment",
-            source_id: "enr-1",
-          },
-          {
-            description: "Racket purchase",
-            amount_cents: 4000,
-            line_type: "equipment",
-            quantity: 1,
-            unit_amount_cents: 4000,
-            source_type: "product",
-            source_id: "prod-racket",
-          },
-        ],
-        due_amount_cents: 11000,
-        paid_amount_cents: 8000,
-        status: "partially_paid",
-        allocations: [{ payment_id: "ledger-pay-1", amount_cents: 8000 }],
-        credit_usage: [{ credit_id: "credit-1", amount_cents: 1000 }],
-        invoice_pdf_artifact_id: null,
-        receipt_artifact_id: null,
-      });
     });
     await page.route("**/api/v2/admin/students/student-1", (route) => {
       if (route.request().method() === "PATCH") {
@@ -429,29 +437,34 @@ test.describe("admin students", () => {
       "Advanced Footwork",
     );
     await expect(page.getByTestId("admin-student-enrolled-sessions")).toContainText("$150");
+    // Issue #674: autopay chip on the current row links to the family page.
+    const autopayChip = page.getByTestId("admin-student-autopay-enr-1");
+    await expect(autopayChip).toHaveText("Autopay");
+    await expect(autopayChip).toHaveAttribute("href", "/admin/families/parent-1");
+    // The default not_offered state reads as Manual (family-page wording),
+    // never as a pending card setup.
+    await expect(page.getByTestId("admin-student-autopay-enr-2")).toHaveText("Manual");
+    // Issue #674: the cancelled enrollment is listed with date, actor and reason.
+    const pastRow = page.getByTestId("admin-student-past-enrollment-enr-0");
+    await expect(pastRow).toContainText("Beginner Basics");
+    await expect(pastRow).toContainText("Cancelled");
+    await expect(pastRow).toContainText("2026");
+    await expect(pastRow).toContainText("Parent");
+    await expect(pastRow).toContainText("Schedule conflict");
+    // An admin cancel stored at UTC midnight renders on its calendar day.
+    const adminCancelRow = page.getByTestId("admin-student-past-enrollment-enr-9");
+    await expect(adminCancelRow).toContainText("9/1/2026");
+    await expect(adminCancelRow).not.toContainText("8/31");
+    await expect(adminCancelRow).toContainText("Admin");
+    await expect(adminCancelRow).toContainText("Moved away");
 
     await page.getByRole("tab", { name: "Billing" }).click();
-    await expect(page.getByTestId("admin-student-account-balance")).toContainText("$110");
-    await expect(page.getByTestId("admin-student-account-balance")).toContainText(
-      "1 unpaid invoice",
+    await expect(page.getByTestId("admin-student-family-billing-link")).toContainText(
+      "Open family billing",
     );
-    await expect(page.getByTestId("admin-student-current-payment")).toContainText("$110");
-    await expect(page.getByTestId("admin-student-current-payment")).toContainText(
-      "Balance",
-    );
-    await expect(page.getByTestId("admin-student-invoice-list")).toContainText("2026-06");
-    await expect(page.getByTestId("admin-student-invoice-list")).toContainText("$110");
-    await expect(page.getByTestId("admin-student-current-payment")).toContainText(
-      "INV-2026-06-001",
-    );
-    await expect(page.getByTestId("admin-student-invoice-lines")).toContainText(
-      "Racket purchase",
-    );
-    await expect(page.getByTestId("admin-student-invoice-lines")).toContainText("equipment");
-    await expect(page.getByTestId("admin-student-invoice-lines")).toContainText("$40");
-    await expect(page.getByTestId("admin-student-current-payment")).toContainText("$190");
-    await expect(page.getByTestId("admin-student-current-payment")).toContainText("$80");
-    await expect(page.getByTestId("admin-student-current-payment")).toContainText("$110");
+    await expect(
+      page.getByTestId("admin-student-family-billing-link").getByRole("link"),
+    ).toHaveAttribute("href", /\/admin\/families\//);
 
     await page.getByRole("tab", { name: "Family & Compliance" }).click();
     await expect(page.getByTestId("admin-student-compliance-tab")).toContainText("2026-v1");
