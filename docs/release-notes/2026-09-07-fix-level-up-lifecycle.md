@@ -1,6 +1,6 @@
 # fix-level-up-lifecycle
 
-PR: #TBD
+PR: #680
 
 ## What changed
 The level-up queue and its approval now respect enrollment lifecycle (issue #673). A
