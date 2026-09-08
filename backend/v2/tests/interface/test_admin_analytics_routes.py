@@ -121,12 +121,23 @@ def test_admin_report_export_allows_known_reports() -> None:
     export = AsyncMock(return_value="header\nvalue\n")
     client = _make_client(use_cases=SimpleNamespace(export_report_csv=export))
 
-    resp = client.get("/api/v2/admin/reports/attendance.csv")
+    resp = client.get("/api/v2/admin/reports/quickbooks.csv")
 
     assert resp.status_code == 200, resp.text
     assert resp.headers["content-type"] == "text/csv; charset=utf-8"
     assert resp.text == "header\nvalue\n"
-    export.assert_awaited_once_with("attendance", None)
+    export.assert_awaited_once_with("quickbooks", None)
+
+
+def test_admin_report_export_no_longer_serves_the_removed_csvs() -> None:
+    """Month close keeps the QuickBooks journal and the deposit slip only;
+    the pending-payments, revenue and attendance CSVs are gone (spec §5)."""
+    export = AsyncMock(return_value="header\nvalue\n")
+    client = _make_client(use_cases=SimpleNamespace(export_report_csv=export))
+
+    for report in ("pending-payments", "revenue", "attendance"):
+        assert client.get(f"/api/v2/admin/reports/{report}.csv").status_code == 404
+    export.assert_not_awaited()
 
 
 def test_admin_report_export_rejects_unknown_report_without_calling_use_case() -> None:

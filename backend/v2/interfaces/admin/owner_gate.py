@@ -45,8 +45,12 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         # billing_routes.py — money governance
         ("PUT", f"{_ADMIN}/billing/settings/platform-fallback"),
         ("PUT", f"{_ADMIN}/billing/settings/invoice-schedule"),
+        # billing_rules_routes.py — the merged Settings panel write
+        # (GET /billing/rules stays admin).
+        ("PUT", f"{_ADMIN}/billing/rules"),
         # (POST /enrollments/{id}/withdraw stays admin; its `credit` outcome is
-        # owner-gated per action by `ensure_owner_for_withdrawal_credit`.)
+        # owner-gated per action by `ensure_owner_for_withdrawal_credit`.
+        # The old owner-only .../withdrawal-credit/approve route was removed.)
         ("POST", f"{_ADMIN}/payments/refund"),
         ("POST", f"{_ADMIN}/payments/{{payment_id}}/discount"),
         ("PUT", f"{_ADMIN}/enrollments/{{enrollment_id}}/tuition-discount"),
@@ -84,9 +88,9 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("POST", f"{_ADMIN}/coaches/{{coach_id}}/pay-rates/repair"),
         # reports_routes.py — financial reports (dashboard, enrollment-funnel,
         # attendance-trends, coach-utilization stay admin)
+        ("GET", f"{_ADMIN}/reports/month-close"),
         ("GET", f"{_ADMIN}/reports/session-economics"),
         ("GET", f"{_ADMIN}/reports/projected-income"),
-        ("GET", f"{_ADMIN}/reports/kpis"),
         ("GET", f"{_ADMIN}/reports/refunds"),
         ("GET", f"{_ADMIN}/reports/revenue-by-category"),
         ("GET", f"{_ADMIN}/reports/deposit-slip"),

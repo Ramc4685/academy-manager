@@ -1050,6 +1050,9 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     TransferEnrollment,
     WithdrawEnrollment,
 )
+from backend.v2.contexts.enrollment.application.use_cases.cancel_session_occurrence import (
+    CancelSessionOccurrence,
+)
 from backend.v2.contexts.enrollment.application.use_cases.pause_requests import (
     ApprovePauseRequest,
     DeclinePauseRequest,
@@ -1194,6 +1197,30 @@ class FakeAdminOccurrenceRepo:
 
     async def get(self, occurrence_id: str) -> SessionOccurrence | None:
         return self.rows.get(occurrence_id)
+
+    async def cancel_scheduled(
+        self,
+        *,
+        occurrence_id: str,
+        reason: str,
+        actor_id: str | None,
+        now: datetime,
+    ) -> SessionOccurrence | None:
+        """Mirrors the Mongo CAS: only a row still ``scheduled`` matches."""
+        occurrence = self.rows.get(occurrence_id)
+        if occurrence is None or occurrence.status != "scheduled":
+            return None
+        self.rows[occurrence_id] = occurrence.model_copy(
+            update={
+                "status": "cancelled",
+                "is_billable": False,
+                "is_payable": False,
+                "cancellation_reason": reason,
+                "cancelled_at": now,
+                "cancelled_by": actor_id,
+            }
+        )
+        return self.rows[occurrence_id]
 
     async def update_coach_assignment(
         self,
@@ -1433,6 +1460,34 @@ class FakeWaitlistRepo:
             and entry.status == "waiting"
             else entry
             for waitlist_id, entry in self.entries.items()
+        }
+
+
+class FakeOccurrenceBilling:
+    """``OccurrenceBillingSync`` stand-in (#671).
+
+    Records the call and reports one credit per affected family, so the route
+    test can assert the response carries the billing outcome rather than
+    quietly dropping it.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def apply(self, *, occurrence_id, session_id, start_at, reason, actor_id):
+        self.calls.append(
+            {
+                "occurrence_id": occurrence_id,
+                "session_id": session_id,
+                "start_at": start_at,
+                "reason": reason,
+                "actor_id": actor_id,
+            }
+        )
+        return {
+            "billing_policy": "cancelled_date_credited",
+            "billing_result": "credited=1,override=written",
+            "credits": {"enr-1": "credit-671"},
         }
 
 
@@ -1975,6 +2030,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
     pause_requests = seed["pause_requests"]
     billing_deferrals = seed["billing_deferrals"]
     autopay_status = seed["autopay_status"]
+    _occurrence_billing = FakeOccurrenceBilling()
     payments = seed["payments"]
     tuition_discounts = seed["tuition_discounts"]
     outbox = seed["outbox"]
@@ -2131,6 +2187,8 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
             "start_at": occurrence.start_at,
             "end_at": occurrence.end_at,
             "status": occurrence.status,
+            "cancellation_reason": occurrence.cancellation_reason,
+            "cancelled_at": occurrence.cancelled_at,
             "scheduled_coach_id": occurrence.scheduled_coach_id,
             "actual_coach_id": occurrence.actual_coach_id,
             "substitute_coach_id": occurrence.substitute_coach_id,
@@ -2457,6 +2515,15 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
 
     _admin_user_editor = _FakeAdminUserEditor()
 
+    cancel_session_occurrence = CancelSessionOccurrence(
+        occurrences=occurrences,
+        sessions=sessions,
+        enrollments=enrollments_q,
+        enrollment_events=enrollment_events,
+        billing_sync=_occurrence_billing,
+        clock=lambda: datetime(2026, 5, 15, 12, 0, tzinfo=UTC),
+    )
+
     return AdminUseCases(
         list_admin_users=_ListAdminUsers(),  # type: ignore[arg-type]
         send_login_invite=_login_invite_sender,  # type: ignore[arg-type]
@@ -2469,6 +2536,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         create_session=create_session,
         edit_session=edit_session,
         cancel_session=cancel_session,
+        cancel_session_occurrence=cancel_session_occurrence,
         edit_roster_add=edit_roster_add,
         cancel_enrollment=cancel_enrollment,
         transfer_enrollment=transfer_enrollment,
@@ -2512,14 +2580,6 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         list_billing_deferral_warnings=billing_deferrals.list_admin_warnings,
         send_dues_reminders=send_dues_reminders,
         export_report_csv=export_report_csv,
-        get_reports_kpis=AsyncMock(
-            return_value={
-                "active_students": 0,
-                "attendance_rate_30d": 0.0,
-                "dues_collected_mtd_cents": 0,
-                "pending_waivers": 0,
-            }
-        ),
         list_enrollment_events=enrollment_events.list_for_enrollment,
         comms=comms,
         list_admin_waivers=waivers,  # type: ignore[arg-type]

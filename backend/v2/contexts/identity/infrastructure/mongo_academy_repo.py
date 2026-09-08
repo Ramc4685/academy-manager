@@ -45,7 +45,6 @@ class MongoAcademyRepository:
             "academy_id": academy_id,
             "display_name": academy_id,
             "fees": {
-                "default_monthly_cents": None,
                 "late_fee_cents": None,
                 "grace_days": None,
             },

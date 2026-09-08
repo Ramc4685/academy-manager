@@ -52,6 +52,7 @@ from backend.v2.composition.lifecycle_billing import (
     compose_enrollment_move_billing_sync,
     compose_withdrawal_decision,
 )
+from backend.v2.composition.occurrence_cancellation import compose_cancel_session_occurrence
 from backend.v2.composition.pathway import (
     compose_curriculum,
     compose_student_progress,
@@ -184,7 +185,6 @@ from backend.v2.contexts.billing.infrastructure.admin_reports_read_model import 
     make_projected_income_report,
     make_refunds_report,
     make_reports_dashboard,
-    make_reports_kpis,
     make_revenue_by_category_report,
     make_session_economics_report,
 )
@@ -2724,6 +2724,8 @@ def compose_admin(
             "start_at": occurrence.start_at,
             "end_at": occurrence.end_at,
             "status": occurrence.status,
+            "cancellation_reason": occurrence.cancellation_reason,
+            "cancelled_at": occurrence.cancelled_at,
             "scheduled_coach_id": occurrence.scheduled_coach_id,
             "actual_coach_id": occurrence.actual_coach_id,
             "substitute_coach_id": occurrence.substitute_coach_id,
@@ -4546,6 +4548,7 @@ def compose_admin(
         ),
         list_session_occurrences=list_session_occurrences,
         get_session_occurrence=occurrences_r.get,
+        cancel_session_occurrence=compose_cancel_session_occurrence(db, notifier=notifiers.roster),
         generate_daily_teaching_plan=generate_daily_teaching_plan,
         get_coach_engagement_stats=get_coach_engagement_stats,
         update_session_occurrence_coach=update_session_occurrence_coach,
@@ -4563,7 +4566,6 @@ def compose_admin(
         get_refunds_report=get_refunds_report,
         get_revenue_by_category_report=get_revenue_by_category_report,
         get_deposit_slip_report=get_deposit_slip_report,
-        get_reports_kpis=make_reports_kpis(db),
         get_session_economics=make_session_economics_report(db),
         get_projected_income=make_projected_income_report(db),
         list_enrollment_events=make_list_enrollment_events(db),

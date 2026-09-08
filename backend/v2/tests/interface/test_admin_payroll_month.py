@@ -119,7 +119,6 @@ def _minimal_admin_use_cases(
         list_billing_deferral_warnings=mock,
         send_dues_reminders=mock,  # type: ignore[arg-type]
         export_report_csv=mock,
-        get_reports_kpis=mock,
         list_enrollment_events=mock,
         comms=mock,  # type: ignore[arg-type]
         list_admin_waivers=mock,  # type: ignore[arg-type]

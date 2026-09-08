@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   ADMIN_NAV,
+  OWNER_ONLY_ROUTE_EXCEPTIONS,
   isOwnerOnlyRoute,
   metaForPath,
   navForRoles,
@@ -68,9 +69,14 @@ describe("isOwnerOnlyRoute", () => {
     expect(isOwnerOnlyRoute("/admin/session-economics")).toBe(true);
   });
 
-  it("keeps dues follow-up open to admins even though it lives under /admin/reports", () => {
+  it("keeps the old Dues path reachable so its redirect can run for admins", () => {
+    // The page is gone, but the path is now a redirect to `/admin/payments` —
+    // a page admins may use. Dropping the exception would meet an admin
+    // following an old bookmark with an owner-only wall instead of forwarding
+    // them (month close spec §6).
+    expect(OWNER_ONLY_ROUTE_EXCEPTIONS).toEqual(["/admin/reports/dues"]);
     expect(isOwnerOnlyRoute("/admin/reports/dues")).toBe(false);
-    expect(isOwnerOnlyRoute("/admin/reports/dues/parent-1")).toBe(false);
+    expect(isOwnerOnlyRoute("/admin/reports")).toBe(true);
   });
 
   it("does not match on a shared string prefix", () => {
@@ -96,6 +102,15 @@ describe("isOwnerOnlyRoute", () => {
 describe("metaForPath", () => {
   it("titles the Families list", () => {
     expect(metaForPath("/admin/families").title).toBe("Families");
+    // Reports is Month close now (spec §5); the sub-reports say so too.
+    expect(metaForPath("/admin/reports").title).toBe("Month close");
+    expect(metaForPath("/admin/reports").breadcrumbs).toEqual(["Admin", "Money", "Month close"]);
+    expect(metaForPath("/admin/reports/deposit-slip").breadcrumbs).toEqual([
+      "Admin",
+      "Money",
+      "Month close",
+      "Deposit slip",
+    ]);
     expect(metaForPath("/admin/families").breadcrumbs).toEqual(["Admin", "Money", "Families"]);
   });
 

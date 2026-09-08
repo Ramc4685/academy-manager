@@ -5,6 +5,7 @@ import { useQueries, useQuery } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
 
 import { getChildSchedule, listParentChildren } from "@/lib/api/parent";
+import { scheduleEntryToEvent } from "@/lib/parent/schedule-events";
 import type { CalendarViewEvent } from "@/components/calendar/PersonaCalendarView";
 import { Card } from "@/components/ds/card";
 import { Skeleton } from "@/components/ds/skeleton";
@@ -43,7 +44,9 @@ export default function ParentCalendarPage() {
   const isError = childrenError || scheduleQueries.some((q) => q.isError);
 
   const scheduleSignature = scheduleQueries
-    .map((q) => (q.data ? q.data.entries.map((e) => e.occurrence_id).join(",") : ""))
+    .map((q) =>
+      q.data ? q.data.entries.map((e) => `${e.occurrence_id}:${e.status}`).join(",") : "",
+    )
     .join("|");
 
   const events: CalendarViewEvent[] = useMemo(() => {
@@ -51,14 +54,10 @@ export default function ParentCalendarPage() {
     children.forEach((child, idx) => {
       const color = CHILD_COLORS[idx % CHILD_COLORS.length];
       const entries = scheduleQueries[idx]?.data?.entries ?? [];
+      // Cancelled dates come back from this feed too (#671); the mapper
+      // greys them out rather than letting them read as a normal class.
       entries.forEach((e) => {
-        out.push({
-          id: e.occurrence_id,
-          title: `${child.full_name} — ${e.session_title}`,
-          start: e.start_at,
-          end: e.end_at,
-          color,
-        });
+        out.push(scheduleEntryToEvent(e, { childName: child.full_name, color }));
       });
     });
     return out;
