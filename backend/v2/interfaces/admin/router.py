@@ -6,6 +6,7 @@ from fastapi import APIRouter
 
 from .academy_routes import router as academy_router
 from .audit_routes import router as audit_router
+from .billing_health_routes import router as billing_health_router
 from .billing_products_routes import router as billing_products_router
 from .billing_routes import router as billing_router
 from .billing_rules_routes import router as billing_rules_router
@@ -48,6 +49,7 @@ router.include_router(session_type_router)
 router.include_router(waitlist_router)
 router.include_router(collections_router)
 router.include_router(families_router)
+router.include_router(billing_health_router)
 router.include_router(billing_router)
 router.include_router(billing_setup_router)
 router.include_router(billing_products_router)

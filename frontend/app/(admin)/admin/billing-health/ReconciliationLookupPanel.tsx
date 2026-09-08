@@ -1,5 +1,13 @@
 "use client";
 
+/**
+ * Look one Stripe id up against the ledger — read-only, changes nothing.
+ *
+ * Moved here from the Payments page by the Billing Health trim (spec
+ * 2026-09-07 §6): it answers "Stripe says this happened — did we record it?",
+ * which is plumbing, not a family question. Same component, new home.
+ */
+
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 
@@ -12,22 +20,11 @@ import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Field } from "@/components/ds/dialog-chrome";
-import { BigNum, Overline } from "@/components/ds/typography";
+import { Overline } from "@/components/ds/typography";
 
-import { formatCents } from "./format";
+import { formatCents } from "@/lib/money";
 
-export function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <Card p={20}>
-      <Overline>{label}</Overline>
-      <div className="mt-1.5">
-        <BigNum size={28}>{value}</BigNum>
-      </div>
-    </Card>
-  );
-}
-
-export function ReconciliationReportPanel() {
+export function ReconciliationLookupPanel() {
   const [stripeInvoiceId, setStripeInvoiceId] = useState("");
   const [paymentIntentId, setPaymentIntentId] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -45,8 +42,8 @@ export function ReconciliationReportPanel() {
 
   return (
     <Card p={16}>
-      <div>
-        <Overline>Reconciliation</Overline>
+      <div data-testid="reconciliation-lookup">
+        <Overline>Look up a Stripe id</Overline>
         <h2 className="mt-1 font-display text-lg font-semibold text-rally-ink">
           Read-only reconciliation
         </h2>

@@ -257,6 +257,9 @@ class ParentEnrollmentView(BaseModel):
     session_id: str
     session_title: str
     status: str
+    # Issue #675: a parent's end-of-period cancel is pending; the enrollment
+    # stays active (roster, schedule, seat) until this instant.
+    pending_cancellation_at: datetime | None = None
     payment_mode: str | None = None
     subscription_status: str | None = None
     autopay_enrollment_status: str | None = None

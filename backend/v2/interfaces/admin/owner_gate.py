@@ -62,6 +62,16 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("POST", f"{_ADMIN}/billing/invoices/{{invoice_id}}/adjustments"),
         ("POST", f"{_ADMIN}/billing/invoices/{{invoice_id}}/void"),
         ("POST", f"{_ADMIN}/billing/invoices/{{invoice_id}}/refund"),
+        # billing_health_routes.py — Stripe plumbing is governance, the same
+        # tier as Reports and Payouts (spec 2026-09-07 §2). Admins who could
+        # open Billing Health before this change now get a 404.
+        ("GET", f"{_ADMIN}/billing/connect-readiness"),
+        ("GET", f"{_ADMIN}/billing/webhooks"),
+        ("POST", f"{_ADMIN}/billing/webhook-events/{{event_id}}/replay"),
+        ("GET", f"{_ADMIN}/billing/reconciliation-runs"),
+        ("POST", f"{_ADMIN}/billing/reconcile-now"),
+        ("GET", f"{_ADMIN}/billing/reconciliation"),
+        ("POST", f"{_ADMIN}/billing/legacy-match/confirm"),
         # billing_products_routes.py — pricing (GET stays admin)
         ("POST", f"{_ADMIN}/billing/products"),
         ("PATCH", f"{_ADMIN}/billing/products/{{product_id}}"),

@@ -32,14 +32,16 @@ async def dashboard_attention(
     items: list[AdminAttentionItemView] = []
     today = date.today()
 
-    blocked_resume_reader = getattr(use_cases, "list_blocked_scheduled_resume_actions", None)
+    stuck_actions_reader = getattr(use_cases, "list_stuck_scheduled_actions", None)
 
     # Fan out all independent data fetches concurrently.
-    if callable(blocked_resume_reader):
+    stuck_actions: list[Any] = []
+
+    if callable(stuck_actions_reader):
         (
             dues_rows,
             pause_requests,
-            blocked_resumes,
+            stuck_actions,
             billing_deferral_warnings,
             waiver_report,
             sessions,
@@ -48,7 +50,7 @@ async def dashboard_attention(
             _read_attention_source(
                 "pause_requests", use_cases.list_admin_pause_requests.execute, []
             ),
-            _read_attention_source("blocked_scheduled_resumes", blocked_resume_reader, []),
+            _read_attention_source("stuck_scheduled_actions", stuck_actions_reader, []),
             _read_attention_source(
                 "billing_deferral_warnings",
                 use_cases.list_billing_deferral_warnings,
@@ -81,7 +83,6 @@ async def dashboard_attention(
             _read_attention_source("waivers", use_cases.list_admin_waivers.execute, None),
             _read_attention_source("sessions", use_cases.list_admin_sessions, [], today),
         )
-        blocked_resumes: list[Any] = []
 
     overdue_count = len([row for row in dues_rows if int(row.get("total_due_cents") or 0) > 0])
     if overdue_count:
@@ -112,6 +113,15 @@ async def dashboard_attention(
             )
         )
 
+    # Issue #675 follow-up: one reader, two very different problems — a resume
+    # that could not find a seat, and a month-end cancel that gave up after its
+    # retries. They get their own items so an admin is not told a lost
+    # cancellation is a capacity problem.
+    blocked_resumes = [
+        row for row in stuck_actions if str(_field(row, "status", "")) == "blocked_capacity"
+    ]
+    failed_actions = [row for row in stuck_actions if str(_field(row, "status", "")) == "failed"]
+
     if blocked_resumes:
         count = len(blocked_resumes)
         items.append(
@@ -125,6 +135,24 @@ async def dashboard_attention(
                 ),
                 severity="medium",
                 href="/admin/pause-requests",
+                count=count,
+            )
+        )
+
+    if failed_actions:
+        count = len(failed_actions)
+        items.append(
+            AdminAttentionItemView(
+                attention_id="scheduled-action-failed",
+                kind="scheduled_action_failed",
+                title="Scheduled enrollment change failed",
+                detail=(
+                    f"{count} scheduled change{'s' if count != 1 else ''} "
+                    "(such as an end-of-period cancellation) could not be applied "
+                    "and needs a manual fix."
+                ),
+                severity="high",
+                href="/admin/requests",
                 count=count,
             )
         )

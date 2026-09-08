@@ -655,6 +655,11 @@ class CancelSession:
             # would drive `reserved_seats` below the truth.
             if not was_paused:
                 await self._sessions.release_seat(e.session_id)
+                # Issue #675: a pending end-of-period self-cancel dies with
+                # the class too; the paused branch below already does this.
+                await _retire_scheduled_actions(
+                    self._scheduled_actions, e.enrollment_id, reason="session_cancelled"
+                )
             else:
                 await self._close_paused_followups(e.enrollment_id, now=now)
             await _drop_future_occurrence_roster(
@@ -1047,6 +1052,28 @@ async def _sync_billing(
         return {"billing_result": "billing_sync_failed"}
 
 
+async def _retire_scheduled_actions(
+    scheduled_actions: ScheduledEnrollmentActionRepository | None,
+    enrollment_id: str,
+    *,
+    reason: str,
+) -> None:
+    """Issue #675: an enrollment that just ended must not have a pending
+    ``cancel_at_period_end`` (or ``resume_from_pause``) fire later against a
+    row that is already cancelled / withdrawn. Best-effort — the status
+    write has committed, and the processor's CAS refuses an ended row anyway;
+    this keeps the blocked-actions list honest."""
+    if scheduled_actions is None:
+        return
+    try:
+        await scheduled_actions.cancel_pending_for_enrollment(enrollment_id, reason=reason)
+    except Exception:
+        log.exception(
+            "enrollment.scheduled_action_retire_failed",
+            extra={"enrollment_id": enrollment_id, "reason": reason},
+        )
+
+
 async def _sync_move_billing(
     billing_sync: EnrollmentMoveBillingSync | None,
     *,
@@ -1133,6 +1160,7 @@ class CancelEnrollment:
         roster_notifier: RosterChangeNotifier | None = None,
         billing_sync: EnrollmentBillingSync | None = None,
         occurrence_roster: OccurrenceRosterCleanup | None = None,
+        scheduled_actions: ScheduledEnrollmentActionRepository | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._enrollments = enrollments
@@ -1143,6 +1171,7 @@ class CancelEnrollment:
         self._roster_notifier = roster_notifier
         self._billing_sync = billing_sync
         self._occurrence_roster = occurrence_roster
+        self._scheduled_actions = scheduled_actions
         self._now = clock
 
     #: Statuses that no longer hold a seat (issue #651): a paused row released
@@ -1168,6 +1197,9 @@ class CancelEnrollment:
             cancelled_at=effective_at,
             cancelled_by="admin",
             cancellation_reason=cmd.reason,
+        )
+        await _retire_scheduled_actions(
+            self._scheduled_actions, e.enrollment_id, reason=f"enrollment_{cmd.event_type}"
         )
         # Issue #651: billing must follow the cancel (void future invoices,
         # disable autopay) BEFORE the lifecycle event records the outcome.
@@ -1770,6 +1802,7 @@ class WithdrawEnrollment:
         sessions: SessionWriter | None = None,
         outbox: Outbox | None = None,
         occurrence_roster: OccurrenceRosterCleanup | None = None,
+        scheduled_actions: ScheduledEnrollmentActionRepository | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._enrollments = enrollments
@@ -1780,6 +1813,7 @@ class WithdrawEnrollment:
         self._sessions = sessions
         self._outbox = outbox
         self._occurrence_roster = occurrence_roster
+        self._scheduled_actions = scheduled_actions
         self._now = clock
 
     async def execute(self, cmd: WithdrawEnrollmentCommand) -> None:
@@ -1825,6 +1859,9 @@ class WithdrawEnrollment:
             e.enrollment_id,
             cancelled_by="admin",
             cancellation_reason=cmd.reason,
+        )
+        await _retire_scheduled_actions(
+            self._scheduled_actions, e.enrollment_id, reason="enrollment_withdrawn"
         )
         # Issue #651: a withdrawn student no longer holds a seat. A paused row
         # released its seat when it paused, so only an active row releases —

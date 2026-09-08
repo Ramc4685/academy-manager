@@ -66,7 +66,18 @@ class ProcessScheduledResumeActions:
         limit: int = 50,
     ) -> ProcessScheduledResumeActionsResult:
         attempted_at = now or self._now()
-        actions = await self._scheduled_actions.list_due(now=attempted_at, limit=limit)
+        # Issue #675 follow-up: ask Mongo for OUR type only, and re-check in
+        # Python as defence in depth. A `cancel_at_period_end` row taken by
+        # this worker would be no-opped by `ResumeEnrollment` (the enrollment
+        # is not paused) and then marked succeeded, permanently destroying the
+        # parent's cancellation.
+        actions = [
+            a
+            for a in await self._scheduled_actions.list_due(
+                now=attempted_at, limit=limit, action_type="resume_from_pause"
+            )
+            if a.action_type == "resume_from_pause"
+        ]
         succeeded = 0
         blocked_capacity = 0
         blocked_session_cancelled = 0

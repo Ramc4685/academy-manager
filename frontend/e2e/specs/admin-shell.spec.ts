@@ -784,6 +784,8 @@ test.describe("Rally admin shell", () => {
       await expect(nav.getByTestId("admin-nav-month-close")).toHaveCount(0);
       await expect(nav.getByTestId("admin-nav-coach-payouts")).toHaveCount(0);
       await expect(nav.getByTestId("admin-nav-audit-logs")).toHaveCount(0);
+      // Stripe plumbing became owner-only with the Billing Health trim.
+      await expect(nav.getByTestId("admin-nav-billing-health")).toHaveCount(0);
       await expect(nav.getByText("Admin", { exact: true })).toBeVisible();
       await expect(nav.getByText("Owner", { exact: true })).toHaveCount(0);
 
@@ -807,9 +809,24 @@ test.describe("Rally admin shell", () => {
         .toBe(true);
       await expect(page.getByTestId("admin-month-close")).toHaveCount(0);
 
-      // The Dues page is gone, so there is no longer an owner-only exception
-      // to check here. Chasing balances is Payments work, which admins keep;
-      // the old bookmarks forward there, covered by the UIC3 redirect test.
+      // Billing Health too — its BFF 404s for a non-owner, so the page would
+      // have nothing to show even without the panel. Same shell race as
+      // /admin/reports above: arm for either outcome rather than pinning the
+      // test to the panel, which is what made this flake on webkit.
+      await page.goto("/admin/billing-health", { waitUntil: "commit" }).catch(() => undefined);
+      await expect
+        .poll(
+          async () =>
+            (await page.getByTestId("owner-only-panel").count()) > 0 ||
+            new URL(page.url()).pathname === "/admin",
+          { timeout: 30_000 },
+        )
+        .toBe(true);
+      await expect(page.getByTestId("billing-health-page")).toHaveCount(0);
+
+      // The Dues page is gone (#687), so there is no longer an owner-only
+      // exception to check here. Chasing balances is Payments work, which
+      // admins keep; the old bookmarks forward there, covered by UIC3.
 
       expect(
         errors,
@@ -832,6 +849,7 @@ test.describe("Rally admin shell", () => {
       await expect(nav.getByTestId("admin-nav-month-close")).toBeVisible();
       await expect(nav.getByTestId("admin-nav-coach-payouts")).toBeVisible();
       await expect(nav.getByTestId("admin-nav-audit-logs")).toBeVisible();
+      await expect(nav.getByTestId("admin-nav-billing-health")).toBeVisible();
 
       await page.goto("/admin/reports");
       await expect(page.getByTestId("admin-month-close")).toBeVisible({ timeout: 30_000 });
@@ -948,8 +966,12 @@ test.describe("Rally admin shell", () => {
   }) => {
     const errors = collectConsoleErrors(page);
     await stubAdminBff(page);
-    await page.goto("/admin/coaches");
-    await expect(page).toHaveURL(/\/admin\/users\?role=coach$/);
+    // Arm before navigating: the redirect fires during load and can abort
+    // `page.goto` itself, and the 5s expect default is shorter than a cold
+    // compile — the same race #683 armed for the other bookmark redirects.
+    const landed = page.waitForURL(/\/admin\/users\?role=coach$/, { timeout: 30_000 });
+    await page.goto("/admin/coaches", { waitUntil: "commit" }).catch(() => undefined);
+    await landed;
     await expect(page.getByTestId("admin-users")).toBeVisible();
     // The coach engagement strip only renders while the Coaches tab is active.
     await expect(page.getByTestId("coach-engagement-stats")).toBeVisible();
@@ -964,8 +986,12 @@ test.describe("Rally admin shell", () => {
   }) => {
     const errors = collectConsoleErrors(page);
     await stubAdminBff(page);
-    await page.goto("/admin/parents");
-    await expect(page).toHaveURL(/\/admin\/users\?role=parent$/);
+    // Arm before navigating: the redirect fires during load and can abort
+    // `page.goto` itself, and the 5s expect default is shorter than a cold
+    // compile — the same race #683 armed for the other bookmark redirects.
+    const landed = page.waitForURL(/\/admin\/users\?role=parent$/, { timeout: 30_000 });
+    await page.goto("/admin/parents", { waitUntil: "commit" }).catch(() => undefined);
+    await landed;
     await expect(page.getByTestId("admin-users")).toBeVisible();
     // Parent tab must NOT show the coach-only engagement strip.
     await expect(page.getByTestId("coach-engagement-stats")).toHaveCount(0);

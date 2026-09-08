@@ -110,14 +110,18 @@ def test_admin_approve_pause_request_sets_enrollment_autopay_paused(admin_client
     assert admin_client.seed["enrollments"].rows["enr-2"].status == "paused"
 
 
+class _StuckAction:
+    def __init__(self, enrollment_id: str, status: str, action_type: str) -> None:
+        self.enrollment_id = enrollment_id
+        self.status = status
+        self.action_type = action_type
+
+
 def test_dashboard_attention_includes_blocked_scheduled_resume(admin_client) -> None:
-    class _Action:
-        enrollment_id = "enr-1"
+    async def list_stuck():
+        return [_StuckAction("enr-1", "blocked_capacity", "resume_from_pause")]
 
-    async def list_blocked():
-        return [_Action()]
-
-    admin_client.use_cases.list_blocked_scheduled_resume_actions = list_blocked
+    admin_client.use_cases.list_stuck_scheduled_actions = list_stuck
 
     response = admin_client.get("/api/v2/admin/dashboard/attention")
 
@@ -128,3 +132,27 @@ def test_dashboard_attention_includes_blocked_scheduled_resume(admin_client) -> 
         and item["count"] == 1
         for item in response.json()["items"]
     )
+
+
+def test_dashboard_attention_surfaces_failed_scheduled_cancellations(admin_client) -> None:
+    """Issue #675 follow-up: a month-end cancel that exhausted its retries is
+    terminal and reaches no other screen. It must not be reported as a
+    capacity problem, so it gets its own item."""
+
+    async def list_stuck():
+        return [
+            _StuckAction("enr-1", "blocked_capacity", "resume_from_pause"),
+            _StuckAction("enr-2", "failed", "cancel_at_period_end"),
+        ]
+
+    admin_client.use_cases.list_stuck_scheduled_actions = list_stuck
+
+    response = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    assert response.status_code == 200, response.text
+    items = {item["kind"]: item for item in response.json()["items"]}
+    assert items["scheduled_resume_blocked"]["count"] == 1
+    failed = items["scheduled_action_failed"]
+    assert failed["count"] == 1
+    assert failed["severity"] == "high"
+    assert failed["href"] == "/admin/requests"

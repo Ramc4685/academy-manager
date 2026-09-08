@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from backend.v2.composition.admin import compose_admin
+from backend.v2.composition.billing_health import compose_admin_billing_health
 from backend.v2.shared.config.settings import get_settings
 from backend.v2.shared.tenancy.context import tenant_scope
 
@@ -44,6 +45,11 @@ def _admin_use_cases(db: Any):
         idempotency_store=object(),  # type: ignore[arg-type]
         stripe=_NoopStripe(),  # type: ignore[arg-type]
     )
+
+
+def _billing_health(db: Any, stripe: Any = None):
+    """Billing Health wiring lives in its own composition module (spec 2026-09-07 §5.1)."""
+    return compose_admin_billing_health(db, stripe or _NoopStripe())  # type: ignore[arg-type]
 
 
 def _admin_use_cases_with_stripe(db: Any, stripe: Any):
@@ -958,7 +964,7 @@ async def test_admin_billing_webhook_queue_uses_request_tenant(mongo_db) -> None
         ]
     )
 
-    admin = _admin_use_cases(mongo_db)
+    admin = _billing_health(mongo_db)
     with tenant_scope("request-acad"):
         rows = await admin.list_billing_webhook_events(status="quarantined", limit=10)
 
@@ -1080,7 +1086,7 @@ async def test_billing_reconciliation_detects_orphan_stripe_payment(mongo_db) ->
         }
     )
 
-    admin = _admin_use_cases_with_stripe(mongo_db, stripe)
+    admin = _billing_health(mongo_db, stripe)
     with tenant_scope("request-acad"):
         report = await admin.get_billing_reconciliation_report(payment_intent_id="pi_orphan")
 
@@ -1152,7 +1158,7 @@ async def test_billing_reconciliation_detects_duplicate_obligation(mongo_db) -> 
         },
     )
 
-    admin = _admin_use_cases_with_stripe(mongo_db, stripe)
+    admin = _billing_health(mongo_db, stripe)
     with tenant_scope("request-acad"):
         report = await admin.get_billing_reconciliation_report(stripe_invoice_id="in_duplicate")
 
