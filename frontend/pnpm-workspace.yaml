@@ -27,8 +27,8 @@ overrides:
   brace-expansion@1: ^1.1.18
   brace-expansion@2: ^2.1.4
   brace-expansion@5: ^5.0.9
-  js-yaml@3: ^3.15.1
-  js-yaml@4: ^4.3.1
+  js-yaml@3: ^3.15.2
+  js-yaml@4: ^4.3.2
   # GHSA-c83g-rgw3-j3cx (unbounded memory growth: no cache eviction on
   # distinct query results) / GHSA-73wf-gq98-2v4g (uncaught crash and
   # prototype write via untrusted browserslist-stats.json in normalizeStats).
@@ -44,7 +44,8 @@ auditConfig:
     - GHSA-mwp4-54f8-5fhr # ip-address >=10.3.1
     - GHSA-mh99-v99m-4gvg # brace-expansion 1.x/2.x/5.x patched pins
     - GHSA-rgw5-rvv9-x895 # brace-expansion >=5.0.9
-    - GHSA-5p4m-2wfm-xmqj # js-yaml 3.15.1 / 4.3.1
+    - GHSA-5p4m-2wfm-xmqj # js-yaml 3.15.2 / 4.3.2
+    - GHSA-2883-xcg3-v3hh # js-yaml 3.15.2 / 4.3.2
     - GHSA-28wg-ghj8-5hjv # nanoid >=5.1.16
     - GHSA-2v37-7h3g-55p8 # nanoid >=3.3.18
   # The entry below is the exception: it has NO patched release to pin to.
@@ -57,6 +58,7 @@ auditConfig:
   # entry once upstream publishes a fix or the puppeteer chain drops
   # extract-zip.
     - GHSA-jmr9-qjv8-65gv # extract-zip <=2.0.1, dev-only, no patched release
+    - GHSA-7pqw-9j4j-h8q3 # extract-zip <=2.0.1, dev-only, no patched release (re-issued advisory)
 
 onlyBuiltDependencies:
   - esbuild

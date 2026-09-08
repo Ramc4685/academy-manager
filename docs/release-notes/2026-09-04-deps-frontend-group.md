@@ -27,6 +27,29 @@ etc.) moved to the version Dependabot proposed. `pnpm-lock.yaml` was regenerated
 current `main` (27 commits, including #662/#664/#665/#661/#666/#667/#683 and the
 role-model and lifecycle-followup work).
 
+### Also: unblocks the repo-wide `Frontend Static` audit failure
+
+`pnpm audit --audit-level=high` was failing on **`main` and therefore on every open PR**,
+so nothing could merge. Three separate causes, all fixed here:
+
+- **2 critical, `next` (GHSA-p293-qw3h-jr36, GHSA-2xp9-vwfh-vxw4, `<15.5.24`).** `main`
+  pinned `next@15.5.21`. This PR's bump to `16.3.4` clears both, and takes the
+  `sharp <0.35.4` high (GHSA-rgj7-g3m4-5g8c) with it, since that reached us through
+  `next`'s bundled `sharp`.
+- **2 high, `js-yaml` (GHSA-2883-xcg3-v3hh).** A re-issued advisory that moves the fixed
+  versions one patch past the pins already in `frontend/pnpm-workspace.yaml`, so
+  `js-yaml@3: ^3.15.1 -> ^3.15.2` and `js-yaml@4: ^4.3.1 -> ^4.3.2`. Both are published;
+  dev-only, transitive via `eslint` and `@lhci/cli`.
+- **1 high, `extract-zip` (GHSA-7pqw-9j4j-h8q3).** The same unvalidated-symlink issue the
+  workspace already documents and ignores as `GHSA-jmr9-qjv8-65gv`, re-issued under a new
+  id, so the ignore stopped matching. The original justification is unchanged and still
+  verified: `2.0.1` is **still** the latest version on the registry (the advisory names
+  `>=2.0.2` as patched, but no such release exists), and it is dev-only via
+  `@lhci/cli -> lighthouse -> puppeteer-core -> @puppeteer/browsers`, never reaching the
+  deployed bundle. The new id is added alongside the old one, with the same note.
+
+After this, `scripts/ci/dependency_audit.sh pnpm audit --audit-level=high` exits 0.
+
 ## Deploy notes
 None. Dependency bump only — no backend change, no migration, no new env vars.
 
@@ -36,5 +59,10 @@ None. Dependency bump only — no backend change, no migration, no new env vars.
 packages (`@fullcalendar/react`, `typescript`/`eslint`) will come back in a future
 Dependabot run once `@fullcalendar/daygrid` ships a stable v7 and once
 `typescript-eslint` / `eslint-plugin-react` publish releases compatible with
-`typescript@7` / `eslint@10`. Rollback is reverting the PR; nothing here is
-runtime-visible so a revert is low-risk.
+`typescript@7` / `eslint@10`. Rollback is reverting the PR — but note that reverting also
+restores the two critical `next` advisories and re-breaks the `Frontend Static` audit gate
+on every open PR, so a revert should be paired with a direct `next >= 15.5.24` bump.
+
+The two `extract-zip` highs remain reported-but-ignored; that is the pre-existing,
+documented exception (no patched release exists upstream), not a regression introduced
+here. Remove both ids once the puppeteer chain drops `extract-zip` or `2.0.2` ships.
