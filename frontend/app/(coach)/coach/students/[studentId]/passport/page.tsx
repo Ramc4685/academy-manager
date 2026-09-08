@@ -15,6 +15,7 @@ import {
   type SkillStatus,
 } from "@/lib/api/curriculum";
 import { SkillNotesPanel } from "@/components/coach/skill-notes-panel";
+import { recommendErrorMessage } from "@/components/admin/admissions/level-up-review";
 
 const STATUS_LABELS: Record<SkillStatus, string> = {
   NOT_STARTED: "Not started",
@@ -115,7 +116,7 @@ export default function CoachStudentPassportPage() {
       )}
       {levelUpMutation.isError && (
         <p className="rounded-md bg-red-50 p-3 text-sm text-red-700">
-          Failed to submit recommendation.
+          {recommendErrorMessage(levelUpMutation.error)}
         </p>
       )}
 

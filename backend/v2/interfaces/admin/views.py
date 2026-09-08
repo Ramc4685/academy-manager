@@ -104,6 +104,13 @@ class AdminStudentSessionSummaryView(BaseModel):
     subscription_status: str | None = None
     amount_cents: int | None = None
     discount: AdminStudentSessionDiscountView | None = None
+    # Issue #674: billing autopay axis on current rows; lifecycle facts on past rows.
+    autopay_status: str | None = None
+    cancelled_at: datetime | None = None
+    withdrawal_date: datetime | None = None
+    ended_at: datetime | None = None
+    cancelled_by: str | None = None
+    reason: str | None = None
 
 
 class AdminStudentPaymentSummaryView(BaseModel):
@@ -155,6 +162,7 @@ class AdminStudentDetailView(AdminStudentView):
     waiver_version: str | None = None
     recent_attendance: list[AdminStudentRecentAttendanceView] = Field(default_factory=list)
     enrolled_sessions: list[AdminStudentSessionSummaryView] = Field(default_factory=list)
+    past_enrollments: list[AdminStudentSessionSummaryView] = Field(default_factory=list)
     payment_history: list[AdminStudentPaymentSummaryView] = Field(default_factory=list)
     current_payment: AdminStudentCurrentPaymentSummaryView | None = None
     outstanding_balance_cents: int = 0

@@ -191,6 +191,8 @@ export default function AdminStudentDetailPage() {
         <TabPanel id="sessions">
           <SessionsPanel
             sessions={student.enrolled_sessions ?? []}
+            pastEnrollments={student.past_enrollments ?? []}
+            parentId={student.parent_id}
             studentId={studentId}
             queryClient={queryClient}
           />

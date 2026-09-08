@@ -158,8 +158,8 @@ def _paused_enrollment(enrollment_id: str = "enr-2", student_id: str = "stu-2") 
 class DatedEnrollments(FakeEnrollments):
     dates: list[dict[str, Any]] = field(default_factory=list)
 
-    async def set_lifecycle_dates(self, enrollment_id: str, **dates: datetime) -> None:
-        self.dates.append({"enrollment_id": enrollment_id, **dates})
+    async def set_lifecycle_dates(self, enrollment_id: str, **fields: object) -> None:
+        self.dates.append({"enrollment_id": enrollment_id, **fields})
 
 
 @pytest.mark.asyncio
@@ -190,7 +190,14 @@ async def test_cancel_enrollment_syncs_billing_persists_date_and_records_result(
             "actor_id": "admin-1",
         }
     ]
-    assert enrollments.dates == [{"enrollment_id": "enr-1", "cancelled_at": EFFECTIVE}]
+    assert enrollments.dates == [
+        {
+            "enrollment_id": "enr-1",
+            "cancelled_at": EFFECTIVE,
+            "cancelled_by": "admin",
+            "cancellation_reason": "admin_cancel",
+        }
+    ]
     assert events.rows[0].billing_policy == "current_period_payable_future_voided"
     assert events.rows[0].billing_result == "voided=1,autopay=disabled"
 
@@ -261,7 +268,14 @@ async def test_withdraw_syncs_billing_and_never_claims_a_decision_was_recorded()
     )
     assert sync.calls[0]["transition"] == "withdrawn"
     assert sync.calls[0]["effective_at"] == EFFECTIVE
-    assert enrollments.dates == [{"enrollment_id": "enr-1", "withdrawal_date": EFFECTIVE}]
+    assert enrollments.dates == [
+        {
+            "enrollment_id": "enr-1",
+            "withdrawal_date": EFFECTIVE,
+            "cancelled_by": "admin",
+            "cancellation_reason": "moving",
+        }
+    ]
     assert events.rows[0].billing_result == "decision_not_recorded;voided=1,autopay=disabled"
 
 

@@ -52,14 +52,25 @@ class MongoEnrollmentWriter(TenantScopedRepository):
         *,
         cancelled_at: datetime | None = None,
         withdrawal_date: datetime | None = None,
+        cancelled_by: str | None = None,
+        cancellation_reason: str | None = None,
     ) -> None:
-        """Persist the effective date of a cancel/withdraw (issue #651)."""
+        """Persist the effective date of a cancel/withdraw (issue #651) and,
+        issue #674, who ended it and why, so the student's past-enrollment row
+        can show the actor and reason without a join on the event log. The
+        actor defaults to "admin" when a cancel date is stamped (the parent
+        self-cancel path has its own writer and never comes through here).
+        """
         fields: dict[str, object] = {"updated_at": datetime.now(UTC)}
         if cancelled_at is not None:
             fields["cancelled_at"] = cancelled_at
-            fields["cancelled_by"] = "admin"
+            fields["cancelled_by"] = cancelled_by or "admin"
+        elif cancelled_by is not None:
+            fields["cancelled_by"] = cancelled_by
         if withdrawal_date is not None:
             fields["withdrawal_date"] = withdrawal_date
+        if cancellation_reason is not None and cancellation_reason.strip():
+            fields["cancellation_reason"] = cancellation_reason.strip()
         await self._update_one({"enrollment_id": enrollment_id}, {"$set": fields})
 
     async def mark_withdrawn(self, enrollment_id: str, *, withdrawal_date: datetime) -> None:

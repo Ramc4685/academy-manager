@@ -92,6 +92,19 @@ def monthly_discount_cents(policy: TuitionDiscount, *, monthly_price_cents: int)
     return max(0, min(d, monthly_price_cents))
 
 
+def policy_applies_to_period(
+    policy: TuitionDiscount, *, period_start: date, period_end: date
+) -> bool:
+    """True when the policy's effective window overlaps ``[period_start, period_end]``.
+
+    Shared by the monthly generator (``_policy_applies``) and the mid-period move
+    quote (issue #669) so both price a discounted enrollment the same way.
+    """
+    return policy.effective_start <= period_end and (
+        policy.effective_end is None or policy.effective_end >= period_start
+    )
+
+
 def display_label(policy: TuitionDiscount) -> str:
     """Human label for the badge / parent invoice line (never the private note)."""
     if policy.category == "other":

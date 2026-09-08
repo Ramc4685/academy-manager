@@ -11,6 +11,8 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, Field
 
+from backend.v2.contexts.enrollment.application.ports import EnrollmentAutopayLookup
+
 DuesStatus = Literal["current", "due", "overdue"]
 WaiverStatus = Literal["signed", "missing", "unknown"]
 
@@ -65,6 +67,20 @@ class AdminStudentSessionSummary(BaseModel):
     payment_mode: str | None = None
     subscription_status: str | None = None
     amount_cents: int | None = None
+    # Issue #674: billing's per-enrollment autopay axis
+    # (``autopay_enrollment_status``: active / paused / disabled / setup
+    # states). Filled by ``GetAdminStudent`` through ``EnrollmentAutopayLookup``
+    # for CURRENT rows only; None when billing has no record.
+    autopay_status: str | None = None
+    # Issue #674: lifecycle facts for PAST rows (cancelled / withdrawn).
+    # ``cancelled_at`` and ``withdrawal_date`` are both kept
+    # because admin cancel stamps the former and withdraw stamps the latter;
+    # ``ended_at`` is whichever applies so the UI sorts and renders one date.
+    cancelled_at: datetime | None = None
+    withdrawal_date: datetime | None = None
+    ended_at: datetime | None = None
+    cancelled_by: str | None = None
+    reason: str | None = None
 
 
 class AdminStudentPaymentSummary(BaseModel):
@@ -124,6 +140,9 @@ class AdminStudentDetail(AdminStudentSummary):
     waiver_version: str | None = None
     recent_attendance: list[AdminStudentRecentAttendance] = Field(default_factory=list)
     enrolled_sessions: list[AdminStudentSessionSummary] = Field(default_factory=list)
+    # Issue #674: cancelled / withdrawn enrollments, newest ended first, so a
+    # cancelled student no longer looks never-enrolled.
+    past_enrollments: list[AdminStudentSessionSummary] = Field(default_factory=list)
     payment_history: list[AdminStudentPaymentSummary] = Field(default_factory=list)
     current_payment: AdminStudentCurrentPaymentSummary | None = None
     outstanding_balance_cents: int = 0
@@ -258,8 +277,22 @@ class ListAdminStudents:
 
 
 class GetAdminStudent:
-    def __init__(self, students: AdminStudentDetailQuery) -> None:
+    """Admin student detail.
+
+    ``autopay`` (issue #674) is the cross-context port onto billing's
+    per-enrollment autopay status; it is optional so callers that do not wire
+    billing (and existing tests) keep working. Only CURRENT rows are enriched:
+    a past enrollment's autopay is always disabled by the lifecycle sync
+    (#651) and would only add noise.
+    """
+
+    def __init__(
+        self,
+        students: AdminStudentDetailQuery,
+        autopay: EnrollmentAutopayLookup | None = None,
+    ) -> None:
         self._students = students
+        self._autopay = autopay
 
     async def execute(self, student_id: str) -> AdminStudentDetail:
         from backend.v2.contexts.enrollment.domain.errors import StudentNotFound
@@ -267,7 +300,21 @@ class GetAdminStudent:
         student = await self._students.get_admin_student(student_id)
         if student is None:
             raise StudentNotFound("student not found")
-        return student
+        if self._autopay is None or not student.enrolled_sessions:
+            return student
+        statuses = await self._autopay.autopay_status_by_enrollment(
+            [row.enrollment_id for row in student.enrolled_sessions if row.enrollment_id]
+        )
+        if not statuses:
+            return student
+        return student.model_copy(
+            update={
+                "enrolled_sessions": [
+                    row.model_copy(update={"autopay_status": statuses.get(row.enrollment_id)})
+                    for row in student.enrolled_sessions
+                ]
+            }
+        )
 
 
 class UpdateAdminStudent:

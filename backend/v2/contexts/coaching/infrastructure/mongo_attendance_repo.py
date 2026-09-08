@@ -25,6 +25,9 @@ class MongoAttendanceRepository(TenantScopedRepository):
             marked_at_client=doc.get("marked_at_client"),
             status=doc["status"],
             client_app_version=str(doc.get("client_app_version", "unknown")),
+            # Rows written before #672 carry no source: they were all
+            # enrollment-gated, so ``enrollment`` is the faithful default.
+            entry_source=doc.get("entry_source") or "enrollment",
             corrected_by=doc.get("corrected_by"),
             corrected_at=doc.get("corrected_at"),
             previous_status=doc.get("previous_status"),
@@ -51,6 +54,7 @@ class MongoAttendanceRepository(TenantScopedRepository):
                     "marked_at_client": attendance.marked_at_client,
                     "status": attendance.status,
                     "client_app_version": attendance.client_app_version,
+                    "entry_source": attendance.entry_source,
                 }
             )
         except DuplicateKeyError:

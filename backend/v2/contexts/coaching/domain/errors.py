@@ -56,7 +56,9 @@ class BulkSessionNotAssigned(DomainError):
 
 
 class BulkStudentNotEnrolled(DomainError):
-    """Bulk attendance rejected because a student is not enrolled (whole batch fails)."""
+    """Bulk attendance rejected because a student is not eligible (whole batch
+    fails). ``details["student_ids"]`` lists every ineligible student so the
+    coach UI can name them (issue #672)."""
 
     code = "Coaching.BulkStudentNotEnrolled"
     status_code = 422
