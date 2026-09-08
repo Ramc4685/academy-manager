@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { Route } from "next";
+import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -19,6 +21,7 @@ import {
 import { queryKeys } from "@/lib/query/keys";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
+import { Chip } from "@/components/ds/chip";
 import { Overline } from "@/components/ds/typography";
 
 import {
@@ -29,6 +32,7 @@ import {
   getErrorMessage,
   previewNetCents,
 } from "./format";
+import { autopayChip, familyBillingHref, pastEnrollmentRow } from "./session-rows";
 import { StatusChip } from "./StatusChip";
 
 const DISCOUNT_CATEGORIES: { value: TuitionDiscountCategory; label: string }[] = [
@@ -48,13 +52,20 @@ const DISCOUNT_KINDS: { value: TuitionDiscountKind; label: string }[] = [
 
 function SessionsPanel({
   sessions,
+  pastEnrollments = [],
+  parentId,
   studentId,
   queryClient,
 }: {
   sessions: AdminStudentSessionSummary[];
+  /** Issue #674: cancelled / withdrawn rows, newest ended first. */
+  pastEnrollments?: AdminStudentSessionSummary[];
+  /** Autopay lives on the family page; the chip links there when a parent is on file. */
+  parentId?: string | null;
   studentId: string;
   queryClient: ReturnType<typeof useQueryClient>;
 }) {
+  const billingHref = familyBillingHref(parentId);
   const [moving, setMoving] = useState<AdminStudentSessionSummary | null>(null);
   const [billingOverride, setBillingOverride] =
     useState<AdminStudentSessionSummary | null>(null);
@@ -270,9 +281,16 @@ function SessionsPanel({
                       )}
                     </td>
                     <td className="py-3 pr-4 align-top">
-                      <StatusChip
-                        status={session.subscription_status ?? session.status}
-                      />
+                      <div className="flex flex-col items-start gap-1.5">
+                        <StatusChip
+                          status={session.subscription_status ?? session.status}
+                        />
+                        <AutopayChipLink
+                          status={session.autopay_status}
+                          href={billingHref}
+                          enrollmentId={session.enrollment_id}
+                        />
+                      </div>
                     </td>
                     <td className="py-3 align-top">
                       <div className="flex items-center justify-end gap-3">
@@ -329,6 +347,8 @@ function SessionsPanel({
           </div>
         )}
       </Card>
+
+      <PastEnrollmentsPanel rows={pastEnrollments} />
 
       {moving && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -688,6 +708,105 @@ function SessionsPanel({
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * Issue #674: the autopay state of one enrollment, wording from
+ * `autopayChip`. Wrapped in a link to the family billing page (where autopay
+ * is actually managed) whenever the student has a parent on file.
+ */
+function AutopayChipLink({
+  status,
+  href,
+  enrollmentId,
+}: {
+  status: string | null | undefined;
+  href: string | null;
+  enrollmentId: string;
+}) {
+  const chip = autopayChip(status);
+  const testId = `admin-student-autopay-${enrollmentId}`;
+  if (!href) {
+    return (
+      <span data-testid={testId} data-autopay-status={status ?? "none"}>
+        <Chip variant={chip.variant} label={chip.label} />
+      </span>
+    );
+  }
+  return (
+    <Link
+      href={href as Route}
+      className="rounded-full focus:outline-none focus:ring-2 focus:ring-rally-blue"
+      title="Manage autopay on the family billing page"
+      data-testid={testId}
+      data-autopay-status={status ?? "none"}
+    >
+      <Chip variant={chip.variant} label={chip.label} />
+    </Link>
+  );
+}
+
+/**
+ * Issue #674: enrollments that ended (cancelled / withdrawn) with when, by
+ * whom and why, so a cancelled student no longer looks
+ * like one who was never enrolled. Read-only: nothing here can be edited.
+ */
+function PastEnrollmentsPanel({ rows }: { rows: AdminStudentSessionSummary[] }) {
+  return (
+    <Card p={20} className="lg:col-span-2" data-testid="admin-student-past-enrollments">
+      <div className="flex items-center justify-between gap-3">
+        <Overline>Past enrollments</Overline>
+        <span className="font-mono text-xs text-rally-muted tabular-nums">
+          {rows.length} ended
+        </span>
+      </div>
+      {rows.length === 0 ? (
+        <p className="mt-3 text-sm text-rally-muted" data-testid="admin-student-no-past-enrollments">
+          No cancelled or withdrawn enrollments.
+        </p>
+      ) : (
+        <div className="mt-3 overflow-x-auto">
+          <table className="min-w-full text-left text-sm">
+            <thead className="border-b border-neutral-200 text-xs uppercase tracking-overline text-rally-muted">
+              <tr>
+                <th className="py-2 pr-4 font-medium">Session</th>
+                <th className="py-2 pr-4 font-medium">Status</th>
+                <th className="py-2 pr-4 font-medium">Ended</th>
+                <th className="py-2 pr-4 font-medium">Ended by</th>
+                <th className="py-2 font-medium">Reason</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-neutral-100">
+              {rows.map((raw) => {
+                const row = pastEnrollmentRow(raw);
+                return (
+                  <tr
+                    key={row.enrollmentId}
+                    data-testid={`admin-student-past-enrollment-${row.enrollmentId}`}
+                  >
+                    <td className="py-3 pr-4 align-top">
+                      <div className="font-medium text-rally-ink">{row.sessionTitle}</div>
+                      {row.location && (
+                        <div className="text-xs text-rally-muted">{row.location}</div>
+                      )}
+                    </td>
+                    <td className="py-3 pr-4 align-top">
+                      <Chip variant={row.statusVariant} label={row.statusLabel} />
+                    </td>
+                    <td className="py-3 pr-4 align-top text-rally-muted tabular-nums">
+                      {row.endedOn}
+                    </td>
+                    <td className="py-3 pr-4 align-top text-rally-muted">{row.endedBy}</td>
+                    <td className="py-3 align-top text-rally-muted">{row.reason}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
   );
 }
 

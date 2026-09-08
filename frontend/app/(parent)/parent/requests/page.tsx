@@ -115,7 +115,11 @@ function AbsencesPanel() {
 
   const children = childrenQuery.data?.children ?? [];
   const academyTimezone = academyQuery.data?.timezone ?? null;
-  const occurrences = scheduleQuery.data?.entries ?? [];
+  // A cancelled class cannot be missed, so it must not be offered as the
+  // subject of an absence notice (#671).
+  const occurrences = (scheduleQuery.data?.entries ?? []).filter(
+    (entry: ParentScheduleEntry) => entry.status !== "cancelled",
+  );
   const notices = absencesQuery.data?.notices ?? [];
 
   return (

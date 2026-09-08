@@ -83,6 +83,23 @@ class MongoStudentBillingEnrollmentRepository(TenantScopedRepository):
         status = doc.get("autopay_enrollment_status")
         return status if status else None
 
+    async def autopay_status_by_enrollment(
+        self, enrollment_ids: list[str]
+    ) -> dict[str, str | None]:
+        """Batch read of the autopay axis for the admin student page (#674).
+
+        Tenant-scoped through ``_find_many``; enrollments with no billing
+        record are absent from the result rather than mapped to None.
+        """
+        if not enrollment_ids:
+            return {}
+        cursor = self._find_many({"enrollment_id": {"$in": list(enrollment_ids)}})
+        return {
+            str(doc["enrollment_id"]): (doc.get("autopay_enrollment_status") or None)
+            async for doc in cursor
+            if doc.get("enrollment_id") is not None
+        }
+
     async def set_autopay_enrollment_status(
         self,
         *,

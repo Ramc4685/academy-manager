@@ -8,6 +8,7 @@ from .academy_routes import router as academy_router
 from .audit_routes import router as audit_router
 from .billing_products_routes import router as billing_products_router
 from .billing_routes import router as billing_router
+from .billing_rules_routes import router as billing_rules_router
 from .billing_setup_routes import router as billing_setup_router
 from .coach_pay_rate_routes import router as coach_pay_rate_router
 from .collections_routes import router as collections_router
@@ -16,6 +17,7 @@ from .dashboard_routes import router as dashboard_router
 from .directory_routes import router as directory_router
 from .dues_routes import router as dues_router
 from .families_routes import router as families_router
+from .month_close_routes import router as month_close_router
 from .pathway_routes import router as pathway_router
 from .pause_routes import router as pause_router
 from .payout_period_routes import router as payout_period_router
@@ -39,6 +41,7 @@ router.include_router(pause_router)
 router.include_router(registration_router)
 router.include_router(dues_router)
 router.include_router(reports_router)
+router.include_router(month_close_router)
 router.include_router(sessions_router)
 router.include_router(teaching_plan_router)
 router.include_router(session_type_router)
@@ -48,6 +51,7 @@ router.include_router(families_router)
 router.include_router(billing_router)
 router.include_router(billing_setup_router)
 router.include_router(billing_products_router)
+router.include_router(billing_rules_router)
 router.include_router(payout_period_router)
 router.include_router(payroll_router)
 router.include_router(coach_pay_rate_router)

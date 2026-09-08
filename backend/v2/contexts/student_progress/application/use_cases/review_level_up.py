@@ -8,12 +8,14 @@ from pydantic import BaseModel
 
 from backend.v2.contexts.student_progress.application.ports import (
     CertificateRepository,
+    EnrollmentStatusLookup,
     LevelUpRecommendationRepository,
     SkillLookup,
     StudentLevelProgressRepository,
     StudentSkillProgressRepository,
 )
 from backend.v2.contexts.student_progress.domain.errors import (
+    EnrollmentEnded,
     RecommendationAlreadyReviewed,
     RecommendationNotFound,
 )
@@ -70,6 +72,7 @@ class ReviewLevelUpRecommendation:
         skill_progress: StudentSkillProgressRepository,
         certificates: CertificateRepository,
         skill_lookup: SkillLookup,
+        enrollment_lookup: EnrollmentStatusLookup,
         outbox: Outbox | None = None,
     ) -> None:
         self._recs = recommendations
@@ -77,6 +80,7 @@ class ReviewLevelUpRecommendation:
         self._skill_progress = skill_progress
         self._certs = certificates
         self._skill_lookup = skill_lookup
+        self._enrollments = enrollment_lookup
         self._outbox = outbox
 
     async def execute(self, cmd: ReviewLevelUpCommand) -> ReviewLevelUpResult:
@@ -98,6 +102,16 @@ class ReviewLevelUpRecommendation:
         decision = "APPROVED" if cmd.action == "approve" else "REJECTED"
 
         if cmd.action == "approve":
+            # Issue #673: a withdrawn / cancelled student must not be advanced
+            # or certified. Checked before any side effect so a refused
+            # approval leaves the row untouched; reject is still allowed so
+            # the admin can clear it.
+            if not await self._enrollments.has_active_or_paused_enrollment(rec.student_id):
+                raise EnrollmentEnded(
+                    "student no longer has an active or paused enrollment",
+                    rec_id=cmd.rec_id,
+                    student_id=rec.student_id,
+                )
             # Approval side effects run *before* the status stamp and every one
             # of them is idempotent, so the status transition below is the
             # commit point. Two consequences, both deliberate:

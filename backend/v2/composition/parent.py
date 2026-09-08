@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import OperationFailure
 
+from backend.v2.composition.level_up_lifecycle import compose_expire_level_up_recommendations
 from backend.v2.composition.lifecycle_billing import compose_enrollment_billing_sync
 from backend.v2.composition.pathway import (
     CurriculumComposition,
@@ -964,6 +965,7 @@ def compose_parent(
             promote_from_waitlist=promote,
             issue_refund=issue_refund,
             transition_application=transition,
+            expire_level_up_recommendations=compose_expire_level_up_recommendations(db),
         )
     )
 

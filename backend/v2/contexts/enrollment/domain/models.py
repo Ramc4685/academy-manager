@@ -92,6 +92,12 @@ class SessionOccurrence(BaseModel):
     is_billable: bool = True
     is_payable: bool = True
     cancellation_reason: str | None = None
+    # Issue #671: stamped by ``CancelSessionOccurrence`` when ONE dated class
+    # is called off (rain-out, coach sick). ``cancelled_by`` is the admin's
+    # user id; a whole-session cancel (#467) leaves both unset and writes
+    # ``cancellation_reason="session_cancelled"`` instead.
+    cancelled_at: datetime | None = None
+    cancelled_by: str | None = None
     template_session_id: str | None = None
     # Snapshot of the session's assistants when the occurrence was generated
     # or last re-synced; the attendance use cases treat these ids like an

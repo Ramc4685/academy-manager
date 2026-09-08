@@ -78,13 +78,14 @@ describe("BUCKET_ORDER / BUCKET_META / ACTION_LABEL", () => {
     expect(BUCKET_META.failed_autopay.emptyLine).toBe("No failed autopay");
   });
 
-  it("labels all five actions", () => {
+  it("labels every action, including the WhatsApp link", () => {
     expect(ACTION_LABEL).toEqual({
       send_reminder: "Send reminder",
       record_payment: "Record payment",
       message: "Message",
       skip_month: "Skip this month",
       resume: "Resume",
+      whatsapp: "WhatsApp",
     });
   });
 });

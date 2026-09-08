@@ -49,13 +49,16 @@ from backend.v2.composition.lifecycle_billing import (
     build_autopay_status_gateway,
     build_void_billing_invoice,
     compose_enrollment_billing_sync,
+    compose_enrollment_move_billing_sync,
 )
+from backend.v2.composition.occurrence_cancellation import compose_cancel_session_occurrence
 from backend.v2.composition.pathway import (
     compose_curriculum,
     compose_student_progress,
 )
 from backend.v2.composition.roster_notifications import compose_enrollment_notifiers
 from backend.v2.composition.session_announcements import compose_announcements
+from backend.v2.composition.student_autopay import compose_get_admin_student
 from backend.v2.contexts.billing.application.admin_money import (
     coerce_report_datetime,
     invoice_outstanding_cents,
@@ -182,7 +185,6 @@ from backend.v2.contexts.billing.infrastructure.admin_reports_read_model import 
     make_projected_income_report,
     make_refunds_report,
     make_reports_dashboard,
-    make_reports_kpis,
     make_revenue_by_category_report,
     make_session_economics_report,
 )
@@ -269,7 +271,6 @@ from backend.v2.contexts.curriculum.infrastructure.mongo_video_ref_repo import (
 )
 from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
     ChangeAdminStudentParent,
-    GetAdminStudent,
     ListAdminStudents,
     UpdateAdminStudent,
 )
@@ -736,6 +737,7 @@ def compose_admin(
         sessions=sessions_w,
         enrollment_events=enrollment_events,
         roster_notifier=notifiers.roster,
+        billing_sync=compose_enrollment_move_billing_sync(db, idempotency=idempotency_store),
     )
     override_enrollment_fee = OverrideEnrollmentFee(enrollments=enrollments_w)
     pause_enrollment = PauseEnrollment(
@@ -2083,7 +2085,7 @@ def compose_admin(
         academies=academy_repo,
         return_url=_billing_setup_return_url,
     )
-    get_admin_student = GetAdminStudent(students_r)
+    get_admin_student = compose_get_admin_student(db, students_r)
     update_admin_student = UpdateAdminStudent(students_r)
     change_admin_student_parent = ChangeAdminStudentParent(students_r)
 
@@ -2724,6 +2726,8 @@ def compose_admin(
             "start_at": occurrence.start_at,
             "end_at": occurrence.end_at,
             "status": occurrence.status,
+            "cancellation_reason": occurrence.cancellation_reason,
+            "cancelled_at": occurrence.cancelled_at,
             "scheduled_coach_id": occurrence.scheduled_coach_id,
             "actual_coach_id": occurrence.actual_coach_id,
             "substitute_coach_id": occurrence.substitute_coach_id,
@@ -4547,6 +4551,7 @@ def compose_admin(
         ),
         list_session_occurrences=list_session_occurrences,
         get_session_occurrence=occurrences_r.get,
+        cancel_session_occurrence=compose_cancel_session_occurrence(db, notifier=notifiers.roster),
         generate_daily_teaching_plan=generate_daily_teaching_plan,
         get_coach_engagement_stats=get_coach_engagement_stats,
         update_session_occurrence_coach=update_session_occurrence_coach,
@@ -4564,7 +4569,6 @@ def compose_admin(
         get_refunds_report=get_refunds_report,
         get_revenue_by_category_report=get_revenue_by_category_report,
         get_deposit_slip_report=get_deposit_slip_report,
-        get_reports_kpis=make_reports_kpis(db),
         get_session_economics=make_session_economics_report(db),
         get_projected_income=make_projected_income_report(db),
         list_enrollment_events=make_list_enrollment_events(db),
