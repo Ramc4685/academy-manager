@@ -71,6 +71,17 @@ COACH_ID = "coach-001"
 SESSION_ID = "session-001"
 
 
+class _AlwaysEnrolled:
+    """EnrollmentStatusLookup fake: every student is live (issue #673 guard is
+    exercised in test_level_up_lifecycle.py; the coach route 404s first)."""
+
+    async def has_active_or_paused_enrollment(self, student_id: str) -> bool:
+        return True
+
+    async def students_with_active_or_paused_enrollment(self, student_ids: list[str]) -> set[str]:
+        return set(student_ids)
+
+
 class _FakeLevelProgressRepo:
     def __init__(self) -> None:
         self._store: dict[str, StudentLevelProgress] = {}
@@ -310,6 +321,7 @@ def _build_coach_app() -> FastAPI:
         skill_progress=skill_progress_repo,
         recommendations=level_up_repo,
         skill_lookup=skill_lookup,
+        enrollment_lookup=_AlwaysEnrolled(),
     )
 
     app = FastAPI()

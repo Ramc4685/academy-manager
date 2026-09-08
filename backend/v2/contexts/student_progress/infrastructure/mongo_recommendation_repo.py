@@ -110,3 +110,10 @@ class MongoLevelUpRecommendationRepository(TenantScopedRepository):
             sort=[("recommended_at", 1)],
         )
         return [self._to_domain(doc) async for doc in cursor]
+
+    async def list_pending_for_student(self, student_id: str) -> list[LevelUpRecommendation]:
+        cursor = self._find_many(
+            {"student_id": student_id, "status": "RECOMMENDED"},
+            sort=[("recommended_at", 1)],
+        )
+        return [self._to_domain(doc) async for doc in cursor]

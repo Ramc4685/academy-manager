@@ -81,7 +81,7 @@ export default defineConfig({
         ...devices["Desktop Chrome"],
         viewport: { width: 1280, height: 800 },
       },
-      testMatch: /admin-(shell|students|registrations)\.spec\.ts/,
+      testMatch: /admin-(shell|students|registrations|level-ups-lifecycle)\.spec\.ts/,
     },
   ],
 });
