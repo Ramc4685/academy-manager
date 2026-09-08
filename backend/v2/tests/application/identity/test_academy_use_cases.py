@@ -225,3 +225,37 @@ async def test_update_academy_notifications():
     output = await use_case.execute("acad-1", {"attendance_alerts": True})
     assert output.attendance_alerts is True
     repo.update_by_id.assert_awaited_once_with("acad-1", {"notifications.attendance_alerts": True})
+
+
+@pytest.mark.asyncio
+async def test_a_zero_late_fee_reads_back_as_zero_not_none() -> None:
+    """`or` collapsed a stored 0 to the legacy alias and then to None.
+
+    The Billing rules panel showed the field blank right after saving 0, so the
+    owner retyped it and every save wrote another audit entry claiming
+    `null -> 0` for a change that had already landed.
+    """
+    repo = AsyncMock()
+    repo.find_by_id.return_value = {
+        "_id": "acad-1",
+        "fees": {"late_fee_cents": 0, "grace_days": 0},
+    }
+
+    result = await GetAcademyFeesUseCase(academy_repo=repo).execute("acad-1")
+
+    assert result.late_fee_cents == 0
+    assert result.grace_days == 0
+
+
+@pytest.mark.asyncio
+async def test_a_missing_late_fee_still_falls_back_to_the_legacy_alias() -> None:
+    """The fallback must survive the fix — only absence should trigger it."""
+    repo = AsyncMock()
+    repo.find_by_id.return_value = {
+        "_id": "acad-1",
+        "fees": {"late_cancellation_fee_cents": 750},
+    }
+
+    result = await GetAcademyFeesUseCase(academy_repo=repo).execute("acad-1")
+
+    assert result.late_fee_cents == 750

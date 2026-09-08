@@ -19,6 +19,7 @@ use cases. Nothing here imports another context.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any, Final, Literal, Protocol
@@ -37,6 +38,8 @@ from backend.v2.contexts.billing.domain.dunning import (
 )
 from backend.v2.contexts.billing.domain.proration import BillingCalculationSnapshot
 from backend.v2.shared.ids import new_ulid
+
+log = logging.getLogger(__name__)
 
 RuleUnit = Literal["day_of_month", "days", "cents"]
 
@@ -411,6 +414,9 @@ class BillingRulesWriteResult(BaseModel):
     model_config = {"frozen": True}
 
     changed_fields: tuple[str, ...]
+    #: False when the writes landed but the audit entry could not be appended.
+    #: The change is real either way; this says whether it left a trail.
+    audited: bool = True
 
 
 class UpdateBillingRules:
@@ -483,13 +489,37 @@ class UpdateBillingRules:
 
         applied: list[str] = []
         try:
-            await self._apply(academy_id, before, changed, applied)
+            await self._apply(academy_id, before, changed, applied, cmd.actor_id, cmd.reason)
         except Exception as exc:  # re-raised below, after the audit lands
-            await self._append_audit(cmd, academy_id, before, tuple(applied), changed)
+            await self._audit_best_effort(cmd, academy_id, before, tuple(applied), changed)
             raise BillingRulesPartialWriteError(tuple(applied), exc) from exc
 
-        await self._append_audit(cmd, academy_id, before, tuple(applied), changed)
-        return BillingRulesWriteResult(changed_fields=tuple(applied))
+        # The writes have landed. An audit failure from here must not be
+        # reported as "nothing was saved": the owner would retry, the retry
+        # would diff clean and write no audit at all, and a money-timing change
+        # would be live with no trail. Report what was saved and log loudly.
+        audited = await self._audit_best_effort(cmd, academy_id, before, tuple(applied), changed)
+        return BillingRulesWriteResult(changed_fields=tuple(applied), audited=audited)
+
+    async def _audit_best_effort(
+        self,
+        cmd: UpdateBillingRulesCommand,
+        academy_id: str,
+        before: dict[str, Any],
+        applied: tuple[str, ...],
+        changed: dict[str, int],
+    ) -> bool:
+        """Append the audit entry; never let its failure mask what was written."""
+        try:
+            await self._append_audit(cmd, academy_id, before, applied, changed)
+        except Exception:
+            log.error(
+                "billing_rules_audit_failed",
+                exc_info=True,
+                extra={"academy_id": academy_id, "fields": list(applied)},
+            )
+            return False
+        return True
 
     async def _apply(
         self,
@@ -497,6 +527,8 @@ class UpdateBillingRules:
         before: dict[str, Any],
         changed: dict[str, int],
         applied: list[str],
+        actor_id: str,
+        reason: str | None,
     ) -> None:
         schedule_fields = [f for f in ("billing_day", "invoice_due_days") if f in changed]
         if schedule_fields:
@@ -504,8 +536,12 @@ class UpdateBillingRules:
                 SetInvoiceScheduleCommand(
                     billing_day=changed.get("billing_day", before["billing_day"]),
                     invoice_due_days=changed.get("invoice_due_days", before["invoice_due_days"]),
-                    actor_id="billing-rules",
-                    reason="Settings -> Billing rules",
+                    # The real owner, not a placeholder: anyone querying
+                    # `invoice_schedule_changed` for "who moved invoice day"
+                    # must get the same answer as the billing_rules_changed
+                    # entry written beside it.
+                    actor_id=actor_id,
+                    reason=reason or "Settings -> Billing rules",
                 )
             )
             applied.extend(schedule_fields)

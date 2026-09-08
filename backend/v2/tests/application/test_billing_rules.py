@@ -114,10 +114,13 @@ class _Reader:
 
 
 class _FakeAudit:
-    def __init__(self) -> None:
+    def __init__(self, fail: bool = False) -> None:
         self.entries: list[BillingAuditEntry] = []
+        self.fail = fail
 
     async def append(self, entry: BillingAuditEntry) -> None:
+        if self.fail:
+            raise RuntimeError("audit store down")
         self.entries.append(entry)
 
 
@@ -426,3 +429,38 @@ async def test_a_previously_unset_fee_counts_as_a_change() -> None:
     assert result.changed_fields == ("grace_days",)
     assert audit.entries[0].before == {"grace_days": None}
     assert audit.entries[0].after == {"grace_days": 0}
+
+
+@pytest.mark.asyncio
+async def test_an_audit_failure_does_not_report_a_save_that_landed_as_failed() -> None:
+    """The writes are real; only the trail is missing.
+
+    Reporting a blanket failure made the owner retry, the retry diffed clean and
+    wrote no audit at all, and a money-timing change went live untraceable.
+    """
+    schedule, fees, policy = _FakeSchedule(), _FakeFees(), _FakePolicy()
+    audit = _FakeAudit(fail=True)
+
+    result = await _update(schedule, fees, policy, audit).execute(
+        "acad-1", UpdateBillingRulesCommand(actor_id="usr_owner", billing_day=5)
+    )
+
+    assert result.changed_fields == ("billing_day",)
+    assert result.audited is False
+    assert schedule.current.billing_day == 5
+
+
+@pytest.mark.asyncio
+async def test_the_invoice_schedule_audit_names_the_real_owner() -> None:
+    """Two entries about one change must not disagree about who made it."""
+    schedule, fees, policy = _FakeSchedule(), _FakeFees(), _FakePolicy()
+
+    await _update(schedule, fees, policy, _FakeAudit()).execute(
+        "acad-1",
+        UpdateBillingRulesCommand(
+            actor_id="usr_owner", reason="moving to mid-month", billing_day=15
+        ),
+    )
+
+    assert schedule.commands[-1].actor_id == "usr_owner"
+    assert schedule.commands[-1].reason == "moving to mid-month"
