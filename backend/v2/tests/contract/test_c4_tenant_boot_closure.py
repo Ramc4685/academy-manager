@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from backend.v2.contexts.coaching.application.ports import AttendanceEligibility
 from backend.v2.contexts.coaching.application.use_cases.bulk_mark_attendance import (
     BulkAttendanceEntry,
     BulkMarkAttendance,
@@ -117,6 +118,9 @@ class FakeOccurrenceLookup:
 class FakeEnrollmentLookup:
     async def is_active(self, session_id: str, student_id: str) -> bool:
         return True
+
+    async def attendance_eligibility(self, **_kwargs):
+        return AttendanceEligibility(source="enrollment")
 
 
 class FakeSessionWriter:

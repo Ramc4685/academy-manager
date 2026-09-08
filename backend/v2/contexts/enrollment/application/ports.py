@@ -242,6 +242,19 @@ class EnrollmentBillingSync(Protocol):
     ) -> dict[str, Any]: ...
 
 
+class EnrollmentAutopayLookup(Protocol):
+    """Cross-context READ port (issue #674): billing's per-enrollment autopay
+    status (``autopay_enrollment_status``: active / paused / disabled / setup
+    states) keyed by enrollment id. Adapted in the composition root onto the
+    billing repository; enrollment infrastructure never reads billing's
+    collections directly. Ids with no billing record are simply absent.
+    """
+
+    async def autopay_status_by_enrollment(
+        self, enrollment_ids: list[str]
+    ) -> dict[str, str | None]: ...
+
+
 class OccurrenceRosterCleanup(Protocol):
     """Drop a student's FUTURE one-time occurrence roster rows (issue #651).
 
@@ -345,18 +358,32 @@ class OccurrenceCancellationNotifier(Protocol):
     ) -> None: ...
 
 
-class EnrollmentLifecycleBillingPort(Protocol):
-    async def record_move_proration(
+class EnrollmentMoveBillingSync(Protocol):
+    """Cross-context port (issue #669): tell billing an enrollment changed
+    session so the CURRENT period is re-priced for the classes still to come
+    (debit line / adjustment invoice / ledger credit). Later periods re-price
+    through the monthly generator on their own.
+
+    Same contract as ``EnrollmentBillingSync``: idempotent per
+    (enrollment, period, from, to) and never raises into the caller's write
+    path — the returned dict carries ``billing_result`` for the audit event.
+    """
+
+    async def apply_move(
         self,
         *,
-        enrollment: Enrollment,
+        enrollment_id: str,
         from_session_id: str,
         to_session_id: str,
         effective_at: datetime,
-        actor_id: str,
-        reason: str | None,
+        reason: str,
+        actor_id: str | None,
+        effective_date: date | None = None,
+        move_seq: int = 0,
     ) -> dict[str, Any]: ...
 
+
+class EnrollmentLifecycleBillingPort(Protocol):
     async def record_withdrawal_decision(
         self,
         *,

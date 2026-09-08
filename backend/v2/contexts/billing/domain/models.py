@@ -25,6 +25,7 @@ PaymentStatus = Literal[
 SubscriptionStatus = Literal["active", "past_due", "cancelled", "incomplete"]
 CreditEntryType = Literal[
     "EARLY_WITHDRAWAL_CREDIT",
+    "MOVE_PRORATION_CREDIT",
     "MANUAL_CREDIT",
     "CREDIT_APPLIED",
     "CREDIT_VOIDED",

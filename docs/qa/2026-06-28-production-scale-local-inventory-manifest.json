@@ -546,7 +546,8 @@
       "role": "admin",
       "source": "frontend/app/(admin)/admin/level-up-queue/page.tsx",
       "workflows": [
-        "Approve/reject level-up"
+        "Approve/reject level-up",
+        "Reject a withdrawn student's level-up"
       ],
       "controls": {
         "buttons": [
@@ -563,17 +564,21 @@
       "states": [
         "loading",
         "empty",
-        "mutation error"
+        "mutation error",
+        "withdrawn student flagged (enrollment ended)"
       ],
       "risk_edges": [
         "Reject without reason",
-        "Already-approved conflict"
+        "Already-approved conflict",
+        "Approve after withdrawal (stale queue, 409 EnrollmentEnded)"
       ],
       "acceptance": [
         "Level-up decisions require valid reason when rejected",
         "Workflow evidence: \"Approve/reject level-up\" completes for the admin route /admin/level-up-queue with real-user evidence and no framework or runtime errors.",
         "Risk evidence: \"Reject without reason\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Already-approved conflict\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+        "Risk evidence: \"Already-approved conflict\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Workflow evidence: \"Reject a withdrawn student's level-up\" completes for the admin route /admin/level-up-queue: the row carries the Withdrawn chip, Approve is disabled, Reject clears it.",
+        "Risk evidence: \"Approve after withdrawal (stale queue, 409 EnrollmentEnded)\" has an explicit pass, fail, or blocked result — the backend refuses with StudentProgress.EnrollmentEnded and no certificate is issued."
       ]
     },
     {

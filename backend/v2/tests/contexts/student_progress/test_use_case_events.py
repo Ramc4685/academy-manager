@@ -42,6 +42,17 @@ from backend.v2.contexts.student_progress.domain.models import (
 from backend.v2.shared.tenancy import tenant_scope
 
 
+class _AlwaysEnrolled:
+    """EnrollmentStatusLookup fake: every student is live (issue #673 guard is
+    exercised in test_level_up_lifecycle.py; the coach route 404s first)."""
+
+    async def has_active_or_paused_enrollment(self, student_id: str) -> bool:
+        return True
+
+    async def students_with_active_or_paused_enrollment(self, student_ids: list[str]) -> set[str]:
+        return set(student_ids)
+
+
 class _FakeOutbox:
     def __init__(self) -> None:
         self.events: list = []
@@ -453,6 +464,7 @@ async def test_recommend_level_up_emits_recommended_event() -> None:
         skill_progress=skill_progress,
         recommendations=recommendations,
         skill_lookup=_SkillLookup(),
+        enrollment_lookup=_AlwaysEnrolled(),
         outbox=outbox,
     )
 
@@ -503,6 +515,7 @@ async def test_review_level_up_approve_emits_leveled_up_and_certificate_events()
         skill_progress=skill_progress,
         certificates=certs,
         skill_lookup=_SkillLookup(),
+        enrollment_lookup=_AlwaysEnrolled(),
         outbox=outbox,
     )
 
@@ -568,6 +581,7 @@ async def test_review_level_up_replayed_approve_is_rejected_without_side_effects
         skill_progress=skill_progress,
         certificates=certs,
         skill_lookup=_SkillLookup(),
+        enrollment_lookup=_AlwaysEnrolled(),
         outbox=outbox,
     )
     command = ReviewLevelUpCommand(
@@ -640,6 +654,7 @@ def _review_use_case(
         skill_progress=skill_progress,
         certificates=certs,
         skill_lookup=_SkillLookup(),
+        enrollment_lookup=_AlwaysEnrolled(),
         outbox=outbox,
     )
 

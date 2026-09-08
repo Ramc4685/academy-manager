@@ -12,7 +12,8 @@ import {
 import { Card } from "@/components/ds/card";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { Button } from "@/components/ds/button";
-import type { ApiError } from "@/lib/api/client";
+
+import { isWithdrawn, reviewErrorMessage, WITHDRAWN_APPROVE_HINT } from "./level-up-review";
 
 function levelUpChipVariant(status: LevelUpRecommendation["status"]): ChipVariant {
   switch (status) {
@@ -26,17 +27,6 @@ function levelUpChipVariant(status: LevelUpRecommendation["status"]): ChipVarian
 }
 
 const QUEUE_KEY = ["admin", "level-up-queue"];
-
-function reviewErrorMessage(err: unknown): string {
-  const status = (err as ApiError | undefined)?.status;
-  if (status === 409) {
-    return "This recommendation was already reviewed by someone else. The queue has been refreshed.";
-  }
-  if (status === 404) {
-    return "This recommendation no longer exists. The queue has been refreshed.";
-  }
-  return err instanceof Error && err.message ? err.message : "Could not update this recommendation.";
-}
 
 export function LevelUpsTab() {
   const queryClient = useQueryClient();
@@ -176,6 +166,9 @@ function QueueRow({
   const [rejectReason, setRejectReason] = useState("");
   const isPending = rec.status === "RECOMMENDED";
   const disabled = approvePending || rejectPending;
+  // Issue #673: a withdrawn student stays listed so the admin can reject the
+  // row, but approval is refused (server-side too — this only saves a 409).
+  const withdrawn = isWithdrawn(rec);
 
   function handleReject() {
     if (rejectReason.trim()) {
@@ -190,7 +183,16 @@ function QueueRow({
       data-testid={`level-up-row-${rec.rec_id}`}
       className="border-b border-neutral-100 last:border-0 dark:border-neutral-800"
     >
-      <td className="px-4 py-3 font-medium text-rally-base">{rec.student_id}</td>
+      <td className="px-4 py-3 font-medium text-rally-base">
+        <div className="flex items-center gap-2">
+          <span>{rec.student_id}</span>
+          {withdrawn && (
+            <span data-testid={`level-up-withdrawn-${rec.rec_id}`} title={WITHDRAWN_APPROVE_HINT}>
+              <Chip variant="expired" label="Withdrawn" />
+            </span>
+          )}
+        </div>
+      </td>
       <td className="px-4 py-3 text-rally-subtle">{rec.program_id}</td>
       <td className="px-4 py-3 text-rally-subtle">{rec.from_level_id}</td>
       <td className="px-4 py-3 text-rally-subtle">{rec.recommended_by}</td>
@@ -217,14 +219,18 @@ function QueueRow({
                 >
                   Reject
                 </Button>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  disabled={disabled}
-                  onClick={onApprove}
-                >
-                  {approvePending ? "..." : "Approve"}
-                </Button>
+                <span title={withdrawn ? WITHDRAWN_APPROVE_HINT : undefined}>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    disabled={disabled || withdrawn}
+                    aria-disabled={withdrawn || undefined}
+                    title={withdrawn ? WITHDRAWN_APPROVE_HINT : undefined}
+                    onClick={onApprove}
+                  >
+                    {approvePending ? "..." : "Approve"}
+                  </Button>
+                </span>
               </div>
             ) : (
               <div className="flex items-center gap-2">

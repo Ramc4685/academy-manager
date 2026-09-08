@@ -184,6 +184,12 @@ export interface LevelUpRecommendation {
   status: string;
   recommended_by: string;
   recommended_at: string;
+  /**
+   * False when the student no longer holds an active or paused enrollment
+   * (issue #673). Only the admin queue read (`GET /admin/level-up-queue`)
+   * sets it; the coach recommend response leaves it undefined.
+   */
+  enrollment_active?: boolean;
 }
 
 export interface SkillCertificate {
