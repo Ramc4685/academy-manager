@@ -31,6 +31,9 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     TransferEnrollmentCommand,
     WithdrawEnrollmentCommand,
 )
+from backend.v2.contexts.enrollment.application.use_cases.cancel_session_occurrence import (
+    CancelSessionOccurrenceCommand,
+)
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
     AddSessionReplacementRequest,
@@ -42,6 +45,8 @@ from backend.v2.interfaces.admin.views import (
     AdminSessionOccurrenceView,
     AdminSessionView,
     AdminStudentAttendanceView,
+    CancelSessionOccurrenceRequest,
+    CancelSessionOccurrenceResponse,
     CorrectStudentAttendanceRequest,
     CreateSessionRequest,
     EditRosterAddRequest,
@@ -349,6 +354,51 @@ async def update_session_occurrence_replacement(
     if row is None:
         raise HTTPException(status_code=404, detail="Occurrence not found")
     return AdminSessionOccurrenceView(**row)
+
+
+@router.post(
+    "/session-occurrences/{occurrence_id}/cancel",
+    response_model=CancelSessionOccurrenceResponse,
+    summary="Cancel one dated class, credit the families and stop coach pay (#671)",
+)
+async def cancel_session_occurrence(
+    occurrence_id: str,
+    body: CancelSessionOccurrenceRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> CancelSessionOccurrenceResponse:
+    if use_cases.cancel_session_occurrence is None:
+        raise HTTPException(status_code=503, detail="Class-date cancellation is not configured")
+    result = await use_cases.cancel_session_occurrence.execute(  # type: ignore[attr-defined]
+        CancelSessionOccurrenceCommand(
+            occurrence_id=occurrence_id,
+            reason=body.reason,
+            actor_id=claims.user_id,
+            notify=body.notify,
+        )
+    )
+    occurrence = result.occurrence
+    return CancelSessionOccurrenceResponse(
+        occurrence=AdminSessionOccurrenceView(
+            occurrence_id=occurrence.occurrence_id,
+            session_id=occurrence.template_session_id or occurrence.session_id,
+            start_at=occurrence.start_at,
+            end_at=occurrence.end_at,
+            status=occurrence.status,
+            cancellation_reason=occurrence.cancellation_reason,
+            cancelled_at=occurrence.cancelled_at,
+            scheduled_coach_id=occurrence.scheduled_coach_id,
+            actual_coach_id=occurrence.actual_coach_id,
+            substitute_coach_id=occurrence.substitute_coach_id,
+        ),
+        affected_enrollment_ids=list(result.affected_enrollment_ids),
+        roster_entries_removed=result.roster_entries_removed,
+        makeups_reopened=result.makeups_reopened,
+        trials_reopened=result.trials_reopened,
+        credits_issued=result.credits_issued,
+        billing_result=result.billing_result,
+        notified=result.notified,
+    )
 
 
 @router.patch(

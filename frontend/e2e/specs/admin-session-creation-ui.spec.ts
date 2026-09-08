@@ -352,9 +352,10 @@ test.describe("admin session creation and billing-rules settings UI", () => {
 
     await page.goto("/admin/sessions/series-wed");
 
-    await expect(page.getByRole("heading", { name: "Replacement coaches" })).toBeVisible();
+    // #671 merged "Replacement coaches" into the single "Class dates" card.
+    await expect(page.getByRole("heading", { name: "Class dates" })).toBeVisible();
     await expect(page.getByText("Occurrences")).toHaveCount(0);
-    await expect(page.getByText("No replacement coaches added.")).toBeVisible();
+    await expect(page.getByRole("cell", { name: "Replacement Coach" })).toHaveCount(0);
 
     await page.getByRole("button", { name: "Add replacement" }).click();
     await page.getByLabel("Date").fill(replacementDate);
@@ -371,7 +372,8 @@ test.describe("admin session creation and billing-rules settings UI", () => {
       replacement_coach_id: "coach-replacement",
       reason: null,
     });
-    await expect(page.getByText("No replacement coaches added.")).toHaveCount(0);
-    await expect(page.getByRole("cell", { name: "Replacement Coach" })).toBeVisible();
+    // Issue #671 folded the replacement-coach table into the single "Class
+    // dates" card, so a replaced date is listed exactly ONCE.
+    await expect(page.getByRole("cell", { name: "Replacement Coach" })).toHaveCount(1);
   });
 });

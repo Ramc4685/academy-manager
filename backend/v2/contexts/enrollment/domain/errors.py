@@ -136,3 +136,26 @@ class EnrollmentNotTransferable(DomainError):
 class WaitlistEmpty(DomainError):
     code = "Enrollment.WaitlistEmpty"
     status_code = 404
+
+
+class OccurrenceNotFound(DomainError):
+    code = "Enrollment.OccurrenceNotFound"
+    status_code = 404
+
+
+class OccurrenceAlreadyCancelled(DomainError):
+    """This dated class was already called off (issue #671)."""
+
+    code = "Enrollment.OccurrenceAlreadyCancelled"
+    status_code = 409
+
+
+class OccurrenceNotCancellable(DomainError):
+    """The class has already started, finished, or its session is cancelled.
+
+    A past class is history: attendance, payroll and billing all already
+    treat it as having happened, so it can only be corrected by hand.
+    """
+
+    code = "Enrollment.OccurrenceNotCancellable"
+    status_code = 409

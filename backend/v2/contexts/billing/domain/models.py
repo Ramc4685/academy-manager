@@ -29,6 +29,8 @@ CreditEntryType = Literal[
     "MANUAL_CREDIT",
     "CREDIT_APPLIED",
     "CREDIT_VOIDED",
+    # Issue #671: one dated class was cancelled after the month was priced.
+    "CLASS_CANCELLATION_CREDIT",
 ]
 CreditStatus = Literal["PENDING", "APPROVED", "APPLIED", "EXPIRED", "VOIDED"]
 AutopayConsentSource = Literal[

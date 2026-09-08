@@ -19,6 +19,8 @@ EnrollmentLifecycleEventType = Literal[
     "withdrawn",
     "waitlisted",
     "promoted",
+    # Issue #671: one dated class was called off; recorded per enrolled student.
+    "occurrence_cancelled",
 ]
 
 

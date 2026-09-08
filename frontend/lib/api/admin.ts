@@ -60,6 +60,9 @@ export interface AdminSessionOccurrenceView {
   start_at: string;
   end_at: string;
   status: "scheduled" | "cancelled" | "completed";
+  /** Why this date is off (#671); a live date carries null. */
+  cancellation_reason: string | null;
+  cancelled_at: string | null;
   scheduled_coach_id: string;
   actual_coach_id: string | null;
   substitute_coach_id: string | null;
@@ -1654,6 +1657,41 @@ export function updateSessionOccurrenceReplacement(
     `/admin/session-occurrences/${encodeURIComponent(occurrenceId)}/replacement`,
     {
       method: "PATCH",
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+/** Body of "cancel this date" (#671). */
+export interface CancelSessionOccurrenceRequest {
+  reason: string;
+  /** false records the cancellation without emailing families or the coach. */
+  notify?: boolean;
+}
+
+export interface CancelSessionOccurrenceResponse {
+  occurrence: AdminSessionOccurrenceView;
+  affected_enrollment_ids: string[];
+  roster_entries_removed: number;
+  makeups_reopened: number;
+  credits_issued: number;
+  billing_result: string | null;
+  notified: boolean;
+}
+
+/**
+ * Call off ONE class date (#671). The families enrolled that month are
+ * credited the date's share automatically; the coach is not paid for it.
+ * 409 when the date is already cancelled or has already started.
+ */
+export function cancelSessionOccurrence(
+  occurrenceId: string,
+  payload: CancelSessionOccurrenceRequest
+): Promise<CancelSessionOccurrenceResponse> {
+  return apiFetch<CancelSessionOccurrenceResponse>(
+    `/admin/session-occurrences/${encodeURIComponent(occurrenceId)}/cancel`,
+    {
+      method: "POST",
       body: JSON.stringify(payload),
     }
   );

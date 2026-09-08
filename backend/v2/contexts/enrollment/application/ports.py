@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import date, datetime
 from typing import Any, Literal, Protocol
 
@@ -64,6 +65,18 @@ class SessionOccurrenceRepository(Protocol):
     ) -> list[SessionOccurrence]: ...
 
     async def save_many(self, occurrences: list[SessionOccurrence]) -> None: ...
+
+    async def cancel_scheduled(
+        self,
+        *,
+        occurrence_id: str,
+        reason: str,
+        actor_id: str | None,
+        now: datetime,
+    ) -> SessionOccurrence | None:
+        """CAS ``scheduled`` → ``cancelled`` for one date (issue #671); ``None``
+        when the row is missing or no longer scheduled."""
+        ...
 
     async def update_coach_assignment(
         self,
@@ -256,6 +269,93 @@ class OccurrenceRosterCleanup(Protocol):
     async def remove_future_for_student(
         self, *, session_id: str, student_id: str, after: datetime
     ) -> int: ...
+
+
+class OccurrenceRosterPurge(Protocol):
+    """Drop every one-time roster row for ONE cancelled date (issue #671).
+
+    Returns the removed entries so the caller can re-open the make-up
+    requests behind them. Best-effort from the use case's point of view.
+    """
+
+    async def remove_for_occurrence(self, occurrence_id: str) -> list[Any]: ...
+
+
+class MakeupReopener(Protocol):
+    """Put approved make-ups that targeted a cancelled date back to pending
+    (issue #671) so an admin can offer another class.
+
+    ``expires_at`` is mandatory: a re-opened request whose original window has
+    already lapsed is flipped straight back to ``expired`` by the next sweep,
+    so the family loses an entitlement the academy had granted.
+    """
+
+    async def reopen_for_target_occurrence(
+        self, occurrence_id: str, *, expires_at: datetime
+    ) -> int: ...
+
+
+class TrialReopener(Protocol):
+    """Put approved trials assigned to a cancelled date back to pending
+    (issue #671). Returns the student ids so the families can be told."""
+
+    async def reopen_for_assigned_occurrence(self, occurrence_id: str) -> list[str]: ...
+
+
+class MakeupPolicyLookup(Protocol):
+    """The academy's self-service policy, for the re-opened make-up window."""
+
+    async def get_or_default(self) -> Any: ...
+
+
+class OccurrenceBillingSync(Protocol):
+    """Tell billing one dated class was called off (issue #671).
+
+    Sibling of :class:`EnrollmentBillingSync`: a narrow port here, the adapter
+    over the billing context's ``ApplyOccurrenceCancellation`` in
+    ``composition/occurrence_cancellation.py``. The occurrence write has
+    already committed when this runs; the use case logs a failure and stamps
+    ``billing_result`` on the lifecycle event, but never reports the cancel
+    as failed. Returns a summary dict (``credits`` keyed by enrollment id).
+    """
+
+    async def apply(
+        self,
+        *,
+        occurrence_id: str,
+        session_id: str,
+        start_at: datetime,
+        reason: str,
+        actor_id: str | None,
+    ) -> dict[str, Any]: ...
+
+
+class OccurrenceCancellationNotifier(Protocol):
+    """Tell the affected families and the coach one date is off (issue #671).
+
+    Best-effort: implementations must not raise into the enrollment write.
+
+    ``extra_student_ids`` are the make-up and trial students whose one-time
+    seat for the date was just deleted — they have no enrollment on the
+    session, so the roster audience misses them entirely and they would turn
+    up at a closed gym. ``credited_student_ids`` are the families billing
+    actually credited: the email may only promise a credit to them, and
+    ``billing_warning`` carries a staff-facing note when the sync did not run
+    at all.
+    """
+
+    async def occurrence_cancelled(
+        self,
+        *,
+        session_id: str,
+        occurrence_id: str,
+        start_at: datetime,
+        reason: str,
+        actor_id: str | None,
+        extra_student_ids: Sequence[str] = (),
+        credited_student_ids: Sequence[str] = (),
+        billing_warning: str | None = None,
+    ) -> None: ...
 
 
 class EnrollmentMoveBillingSync(Protocol):
