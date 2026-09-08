@@ -245,6 +245,9 @@ test.describe("admin enrollment withdraw dialog (#670)", () => {
     await openWithdrawDialog(page);
 
     const dialog = page.getByRole("dialog", { name: "Withdraw enrollment" });
+    // The copy is keyed off the error code, not the outcome, so this drives it
+    // through an outcome that needs no credit preview to enable Withdraw.
+    await dialog.getByLabel("Outcome").selectOption("adjustment");
     await dialog.getByLabel("Withdrawal date").fill("2026-09-15");
     await dialog.getByRole("button", { name: "Withdraw", exact: true }).click();
 
