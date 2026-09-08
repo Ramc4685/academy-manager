@@ -49,6 +49,7 @@ import {
 } from "./format";
 import { RosterMetrics, RosterTable } from "./RosterPanel";
 import {
+  CancelOccurrenceDialog,
   OccurrenceReplacementDialog,
   ReplacementCoachTable,
   SessionAssistantsDialog,
@@ -82,6 +83,8 @@ export default function AdminSessionDetailPage() {
   const [withdrawalTarget, setWithdrawalTarget] = useState<AdminEnrollmentView | null>(null);
   const [occurrenceTarget, setOccurrenceTarget] = useState<AdminSessionOccurrenceView | null>(null);
   const [replacementOpen, setReplacementOpen] = useState(false);
+  // Issue #671: the date an admin is calling off, or null.
+  const [cancelTarget, setCancelTarget] = useState<AdminSessionOccurrenceView | null>(null);
   const [assistantsOpen, setAssistantsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<DetailTab>("roster");
   const [cancelError, setCancelError] = useState<string | null>(null);
@@ -171,7 +174,6 @@ export default function AdminSessionDetailPage() {
     [enrollmentsQuery.data?.enrollments],
   );
   const occurrences = occurrencesQuery.data?.occurrences ?? [];
-  const replacementOccurrences = occurrences.filter((occurrence) => Boolean(occurrence.actual_coach_id));
   const userNameById = new Map(
     (usersQuery.data?.users ?? []).map((user) => [user.user_id, user.display_name || user.email])
   );
@@ -310,11 +312,14 @@ export default function AdminSessionDetailPage() {
         {session ? <CoachingStaffCard session={session} /> : <TableSkeleton />}
       </Card>
 
-      {/* Replacement coaches */}
+      {/* Class dates (#671) — one table. It already carries the replacement
+          column, the replacement action and the cancel action, so a separate
+          "Replacement coaches" card would list every replaced date twice with
+          two identical buttons (ambiguous for the admin and for locators). */}
       <Card p={20} className="min-w-0">
         <LaneHeader
           index="02"
-          title="Replacement coaches"
+          title="Class dates"
           action={
             <Button
               variant="primary"
@@ -328,14 +333,15 @@ export default function AdminSessionDetailPage() {
         />
         {occurrencesQuery.isLoading ? (
           <TableSkeleton />
-        ) : replacementOccurrences.length === 0 ? (
-          <p className="text-sm text-rally-subtle">No replacement coaches added.</p>
         ) : (
           <ReplacementCoachTable
-            occurrences={replacementOccurrences}
+            occurrences={occurrences}
             userNameById={userNameById}
             timezone={session?.timezone ?? null}
             onEdit={setOccurrenceTarget}
+            onCancel={setCancelTarget}
+            showStatus
+            emptyLabel="No dates scheduled yet."
           />
         )}
       </Card>
@@ -511,6 +517,17 @@ export default function AdminSessionDetailPage() {
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessionDetail(sessionId) });
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
           // Assistants are re-synced onto future occurrences server-side.
+          void queryClient.invalidateQueries({
+            queryKey: queryKeys.admin.sessionOccurrences(sessionId),
+          });
+        }}
+      />
+      <CancelOccurrenceDialog
+        occurrence={cancelTarget}
+        timezone={session?.timezone ?? null}
+        onClose={() => setCancelTarget(null)}
+        onCancelled={() => {
+          setCancelTarget(null);
           void queryClient.invalidateQueries({
             queryKey: queryKeys.admin.sessionOccurrences(sessionId),
           });

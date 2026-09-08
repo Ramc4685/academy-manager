@@ -28,6 +28,7 @@ from backend.v2.contexts.billing.application.autopay_eligibility import (
     invoice_is_chargeable,
 )
 from backend.v2.contexts.billing.domain.dunning import MAX_DUNNING_ATTEMPTS
+from backend.v2.shared.comms.whatsapp import dues_reminder_text, whatsapp_deep_link
 
 BUCKET_ORDER: tuple[str, ...] = (
     "failed_autopay",
@@ -37,6 +38,11 @@ BUCKET_ORDER: tuple[str, ...] = (
     "paused",
     "paid",
 )
+
+# Buckets whose rows carry the WhatsApp link. The Dues page was the only
+# surface with one; it moves here (month close spec §7) and nowhere else —
+# a scheduled autopay or a paid family has nothing to chase.
+WHATSAPP_BUCKETS: frozenset[str] = frozenset({"past_due", "awaiting"})
 
 BUCKET_ACTIONS: dict[str, list[str]] = {
     "failed_autopay": ["message", "record_payment"],
@@ -117,6 +123,21 @@ class FamilyFacts:
     has_payment_method: bool | None
     card_last4: str | None
     connected_account_ready: bool | None
+    # Optional so every existing caller (and every test fixture) keeps working;
+    # a family with no usable phone simply gets no WhatsApp action (spec §7).
+    parent_phone: str | None = None
+
+
+@dataclass(frozen=True)
+class WhatsAppContext:
+    """Per-build facts the reminder message needs, resolved once, not per row.
+
+    Mirrors what the Dues page's ``list_dues_followup`` closure resolved: the
+    academy's own parent-payments URL (ADR-0007) and its display name.
+    """
+
+    pay_url: str | None = None
+    academy_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -310,8 +331,42 @@ def _invoice_payload(inv: InvoiceFacts) -> dict[str, Any]:
     }
 
 
+def _whatsapp_url(
+    family: FamilyFacts,
+    bucket: str,
+    owing: list[InvoiceFacts],
+    whatsapp: WhatsAppContext | None,
+) -> str | None:
+    """The Dues page's WhatsApp deep link, on the two chase buckets only.
+
+    Same helper, same message body as ``list_dues_followup`` built: this is a
+    move, not a rewrite. ``None`` when the bucket does not chase money, when the
+    build has no WhatsApp context, or when the stored phone cannot be dialled.
+    """
+    if whatsapp is None or bucket not in WHATSAPP_BUCKETS:
+        return None
+    total_due_cents = sum(inv.balance_due_cents for inv in owing)
+    if total_due_cents <= 0:
+        return None
+    return whatsapp_deep_link(
+        phone=family.parent_phone,
+        message=dues_reminder_text(
+            display_name=family.parent_name,
+            total_due_cents=total_due_cents,
+            pending_count=len(owing),
+            currency="usd",
+            pay_url=whatsapp.pay_url,
+            academy_name=whatsapp.academy_name,
+        ),
+    )
+
+
 def classify_family(
-    family: FamilyFacts, *, today: date, zone: tzinfo | None = None
+    family: FamilyFacts,
+    *,
+    today: date,
+    zone: tzinfo | None = None,
+    whatsapp: WhatsAppContext | None = None,
 ) -> FamilyRow | None:
     """Place one family in the first matching spec §2 bucket, or ``None``.
 
@@ -327,6 +382,13 @@ def classify_family(
     bucket, trigger = _pick_bucket(family, owing, eligibility, today=today)
     if bucket is None:
         return None
+
+    whatsapp_url = _whatsapp_url(family, bucket, owing, whatsapp)
+    # A link, not a mutation: the action only exists when there is a URL behind
+    # it, so the row never renders a dead button.
+    actions = list(BUCKET_ACTIONS[bucket])
+    if whatsapp_url:
+        actions.append("whatsapp")
 
     payload: dict[str, Any] = {
         "parent_id": family.parent_id,
@@ -355,7 +417,8 @@ def classify_family(
         "pause": _pause_payload(family) if bucket == "paused" else None,
         "paid": _paid_payload(family, bucket),
         "last_reminder_at": _last_reminder_at(owing),
-        "actions": list(BUCKET_ACTIONS[bucket]),
+        "whatsapp_url": whatsapp_url,
+        "actions": actions,
     }
     return FamilyRow(bucket=bucket, payload=payload)
 
@@ -379,13 +442,14 @@ def build_collections_view(
     timezone: str,
     generated_at: datetime,
     unclassified: list[dict[str, Any]] | None = None,
+    whatsapp: WhatsAppContext | None = None,
 ) -> dict[str, Any]:
     """Spec §3 ``AdminCollectionsView`` as a plain dict, buckets in ``BUCKET_ORDER``."""
     zone = _zone_for(timezone)
     rows = [
         row
         for family in families
-        if (row := classify_family(family, today=today, zone=zone)) is not None
+        if (row := classify_family(family, today=today, zone=zone, whatsapp=whatsapp)) is not None
     ]
     return build_collections_view_from_rows(
         rows,

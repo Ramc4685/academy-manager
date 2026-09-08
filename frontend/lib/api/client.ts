@@ -72,7 +72,16 @@ function makeError(status: number, body: unknown, requestId?: string | null): Ap
     // real reason (e.g. "no saved card") reaches the UI instead of the generic
     // "Request failed" fallback.
     const detail = (body as { detail?: unknown }).detail;
-    if (typeof detail === "string" && detail) err.message = detail;
+    if (typeof detail === "string" && detail) {
+      err.message = detail;
+    } else if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+      // A structured detail (e.g. billing rules' `{field, message}` 422) is
+      // kept intact so a form can render it against the offending input
+      // instead of showing a page-level "Request failed".
+      err.details = detail as Record<string, unknown>;
+      const message = (detail as { message?: unknown }).message;
+      if (typeof message === "string" && message) err.message = message;
+    }
   }
   return err;
 }

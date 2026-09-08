@@ -16,8 +16,24 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
 
-ClassStatus = Literal["scheduled", "completed", "canceled", "makeup", "holiday"]
+ClassStatus = Literal["scheduled", "completed", "canceled", "makeup", "holiday", "cancelled"]
 SnapshotStatus = Literal["OPEN", "CONSUMED", "EXPIRED", "SUPERSEDED"]
+
+#: A date the academy called OFF after the month was already laid out (#671).
+#:
+#: It is deliberately not the same thing as ``holiday`` (a date that was never
+#: part of the schedule) or ``canceled`` (the legacy per-student spelling).
+#: A cancelled date stays in the first-month proration DENOMINATOR — the month
+#: still costs what it cost, and every family enrolled when it was priced is
+#: credited its share through ``ApplyOccurrenceCancellation`` — but it can
+#: never appear in the NUMERATOR, because nobody will attend it. Dropping it
+#: from both would make each remaining class more expensive for a family
+#: enrolling after the cancellation, i.e. charge them more because a class
+#: they were never going to attend was called off.
+CANCELLED_AFTER_PRICING_STATUS = "cancelled"
+
+#: ``excluded_occurrences`` reason stamped on such a date.
+CANCELLED_EXCLUSION_REASON = "CLASS_CANCELLED"
 
 
 class BillingPeriod(BaseModel):
@@ -119,6 +135,11 @@ class FirstMonthProrationPolicy:
         included: list[str] = []
         excluded: dict[str, str] = {}
         for occurrence in eligible:
+            if occurrence.status == CANCELLED_AFTER_PRICING_STATUS:
+                # Counted above (it is part of what the month costs), never
+                # charged for: the class will not run. See #671.
+                excluded[occurrence.occurrence_id] = CANCELLED_EXCLUSION_REASON
+                continue
             if occurrence.start_at < billing_start_at:
                 excluded[occurrence.occurrence_id] = "BEFORE_BILLING_START"
                 continue
@@ -161,6 +182,10 @@ class FirstMonthProrationPolicy:
         local_start = occurrence.start_at.astimezone(ZoneInfo(period.timezone))
         if not (period.start_at <= local_start < period.end_at):
             return False
+        if occurrence.status == CANCELLED_AFTER_PRICING_STATUS:
+            # In the denominator despite ``is_billable=False``: the month was
+            # priced with this date in it (#671).
+            return True
         return occurrence.is_billable and occurrence.status in {"scheduled", "completed", "makeup"}
 
 

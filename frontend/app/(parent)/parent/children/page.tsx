@@ -227,6 +227,10 @@ function SessionRow({
   const { toast } = useToast();
   const [submitted, setSubmitted] = useState(false);
   const whenStr = formatAcademyTimeRange(entry.start_at, entry.end_at, academyTimezone);
+  // #671: a cancelled date is still returned by the child-schedule feed.
+  // Showing it as a normal upcoming class contradicts the cancellation email
+  // — and reporting an absence for a class that will not run makes no sense.
+  const cancelled = entry.status === "cancelled";
 
   const absenceMutation = useMutation({
     mutationFn: submitAbsenceNotice,
@@ -246,8 +250,21 @@ function SessionRow({
           </svg>
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold truncate text-rally-ink">{entry.session_title}</p>
+          <p
+            className={
+              cancelled
+                ? "text-sm font-semibold truncate text-rally-muted line-through"
+                : "text-sm font-semibold truncate text-rally-ink"
+            }
+          >
+            {entry.session_title}
+          </p>
           <p className="text-xs mt-0.5 text-rally-muted">{whenStr}</p>
+          {cancelled && (
+            <p className="text-[11px] mt-0.5 font-semibold text-status-red-600">
+              Cancelled — this class will not run
+            </p>
+          )}
           {(entry.location || entry.coach_name) && (
             <div className="flex flex-wrap gap-1.5 mt-1">
               {entry.location && <span className="text-[11px] text-rally-muted">{entry.location}</span>}
@@ -267,7 +284,7 @@ function SessionRow({
         </p>
       )}
 
-      {submitted ? (
+      {cancelled ? null : submitted ? (
         <p role="status" className="text-xs font-semibold text-status-green-800">
           Absence reported
         </p>

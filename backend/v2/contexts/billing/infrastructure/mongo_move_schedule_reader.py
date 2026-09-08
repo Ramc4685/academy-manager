@@ -15,7 +15,7 @@ from backend.v2.contexts.billing.application.use_cases.apply_enrollment_move imp
 )
 from backend.v2.contexts.billing.domain.proration import BillingPeriod
 from backend.v2.contexts.billing.infrastructure.mongo_monthly_billing import (
-    _session_amount_cents,
+    session_amount_cents,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
     MongoPaymentRepository,
@@ -39,7 +39,7 @@ class MongoMoveScheduleReader:
         occurrences = await self._payments._occurrences_for_session(doc, billing_period)
         return MoveSessionSchedule(
             session_id=session_id,
-            monthly_price_cents=max(_session_amount_cents(doc), 0),
+            monthly_price_cents=max(session_amount_cents(doc), 0),
             timezone=timezone_name,
             occurrences=occurrences,
         )

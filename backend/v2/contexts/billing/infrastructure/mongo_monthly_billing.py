@@ -1075,7 +1075,16 @@ class MongoMonthlyBillingGenerator:
         )
 
 
-def _session_amount_cents(doc: dict[str, object]) -> int:
+def session_amount_cents(doc: dict[str, object]) -> int:
+    """The monthly price the generator bills a session at.
+
+    Public because the cancellation reader must price a session EXACTLY as
+    the generator does (#671): a bare ``amount_cents`` read is not
+    equivalent — legacy/imported session docs carry only
+    ``monthly_price_cents`` or ``monthly_price`` and would price at zero,
+    crediting nobody for a date the family is still billed for in full
+    (see the #609 warning in ``mongo_session_repo``).
+    """
     if doc.get("amount_cents") is not None:
         return int(doc["amount_cents"])
     if doc.get("monthly_price_cents") is not None:
@@ -1199,7 +1208,7 @@ async def _resolve_charge_for_enrollment(
     effective for the period, is applied at monthly scale and threaded through the
     existing proration policy so discounted invoices stay consistent with proration.
     """
-    amount_cents = _session_amount_cents(session_doc)
+    amount_cents = session_amount_cents(session_doc)
     billing_start = _coerce_datetime(
         enrollment.get("billing_start_at")
         or enrollment.get("enrolled_at")

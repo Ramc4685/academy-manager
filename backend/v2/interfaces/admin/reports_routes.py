@@ -19,7 +19,6 @@ from backend.v2.interfaces.admin.views import (
     AttendanceTrendsResponse,
     CoachUtilizationResponse,
     EnrollmentFunnelResponse,
-    ReportsKpiResponse,
 )
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_owner, require_persona
@@ -27,9 +26,8 @@ from backend.v2.shared.http import require_owner, require_persona
 _PERIOD_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 _EXPORT_REPORTS = frozenset(
     {
-        "pending-payments",
-        "revenue",
-        "attendance",
+        # Month close keeps the QuickBooks journal and the deposit slip only;
+        # the pending-payments, revenue and attendance CSVs are gone (spec §5).
         "refunds",
         "revenue-by-category",
         "deposit-slip",
@@ -81,15 +79,6 @@ async def get_projected_income(
         raise HTTPException(status_code=503, detail="projected income report is unavailable")
     result = await use_cases.get_projected_income(period)  # type: ignore[operator]
     return AdminProjectedIncomeResponse(**result)
-
-
-@router.get("/reports/kpis", response_model=ReportsKpiResponse)
-async def get_reports_kpis(
-    _claims: AuthClaims = Depends(require_owner()),
-    use_cases: AdminUseCases = Depends(get_admin_use_cases),
-) -> ReportsKpiResponse:
-    result = await use_cases.get_reports_kpis()  # type: ignore[operator]
-    return ReportsKpiResponse(**result)
 
 
 @router.get("/reports/enrollment-funnel", response_model=EnrollmentFunnelResponse)

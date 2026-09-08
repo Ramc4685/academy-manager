@@ -1731,6 +1731,8 @@ def test_list_session_occurrences_shows_assignment_state(admin_client):
             "start_at": "2026-05-16T09:00:00Z",
             "end_at": "2026-05-16T10:30:00Z",
             "status": "scheduled",
+            "cancellation_reason": None,
+            "cancelled_at": None,
             "scheduled_coach_id": "coach-1",
             "actual_coach_id": None,
             "substitute_coach_id": None,

@@ -33,6 +33,12 @@ BillingAuditAction = Literal[
     # when invoices are generated and when the dunning ladder's first autopay
     # charge fires, so changes get the same actor/before/after trail.
     "invoice_schedule_changed",
+    # Settings -> Billing rules: one owner write that can touch the invoice
+    # schedule, the academy late-fee values and the cancellation policy at
+    # once. Fee changes were previously unaudited entirely
+    # (UpdateAcademyFeesUseCase writes no entry), so this is the trail for
+    # them (spec 2026-09-07-billing-rules-design SS4.1).
+    "billing_rules_changed",
 ]
 
 

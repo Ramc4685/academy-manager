@@ -74,12 +74,11 @@ def test_patch_academy_contract(admin_client):
 
 def test_get_and_patch_fees_contract(admin_client):
     admin_client.use_cases.get_academy_fees_use_case.execute.return_value = GetAcademyFeesOutput(
-        default_monthly_cents=12000,
         late_fee_cents=1500,
         grace_days=5,
     )
     admin_client.use_cases.update_academy_fees_use_case.execute.return_value = GetAcademyFeesOutput(
-        default_monthly_cents=12000, late_fee_cents=2000, grace_days=5
+        late_fee_cents=2000, grace_days=5
     )
 
     get_response = admin_client.get("/api/v2/admin/academy/fees")
@@ -87,7 +86,6 @@ def test_get_and_patch_fees_contract(admin_client):
 
     assert get_response.status_code == 200, get_response.text
     assert get_response.json() == {
-        "default_monthly_cents": 12000,
         "late_fee_cents": 1500,
         "grace_days": 5,
     }

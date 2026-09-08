@@ -74,6 +74,7 @@ export const ACTION_LABEL: Record<CollectionsAction, string> = {
   message: "Message",
   skip_month: "Skip this month",
   resume: "Resume",
+  whatsapp: "WhatsApp",
 };
 
 const ZERO_TOTALS: AdminCollectionsView["totals"] = {

@@ -110,7 +110,8 @@ const COLLECTIONS_FIXTURE = {
           pause: null,
           paid: null,
           last_reminder_at: null,
-          actions: ["send_reminder", "record_payment"],
+          whatsapp_url: "https://wa.me/15550100100?text=Hi%20Dana",
+          actions: ["send_reminder", "record_payment", "whatsapp"],
         },
       ],
     },
@@ -293,6 +294,11 @@ test.describe("admin payments buckets", () => {
     await expect(page.getByTestId("collections-tile-autopay-value")).toHaveText("$1,380.00");
     await expect(page.getByTestId("collections-tile-needs-action-value")).toHaveText("2");
     await expect(page.getByTestId("collections-tile-collected-value")).toHaveText("$2,010.00");
+    // Relabelled: this sums allocations against THIS month's invoices, not cash
+    // received in the month (month close spec §3.2).
+    await expect(page.getByTestId("collections-tile-collected")).toContainText(
+      "Paid toward this month's invoices",
+    );
 
     const renderedOrder = await page
       .locator('section[data-testid^="bucket-"]')
@@ -370,6 +376,32 @@ test.describe("admin payments buckets", () => {
     await expect.poll(() => reminderBodies.length).toBe(1);
     expect(reminderBodies[0]).toMatchObject({ parent_ids: ["parent-past-due"] });
     await expect(page.getByTestId("row-status-parent-past-due")).toHaveText("Reminder sent");
+  });
+
+  test("the WhatsApp action is a link, and only where the backend built one", async ({
+    page,
+  }) => {
+    const guard = installTenantGuard(page);
+    const errors = collectConsoleErrors(page);
+    await stubAdminShell(page);
+    await stubCollections(page);
+
+    await page.goto("/admin/payments");
+
+    // Past due: a link (not a button), pointing at the pre-filled wa.me chat.
+    const link = page.getByTestId("action-whatsapp-parent-past-due");
+    await expect(link).toBeVisible();
+    await expect(link).toHaveAttribute("href", /^https:\/\/wa\.me\/15550100100\?text=/);
+    await expect(link).toHaveAttribute("target", "_blank");
+    await expect(link).toHaveAttribute("rel", /noopener/);
+
+    // Awaiting has no phone on file, so it simply gets no action.
+    await expect(page.getByTestId("action-whatsapp-parent-awaiting")).toHaveCount(0);
+    // Scheduled autopay is not a chase bucket at all.
+    await expect(page.getByTestId("action-whatsapp-parent-autopay")).toHaveCount(0);
+
+    guard.assertNoLegacyApiCalls();
+    expect(errors, `Console errors: ${errors.join("\n")}`).toEqual([]);
   });
 
   test("an empty response renders zero tiles and every empty-bucket line", async ({ page }) => {
