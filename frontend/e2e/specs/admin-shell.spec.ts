@@ -926,8 +926,12 @@ test.describe("Rally admin shell", () => {
   }) => {
     const errors = collectConsoleErrors(page);
     await stubAdminBff(page);
-    await page.goto("/admin/session-economics");
-    await expect(page).toHaveURL(/\/admin\/reports\/session-economics$/);
+    // Same redirect race as the dues bookmark above.
+    const landedEconomics = page.waitForURL(/\/admin\/reports\/session-economics$/, {
+      timeout: 30_000,
+    });
+    await page.goto("/admin/session-economics", { waitUntil: "commit" }).catch(() => undefined);
+    await landedEconomics;
     expect(
       errors,
       `App console errors on session economics redirect: ${errors.join("\n")}`,
