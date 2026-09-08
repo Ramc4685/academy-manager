@@ -966,8 +966,12 @@ test.describe("Rally admin shell", () => {
   }) => {
     const errors = collectConsoleErrors(page);
     await stubAdminBff(page);
-    await page.goto("/admin/coaches");
-    await expect(page).toHaveURL(/\/admin\/users\?role=coach$/);
+    // Arm before navigating: the redirect fires during load and can abort
+    // `page.goto` itself, and the 5s expect default is shorter than a cold
+    // compile — the same race #683 armed for the other bookmark redirects.
+    const landed = page.waitForURL(/\/admin\/users\?role=coach$/, { timeout: 30_000 });
+    await page.goto("/admin/coaches", { waitUntil: "commit" }).catch(() => undefined);
+    await landed;
     await expect(page.getByTestId("admin-users")).toBeVisible();
     // The coach engagement strip only renders while the Coaches tab is active.
     await expect(page.getByTestId("coach-engagement-stats")).toBeVisible();
@@ -982,8 +986,12 @@ test.describe("Rally admin shell", () => {
   }) => {
     const errors = collectConsoleErrors(page);
     await stubAdminBff(page);
-    await page.goto("/admin/parents");
-    await expect(page).toHaveURL(/\/admin\/users\?role=parent$/);
+    // Arm before navigating: the redirect fires during load and can abort
+    // `page.goto` itself, and the 5s expect default is shorter than a cold
+    // compile — the same race #683 armed for the other bookmark redirects.
+    const landed = page.waitForURL(/\/admin\/users\?role=parent$/, { timeout: 30_000 });
+    await page.goto("/admin/parents", { waitUntil: "commit" }).catch(() => undefined);
+    await landed;
     await expect(page.getByTestId("admin-users")).toBeVisible();
     // Parent tab must NOT show the coach-only engagement strip.
     await expect(page.getByTestId("coach-engagement-stats")).toHaveCount(0);
