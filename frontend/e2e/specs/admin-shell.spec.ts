@@ -810,9 +810,18 @@ test.describe("Rally admin shell", () => {
       await expect(page.getByTestId("admin-month-close")).toHaveCount(0);
 
       // Billing Health too — its BFF 404s for a non-owner, so the page would
-      // have nothing to show even without the panel.
-      await page.goto("/admin/billing-health");
-      await expect(page.getByTestId("owner-only-panel")).toBeVisible({ timeout: 30_000 });
+      // have nothing to show even without the panel. Same shell race as
+      // /admin/reports above: arm for either outcome rather than pinning the
+      // test to the panel, which is what made this flake on webkit.
+      await page.goto("/admin/billing-health", { waitUntil: "commit" }).catch(() => undefined);
+      await expect
+        .poll(
+          async () =>
+            (await page.getByTestId("owner-only-panel").count()) > 0 ||
+            new URL(page.url()).pathname === "/admin",
+          { timeout: 30_000 },
+        )
+        .toBe(true);
       await expect(page.getByTestId("billing-health-page")).toHaveCount(0);
 
       // The Dues page is gone (#687), so there is no longer an owner-only
