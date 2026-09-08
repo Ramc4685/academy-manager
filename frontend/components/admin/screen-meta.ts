@@ -62,14 +62,17 @@ export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
   {
     group: "MONEY",
     items: [
+      // Ordered by how often the job is done: work the money list, check a
+      // family, close the month, then the plumbing and the outgoings.
       {
         href: "/admin/payments",
         label: "Payments",
         icon: "pay",
         match: startsWith("/admin/payments"),
       },
-      { href: "/admin/billing-health", label: "Billing Health", icon: "signal", match: startsWith("/admin/billing-health"), ownerOnly: true },
       { href: "/admin/families", label: "Families", icon: "user", match: startsWith("/admin/families") },
+      { href: "/admin/reports", label: "Month close", icon: "chart", match: startsWith("/admin/reports"), ownerOnly: true },
+      { href: "/admin/billing-health", label: "Billing Health", icon: "signal", match: startsWith("/admin/billing-health"), ownerOnly: true },
       {
         href: "/admin/expenses",
         label: "Expenses",
@@ -77,7 +80,6 @@ export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
         match: startsWith("/admin/expenses"),
       },
       { href: "/admin/payouts", label: "Coach payouts", icon: "whistle", match: startsWith("/admin/payouts"), ownerOnly: true },
-      { href: "/admin/reports", label: "Reports", icon: "chart", match: startsWith("/admin/reports"), ownerOnly: true },
     ],
   },
   {
@@ -134,9 +136,14 @@ export const OWNER_ONLY_ROUTE_PREFIXES: ReadonlyArray<string> = [
 ];
 
 /**
- * Exceptions carved out of `OWNER_ONLY_ROUTE_PREFIXES`: dues follow-up is
- * operations work (chasing balances), so admins keep it even though it lives
- * under `/admin/reports`.
+ * Exceptions carved out of `OWNER_ONLY_ROUTE_PREFIXES`.
+ *
+ * `/admin/reports/dues` stays listed even though the Dues page is gone (month
+ * close spec §6). It is now a redirect to `/admin/payments`, and `/admin/reports`
+ * is owner-only, so removing the exception would meet an admin following an old
+ * bookmark with an owner-only wall instead of forwarding them to a page they are
+ * allowed to use. The exception keeps the redirect reachable by whoever the
+ * target is reachable by.
  */
 export const OWNER_ONLY_ROUTE_EXCEPTIONS: ReadonlyArray<string> = ["/admin/reports/dues"];
 
@@ -177,12 +184,11 @@ export const SCREEN_META: Record<string, AdminScreenMeta> = {
   "/admin/families/[parentId]": { title: "Family billing", subtitle: "Balance, autopay, invoices and what the system did", breadcrumbs: ["Admin", "Money", "Families", "Family"] },
   "/admin/expenses": { title: "Expenses", subtitle: "Categorised academy spend", breadcrumbs: ["Admin", "Money", "Expenses"] },
   "/admin/payouts": { title: "Payroll & payouts", subtitle: "Payout cycles and coach payslips", breadcrumbs: ["Admin", "Money", "Payouts"] },
-  "/admin/reports": { title: "Reports", subtitle: "Exports and summaries", breadcrumbs: ["Admin", "Money", "Reports"] },
-  "/admin/reports/session-economics": { title: "Session economics", subtitle: "Revenue, cost, and profit by session", breadcrumbs: ["Admin", "Money", "Reports", "Session economics"] },
-  "/admin/reports/dues": { title: "Dues follow-up", subtitle: "Outstanding balances", breadcrumbs: ["Admin", "Money", "Reports", "Dues"] },
-  "/admin/reports/refunds": { title: "Refunds & credits", subtitle: "Money returned and account credits by month", breadcrumbs: ["Admin", "Money", "Reports", "Refunds & credits"] },
-  "/admin/reports/revenue-by-category": { title: "Revenue by category", subtitle: "Collected revenue split by program and fee category", breadcrumbs: ["Admin", "Money", "Reports", "Revenue by category"] },
-  "/admin/reports/deposit-slip": { title: "Deposit slip", subtitle: "Payments received by day and method for bank reconciliation", breadcrumbs: ["Admin", "Money", "Reports", "Deposit slip"] },
+  "/admin/reports": { title: "Month close", subtitle: "The month's two runs, its money, and anything odd", breadcrumbs: ["Admin", "Money", "Month close"] },
+  "/admin/reports/session-economics": { title: "Session economics", subtitle: "Revenue, cost, and profit by session", breadcrumbs: ["Admin", "Money", "Month close", "Session economics"] },
+  "/admin/reports/refunds": { title: "Refunds & credits", subtitle: "Money returned and account credits by month", breadcrumbs: ["Admin", "Money", "Month close", "Refunds & credits"] },
+  "/admin/reports/revenue-by-category": { title: "Revenue by category", subtitle: "Collected revenue split by program and fee category", breadcrumbs: ["Admin", "Money", "Month close", "Revenue by category"] },
+  "/admin/reports/deposit-slip": { title: "Deposit slip", subtitle: "Payments received by day and method for bank reconciliation", breadcrumbs: ["Admin", "Money", "Month close", "Deposit slip"] },
   "/admin/messages": { title: "Messages", subtitle: "Inbox and broadcasts", breadcrumbs: ["Admin", "Comms", "Messages"] },
   "/admin/waivers": { title: "Waivers", subtitle: "Student signatures and expiry", breadcrumbs: ["Admin", "Comms", "Waivers"] },
   "/admin/settings": { title: "Settings", subtitle: "Academy preferences", breadcrumbs: ["Admin", "Settings"] },

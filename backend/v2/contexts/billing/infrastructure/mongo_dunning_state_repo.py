@@ -15,6 +15,7 @@ from backend.v2.contexts.billing.application.autopay_eligibility import (
     ladder_eligibility,
 )
 from backend.v2.contexts.billing.domain.dunning import (
+    FIRST_ATTEMPT_LOCAL_HOUR,
     DunningState,
     open_initial_dunning_state,
     record_dunning_attempt_result,
@@ -47,7 +48,9 @@ class MongoDunningStateRepository(TenantScopedRepository):
     #: Local hour (academy timezone) before which no NEW ladder is prepared on
     #: its due date, so the first autopay attempt lands in the morning of the
     #: due date instead of 00:00 UTC — 7pm the evening before in Chicago (#651).
-    first_attempt_local_hour: ClassVar[int] = 9
+    #: The value is the domain constant; this alias keeps the existing call
+    #: sites working while the rule itself lives with the ladder.
+    first_attempt_local_hour: ClassVar[int] = FIRST_ATTEMPT_LOCAL_HOUR
 
     def __init__(
         self,

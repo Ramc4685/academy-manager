@@ -5,6 +5,11 @@
  * the openapi-typescript generator produces lib/api/generated/v2.d.ts.
  */
 
+import type {
+  BillingRulesView,
+  UpdateBillingRulesRequest,
+} from "@/lib/billing-rules-form";
+
 import { apiFetch } from "./client";
 
 // ---------------------------------------------------------------------------
@@ -55,6 +60,9 @@ export interface AdminSessionOccurrenceView {
   start_at: string;
   end_at: string;
   status: "scheduled" | "cancelled" | "completed";
+  /** Why this date is off (#671); a live date carries null. */
+  cancellation_reason: string | null;
+  cancelled_at: string | null;
   scheduled_coach_id: string;
   actual_coach_id: string | null;
   substitute_coach_id: string | null;
@@ -358,7 +366,9 @@ export type CollectionsAction =
   | "record_payment"
   | "message"
   | "skip_month"
-  | "resume";
+  | "resume"
+  /** A link, not a mutation — Past due and Awaiting payment rows only. */
+  | "whatsapp";
 
 export interface AdminCollectionsFamily {
   parent_id: string;
@@ -401,6 +411,12 @@ export interface AdminCollectionsFamily {
   } | null;
   paid: { amount_cents: number; method: string | null; paid_at: string | null } | null;
   last_reminder_at: string | null;
+  /**
+   * Pre-filled `wa.me` link carrying the dues reminder text. Present on Past
+   * due and Awaiting payment rows whose family has a dialable phone; the
+   * `whatsapp` action is only listed when this is non-null.
+   */
+  whatsapp_url?: string | null;
   actions: CollectionsAction[];
 }
 
@@ -900,13 +916,6 @@ export interface AdminRevenueResponse {
   by_month: Record<string, number>; // "YYYY-MM": cents
 }
 
-export interface AdminReportsKpiResponse {
-  active_students: number;
-  attendance_rate_30d: number;
-  dues_collected_mtd_cents: number;
-  pending_waivers: number;
-}
-
 export interface AdminReportsAttendanceSummary {
   present_count: number;
   recorded_count: number;
@@ -1360,21 +1369,6 @@ export interface AdminAuditLogList {
   logs: AdminAuditLogView[];
 }
 
-export interface DuesFollowupParentView {
-  parent_id: string;
-  parent_name: string | null;
-  email: string | null;
-  phone: string | null;
-  pending_count: number;
-  total_due_cents: number;
-  /** Pre-filled wa.me link; null when the parent has no usable phone on file. */
-  whatsapp_url: string | null;
-}
-
-export interface DuesFollowupResponse {
-  parents: DuesFollowupParentView[];
-}
-
 export interface SendDuesRemindersResponse {
   sent: number;
   blocked: boolean;
@@ -1417,7 +1411,6 @@ export type UpdateAdminAcademyRequest = Partial<{
 }>;
 
 export interface AdminFeesView {
-  default_monthly_cents: number | null;
   late_fee_cents: number | null;
   grace_days: number | null;
 }
@@ -1664,6 +1657,41 @@ export function updateSessionOccurrenceReplacement(
     `/admin/session-occurrences/${encodeURIComponent(occurrenceId)}/replacement`,
     {
       method: "PATCH",
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+/** Body of "cancel this date" (#671). */
+export interface CancelSessionOccurrenceRequest {
+  reason: string;
+  /** false records the cancellation without emailing families or the coach. */
+  notify?: boolean;
+}
+
+export interface CancelSessionOccurrenceResponse {
+  occurrence: AdminSessionOccurrenceView;
+  affected_enrollment_ids: string[];
+  roster_entries_removed: number;
+  makeups_reopened: number;
+  credits_issued: number;
+  billing_result: string | null;
+  notified: boolean;
+}
+
+/**
+ * Call off ONE class date (#671). The families enrolled that month are
+ * credited the date's share automatically; the coach is not paid for it.
+ * 409 when the date is already cancelled or has already started.
+ */
+export function cancelSessionOccurrence(
+  occurrenceId: string,
+  payload: CancelSessionOccurrenceRequest
+): Promise<CancelSessionOccurrenceResponse> {
+  return apiFetch<CancelSessionOccurrenceResponse>(
+    `/admin/session-occurrences/${encodeURIComponent(occurrenceId)}/cancel`,
+    {
+      method: "POST",
       body: JSON.stringify(payload),
     }
   );
@@ -1939,6 +1967,25 @@ export function getInvoiceSchedule(): Promise<InvoiceScheduleView> {
 
 export function setInvoiceSchedule(payload: SetInvoiceScheduleRequest): Promise<InvoiceScheduleView> {
   return apiFetch<InvoiceScheduleView>("/admin/billing/settings/invoice-schedule", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+/**
+ * Settings -> Billing rules. One read and one owner-only write covering
+ * numbers that live in three stores (spec 2026-09-07-billing-rules-design).
+ * Row shapes are re-exported from `lib/billing-rules-form` so the panel and
+ * its view model agree on one type.
+ */
+export function getBillingRules(): Promise<BillingRulesView> {
+  return apiFetch<BillingRulesView>("/admin/billing/rules", { method: "GET" });
+}
+
+export function updateBillingRules(
+  payload: UpdateBillingRulesRequest,
+): Promise<BillingRulesView> {
+  return apiFetch<BillingRulesView>("/admin/billing/rules", {
     method: "PUT",
     body: JSON.stringify(payload),
   });
@@ -2542,10 +2589,6 @@ export function getRevenue(): Promise<AdminRevenueResponse> {
   return apiFetch<AdminRevenueResponse>("/admin/finance/revenue", { method: "GET" });
 }
 
-export function getAdminReportKpis(): Promise<AdminReportsKpiResponse> {
-  return apiFetch<AdminReportsKpiResponse>("/admin/reports/kpis", { method: "GET" });
-}
-
 export interface AdminProjectedIncomeSessionRow {
   session_id: string;
   title: string;
@@ -2996,10 +3039,6 @@ export function listAuditLogs(): Promise<AdminAuditLogList> {
   return apiFetch<AdminAuditLogList>("/admin/audit-logs", { method: "GET" });
 }
 
-export function listDuesFollowup(): Promise<DuesFollowupResponse> {
-  return apiFetch<DuesFollowupResponse>("/admin/dues-followup", { method: "GET" });
-}
-
 export function sendDuesReminders(payload: { parent_ids?: string[] } = {}): Promise<SendDuesRemindersResponse> {
   return apiFetch<SendDuesRemindersResponse>("/admin/dues-reminders", {
     method: "POST",
@@ -3025,6 +3064,84 @@ export function getTuitionDiscountSummary(period: string): Promise<AdminTuitionD
     `/admin/finance/tuition-discounts?period=${encodeURIComponent(period)}`,
     { method: "GET" },
   );
+}
+
+/**
+ * `GET /admin/reports/month-close` — the Month close view.
+ *
+ * Field names mirror `AdminMonthCloseView` in
+ * `backend/v2/interfaces/admin/month_close_views.py` (month close spec §4.2).
+ * Owner only: an admin without the owner scope gets a 404, never a 403.
+ */
+export type MonthCloseOddCode =
+  | "invoice_without_enrollment"
+  | "paused_family_invoiced"
+  | "autopay_no_card"
+  | "autopay_on_dead_enrollment";
+
+export interface AdminMonthCloseTally {
+  count: number;
+  cents: number;
+}
+
+export interface AdminMonthCloseOddItem {
+  kind: "family" | "invoice";
+  id: string;
+  label: string;
+  href: string;
+}
+
+export interface AdminMonthCloseOdd {
+  code: MonthCloseOddCode;
+  label: string;
+  /** The true count; `items` is capped at 20 so the page can say "showing 20 of N". */
+  count: number;
+  items: AdminMonthCloseOddItem[];
+}
+
+export interface AdminMonthCloseView {
+  generated_at: string;
+  timezone: string;
+  period: string;
+  invoices: {
+    generated: number;
+    emailed: number;
+    autopay_notices: number;
+    not_sent: number;
+    voided: number;
+    voided_cents: number;
+    void_reasons: { reason: string; count: number }[];
+  };
+  money: {
+    billed_cents: number;
+    collected_cents: number;
+    outstanding_cents: number;
+    /** Null, never 0, when nothing was billed — the page renders "—". */
+    collection_rate: number | null;
+  };
+  autopay_run: {
+    charge_on: string | null;
+    charge_on_varies: boolean;
+    has_run: boolean;
+    scheduled: AdminMonthCloseTally;
+    succeeded: AdminMonthCloseTally;
+    failed: AdminMonthCloseTally;
+    pending: AdminMonthCloseTally;
+  };
+  odd: AdminMonthCloseOdd[];
+  /** Null when the discount query was unavailable (see `warnings`). */
+  tuition_discounts: {
+    gross_cents: number;
+    discount_cents: number;
+    net_cents: number;
+    by_category: { category: string; amount_cents: number }[];
+  } | null;
+  warnings: string[];
+}
+
+export function getAdminMonthClose(period?: string): Promise<AdminMonthCloseView> {
+  const query = period ? `?period=${encodeURIComponent(period)}` : "";
+  return apiFetch<AdminMonthCloseView>(`/admin/reports/month-close${query}`, { method: "GET" });
 }
 
 export function exportAdminReportCsv(reportName: string, period?: string): Promise<string> {

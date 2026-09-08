@@ -42,6 +42,44 @@ const PARENT_ME = {
   roles: ["parent" as const],
 };
 
+/**
+ * An empty Month close payload. Route stubs must name
+ * `/api/v2/admin/reports/month-close` explicitly: a `*` glob stops at `/`, so
+ * `admin/reports*` does NOT match it (lesson from the payments buckets spec).
+ */
+const MONTH_CLOSE_EMPTY = {
+  generated_at: "2026-09-30T14:00:00Z",
+  timezone: "America/Chicago",
+  period: "2026-09",
+  invoices: {
+    generated: 0,
+    emailed: 0,
+    autopay_notices: 0,
+    not_sent: 0,
+    voided: 0,
+    voided_cents: 0,
+    void_reasons: [],
+  },
+  money: {
+    billed_cents: 0,
+    collected_cents: 0,
+    outstanding_cents: 0,
+    collection_rate: null,
+  },
+  autopay_run: {
+    charge_on: null,
+    charge_on_varies: false,
+    has_run: false,
+    scheduled: { count: 0, cents: 0 },
+    succeeded: { count: 0, cents: 0 },
+    failed: { count: 0, cents: 0 },
+    pending: { count: 0, cents: 0 },
+  },
+  odd: [],
+  tuition_discounts: { gross_cents: 0, discount_cents: 0, net_cents: 0, by_category: [] },
+  warnings: [],
+};
+
 const REPORTS_DASHBOARD_EMPTY = {
   period: "2026-05",
   cash_collected_cents: 0,
@@ -117,10 +155,11 @@ const ADMIN_ROUTE_MATRIX = [
     testId: "admin-pause-requests",
   },
   { label: "payments", href: "/admin/payments", testId: "admin-payments" },
-  { label: "dues", href: "/admin/reports/dues", testId: "admin-dues" },
+  // The Dues page is gone; the old bookmark forwards to Payments (spec §6).
+  { label: "dues redirect", href: "/admin/dues", testId: "admin-payments" },
   { label: "expenses", href: "/admin/expenses", testId: "admin-expenses" },
   { label: "payouts", href: "/admin/payouts", testId: "admin-payouts" },
-  { label: "reports", href: "/admin/reports", testId: "admin-reports" },
+  { label: "reports", href: "/admin/reports", testId: "admin-month-close" },
   { label: "messages", href: "/admin/messages", testId: "admin-messages" },
   { label: "waivers", href: "/admin/waivers", testId: "admin-waivers" },
   { label: "settings", href: "/admin/settings", testId: "admin-settings-academy" },
@@ -199,9 +238,6 @@ async function stubAdminLaunchBff(page: Page): Promise<void> {
   await page.route("**/api/v2/admin/billing/reconciliation-runs", (route) =>
     fulfillJson(route, { runs: [] })
   );
-  await page.route("**/api/v2/admin/dues-followup*", (route) =>
-    fulfillJson(route, { parents: [] })
-  );
   await page.route("**/api/v2/admin/finance/expenses*", (route) =>
     fulfillJson(route, { expenses: [] })
   );
@@ -210,6 +246,9 @@ async function stubAdminLaunchBff(page: Page): Promise<void> {
   );
   await page.route("**/api/v2/admin/finance/revenue*", (route) =>
     fulfillJson(route, { by_month: {} })
+  );
+  await page.route("**/api/v2/admin/reports/month-close*", (route) =>
+    fulfillJson(route, MONTH_CLOSE_EMPTY)
   );
   await page.route("**/api/v2/admin/reports/dashboard*", (route) =>
     fulfillJson(route, REPORTS_DASHBOARD_EMPTY)
@@ -267,7 +306,6 @@ async function stubAdminLaunchBff(page: Page): Promise<void> {
   );
   await page.route(/\/api\/v2\/admin\/academy\/fees(?:\?.*)?$/, (route) =>
     fulfillJson(route, {
-      default_monthly_cents: null,
       late_fee_cents: null,
       grace_days: null,
     })
@@ -343,7 +381,7 @@ test.describe("Wave 12 SaaS launch route matrix scaffold", () => {
       if (route.label === "reports") {
         // Wait for the async report feeds as well as the initial page shell so
         // malformed stubs cannot crash just after the mount assertion passes.
-        await expect(page.getByText("No payments received yet.")).toBeVisible();
+        await expect(page.getByTestId("autopay-run-box")).toBeVisible();
         await expect(
           page.getByText("No active enrollments with a monthly fee yet.")
         ).toBeVisible();

@@ -29,6 +29,8 @@ class MongoCreditLedgerRepository(TenantScopedRepository):
             remaining_amount_cents=int(doc.get("remaining_amount_cents", 0)),
             currency=str(doc.get("currency", "usd")),
             reason=str(doc.get("reason", "")),
+            source_type=doc.get("source_type"),
+            source_id=doc.get("source_id"),
             calculation_snapshot_id=doc.get("calculation_snapshot_id"),
             approved_by=doc.get("approved_by"),
             approved_at=doc.get("approved_at"),
@@ -42,6 +44,27 @@ class MongoCreditLedgerRepository(TenantScopedRepository):
     async def create(self, entry: CreditLedgerEntry) -> None:
         doc = entry.model_dump(mode="python")
         await self._insert_one({k: v for k, v in doc.items() if k != "academy_id"})
+
+    async def create_if_absent(self, entry: CreditLedgerEntry) -> bool:
+        """Insert unless a credit with the same ``(source_type, source_id)``
+        already exists (issue #671). The partial unique index from migration
+        0168 is the backstop for two concurrent writers; the pre-read keeps
+        the common retry cheap. Returns ``True`` iff this call wrote the row."""
+        if entry.source_type and entry.source_id:
+            existing = await self.find_by_source(
+                source_type=entry.source_type, source_id=entry.source_id
+            )
+            if existing is not None:
+                return False
+        try:
+            await self.create(entry)
+        except DuplicateKeyError:
+            return False
+        return True
+
+    async def find_by_source(self, *, source_type: str, source_id: str) -> CreditLedgerEntry | None:
+        doc = await self._find_one({"source_type": source_type, "source_id": source_id})
+        return self._to_domain(doc) if doc else None
 
     async def list_for_parent(self, parent_id: str) -> list[CreditLedgerEntry]:
         cursor = self._find_many(

@@ -103,6 +103,13 @@ class AdminStudentSessionSummaryView(BaseModel):
     subscription_status: str | None = None
     amount_cents: int | None = None
     discount: AdminStudentSessionDiscountView | None = None
+    # Issue #674: billing autopay axis on current rows; lifecycle facts on past rows.
+    autopay_status: str | None = None
+    cancelled_at: datetime | None = None
+    withdrawal_date: datetime | None = None
+    ended_at: datetime | None = None
+    cancelled_by: str | None = None
+    reason: str | None = None
 
 
 class AdminStudentPaymentSummaryView(BaseModel):
@@ -154,6 +161,7 @@ class AdminStudentDetailView(AdminStudentView):
     waiver_version: str | None = None
     recent_attendance: list[AdminStudentRecentAttendanceView] = Field(default_factory=list)
     enrolled_sessions: list[AdminStudentSessionSummaryView] = Field(default_factory=list)
+    past_enrollments: list[AdminStudentSessionSummaryView] = Field(default_factory=list)
     payment_history: list[AdminStudentPaymentSummaryView] = Field(default_factory=list)
     current_payment: AdminStudentCurrentPaymentSummaryView | None = None
     outstanding_balance_cents: int = 0
@@ -394,6 +402,10 @@ class AdminSessionOccurrenceView(BaseModel):
     start_at: datetime
     end_at: datetime
     status: Literal["scheduled", "cancelled", "completed"]
+    # Issue #671: why this date is off, and when it was called off. Both stay
+    # None for a live date; a whole-session cancel (#467) sets the reason only.
+    cancellation_reason: str | None = None
+    cancelled_at: datetime | None = None
     scheduled_coach_id: str
     actual_coach_id: str | None = None
     substitute_coach_id: str | None = None
@@ -508,6 +520,27 @@ class SetSessionAssistantsRequest(BaseModel):
 
     assistant_coach_ids: list[str] = Field(default_factory=list, max_length=20)
     reason: str | None = Field(default=None, max_length=500)
+
+
+class CancelSessionOccurrenceRequest(BaseModel):
+    """Admin "cancel this date" body (#671)."""
+
+    reason: str = Field(min_length=1, max_length=500)
+    #: ``False`` records the cancellation without emailing anyone — for a date
+    #: the academy has already announced by WhatsApp or in person.
+    notify: bool = True
+
+
+class CancelSessionOccurrenceResponse(BaseModel):
+    occurrence: AdminSessionOccurrenceView
+    affected_enrollment_ids: list[str] = Field(default_factory=list)
+    roster_entries_removed: int = 0
+    makeups_reopened: int = 0
+    #: Approved trials that were assigned to this date and are pending again (#671).
+    trials_reopened: int = 0
+    credits_issued: int = 0
+    billing_result: str | None = None
+    notified: bool = False
 
 
 class UpdateOccurrenceReplacementRequest(BaseModel):
@@ -1357,22 +1390,6 @@ class AdminAuditLogList(BaseModel):
     logs: list[AdminAuditLogView]
 
 
-class DuesFollowupParentView(BaseModel):
-    parent_id: str
-    parent_name: str | None = None
-    email: str | None = None
-    phone: str | None = None
-    pending_count: int
-    total_due_cents: int
-    # Pre-filled wa.me link the admin clicks to open WhatsApp; None when the
-    # parent has no usable phone on file.
-    whatsapp_url: str | None = None
-
-
-class DuesFollowupResponse(BaseModel):
-    parents: list[DuesFollowupParentView]
-
-
 class SendDuesRemindersResponse(BaseModel):
     sent: int
     blocked: bool
@@ -1686,13 +1703,11 @@ class UpdateAdminAcademyRequest(BaseModel):
 
 
 class AdminFeesView(BaseModel):
-    default_monthly_cents: int | None = None
     late_fee_cents: int | None = None
     grace_days: int | None = None
 
 
 class UpdateAdminFeesRequest(BaseModel):
-    default_monthly_cents: int | None = None
     late_fee_cents: int | None = None
     grace_days: int | None = None
 
@@ -1755,13 +1770,6 @@ class AdminGatewayView(BaseModel):
 
 class AdminGatewayConnectLinkView(BaseModel):
     url: str
-
-
-class ReportsKpiResponse(BaseModel):
-    active_students: int = 0
-    attendance_rate_30d: float = 0.0
-    dues_collected_mtd_cents: int = 0
-    pending_waivers: int = 0
 
 
 class AdminRefundRow(BaseModel):

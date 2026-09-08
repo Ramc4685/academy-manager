@@ -36,6 +36,8 @@ export interface MockState {
         enrollment_status: "active" | "paused" | "cancelled";
         /** Seed a server-saved mark (hydrates the row as already marked). */
         attendance_status?: "present" | "absent" | "late" | null;
+        /** "makeup" / "trial" renders the one-time chip (#672). */
+        entry_source?: "enrollment" | "makeup" | "trial";
       }>;
     }>;
   };
@@ -46,6 +48,11 @@ export interface MockState {
   bulkSkillCalls: Array<Record<string, unknown>>;
   skillStatusCalls: Array<Record<string, unknown>>;
   attendanceResponder?: (body: Record<string, unknown>) => {
+    status: number;
+    body: Record<string, unknown>;
+  };
+  /** Override the bulk endpoint's reply (e.g. a 422 naming ineligible rows, #672). */
+  bulkAttendanceResponder?: (body: Record<string, unknown>) => {
     status: number;
     body: Record<string, unknown>;
   };
@@ -521,6 +528,14 @@ export const test = base.extend<{
         if (route.request().method() !== "POST") return route.fallback();
         const body = JSON.parse(route.request().postData() ?? "{}");
         state.bulkAttendanceCalls.push(body);
+        const responder = state.bulkAttendanceResponder?.(body);
+        if (responder) {
+          return route.fulfill({
+            status: responder.status,
+            contentType: "application/json",
+            body: JSON.stringify(responder.body),
+          });
+        }
         const entries = (body.entries ?? []) as Array<{
           student_id: string;
           status: string;

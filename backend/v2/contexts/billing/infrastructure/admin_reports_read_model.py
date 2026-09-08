@@ -33,7 +33,6 @@ from backend.v2.contexts.billing.application.admin_money import (
     ledger_payment_effective_at,
     ledger_payment_effective_month,
     ledger_payment_effective_window_query,
-    legacy_payment_cash_candidate_query,
     month_bounds,
     payment_collected_cents,
     payment_due_date,
@@ -43,107 +42,9 @@ from backend.v2.contexts.billing.application.admin_money import (
     payment_revenue_net_cents,
     round_money_minor,
 )
+from backend.v2.contexts.billing.infrastructure.cash_received import cash_received_in_period
 from backend.v2.shared.occurrences import occurrence_session_id
 from backend.v2.shared.tenancy import current_academy_id
-
-
-def make_reports_kpis(db: AsyncIOMotorDatabase[Any]) -> object:
-    """Returns an async callable that computes KPIs on-demand from live collections."""
-    from datetime import UTC, datetime, timedelta
-
-    from backend.v2.shared.tenancy import current_academy_id
-
-    async def get_reports_kpis() -> dict[str, int | float]:
-        academy_id = current_academy_id()
-        now = datetime.now(UTC)
-        period_str = now.strftime("%Y-%m")
-        start_month, end_month = month_bounds(period_str)
-        cutoff_30d = now - timedelta(days=30)
-
-        # active_students: distinct students with active enrollment
-        pipeline_students: list[dict[str, Any]] = [
-            {"$match": {"academy_id": academy_id, "status": "active"}},
-            {"$group": {"_id": "$student_id"}},
-            {"$count": "n"},
-        ]
-        res = await db.enrollments.aggregate(pipeline_students).to_list(length=1)
-        active_students: int = res[0]["n"] if res else 0
-
-        # attendance_rate_30d
-        pipeline_att: list[dict[str, Any]] = [
-            {
-                "$match": {
-                    "academy_id": academy_id,
-                    "marked_at": {"$gte": cutoff_30d},
-                    "status": {"$in": ["present", "absent", "late"]},
-                }
-            },
-            {
-                "$group": {
-                    "_id": None,
-                    "present": {
-                        "$sum": {"$cond": [{"$in": ["$status", ["present", "late"]]}, 1, 0]}
-                    },
-                    "total": {"$sum": 1},
-                }
-            },
-        ]
-        res2 = await db.attendance.aggregate(pipeline_att).to_list(length=1)
-        if res2 and res2[0]["total"] > 0:
-            attendance_rate_30d = round(res2[0]["present"] / res2[0]["total"], 4)
-        else:
-            attendance_rate_30d = 0.0
-
-        # dues_collected_mtd
-        pipeline_dues: list[dict[str, Any]] = [
-            {
-                "$match": {
-                    "academy_id": academy_id,
-                    "status": {"$in": ["succeeded", "paid"]},
-                    "created_at": {"$gte": start_month, "$lt": end_month},
-                }
-            },
-            {
-                "$group": {
-                    "_id": None,
-                    "total": {
-                        "$sum": {
-                            "$subtract": [
-                                "$amount_cents",
-                                {"$ifNull": ["$refunded_cents", 0]},
-                            ]
-                        }
-                    },
-                }
-            },
-        ]
-        res3 = await db.ledger_payments.aggregate(pipeline_dues).to_list(length=1)
-        dues_collected_mtd_cents: int = res3[0]["total"] if res3 else 0
-
-        # pending_waivers
-        active_student_ids_cursor = db.enrollments.find(
-            {"academy_id": academy_id, "status": "active"}, {"student_id": 1}
-        )
-        active_ids = {doc["student_id"] async for doc in active_student_ids_cursor}
-        signed_cursor = db.waiver_acceptances.find(
-            {
-                "academy_id": academy_id,
-                "student_id": {"$in": list(active_ids)},
-                "is_deleted": {"$ne": True},
-            },
-            {"student_id": 1},
-        )
-        signed_ids = {doc["student_id"] async for doc in signed_cursor}
-        pending_waivers = len(active_ids - signed_ids)
-
-        return {
-            "active_students": active_students,
-            "attendance_rate_30d": attendance_rate_30d,
-            "dues_collected_mtd_cents": dues_collected_mtd_cents,
-            "pending_waivers": pending_waivers,
-        }
-
-    return get_reports_kpis
 
 
 class AdminEffectiveRevenueQuery:
@@ -635,7 +536,10 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
         academy_id = current_academy_id()
         start, end = month_bounds(period)
 
-        cash_collected_cents = 0
+        # Spec 2026-09-07 §3.2: one reader is the definition of cash received.
+        cash_collected_cents = (
+            await cash_received_in_period(db, academy_id=academy_id, start=start, end=end)
+        ).net_cents
         billed_cents = 0
         outstanding_dues_cents = 0
         failed_payment_count = 0
@@ -645,10 +549,9 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
             label: {"amount_cents": 0, "family_ids": set(), "family_amounts": {}}
             for label in ("Current", "1-30", "31-60", "60+")
         }
+        # Rebuilt here for the ``risk_payments`` pass below only; the cash
+        # reader keeps its own copy because its legacy dedup depends on it.
         invoice_keys: set[str] = set()
-        ledger_payment_keys: set[str] = set()
-        ledger_payment_ids: set[str] = set()
-        successful_ledger_statuses = ["succeeded", "paid", "partially_refunded", "refunded"]
         invoices_cursor = db["invoices"].find(
             {
                 "academy_id": academy_id,
@@ -685,80 +588,6 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
                     family_amounts = bucket["family_amounts"]
                     family_amounts[family_id] = int(family_amounts.get(family_id, 0)) + outstanding
 
-        ledger_payments_cursor = db["ledger_payments"].find(
-            {
-                "academy_id": academy_id,
-                **ledger_payment_effective_window_query(start, end),
-                "status": {"$in": successful_ledger_statuses},
-            },
-            {
-                "payment_id": 1,
-                "invoice_id": 1,
-                "invoice_number": 1,
-                "stripe_invoice_id": 1,
-                "stripe_payment_intent_id": 1,
-                "stripe_checkout_session_id": 1,
-                "amount_cents": 1,
-                "final_amount_cents": 1,
-                "gross_amount_cents": 1,
-                "amount": 1,
-                "final_amount": 1,
-                "gross_amount": 1,
-                "discount_cents": 1,
-                "discount": 1,
-                "paid_amount_cents": 1,
-                "amount_received_cents": 1,
-                "paid_amount": 1,
-                "amount_received": 1,
-                "refunded_cents": 1,
-                "paid_at": 1,
-                "created_at": 1,
-            },
-        )
-        async for ledger_payment in ledger_payments_cursor:
-            if ledger_payment_effective_month(ledger_payment) != period:
-                continue
-            ledger_payment_keys.update(payment_provider_keys(ledger_payment))
-            payment_id = str(ledger_payment.get("payment_id") or "")
-            if payment_id:
-                ledger_payment_ids.add(payment_id)
-            cash_collected_cents += payment_revenue_net_cents(ledger_payment)
-
-        ledger_key_cursor = db["ledger_payments"].find(
-            {
-                "academy_id": academy_id,
-                "status": {"$in": successful_ledger_statuses},
-            },
-            {
-                "payment_id": 1,
-                "invoice_id": 1,
-                "invoice_number": 1,
-                "stripe_invoice_id": 1,
-                "stripe_payment_intent_id": 1,
-                "stripe_checkout_session_id": 1,
-            },
-        )
-        async for ledger_payment in ledger_key_cursor:
-            ledger_payment_keys.update(payment_provider_keys(ledger_payment))
-            payment_id = str(ledger_payment.get("payment_id") or "")
-            if payment_id:
-                ledger_payment_ids.add(payment_id)
-
-        ledger_payment_id_list = sorted(ledger_payment_ids)
-        for index in range(0, len(ledger_payment_id_list), 500):
-            payment_id_batch = ledger_payment_id_list[index : index + 500]
-            allocation_cursor = db["payment_allocations"].find(
-                {
-                    "academy_id": academy_id,
-                    "payment_id": {"$in": payment_id_batch},
-                },
-                {"invoice_id": 1},
-            )
-            async for allocation in allocation_cursor:
-                invoice_id = str(allocation.get("invoice_id") or "")
-                if invoice_id:
-                    ledger_payment_keys.add(invoice_id)
-
         failed_attempts_cursor = db["payment_attempts"].find(
             {
                 "academy_id": academy_id,
@@ -768,43 +597,6 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
         )
         async for _attempt in failed_attempts_cursor:
             failed_payment_count += 1
-
-        cash_payments_cursor = db["payments"].find(
-            legacy_payment_cash_candidate_query(academy_id, period, start, end),
-            {
-                "payment_id": 1,
-                "invoice_id": 1,
-                "invoice_number": 1,
-                "stripe_invoice_id": 1,
-                "stripe_payment_intent_id": 1,
-                "stripe_checkout_session_id": 1,
-                "status": 1,
-                "amount_cents": 1,
-                "final_amount_cents": 1,
-                "gross_amount_cents": 1,
-                "amount": 1,
-                "final_amount": 1,
-                "gross_amount": 1,
-                "discount_cents": 1,
-                "discount": 1,
-                "paid_amount_cents": 1,
-                "amount_received_cents": 1,
-                "paid_amount": 1,
-                "amount_received": 1,
-                "refunded_cents": 1,
-                "paid_at": 1,
-                "payment_date": 1,
-                "created_at": 1,
-                "period": 1,
-            },
-        )
-        async for payment in cash_payments_cursor:
-            if payment_effective_month(payment) != period:
-                continue
-            payment_keys = payment_provider_keys(payment)
-            if payment_keys & (invoice_keys | ledger_payment_keys):
-                continue
-            cash_collected_cents += payment_collected_cents(payment)
 
         risk_payments_cursor = db["payments"].find(
             {

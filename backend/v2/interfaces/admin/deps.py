@@ -245,7 +245,6 @@ class AdminUseCases:
     list_dues_followup: object  # callable
     send_dues_reminders: SendDuesReminders
     export_report_csv: object  # callable
-    get_reports_kpis: object  # async () -> dict[str, int | float]
     list_enrollment_events: object  # async (enrollment_id: str) -> list[dict]
     list_billing_deferral_warnings: object  # async (*, today: date, limit: int)
     # comms
@@ -333,6 +332,10 @@ class AdminUseCases:
     student_progress: StudentProgressComposition | None = None
     generate_daily_teaching_plan: GenerateDailyTeachingPlan | None = None
     get_session_occurrence: object | None = None  # async (occurrence_id: str) -> occurrence | None
+    # Issue #671: CancelSessionOccurrence — "cancel this date". Optional so
+    # older admin fixtures still construct AdminUseCases; the route 503s
+    # rather than 500s when a composition root forgets to wire it.
+    cancel_session_occurrence: object | None = None
     get_coach_engagement_stats: GetCoachEngagementStats | None = None
     send_campaign: SendCampaign | None = None
     start_stripe_connect_use_case: StartStripeConnectUseCase | None = None

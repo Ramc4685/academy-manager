@@ -301,6 +301,28 @@ class _FakeRecommendationRepo:
     async def list_pending(self) -> list:
         return [r for r in self.rows.values() if r.status == "RECOMMENDED"]
 
+    async def list_pending_for_student(self, student_id: str) -> list:
+        return [r for r in await self.list_pending() if r.student_id == student_id]
+
+
+class _FakeEnrollmentLookup:
+    """EnrollmentStatusLookup fake (issue #673).
+
+    Mirrors the real adapter: a student is live unless every enrollment has
+    ended. Tests mark a student withdrawn by adding them to ``withdrawn``.
+    """
+
+    def __init__(self) -> None:
+        self.withdrawn: set[str] = set()
+        self.batch_calls: list[list[str]] = []
+
+    async def has_active_or_paused_enrollment(self, student_id: str) -> bool:
+        return student_id not in self.withdrawn
+
+    async def students_with_active_or_paused_enrollment(self, student_ids: list[str]) -> set[str]:
+        self.batch_calls.append(list(student_ids))
+        return {sid for sid in student_ids if sid not in self.withdrawn}
+
 
 class _FakeCertificateRepo:
     def __init__(self) -> None:
@@ -436,6 +458,7 @@ def env():
     attempt_repo = _FakeTestAttemptRepo()
     rec_repo = _FakeRecommendationRepo()
     cert_repo = _FakeCertificateRepo()
+    enrollment_lookup = _FakeEnrollmentLookup()
 
     student_progress = SimpleNamespace(
         place_student=PlaceStudentInLevel(
@@ -458,6 +481,7 @@ def env():
             skill_progress=skill_repo,
             recommendations=rec_repo,
             skill_lookup=skill_lookup,
+            enrollment_lookup=enrollment_lookup,
         ),
         review_level_up=ReviewLevelUpRecommendation(
             recommendations=rec_repo,
@@ -465,6 +489,7 @@ def env():
             skill_progress=skill_repo,
             certificates=cert_repo,
             skill_lookup=skill_lookup,
+            enrollment_lookup=enrollment_lookup,
         ),
         get_student_progress=GetStudentProgress(
             level_progress=level_repo,
@@ -491,6 +516,7 @@ def env():
             skill_progress=skill_repo,
             recommendations=rec_repo,
             skill_lookup=skill_lookup,
+            enrollment_lookup=enrollment_lookup,
         ),
         get_certificates=GetStudentCertificates(certificates=cert_repo),
     )
@@ -538,6 +564,7 @@ def env():
         level_repo=level_repo,
         rec_repo=rec_repo,
         cert_repo=cert_repo,
+        enrollment_lookup=enrollment_lookup,
         program_id=program.program_id,
         level1=level1,
         level2=level2,
@@ -729,6 +756,69 @@ def test_replayed_approve_is_conflict_and_performs_no_writes(env):
     assert level2_rows[0].status == "active"
     # Skill progress earned since the first approval survives.
     assert _get_progress(env, student_id).json()["passed_skills"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Issue #673: enrollment lifecycle
+# ---------------------------------------------------------------------------
+
+
+def test_queue_flags_withdrawn_students_and_keeps_them_listed(env):
+    """A withdrawn student stays in the queue (so the admin can reject) but
+    the row says so; live students read ``enrollment_active: true``."""
+    _place(env, "st-live")
+    _pass_all_level1_skills(env, "st-live")
+    live_rec = _recommend(env, "st-live")
+    _place(env, "st-gone")
+    _pass_all_level1_skills(env, "st-gone")
+    gone_rec = _recommend(env, "st-gone")
+    # Withdrawn *after* the recommendation was made (the stale-queue window).
+    env.enrollment_lookup.withdrawn.add("st-gone")
+
+    queue = env.client.get("/api/v2/admin/level-up-queue").json()["queue"]
+
+    by_id = {row["rec_id"]: row for row in queue}
+    assert by_id[live_rec.rec_id]["enrollment_active"] is True
+    assert by_id[gone_rec.rec_id]["enrollment_active"] is False
+    # One batch read for the whole queue, not one lookup per row.
+    assert env.enrollment_lookup.batch_calls[-1] == ["st-gone", "st-live"]
+
+
+def test_approve_is_refused_for_a_withdrawn_student_and_writes_nothing(env):
+    student_id = "st-withdrawn-approve"
+    _place(env, student_id)
+    _pass_all_level1_skills(env, student_id)
+    rec = _recommend(env, student_id)
+    env.enrollment_lookup.withdrawn.add(student_id)
+
+    resp = env.client.post(f"/api/v2/admin/level-up/{rec.rec_id}/approve")
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["error"]["code"] == "StudentProgress.EnrollmentEnded"
+    assert resp.json()["error"]["details"]["student_id"] == student_id
+    # No certificate, no advancement, row still pending (so it can be rejected).
+    assert env.client.get(f"/api/v2/admin/students/{student_id}/certificates").json() == {
+        "certificates": []
+    }
+    assert _get_progress(env, student_id).json()["current_level_id"] == env.level1.level_id
+    assert _run(env.rec_repo.get(rec.rec_id)).status == "RECOMMENDED"
+
+
+def test_reject_is_still_allowed_for_a_withdrawn_student(env):
+    student_id = "st-withdrawn-reject"
+    _place(env, student_id)
+    _pass_all_level1_skills(env, student_id)
+    rec = _recommend(env, student_id)
+    env.enrollment_lookup.withdrawn.add(student_id)
+
+    resp = env.client.post(
+        f"/api/v2/admin/level-up/{rec.rec_id}/reject",
+        json={"rejection_reason": "family withdrew"},
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "REJECTED"
+    assert env.client.get("/api/v2/admin/level-up-queue").json()["queue"] == []
 
 
 def test_replayed_reject_is_conflict(env):

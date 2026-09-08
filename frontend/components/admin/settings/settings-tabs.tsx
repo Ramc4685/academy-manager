@@ -5,7 +5,7 @@ import type { UrlObject } from "url";
 
 export type SettingsPanelKey =
   | "academy"
-  | "fees"
+  | "billing-rules"
   | "gateway"
   | "notify"
   | "roles"
@@ -16,7 +16,7 @@ export type SettingsPanelKey =
 
 export const SETTINGS_TABS: Array<{ key: SettingsPanelKey; label: string }> = [
   { key: "academy", label: "Academy" },
-  { key: "fees", label: "Fees" },
+  { key: "billing-rules", label: "Billing rules" },
   { key: "gateway", label: "Gateway" },
   { key: "notify", label: "Notify" },
   { key: "roles", label: "Roles" },
@@ -31,9 +31,17 @@ export const SETTINGS_TABS: Array<{ key: SettingsPanelKey; label: string }> = [
  * Owner-only: the BFF 404s their writes for anyone without the owner scope.
  */
 export const OWNER_ONLY_SETTINGS_PANELS: ReadonlySet<SettingsPanelKey> = new Set<SettingsPanelKey>([
-  "fees",
+  "billing-rules",
   "gateway",
 ]);
+
+/**
+ * Retired panel keys that still resolve, so an old bookmark lands somewhere
+ * sensible: `?panel=fees` renders Billing rules (spec SS5).
+ */
+export const RETIRED_SETTINGS_PANELS: Readonly<Record<string, SettingsPanelKey>> = {
+  fees: "billing-rules",
+};
 
 interface SettingsTabsProps {
   active: SettingsPanelKey;
