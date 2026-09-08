@@ -205,6 +205,7 @@ def test_admin_can_get_and_update_student_detail(admin_client):
             "start_at": "2026-06-02T21:00:00Z",
             "end_at": "2026-06-02T22:00:00Z",
             "status": "active",
+            "pending_cancellation_at": None,
             "payment_mode": "monthly",
             "subscription_status": "active",
             "amount_cents": 15000,

@@ -169,6 +169,8 @@ export interface AdminEnrollmentView {
   parent_id: string;
   full_name: string;
   status: EnrollmentStatus;
+  /** Issue #675: parent end-of-period cancel pending; still on the roster until then. */
+  pending_cancellation_at?: string | null;
   enrolled_at: string | null;
   level?: string | null;
   pathway_program_id?: string | null;
@@ -1198,6 +1200,7 @@ export type AdminAttentionKind =
   | "overdue_dues"
   | "pause_requests"
   | "scheduled_resume_blocked"
+  | "scheduled_action_failed"
   | "billing_deferrals"
   | "waivers"
   | "session_pressure";

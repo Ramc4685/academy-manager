@@ -425,6 +425,11 @@ RosterChangeKind = Literal[
     "promoted",  # a waitlisted student took an opened seat
     "moved",  # transferred between sessions (both rosters changed)
     "cancelled",  # enrollment cancelled/removed (admin or parent self-serve)
+    # A parent scheduled an end-of-period cancel (#675): the child is STILL on
+    # the roster until month end. Distinct from "cancelled" so a coach reading
+    # the alert does not drop a student who is still attending — and so staff
+    # are not told twice (once now, once when the scheduled cancel runs).
+    "cancellation_scheduled",
     "withdrawn",  # enrollment withdrawn mid-term
     "paused",  # enrollment paused (seat released, billing stopped)
     "resumed",  # paused enrollment back on the roster

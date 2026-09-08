@@ -21,6 +21,7 @@ class MongoEnrollmentRepository(TenantScopedRepository):
             created_at=doc.get("created_at"),
             registration_application_id=doc.get("registration_application_id"),
             registration_student_lock=doc.get("registration_student_lock"),
+            pending_cancellation_at=doc.get("pending_cancellation_at"),
         )
 
     async def active_for_session(self, session_id: str) -> list[Enrollment]:

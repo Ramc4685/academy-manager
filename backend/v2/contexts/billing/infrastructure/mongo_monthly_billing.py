@@ -69,6 +69,25 @@ class MongoMonthlyBillingGenerator:
         # straddles midnight or an admin edits the setting mid-run.
         self._invoice_due_days = BillingSettings.default("").invoice_due_days
 
+    async def _load_academy_timezone(self) -> str | None:
+        """The academy's wall clock, resolved once per generation run.
+
+        Issue #675 follow-up: ``pending_cancellation_at`` is the last instant
+        of the academy-LOCAL month, so bucketing it into a ``YYYY-MM`` period
+        needs that zone — in UTC a Chicago September ends in October and the
+        skip below would be off by a month. Unreadable/unset degrades to UTC,
+        matching ``self_cancel._end_of_month`` and ``period_of``.
+        """
+        try:
+            doc = await self._db["academies"].find_one({"academy_id": current_academy_id()})
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "monthly_generation_academy_timezone_unreadable; using UTC",
+                exc_info=True,
+            )
+            return None
+        return str((doc or {}).get("timezone") or "") or None
+
     async def _load_invoice_due_days(self) -> int:
         """Read this academy's grace window, falling back to the model default.
 
@@ -194,6 +213,28 @@ class MongoMonthlyBillingGenerator:
             billing_period=period,
             needs_review=False,
             metadata={"policy": "paused enrollments are not invoiced (#651)"},
+        )
+
+    def _pending_cancellation_detail(
+        self,
+        *,
+        enrollment: dict[str, object],
+        student_doc: dict[str, object] | None,
+        period: str,
+        pending_period: str,
+    ) -> MonthlyGenerationSkippedDetail:
+        return MonthlyGenerationSkippedDetail(
+            enrollment_id=str(enrollment.get("enrollment_id") or enrollment.get("_id")),
+            student_id=str(enrollment.get("student_id") or ""),
+            student_name=str((student_doc or {}).get("full_name") or "") or None,
+            reason_code="pending_cancellation",
+            source="enrollment.pending_cancellation_at",
+            billing_period=period,
+            needs_review=False,
+            metadata={
+                "policy": "a scheduled end-of-period cancel is not billed past its month (#675)",
+                "pending_cancellation_period": pending_period,
+            },
         )
 
     def _legacy_skip_period_detail(
@@ -794,6 +835,7 @@ class MongoMonthlyBillingGenerator:
     async def generate_monthly_payments(self, period: str) -> GenerateMonthlyPaymentsResult:
         academy_id = current_academy_id()
         self._invoice_due_days = await self._load_invoice_due_days()
+        academy_timezone = await self._load_academy_timezone() or "UTC"
         cursor = self._db["enrollments"].find(
             {
                 "academy_id": academy_id,
@@ -840,6 +882,26 @@ class MongoMonthlyBillingGenerator:
                     )
                 )
                 continue
+            pending_cancellation_at = _coerce_datetime(enrollment.get("pending_cancellation_at"))
+            if pending_cancellation_at is not None:
+                # Issue #675 follow-up: an ``end_of_period`` self-cancel leaves
+                # the row ``active`` until the hourly worker flips it at month
+                # end, and the generation cron can run first (03:00 UTC vs a
+                # Chicago 04:59:59 run_at). Without this the family is minted —
+                # and emailed — an invoice for the month they cancelled, which
+                # the worker then voids hours later.
+                pending_period = _local_period_label(pending_cancellation_at, academy_timezone)
+                if period > pending_period:
+                    skipped_paused += 1
+                    skipped_details.append(
+                        self._pending_cancellation_detail(
+                            enrollment=enrollment,
+                            student_doc=student_doc,
+                            period=period,
+                            pending_period=pending_period,
+                        )
+                    )
+                    continue
             if period in set(enrollment.get("skip_periods") or []):
                 skipped_paused += 1
                 skipped_details.append(

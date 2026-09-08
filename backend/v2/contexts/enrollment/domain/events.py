@@ -21,6 +21,9 @@ EnrollmentLifecycleEventType = Literal[
     "promoted",
     # Issue #671: one dated class was called off; recorded per enrolled student.
     "occurrence_cancelled",
+    # Issue #675: a parent's end-of-period self-cancel was accepted; the
+    # real "cancelled" row follows when the scheduled action runs.
+    "cancellation_scheduled",
 ]
 
 

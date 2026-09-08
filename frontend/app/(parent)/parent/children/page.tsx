@@ -26,6 +26,11 @@ import {
   type ParentScheduleEntry,
 } from "@/lib/api/parent";
 import { formatAcademyDate, formatAcademyTimeRange } from "@/lib/format/academy-time";
+import {
+  cancellationResultTitle,
+  cancellationTimingCopy,
+  pendingCancellationLabel,
+} from "@/lib/format/cancellation-copy";
 
 // Per-child avatar gradients are derived from the name hash — genuinely
 // dynamic, so these stay as literal color stops (no single token pair
@@ -184,7 +189,7 @@ function ChildCard({
           </p>
           <ul className="space-y-2">
             {activeEnrollments.map((e) => (
-              <EnrollmentRow key={e.enrollment_id} enrollment={e} />
+              <EnrollmentRow key={e.enrollment_id} enrollment={e} academyTimezone={academyTimezone} />
             ))}
           </ul>
         </div>
@@ -299,22 +304,42 @@ function SessionRow({
   );
 }
 
-function EnrollmentRow({ enrollment }: { enrollment: ParentEnrollment }) {
+function EnrollmentRow({
+  enrollment,
+  academyTimezone,
+}: {
+  enrollment: ParentEnrollment;
+  academyTimezone: string | null;
+}) {
   const [confirming, setConfirming] = useState(false);
+  const pendingLabel = pendingCancellationLabel(enrollment.pending_cancellation_at, academyTimezone);
 
   return (
     <li className="rounded-xl p-3 bg-rally-paper">
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <p className="text-sm font-semibold truncate text-rally-ink">{enrollment.session_title}</p>
-          <p className="text-xs mt-0.5 text-rally-muted">Active enrollment</p>
+          <p className="text-xs mt-0.5 text-rally-muted">
+            {pendingLabel ? "Cancellation scheduled" : "Active enrollment"}
+          </p>
+          {pendingLabel && (
+            <div className="mt-1">
+              <Chip variant="pending" label={pendingLabel} />
+            </div>
+          )}
         </div>
-        <Button variant="danger" size="sm" onClick={() => setConfirming(true)}>
-          Cancel enrollment…
-        </Button>
+        {!pendingLabel && (
+          <Button variant="danger" size="sm" onClick={() => setConfirming(true)}>
+            Cancel enrollment…
+          </Button>
+        )}
       </div>
       {confirming && (
-        <CancelEnrollmentDialog enrollment={enrollment} onClose={() => setConfirming(false)} />
+        <CancelEnrollmentDialog
+          enrollment={enrollment}
+          academyTimezone={academyTimezone}
+          onClose={() => setConfirming(false)}
+        />
       )}
     </li>
   );
@@ -322,9 +347,11 @@ function EnrollmentRow({ enrollment }: { enrollment: ParentEnrollment }) {
 
 function CancelEnrollmentDialog({
   enrollment,
+  academyTimezone,
   onClose,
 }: {
   enrollment: ParentEnrollment;
+  academyTimezone: string | null;
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
@@ -342,7 +369,7 @@ function CancelEnrollmentDialog({
       void queryClient.invalidateQueries({ queryKey: ["parent", "enrollments"] });
       toast({
         kind: "success",
-        title: `Enrollment ${res.status}`,
+        title: cancellationResultTitle(res.status),
         description: res.fee_cents > 0 ? `Fee charged: ${money(res.fee_cents)}` : "No fee charged",
       });
       onClose();
@@ -380,8 +407,8 @@ function CancelEnrollmentDialog({
         <div className="space-y-3">
           <div className="text-sm text-rally-ink">
             <p className="font-semibold">Cancellation fee: {money(preview.fee_cents)}</p>
-            <p className="mt-1 text-xs text-rally-muted">
-              Effective timing: {preview.effective_timing}
+            <p className="mt-1 text-xs text-rally-muted" data-testid="cancellation-timing-copy">
+              {cancellationTimingCopy(preview, academyTimezone)}
             </p>
             <p className="mt-1 text-xs text-rally-muted">
               {preview.notice_met ? "Notice period met" : "Notice period not met"}

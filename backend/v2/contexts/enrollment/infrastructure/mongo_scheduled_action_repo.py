@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 from backend.v2.contexts.enrollment.application.use_cases.scheduled_actions import (
     ScheduledActionStatus,
+    ScheduledActionType,
     ScheduledEnrollmentAction,
 )
 from backend.v2.shared.tenancy import TenantScopedRepository
@@ -21,7 +22,9 @@ class MongoScheduledEnrollmentActionRepository(TenantScopedRepository):
             academy_id=str(doc["academy_id"]),
             action_type=doc["action_type"],
             enrollment_id=str(doc["enrollment_id"]),
-            pause_request_id=str(doc["pause_request_id"]),
+            pause_request_id=(
+                str(doc["pause_request_id"]) if doc.get("pause_request_id") is not None else None
+            ),
             run_at=doc["run_at"],
             status=doc.get("status", "pending"),
             attempt_count=int(doc.get("attempt_count") or 0),
@@ -32,25 +35,60 @@ class MongoScheduledEnrollmentActionRepository(TenantScopedRepository):
         )
 
     async def add(self, action: ScheduledEnrollmentAction) -> None:
+        """Upsert on the action's natural identity (see ``scheduled_actions``
+        module docstring): a pause resume is one-per-pause-request; an
+        end-of-period cancel is one PENDING action per enrollment, so a
+        retired (cancelled/succeeded) row never blocks a later request.
+        Migration 0169 backs both keys with partial unique indexes."""
         doc = action.model_dump(mode="python")
-        await self._update_one(
-            {
+        if action.pause_request_id is not None:
+            key: dict[str, object] = {
                 "pause_request_id": action.pause_request_id,
                 "action_type": action.action_type,
-            },
-            {"$setOnInsert": doc},
-            upsert=True,
-        )
+            }
+        else:
+            key = {
+                "enrollment_id": action.enrollment_id,
+                "action_type": action.action_type,
+                "status": "pending",
+            }
+        await self._update_one(key, {"$setOnInsert": doc}, upsert=True)
 
     async def list_due(
         self,
         *,
         now: datetime,
         limit: int = 50,
+        action_type: ScheduledActionType | None = None,
+    ) -> list[ScheduledEnrollmentAction]:
+        """Due pending work, narrowed to ONE ``action_type`` per caller.
+
+        Issue #675 follow-up: the two workers share this collection, and the
+        resume worker used to take whatever was due — including a
+        ``cancel_at_period_end`` row, which it no-ops and marks succeeded,
+        destroying the parent's cancellation. Filtering in Mongo (rather than
+        in each worker) also stops one type's backlog from crowding the other
+        out of the ``limit`` window.
+        """
+        query: dict[str, object] = {"status": "pending", "run_at": {"$lte": now}}
+        if action_type is not None:
+            query["action_type"] = action_type
+        cursor = self._find_many(
+            query,
+            sort=[("run_at", 1), ("created_at", 1)],
+            limit=limit,
+        )
+        return [self._to_domain(doc) async for doc in cursor]
+
+    async def list_by_statuses(
+        self,
+        statuses: list[ScheduledActionStatus],
+        *,
+        limit: int = 50,
     ) -> list[ScheduledEnrollmentAction]:
         cursor = self._find_many(
-            {"status": "pending", "run_at": {"$lte": now}},
-            sort=[("run_at", 1), ("created_at", 1)],
+            {"status": {"$in": statuses}},
+            sort=[("updated_at", -1), ("created_at", 1)],
             limit=limit,
         )
         return [self._to_domain(doc) async for doc in cursor]
@@ -61,12 +99,7 @@ class MongoScheduledEnrollmentActionRepository(TenantScopedRepository):
         *,
         limit: int = 50,
     ) -> list[ScheduledEnrollmentAction]:
-        cursor = self._find_many(
-            {"status": status},
-            sort=[("updated_at", -1), ("created_at", 1)],
-            limit=limit,
-        )
-        return [self._to_domain(doc) async for doc in cursor]
+        return await self.list_by_statuses([status], limit=limit)
 
     async def mark_succeeded(self, action_id: str, *, attempted_at: datetime) -> None:
         await self._transition(
@@ -96,6 +129,37 @@ class MongoScheduledEnrollmentActionRepository(TenantScopedRepository):
             status="failed",
             attempted_at=attempted_at,
             last_error=error,
+        )
+
+    async def mark_retry_pending(
+        self,
+        action_id: str,
+        *,
+        attempted_at: datetime,
+        error: str,
+    ) -> None:
+        """Record a failed attempt but LEAVE the row pending so the next tick
+        retries it (issue #675 follow-up). ``_transition`` increments
+        ``attempt_count``, which is what bounds the retries."""
+        await self._transition(
+            action_id,
+            status="pending",
+            attempted_at=attempted_at,
+            last_error=error,
+        )
+
+    async def mark_cancelled(
+        self,
+        action_id: str,
+        *,
+        attempted_at: datetime,
+        reason: str,
+    ) -> None:
+        await self._transition(
+            action_id,
+            status="cancelled",
+            attempted_at=attempted_at,
+            last_error=reason,
         )
 
     async def cancel_pending_for_enrollment(self, enrollment_id: str, *, reason: str) -> int:

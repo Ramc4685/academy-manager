@@ -57,6 +57,10 @@ from backend.v2.composition.pathway import (
     compose_student_progress,
 )
 from backend.v2.composition.roster_notifications import compose_enrollment_notifiers
+from backend.v2.composition.scheduled_cancellations import (
+    compose_list_stuck_scheduled_actions,
+    compose_process_scheduled_cancellation_actions,
+)
 from backend.v2.composition.session_announcements import compose_announcements
 from backend.v2.composition.student_autopay import compose_get_admin_student
 from backend.v2.contexts.billing.application.admin_money import (
@@ -724,6 +728,7 @@ def compose_admin(
         roster_notifier=notifiers.roster,
         billing_sync=enrollment_billing_sync,
         occurrence_roster=occurrence_roster_repo,
+        scheduled_actions=scheduled_actions,
         academy_id=academy_id,
     )
     transfer_enrollment = TransferEnrollment(
@@ -765,6 +770,7 @@ def compose_admin(
         sessions=sessions_w,
         outbox=outbox,
         occurrence_roster=occurrence_roster_repo,
+        scheduled_actions=scheduled_actions,
     )
     edit_roster_add = EditRosterAdd(
         sessions=sessions_w,
@@ -814,6 +820,17 @@ def compose_admin(
         scheduled_actions=scheduled_actions,
         resume_enrollment=resume_enrollment,
         billing_deferrals=billing_deferrals,
+    )
+    process_scheduled_cancellation_actions = compose_process_scheduled_cancellation_actions(
+        db,
+        scheduled_actions=scheduled_actions,
+        outbox=outbox,
+        enrollment_events=enrollment_events,
+        billing_sync=enrollment_billing_sync,
+        occurrence_roster=occurrence_roster_repo,
+        roster_notifier=notifiers.roster,
+        enrollments=enrollments_w,
+        sessions=sessions_w,
     )
 
     # Billing
@@ -2612,6 +2629,7 @@ def compose_admin(
                     "full_name": full_name,
                     "parent_id": s.parent_id if s else "",
                     "status": e.status,
+                    "pending_cancellation_at": doc.get("pending_cancellation_at"),
                     # Prefer the semantic enrolled_at field (v2/seed); fall back
                     # to created_at for any legacy docs that only have that.
                     "enrolled_at": doc.get("enrolled_at") or doc.get("created_at"),
@@ -4023,6 +4041,7 @@ def compose_admin(
         approve_pause_request=approve_pause_request,
         decline_pause_request=decline_pause_request,
         process_scheduled_resume_actions=process_scheduled_resume_actions,
+        process_scheduled_cancellation_actions=process_scheduled_cancellation_actions,
         issue_refund=issue_refund,
         quote_enrollment=quote_enrollment,
         preview_withdrawal_credit=preview_withdrawal_credit,
@@ -4185,10 +4204,7 @@ def compose_admin(
         list_student_billing_enrollments=list_student_billing_enrollments,
         move_student_session_type=move_student_session_type,
         override_student_price=override_student_price,
-        list_blocked_scheduled_resume_actions=lambda: scheduled_actions.list_by_status(
-            "blocked_capacity",
-            limit=100,
-        ),
+        list_stuck_scheduled_actions=compose_list_stuck_scheduled_actions(scheduled_actions),
     )
     admin.get_reports_dashboard = make_reports_dashboard(db)  # type: ignore[attr-defined]
 
