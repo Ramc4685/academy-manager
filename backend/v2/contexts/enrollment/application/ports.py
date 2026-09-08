@@ -229,6 +229,19 @@ class EnrollmentBillingSync(Protocol):
     ) -> dict[str, Any]: ...
 
 
+class EnrollmentAutopayLookup(Protocol):
+    """Cross-context READ port (issue #674): billing's per-enrollment autopay
+    status (``autopay_enrollment_status``: active / paused / disabled / setup
+    states) keyed by enrollment id. Adapted in the composition root onto the
+    billing repository; enrollment infrastructure never reads billing's
+    collections directly. Ids with no billing record are simply absent.
+    """
+
+    async def autopay_status_by_enrollment(
+        self, enrollment_ids: list[str]
+    ) -> dict[str, str | None]: ...
+
+
 class OccurrenceRosterCleanup(Protocol):
     """Drop a student's FUTURE one-time occurrence roster rows (issue #651).
 
