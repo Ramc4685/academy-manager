@@ -17,7 +17,11 @@ from pydantic import BaseModel, Field
 from backend.v2.contexts.enrollment.application.use_cases.departure_policies import (
     UpdateEnrollmentDeparturePolicyCommand,
 )
-from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
+from backend.v2.interfaces.admin.deps import (
+    AdminUseCases,
+    get_admin_use_cases,
+    require_use_case,
+)
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_owner, require_persona
 
@@ -68,7 +72,7 @@ async def get_departure_policy(
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> EnrollmentDeparturePolicyView:
-    policy = await use_cases.departure_policy.execute()  # type: ignore[union-attr]
+    policy = await require_use_case(use_cases.departure_policy, "departure_policy").execute()
     return EnrollmentDeparturePolicyView.from_domain(policy)
 
 
@@ -78,7 +82,7 @@ async def update_departure_policy(
     _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> EnrollmentDeparturePolicyView:
-    policy = await use_cases.update_departure_policy.execute(  # type: ignore[union-attr]
-        UpdateEnrollmentDeparturePolicyCommand(**body.model_dump())
-    )
+    policy = await require_use_case(
+        use_cases.update_departure_policy, "update_departure_policy"
+    ).execute(UpdateEnrollmentDeparturePolicyCommand(**body.model_dump()))
     return EnrollmentDeparturePolicyView.from_domain(policy)

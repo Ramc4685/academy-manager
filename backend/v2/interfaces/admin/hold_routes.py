@@ -7,7 +7,11 @@ from datetime import date
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
+from backend.v2.interfaces.admin.deps import (
+    AdminUseCases,
+    get_admin_use_cases,
+    require_use_case,
+)
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
 
@@ -30,7 +34,7 @@ async def hold_enrollment(
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> None:
-    await use_cases.hold_enrollment.execute(  # type: ignore[union-attr]
+    await require_use_case(use_cases.hold_enrollment, "hold_enrollment").execute(
         enrollment_id,
         return_on=body.return_on,
         reason=body.reason,
@@ -45,7 +49,7 @@ async def return_from_hold(
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> None:
-    await use_cases.return_from_hold.execute(  # type: ignore[union-attr]
+    await require_use_case(use_cases.return_from_hold, "return_from_hold").execute(
         enrollment_id,
         reason=body.reason,
         actor_id=claims.user_id,

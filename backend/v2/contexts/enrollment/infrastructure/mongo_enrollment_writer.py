@@ -365,6 +365,11 @@ class MongoEnrollmentWriter(TenantScopedRepository):
 
     @staticmethod
     def _to_domain(doc: dict[str, object]) -> Enrollment:
+        # Older rows stored the hold return date as an ISO string; newer ones
+        # store a real date. Narrow it once, here, rather than at every field.
+        hold_return_on = doc.get("hold_return_on")
+        if isinstance(hold_return_on, str):
+            hold_return_on = date.fromisoformat(hold_return_on)
         return Enrollment(
             enrollment_id=str(doc["enrollment_id"]),
             academy_id=str(doc["academy_id"]),
@@ -382,11 +387,7 @@ class MongoEnrollmentWriter(TenantScopedRepository):
             pending_cancellation_at=doc.get("pending_cancellation_at"),
             pending_cancellation_requested_at=doc.get("pending_cancellation_requested_at"),
             hold_started_at=doc.get("hold_started_at"),
-            hold_return_on=(
-                date.fromisoformat(doc["hold_return_on"])
-                if isinstance(doc.get("hold_return_on"), str)
-                else doc.get("hold_return_on")
-            ),
+            hold_return_on=hold_return_on,
             hold_expires_at=doc.get("hold_expires_at"),
             hold_reason=doc.get("hold_reason"),
             hold_seq=doc.get("hold_seq", 0),

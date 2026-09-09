@@ -25,7 +25,11 @@ from backend.v2.contexts.enrollment.application.use_cases.leaving_report import 
 from backend.v2.contexts.enrollment.application.use_cases.stop_all_classes import (
     StopAllClassesCommand,
 )
-from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
+from backend.v2.interfaces.admin.deps import (
+    AdminUseCases,
+    get_admin_use_cases,
+    require_use_case,
+)
 from backend.v2.interfaces.admin.owner_gate import ensure_owner_for_withdrawal_credit
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_owner, require_persona
@@ -83,13 +87,13 @@ async def stop_all_classes(
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> StopAllClassesResponse:
-    policy = await use_cases.departure_policy.execute()  # type: ignore[union-attr]
+    policy = await require_use_case(use_cases.departure_policy, "departure_policy").execute()
     outcome = body.outcome or _DROP_DEFAULT_TO_WITHDRAWAL_OUTCOME[policy.drop_default_outcome]
     # Same money-governance gate as the single-enrollment Drop route,
     # including for the academy's own configured default — a plain admin at
     # an academy whose default is ``credit_mid_month`` still gets 404 here.
     ensure_owner_for_withdrawal_credit(claims, outcome)
-    result = await use_cases.stop_all_classes.execute(  # type: ignore[union-attr]
+    result = await require_use_case(use_cases.stop_all_classes, "stop_all_classes").execute(
         StopAllClassesCommand(
             student_id=student_id,
             effective_at=_start_of_day_utc(body.effective_date),
@@ -145,7 +149,7 @@ async def get_leaving_report(
     _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> LeavingReportResponse:
-    rows = await use_cases.leaving_report.execute(  # type: ignore[union-attr]
+    rows = await require_use_case(use_cases.leaving_report, "leaving_report").execute(
         LeavingReportRequest(start=_start_of_day_utc(start), end=_start_of_day_utc(end))
     )
     total = sum(r.monthly_revenue_effect_cents or 0 for r in rows)

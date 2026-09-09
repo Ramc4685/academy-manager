@@ -18,6 +18,7 @@ correct arithmetic, not a shortcut.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
@@ -33,6 +34,8 @@ from backend.v2.contexts.enrollment.application.ports import (
 from backend.v2.contexts.enrollment.domain.models import Enrollment
 
 log = logging.getLogger(__name__)
+
+Clock = Callable[[], datetime]
 
 
 @dataclass(frozen=True)
@@ -57,7 +60,7 @@ class SeatBroker:
         billing_sync: EnrollmentBillingSync | None = None,
         notifier: HoldNotifier | None = None,
         enrollment_events: EnrollmentEventRepository | None = None,
-        clock=lambda: datetime.now(UTC),
+        clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._sessions = sessions
         self._holds = holds
