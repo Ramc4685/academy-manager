@@ -9,6 +9,7 @@ from .academy_routes import router as academy_router
 from .activity_routes import router as activity_router
 from .email_preference_routes import router as email_preference_router
 from .enrollment_routes import router as enrollment_router
+from .home_routes import router as home_router
 from .invoice_routes import router as invoice_router
 from .makeup_routes import router as makeup_router
 from .messages_routes import router as messages_router
@@ -30,6 +31,7 @@ router.include_router(academy_router)
 router.include_router(activity_router)
 router.include_router(email_preference_router)
 router.include_router(enrollment_router)
+router.include_router(home_router)
 router.include_router(invoice_router)
 router.include_router(makeup_router)
 router.include_router(messages_router)

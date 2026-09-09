@@ -26,27 +26,15 @@ import {
   type ParentScheduleEntry,
 } from "@/lib/api/parent";
 import { formatAcademyDate, formatAcademyTimeRange } from "@/lib/format/academy-time";
+import { nameGradient } from "@/lib/avatar-gradient";
 import {
   cancellationResultTitle,
   cancellationTimingCopy,
   pendingCancellationLabel,
 } from "@/lib/format/cancellation-copy";
 
-// Per-child avatar gradients are derived from the name hash — genuinely
-// dynamic, so these stay as literal color stops (no single token pair
-// covers a rotating 5-way palette).
-const GRADIENTS = [
-  "linear-gradient(135deg,#2563eb,#4f46e5)",
-  "linear-gradient(135deg,#059669,#0d9488)",
-  "linear-gradient(135deg,#d97706,#f59e0b)",
-  "linear-gradient(135deg,#7c3aed,#db2777)",
-  "linear-gradient(135deg,#0891b2,#2563eb)",
-];
-function nameGradient(s: string) {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) & 0xffffffff;
-  return GRADIENTS[Math.abs(h) % GRADIENTS.length];
-}
+// Avatar gradients are shared with the kid-first Home cards so the same child
+// wears the same colour on both screens (lib/avatar-gradient.ts).
 
 function money(cents: number, currency = "USD"): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(cents / 100);
