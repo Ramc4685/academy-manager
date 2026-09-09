@@ -142,7 +142,7 @@ class LeavingReportResponse(BaseModel):
 async def get_leaving_report(
     start: date = Query(...),
     end: date = Query(...),
-    _claims: AuthClaims = Depends(require_owner),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> LeavingReportResponse:
     rows = await use_cases.leaving_report.execute(  # type: ignore[union-attr]
