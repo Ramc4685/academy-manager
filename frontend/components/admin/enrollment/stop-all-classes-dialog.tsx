@@ -23,20 +23,11 @@ import { Button } from "@/components/ds/button";
 import { Modal } from "@/components/ds/modal";
 import { OwnerOnlyHint, useIsOwner } from "@/components/admin/owner-context";
 
-type MoneyOutcome = "credit" | "refund" | "adjustment";
-
-/** Mirrors the design contract §1.2 mapping — the dialog pre-selects the
- * academy's configured default, translated into the money-side outcome. */
-function defaultOutcomeFor(policyDefault: DropDefaultOutcome | undefined): MoneyOutcome {
-  switch (policyDefault) {
-    case "credit_mid_month":
-      return "credit";
-    case "no_credit_mid_month":
-    case "no_credit_end_of_period":
-    default:
-      return "adjustment";
-  }
-}
+import {
+  defaultOutcomeFor,
+  isMoneyOutcomeAllowed,
+  type MoneyOutcome,
+} from "./stop-all-classes-outcome";
 
 export function StopAllClassesDialog({
   studentId,
@@ -130,10 +121,10 @@ export function StopAllClassesDialog({
             className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
           >
             <option value="adjustment">No credit</option>
-            <option value="credit" disabled={!isOwner}>
+            <option value="credit" disabled={!isMoneyOutcomeAllowed("credit", isOwner)}>
               Credit {!isOwner ? "(owner only)" : ""}
             </option>
-            <option value="refund" disabled={!isOwner}>
+            <option value="refund" disabled={!isMoneyOutcomeAllowed("refund", isOwner)}>
               Refund {!isOwner ? "(owner only)" : ""}
             </option>
           </select>
@@ -160,7 +151,12 @@ export function StopAllClassesDialog({
         </Button>
         <Button
           size="sm"
-          disabled={!reason.trim() || !effectiveDate || mutation.isPending}
+          disabled={
+            !reason.trim() ||
+            !effectiveDate ||
+            !isMoneyOutcomeAllowed(outcome, isOwner) ||
+            mutation.isPending
+          }
           icon={mutation.isPending ? <RefreshCw className="size-3.5 animate-spin" /> : undefined}
           onClick={() => mutation.mutate()}
         >
