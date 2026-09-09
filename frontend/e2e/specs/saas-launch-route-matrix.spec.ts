@@ -349,6 +349,11 @@ async function stubCoachLaunchBff(page: Page): Promise<void> {
 
 async function stubParentLaunchBff(page: Page): Promise<void> {
   await stubMe(page, PARENT_ME);
+  // The parent shell fetches /me/memberships on landing; unstubbed it 500s
+  // and trips the clean-console assertion in every route-mount test.
+  await stubMemberships(page, [
+    { academy_id: ACADEMY_A, academy_name: "Aces Academy", role: "parent" },
+  ]);
   await stubParentMessages(page);
   await page.route("**/api/v2/parent/payments", (route) =>
     fulfillJson(route, { payments: [] })
