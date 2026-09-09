@@ -64,7 +64,7 @@ async def test_c1_one_held_row_reclaimed_exactly_once_seat_count_unchanged() -> 
             )
         }
     )
-    broker, holds, billing, notifier, events = _broker(enrollments, sessions)
+    broker, _holds, billing, notifier, events = _broker(enrollments, sessions)
 
     acquisition = await broker.acquire("sess-1", requested_by="roster_add:new-student")
 
@@ -107,7 +107,7 @@ async def test_c2_two_held_rows_take_the_two_longest_in_order() -> None:
             ),
         }
     )
-    broker, holds, billing, notifier, events = _broker(enrollments, sessions)
+    broker, _holds, _billing, notifier, _events = _broker(enrollments, sessions)
 
     first = await broker.acquire("sess-1", requested_by="a")
     second = await broker.acquire("sess-1", requested_by="b")
@@ -231,7 +231,7 @@ async def test_c3_reclaim_wins_return_then_fails_not_returnable() -> None:
     enrollments = FakeEnrollmentWriter(
         rows={"enr-1": make_enrollment("enr-1", status="held", hold_started_at=NOW)}
     )
-    broker, holds, billing, notifier, events = _broker(enrollments, sessions)
+    broker, _holds, _billing, _notifier, _events = _broker(enrollments, sessions)
     return_uc = ReturnFromHold(enrollments=enrollments, clock=lambda: NOW)
 
     # Reclaim wins first.
@@ -257,7 +257,7 @@ async def test_c3_return_wins_reclaim_then_finds_no_holds_left() -> None:
     enrollments = FakeEnrollmentWriter(
         rows={"enr-1": make_enrollment("enr-1", status="held", hold_started_at=NOW)}
     )
-    broker, holds, billing, notifier, events = _broker(enrollments, sessions)
+    broker, _holds, _billing, notifier, _events = _broker(enrollments, sessions)
     return_uc = ReturnFromHold(enrollments=enrollments, clock=lambda: NOW)
 
     # Return wins first.
@@ -281,7 +281,7 @@ async def test_c4_reclaim_wins_drop_then_conflicts() -> None:
     enrollments = FakeEnrollmentWriter(
         rows={"enr-1": make_enrollment("enr-1", status="held", hold_started_at=NOW)}
     )
-    broker, holds, billing, notifier, events = _broker(enrollments, sessions)
+    broker, _holds, _billing, _notifier, _events = _broker(enrollments, sessions)
     withdraw_uc = WithdrawEnrollment(enrollments=enrollments, sessions=sessions, clock=lambda: NOW)
 
     acquisition = await broker.acquire("sess-1", requested_by="roster_add:x")
@@ -310,7 +310,7 @@ async def test_c4_drop_wins_reclaim_then_finds_nothing_to_claim() -> None:
     enrollments = FakeEnrollmentWriter(
         rows={"enr-1": make_enrollment("enr-1", status="held", hold_started_at=NOW)}
     )
-    broker, holds, billing, notifier, events = _broker(enrollments, sessions)
+    broker, _holds, _billing, notifier, _events = _broker(enrollments, sessions)
     withdraw_uc = WithdrawEnrollment(enrollments=enrollments, sessions=sessions, clock=lambda: NOW)
 
     await withdraw_uc.execute(
@@ -360,7 +360,7 @@ async def test_c7_release_after_reclaim_orphans_the_victim_without_a_second_drop
             )
         }
     )
-    broker, holds, billing, notifier, events = _broker(enrollments, sessions)
+    broker, _holds, _billing, notifier, events = _broker(enrollments, sessions)
 
     acquisition = await broker.acquire("sess-1", requested_by="roster_add:new-student")
     assert acquisition.granted and acquisition.via_reclaim
@@ -391,7 +391,7 @@ async def test_c7_release_after_a_plain_reserve_is_a_bare_release_no_orphan_even
     sessions = FakeSessionWriter(sessions={"sess-1": make_session(capacity=2)})
     sessions.reserved_seats["sess-1"] = 0
     enrollments = FakeEnrollmentWriter(rows={})
-    broker, holds, billing, notifier, events = _broker(enrollments, sessions)
+    broker, _holds, _billing, _notifier, events = _broker(enrollments, sessions)
 
     acquisition = await broker.acquire("sess-1", requested_by="roster_add:x")
     assert acquisition.granted and not acquisition.via_reclaim
