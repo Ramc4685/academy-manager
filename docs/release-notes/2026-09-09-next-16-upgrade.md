@@ -1,6 +1,6 @@
 # next-16-upgrade
 
-PR: #TBD
+PR: #695
 
 ## What changed
 The frontend moves to Next 16 (`next@16.3.4`, `eslint-config-next@16.3.4`). The
