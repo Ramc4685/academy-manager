@@ -68,7 +68,7 @@ async def get_departure_policy(
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> EnrollmentDeparturePolicyView:
-    policy = await use_cases.departure_policy.execute()  # type: ignore[union-attr]
+    policy = await use_cases.departure_policy.execute()  # type: ignore[attr-defined]
     return EnrollmentDeparturePolicyView.from_domain(policy)
 
 
@@ -78,7 +78,7 @@ async def update_departure_policy(
     _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> EnrollmentDeparturePolicyView:
-    policy = await use_cases.update_departure_policy.execute(  # type: ignore[union-attr]
+    policy = await use_cases.update_departure_policy.execute(  # type: ignore[attr-defined]
         UpdateEnrollmentDeparturePolicyCommand(**body.model_dump())
     )
     return EnrollmentDeparturePolicyView.from_domain(policy)

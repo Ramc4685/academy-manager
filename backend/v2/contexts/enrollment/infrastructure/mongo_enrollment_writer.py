@@ -366,9 +366,9 @@ class MongoEnrollmentWriter(TenantScopedRepository):
             pending_cancellation_requested_at=doc.get("pending_cancellation_requested_at"),
             hold_started_at=doc.get("hold_started_at"),
             hold_return_on=(
-                date.fromisoformat(doc["hold_return_on"])
-                if isinstance(doc.get("hold_return_on"), str)
-                else doc.get("hold_return_on")
+                date.fromisoformat(hold_return_on_raw)
+                if isinstance(hold_return_on_raw := doc.get("hold_return_on"), str)
+                else hold_return_on_raw
             ),
             hold_expires_at=doc.get("hold_expires_at"),
             hold_reason=doc.get("hold_reason"),

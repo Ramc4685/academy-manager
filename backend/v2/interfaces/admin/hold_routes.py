@@ -30,7 +30,7 @@ async def hold_enrollment(
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> None:
-    await use_cases.hold_enrollment.execute(  # type: ignore[union-attr]
+    await use_cases.hold_enrollment.execute(  # type: ignore[attr-defined]
         enrollment_id,
         return_on=body.return_on,
         reason=body.reason,
@@ -45,7 +45,7 @@ async def return_from_hold(
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> None:
-    await use_cases.return_from_hold.execute(  # type: ignore[union-attr]
+    await use_cases.return_from_hold.execute(  # type: ignore[attr-defined]
         enrollment_id,
         reason=body.reason,
         actor_id=claims.user_id,

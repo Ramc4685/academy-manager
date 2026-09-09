@@ -111,4 +111,4 @@ def _to_domain(doc: dict[str, object]) -> Enrollment:
         MongoEnrollmentWriter,
     )
 
-    return MongoEnrollmentWriter._to_domain(doc)  # type: ignore[arg-type]
+    return MongoEnrollmentWriter._to_domain(doc)
