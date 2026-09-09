@@ -383,8 +383,8 @@ export function TransferEnrollmentDialog({
     <RallyDialog
       open={enrollment !== null}
       onOpenChange={(open) => !open && onClose()}
-      title="Move enrollment"
-      description={enrollment ? `Move ${enrollment.full_name} to another session.` : ""}
+      title="Transfer enrollment"
+      description={enrollment ? `Transfer ${enrollment.full_name} to another session.` : ""}
       overline="Transfer"
     >
       {error && <DialogError message={error} />}
@@ -420,6 +420,11 @@ export function TransferEnrollmentDialog({
             placeholder="Optional"
           />
         </Field>
+        <p className="text-xs text-rally-subtle">
+          Transferring reserves a seat in the target class first, then releases this seat.
+          Billing follows the new class&apos;s price from the effective date — the current
+          period&apos;s invoice is adjusted, it is not charged again.
+        </p>
         <DialogActions>
           <Button variant="secondary" size="sm" type="button" onClick={onClose}>
             Cancel
@@ -435,7 +440,7 @@ export function TransferEnrollmentDialog({
               !effectiveDate
             }
           >
-            {mutation.isPending ? "Moving…" : "Move"}
+            {mutation.isPending ? "Transferring…" : "Transfer"}
           </Button>
         </DialogActions>
       </form>
@@ -570,9 +575,16 @@ export function WithdrawalCreditDialog({
           className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl bg-white p-6 shadow-xl focus:outline-none dark:bg-neutral-900"
           aria-describedby="withdrawal-credit-desc"
         >
+          {/* Title/labels below intentionally keep the "Withdraw" wording:
+              e2e/specs/admin-enrollment-withdraw.spec.ts asserts on this
+              dialog's accessible name and must keep passing unchanged. The
+              launcher (the shared DepartureActions menu) already shows the
+              new "Drop" vocabulary; only this dialog's internals are frozen. */}
           <Dialog.Title className="mb-1 text-lg font-semibold">Withdraw enrollment</Dialog.Title>
           <Dialog.Description id="withdrawal-credit-desc" className="mb-4 text-sm text-neutral-500">
-            {enrollment ? `Preview unused-class credit for ${enrollment.full_name}.` : ""}
+            {enrollment
+              ? `Drop (withdraw) ${enrollment.full_name} — releases the seat, stops autopay, and settles unused-class credit per the outcome below.`
+              : ""}
           </Dialog.Description>
           {error && (
             <p role="alert" className="mb-3 rounded-md bg-red-50 p-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
@@ -703,8 +715,8 @@ export function RemoveEnrollmentDialog({
     <RallyDialog
       open={enrollment !== null}
       onOpenChange={(open) => !open && onClose()}
-      title="Remove enrollment"
-      description={enrollment ? `Remove ${enrollment.full_name} from this roster.` : ""}
+      title="Delete enrollment"
+      description={enrollment ? `Delete ${enrollment.full_name}'s enrollment.` : ""}
       overline="Lifecycle"
     >
       {error && <DialogError message={error} />}
@@ -733,6 +745,11 @@ export function RemoveEnrollmentDialog({
             className={inputClass}
           />
         </Field>
+        <p className="text-xs text-rally-subtle">
+          Deleting ends this enrollment as of the effective date, releases the seat if it holds
+          one, voids future unpaid invoices and turns off autopay for this enrollment. No credit
+          is issued — there is no outcome choice here, unlike Drop.
+        </p>
         <DialogActions>
           <Button variant="secondary" size="sm" type="button" onClick={onClose}>
             Cancel
@@ -743,7 +760,7 @@ export function RemoveEnrollmentDialog({
             type="submit"
             disabled={!effectiveDate || !reason.trim() || mutation.isPending}
           >
-            {mutation.isPending ? "Removing..." : "Remove"}
+            {mutation.isPending ? "Deleting..." : "Delete"}
           </Button>
         </DialogActions>
       </form>
