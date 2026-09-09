@@ -6,16 +6,33 @@ roster, waitlist promotion) lands in Wave 2/3.
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Any, Literal
+from datetime import date, datetime
+from typing import Any, Final, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from backend.v2.shared.security.external_url import validate_external_url
 
-EnrollmentStatus = Literal["active", "paused", "cancelled", "withdrawn"]
+#: Issue #697 adds "held" (keeps the seat) and "reclaim_pending" (the
+#: transient in-flight state of a reclaim claim, see application/seat_broker.py).
+#: "held" is NOT a rename of "paused" — paused releases the seat, held does
+#: not — see the departures design contract §2.1.
+EnrollmentStatus = Literal["active", "paused", "held", "reclaim_pending", "cancelled", "withdrawn"]
 SessionStatus = Literal["scheduled", "cancelled", "completed"]
 SessionOccurrenceStatus = Literal["scheduled", "cancelled", "completed"]
+
+#: Statuses whose row is counted in sessions.reserved_seats (issue #697).
+#: No module outside this file and the CAS filter builders in
+#: infrastructure/ may compare an enrollment status to a bare string literal
+#: for seat purposes — use these frozensets instead (structural test
+#: tests/structural/test_enrollment_status_predicates.py enforces this).
+SEAT_HOLDING: Final[frozenset[str]] = frozenset({"active", "held"})
+
+#: Statuses whose row has already given its seat back. Disjoint from
+#: SEAT_HOLDING; together with "reclaim_pending" (a transient in-flight
+#: state, neither holding nor released until finalize() runs) they cover
+#: every EnrollmentStatus member.
+SEATLESS: Final[frozenset[str]] = frozenset({"paused", "cancelled", "withdrawn"})
 
 
 class Session(BaseModel):
@@ -167,6 +184,16 @@ class Enrollment(BaseModel):
     pending_cancellation_at: datetime | None = None
     pending_cancellation_requested_at: datetime | None = None
 
+    # --- Hold fields (issue #697) ---
+    # All default to None/0 so every existing row validates unchanged.
+    hold_started_at: datetime | None = None  # when this hold began; the reclaim sort key
+    hold_return_on: date | None = None  # required to start a hold; the promised return
+    hold_expires_at: datetime | None = None  # snapshot: hold_started_at + policy.max_hold_days
+    hold_reason: str | None = None
+    hold_seq: int = 0  # +1 on every hold START; part of every email idempotency key
+    hold_reclaim_claimed_at: datetime | None = None  # set by the reclaim CAS; None while claimable
+    hold_reclaim_for: str | None = None  # the requester the seat was handed to (audit)
+
 
 class RosterEntry(BaseModel):
     """Pair of (enrollment, student) joined for roster display."""
@@ -179,3 +206,5 @@ class RosterEntry(BaseModel):
     status: EnrollmentStatus
     # Issue #675: set while a parent's end-of-period cancel is pending.
     pending_cancellation_at: datetime | None = None
+    # Issue #697: so the roster can show "On hold until <return_on>".
+    hold_return_on: date | None = None

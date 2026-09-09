@@ -15,7 +15,11 @@ class GetSessionRoster:
         self._students = students
 
     async def execute(self, session_id: str) -> list[RosterEntry]:
-        active = await self._enrollments.active_for_session(session_id)
+        # Issue #697 (contract §2.4 T1 roster visibility): a held row stays
+        # on the roster, marked "On hold until <return_on>" — a paused row
+        # invisible on the roster but still blocking re-add was the #641
+        # dead end, and held rows must not repeat it.
+        active = await self._enrollments.for_session_in_statuses(session_id, ["active", "held"])
         if not active:
             return []
         students = await self._students.by_ids([e.student_id for e in active])
@@ -33,6 +37,7 @@ class GetSessionRoster:
                     full_name=s.full_name,
                     status=e.status,
                     pending_cancellation_at=e.pending_cancellation_at,
+                    hold_return_on=e.hold_return_on,
                 )
             )
         return out

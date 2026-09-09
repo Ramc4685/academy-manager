@@ -65,7 +65,13 @@ from backend.v2.contexts.enrollment.domain.events import (
     EnrollmentCancelledPayload,
     EnrollmentLifecycleEvent,
 )
-from backend.v2.contexts.enrollment.domain.models import Enrollment, Session, Student
+from backend.v2.contexts.enrollment.domain.models import (
+    SEAT_HOLDING,
+    SEATLESS,
+    Enrollment,
+    Session,
+    Student,
+)
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.ids import new_ulid
@@ -593,7 +599,7 @@ class CancelSession:
     """
 
     #: Rows a cancelled class must sweep up (issue #651).
-    _CANCELLABLE_STATUSES = ("active", "paused")
+    _CANCELLABLE_STATUSES = ("active", "paused", "held")
 
     def __init__(
         self,
@@ -640,7 +646,7 @@ class CancelSession:
         await self._sessions.update_status(cmd.session_id, "cancelled")
         now = self._now()
         for e in rows:
-            was_paused = e.status == "paused"
+            was_seat_holding = e.status in SEAT_HOLDING
             await self._enrollments_w.update_status(e.enrollment_id, "cancelled")
             await _persist_lifecycle_dates(
                 self._enrollments_w,
@@ -649,11 +655,11 @@ class CancelSession:
                 cancelled_by="admin",
                 cancellation_reason="session_cancelled",
             )
-            # Issue #651: a cancelled class must release its seats, leave an
-            # audit trail per student, and stop billing for every family.
-            # A paused row released its seat when it paused; releasing again
-            # would drive `reserved_seats` below the truth.
-            if not was_paused:
+            # Issue #651 (widened #697): a cancelled class must release its
+            # seats, leave an audit trail per student, and stop billing for
+            # every family. A paused row released its seat when it paused;
+            # releasing again would drive `reserved_seats` below the truth.
+            if was_seat_holding:
                 await self._sessions.release_seat(e.session_id)
                 # Issue #675: a pending end-of-period self-cancel dies with
                 # the class too; the paused branch below already does this.
@@ -772,9 +778,9 @@ class EditRosterAdd:
     full.
     """
 
-    #: Statuses that mean "this student is already on this roster". A cancelled
-    #: row must not block a re-add.
-    _BLOCKING_STATUSES = frozenset({"active", "paused"})
+    #: Statuses that mean "this student is already on this roster" (widened
+    #: #697 for `held`). A cancelled row must not block a re-add.
+    _BLOCKING_STATUSES = frozenset({"active", "paused", "held"})
 
     #: Mirrors the `$in` predicate in `MongoSessionWriter.try_reserve_seat`.
     _ENROLLABLE_STATUSES = frozenset({"scheduled", "active", "open"})
@@ -831,11 +837,12 @@ class EditRosterAdd:
             )
             return existing.model_copy(update={"status": "active"})
         if existing is not None and existing.status in self._BLOCKING_STATUSES:
-            hint = (
-                "Use Resume on the roster instead."
-                if existing.status == "paused"
-                else "Remove the existing enrollment first."
-            )
+            if existing.status == "paused":
+                hint = "Use Resume on the roster instead."
+            elif existing.status == "held":
+                hint = "Use Return on the roster instead."
+            else:
+                hint = "Remove the existing enrollment first."
             raise StudentAlreadyOnRoster(
                 f"{cmd.full_name} is already on this roster ({existing.status}). {hint}",
                 session_id=cmd.session_id,
@@ -1174,11 +1181,12 @@ class CancelEnrollment:
         self._scheduled_actions = scheduled_actions
         self._now = clock
 
-    #: Statuses that no longer hold a seat (issue #651): a paused row released
-    #: its seat when it paused and a withdrawn row when it withdrew, so a later
+    #: Statuses that no longer hold a seat (issue #651, widened #697): a
+    #: paused/cancelled/withdrawn row already released its seat, so a later
     #: cancel must not release it again and drive `reserved_seats` under the
-    #: real roster count.
-    _SEATLESS_STATUSES = frozenset({"paused", "withdrawn"})
+    #: real roster count. Deliberately NOT SEAT_HOLDING's complement by name —
+    #: see domain/models.py SEATLESS, which this mirrors exactly.
+    _SEATLESS_STATUSES = SEATLESS
 
     async def execute(self, cmd: CancelEnrollmentCommand) -> None:
         e = await self._enrollments.get(cmd.enrollment_id)
@@ -1297,8 +1305,16 @@ class TransferEnrollment:
         self._roster_notifier = roster_notifier
         self._now = clock
 
-    #: Only these rows still hold a seat and still attend (see the docstring).
-    _TRANSFERABLE_STATUSES = frozenset({"active", "paused"})
+    #: Rows that may be transferred (issue #669, widened #697 for `held`).
+    #: NOT all of these still hold a seat — `paused` does not (it released
+    #: its seat when it paused). The source `release_seat` below is
+    #: conditioned on `SEAT_HOLDING`, not on this set, which is exactly the
+    #: fix for the §0.1 latent bug: the old code's comment claimed "only
+    #: these rows still hold a seat" while unconditionally releasing for
+    #: every transferable status, silently over-releasing a paused row's
+    #: (already-gone) seat and letting the source session admit one student
+    #: past capacity.
+    _TRANSFERABLE_STATUSES = frozenset({"active", "paused", "held"})
 
     async def execute(self, cmd: TransferEnrollmentCommand) -> Enrollment:
         enrollment = await self._enrollments.get(cmd.enrollment_id)
@@ -1362,7 +1378,12 @@ class TransferEnrollment:
             credit_id=metadata.get("credit_id"),
             metadata=metadata,
         )
-        await self._sessions.release_seat(enrollment.session_id)
+        # §0.1 fix: only release the source seat when the pre-transfer status
+        # actually held one. A `paused` row already released its seat when it
+        # paused; releasing again here would silently steal a seat from a
+        # different, still-active student in the SAME source session.
+        if enrollment.status in SEAT_HOLDING:
+            await self._sessions.release_seat(enrollment.session_id)
         await _notify_roster_change(
             self._roster_notifier,
             change="moved",
@@ -1788,8 +1809,9 @@ class WithdrawEnrollment:
        waitlist, and staff are told last.
     """
 
-    #: Statuses a withdrawal may start from. Anything else is a conflict.
-    _WITHDRAWABLE = frozenset({"active", "paused"})
+    #: Statuses a withdrawal may start from (widened #697 for `held`).
+    #: Anything else is a conflict.
+    _WITHDRAWABLE = frozenset({"active", "paused", "held"})
 
     def __init__(
         self,
@@ -1863,10 +1885,11 @@ class WithdrawEnrollment:
         await _retire_scheduled_actions(
             self._scheduled_actions, e.enrollment_id, reason="enrollment_withdrawn"
         )
-        # Issue #651: a withdrawn student no longer holds a seat. A paused row
-        # released its seat when it paused, so only an active row releases —
-        # judged on the CAS pre-image, the only read that cannot be stale.
-        if self._sessions is not None and before.status == "active":
+        # Issue #651 (widened #697): a withdrawn student no longer holds a
+        # seat. A paused row released its seat when it paused, so only an
+        # active or held row releases — judged on the CAS pre-image, the
+        # only read that cannot be stale.
+        if self._sessions is not None and before.status in SEAT_HOLDING:
             await self._sessions.release_seat(e.session_id)
         await _drop_future_occurrence_roster(
             self._occurrence_roster,

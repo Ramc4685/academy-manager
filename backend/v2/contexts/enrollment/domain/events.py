@@ -24,6 +24,14 @@ EnrollmentLifecycleEventType = Literal[
     # Issue #675: a parent's end-of-period self-cancel was accepted; the
     # real "cancelled" row follows when the scheduled action runs.
     "cancellation_scheduled",
+    # Issue #697: hold lifecycle.
+    "held",
+    "returned",
+    "hold_reclaimed",
+    "hold_expired",
+    "hold_reclaim_orphaned",
+    "dropped",
+    "deleted",
 ]
 
 

@@ -12,6 +12,7 @@ import { GatewayPanel } from "@/components/admin/settings/gateway-panel";
 import { NotifyPanel } from "@/components/admin/settings/notify-panel";
 import { RolesPanel } from "@/components/admin/settings/roles-panel";
 import { SelfServicePanel } from "@/components/admin/settings/self-service-panel";
+import { DeparturePolicyPanel } from "@/components/admin/settings/departure-policy-panel";
 import { SessionTypesPanel } from "@/components/admin/settings/session-types-panel";
 import {
   OWNER_ONLY_SETTINGS_PANELS,
@@ -75,7 +76,12 @@ export default function AdminSettingsPage() {
       {active === "roles" && <RolesPanel />}
       {active === "branding" && <BrandingPanel />}
       {active === "data" && <DataPanel />}
-      {active === "self-service" && <SelfServicePanel />}
+      {active === "self-service" && (
+        <div className="space-y-6">
+          <SelfServicePanel />
+          <DeparturePolicyPanel />
+        </div>
+      )}
       {active === "session-types" && <SessionTypesPanel />}
     </section>
   );

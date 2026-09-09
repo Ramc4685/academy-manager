@@ -521,6 +521,17 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Admin BFF wiring (Wave 3).
     app.state.admin = compose_admin(db, outbox, idempotency_store, stripe_gw)
+    # Departures / holds (issue #697; composition/admin.py is at its line
+    # budget, so this attaches onto the already-built object rather than
+    # being wired inside compose_admin).
+    from backend.v2.composition.enrollment_holds import compose_enrollment_holds
+
+    _holds = compose_enrollment_holds(db, settings)
+    app.state.admin.departure_policy = _holds.departure_policy
+    app.state.admin.update_departure_policy = _holds.update_departure_policy
+    app.state.admin.hold_enrollment = _holds.hold_enrollment
+    app.state.admin.return_from_hold = _holds.return_from_hold
+    app.state.enrollment_holds = _holds
     # Payments bucket view (composition/admin.py is at its line budget).
     app.state.admin_collections = compose_admin_collections(db)
     app.state.admin_billing_rules = compose_admin_billing_rules(db, app.state.admin)

@@ -70,6 +70,20 @@ from backend.v2.shared.tenancy import current_academy_id
 from backend.v2.shared.time.academy_timezone import academy_timezone_lookup
 
 
+#: Issue #697: hold transitions map onto the existing pause/resume/withdraw/
+#: cancel billing behavior — the billing context itself is not otherwise
+#: touched. "held" behaves exactly like "paused" (void unpaid future-period
+#: invoices, pause per-enrollment autopay, one BillingDeferral per held
+#: month); "returned" like "resumed"; "dropped" (admin Drop or a system
+#: reclaim/expiry) like "withdrawn"; "deleted" like "cancelled".
+_HOLD_TRANSITION_MAP: dict[str, str] = {
+    "held": "paused",
+    "returned": "resumed",
+    "dropped": "withdrawn",
+    "deleted": "cancelled",
+}
+
+
 class EnrollmentBillingSyncAdapter:
     """``EnrollmentBillingSync`` implementation backed by the billing use case."""
 
@@ -88,7 +102,7 @@ class EnrollmentBillingSyncAdapter:
         result = await self._use_case.execute(
             ApplyEnrollmentLifecycleCommand(
                 enrollment_id=enrollment_id,
-                transition=transition,
+                transition=_HOLD_TRANSITION_MAP.get(transition, transition),
                 effective_at=effective_at,
                 reason=reason[:500],
                 actor_id=actor_id,

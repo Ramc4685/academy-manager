@@ -121,6 +121,7 @@ export const queryKeys = {
     billingSetup: (params?: { status?: string; q?: string }) =>
       [...queryKeys.admin.billingSetupAll(), params?.status ?? "all", params?.q ?? ""] as const,
     selfServicePolicy: () => ["admin", "self-service", "policy"] as const,
+    departurePolicy: () => ["admin", "enrollment", "departure-policy"] as const,
     selfServiceAbsences: () => ["admin", "self-service", "absences"] as const,
     selfServiceMakeupsAll: () => ["admin", "self-service", "makeups"] as const,
     selfServiceMakeups: (status?: string) =>

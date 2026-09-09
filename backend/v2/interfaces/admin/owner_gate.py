@@ -116,6 +116,9 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("POST", f"{_ADMIN}/billing-enrollments/{{enrollment_id}}/override"),
         # sessions_routes.py — ad-hoc enrollment fee
         ("POST", f"{_ADMIN}/enrollments/{{enrollment_id}}/fee"),
+        # departure_policy_routes.py — governs delete_enrollment_requires_owner
+        # and the drop/reclaim defaults (issue #697 design contract §1.1(2)).
+        ("PUT", f"{_ADMIN}/enrollment/departure-policy"),
     }
 )
 

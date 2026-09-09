@@ -403,6 +403,14 @@ class AdminUseCases:
     # Student attendance correction (#517). Optional for fixtures that
     # predate it; real admin composition always sets it.
     correct_attendance: object | None = None  # CorrectAttendance
+    # Departures / holds (issue #697). Wired in composition/enrollment_holds.py
+    # (never composition/admin.py — see that module's docstring) and attached
+    # onto this already-built object in main.py, mirroring
+    # compose_admin_billing_rules's pattern.
+    departure_policy: object | None = None  # GetEnrollmentDeparturePolicy
+    update_departure_policy: object | None = None  # UpdateEnrollmentDeparturePolicy
+    hold_enrollment: object | None = None  # HoldEnrollment
+    return_from_hold: object | None = None  # ReturnFromHold
 
 
 def get_admin_use_cases(request: Request) -> AdminUseCases:
