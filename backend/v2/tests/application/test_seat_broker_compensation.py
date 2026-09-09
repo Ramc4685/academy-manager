@@ -131,7 +131,7 @@ async def test_transfer_enrollment_compensates_via_broker_when_update_session_fa
     # The held row WAS reclaimed (the broker granted before the write blew
     # up) but the failed write must not leave that seat permanently
     # un-accounted-for: compensation releases it.
-    assert enrollments.rows["held-1"].status == "withdrawn"
+    assert enrollments.rows["held-1"].status == "dropped"
     assert sessions.release_calls == ["sess-target"]
     assert sessions.reserved_seats["sess-target"] == 0
     # And the broker recorded that the reclaim was for nothing.
@@ -169,7 +169,7 @@ async def test_resume_enrollment_compensates_via_broker_when_update_status_fails
     with pytest.raises(_Boom):
         await resume.execute("paused-1")
 
-    assert enrollments.rows["held-1"].status == "withdrawn"
+    assert enrollments.rows["held-1"].status == "dropped"
     assert sessions.release_calls == ["sess-1"]
     assert sessions.reserved_seats["sess-1"] == 0
     event_types = [e.event_type for e in events.rows]
@@ -235,7 +235,7 @@ async def test_promote_from_waitlist_compensates_via_broker_when_create_fails() 
     with pytest.raises(_Boom):
         await promote.execute("sess-1")
 
-    assert enrollments.rows["held-1"].status == "withdrawn"
+    assert enrollments.rows["held-1"].status == "dropped"
     assert sessions.release_calls == ["sess-1"]
     assert sessions.reserved_seats["sess-1"] == 0
     event_types = [e.event_type for e in events.rows]

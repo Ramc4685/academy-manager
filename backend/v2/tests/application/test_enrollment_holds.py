@@ -445,7 +445,7 @@ async def test_stalled_reclaim_from_an_expiry_claim_finalizes_as_expiry_not_recl
     finalized = await sweep.execute()
 
     assert finalized == 1
-    assert enrollments.rows["held-1"].status == "withdrawn"
+    assert enrollments.rows["held-1"].status == "dropped"
     # The defining assertion: the seat is RELEASED (nobody takes it), unlike
     # a real reclaim's handed-over disposition which leaves the counter
     # alone.
