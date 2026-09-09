@@ -82,7 +82,10 @@ async def test_c3_return_wins_reclaim_then_finds_no_candidate() -> None:
     assert result.status == "active"
 
     broker = SeatBroker(
-        sessions=sessions, holds=holds, departure_policy=FakeDeparturePolicyRepo(), clock=lambda: NOW
+        sessions=sessions,
+        holds=holds,
+        departure_policy=FakeDeparturePolicyRepo(),
+        clock=lambda: NOW,
     )
     acquisition = await broker.acquire("sess-1", requested_by="y")
     assert acquisition.granted is False
@@ -106,7 +109,9 @@ async def test_c4_reclaim_wins_drop_loses_with_conflict_and_no_side_effects() ->
     victim = await holds.claim_longest_held(session_id="sess-1", now=NOW, requested_by="x")
     assert victim is not None
 
-    withdraw_uc = WithdrawEnrollment(enrollments=enrollments, sessions=sessions, billing_sync=billing, clock=lambda: NOW)
+    withdraw_uc = WithdrawEnrollment(
+        enrollments=enrollments, sessions=sessions, billing_sync=billing, clock=lambda: NOW
+    )
     with pytest.raises(EnrollmentNotWithdrawable):
         await withdraw_uc.execute(
             WithdrawEnrollmentCommand(
@@ -133,7 +138,9 @@ async def test_c4_drop_wins_reclaim_then_finds_no_candidate() -> None:
     holds = FakeHoldRepository(enrollments=enrollments)
     billing = FakeBillingSync()
 
-    withdraw_uc = WithdrawEnrollment(enrollments=enrollments, sessions=sessions, billing_sync=billing, clock=lambda: NOW)
+    withdraw_uc = WithdrawEnrollment(
+        enrollments=enrollments, sessions=sessions, billing_sync=billing, clock=lambda: NOW
+    )
     await withdraw_uc.execute(
         WithdrawEnrollmentCommand(
             enrollment_id="held-1",
@@ -147,7 +154,10 @@ async def test_c4_drop_wins_reclaim_then_finds_no_candidate() -> None:
     assert sessions.reserved_seats["sess-1"] == 0
 
     broker = SeatBroker(
-        sessions=sessions, holds=holds, departure_policy=FakeDeparturePolicyRepo(), clock=lambda: NOW
+        sessions=sessions,
+        holds=holds,
+        departure_policy=FakeDeparturePolicyRepo(),
+        clock=lambda: NOW,
     )
     acquisition = await broker.acquire("sess-1", requested_by="y")
     # Drop already freed the seat AND removed the row from `held`, so the
@@ -170,7 +180,11 @@ async def test_c7_compensation_after_a_reclaimed_grant_releases_but_never_undoes
     sessions = FakeSessionWriter(sessions={"sess-1": make_session(capacity=1)})
     sessions.reserved_seats["sess-1"] = 1
     enrollments = FakeEnrollmentWriter(
-        rows={"held-1": make_enrollment("held-1", status="held", hold_started_at=NOW - timedelta(days=3))}
+        rows={
+            "held-1": make_enrollment(
+                "held-1", status="held", hold_started_at=NOW - timedelta(days=3)
+            )
+        }
     )
     holds = FakeHoldRepository(enrollments=enrollments)
     billing = FakeBillingSync()
@@ -263,7 +277,11 @@ async def test_c10_stalled_reclaim_is_finalized_exactly_once_seat_count_unchange
     events = FakeEnrollmentEvents()
 
     sweep = ProcessStalledReclaims(
-        holds=holds, billing_sync=billing, notifier=notifier, enrollment_events=events, clock=lambda: NOW
+        holds=holds,
+        billing_sync=billing,
+        notifier=notifier,
+        enrollment_events=events,
+        clock=lambda: NOW,
     )
 
     finalized_first = await sweep.execute()

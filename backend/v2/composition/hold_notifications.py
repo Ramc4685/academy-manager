@@ -19,6 +19,7 @@ import logging
 from datetime import date, datetime
 from typing import Any, Literal, Protocol
 
+from backend.v2.composition.hold_notice_send_repo import MongoHoldNoticeSendRepository
 from backend.v2.contexts.communications.application.ports import (
     AudienceResolver,
     EmailSendPort,
@@ -27,7 +28,6 @@ from backend.v2.contexts.communications.application.ports import (
 from backend.v2.contexts.communications.domain.email_category import EmailCategory
 from backend.v2.contexts.communications.domain.models import SelectedRecipientsAudience
 from backend.v2.contexts.enrollment.domain.models import Session, Student
-from backend.v2.composition.hold_notice_send_repo import MongoHoldNoticeSendRepository
 from backend.v2.shared.tenancy import current_academy_id
 
 logger = logging.getLogger(__name__)
@@ -175,7 +175,9 @@ class HoldNotificationAdapter:
         elif outcome.suppressed:
             await self._notice_sends.mark_failed(claim["send_id"], "suppressed", retryable=False)
         else:
-            await self._notice_sends.mark_failed(claim["send_id"], outcome.failed_reason or "send_failed")
+            await self._notice_sends.mark_failed(
+                claim["send_id"], outcome.failed_reason or "send_failed"
+            )
 
     async def _resolve_parent(self, parent_id: str) -> ResolvedRecipient | None:
         try:

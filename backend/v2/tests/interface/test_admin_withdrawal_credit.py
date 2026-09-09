@@ -89,7 +89,9 @@ def test_second_withdraw_is_a_409_conflict(admin_client) -> None:
     assert "already withdrawn" in body["message"]
     seed = admin_client.seed
     assert len(seed["withdrawal_decision"].calls) == 1
-    assert len([e for e in seed["enrollment_events"].rows if e.event_type == "dropped"]) == 1  # Issue #699
+    assert (
+        len([e for e in seed["enrollment_events"].rows if e.event_type == "dropped"]) == 1
+    )  # Issue #699
 
 
 def test_plain_admin_cannot_withdraw_with_credit_outcome(admin_only_client) -> None:

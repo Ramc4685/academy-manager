@@ -156,9 +156,7 @@ async def up(db: AsyncIOMotorDatabase) -> None:  # type: ignore[type-arg]
 
     events = db["enrollment_events"]
     for old, new in _EVENT_TYPE_RENAMES.items():
-        result = await events.update_many(
-            {"event_type": old}, {"$set": {"event_type": new}}
-        )
+        result = await events.update_many({"event_type": old}, {"$set": {"event_type": new}})
         log.info(
             "0171: renamed enrollment_events.event_type %r -> %r on %d document(s)",
             old,

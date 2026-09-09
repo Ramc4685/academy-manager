@@ -184,8 +184,9 @@ async def test_c12_lite_seat_invariant_holds_after_every_step() -> None:
     invariant()
 
     # 2. hold A.
-    from backend.v2.contexts.enrollment.application.use_cases.holds import HoldEnrollment
     from datetime import date
+
+    from backend.v2.contexts.enrollment.application.use_cases.holds import HoldEnrollment
 
     hold_uc = HoldEnrollment(
         enrollments=enrollments, departure_policy=FakeDeparturePolicyRepo(), clock=lambda: NOW

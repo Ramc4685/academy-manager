@@ -113,7 +113,7 @@ async def test_0171_renames_enrollments_status_and_is_idempotent() -> None:
 
 
 def test_0171_never_touches_removed_event_type() -> None:
-    """"removed" is a distinct audit label (soft-cancel via the legacy
+    """ "removed" is a distinct audit label (soft-cancel via the legacy
     DELETE /enrollments/{id} route) from "deleted" (a genuine hard-delete,
     #697's delete_if_status). Renaming it would collide two different
     historical facts into one value — see the migration's module docstring."""
@@ -139,9 +139,7 @@ def test_enrollments_status_and_event_type_are_unconstrained_strings() -> None:
     is needed before the data rewrite. If either validator is ever narrowed
     to an enum, this migration's docstring assumption is no longer true and
     a 0172 must widen it BEFORE this migration's rename is applied again."""
-    v0132 = importlib.import_module(
-        "backend.v2.migrations.0132_launch_indexes_and_validators"
-    )
+    v0132 = importlib.import_module("backend.v2.migrations.0132_launch_indexes_and_validators")
     v0133 = importlib.import_module(
         "backend.v2.migrations.0133_broader_validators_and_outbox_retry_lock"
     )

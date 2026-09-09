@@ -54,8 +54,8 @@ def compose_enrollment_holds(db: Any, settings: Any) -> EnrollmentHoldsCompositi
     ``composition/admin.py`` per that module's line-budget test; attach the
     result's fields onto the already-built ``AdminUseCases`` in ``main.py``.
     """
-    from backend.v2.composition.lifecycle_billing import compose_enrollment_billing_sync
     from backend.v2.composition.hold_notifications import compose_hold_notifications
+    from backend.v2.composition.lifecycle_billing import compose_enrollment_billing_sync
     from backend.v2.composition.roster_notifications import compose_roster_notifier
     from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_event_repo import (
         MongoEnrollmentEventRepository,

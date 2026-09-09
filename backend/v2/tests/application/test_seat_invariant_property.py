@@ -18,7 +18,7 @@ rather than being masked by a lucky fixed script.
 from __future__ import annotations
 
 import random
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -85,7 +85,9 @@ async def test_c12_seat_invariant_survives_a_randomized_sequence(seed: int) -> N
     broker = SeatBroker(
         sessions=sessions, holds=holds_repo, departure_policy=policy_repo, clock=lambda: NOW
     )
-    hold_uc = HoldEnrollment(enrollments=enrollments, departure_policy=policy_repo, clock=lambda: NOW)
+    hold_uc = HoldEnrollment(
+        enrollments=enrollments, departure_policy=policy_repo, clock=lambda: NOW
+    )
     return_uc = ReturnFromHold(enrollments=enrollments, clock=lambda: NOW)
     withdraw_uc = WithdrawEnrollment(enrollments=enrollments, sessions=sessions, clock=lambda: NOW)
     transfer_uc = TransferEnrollment(enrollments=enrollments, sessions=sessions, clock=lambda: NOW)
@@ -124,7 +126,9 @@ async def test_c12_seat_invariant_survives_a_randomized_sequence(seed: int) -> N
             pass
 
     async def do_drop() -> None:
-        candidates = [e for e in enrollments.rows.values() if e.status in {"active", "held", "paused"}]
+        candidates = [
+            e for e in enrollments.rows.values() if e.status in {"active", "held", "paused"}
+        ]
         if not candidates:
             return
         row = rng.choice(candidates)
@@ -142,7 +146,9 @@ async def test_c12_seat_invariant_survives_a_randomized_sequence(seed: int) -> N
             pass
 
     async def do_transfer() -> None:
-        candidates = [e for e in enrollments.rows.values() if e.status in {"active", "held", "paused"}]
+        candidates = [
+            e for e in enrollments.rows.values() if e.status in {"active", "held", "paused"}
+        ]
         if not candidates:
             return
         row = rng.choice(candidates)

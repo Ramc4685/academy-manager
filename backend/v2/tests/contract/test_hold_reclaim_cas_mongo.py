@@ -17,7 +17,9 @@ from backend.v2.shared.tenancy.context import tenant_scope
 NOW = datetime(2026, 9, 9, 12, 0, tzinfo=UTC)
 
 
-async def _insert_held(db, acad: str, enrollment_id: str, *, session_id: str, hold_started_at: datetime) -> None:
+async def _insert_held(
+    db, acad: str, enrollment_id: str, *, session_id: str, hold_started_at: datetime
+) -> None:
     await db["enrollments"].insert_one(
         {
             "academy_id": acad,
@@ -37,7 +39,9 @@ async def test_c1_claim_longest_held_is_a_single_atomic_claim(db, acad) -> None:
     """C1: one held row on a full session. A second claim attempt — the
     stand-in for a second concurrent broker — must find nothing, and the
     document must show exactly one claim, never two half-applied updates."""
-    await _insert_held(db, acad, "held-1", session_id="sess-1", hold_started_at=NOW - timedelta(days=10))
+    await _insert_held(
+        db, acad, "held-1", session_id="sess-1", hold_started_at=NOW - timedelta(days=10)
+    )
     repo = MongoHoldRepository(db)
 
     first = await repo.claim_longest_held(session_id="sess-1", now=NOW, requested_by="a")
@@ -59,8 +63,12 @@ async def test_c2_two_held_rows_claimed_in_deterministic_longest_first_order(db,
     find_one_and_update must hand out the two distinct victims in
     (hold_started_at ASC, enrollment_id ASC) order — never the same row
     twice, never an arbitrary pair."""
-    await _insert_held(db, acad, "held-newer", session_id="sess-1", hold_started_at=NOW - timedelta(days=5))
-    await _insert_held(db, acad, "held-older", session_id="sess-1", hold_started_at=NOW - timedelta(days=20))
+    await _insert_held(
+        db, acad, "held-newer", session_id="sess-1", hold_started_at=NOW - timedelta(days=5)
+    )
+    await _insert_held(
+        db, acad, "held-older", session_id="sess-1", hold_started_at=NOW - timedelta(days=20)
+    )
     repo = MongoHoldRepository(db)
 
     first = await repo.claim_longest_held(session_id="sess-1", now=NOW, requested_by="a")
@@ -83,7 +91,13 @@ async def test_claim_is_scoped_to_its_own_session_and_tenant(db, acad) -> None:
     """A held row in a different session, or a different academy, must
     never be claimable for THIS session's demand — cross-session or
     cross-tenant reclaim would drop the wrong family's child."""
-    await _insert_held(db, acad, "held-other-session", session_id="sess-2", hold_started_at=NOW - timedelta(days=99))
+    await _insert_held(
+        db,
+        acad,
+        "held-other-session",
+        session_id="sess-2",
+        hold_started_at=NOW - timedelta(days=99),
+    )
     with tenant_scope("other-academy"):
         await db["enrollments"].insert_one(
             {

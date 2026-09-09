@@ -207,9 +207,7 @@ class FakeEnrollmentWriter:
 
     async def count_active_for_session(self, session_id: str) -> int:
         return sum(
-            1
-            for e in self.rows.values()
-            if e.session_id == session_id and e.status in SEAT_HOLDING
+            1 for e in self.rows.values() if e.session_id == session_id and e.status in SEAT_HOLDING
         )
 
 
