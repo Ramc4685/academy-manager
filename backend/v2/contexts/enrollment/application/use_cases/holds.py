@@ -332,32 +332,18 @@ class ExpireDueHolds:
         result = ExpireDueHoldsResult()
         for row in await self._holds.list_expired(now=now):
             result.processed += 1
-            claimed = await self._holds.claim_longest_held(
-                session_id=row.session_id, now=now, requested_by="hold_expiry"
+            # Claim THIS row by id — never the longest-held row on its
+            # session. Expiry must drop the enrollment whose OWN
+            # hold_expires_at has passed; claiming by session (as
+            # `claim_longest_held` does) can silently pick a DIFFERENT,
+            # unexpired hold on the same session and drop the wrong child.
+            claimed = await self._holds.claim_expired(
+                enrollment_id=row.enrollment_id, now=now, requested_by="hold_expiry"
             )
-            # list_expired already filtered to this row's own expiry, but the
-            # claim CAS re-validates it is still `held` before touching it —
-            # a concurrent Return or admin Drop may have already won.
-            if claimed is None or claimed.enrollment_id != row.enrollment_id:
-                if claimed is not None:
-                    # Claimed a DIFFERENT row on the same session (e.g. the
-                    # longest-held is not the one that expired) — finalize
-                    # that one as an expiry too if it is actually due, else
-                    # release it back... simplest safe behavior: finalize as
-                    # release since it was legitimately claimed off `held`.
-                    await finalize_reclaim(
-                        claimed,
-                        holds=self._holds,
-                        sessions=self._sessions,
-                        billing_sync=self._billing_sync,
-                        notifier=self._notifier,
-                        enrollment_events=self._enrollment_events,
-                        requested_by=None,
-                        reason="expired",
-                        seat_disposition="release",
-                        now=now,
-                    )
-                    result.expired += 1
+            if claimed is None:
+                # Lost a race (Return, admin Drop, or a reclaim already
+                # claimed this exact row) between list_expired and the claim
+                # — nothing left to do for this row.
                 continue
             try:
                 await finalize_reclaim(

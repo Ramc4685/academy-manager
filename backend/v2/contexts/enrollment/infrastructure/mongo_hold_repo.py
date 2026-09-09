@@ -44,6 +44,27 @@ class MongoHoldRepository(TenantScopedRepository):
         )
         return _to_domain(doc) if doc else None
 
+    async def claim_expired(
+        self, *, enrollment_id: str, now: datetime, requested_by: str
+    ) -> Enrollment | None:
+        doc = await self._find_one_and_update(
+            {
+                "enrollment_id": enrollment_id,
+                "status": "held",
+                "hold_reclaim_claimed_at": None,
+            },
+            {
+                "$set": {
+                    "status": "reclaim_pending",
+                    "hold_reclaim_claimed_at": now,
+                    "hold_reclaim_for": requested_by,
+                    "updated_at": now,
+                }
+            },
+            return_document_after=False,
+        )
+        return _to_domain(doc) if doc else None
+
     async def finalize_reclaim(
         self, enrollment_id: str, *, withdrawal_date: datetime
     ) -> Enrollment | None:

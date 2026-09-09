@@ -36,6 +36,7 @@ from backend.v2.contexts.enrollment.application.ports import (
     WaitlistRepository,
     WithdrawalOutcome,
 )
+from backend.v2.contexts.enrollment.application.seat_broker import SeatAcquisition, SeatBroker
 from backend.v2.contexts.enrollment.application.use_cases.billing_deferrals import (
     BillingDeferral,
     BillingDeferralRepository,
@@ -44,6 +45,7 @@ from backend.v2.contexts.enrollment.application.use_cases.billing_deferrals impo
 from backend.v2.contexts.enrollment.application.use_cases.scheduled_actions import (
     ScheduledEnrollmentActionRepository,
 )
+from backend.v2.contexts.enrollment.domain.departure_policy import EnrollmentNotPausable
 from backend.v2.contexts.enrollment.domain.errors import (
     # Explicitly re-exported: the interface layer raises 422 on this but may not
     # import domain modules directly (import-linter rule 4).
@@ -801,6 +803,7 @@ class EditRosterAdd:
         welcome_notifier: EnrollmentWelcomeNotifier | None = None,
         roster_notifier: RosterChangeNotifier | None = None,
         resume: ResumeEnrollment | None = None,
+        seat_broker: SeatBroker | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._sessions = sessions
@@ -814,7 +817,20 @@ class EditRosterAdd:
         self._welcome_notifier = welcome_notifier
         self._roster_notifier = roster_notifier
         self._resume = resume
+        # Departures design contract §3.1: demand for a seat is detected in
+        # exactly one place, and every caller that needs one routes through
+        # SeatBroker.acquire so a full class with a held seat reclaims the
+        # longest-held hold instead of refusing. Optional (defaults to a
+        # direct `sessions.try_reserve_seat` call) so existing callers/tests
+        # that construct this use case without a broker keep working
+        # unchanged; production wiring sets this via `set_seat_broker`
+        # (composition/admin.py is at its line-budget cap, and SeatBroker is
+        # composed later in main.py — see composition/enrollment_holds.py).
+        self._seat_broker = seat_broker
         self._now = clock
+
+    def set_seat_broker(self, seat_broker: SeatBroker) -> None:
+        self._seat_broker = seat_broker
 
     def _resolve_academy_id(self) -> str:
         return self._academy_id() if callable(self._academy_id) else self._academy_id
@@ -856,7 +872,14 @@ class EditRosterAdd:
                 status=existing.status,
             )
 
-        reserved = await self._sessions.try_reserve_seat(cmd.session_id)
+        acquisition: SeatAcquisition | None = None
+        if self._seat_broker is not None:
+            acquisition = await self._seat_broker.acquire(
+                cmd.session_id, requested_by=f"roster_add:{cmd.student_id}"
+            )
+            reserved = acquisition.granted
+        else:
+            reserved = await self._sessions.try_reserve_seat(cmd.session_id)
         if not reserved:
             await self._raise_reserve_failure(cmd)
 
@@ -881,7 +904,7 @@ class EditRosterAdd:
             )
             await self._enrollments.create(enrollment)
         except DuplicateKeyError as exc:
-            await self._release_quietly(cmd.session_id)
+            await self._release_quietly(cmd.session_id, acquisition)
             raise StudentAlreadyOnRoster(
                 f"Could not add {cmd.full_name} — a conflicting record already "
                 f"exists for this student. If they are already on the roster, "
@@ -891,7 +914,7 @@ class EditRosterAdd:
                 student_id=cmd.student_id,
             ) from exc
         except BaseException:
-            await self._release_quietly(cmd.session_id)
+            await self._release_quietly(cmd.session_id, acquisition)
             raise
         await self._record_created_event(cmd, enrollment, academy_id=academy_id)
         await self._notify_welcome(cmd)
@@ -973,14 +996,26 @@ class EditRosterAdd:
                 extra={"session_id": cmd.session_id, "student_id": cmd.student_id},
             )
 
-    async def _release_quietly(self, session_id: str) -> None:
+    async def _release_quietly(
+        self, session_id: str, acquisition: SeatAcquisition | None = None
+    ) -> None:
         """Give the seat back without ever masking the error being handled.
 
         `release_seat` is idempotent at zero (its Mongo predicate refuses to
         decrement below zero), so calling it on every failure path is safe.
+
+        When the seat came from ``SeatBroker.acquire`` (``acquisition`` is
+        not ``None``), compensation MUST go through ``SeatBroker.release`` —
+        not a bare ``sessions.release_seat`` — because a reclaim-granted
+        acquisition already dropped and emailed a different family, and only
+        the broker knows to record that as a ``hold_reclaim_orphaned`` audit
+        event rather than pretending nothing happened.
         """
         try:
-            await self._sessions.release_seat(session_id)
+            if self._seat_broker is not None and acquisition is not None:
+                await self._seat_broker.release(acquisition)
+            else:
+                await self._sessions.release_seat(session_id)
         except Exception:  # pragma: no cover - defensive
             log.exception(
                 "enrollment.roster_add_seat_release_failed",
@@ -1189,8 +1224,15 @@ class CancelEnrollment:
     #: Statuses that no longer hold a seat (issue #651, widened #697): a
     #: paused/cancelled/withdrawn row already released its seat, so a later
     #: cancel must not release it again and drive `reserved_seats` under the
-    #: real roster count. Deliberately NOT SEAT_HOLDING's complement by name —
-    #: see domain/models.py SEATLESS, which this mirrors exactly.
+    #: real roster count. Kept for documentation/back-compat only — the
+    #: release decision below is NOT `not in _SEATLESS_STATUSES`. `SEATLESS`
+    #: and `SEAT_HOLDING` are deliberately not full complements of each
+    #: other: `reclaim_pending` (a transient in-flight reclaim claim) is in
+    #: NEITHER set. `not in SEATLESS` therefore treated a `reclaim_pending`
+    #: row as seat-holding-and-releasable, so cancelling one released a seat
+    #: that was mid-handover to the incoming child (defect #6). `in
+    #: SEAT_HOLDING` is the only exhaustive partition of every
+    #: `EnrollmentStatus` member into "release" / "do not release".
     _SEATLESS_STATUSES = SEATLESS
 
     async def execute(self, cmd: CancelEnrollmentCommand) -> None:
@@ -1240,7 +1282,7 @@ class CancelEnrollment:
             billing_policy="current_period_payable_future_voided",
             billing_result=_billing_result(billing),
         )
-        if e.status not in self._SEATLESS_STATUSES:
+        if e.status in SEAT_HOLDING:
             await self._sessions.release_seat(e.session_id)
         await _drop_future_occurrence_roster(
             self._occurrence_roster,
@@ -1303,6 +1345,7 @@ class TransferEnrollment:
         enrollment_events: EnrollmentEventRepository | None = None,
         billing_sync: EnrollmentMoveBillingSync | None = None,
         roster_notifier: RosterChangeNotifier | None = None,
+        seat_broker: SeatBroker | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._enrollments = enrollments
@@ -1310,7 +1353,14 @@ class TransferEnrollment:
         self._enrollment_events = enrollment_events
         self._billing_sync = billing_sync
         self._roster_notifier = roster_notifier
+        # See EditRosterAdd's constructor comment — optional so existing
+        # callers/tests keep working unwired; production wiring injects this
+        # via `set_seat_broker` from main.py.
+        self._seat_broker = seat_broker
         self._now = clock
+
+    def set_seat_broker(self, seat_broker: SeatBroker) -> None:
+        self._seat_broker = seat_broker
 
     #: Rows that may be transferred (issue #669, widened #697 for `held`).
     #: NOT all of these still hold a seat — `paused` does not (it released
@@ -1342,7 +1392,13 @@ class TransferEnrollment:
             # than dead-ending (issue #669 review).
             await self._retry_failed_move_billing(enrollment, cmd)
             return enrollment
-        reserved = await self._sessions.try_reserve_seat(cmd.target_session_id)
+        if self._seat_broker is not None:
+            acquisition = await self._seat_broker.acquire(
+                cmd.target_session_id, requested_by=f"transfer:{cmd.enrollment_id}"
+            )
+            reserved = acquisition.granted
+        else:
+            reserved = await self._sessions.try_reserve_seat(cmd.target_session_id)
         if not reserved:
             from backend.v2.contexts.enrollment.domain.errors import CapacityExceeded
 
@@ -1594,6 +1650,17 @@ class PauseEnrollment:
             raise EnrollmentNotFound("enrollment missing")
         if e.status == "paused":
             return
+        if e.status == "held":
+            # T9 (departures design contract §2.4): a held row's seat is
+            # retained precisely so the family is safe from losing it.
+            # Pausing it would release that seat, park the student on the
+            # waitlist and can promote someone else — exactly what a hold
+            # promises will NOT happen. Return it first, then Pause.
+            raise EnrollmentNotPausable(
+                "This enrollment is on hold. Return it first, then pause it.",
+                enrollment_id=e.enrollment_id,
+                status=e.status,
+            )
         await self._enrollments.update_status(e.enrollment_id, "paused")
         now = self._now()
         effective_at = cmd.effective_at or now
@@ -1983,6 +2050,7 @@ class ResumeEnrollment:
         autopay_status: EnrollmentAutopayStatusGateway | None = None,
         billing_sync: EnrollmentBillingSync | None = None,
         roster_notifier: RosterChangeNotifier | None = None,
+        seat_broker: SeatBroker | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._enrollments = enrollments
@@ -1994,7 +2062,14 @@ class ResumeEnrollment:
         self._autopay_status = autopay_status
         self._billing_sync = billing_sync
         self._roster_notifier = roster_notifier
+        # See EditRosterAdd's constructor comment — optional so existing
+        # callers/tests keep working unwired; production wiring injects this
+        # via `set_seat_broker` from main.py.
+        self._seat_broker = seat_broker
         self._now = clock
+
+    def set_seat_broker(self, seat_broker: SeatBroker) -> None:
+        self._seat_broker = seat_broker
 
     async def execute(
         self,
@@ -2018,7 +2093,13 @@ class ResumeEnrollment:
                     session_id=e.session_id,
                     status=session.status,
                 )
-            reserved = await self._sessions.try_reserve_seat(e.session_id)
+            if self._seat_broker is not None:
+                acquisition = await self._seat_broker.acquire(
+                    e.session_id, requested_by=f"resume:{e.enrollment_id}"
+                )
+                reserved = acquisition.granted
+            else:
+                reserved = await self._sessions.try_reserve_seat(e.session_id)
             if not reserved:
                 raise CapacityExceeded("session full", session_id=e.session_id)
         await self._enrollments.update_status(e.enrollment_id, "active")

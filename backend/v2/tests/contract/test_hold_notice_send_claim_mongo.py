@@ -4,8 +4,19 @@ notice) ticks on the same day must produce exactly one send per
 (``digest_claim.claim_digest_send``) reused via
 ``MongoHoldNoticeSendRepository`` — not a hand-rolled append.
 
+This is the reproduction for defect #2: ``try_claim`` built its QUEUED
+document with a ``notice_key`` field but ``claim_digest_send`` (and its
+fallback ``reclaim_retryable_send``) key their lookup, their post-insert
+"am I alone" verify, and the conditional re-claim on a ``digest_date``
+field the document never set. Every claim's own insert therefore failed
+its own alone-check, withdrew itself, and ``try_claim`` returned ``None``
+unconditionally — no hold reclaim notice or monthly reminder could ever
+send. These tests fail on that bug (every claim below would return
+``None`` and no row would ever reach ``sent``) and pass once
+``hold_notice_send_repo.py`` sets ``digest_date``.
+
 Run both WITH the migration 0170 unique index and WITHOUT it, because the
-2026-09-02 production incident (this module's own docstring) happened
+2026-09-02 production incident (digest_claim.py's own docstring) happened
 precisely because production had never built the index the claim assumed —
 the claim's lookup-then-insert-then-verify protocol must be safe either way.
 """
@@ -26,6 +37,28 @@ async def _create_index(db) -> None:
         unique=True,
         name="enrollment_hold_notice_sends_key_unique",
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("with_index", [True, False], ids=["with_index", "without_index"])
+async def test_c9_a_fresh_claim_succeeds_and_can_be_marked_sent(db, with_index: bool) -> None:
+    """The direct reproduction: before the fix, EVERY try_claim call
+    returned None (it withdrew its own insert), so this assertion alone
+    fails without the digest_date fix."""
+    if with_index:
+        await _create_index(db)
+    with tenant_scope(ACADEMY_ID):
+        repo = MongoHoldNoticeSendRepository(db)
+
+        claim = await repo.try_claim(
+            academy_id=ACADEMY_ID, enrollment_id="enr-0", notice_key="hold-reclaim:1"
+        )
+        assert claim is not None, "try_claim returned None — the digest_date claim key is missing"
+        await repo.mark_sent(claim["send_id"])
+
+    sent = await db["enrollment_hold_notice_sends"].find_one({"send_id": claim["send_id"]})
+    assert sent is not None
+    assert sent["status"] == "sent"
 
 
 @pytest.mark.asyncio
@@ -71,6 +104,7 @@ async def test_c9_a_new_hold_seq_gets_its_own_claim_not_blocked_by_the_old_one(
         first = await repo.try_claim(
             academy_id=ACADEMY_ID, enrollment_id="enr-1", notice_key="hold-reminder:1:1"
         )
+        assert first is not None
         await repo.mark_sent(first["send_id"])
 
         second = await repo.try_claim(
