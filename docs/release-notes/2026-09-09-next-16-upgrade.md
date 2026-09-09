@@ -31,6 +31,14 @@ behind it, returned 500, and tripped the trailing clean-console assertion. Next 
 happened to mask them. Each endpoint was read out of the failing test's trace rather than
 guessed at, and `/parent/academy` gets a shared helper because five parent pages read it.
 
+One WebKit-only test needed a real fix. `qa-defects.spec.ts` asserted a transient
+"Confirming autopay…" banner inside a fixed 200ms stub delay. Next 16 settles the
+navigation later than that on WebKit, so the banner was gone before the assertion could
+start polling — the end state was still correct, and widening the window made it pass, so
+the app renders the banner as it always did. The fixed sleep is replaced by a promise the
+test resolves once it has actually seen the banner, which removes the timing window
+instead of retuning it. Chromium was never affected.
+
 One of these is worth remembering: `**/api/v2/admin/payments*` does not match
 `/payments/collections`, because Playwright stops a `*` wildcard at the path separator.
 A glob that looks like it covers a whole endpoint family may quietly cover only part of
