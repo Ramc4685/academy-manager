@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from typing import Callable
+from typing import Callable, Literal
 
 from backend.v2.contexts.enrollment.application.ports import (
     EnrollmentBillingSync,
@@ -365,22 +365,41 @@ class ExpireDueHolds:
         return result
 
 
+#: `requested_by` value `ExpireDueHolds.execute` claims with (see above,
+#: `claim_expired(..., requested_by="hold_expiry")`). A stalled row carrying
+#: this provenance was claimed by expiry, not by a SeatBroker reclaim — no
+#: requester is waiting for its seat — and must be finalized the way expiry
+#: would have, or the seat leaks and the family is emailed the wrong reason.
+EXPIRY_REQUESTED_BY = "hold_expiry"
+
+
 class ProcessStalledReclaims:
     """Crash recovery (contract §3.7): finish any reclaim_pending row whose
-    claim is older than STALLED_RECLAIM_AFTER. Always "handed_over" — the
-    requester either completed its write (and holds the seat) or
-    compensated via SeatBroker.release, which never re-releases here."""
+    claim is older than STALLED_RECLAIM_AFTER.
+
+    Defaults to "handed_over" — the requester either completed its write
+    (and holds the seat) or compensated via SeatBroker.release, which never
+    re-releases here. The one exception is a row claimed by `ExpireDueHolds`
+    (`hold_reclaim_for == "hold_expiry"`): nobody is waiting for that seat,
+    so finalizing it as a reclaim would hand the seat to no one (leaking it,
+    since "handed_over" performs no seat arithmetic) and email the family
+    "reclaimed" instead of "expired". That row is finalized exactly as
+    `ExpireDueHolds` itself would have: `seat_disposition="release"`,
+    `reason="expired"`, `requested_by=None`.
+    """
 
     def __init__(
         self,
         *,
         holds: HoldRepository,
+        sessions: SessionWriter | None = None,
         billing_sync: EnrollmentBillingSync | None = None,
         notifier: HoldNotifier | None = None,
         enrollment_events: EnrollmentEventRepository | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._holds = holds
+        self._sessions = sessions
         self._billing_sync = billing_sync
         self._notifier = notifier
         self._enrollment_events = enrollment_events
@@ -391,16 +410,26 @@ class ProcessStalledReclaims:
         cutoff = now - STALLED_RECLAIM_AFTER
         finalized = 0
         for row in await self._holds.list_stalled(older_than=cutoff):
+            if row.hold_reclaim_for == EXPIRY_REQUESTED_BY:
+                requested_by: str | None = None
+                reason: Literal["reclaimed", "expired"] = "expired"
+                seat_disposition: Literal["handed_over", "release"] = "release"
+                sessions = self._sessions
+            else:
+                requested_by = row.hold_reclaim_for
+                reason = "reclaimed"
+                seat_disposition = "handed_over"
+                sessions = None
             await finalize_reclaim(
                 row,
                 holds=self._holds,
-                sessions=None,
+                sessions=sessions,
                 billing_sync=self._billing_sync,
                 notifier=self._notifier,
                 enrollment_events=self._enrollment_events,
-                requested_by=row.hold_reclaim_for,
-                reason="reclaimed",
-                seat_disposition="handed_over",
+                requested_by=requested_by,
+                reason=reason,
+                seat_disposition=seat_disposition,
                 now=now,
             )
             finalized += 1

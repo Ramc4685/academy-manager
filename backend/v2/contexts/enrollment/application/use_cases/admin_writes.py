@@ -1385,6 +1385,7 @@ class TransferEnrollment:
             # than dead-ending (issue #669 review).
             await self._retry_failed_move_billing(enrollment, cmd)
             return enrollment
+        acquisition: SeatAcquisition | None = None
         if self._seat_broker is not None:
             acquisition = await self._seat_broker.acquire(
                 cmd.target_session_id, requested_by=f"transfer:{cmd.enrollment_id}"
@@ -1396,7 +1397,17 @@ class TransferEnrollment:
             from backend.v2.contexts.enrollment.domain.errors import CapacityExceeded
 
             raise CapacityExceeded("target session full", session_id=cmd.target_session_id)
-        await self._enrollments.update_session(enrollment.enrollment_id, cmd.target_session_id)
+        # Contract §3.8: a failure here (before the row actually points at the
+        # target session) must compensate through SeatBroker.release, not a
+        # bare release_seat — a reclaim-granted acquisition already dropped
+        # and emailed a different family for this seat, and only the broker
+        # records that as a `hold_reclaim_orphaned` audit event instead of
+        # silently pretending the target seat was never touched.
+        try:
+            await self._enrollments.update_session(enrollment.enrollment_id, cmd.target_session_id)
+        except BaseException:
+            await self._release_quietly(cmd.target_session_id, acquisition)
+            raise
         now = self._now()
         effective_at = cmd.effective_at or now
         # Issue #669: the session changed in place, so the current period's
@@ -1454,6 +1465,30 @@ class TransferEnrollment:
             actor_id=cmd.actor_id,
         )
         return enrollment.model_copy(update={"session_id": cmd.target_session_id})
+
+    async def _release_quietly(
+        self, session_id: str, acquisition: SeatAcquisition | None
+    ) -> None:
+        """Give a just-acquired target seat back without masking the error.
+
+        Mirrors ``EditRosterAdd._release_quietly`` (contract §3.8): when the
+        seat came from ``SeatBroker.acquire`` (``acquisition`` is not
+        ``None``), compensation MUST go through ``SeatBroker.release`` rather
+        than a bare ``sessions.release_seat`` — a reclaim-granted acquisition
+        already dropped and emailed a different family for this seat, and
+        only the broker records that as a ``hold_reclaim_orphaned`` audit
+        event rather than pretending nothing happened.
+        """
+        try:
+            if self._seat_broker is not None and acquisition is not None:
+                await self._seat_broker.release(acquisition)
+            else:
+                await self._sessions.release_seat(session_id)
+        except Exception:  # pragma: no cover - defensive
+            log.exception(
+                "enrollment.transfer_seat_release_failed",
+                extra={"session_id": session_id},
+            )
 
     # -- move bookkeeping (issue #669) ------------------------------------
 
@@ -2086,6 +2121,7 @@ class ResumeEnrollment:
                     session_id=e.session_id,
                     status=session.status,
                 )
+            acquisition: SeatAcquisition | None = None
             if self._seat_broker is not None:
                 acquisition = await self._seat_broker.acquire(
                     e.session_id, requested_by=f"resume:{e.enrollment_id}"
@@ -2095,7 +2131,19 @@ class ResumeEnrollment:
                 reserved = await self._sessions.try_reserve_seat(e.session_id)
             if not reserved:
                 raise CapacityExceeded("session full", session_id=e.session_id)
-        await self._enrollments.update_status(e.enrollment_id, "active")
+            # Contract §3.8: a failure between the acquire and the write that
+            # actually claims the seat must compensate through
+            # SeatBroker.release, not a bare release_seat — when the seat
+            # came from a reclaim, only the broker knows to record the
+            # `hold_reclaim_orphaned` audit event for the child who was
+            # already dropped and emailed for it.
+            try:
+                await self._enrollments.update_status(e.enrollment_id, "active")
+            except BaseException:
+                await self._release_quietly(e.session_id, acquisition)
+                raise
+        else:
+            await self._enrollments.update_status(e.enrollment_id, "active")
         if self._waitlist is not None:
             await self._waitlist.remove_waiting_for_session_student(e.session_id, e.student_id)
         now = self._now()
@@ -2158,6 +2206,29 @@ class ResumeEnrollment:
             enrollment_id=e.enrollment_id,
             actor_id=actor_id,
         )
+
+    async def _release_quietly(
+        self, session_id: str, acquisition: SeatAcquisition | None
+    ) -> None:
+        """Give a just-acquired seat back without masking the error being handled.
+
+        Mirrors ``EditRosterAdd._release_quietly`` (contract §3.8): when the
+        seat came from ``SeatBroker.acquire`` (``acquisition`` is not
+        ``None``), compensation MUST go through ``SeatBroker.release`` rather
+        than a bare ``sessions.release_seat`` — a reclaim-granted acquisition
+        already dropped and emailed a different family, and only the broker
+        records that as a ``hold_reclaim_orphaned`` audit event.
+        """
+        try:
+            if self._seat_broker is not None and acquisition is not None:
+                await self._seat_broker.release(acquisition)
+            elif self._sessions is not None:
+                await self._sessions.release_seat(session_id)
+        except Exception:  # pragma: no cover - defensive
+            log.exception(
+                "enrollment.resume_seat_release_failed",
+                extra={"session_id": session_id},
+            )
 
 
 # -- Waitlist writes ----------------------------------------------------
