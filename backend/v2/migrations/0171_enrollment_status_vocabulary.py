@@ -69,6 +69,54 @@ instances redeployed) before this runs.
 
 Idempotent (filters on the OLD value only, so a second run touches zero
 documents) and count-logged, following the 0137 pattern.
+
+ROLLBACK — deliberately no ``down()``, and this is a decision, not an
+omission. Justification:
+
+1. **No migration in this repo has one.** ``runner.py`` has no ``down``
+   concept at all — none of the other 83 migrations under this directory
+   define it, so a ``down()`` here would be dead code the runner cannot
+   invoke, and building rollback machinery into the runner is a separate,
+   much larger change than a vocabulary rename warrants.
+2. **A mechanical inverse would be actively unsafe to run anyway.** By the
+   time anyone would reach for it, some rows may carry "dropped"/"deleted"
+   from THIS migration while others carry the same values written natively
+   by code that shipped after it (#697/#698 write only the new spelling).
+   Blindly rewriting every "dropped" back to "withdrawn" cannot tell those
+   two provenances apart and would silently relabel rows this migration
+   never touched.
+
+Instead, the release is made survivable in the direction that actually
+matters — an operator rolling the APP back one release after running this
+migration, with the data left exactly as this migration wrote it:
+
+* ``EnrollmentStatus`` (``domain/models.py``) lists BOTH the legacy and
+  canonical spellings side by side, permanently, not as a transient shim —
+  there is no follow-up commit anywhere in #696-#699 that narrows it back.
+  Narrowing it is explicitly Phase C, filed as a future issue, gated on "a
+  stated soak" (design contract §5.4) precisely so it never lands the same
+  week as this migration.
+* Every reader that groups or filters by outcome — ``canonical_status()``,
+  the ``SEAT_HOLDING``/``SEATLESS`` frozensets, ``PAST_ENROLLMENT_STATUSES``
+  / ``_TERMINAL_STATUSES`` in ``infrastructure/``, and the two billing-side
+  bypasses this same slice fixed
+  (``contexts/billing/application/family_billing.py``'s
+  ``_CANCELLED_ENROLLMENT_STATUSES`` and
+  ``contexts/billing/application/month_close.py``'s
+  ``_DEAD_ENROLLMENT_STATUSES``) — treats both spellings identically.
+* Consequently, "roll the app back one release" only 500s (roster,
+  past-enrollments panel, family billing read model) if it lands on a
+  release that PREDATES the dual-read code — i.e. more than one release
+  back, or a rollback that skips over this branch's merge entirely. A
+  same-generation one-release rollback reads a "dropped" row exactly like
+  a "withdrawn" one, because nothing in that generation ever stops
+  understanding the old spelling.
+
+This is why the "apply after soak" rule two paragraphs up is load-bearing
+for the *forward* direction, and the permanent dual-spelling ``Literal`` is
+load-bearing for the *rollback* direction — together they mean this
+migration has no window in which either direction 500s, without this file
+having to carry an unrunnable ``down()``.
 """
 
 from __future__ import annotations

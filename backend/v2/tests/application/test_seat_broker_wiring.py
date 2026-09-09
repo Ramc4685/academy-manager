@@ -150,7 +150,7 @@ async def test_edit_roster_add_reclaims_a_held_seat_through_the_broker() -> None
 
     assert result.status == "active"
     # The held row was reclaimed (dropped), not the new add refused.
-    assert enrollments.rows["held-1"].status == "withdrawn"
+    assert enrollments.rows["held-1"].status == "dropped"
     assert [c["transition"] for c in billing.calls] == ["dropped"]
     # Handover: the counter never moves — no try_reserve_seat succeeded a
     # second time and no release_seat ran for the reclaim.
@@ -223,7 +223,7 @@ async def test_resume_enrollment_reclaims_a_held_seat_through_the_broker() -> No
     await resume.execute("paused-1")
 
     assert enrollments.rows["paused-1"].status == "active"
-    assert enrollments.rows["held-1"].status == "withdrawn"
+    assert enrollments.rows["held-1"].status == "dropped"
     assert sessions.reserved_seats["sess-1"] == 1
     assert sessions.release_calls == []
 
@@ -266,7 +266,7 @@ async def test_transfer_enrollment_reclaims_a_held_seat_in_the_target_through_th
     )
 
     assert result.session_id == "sess-target"
-    assert enrollments.rows["held-1"].status == "withdrawn"
+    assert enrollments.rows["held-1"].status == "dropped"
     # Target: handover, net zero. Source: released because the moving row
     # was in SEAT_HOLDING.
     assert sessions.reserved_seats["sess-target"] == 1
@@ -322,6 +322,6 @@ async def test_promote_from_waitlist_reclaims_a_held_seat_through_the_broker() -
 
     assert promoted_id == "wl-1"
     assert waitlist.updated_status["wl-1"] == "promoted"
-    assert enrollments.rows["held-1"].status == "withdrawn"
+    assert enrollments.rows["held-1"].status == "dropped"
     assert sessions.reserved_seats["sess-1"] == 1
     assert sessions.release_calls == []

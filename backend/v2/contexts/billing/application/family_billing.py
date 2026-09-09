@@ -37,7 +37,19 @@ FAILURE_ATTEMPT_STATUSES: frozenset[str] = frozenset(
 )
 
 _PAUSED = "paused"
-_CANCELLED_ENROLLMENT_STATUSES: frozenset[str] = frozenset({"cancelled", "withdrawn"})
+#: Terminal ("dead") enrollment statuses, in BOTH the legacy and #699
+#: canonical spellings ("withdrawn"->"dropped", "cancelled"->"deleted").
+#: Billing cannot import contexts.enrollment.domain.models.canonical_status
+#: (Rule 5, no cross-context imports — enforced by
+#: tests/structural/test_layering.py::test_no_cross_context_imports), so the
+#: dual-spelling set is duplicated here rather than normalized through a
+#: shared function. Before this widened, a dropped/deleted enrollment
+#: written by #699-migrated code read as neither "cancelled" nor "withdrawn"
+#: and therefore counted as LIVE here — the family billing page kept billing
+#: (and computing autopay eligibility for) a child who had actually left.
+_CANCELLED_ENROLLMENT_STATUSES: frozenset[str] = frozenset(
+    {"cancelled", "deleted", "withdrawn", "dropped"}
+)
 _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 _EPOCH = datetime.min.replace(tzinfo=UTC)
 

@@ -236,7 +236,7 @@ async def test_c3_reclaim_wins_return_then_fails_not_returnable() -> None:
     # Reclaim wins first.
     acquisition = await broker.acquire("sess-1", requested_by="roster_add:x")
     assert acquisition.granted and acquisition.via_reclaim
-    assert enrollments.rows["enr-1"].status == "withdrawn"
+    assert enrollments.rows["enr-1"].status == "dropped"
 
     with pytest.raises(EnrollmentNotReturnable):
         await return_uc.execute("enr-1")
@@ -285,7 +285,7 @@ async def test_c4_reclaim_wins_drop_then_conflicts() -> None:
 
     acquisition = await broker.acquire("sess-1", requested_by="roster_add:x")
     assert acquisition.granted and acquisition.via_reclaim
-    assert enrollments.rows["enr-1"].status == "withdrawn"
+    assert enrollments.rows["enr-1"].status == "dropped"
 
     with pytest.raises(EnrollmentNotWithdrawable):
         await withdraw_uc.execute(
@@ -338,7 +338,7 @@ async def test_c4_drop_wins_reclaim_then_finds_nothing_to_claim() -> None:
     # No double release for the same drop.
     assert sessions.release_calls == ["sess-1"]
     assert sessions.reserved_seats["sess-1"] == 1
-    assert enrollments.rows["enr-1"].status == "withdrawn"  # not resurrected
+    assert enrollments.rows["enr-1"].status == "dropped"  # not resurrected
 
 
 # -- C7: compensation when the requester's own write fails after a reclaim --
@@ -363,7 +363,7 @@ async def test_c7_release_after_reclaim_orphans_the_victim_without_a_second_drop
 
     acquisition = await broker.acquire("sess-1", requested_by="roster_add:new-student")
     assert acquisition.granted and acquisition.via_reclaim
-    assert enrollments.rows["held-1"].status == "withdrawn"
+    assert enrollments.rows["held-1"].status == "dropped"
     assert [e.event_type for e in events.rows] == ["hold_reclaimed"]
 
     # The requester's own write (e.g. enrollments.create) now raises; it
@@ -376,7 +376,7 @@ async def test_c7_release_after_reclaim_orphans_the_victim_without_a_second_drop
     assert sessions.reserved_seats["sess-1"] == 0
     # The victim stays dropped — it is never un-dropped — but an orphan
     # event records that the seat went nowhere.
-    assert enrollments.rows["held-1"].status == "withdrawn"
+    assert enrollments.rows["held-1"].status == "dropped"
     event_types = [e.event_type for e in events.rows]
     assert event_types == ["hold_reclaimed", "hold_reclaim_orphaned"]
     # The reclaim notice was already sent and must not be retracted.

@@ -48,7 +48,19 @@ _DRAFT_STATUS = "draft"
 _SENT_DELIVERY = "sent"
 _UNSENT_DELIVERY: frozenset[str] = frozenset({"not_sent", "delivery_failed"})
 _PAUSED_ENROLLMENT = "paused"
-_DEAD_ENROLLMENT_STATUSES: frozenset[str] = frozenset({"cancelled", "withdrawn"})
+#: Terminal ("dead") enrollment statuses, in BOTH the legacy and #699
+#: canonical spellings ("withdrawn"->"dropped", "cancelled"->"deleted").
+#: Billing cannot import contexts.enrollment.domain.models.canonical_status
+#: (Rule 5, no cross-context imports — enforced by
+#: tests/structural/test_layering.py::test_no_cross_context_imports), so the
+#: dual-spelling set is duplicated here rather than normalized through a
+#: shared function. Before this widened, a dropped/deleted enrollment
+#: written by #699-migrated code matched neither "cancelled" nor "withdrawn",
+#: so an autopay left on over a dropped child never tripped
+#: "autopay_on_dead_enrollment" and month close silently missed it.
+_DEAD_ENROLLMENT_STATUSES: frozenset[str] = frozenset(
+    {"cancelled", "deleted", "withdrawn", "dropped"}
+)
 
 #: Same as ``collections_buckets._FAILED_LADDER_STATUSES`` / ``_DUNNED_STATUS``:
 #: a ladder that has actually tried and failed, or one that gave up.
