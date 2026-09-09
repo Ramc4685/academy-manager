@@ -7,6 +7,7 @@ policy window bounds (§6.3), and the invariant that Return never touches
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import get_args
 
@@ -18,6 +19,9 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     PauseEnrollmentCommand,
     TransferEnrollment,
     TransferEnrollmentCommand,
+)
+from backend.v2.contexts.enrollment.application.use_cases.billing_deferrals import (
+    BillingDeferral,
 )
 from backend.v2.contexts.enrollment.application.use_cases.holds import (
     STALLED_RECLAIM_AFTER,
@@ -90,6 +94,49 @@ async def test_hold_keeps_status_moves_to_held_and_billing_syncs_once() -> None:
     assert enrollments.rows["enr-1"].hold_seq == 1
     assert [c["transition"] for c in billing.calls] == ["held"]
     assert [e.event_type for e in events.rows] == ["held"]
+
+
+@dataclass
+class _FakeBillingDeferrals:
+    rows: list[BillingDeferral] = field(default_factory=list)
+
+    async def add(self, deferral: BillingDeferral) -> None:
+        self.rows.append(deferral)
+
+
+@pytest.mark.asyncio
+async def test_hold_writes_one_billing_deferral_per_held_month_like_pause_does() -> None:
+    """Departures design contract T1: a held month must leave the same audit
+    trail a paused month does — one ``BillingDeferral`` per month via the
+    SAME ``paused_billing_periods`` helper ``PauseEnrollment`` uses. No money
+    moves either way (the invoice generator selects only active/paused, so a
+    held row was already invisible) but before this fix no branch wrote the
+    deferral, so a paused month left a generation-skip record and a held
+    month left nothing — the audit trail disagreed with itself."""
+    enrollments = FakeEnrollmentWriter(rows={"enr-1": make_enrollment(status="active")})
+    deferrals = _FakeBillingDeferrals()
+    hold_uc = HoldEnrollment(
+        enrollments=enrollments,
+        departure_policy=FakeDeparturePolicyRepo(),
+        billing_deferrals=deferrals,
+        clock=_clock,
+    )
+
+    # NOW is 2026-09-09; a return_on of 2026-10-15 suppresses exactly the
+    # 2026-10 billing period (the current month, September, stays payable).
+    await hold_uc.execute(
+        "enr-1", return_on=date(2026, 10, 15), reason="family trip", actor_id="admin-1"
+    )
+
+    assert [d.billing_period for d in deferrals.rows] == ["2026-10"]
+    [deferral] = deferrals.rows
+    assert deferral.deferral_type == "admin_hold"
+    assert deferral.enrollment_id == "enr-1"
+    assert deferral.student_id == "stu-1"
+    assert deferral.resume_on == date(2026, 10, 15)
+    assert deferral.source == "admin_hold"
+    assert deferral.actor_id == "admin-1"
+    assert deferral.status == "active"
 
 
 @pytest.mark.asyncio

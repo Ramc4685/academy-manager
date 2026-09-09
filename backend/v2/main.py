@@ -566,6 +566,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.admin.resume_enrollment.set_seat_broker(_holds.seat_broker)
     app.state.admin.transfer_enrollment.set_seat_broker(_holds.seat_broker)
     app.state.admin.promote_from_waitlist.set_seat_broker(_holds.seat_broker)
+    # Issue follow-up: registration approval is a fifth seat-reserving call
+    # site that the original four-class wiring test never counted — see
+    # tests/structural/test_seat_broker_wiring.py.
+    app.state.admin.admin_registration_review.set_seat_broker(_holds.seat_broker)
     # The event-driven promotion path (Enrollment.EnrollmentCancelled ->
     # PromoteFromWaitlist, wired via install_handlers in compose_parent) is a
     # SECOND PromoteFromWaitlist instance, distinct from the one above that
@@ -573,6 +577,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # ordinary cancel/drop and must reclaim a hold exactly like the route
     # does, so it needs the same broker.
     app.state.parent.promote_from_waitlist.set_seat_broker(_holds.seat_broker)
+    # ConfirmEnrollment (Billing.PaymentSucceeded -> new checkout enrollment)
+    # is the same shape of seat demand as the routes above: a class full only
+    # because of holds must reclaim, not force an auto-refund.
+    app.state.parent.confirm_enrollment.set_seat_broker(_holds.seat_broker)
     # Stop-all-classes + leaving report (issue #698; also outside
     # composition/admin.py's line budget).
     from backend.v2.composition.departures import compose_departures

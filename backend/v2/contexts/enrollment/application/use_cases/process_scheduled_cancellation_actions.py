@@ -22,8 +22,8 @@ status — but belt and braces) is caught by the second pass.
 
 Outcomes per action:
 
-- enrollment still active (or paused: an admin pause keeps the pending
-  cancellation) → cancelled; ``succeeded``.
+- enrollment still active (or paused/held: an admin pause or hold keeps the
+  pending cancellation) → cancelled; ``succeeded``.
 - enrollment already ended by an admin (cancel / withdraw / session cancel
   cleared the pending marker or flipped the status) → nothing to do;
   ``cancelled`` with the reason, never ``failed`` — an operator reading the
@@ -105,8 +105,12 @@ class ProcessScheduledCancellationActionsResult(BaseModel):
 
 
 #: Statuses that still hold a seat; a paused row released its own when it
-#: paused (see ``admin_writes.CancelEnrollment._SEATLESS_STATUSES``).
-_SEATED_STATUSES = frozenset({"active"})
+#: paused (see ``admin_writes.CancelEnrollment._SEATLESS_STATUSES``). A held
+#: row keeps its seat too — ``mark_held_if_active`` never touches
+#: ``reserved_seats`` — so it must be included here or a hold placed after an
+#: end-of-period self-cancel leaks the seat forever once this worker
+#: completes the cancellation.
+_SEATED_STATUSES = frozenset({"active", "held"})
 
 #: How many times a transient failure is retried before the row is parked as
 #: ``failed`` for a human. Hourly ticks, so three attempts spans ~2h — inside

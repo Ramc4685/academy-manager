@@ -93,6 +93,24 @@ class MongoHoldRepository(TenantScopedRepository):
         )
         return _to_domain(doc) if doc else None
 
+    async def mark_reclaim_orphaned(self, enrollment_id: str, *, now: datetime) -> None:
+        """Best-effort CAS: stamp ``hold_reclaim_failed_at`` on a row still
+        ``reclaim_pending`` (issue follow-up on #697's stalled-reclaim sweep).
+
+        Called from ``SeatBroker.acquire``'s except block when its own
+        ``finalize_reclaim`` call raised — a Mongo blip or primary
+        step-down — after the CAS above already flipped this row to
+        ``reclaim_pending`` but before the withdrawal committed. The filter
+        on ``status: "reclaim_pending"`` makes this safe even when the
+        underlying write actually DID apply despite the raised error (the
+        classic ambiguous-write case): the row is already ``withdrawn`` by
+        then, this simply matches nothing, and the (genuine) hand-over is
+        left alone."""
+        await self._update_one(
+            {"enrollment_id": enrollment_id, "status": "reclaim_pending"},
+            {"$set": {"hold_reclaim_failed_at": now}},
+        )
+
     async def list_stalled(self, *, older_than: datetime) -> list[Enrollment]:
         cursor = self._find_many(
             {"status": "reclaim_pending", "hold_reclaim_claimed_at": {"$lt": older_than}}

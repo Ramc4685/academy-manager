@@ -8,6 +8,7 @@ what is not yet covered at full contract depth).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -17,7 +18,10 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     WithdrawEnrollment,
     WithdrawEnrollmentCommand,
 )
-from backend.v2.contexts.enrollment.application.use_cases.holds import ReturnFromHold
+from backend.v2.contexts.enrollment.application.use_cases.holds import (
+    ProcessStalledReclaims,
+    ReturnFromHold,
+)
 from backend.v2.contexts.enrollment.domain.departure_policy import EnrollmentNotReturnable
 from backend.v2.contexts.enrollment.domain.errors import EnrollmentNotWithdrawable
 from backend.v2.contexts.enrollment.domain.models import SEAT_HOLDING
@@ -401,3 +405,155 @@ async def test_c7_release_after_a_plain_reserve_is_a_bare_release_no_orphan_even
     assert sessions.release_calls == ["sess-1"]
     assert sessions.reserved_seats["sess-1"] == 0
     assert events.rows == []  # no orphan event for a non-reclaim release
+
+
+# -- Orphan recovery: finalize_reclaim's own write raises mid-acquire -------
+
+
+@dataclass
+class _FinalizeRaisesOnce(FakeHoldRepository):
+    """Wraps ``FakeHoldRepository`` so its ``finalize_reclaim`` raises
+    exactly once — simulating the exact failure this guards against: the
+    withdrawal write inside ``finalize_reclaim`` hits a Mongo blip / primary
+    step-down AFTER ``claim_longest_held`` already flipped the victim to
+    ``reclaim_pending``."""
+
+    should_raise: bool = True
+
+    async def finalize_reclaim(self, enrollment_id: str, *, withdrawal_date):
+        if self.should_raise:
+            self.should_raise = False
+            raise RuntimeError("mongo primary step-down")
+        return await super().finalize_reclaim(enrollment_id, withdrawal_date=withdrawal_date)
+
+
+@pytest.mark.asyncio
+async def test_acquire_marks_the_victim_orphaned_when_finalize_raises() -> None:
+    """If finalize_reclaim's own withdrawal write raises after
+    claim_longest_held already claimed the victim, nobody got the seat:
+    acquire() must re-raise (so the caller's own write never happens
+    either) AND the victim row must be marked so the stalled-reclaim sweep,
+    fifteen minutes later, can tell this apart from a genuinely completed
+    hand-over — see the two tests below and ``ProcessStalledReclaims``."""
+    sessions = FakeSessionWriter(sessions={"sess-1": make_session(capacity=1)})
+    sessions.reserved_seats["sess-1"] = 1
+    enrollments = FakeEnrollmentWriter(
+        rows={
+            "held-1": make_enrollment(
+                "held-1", status="held", hold_started_at=NOW - timedelta(days=3)
+            )
+        }
+    )
+    holds = _FinalizeRaisesOnce(enrollments=enrollments)
+    broker = SeatBroker(
+        sessions=sessions,
+        holds=holds,
+        departure_policy=FakeDeparturePolicyRepo(),
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(RuntimeError, match="primary step-down"):
+        await broker.acquire("sess-1", requested_by="roster_add:new-student")
+
+    victim = enrollments.rows["held-1"]
+    # Still reclaim_pending — the withdrawal write never committed, so the
+    # row must NOT read as a completed hand-over.
+    assert victim.status == "reclaim_pending"
+    assert victim.hold_reclaim_failed_at == NOW
+    # The requester never got the seat — no arithmetic happened at all.
+    assert sessions.reserved_seats["sess-1"] == 1
+    assert sessions.release_calls == []
+
+
+@pytest.mark.asyncio
+async def test_mark_reclaim_orphaned_is_a_no_op_once_finalize_actually_committed() -> None:
+    """Guards the ambiguous-write case: if the underlying write actually DID
+    apply despite the caller seeing an exception (a lost ack, say), the row
+    is already withdrawn by the time anything calls mark_reclaim_orphaned —
+    it must not resurrect or otherwise touch a genuine hand-over."""
+    enrollments = FakeEnrollmentWriter(
+        rows={"held-1": make_enrollment("held-1", status="withdrawn")}
+    )
+    holds = FakeHoldRepository(enrollments=enrollments)
+
+    await holds.mark_reclaim_orphaned("held-1", now=NOW)
+
+    assert enrollments.rows["held-1"].status == "withdrawn"
+    assert enrollments.rows["held-1"].hold_reclaim_failed_at is None
+
+
+@pytest.mark.asyncio
+async def test_stalled_sweep_recovers_an_orphaned_claim_as_an_orphan_not_a_handover() -> None:
+    """Fifteen minutes after the failure above, the stalled-reclaim sweep
+    must NOT read `hold_reclaim_for` and finalize this as a completed
+    hand-over — that would drop the family and tell them their seat went to
+    another family when it went nowhere. It must release the seat (nobody
+    is waiting for it) and record/notify the honest "orphaned" story."""
+    sessions = FakeSessionWriter(sessions={"sess-1": make_session(capacity=1)})
+    sessions.reserved_seats["sess-1"] = 1
+    victim = make_enrollment(
+        "held-1",
+        status="reclaim_pending",
+        hold_started_at=NOW - timedelta(days=3),
+        hold_reclaim_claimed_at=NOW - timedelta(minutes=20),
+        hold_reclaim_for="roster_add:new-student",
+        hold_reclaim_failed_at=NOW - timedelta(minutes=20),
+    )
+    enrollments = FakeEnrollmentWriter(rows={"held-1": victim})
+    holds = FakeHoldRepository(enrollments=enrollments)
+    billing = FakeBillingSync()
+    notifier = FakeHoldNotifier()
+    events = FakeEnrollmentEvents()
+    sweep = ProcessStalledReclaims(
+        holds=holds,
+        sessions=sessions,
+        billing_sync=billing,
+        notifier=notifier,
+        enrollment_events=events,
+        clock=lambda: NOW,
+    )
+
+    finalized = await sweep.execute()
+
+    assert finalized == 1
+    assert enrollments.rows["held-1"].status == "withdrawn"
+    # The seat is RELEASED — nobody actually received it — unlike a real
+    # hand-over, which performs no seat arithmetic at all.
+    assert sessions.release_calls == ["sess-1"]
+    assert sessions.reserved_seats["sess-1"] == 0
+    assert [e.event_type for e in events.rows] == ["hold_reclaim_orphaned"]
+    [reclaimed] = notifier.reclaimed_calls
+    assert reclaimed["reason"] == "orphaned"
+    assert reclaimed["requested_by"] is None
+
+
+@pytest.mark.asyncio
+async def test_stalled_sweep_still_treats_a_real_handover_as_reclaimed() -> None:
+    """Control case: a stalled row with NO hold_reclaim_failed_at (a real,
+    still-in-flight hand-over caught by crash recovery) keeps the old
+    handed_over/reclaimed behavior — this fix is additive, not a change to
+    the existing default."""
+    sessions = FakeSessionWriter(sessions={"sess-1": make_session(capacity=1)})
+    sessions.reserved_seats["sess-1"] = 1
+    victim = make_enrollment(
+        "held-1",
+        status="reclaim_pending",
+        hold_started_at=NOW - timedelta(days=3),
+        hold_reclaim_claimed_at=NOW - timedelta(minutes=20),
+        hold_reclaim_for="roster_add:new-student",
+    )
+    enrollments = FakeEnrollmentWriter(rows={"held-1": victim})
+    holds = FakeHoldRepository(enrollments=enrollments)
+    events = FakeEnrollmentEvents()
+    sweep = ProcessStalledReclaims(
+        holds=holds, sessions=sessions, enrollment_events=events, clock=lambda: NOW
+    )
+
+    finalized = await sweep.execute()
+
+    assert finalized == 1
+    assert enrollments.rows["held-1"].status == "withdrawn"
+    # Handed over — no seat arithmetic, unlike the orphan case above.
+    assert sessions.release_calls == []
+    assert sessions.reserved_seats["sess-1"] == 1
+    assert [e.event_type for e in events.rows] == ["hold_reclaimed"]

@@ -97,18 +97,48 @@ class SeatBroker:
 
         # No release_seat, no second try_reserve_seat — the handover: the
         # victim's seat is transferred to the requester, net zero.
-        await finalize_reclaim(
-            victim,
-            holds=self._holds,
-            billing_sync=self._billing_sync,
-            notifier=self._notifier,
-            enrollment_events=self._enrollment_events,
-            requested_by=requested_by,
-            reason="reclaimed",
-            seat_disposition="handed_over",
-            sessions=self._sessions,
-            now=now,
-        )
+        try:
+            await finalize_reclaim(
+                victim,
+                holds=self._holds,
+                billing_sync=self._billing_sync,
+                notifier=self._notifier,
+                enrollment_events=self._enrollment_events,
+                requested_by=requested_by,
+                reason="reclaimed",
+                seat_disposition="handed_over",
+                sessions=self._sessions,
+                now=now,
+            )
+        except Exception:
+            # `claim_longest_held` above already flipped the victim to
+            # reclaim_pending. If the withdrawal write inside
+            # finalize_reclaim itself raised (a Mongo blip, a primary
+            # step-down) instead of completing, nobody got this seat: this
+            # method is about to re-raise, so the caller's own write never
+            # happens either. Stamp the row so the stalled-reclaim sweep
+            # (ProcessStalledReclaims, ~15 minutes later) recovers it as an
+            # ORPHAN — seat released, family told the honest story — rather
+            # than reading `hold_reclaim_for` and finalizing it as a
+            # completed hand-over, which would drop the family and tell them
+            # their seat went to another family when it went nowhere. Safe
+            # even if the underlying write actually DID apply despite
+            # raising (an ambiguous write): the CAS in
+            # `mark_reclaim_orphaned` only matches a row still
+            # `reclaim_pending`, so a genuinely-completed hand-over is left
+            # untouched.
+            log.exception(
+                "seat_broker_reclaim_finalize_failed",
+                extra={"enrollment_id": victim.enrollment_id, "session_id": session_id},
+            )
+            try:
+                await self._holds.mark_reclaim_orphaned(victim.enrollment_id, now=now)
+            except Exception:
+                log.exception(
+                    "seat_broker_mark_reclaim_orphaned_failed",
+                    extra={"enrollment_id": victim.enrollment_id},
+                )
+            raise
         return SeatAcquisition(
             granted=True,
             via_reclaim=True,
@@ -168,7 +198,7 @@ async def finalize_reclaim(
     notifier: HoldNotifier | None,
     enrollment_events: EnrollmentEventRepository | None,
     requested_by: str | None,
-    reason: Literal["reclaimed", "expired"],
+    reason: Literal["reclaimed", "expired", "orphaned"],
     seat_disposition: Literal["handed_over", "release"],
     now: datetime,
 ) -> None:
@@ -177,7 +207,10 @@ async def finalize_reclaim(
     Non-defaulted ``seat_disposition`` so this can never be got wrong by
     omission: ``SeatBroker.acquire`` passes ``"handed_over"`` (no seat
     arithmetic — the seat is transferred, not freed); ``ExpireDueHolds`` and
-    the stalled-reclaim sweep pass ``"release"`` (nobody is waiting).
+    the stalled-reclaim sweep pass ``"release"`` (nobody is waiting) — as does
+    the sweep's recovery of an ORPHANED claim (``reason="orphaned"``): the
+    original acquiring caller's transaction failed before it ever held the
+    seat, so nobody is waiting for this one either.
     """
     finalized = await holds.finalize_reclaim(victim.enrollment_id, withdrawal_date=now)
     if finalized is None:
@@ -210,11 +243,16 @@ async def finalize_reclaim(
         from backend.v2.shared.ids import new_ulid
 
         try:
+            event_type = {
+                "reclaimed": "hold_reclaimed",
+                "expired": "hold_expired",
+                "orphaned": "hold_reclaim_orphaned",
+            }[reason]
             await enrollment_events.record(
                 EnrollmentLifecycleEvent(
                     event_id=str(new_ulid()),
                     academy_id=victim.academy_id,
-                    event_type="hold_reclaimed" if reason == "reclaimed" else "hold_expired",
+                    event_type=event_type,  # type: ignore[arg-type]
                     enrollment_id=victim.enrollment_id,
                     session_id=victim.session_id,
                     student_id=victim.student_id,

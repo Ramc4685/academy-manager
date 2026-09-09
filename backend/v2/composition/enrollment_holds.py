@@ -57,6 +57,9 @@ def compose_enrollment_holds(db: Any, settings: Any) -> EnrollmentHoldsCompositi
     from backend.v2.composition.hold_notifications import compose_hold_notifications
     from backend.v2.composition.lifecycle_billing import compose_enrollment_billing_sync
     from backend.v2.composition.roster_notifications import compose_roster_notifier
+    from backend.v2.contexts.enrollment.infrastructure.mongo_billing_deferral_repo import (
+        MongoBillingDeferralRepository,
+    )
     from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_event_repo import (
         MongoEnrollmentEventRepository,
     )
@@ -65,6 +68,11 @@ def compose_enrollment_holds(db: Any, settings: Any) -> EnrollmentHoldsCompositi
     roster_notifier = compose_roster_notifier(db, settings)
     hold_notifier = compose_hold_notifications(db, settings)
     enrollment_events = MongoEnrollmentEventRepository(db)
+    # Contract T1: a held month writes a BillingDeferral exactly like a
+    # paused month does. Its own repo instance (composition/admin.py already
+    # builds one, but this module cannot see it and is at its own line
+    # budget for extra constructor plumbing) — same collection either way.
+    billing_deferrals = MongoBillingDeferralRepository(db)
 
     policy_repo = MongoDeparturePolicyRepository(db)
     enrollments = MongoEnrollmentWriter(db)
@@ -76,6 +84,7 @@ def compose_enrollment_holds(db: Any, settings: Any) -> EnrollmentHoldsCompositi
         departure_policy=policy_repo,
         enrollment_events=enrollment_events,
         billing_sync=billing_sync,
+        billing_deferrals=billing_deferrals,
         roster_notifier=roster_notifier,
     )
     return_from_hold = ReturnFromHold(

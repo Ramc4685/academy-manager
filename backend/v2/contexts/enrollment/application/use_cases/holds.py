@@ -25,6 +25,11 @@ from backend.v2.contexts.enrollment.application.ports import (
     SessionWriter,
 )
 from backend.v2.contexts.enrollment.application.seat_broker import finalize_reclaim
+from backend.v2.contexts.enrollment.application.use_cases.billing_deferrals import (
+    BillingDeferral,
+    BillingDeferralRepository,
+    paused_billing_periods,
+)
 from backend.v2.contexts.enrollment.application.use_cases.scheduled_actions import (
     ScheduledEnrollmentActionRepository,
 )
@@ -128,6 +133,7 @@ class HoldEnrollment:
         departure_policy: EnrollmentDeparturePolicyLookup,
         enrollment_events: EnrollmentEventRepository | None = None,
         billing_sync: EnrollmentBillingSync | None = None,
+        billing_deferrals: BillingDeferralRepository | None = None,
         roster_notifier: RosterChangeNotifier | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
@@ -135,6 +141,7 @@ class HoldEnrollment:
         self._departure_policy = departure_policy
         self._enrollment_events = enrollment_events
         self._billing_sync = billing_sync
+        self._billing_deferrals = billing_deferrals
         self._roster_notifier = roster_notifier
         self._now = clock
 
@@ -207,6 +214,35 @@ class HoldEnrollment:
             occurred_at=now,
             billing_result=str(billing.get("billing_result")) if billing else None,
         )
+        if self._billing_deferrals is not None:
+            # Departures design contract T1: a held month writes one
+            # BillingDeferral per PAUSED-equivalent month, exactly like a
+            # paused month does (issue #651's reasoning applies unchanged) —
+            # otherwise the invoice generator's active/paused-only selection
+            # makes a held row simply invisible with no audit trail
+            # explaining the gap, while a paused month leaves one.
+            for billing_period in paused_billing_periods(
+                effective_at=now, resume_on=return_on, review_on=None
+            ):
+                await self._billing_deferrals.add(
+                    BillingDeferral(
+                        deferral_id=str(new_ulid()),
+                        enrollment_id=enrollment_id,
+                        student_id=e.student_id,
+                        deferral_type="admin_hold",
+                        reason=reason or "admin hold",
+                        source="admin_hold",
+                        source_id=None,
+                        actor_id=actor_id,
+                        actor_type="admin" if actor_id else "system",
+                        billing_period=billing_period,
+                        resume_on=return_on,
+                        review_on=None,
+                        created_at=now,
+                        updated_at=now,
+                        metadata={"seat_policy": "seat_retained"},
+                    )
+                )
         if self._roster_notifier is not None:
             try:
                 await self._roster_notifier.roster_changed(
@@ -384,13 +420,26 @@ class ProcessStalledReclaims:
 
     Defaults to "handed_over" — the requester either completed its write
     (and holds the seat) or compensated via SeatBroker.release, which never
-    re-releases here. The one exception is a row claimed by `ExpireDueHolds`
-    (`hold_reclaim_for == "hold_expiry"`): nobody is waiting for that seat,
-    so finalizing it as a reclaim would hand the seat to no one (leaking it,
-    since "handed_over" performs no seat arithmetic) and email the family
-    "reclaimed" instead of "expired". That row is finalized exactly as
-    `ExpireDueHolds` itself would have: `seat_disposition="release"`,
-    `reason="expired"`, `requested_by=None`.
+    re-releases here. Two exceptions:
+
+    - a row claimed by `ExpireDueHolds` (`hold_reclaim_for == "hold_expiry"`):
+      nobody is waiting for that seat, so finalizing it as a reclaim would
+      hand the seat to no one (leaking it, since "handed_over" performs no
+      seat arithmetic) and email the family "reclaimed" instead of "expired".
+      That row is finalized exactly as `ExpireDueHolds` itself would have:
+      `seat_disposition="release"`, `reason="expired"`, `requested_by=None`.
+    - a row with `hold_reclaim_failed_at` set: `SeatBroker.acquire` claimed
+      it but its OWN `finalize_reclaim` call raised (a Mongo blip, a primary
+      step-down) before the withdrawal committed, so the acquiring caller's
+      transaction failed too and nobody received this seat either — a
+      genuine ORPHAN, distinguishable from a real, completed hand-over only
+      because `SeatBroker.acquire` stamped this marker in its except block.
+      Finalizing it as "handed_over"/"reclaimed" (the old, buggy default)
+      would drop the family and tell them their seat went to another family
+      when it went nowhere. This is recovered the same way an expiry would
+      be: `seat_disposition="release"`, `reason="orphaned"` (a distinct
+      reason from "expired" — the hold did not run out its clock, a write
+      failed) — the seat is freed and the family is told the honest story.
     """
 
     def __init__(
@@ -417,8 +466,16 @@ class ProcessStalledReclaims:
         for row in await self._holds.list_stalled(older_than=cutoff):
             if row.hold_reclaim_for == EXPIRY_REQUESTED_BY:
                 requested_by: str | None = None
-                reason: Literal["reclaimed", "expired"] = "expired"
+                reason: Literal["reclaimed", "expired", "orphaned"] = "expired"
                 seat_disposition: Literal["handed_over", "release"] = "release"
+                sessions = self._sessions
+            elif row.hold_reclaim_failed_at is not None:
+                # SeatBroker.acquire claimed this row but its own
+                # finalize_reclaim call never committed — nobody got the
+                # seat. Recover it as an orphan, not a completed hand-over.
+                requested_by = None
+                reason = "orphaned"
+                seat_disposition = "release"
                 sessions = self._sessions
             else:
                 requested_by = row.hold_reclaim_for
