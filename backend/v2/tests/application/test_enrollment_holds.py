@@ -16,7 +16,9 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     TransferEnrollmentCommand,
 )
 from backend.v2.contexts.enrollment.application.use_cases.holds import (
+    STALLED_RECLAIM_AFTER,
     HoldEnrollment,
+    ProcessStalledReclaims,
     ReturnFromHold,
 )
 from backend.v2.contexts.enrollment.domain.departure_policy import (
@@ -31,6 +33,8 @@ from backend.v2.tests.fixtures.enrollment_fakes import (
     FakeDeparturePolicyRepo,
     FakeEnrollmentEvents,
     FakeEnrollmentWriter,
+    FakeHoldNotifier,
+    FakeHoldRepository,
     FakeSessionWriter,
     make_enrollment,
     make_session,
@@ -289,3 +293,100 @@ async def test_c8_transfer_of_paused_row_never_double_releases_the_source_seat()
     assert sessions.release_calls == []  # the fix: zero releases for a paused row
     assert sessions.reserved_seats["sess-a"] == 1  # the other student's seat survives
     assert sessions.reserved_seats["sess-b"] == 1
+
+
+# -- Structural: HoldEnrollment cannot touch waitlist or outbox -------------
+
+
+def test_hold_enrollment_constructor_has_no_waitlist_or_outbox_collaborator() -> None:
+    """Contract §2.4 T1: 'Unlike Pause, Hold writes no WaitlistEntry and
+    emits no EnrollmentCancelled.' PauseEnrollment's constructor accepts a
+    ``waitlist`` and an ``outbox`` collaborator precisely because it must use
+    them; HoldEnrollment must have no way to reach either, so this is
+    enforced by the type signature itself, not by a mock that happens not to
+    be called."""
+    import inspect
+
+    params = set(inspect.signature(HoldEnrollment.__init__).parameters)
+    assert "waitlist" not in params
+    assert "outbox" not in params
+
+
+# -- C10: crash recovery after a `held -> reclaim_pending` CAS --------------
+
+
+@pytest.mark.asyncio
+async def test_c10_stalled_reclaim_is_finalized_exactly_once_seats_unchanged() -> None:
+    """A crash between claim_longest_held and finalize leaves a row stuck in
+    reclaim_pending. ProcessStalledReclaims must finalize it as
+    'handed_over' (no seat arithmetic — the requester already holds the
+    seat) and the notice must be sent exactly once even if the sweep runs
+    twice."""
+    claimed_at = NOW - STALLED_RECLAIM_AFTER - timedelta(minutes=1)
+    enrollments = FakeEnrollmentWriter(
+        rows={
+            "held-1": make_enrollment(
+                "held-1",
+                status="reclaim_pending",
+                hold_started_at=NOW - timedelta(days=10),
+                hold_reclaim_claimed_at=claimed_at,
+                hold_reclaim_for="roster_add:new-student",
+            )
+        }
+    )
+    sessions = FakeSessionWriter(sessions={"sess-1": make_session(capacity=1)})
+    sessions.reserved_seats["sess-1"] = 1  # the requester already holds this seat
+    holds = FakeHoldRepository(enrollments=enrollments)
+    billing = FakeBillingSync()
+    notifier = FakeHoldNotifier()
+    events = FakeEnrollmentEvents()
+
+    sweep = ProcessStalledReclaims(
+        holds=holds,
+        billing_sync=billing,
+        notifier=notifier,
+        enrollment_events=events,
+        clock=lambda: NOW,
+    )
+
+    finalized_first = await sweep.execute()
+    assert finalized_first == 1
+    assert enrollments.rows["held-1"].status == "withdrawn"
+    # Handed-over disposition: no seat arithmetic from the sweep.
+    assert sessions.release_calls == []
+    assert sessions.reserved_seats["sess-1"] == 1
+    assert [c["transition"] for c in billing.calls] == ["dropped"]
+    assert len(notifier.reclaimed_calls) == 1
+
+    # A second sweep tick (e.g. the job runs again before the next crash
+    # window) must not re-finalize or re-notify — the row is already
+    # withdrawn, so list_stalled finds nothing.
+    finalized_second = await sweep.execute()
+    assert finalized_second == 0
+    assert len(notifier.reclaimed_calls) == 1
+    assert [c["transition"] for c in billing.calls] == ["dropped"]
+
+
+@pytest.mark.asyncio
+async def test_c10_a_reclaim_pending_row_not_yet_stale_is_left_alone() -> None:
+    """The sweep must only touch rows older than STALLED_RECLAIM_AFTER —
+    otherwise it would race a still-in-flight (non-crashed) caller."""
+    fresh_claim = NOW - timedelta(minutes=1)
+    enrollments = FakeEnrollmentWriter(
+        rows={
+            "held-1": make_enrollment(
+                "held-1",
+                status="reclaim_pending",
+                hold_started_at=NOW - timedelta(days=10),
+                hold_reclaim_claimed_at=fresh_claim,
+                hold_reclaim_for="roster_add:x",
+            )
+        }
+    )
+    holds = FakeHoldRepository(enrollments=enrollments)
+    sweep = ProcessStalledReclaims(holds=holds, clock=lambda: NOW)
+
+    finalized = await sweep.execute()
+
+    assert finalized == 0
+    assert enrollments.rows["held-1"].status == "reclaim_pending"
