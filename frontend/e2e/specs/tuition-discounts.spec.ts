@@ -294,6 +294,19 @@ async function stubAdminStudentDiscounts(page: Page, student: StudentDetail) {
     if (route.request().method() !== "GET") return route.fallback();
     return fulfillJson(route, { session_types: [] });
   });
+  // Issue #698: both the student page and the family page's StudentsPanel
+  // fetch the departure policy unconditionally (it seeds the stop-all-classes
+  // dialog's default outcome before the admin ever opens it). Unstubbed it
+  // 404s on every visit to either page, same failure mode as the pair above.
+  await page.route("**/api/v2/admin/enrollment/departure-policy", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, {
+      max_hold_days: 30,
+      hold_reclaim_policy: "longest_held",
+      drop_default_outcome: "no_credit_mid_month",
+      delete_enrollment_requires_owner: true,
+    });
+  });
   await page.route("**/api/v2/admin/students/student-discounts", (route) => {
     if (route.request().method() !== "GET") return route.fallback();
     return fulfillJson(route, student);
