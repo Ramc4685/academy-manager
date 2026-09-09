@@ -21,6 +21,7 @@ import {
   stubAcademy,
   stubMe,
   stubMemberships,
+  stubParentAcademy,
   stubParentMessages,
   stubParentProfile,
 } from "../fixtures/saas-stubs";
@@ -45,6 +46,9 @@ test.describe("SaaS v2 — parent registration", () => {
     // The parent layout fetches this on every /parent/* page (issue #380).
     await stubParentProfile(page, { user_id: "user-parent-w5" });
     await stubParentMessages(page);
+    // /parent/onboarding reads the academy profile on mount; unstubbed it 500s
+    // and trips the clean-console assertion below.
+    await stubParentAcademy(page);
 
     const onboardingStarts: number[] = [];
     await page.route("**/api/v2/parent/onboarding/start", (route) => {

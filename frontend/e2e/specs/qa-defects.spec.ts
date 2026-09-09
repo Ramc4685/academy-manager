@@ -365,8 +365,17 @@ test.describe("QA defect regressions", () => {
         ],
       });
     });
+    // Hold the reconcile open until the test has actually seen the confirming
+    // banner, instead of sleeping a fixed 200ms and hoping the assertion looks
+    // inside that window. Under Next 16 WebKit settles the navigation later
+    // than 200ms, so the fixed sleep raced and the banner was gone before the
+    // first assertion could start polling (the end state was still correct).
+    let releaseCheckoutStatus = () => {};
+    const checkoutStatusHeld = new Promise<void>((resolve) => {
+      releaseCheckoutStatus = resolve;
+    });
     await page.route("**/api/v2/parent/checkout/status/cs_return_123", async (route) => {
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await checkoutStatusHeld;
       return fulfillJson(route, {
         checkout_session_id: "cs_return_123",
         payment_id: null,
@@ -384,6 +393,7 @@ test.describe("QA defect regressions", () => {
     await page.goto("/parent/payments?autopay=success&checkout_session_id=cs_return_123");
 
     await expect(page.getByTestId("autopay-checkout-confirming")).toBeVisible();
+    releaseCheckoutStatus();
     await expect(page.getByText("Autopay active")).toBeVisible();
     await expect(page.getByRole("button", { name: "Autopay on" })).toBeDisabled();
     expect(enrollmentReads).toBeGreaterThan(1);
