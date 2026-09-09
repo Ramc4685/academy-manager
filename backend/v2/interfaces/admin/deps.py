@@ -75,6 +75,17 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     TransferEnrollment,
     WithdrawEnrollment,
 )
+from backend.v2.contexts.enrollment.application.use_cases.departure_policies import (
+    GetEnrollmentDeparturePolicy,
+    UpdateEnrollmentDeparturePolicy,
+)
+from backend.v2.contexts.enrollment.application.use_cases.holds import (
+    HoldEnrollment,
+    ReturnFromHold,
+)
+from backend.v2.contexts.enrollment.application.use_cases.leaving_report import (
+    GetLeavingReport,
+)
 from backend.v2.contexts.enrollment.application.use_cases.makeup_requests import (
     ApproveMakeupRequest,
     DenyMakeupRequest,
@@ -99,6 +110,9 @@ from backend.v2.contexts.enrollment.application.use_cases.self_cancel import (
 from backend.v2.contexts.enrollment.application.use_cases.self_service_policies import (
     GetSelfServicePolicy,
     UpdateSelfServicePolicy,
+)
+from backend.v2.contexts.enrollment.application.use_cases.stop_all_classes import (
+    StopAllClasses,
 )
 from backend.v2.contexts.enrollment.application.use_cases.trial_requests import (
     ApproveTrialRequest,
@@ -407,14 +421,14 @@ class AdminUseCases:
     # (never composition/admin.py — see that module's docstring) and attached
     # onto this already-built object in main.py, mirroring
     # compose_admin_billing_rules's pattern.
-    departure_policy: object | None = None  # GetEnrollmentDeparturePolicy
-    update_departure_policy: object | None = None  # UpdateEnrollmentDeparturePolicy
-    hold_enrollment: object | None = None  # HoldEnrollment
-    return_from_hold: object | None = None  # ReturnFromHold
+    departure_policy: GetEnrollmentDeparturePolicy | None = None
+    update_departure_policy: UpdateEnrollmentDeparturePolicy | None = None
+    hold_enrollment: HoldEnrollment | None = None
+    return_from_hold: ReturnFromHold | None = None
     # Stop-all-classes + leaving report (issue #698). Wired in
     # composition/departures.py, same attach-after-the-fact pattern.
-    stop_all_classes: object | None = None  # StopAllClasses
-    leaving_report: object | None = None  # GetLeavingReport
+    stop_all_classes: StopAllClasses | None = None
+    leaving_report: GetLeavingReport | None = None
 
 
 def get_admin_use_cases(request: Request) -> AdminUseCases:

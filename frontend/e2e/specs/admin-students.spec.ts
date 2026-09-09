@@ -381,6 +381,18 @@ test.describe("admin students", () => {
       if (route.request().method() !== "GET") return route.fallback();
       return fulfillJson(route, { session_types: [] });
     });
+    // The student profile header prefetches the academy's departure policy to
+    // seed the "Stop all classes" dialog (#698). Unstubbed it 404s, and this
+    // spec asserts an empty console.
+    await page.route("**/api/v2/admin/enrollment/departure-policy", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, {
+        max_hold_days: 60,
+        hold_reclaim_policy: "longest_held",
+        drop_default_outcome: "no_credit_mid_month",
+        delete_enrollment_requires_owner: true,
+      });
+    });
     await page.route("**/api/v2/admin/students/student-1", (route) => {
       if (route.request().method() === "PATCH") {
         const requestBody = route.request().postDataJSON() as Record<string, unknown>;
