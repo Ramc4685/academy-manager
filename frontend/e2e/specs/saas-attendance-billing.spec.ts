@@ -87,6 +87,13 @@ test.describe("SaaS v2 — coach attendance is tenant-scoped", () => {
     await page.route("**/api/v2/coach/sessions/*/progress-notes", (route) =>
       fulfillJson(route, { notes: [] }),
     );
+    // The session detail page mounts the announcements panel (#614) for a
+    // lead coach. Unstubbed the fetch 500s and trips the clean-console
+    // assertion at the end of this test.
+    await page.route("**/api/v2/coach/sessions/*/announcements", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, { announcements: [] });
+    });
     await page.route("**/api/v2/coach/attendance", (route) => {
       if (route.request().method() !== "POST") return route.fallback();
       const body = JSON.parse(route.request().postData() ?? "{}");
@@ -226,6 +233,25 @@ test.describe("SaaS v2 — admin billing ledger idempotency", () => {
     await page.route("**/api/v2/admin/payments*", (route) => {
       if (route.request().method() !== "GET") return route.fallback();
       return fulfillJson(route, { payments: [] });
+    });
+    // A `payments*` glob does NOT match `/payments/collections` — Playwright
+    // stops the `*` wildcard at the path separator — so the buckets fetch the
+    // page makes on mount needs its own route or it 500s.
+    await page.route("**/api/v2/admin/payments/collections*", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, {
+        period: "2026-05",
+        generated_at: "2026-05-22T15:00:00Z",
+        timezone: "UTC",
+        totals: {
+          owed_cents: 0,
+          autopay_scheduled_cents: 0,
+          autopay_scheduled_count: 0,
+          needs_action_count: 0,
+          collected_cents: 0,
+        },
+        buckets: [],
+      });
     });
     await page.route("**/api/v2/admin/billing/webhooks*", (route) => {
       if (route.request().method() !== "GET") return route.fallback();
