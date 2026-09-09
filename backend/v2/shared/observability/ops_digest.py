@@ -100,6 +100,15 @@ JOB_STALE_AFTER: dict[str, timedelta] = {
     "process_scheduled_cancellation_actions": timedelta(hours=3),
     "expire_makeup_requests": timedelta(hours=26),
     "send_ops_digest": timedelta(hours=26),
+    # Issue #697: daily hold sweeps (departures design contract §3.9/§4.3).
+    # 26h, not 24h, for the same reason as the other daily jobs above — a
+    # single missed tick must not immediately read as stale.
+    "expire_due_holds": timedelta(hours=26),
+    "send_hold_reminders": timedelta(hours=26),
+    # Crash-recovery sweep (contract §3.7); runs every 15 minutes, so a
+    # window comfortably above a few missed ticks catches a genuinely
+    # stopped scheduler without paging on routine jitter.
+    "process_stalled_hold_reclaims": timedelta(hours=1),
 }
 
 

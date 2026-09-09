@@ -230,22 +230,35 @@ class ApprovePauseRequest:
         if existing is not None and existing.status == "approved":
             return existing
 
-        request = await self._pause_requests.approve(
-            cmd.pause_request_id,
-            admin_id=cmd.admin_id,
-        )
-        if self._pause_enrollment is not None:
+        # Run PauseEnrollment BEFORE writing the approval, not after.
+        # PauseEnrollment now refuses a `held` enrollment with
+        # EnrollmentNotPausable (T9, contract §2.4) — Return it first, then
+        # Pause. The two writes are to separate repositories with no shared
+        # transaction here, so ordering is the only way to avoid a
+        # half-applied state: approving first and pausing second (the old
+        # order) left an "approved" row on record with no pause behind it —
+        # attendance kept counting and the billing deferrals this method
+        # writes below never ran, because the exception aborted the method
+        # before reaching them. Pausing first means a refusal leaves the
+        # request exactly as it was (still pending, nothing else written),
+        # which is the only outcome with no partial state either way.
+        if self._pause_enrollment is not None and existing is not None:
             await self._pause_enrollment.execute(
                 PauseEnrollmentCommand(
-                    enrollment_id=request.enrollment_id,
+                    enrollment_id=existing.enrollment_id,
                     actor_id=cmd.admin_id,
-                    reason=request.reason or "parent pause request",
-                    resume_on=request.resume_on,
-                    review_on=request.review_on,
+                    reason=existing.reason or "parent pause request",
+                    resume_on=existing.resume_on,
+                    review_on=existing.review_on,
                     create_billing_deferral=False,
                     pause_stripe_collection=False,
                 )
             )
+
+        request = await self._pause_requests.approve(
+            cmd.pause_request_id,
+            admin_id=cmd.admin_id,
+        )
         if self._billing_deferrals is not None:
             now = self._now()
             # Issue #651: one deferral per PAUSED month (the old single row

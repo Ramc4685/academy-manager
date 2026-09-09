@@ -15,9 +15,11 @@ from .coach_pay_rate_routes import router as coach_pay_rate_router
 from .collections_routes import router as collections_router
 from .comms_routes import router as comms_router
 from .dashboard_routes import router as dashboard_router
+from .departure_policy_routes import router as departure_policy_router
 from .directory_routes import router as directory_router
 from .dues_routes import router as dues_router
 from .families_routes import router as families_router
+from .hold_routes import router as hold_router
 from .month_close_routes import router as month_close_router
 from .pathway_routes import router as pathway_router
 from .pause_routes import router as pause_router
@@ -64,3 +66,5 @@ router.include_router(pathway_router)
 router.include_router(progress_router)
 router.include_router(self_service_policy_router)
 router.include_router(self_service_request_router)
+router.include_router(departure_policy_router)
+router.include_router(hold_router)

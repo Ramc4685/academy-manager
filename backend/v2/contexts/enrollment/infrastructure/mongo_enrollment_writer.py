@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import ClassVar
 
 from pymongo.errors import DuplicateKeyError
@@ -74,11 +74,84 @@ class MongoEnrollmentWriter(TenantScopedRepository):
             fields["cancellation_reason"] = cancellation_reason.strip()
         await self._update_one({"enrollment_id": enrollment_id}, {"$set": fields})
 
-    #: Statuses a withdrawal may start from (issue #670). Legacy rows with no
-    #: ``status`` field read as ``active`` everywhere else, so they are open too.
+    #: Statuses a withdrawal may start from (issue #670; widened by #697 to
+    #: include ``held`` — Drop must work on a held enrollment). Legacy rows
+    #: with no ``status`` field read as ``active`` everywhere else, so they
+    #: are open too.
     _WITHDRAWABLE_FILTER: ClassVar[dict[str, object]] = {
-        "$or": [{"status": {"$in": ["active", "paused"]}}, {"status": {"$exists": False}}]
+        "$or": [
+            {"status": {"$in": ["active", "paused", "held"]}},
+            {"status": {"$exists": False}},
+        ]
     }
+
+    async def mark_held_if_active(
+        self,
+        enrollment_id: str,
+        *,
+        started_at: datetime,
+        return_on: date,
+        expires_at: datetime,
+        reason: str | None,
+    ) -> Enrollment | None:
+        """CAS ``active`` -> ``held`` (issue #697). Never touches
+        reserved_seats — the row keeps its seat."""
+        doc = await self._find_one_and_update(
+            {"enrollment_id": enrollment_id, "status": "active"},
+            {
+                "$set": {
+                    "status": "held",
+                    "hold_started_at": started_at,
+                    "hold_return_on": return_on.isoformat(),
+                    "hold_expires_at": expires_at,
+                    "hold_reason": reason,
+                    "hold_reclaim_claimed_at": None,
+                    "hold_reclaim_for": None,
+                    "updated_at": datetime.now(UTC),
+                },
+                "$inc": {"hold_seq": 1},
+            },
+            return_document_after=False,
+        )
+        return self._to_domain(doc) if doc else None
+
+    async def mark_active_if_held(self, enrollment_id: str) -> Enrollment | None:
+        """CAS ``held`` -> ``active`` (Return, issue #697).
+
+        MUST NOT reserve a seat — it was never released. This method
+        performs no seat arithmetic and callers must not add any."""
+        doc = await self._find_one_and_update(
+            {"enrollment_id": enrollment_id, "status": "held"},
+            {
+                "$set": {
+                    "status": "active",
+                    "updated_at": datetime.now(UTC),
+                },
+                "$unset": {
+                    "hold_started_at": "",
+                    "hold_return_on": "",
+                    "hold_expires_at": "",
+                    "hold_reason": "",
+                },
+            },
+            return_document_after=False,
+        )
+        return self._to_domain(doc) if doc else None
+
+    async def delete_if_status(
+        self, enrollment_id: str, *, allowed: frozenset[str]
+    ) -> Enrollment | None:
+        """CAS: hard-delete the row iff its status is in ``allowed``. Returns
+        the pre-image so the caller knows whether to release a seat."""
+        doc = await self._find_one_and_update(
+            {"enrollment_id": enrollment_id, "status": {"$in": sorted(allowed)}},
+            {"$set": {"status": "__deleting__"}},
+            return_document_after=False,
+        )
+        if doc is None:
+            return None
+        await self._delete_one({"enrollment_id": enrollment_id})
+        return self._to_domain(doc)
 
     async def mark_withdrawn_if_open(
         self, enrollment_id: str, *, withdrawal_date: datetime
@@ -291,6 +364,17 @@ class MongoEnrollmentWriter(TenantScopedRepository):
             cancelled_at=doc.get("cancelled_at"),
             pending_cancellation_at=doc.get("pending_cancellation_at"),
             pending_cancellation_requested_at=doc.get("pending_cancellation_requested_at"),
+            hold_started_at=doc.get("hold_started_at"),
+            hold_return_on=(
+                date.fromisoformat(hold_return_on_raw)
+                if isinstance(hold_return_on_raw := doc.get("hold_return_on"), str)
+                else hold_return_on_raw
+            ),
+            hold_expires_at=doc.get("hold_expires_at"),
+            hold_reason=doc.get("hold_reason"),
+            hold_seq=doc.get("hold_seq", 0),
+            hold_reclaim_claimed_at=doc.get("hold_reclaim_claimed_at"),
+            hold_reclaim_for=doc.get("hold_reclaim_for"),
         )
 
     async def get(self, enrollment_id: str) -> Enrollment | None:
@@ -304,8 +388,12 @@ class MongoEnrollmentWriter(TenantScopedRepository):
         return [self._to_domain(doc) async for doc in cursor]
 
     async def count_active_for_session(self, session_id: str) -> int:
+        # Issue #697: counts SEAT_HOLDING (active + held), not just active —
+        # else a class full of holds reports "counter drift" (contract §2.5).
+        from backend.v2.contexts.enrollment.domain.models import SEAT_HOLDING
+
         return await self.collection.count_documents(
-            self._scoped({"session_id": session_id, "status": "active"})
+            self._scoped({"session_id": session_id, "status": {"$in": sorted(SEAT_HOLDING)}})
         )
 
     async def find_for_session_student(self, session_id: str, student_id: str) -> Enrollment | None:

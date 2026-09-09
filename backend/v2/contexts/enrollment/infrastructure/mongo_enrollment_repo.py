@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 from backend.v2.contexts.enrollment.domain.models import Enrollment
 from backend.v2.shared.tenancy import TenantScopedRepository
 
@@ -11,6 +13,7 @@ class MongoEnrollmentRepository(TenantScopedRepository):
 
     @staticmethod
     def _to_domain(doc: dict[str, object]) -> Enrollment:
+        raw_return_on = doc.get("hold_return_on")
         return Enrollment(
             enrollment_id=str(doc["enrollment_id"]),
             academy_id=str(doc["academy_id"]),
@@ -22,6 +25,14 @@ class MongoEnrollmentRepository(TenantScopedRepository):
             registration_application_id=doc.get("registration_application_id"),
             registration_student_lock=doc.get("registration_student_lock"),
             pending_cancellation_at=doc.get("pending_cancellation_at"),
+            hold_started_at=doc.get("hold_started_at"),
+            hold_return_on=(
+                date.fromisoformat(raw_return_on)
+                if isinstance(raw_return_on, str)
+                else raw_return_on
+            ),
+            hold_expires_at=doc.get("hold_expires_at"),
+            hold_seq=doc.get("hold_seq", 0),
         )
 
     async def active_for_session(self, session_id: str) -> list[Enrollment]:

@@ -173,10 +173,43 @@ class EnrollmentWriter(Protocol):
 
         Returns the row AS IT WAS before the write, or ``None`` when the row
         was not open (already withdrawn/cancelled, or missing). The pre-image
-        is the seat token: only the caller that flipped an ``active`` row
-        releases its seat, so a concurrent double-submit or a retry can never
-        decrement ``reserved_seats`` twice.
+        is the seat token: only the caller that flipped an ``active`` OR
+        ``held`` row releases its seat (a ``paused`` pre-image never does —
+        it already released when it paused), so a concurrent double-submit or
+        a retry can never decrement ``reserved_seats`` twice.
+
+        Widened by issue #697 to also accept a ``held`` pre-image status —
+        Drop must work on a held enrollment.
         """
+
+    async def mark_held_if_active(
+        self,
+        enrollment_id: str,
+        *,
+        started_at: datetime,
+        return_on: date,
+        expires_at: datetime,
+        reason: str | None,
+    ) -> Enrollment | None:
+        """CAS ``active`` -> ``held`` (issue #697). ``reserved_seats`` is left
+        untouched — the row keeps its seat. Returns the pre-image, or
+        ``None`` when the row was not ``active``."""
+        ...
+
+    async def mark_active_if_held(self, enrollment_id: str) -> Enrollment | None:
+        """CAS ``held`` -> ``active`` (Return, issue #697).
+
+        MUST NOT call ``try_reserve_seat`` — the seat was never released.
+        Returns the pre-image, or ``None`` when the row was not ``held``
+        (already returned, reclaimed, or expired)."""
+        ...
+
+    async def delete_if_status(
+        self, enrollment_id: str, *, allowed: frozenset[str]
+    ) -> Enrollment | None:
+        """CAS: hard-delete the row iff its status is in ``allowed``.
+        Returns the pre-image so the caller knows whether to release a seat."""
+        ...
 
     async def get(self, enrollment_id: str) -> Enrollment | None: ...
 
@@ -508,4 +541,100 @@ class RosterChangeNotifier(Protocol):
         to_session_id: str | None = None,
         actor_id: str | None = None,
         parent_user_id: str | None = None,
+    ) -> None: ...
+
+
+# --- Hold / departure ports (issue #697) --------------------------------
+
+
+class EnrollmentDeparturePolicyLookup(Protocol):
+    """The academy's departure policy (max hold days, reclaim rule, ...)."""
+
+    async def get_or_default(self) -> Any: ...
+
+
+class HoldRepository(Protocol):
+    """Read/claim over ``held`` enrollment rows for the reclaim algorithm.
+
+    Lives beside ``EnrollmentWriter`` rather than folded into it: the reclaim
+    CAS operates on a different predicate shape (session + status +
+    unclaimed) with a deterministic sort, and keeping it a separate Protocol
+    is what let the fake enforce "never return the same document twice"
+    without also having to fake every other enrollment-writer method.
+    """
+
+    async def claim_longest_held(
+        self, *, session_id: str, now: datetime, requested_by: str
+    ) -> Enrollment | None:
+        """Atomically claim the longest-held row for this session:
+        ``held`` -> ``reclaim_pending``, ordered by
+        ``(hold_started_at ASC, enrollment_id ASC)``. Returns the pre-image,
+        or ``None`` when there is no unclaimed held row for this session.
+        Never returns the same document twice."""
+        ...
+
+    async def claim_expired(
+        self, *, enrollment_id: str, now: datetime, requested_by: str
+    ) -> Enrollment | None:
+        """Atomically claim THIS SPECIFIC held row: ``held`` -> ``reclaim_pending``,
+        gated on ``enrollment_id`` (not on session + sort). Used by
+        ``ExpireDueHolds`` so an expiry sweep drops the row whose OWN
+        ``hold_expires_at`` has passed — never a different, unexpired row on
+        the same session (that would be a reclaim, not an expiry, and is
+        ``SeatBroker.acquire``'s job). Returns the pre-image, or ``None``
+        when the row is no longer ``held`` and unclaimed (already returned,
+        already claimed by a concurrent reclaim/expiry, or already dropped)."""
+        ...
+
+    async def finalize_reclaim(
+        self, enrollment_id: str, *, withdrawal_date: datetime
+    ) -> Enrollment | None:
+        """CAS ``reclaim_pending`` -> ``withdrawn``. Returns the pre-image."""
+        ...
+
+    async def list_stalled(self, *, older_than: datetime) -> list[Enrollment]:
+        """Rows stuck in ``reclaim_pending`` whose claim is older than the
+        cutoff (crash recovery, see ``ProcessStalledReclaims``)."""
+        ...
+
+    async def list_due_for_reminder(self) -> list[Enrollment]:
+        """Every ``held`` row (used by ``SendHoldReminders`` to compute which
+        reminder, if any, is due for each — see the use case for the math)."""
+        ...
+
+    async def list_expired(self, *, now: datetime) -> list[Enrollment]:
+        """``held`` rows whose ``hold_expires_at`` has passed."""
+        ...
+
+
+class HoldNotifier(Protocol):
+    """Best-effort family email for hold lifecycle events. Never raises into
+    the caller's write path. Implementations claim before sending; see
+    ``communications/infrastructure/digest_claim.py`` for why the claim, not
+    the send, is what makes this idempotent."""
+
+    async def hold_reclaimed(
+        self,
+        *,
+        enrollment_id: str,
+        hold_seq: int,
+        session_id: str,
+        student_id: str,
+        hold_started_at: datetime,
+        reason: Literal["reclaimed", "expired"],
+        requested_by: str | None,
+        billing_result: str | None,
+    ) -> None: ...
+
+    async def hold_reminder(
+        self,
+        *,
+        enrollment_id: str,
+        hold_seq: int,
+        notice_index: int,
+        session_id: str,
+        student_id: str,
+        hold_started_at: datetime,
+        hold_return_on: date,
+        hold_expires_at: datetime,
     ) -> None: ...

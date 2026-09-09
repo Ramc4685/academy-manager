@@ -34,6 +34,11 @@ class FakeEnrollments:
     async def active_for_session(self, session_id: str) -> list[Enrollment]:
         return [e for e in self._enrollments if e.session_id == session_id and e.status == "active"]
 
+    async def for_session_in_statuses(
+        self, session_id: str, statuses: list[str]
+    ) -> list[Enrollment]:
+        return [e for e in self._enrollments if e.session_id == session_id and e.status in statuses]
+
     async def is_active(self, session_id: str, student_id: str) -> bool:
         return any(
             e.session_id == session_id and e.student_id == student_id and e.status == "active"

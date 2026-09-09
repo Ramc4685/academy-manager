@@ -672,7 +672,14 @@ def test_each_job_uses_its_own_threshold() -> None:
 
     stale_ids = {job.job_id for job in stale_jobs(ticks, NOW)}
 
-    assert stale_ids == {"process_stripe_webhook_events", "reconcile_stripe_payment_intents"}
+    # `process_stalled_hold_reclaims` ticks every 15 minutes (its own
+    # 1-hour threshold), so a 2h-old heartbeat is genuinely stale for it
+    # too — same reasoning as the two sub-daily jobs below.
+    assert stale_ids == {
+        "process_stripe_webhook_events",
+        "reconcile_stripe_payment_intents",
+        "process_stalled_hold_reclaims",
+    }
 
 
 def test_a_job_with_no_heartbeat_is_stale() -> None:
@@ -750,9 +757,14 @@ async def test_boot_seed_stops_the_first_digest_flagging_itself() -> None:
     assert all(set(update) == {"$setOnInsert"} for _, update in runs.updates)
     assert len(runs.updates) == len(JOB_STALE_AFTER)
     # By 07:00 the interval jobs have ticked for real; the dailies (02:00,
-    # 02:30, 03:00 crons) and the digest itself have not fired since boot.
+    # 02:30, 03:00, 02:45, 04:00 crons) and the digest itself have not fired
+    # since boot.
     for doc in runs.docs:
-        if doc["_id"] in {"process_stripe_webhook_events", "reconcile_stripe_payment_intents"}:
+        if doc["_id"] in {
+            "process_stripe_webhook_events",
+            "reconcile_stripe_payment_intents",
+            "process_stalled_hold_reclaims",
+        }:
             doc["last_tick_at"] = NOW - timedelta(minutes=1)
 
     snapshot = await collect_ops_digest(db, now=NOW)  # type: ignore[arg-type]

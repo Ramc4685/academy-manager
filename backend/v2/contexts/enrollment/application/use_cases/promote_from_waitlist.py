@@ -20,6 +20,10 @@ from backend.v2.contexts.enrollment.application.ports import (
     SessionWriter,
     WaitlistRepository,
 )
+from backend.v2.contexts.enrollment.application.seat_broker import (
+    SeatAcquisition,
+    SeatBroker,
+)
 from backend.v2.contexts.enrollment.domain.errors import CapacityExceeded, SessionNotEnrollable
 from backend.v2.contexts.enrollment.domain.events import (
     EnrollmentLifecycleEvent,
@@ -67,6 +71,7 @@ class PromoteFromWaitlist:
         enrollment_events: EnrollmentEventRepository | None = None,
         roster_notifier: RosterChangeNotifier | None = None,
         resume: PausedEnrollmentResumer | None = None,
+        seat_broker: SeatBroker | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._waitlist = waitlist
@@ -77,7 +82,37 @@ class PromoteFromWaitlist:
         self._enrollment_events = enrollment_events
         self._roster_notifier = roster_notifier
         self._resume = resume
+        # Departures design contract §3.1 — optional so existing callers/
+        # tests keep working unwired; production wiring injects this via
+        # `set_seat_broker` from main.py (composition/admin.py is at its
+        # line-budget cap, and SeatBroker is composed later).
+        self._seat_broker = seat_broker
         self._now = clock
+
+    def set_seat_broker(self, seat_broker: SeatBroker) -> None:
+        self._seat_broker = seat_broker
+
+    async def _release_quietly(self, session_id: str, acquisition: SeatAcquisition | None) -> None:
+        """Give a just-acquired seat back without masking the error being handled.
+
+        Mirrors ``EditRosterAdd._release_quietly`` (contract §3.8): when the
+        seat came from ``SeatBroker.acquire`` (``acquisition`` is not
+        ``None``), compensation MUST go through ``SeatBroker.release`` rather
+        than a bare ``sessions.release_seat`` — a reclaim-granted acquisition
+        already dropped and emailed a different family for this seat, and
+        only the broker records that as a ``hold_reclaim_orphaned`` audit
+        event rather than pretending nothing happened.
+        """
+        try:
+            if self._seat_broker is not None and acquisition is not None:
+                await self._seat_broker.release(acquisition)
+            else:
+                await self._sessions.release_seat(session_id)
+        except Exception:  # pragma: no cover - defensive
+            log.exception(
+                "enrollment.waitlist_promotion_seat_release_failed",
+                extra={"session_id": session_id},
+            )
 
     async def execute(
         self,
@@ -125,22 +160,39 @@ class PromoteFromWaitlist:
             enrollment = existing.model_copy(update={"status": "active"})
             resumed = True
         else:
-            reserved = await self._sessions.try_reserve_seat(entry.session_id)
+            acquisition = None
+            if self._seat_broker is not None:
+                acquisition = await self._seat_broker.acquire(
+                    entry.session_id, requested_by=f"waitlist_promotion:{entry.waitlist_id}"
+                )
+                reserved = acquisition.granted
+            else:
+                reserved = await self._sessions.try_reserve_seat(entry.session_id)
             if not reserved:
                 return None
-            if existing is not None and existing.status == "paused":
-                # Kept only for callers that wire no ``resume`` (issue #651).
-                await self._enrollments.update_status(existing.enrollment_id, "active")
-                enrollment = existing.model_copy(update={"status": "active"})
-            else:
-                enrollment = Enrollment(
-                    enrollment_id=str(new_ulid()),
-                    academy_id=academy_id,
-                    session_id=entry.session_id,
-                    student_id=entry.student_id,
-                    status="active",
-                )
-                await self._enrollments.create(enrollment)
+            # Contract §3.8: a failure here must compensate through
+            # SeatBroker.release, not a bare release_seat — a
+            # reclaim-granted acquisition already dropped and emailed a
+            # different family for this seat, and only the broker records
+            # that as a `hold_reclaim_orphaned` audit event rather than
+            # pretending nothing happened.
+            try:
+                if existing is not None and existing.status == "paused":
+                    # Kept only for callers that wire no ``resume`` (#651).
+                    await self._enrollments.update_status(existing.enrollment_id, "active")
+                    enrollment = existing.model_copy(update={"status": "active"})
+                else:
+                    enrollment = Enrollment(
+                        enrollment_id=str(new_ulid()),
+                        academy_id=academy_id,
+                        session_id=entry.session_id,
+                        student_id=entry.student_id,
+                        status="active",
+                    )
+                    await self._enrollments.create(enrollment)
+            except BaseException:
+                await self._release_quietly(entry.session_id, acquisition)
+                raise
 
         await self._waitlist.update_status(entry.waitlist_id, "promoted")
         now = self._now()
