@@ -227,7 +227,11 @@ def _build_parent_app(*, auth_parent_id: str = PARENT_ID) -> FastAPI:
         completed_at=None,
         created_at=now,
     )
-    asyncio.get_event_loop().run_until_complete(level_progress_repo.save(active))
+    _loop = asyncio.new_event_loop()
+    try:
+        _loop.run_until_complete(level_progress_repo.save(active))
+    finally:
+        _loop.close()
 
     # Seed a certificate for OWN_STUDENT_ID
     cert = SkillCertificate(
@@ -244,7 +248,11 @@ def _build_parent_app(*, auth_parent_id: str = PARENT_ID) -> FastAPI:
         issued_by="admin-1",
         issued_at=now,
     )
-    asyncio.get_event_loop().run_until_complete(cert_repo.save(cert))
+    _loop2 = asyncio.new_event_loop()
+    try:
+        _loop2.run_until_complete(cert_repo.save(cert))
+    finally:
+        _loop2.close()
 
     # Use cases
     get_progress = GetStudentProgress(

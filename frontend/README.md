@@ -81,7 +81,7 @@ once upstream publishes a fix or the puppeteer chain drops `extract-zip`.
 
 ```bash
 cp .env.example .env.local
-pnpm dev          # next dev on :3001
+pnpm dev          # next dev (Turbopack) on :3001
 pnpm build        # production build
 pnpm typecheck    # tsc --noEmit
 pnpm lint
