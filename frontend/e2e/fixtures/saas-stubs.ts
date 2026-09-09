@@ -159,6 +159,28 @@ export async function stubParentMessages(
   });
 }
 
+/**
+ * Five parent pages — onboarding, dashboard, children and requests — read the
+ * academy profile through `getParentAcademy`, so any spec that lands on one of
+ * them needs this the same way it needs `stubParentProfile`. Unstubbed the call
+ * 500s against the dev server and trips the clean-console assertion on a page
+ * unrelated to what the spec is testing.
+ */
+export async function stubParentAcademy(page: Page): Promise<void> {
+  await page.route("**/api/v2/parent/academy", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, {
+      display_name: "Aces Academy",
+      timezone: "UTC",
+      contact_email: null,
+      contact_phone: null,
+      hours_text: null,
+      address: null,
+      logo_url: null,
+    });
+  });
+}
+
 export async function stubCoachMessages(
   page: Page,
   messages: unknown[] = []

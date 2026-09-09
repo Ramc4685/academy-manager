@@ -17,6 +17,7 @@ import {
   stubCoachMessages,
   stubMe,
   stubMemberships,
+  stubParentProfile,
   stubParentMessages,
 } from "../fixtures/saas-stubs";
 
@@ -349,6 +350,10 @@ async function stubCoachLaunchBff(page: Page): Promise<void> {
 
 async function stubParentLaunchBff(page: Page): Promise<void> {
   await stubMe(page, PARENT_ME);
+  // The parent layout fetches /parent/profile on EVERY /parent/* page (see the
+  // note on stubParentProfile). Unstubbed it 500s and trips the clean-console
+  // assertion in these route-mount tests.
+  await stubParentProfile(page);
   // The parent shell fetches /me/memberships on landing; unstubbed it 500s
   // and trips the clean-console assertion in every route-mount test.
   await stubMemberships(page, [
