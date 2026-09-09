@@ -23,8 +23,8 @@ import pytest
 
 from backend.v2.contexts.enrollment.application.seat_broker import SeatBroker
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
-    EditRosterAddCommand,
     EditRosterAdd,
+    EditRosterAddCommand,
     ResumeEnrollment,
     TransferEnrollment,
     TransferEnrollmentCommand,
@@ -63,9 +63,7 @@ class FakeWaitlistRepository:
 
     async def next_waiting(self, session_id: str) -> WaitlistEntry | None:
         candidates = [
-            e
-            for e in self.entries.values()
-            if e.session_id == session_id and e.status == "waiting"
+            e for e in self.entries.values() if e.session_id == session_id and e.status == "waiting"
         ]
         if not candidates:
             return None
@@ -96,8 +94,13 @@ class FakeOutbox:
         self.events.append(event)
 
 
-def _broker(sessions: FakeSessionWriter, holds: FakeHoldRepository, billing: FakeBillingSync,
-            notifier: FakeHoldNotifier, events: FakeEnrollmentEvents) -> SeatBroker:
+def _broker(
+    sessions: FakeSessionWriter,
+    holds: FakeHoldRepository,
+    billing: FakeBillingSync,
+    notifier: FakeHoldNotifier,
+    events: FakeEnrollmentEvents,
+) -> SeatBroker:
     return SeatBroker(
         sessions=sessions,
         holds=holds,

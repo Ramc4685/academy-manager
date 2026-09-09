@@ -69,7 +69,6 @@ from backend.v2.shared.idempotency import IdempotencyStore
 from backend.v2.shared.tenancy import current_academy_id
 from backend.v2.shared.time.academy_timezone import academy_timezone_lookup
 
-
 #: Issue #697: hold transitions map onto the existing pause/resume/withdraw/
 #: cancel billing behavior — the billing context itself is not otherwise
 #: touched. "held" behaves exactly like "paused" (void unpaid future-period

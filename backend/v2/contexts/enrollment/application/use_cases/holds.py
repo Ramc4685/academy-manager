@@ -9,9 +9,10 @@ means the caller lost the race and MUST NOT touch seats, billing or email.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from typing import Callable, Literal
+from typing import Literal
 
 from backend.v2.contexts.enrollment.application.ports import (
     EnrollmentBillingSync,
@@ -30,7 +31,6 @@ from backend.v2.contexts.enrollment.application.use_cases.scheduled_actions impo
 from backend.v2.contexts.enrollment.domain.departure_policy import (
     EnrollmentNotHoldable,
     EnrollmentNotReturnable,
-    HoldRequiresReturnDate,
     HoldWindowExceeded,
     compute_hold_expiry,
 )
@@ -360,7 +360,9 @@ class ExpireDueHolds:
                 )
                 result.expired += 1
             except Exception:
-                log.exception("hold_expiry_finalize_failed", extra={"enrollment_id": row.enrollment_id})
+                log.exception(
+                    "hold_expiry_finalize_failed", extra={"enrollment_id": row.enrollment_id}
+                )
                 result.failed += 1
         return result
 
@@ -441,7 +443,13 @@ class SendHoldReminders:
     (contract §4.3). Only the highest-due N is sent per tick, so a job
     outage never produces a burst of back-dated reminders."""
 
-    def __init__(self, *, holds: HoldRepository, notifier: HoldNotifier | None = None, clock: Clock = lambda: datetime.now(UTC)) -> None:
+    def __init__(
+        self,
+        *,
+        holds: HoldRepository,
+        notifier: HoldNotifier | None = None,
+        clock: Clock = lambda: datetime.now(UTC),
+    ) -> None:
         self._holds = holds
         self._notifier = notifier
         self._now = clock
@@ -454,7 +462,11 @@ class SendHoldReminders:
         for row in await self._holds.list_due_for_reminder():
             if row.hold_expires_at is not None and row.hold_expires_at <= now:
                 continue
-            if row.hold_started_at is None or row.hold_return_on is None or row.hold_expires_at is None:
+            if (
+                row.hold_started_at is None
+                or row.hold_return_on is None
+                or row.hold_expires_at is None
+            ):
                 continue
             elapsed = now - row.hold_started_at
             n = int(elapsed.total_seconds() // (REMINDER_STEP_DAYS * 86400))
