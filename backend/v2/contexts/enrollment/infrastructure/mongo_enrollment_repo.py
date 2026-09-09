@@ -91,6 +91,16 @@ class MongoEnrollmentRepository(TenantScopedRepository):
         )
         return [self._to_domain(doc) async for doc in cursor]
 
+    async def departable_for_student(self, student_id: str) -> list[Enrollment]:
+        """Issue #698: every row ``StopAllClasses`` can act on for a student —
+        ``active``/``held`` (still hold a seat) plus ``paused`` (released its
+        seat but still a live commitment, #641)."""
+        cursor = self._find_many(
+            {"student_id": student_id, "status": {"$in": ["active", "held", "paused"]}},
+            sort=[("enrollment_id", 1)],
+        )
+        return [self._to_domain(doc) async for doc in cursor]
+
     async def student_ids_with_active_or_paused_enrollment(
         self, student_ids: list[str]
     ) -> set[str]:

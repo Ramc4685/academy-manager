@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from backend.v2.contexts.enrollment.domain.events import EnrollmentLifecycleEvent
@@ -46,6 +47,21 @@ class MongoEnrollmentEventRepository(TenantScopedRepository):
     async def list_for_enrollment(self, enrollment_id: str) -> list[EnrollmentLifecycleEvent]:
         cursor = self._find_many(
             {"enrollment_id": enrollment_id},
+            sort=[("occurred_at", 1), ("event_id", 1)],
+        )
+        return [self._to_domain(doc) async for doc in cursor]
+
+    async def list_in_range(
+        self, *, start: datetime, end: datetime, event_types: frozenset[str]
+    ) -> list[EnrollmentLifecycleEvent]:
+        """Issue #698's leaving report — read-only, no new index required at
+        the tenant sizes this repo already runs at (mirrors the other admin
+        report use cases' plain range scans)."""
+        cursor = self._find_many(
+            {
+                "event_type": {"$in": sorted(event_types)},
+                "occurred_at": {"$gte": start, "$lt": end},
+            },
             sort=[("occurred_at", 1), ("event_id", 1)],
         )
         return [self._to_domain(doc) async for doc in cursor]

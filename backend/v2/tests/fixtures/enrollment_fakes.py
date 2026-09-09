@@ -59,6 +59,7 @@ def make_session(
     capacity: int = 1,
     status: str = "scheduled",
     coach_id: str = "coach-1",
+    amount_cents: int | None = None,
 ) -> Session:
     from datetime import timedelta
 
@@ -73,6 +74,7 @@ def make_session(
         end_at=now + timedelta(hours=1),
         capacity=capacity,
         status=status,  # type: ignore[arg-type]
+        amount_cents=amount_cents,
     )
 
 
@@ -371,6 +373,15 @@ class FakeEnrollmentEvents:
 
     async def list_for_enrollment(self, enrollment_id: str) -> list[Any]:
         return [e for e in self.rows if e.enrollment_id == enrollment_id]
+
+    async def list_in_range(
+        self, *, start: datetime, end: datetime, event_types: frozenset[str]
+    ) -> list[Any]:
+        """Issue #698's leaving report read. Mirrors the real Mongo repo's
+        range-scan filter."""
+        return [
+            e for e in self.rows if e.event_type in event_types and start <= e.occurred_at < end
+        ]
 
 
 @dataclass

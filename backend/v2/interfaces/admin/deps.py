@@ -411,6 +411,10 @@ class AdminUseCases:
     update_departure_policy: object | None = None  # UpdateEnrollmentDeparturePolicy
     hold_enrollment: object | None = None  # HoldEnrollment
     return_from_hold: object | None = None  # ReturnFromHold
+    # Stop-all-classes + leaving report (issue #698). Wired in
+    # composition/departures.py, same attach-after-the-fact pattern.
+    stop_all_classes: object | None = None  # StopAllClasses
+    leaving_report: object | None = None  # GetLeavingReport
 
 
 def get_admin_use_cases(request: Request) -> AdminUseCases:
