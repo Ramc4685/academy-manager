@@ -173,6 +173,62 @@ async def test_approve_pause_illegal_autopay_transition_is_dropped_mid_workflow(
     assert len(scheduled.actions) == 1
 
 
+@pytest.mark.asyncio
+async def test_approve_refused_by_a_held_enrollment_leaves_the_request_pending() -> None:
+    """Defect #5: PauseEnrollment now raises EnrollmentNotPausable for a
+    `held` enrollment (T9). ApprovePauseRequest must not have already
+    written the approval before finding that out — an approved row with no
+    pause behind it means attendance never actually stopped and the billing
+    deferrals below never ran, yet the request LOOKS handled. The fix runs
+    PauseEnrollment before writing the approval, so a refusal leaves the
+    request exactly as it was: still pending, nothing else written."""
+    from backend.v2.contexts.enrollment.domain.departure_policy import EnrollmentNotPausable
+
+    pause_requests = _FakePauseRequests(_request())
+    pause_enrollment = _FakeRefusingPauseEnrollment()
+    scheduled = _FakeScheduledActions()
+    deferrals = _FakeBillingDeferrals()
+    autopay = _FakeEnrollmentAutopay()
+    use_case = ApprovePauseRequest(
+        pause_requests=pause_requests,
+        pause_enrollment=pause_enrollment,
+        scheduled_actions=scheduled,
+        billing_deferrals=deferrals,
+        autopay_status=autopay,
+        academy_id="acad-1",
+        clock=_now,
+    )
+
+    with pytest.raises(EnrollmentNotPausable):
+        await use_case.execute(
+            DecidePauseRequestCommand(pause_request_id="pause-1", admin_id="admin-1")
+        )
+
+    # No half-applied state: the approval was never written...
+    assert pause_requests.approved is False
+    assert pause_requests.request.status == "pending"
+    # ...and nothing downstream of the approval ran either.
+    assert deferrals.rows == []
+    assert scheduled.actions == []
+    assert autopay.paused == []
+
+
+@dataclass
+class _FakeRefusingPauseEnrollment:
+    """PauseEnrollment for a `held` row (T9, contract §2.4)."""
+
+    async def execute(self, cmd) -> None:
+        from backend.v2.contexts.enrollment.domain.departure_policy import (
+            EnrollmentNotPausable,
+        )
+
+        raise EnrollmentNotPausable(
+            "This enrollment is on hold. Return it first, then pause it.",
+            enrollment_id=cmd.enrollment_id,
+            status="held",
+        )
+
+
 @dataclass
 class _FakePauseRequests:
     request: PauseRequest

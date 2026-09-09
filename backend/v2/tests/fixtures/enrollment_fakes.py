@@ -255,6 +255,12 @@ class FakeHoldRepository:
             before is None
             or before.status != "held"
             or before.hold_reclaim_claimed_at is not None
+            # Mirrors the real CAS filter's `hold_expires_at: {"$lte": now}`:
+            # a row that returned and was re-Held between list_expired's
+            # snapshot and this claim has a fresh, later hold_expires_at and
+            # must NOT be claimable as expired.
+            or before.hold_expires_at is None
+            or before.hold_expires_at > now
         ):
             return None
         self.enrollments.rows[enrollment_id] = before.model_copy(

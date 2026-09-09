@@ -263,6 +263,13 @@ class ParentComposition:
     get_checkout_status: object
     handle_webhook_event: HandleWebhookEvent
     list_available_sessions: ListParentAvailableSessions
+    # Issue #697: the composition root wires SeatBroker onto this instance
+    # from main.py (set_seat_broker), same pattern as the four use cases on
+    # app.state.admin — this is the FIFTH un-brokered construction, reached
+    # via install_handlers()/event_handlers.on_enrollment_cancelled, not via
+    # a route. It must be exposed here so main.py can reach it after
+    # compose_enrollment_holds runs.
+    promote_from_waitlist: PromoteFromWaitlist
     list_payments_for_parent: object  # callable
     list_credits_for_parent: object
     list_children_for_parent: object
@@ -2521,6 +2528,7 @@ def compose_parent(
         get_checkout_status=get_checkout_status,
         handle_webhook_event=handle_webhook,
         list_available_sessions=list_available_sessions,
+        promote_from_waitlist=promote,
         list_payments_for_parent=list_payments_for_parent,
         list_credits_for_parent=list_credits_for_parent,
         list_children_for_parent=list_children_for_parent,

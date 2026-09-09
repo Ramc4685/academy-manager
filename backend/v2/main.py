@@ -566,6 +566,13 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.admin.resume_enrollment.set_seat_broker(_holds.seat_broker)
     app.state.admin.transfer_enrollment.set_seat_broker(_holds.seat_broker)
     app.state.admin.promote_from_waitlist.set_seat_broker(_holds.seat_broker)
+    # The event-driven promotion path (Enrollment.EnrollmentCancelled ->
+    # PromoteFromWaitlist, wired via install_handlers in compose_parent) is a
+    # SECOND PromoteFromWaitlist instance, distinct from the one above that
+    # only the admin "promote next in line" route calls. It runs on every
+    # ordinary cancel/drop and must reclaim a hold exactly like the route
+    # does, so it needs the same broker.
+    app.state.parent.promote_from_waitlist.set_seat_broker(_holds.seat_broker)
     # Payments bucket view (composition/admin.py is at its line budget).
     app.state.admin_collections = compose_admin_collections(db)
     app.state.admin_billing_rules = compose_admin_billing_rules(db, app.state.admin)
