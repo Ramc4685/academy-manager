@@ -102,6 +102,10 @@ def compose_enrollment_holds(db: Any, settings: Any) -> EnrollmentHoldsCompositi
     )
     process_stalled_reclaims = ProcessStalledReclaims(
         holds=holds,
+        # A stalled row claimed by ExpireDueHolds (requested_by="hold_expiry")
+        # must be finalized with seat_disposition="release", which needs the
+        # sessions writer — see holds.py's ProcessStalledReclaims docstring.
+        sessions=sessions,
         billing_sync=billing_sync,
         notifier=hold_notifier,
         enrollment_events=enrollment_events,

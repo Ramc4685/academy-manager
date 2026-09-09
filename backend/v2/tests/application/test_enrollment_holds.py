@@ -402,6 +402,62 @@ async def test_c10_a_reclaim_pending_row_not_yet_stale_is_left_alone() -> None:
     assert enrollments.rows["held-1"].status == "reclaim_pending"
 
 
+@pytest.mark.asyncio
+async def test_stalled_reclaim_from_an_expiry_claim_finalizes_as_expiry_not_reclaim() -> None:
+    """Defect #3: ExpireDueHolds claims with requested_by='hold_expiry' and
+    finalizes with seat_disposition='release'. If the process dies between
+    the claim and the finalize, the row sits reclaim_pending with
+    hold_reclaim_for='hold_expiry'. ProcessStalledReclaims must recognise
+    that provenance and finalize it exactly as ExpireDueHolds would have —
+    reason='expired', seat_disposition='release' — not as a generic reclaim
+    (reason='reclaimed', seat_disposition='handed_over'), which would leak
+    the seat (nobody is waiting for it — 'handed_over' does no seat
+    arithmetic) and email the family the wrong reason."""
+    claimed_at = NOW - STALLED_RECLAIM_AFTER - timedelta(minutes=1)
+    enrollments = FakeEnrollmentWriter(
+        rows={
+            "held-1": make_enrollment(
+                "held-1",
+                session_id="sess-1",
+                status="reclaim_pending",
+                hold_started_at=NOW - timedelta(days=70),
+                hold_reclaim_claimed_at=claimed_at,
+                hold_reclaim_for="hold_expiry",
+            )
+        }
+    )
+    sessions = FakeSessionWriter(sessions={"sess-1": make_session("sess-1", capacity=1)})
+    sessions.reserved_seats["sess-1"] = 1  # nobody is waiting for this seat
+    holds = FakeHoldRepository(enrollments=enrollments)
+    billing = FakeBillingSync()
+    notifier = FakeHoldNotifier()
+    events = FakeEnrollmentEvents()
+
+    sweep = ProcessStalledReclaims(
+        holds=holds,
+        sessions=sessions,
+        billing_sync=billing,
+        notifier=notifier,
+        enrollment_events=events,
+        clock=lambda: NOW,
+    )
+
+    finalized = await sweep.execute()
+
+    assert finalized == 1
+    assert enrollments.rows["held-1"].status == "withdrawn"
+    # The defining assertion: the seat is RELEASED (nobody takes it), unlike
+    # a real reclaim's handed-over disposition which leaves the counter
+    # alone.
+    assert sessions.release_calls == ["sess-1"]
+    assert sessions.reserved_seats["sess-1"] == 0
+    # The family must be told "expired", never "reclaimed".
+    assert len(notifier.reclaimed_calls) == 1
+    assert notifier.reclaimed_calls[0]["reason"] == "expired"
+    recorded = [e for e in events.rows if e.enrollment_id == "held-1"]
+    assert [e.event_type for e in recorded] == ["hold_expired"]
+
+
 # -- Defect #1: ExpireDueHolds must drop the EXPIRED row, never the -----
 # -- longest-held row on the same session --------------------------------
 

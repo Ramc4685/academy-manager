@@ -47,11 +47,21 @@ class MongoHoldRepository(TenantScopedRepository):
     async def claim_expired(
         self, *, enrollment_id: str, now: datetime, requested_by: str
     ) -> Enrollment | None:
+        # The expiry condition MUST be part of this CAS filter, not just the
+        # `list_expired` snapshot that selected this row: between that
+        # snapshot and this claim, the family can Return and be re-Held with
+        # a fresh `hold_expires_at` (60 more days out). Filtering on
+        # `status == "held"` alone still matches that re-held row and would
+        # drop a family who is no longer overdue. Re-checking
+        # `hold_expires_at <= now` here means the claim itself fails once the
+        # row is no longer expired, exactly like `claim_longest_held` failing
+        # once a row is no longer `status == "held"`.
         doc = await self._find_one_and_update(
             {
                 "enrollment_id": enrollment_id,
                 "status": "held",
                 "hold_reclaim_claimed_at": None,
+                "hold_expires_at": {"$lte": now},
             },
             {
                 "$set": {
