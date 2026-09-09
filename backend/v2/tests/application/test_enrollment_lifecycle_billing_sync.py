@@ -241,7 +241,8 @@ async def test_cancel_still_succeeds_when_billing_sync_raises() -> None:
         billing_sync=RecordingBillingSync(fail=True),
         clock=_now,
     ).execute(CancelEnrollmentCommand(enrollment_id="enr-1"))
-    assert enrollments.rows["enr-1"].status == "cancelled"
+    # Issue #699: canonical spelling is "deleted" (was "cancelled").
+    assert enrollments.rows["enr-1"].status == "deleted"
     assert events.rows[0].billing_result == "billing_sync_failed"
 
 
@@ -393,7 +394,8 @@ async def test_cancel_session_releases_seats_records_events_syncs_billing_and_no
     assert sessions.reserved["sess-1"] == 0
     assert {c["enrollment_id"] for c in sync.calls} == {"enr-1", "enr-2"}
     assert all(c["transition"] == "session_cancelled" for c in sync.calls)
-    assert [e.event_type for e in events.rows] == ["cancelled", "cancelled"]
+    # Issue #699: canonical spelling is "deleted" (was "cancelled").
+    assert [e.event_type for e in events.rows] == ["deleted", "deleted"]
     assert all(e.reason == "session_cancelled" for e in events.rows)
     assert [c["change"] for c in roster.calls] == ["session_cancelled", "session_cancelled"]
     assert len(enrollments.dates) == 2
@@ -543,7 +545,8 @@ async def test_cancel_session_sweeps_paused_rows_without_double_releasing() -> N
         clock=_now,
     ).execute(CancelSessionCommand(session_id="sess-1"))
 
-    assert {e.status for e in enrollments.rows.values()} == {"cancelled"}
+    # Issue #699: canonical spelling is "deleted" (was "cancelled").
+    assert {e.status for e in enrollments.rows.values()} == {"deleted"}
     # Only the active row released a seat: 1 -> 0, never negative / drifted.
     assert sessions.reserved["sess-1"] == 0
     assert deferrals.closed == [("enr-2", "session_cancelled")]
@@ -814,7 +817,8 @@ async def test_cancel_enrollment_drops_future_makeup_rows_and_survives_cleanup_f
         occurrence_roster=RecordingOccurrenceRoster(fail=True),
         clock=_now,
     ).execute(CancelEnrollmentCommand(enrollment_id="enr-1"))
-    assert enrollments.rows["enr-1"].status == "cancelled"
+    # Issue #699: canonical spelling is "deleted" (was "cancelled").
+    assert enrollments.rows["enr-1"].status == "deleted"
 
 
 @pytest.mark.asyncio
@@ -901,4 +905,5 @@ async def test_admin_cancel_survives_a_failing_scheduled_action_repo() -> None:
         scheduled_actions=_Broken(),
         clock=_now,
     ).execute(CancelEnrollmentCommand(enrollment_id="enr-1", reason="admin_cancel"))
-    assert enrollments.rows["enr-1"].status == "cancelled"
+    # Issue #699: canonical spelling is "deleted" (was "cancelled").
+    assert enrollments.rows["enr-1"].status == "deleted"

@@ -67,7 +67,7 @@ def test_owner_withdraw_with_credit_issues_one_credit_through_the_single_path(
     assert decision.calls[0]["reason"] == "Relocation"
     assert decision.calls[0]["effective_at"].date().isoformat() == "2026-05-20"
     event = seed["enrollment_events"].rows[-1]
-    assert event.event_type == "withdrawn"
+    assert event.event_type == "dropped"  # Issue #699: renamed from "withdrawn"
     assert event.billing_policy == "early_withdrawal_credit"
     assert event.billing_result.startswith("credit_approved")
     assert event.credit_id == f"credit-{enrollment_id}"
@@ -89,7 +89,7 @@ def test_second_withdraw_is_a_409_conflict(admin_client) -> None:
     assert "already withdrawn" in body["message"]
     seed = admin_client.seed
     assert len(seed["withdrawal_decision"].calls) == 1
-    assert len([e for e in seed["enrollment_events"].rows if e.event_type == "withdrawn"]) == 1
+    assert len([e for e in seed["enrollment_events"].rows if e.event_type == "dropped"]) == 1  # Issue #699
 
 
 def test_plain_admin_cannot_withdraw_with_credit_outcome(admin_only_client) -> None:
@@ -263,7 +263,7 @@ def test_ledger_only_family_withdraws_with_a_credit_none_event(real_decision_cli
     assert client.seed["enrollments"].rows[enrollment_id].status == "withdrawn"
     assert client.seed["sessions"].reserved["sess-1"] == seats_before - 1
     event = client.seed["enrollment_events"].rows[-1]
-    assert event.event_type == "withdrawn"
+    assert event.event_type == "dropped"  # Issue #699: renamed from "withdrawn"
     assert event.billing_policy == "early_withdrawal_credit"
     assert event.billing_result.startswith("credit_none")
     assert event.credit_id is None

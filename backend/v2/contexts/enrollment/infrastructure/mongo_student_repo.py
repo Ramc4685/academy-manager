@@ -829,8 +829,10 @@ class MongoStudentRepository(TenantScopedRepository):
     # Statuses an enrollment lands in once attendance has stopped for good.
     # "paused" is deliberately NOT here: it stays in the current list (#651).
     # A transfer moves the row to the new session in place (no status change),
-    # so it never appears here.
-    PAST_ENROLLMENT_STATUSES = ("cancelled", "withdrawn")
+    # so it never appears here. Issue #699: carries both spellings of each
+    # terminal status (legacy "cancelled"/"withdrawn" and canonical
+    # "deleted"/"dropped") so a row written by either era of code is found.
+    PAST_ENROLLMENT_STATUSES = ("cancelled", "deleted", "withdrawn", "dropped")
 
     async def _admin_student_past_enrollments(
         self,
@@ -864,7 +866,9 @@ class MongoStudentRepository(TenantScopedRepository):
             row = self._admin_student_session_row(enrollment, sessions_by_id)
             cancelled_at = self._coerce_datetime(enrollment.get("cancelled_at"))
             withdrawal_date = self._coerce_datetime(enrollment.get("withdrawal_date"))
-            ended_at = withdrawal_date if row.status == "withdrawn" else cancelled_at
+            # Issue #699: "withdrawn"/"dropped" are the two spellings of the
+            # same withdrawal outcome across the dual-read era.
+            ended_at = withdrawal_date if row.status in ("withdrawn", "dropped") else cancelled_at
             ended_at = ended_at or cancelled_at or withdrawal_date
             rows.append(
                 row.model_copy(

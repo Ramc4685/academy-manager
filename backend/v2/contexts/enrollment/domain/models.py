@@ -17,9 +17,59 @@ from backend.v2.shared.security.external_url import validate_external_url
 #: transient in-flight state of a reclaim claim, see application/seat_broker.py).
 #: "held" is NOT a rename of "paused" — paused releases the seat, held does
 #: not — see the departures design contract §2.1.
-EnrollmentStatus = Literal["active", "paused", "held", "reclaim_pending", "cancelled", "withdrawn"]
+#:
+#: Issue #699 (vocabulary migration) adds "dropped" and "deleted" as the
+#: canonical spellings of "withdrawn" and "cancelled" respectively. Per the
+#: departures design contract §5.4:
+#:   - "withdrawn" -> "dropped" and "cancelled" -> "deleted" are lossless
+#:     renames and ARE performed (see canonical_status() below).
+#:   - "paused" -> "held" is explicitly REFUSED: a legacy paused row already
+#:     released its seat, while held rows are counted in reserved_seats, so
+#:     renaming would silently under-count the seat and let a class over-admit
+#:     by one per migrated row. Legacy "paused" rows keep their status and are
+#:     retired by attrition.
+#: Both old and new spellings are accepted here for one release so a rollback
+#: survives (dual-read); write paths move to the new spelling only (see
+#: mongo_enrollment_writer.py, admin_writes.py, coach_roster_writes.py,
+#: mongo_hold_repo.py). The schema validators (migrations 0132/0133) never
+#: constrained `enrollments.status` or `enrollment_events.event_type` to an
+#: enum — both are unconstrained `bsonType: "string"` — so this rename needs
+#: no validator widening, unlike the #657/#658 failure mode it is modeled on.
+EnrollmentStatus = Literal[
+    "active",
+    "paused",
+    "held",
+    "reclaim_pending",
+    "cancelled",
+    "deleted",
+    "withdrawn",
+    "dropped",
+]
 SessionStatus = Literal["scheduled", "cancelled", "completed"]
 SessionOccurrenceStatus = Literal["scheduled", "cancelled", "completed"]
+
+#: Pure mapping from a legacy stored spelling to its canonical (#699) one.
+#: Identity for every other value, including "paused" (deliberately never
+#: mapped to "held" — see the module docstring above). Every reader that
+#: groups or displays enrollment status by its terminal outcome should
+#: normalize through this function rather than comparing to a bare string,
+#: so it reads legacy ("withdrawn"/"cancelled") and freshly-written
+#: ("dropped"/"deleted") rows identically.
+_LEGACY_TO_CANONICAL_STATUS: Final[dict[str, str]] = {
+    "withdrawn": "dropped",
+    "cancelled": "deleted",
+}
+
+
+def canonical_status(value: str) -> str:
+    """Normalize a stored enrollment status to its #699 canonical spelling.
+
+    ``canonical_status("withdrawn") == canonical_status("dropped") == "dropped"``
+    ``canonical_status("cancelled") == canonical_status("deleted") == "deleted"``
+    Every other value (including "paused") is returned unchanged.
+    """
+    return _LEGACY_TO_CANONICAL_STATUS.get(value, value)
+
 
 #: Statuses whose row is counted in sessions.reserved_seats (issue #697).
 #: No module outside this file and the CAS filter builders in
@@ -31,8 +81,13 @@ SEAT_HOLDING: Final[frozenset[str]] = frozenset({"active", "held"})
 #: Statuses whose row has already given its seat back. Disjoint from
 #: SEAT_HOLDING; together with "reclaim_pending" (a transient in-flight
 #: state, neither holding nor released until finalize() runs) they cover
-#: every EnrollmentStatus member.
-SEATLESS: Final[frozenset[str]] = frozenset({"paused", "cancelled", "withdrawn"})
+#: every EnrollmentStatus member. Carries BOTH spellings of the two renamed
+#: terminal statuses (issue #699 dual-read era) — a row written by
+#: yesterday's code ("withdrawn"/"cancelled") and one written by today's
+#: ("dropped"/"deleted") must both be recognized as seatless.
+SEATLESS: Final[frozenset[str]] = frozenset(
+    {"paused", "cancelled", "deleted", "withdrawn", "dropped"}
+)
 
 
 class Session(BaseModel):

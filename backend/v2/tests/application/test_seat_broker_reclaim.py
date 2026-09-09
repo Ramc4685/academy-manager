@@ -64,7 +64,7 @@ async def test_c1_one_held_row_reclaimed_exactly_once_seat_count_unchanged() -> 
     assert acquisition.granted is True
     assert acquisition.via_reclaim is True
     assert acquisition.reclaimed_enrollment_id == "held-1"
-    assert enrollments.rows["held-1"].status == "withdrawn"
+    assert enrollments.rows["held-1"].status == "dropped"
     # reserved_seats untouched by the reclaim — the handover, not a
     # release-then-reserve.
     assert sessions.reserved_seats["sess-1"] == 1
@@ -109,8 +109,8 @@ async def test_c2_two_held_rows_take_the_two_longest_in_order() -> None:
     # longest-held (held-older) is taken FIRST.
     assert first.reclaimed_enrollment_id == "held-older"
     assert second.reclaimed_enrollment_id == "held-newer"
-    assert enrollments.rows["held-older"].status == "withdrawn"
-    assert enrollments.rows["held-newer"].status == "withdrawn"
+    assert enrollments.rows["held-older"].status == "dropped"
+    assert enrollments.rows["held-newer"].status == "dropped"
     assert sessions.reserved_seats["sess-1"] == 2  # unchanged across both reclaims
     assert len(notifier.reclaimed_calls) == 2
 

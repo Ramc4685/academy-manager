@@ -145,11 +145,13 @@ class FakeEnrollmentWriter:
     async def mark_withdrawn_if_open(
         self, enrollment_id: str, *, withdrawal_date: datetime
     ) -> Enrollment | None:
+        # Issue #699: writes the canonical "dropped" spelling, matching
+        # MongoEnrollmentWriter.mark_withdrawn_if_open (was "withdrawn").
         before = self.rows.get(enrollment_id)
         if before is None or before.status not in {"active", "paused", "held"}:
             return None
         self.rows[enrollment_id] = before.model_copy(
-            update={"status": "withdrawn", "withdrawal_date": withdrawal_date}
+            update={"status": "dropped", "withdrawal_date": withdrawal_date}
         )
         return before
 
@@ -248,11 +250,13 @@ class FakeHoldRepository:
     async def finalize_reclaim(
         self, enrollment_id: str, *, withdrawal_date: datetime
     ) -> Enrollment | None:
+        # Issue #699: writes the canonical "dropped" spelling, matching
+        # MongoHoldRepository.finalize_reclaim (was "withdrawn").
         before = self.enrollments.rows.get(enrollment_id)
         if before is None or before.status != "reclaim_pending":
             return None
         self.enrollments.rows[enrollment_id] = before.model_copy(
-            update={"status": "withdrawn", "withdrawal_date": withdrawal_date}
+            update={"status": "dropped", "withdrawal_date": withdrawal_date}
         )
         return before
 

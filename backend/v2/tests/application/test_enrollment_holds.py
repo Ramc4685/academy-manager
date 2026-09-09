@@ -194,7 +194,7 @@ async def test_c6_hold_then_drop_releases_the_seat_exactly_once() -> None:
         )
     )
 
-    assert enrollments.rows["enr-1"].status == "withdrawn"
+    assert enrollments.rows["enr-1"].status == "dropped"
     assert sessions.release_calls == ["sess-1"]
     assert sessions.reserved_seats["sess-1"] == 0
 

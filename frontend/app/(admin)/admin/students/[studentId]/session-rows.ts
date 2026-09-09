@@ -70,9 +70,15 @@ export interface PastEnrollmentRow {
 
 // A transfer moves the enrollment in place (no status change), so the
 // enrollment read never yields a "transferred" past row.
+//
+// Issue #699: "cancelled"/"withdrawn" are the legacy spellings of
+// "deleted"/"dropped" — both are mapped to the same label so a row from
+// either era of backend code reads identically.
 const STATUS_LABELS: Record<string, { label: string; variant: ChipVariant }> = {
   cancelled: { label: "Cancelled", variant: "expired" },
+  deleted: { label: "Cancelled", variant: "expired" },
   withdrawn: { label: "Withdrawn", variant: "expired" },
+  dropped: { label: "Withdrawn", variant: "expired" },
 };
 
 const ACTOR_LABELS: Record<string, string> = {
@@ -86,7 +92,9 @@ export function pastEnrollmentRow(row: AdminStudentSessionSummary): PastEnrollme
     label: row.status.replace(/_/g, " "),
     variant: "expired" as ChipVariant,
   };
-  const withdrawn = row.status === "withdrawn";
+  // Issue #699: "withdrawn"/"dropped" are the two spellings of the same
+  // withdrawal outcome across the dual-read era.
+  const withdrawn = row.status === "withdrawn" || row.status === "dropped";
   const endedAt =
     row.ended_at ??
     (withdrawn

@@ -58,11 +58,12 @@ class FakeEnrollments:
         self, enrollment_id: str, *, withdrawal_date: datetime
     ) -> Enrollment | None:
         # Mirrors the Mongo CAS: only active/paused rows flip; returns the
-        # pre-image, None when the row was not open.
+        # pre-image, None when the row was not open. Issue #699: writes the
+        # canonical "dropped" spelling (was "withdrawn").
         before = self.rows.get(enrollment_id)
         if before is None or before.status not in {"active", "paused"}:
             return None
-        self.rows[enrollment_id] = before.model_copy(update={"status": "withdrawn"})
+        self.rows[enrollment_id] = before.model_copy(update={"status": "dropped"})
         return before
 
     async def update_session(self, enrollment_id: str, session_id: str) -> None:
@@ -624,7 +625,7 @@ async def test_withdraw_records_admin_selected_outcome_and_effective_date() -> N
         )
     )
 
-    assert enrollments.rows["enr-1"].status == "withdrawn"
+    assert enrollments.rows["enr-1"].status == "dropped"
     assert decision.calls == [
         {
             "enrollment_id": "enr-1",
@@ -635,7 +636,7 @@ async def test_withdraw_records_admin_selected_outcome_and_effective_date() -> N
         }
     ]
     event = events.rows[0]
-    assert event.event_type == "withdrawn"
+    assert event.event_type == "dropped"
     assert event.effective_at == _effective()
     assert event.actor_id == "admin-1"
     assert event.reason == "moving away"
@@ -669,7 +670,7 @@ async def test_remove_records_reason_actor_and_effective_date() -> None:
         )
     )
 
-    assert enrollments.rows["enr-1"].status == "cancelled"
+    assert enrollments.rows["enr-1"].status == "deleted"
     event = events.rows[0]
     assert event.event_type == "removed"
     assert event.effective_at == _effective()

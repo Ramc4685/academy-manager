@@ -135,7 +135,7 @@ def test_withdraw_route_defaults_to_credit_and_accepts_refund_or_adjustment(admi
     assert response.status_code == 204, response.text
     assert admin_client.seed["enrollments"].rows[enrollment_id].status == "withdrawn"
     event = admin_client.seed["enrollment_events"].rows[-1]
-    assert event.event_type == "withdrawn"
+    assert event.event_type == "dropped"  # Issue #699: renamed from "withdrawn"
     assert event.effective_at.date().isoformat() == "2026-05-25"
     assert event.metadata["outcome"] == "refund"
     assert event.billing_policy == "withdrawal_refund"
