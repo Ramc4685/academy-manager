@@ -1,10 +1,11 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 
 /**
- * Issue #670: one withdraw path. The session-detail Withdraw dialog sends
- * every outcome — including the account credit an owner used to approve
- * through a separate route — to `POST /admin/enrollments/{id}/withdraw`,
- * and surfaces the 409 the backend returns when the row already moved on.
+ * Issue #670: one withdraw path. The session-detail Drop dialog (opened from
+ * the roster row's overflow menu, #696) sends every outcome — including the
+ * account credit an owner used to approve through a separate route — to
+ * `POST /admin/enrollments/{id}/withdraw`, and surfaces the 409 the backend
+ * returns when the row already moved on.
  */
 
 const ACADEMY = "academy-e2e";
@@ -148,8 +149,9 @@ async function stubSessionDetail(page: Page, enrollmentStatus = "active"): Promi
 async function openWithdrawDialog(page: Page) {
   await page.goto(`/admin/sessions/${SESSION_ID}`);
   await expect(page.getByText("Alice Example")).toBeVisible();
-  await page.getByRole("button", { name: "Withdraw" }).click();
-  await expect(page.getByRole("dialog", { name: "Withdraw enrollment" })).toBeVisible();
+  await page.getByRole("button", { name: "More actions for Alice Example" }).click();
+  await page.getByRole("menuitem", { name: "Drop" }).click();
+  await expect(page.getByRole("dialog", { name: "Drop enrollment" })).toBeVisible();
 }
 
 test.describe("admin enrollment withdraw dialog (#670)", () => {
@@ -158,13 +160,13 @@ test.describe("admin enrollment withdraw dialog (#670)", () => {
     const stub = await stubSessionDetail(page);
     await openWithdrawDialog(page);
 
-    const dialog = page.getByRole("dialog", { name: "Withdraw enrollment" });
+    const dialog = page.getByRole("dialog", { name: "Drop enrollment" });
     await expect(dialog.getByLabel("Outcome")).toHaveValue("credit");
-    await dialog.getByLabel("Withdrawal date").fill("2026-09-15");
+    await dialog.getByLabel("Drop date").fill("2026-09-15");
     await dialog.getByRole("button", { name: "Preview credit" }).click();
     await expect(dialog.getByText("Credit: $37.50")).toBeVisible();
     await dialog.getByLabel("Admin note").fill("Moving away");
-    await dialog.getByRole("button", { name: "Withdraw", exact: true }).click();
+    await dialog.getByRole("button", { name: "Drop", exact: true }).click();
 
     await expect(dialog).toBeHidden();
     expect(stub.approveCalls).toBe(0);
@@ -180,14 +182,14 @@ test.describe("admin enrollment withdraw dialog (#670)", () => {
     const stub = await stubSessionDetail(page);
     await openWithdrawDialog(page);
 
-    const dialog = page.getByRole("dialog", { name: "Withdraw enrollment" });
+    const dialog = page.getByRole("dialog", { name: "Drop enrollment" });
     await expect(dialog.getByLabel("Outcome")).toHaveValue("refund");
     // toBeDisabled() does not treat <option> as a form control; check the attribute.
     await expect(dialog.getByLabel("Outcome").locator("option[value='credit']")).toHaveAttribute("disabled", "");
     await expect(dialog.getByText("Only the academy owner can issue an account credit.")).toBeVisible();
     await expect(dialog.getByRole("button", { name: "Preview credit" })).toHaveCount(0);
-    await dialog.getByLabel("Withdrawal date").fill("2026-09-15");
-    await dialog.getByRole("button", { name: "Withdraw", exact: true }).click();
+    await dialog.getByLabel("Drop date").fill("2026-09-15");
+    await dialog.getByRole("button", { name: "Drop", exact: true }).click();
 
     await expect(dialog).toBeHidden();
     expect(stub.approveCalls).toBe(0);
@@ -213,10 +215,10 @@ test.describe("admin enrollment withdraw dialog (#670)", () => {
       );
     await openWithdrawDialog(page);
 
-    const dialog = page.getByRole("dialog", { name: "Withdraw enrollment" });
+    const dialog = page.getByRole("dialog", { name: "Drop enrollment" });
     await dialog.getByLabel("Outcome").selectOption("adjustment");
-    await dialog.getByLabel("Withdrawal date").fill("2026-09-15");
-    await dialog.getByRole("button", { name: "Withdraw", exact: true }).click();
+    await dialog.getByLabel("Drop date").fill("2026-09-15");
+    await dialog.getByRole("button", { name: "Drop", exact: true }).click();
 
     await expect(dialog.getByRole("alert")).toHaveText(
       "Enrollment is already withdrawn; it cannot be withdrawn again.",
@@ -244,12 +246,12 @@ test.describe("admin enrollment withdraw dialog (#670)", () => {
       );
     await openWithdrawDialog(page);
 
-    const dialog = page.getByRole("dialog", { name: "Withdraw enrollment" });
+    const dialog = page.getByRole("dialog", { name: "Drop enrollment" });
     // The copy is keyed off the error code, not the outcome, so this drives it
     // through an outcome that needs no credit preview to enable Withdraw.
     await dialog.getByLabel("Outcome").selectOption("adjustment");
-    await dialog.getByLabel("Withdrawal date").fill("2026-09-15");
-    await dialog.getByRole("button", { name: "Withdraw", exact: true }).click();
+    await dialog.getByLabel("Drop date").fill("2026-09-15");
+    await dialog.getByRole("button", { name: "Drop", exact: true }).click();
 
     const alert = dialog.getByRole("alert");
     await expect(alert).toContainText("no paid tuition");

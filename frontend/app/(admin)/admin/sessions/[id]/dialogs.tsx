@@ -575,15 +575,14 @@ export function WithdrawalCreditDialog({
           className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl bg-white p-6 shadow-xl focus:outline-none dark:bg-neutral-900"
           aria-describedby="withdrawal-credit-desc"
         >
-          {/* Title/labels below intentionally keep the "Withdraw" wording:
-              e2e/specs/admin-enrollment-withdraw.spec.ts asserts on this
-              dialog's accessible name and must keep passing unchanged. The
-              launcher (the shared DepartureActions menu) already shows the
-              new "Drop" vocabulary; only this dialog's internals are frozen. */}
-          <Dialog.Title className="mb-1 text-lg font-semibold">Withdraw enrollment</Dialog.Title>
+          {/* Title/labels use the "Drop" vocabulary to match the launcher
+              (the shared DepartureActions menu) — one word for one action
+              across the interface. e2e/specs/admin-enrollment-withdraw.spec.ts
+              asserts on this dialog's accessible name; keep the two in sync. */}
+          <Dialog.Title className="mb-1 text-lg font-semibold">Drop enrollment</Dialog.Title>
           <Dialog.Description id="withdrawal-credit-desc" className="mb-4 text-sm text-neutral-500">
             {enrollment
-              ? `Drop (withdraw) ${enrollment.full_name} — releases the seat, stops autopay, and settles unused-class credit per the outcome below.`
+              ? `Drop ${enrollment.full_name} — releases the seat, stops autopay, and settles unused-class credit per the outcome below.`
               : ""}
           </Dialog.Description>
           {error && (
@@ -617,7 +616,7 @@ export function WithdrawalCreditDialog({
                 {outcomeOptions.find((option) => option.disabledReason)?.disabledReason}
               </p>
             )}
-            <Field label="Withdrawal date" required>
+            <Field label="Drop date" required>
               <input
                 type="date"
                 required
@@ -674,7 +673,7 @@ export function WithdrawalCreditDialog({
                 onClick={() => approveMutation.mutate()}
                 className="min-h-touch rounded-md bg-orange-600 px-4 text-sm font-medium text-white hover:bg-orange-700 disabled:opacity-60"
               >
-                {approveMutation.isPending ? "Saving..." : "Withdraw"}
+                {approveMutation.isPending ? "Saving..." : "Drop"}
               </button>
             </div>
           </div>
