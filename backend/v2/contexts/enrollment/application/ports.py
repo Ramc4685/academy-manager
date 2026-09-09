@@ -591,6 +591,19 @@ class HoldRepository(Protocol):
         Never returns the same document twice."""
         ...
 
+    async def claim_expired(
+        self, *, enrollment_id: str, now: datetime, requested_by: str
+    ) -> Enrollment | None:
+        """Atomically claim THIS SPECIFIC held row: ``held`` -> ``reclaim_pending``,
+        gated on ``enrollment_id`` (not on session + sort). Used by
+        ``ExpireDueHolds`` so an expiry sweep drops the row whose OWN
+        ``hold_expires_at`` has passed — never a different, unexpired row on
+        the same session (that would be a reclaim, not an expiry, and is
+        ``SeatBroker.acquire``'s job). Returns the pre-image, or ``None``
+        when the row is no longer ``held`` and unclaimed (already returned,
+        already claimed by a concurrent reclaim/expiry, or already dropped)."""
+        ...
+
     async def finalize_reclaim(
         self, enrollment_id: str, *, withdrawal_date: datetime
     ) -> Enrollment | None:

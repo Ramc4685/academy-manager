@@ -247,6 +247,26 @@ class FakeHoldRepository:
         self.claimed_ids.append(victim.enrollment_id)
         return victim
 
+    async def claim_expired(
+        self, *, enrollment_id: str, now: datetime, requested_by: str
+    ) -> Enrollment | None:
+        before = self.enrollments.rows.get(enrollment_id)
+        if (
+            before is None
+            or before.status != "held"
+            or before.hold_reclaim_claimed_at is not None
+        ):
+            return None
+        self.enrollments.rows[enrollment_id] = before.model_copy(
+            update={
+                "status": "reclaim_pending",
+                "hold_reclaim_claimed_at": now,
+                "hold_reclaim_for": requested_by,
+            }
+        )
+        self.claimed_ids.append(enrollment_id)
+        return before
+
     async def finalize_reclaim(
         self, enrollment_id: str, *, withdrawal_date: datetime
     ) -> Enrollment | None:

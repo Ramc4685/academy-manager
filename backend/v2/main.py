@@ -275,6 +275,30 @@ SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
         "checkin_margin": 60,
         "max_runtime": 30,
     },
+    # Issue #697 — departures design contract §3.9/§4.3: the hold reminder
+    # MUST run daily (not monthly — a monthly cron that misses a tick skips
+    # a whole month), and expiry alongside it. Timed after the makeup-request
+    # sweep so a fresh day's admin actions (Return, Drop) have a chance to
+    # settle before the sweep claims anything.
+    "expire_due_holds": {
+        "schedule": {"type": "crontab", "value": "45 2 * * *"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
+    },
+    "send_hold_reminders": {
+        "schedule": {"type": "crontab", "value": "0 4 * * *"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
+    },
+    # Crash recovery (contract §3.7) for a reclaim claim stuck in
+    # `reclaim_pending`. Every 15 minutes — comfortably above the digest
+    # jobs' cadence but frequent enough that a stalled claim (and the seat it
+    # is holding open) does not sit unresolved for a full day.
+    "process_stalled_hold_reclaims": {
+        "schedule": {"type": "interval", "value": 15, "unit": "minute"},
+        "checkin_margin": 10,
+        "max_runtime": 10,
+    },
 }
 assert SCHEDULED_JOB_MONITORS.keys() == JOB_STALE_AFTER.keys()
 
@@ -532,6 +556,16 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.admin.hold_enrollment = _holds.hold_enrollment
     app.state.admin.return_from_hold = _holds.return_from_hold
     app.state.enrollment_holds = _holds
+    # Departures design contract §3.1: every caller that needs a seat routes
+    # through SeatBroker.acquire, so a full class with a held seat reclaims
+    # the longest-held hold instead of just refusing. SeatBroker cannot be a
+    # constructor argument in composition/admin.py (that module is at its
+    # wiring line-budget cap, and SeatBroker is composed AFTER compose_admin
+    # runs, above) — each use case exposes a `set_seat_broker` setter instead.
+    app.state.admin.edit_roster_add.set_seat_broker(_holds.seat_broker)
+    app.state.admin.resume_enrollment.set_seat_broker(_holds.seat_broker)
+    app.state.admin.transfer_enrollment.set_seat_broker(_holds.seat_broker)
+    app.state.admin.promote_from_waitlist.set_seat_broker(_holds.seat_broker)
     # Stop-all-classes + leaving report (issue #698; also outside
     # composition/admin.py's line budget).
     from backend.v2.composition.departures import compose_departures
@@ -660,6 +694,74 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             totals["expired"] += expired
         if totals["expired"]:
             log.info("makeup_requests_expired", extra=totals)
+
+    # -- Issue #697: departure-policy hold sweeps ---------------------------
+    # Defect #4 fix: these three use cases were composed onto
+    # `app.state.enrollment_holds` (see `compose_enrollment_holds` above) but
+    # were never registered with APScheduler, so no hold ever expired, no
+    # stalled reclaim was ever recovered, and no reminder was ever sent.
+
+    async def _expire_due_holds() -> None:
+        await _run_leased_job(
+            "expire_due_holds", timedelta(minutes=5), _expire_due_holds_body
+        )
+
+    async def _expire_due_holds_body() -> None:
+        totals = {"academy_count": 0, "processed": 0, "expired": 0, "failed": 0}
+        for academy_id in await _scheduler_academy_ids(
+            MongoAcademyRepository(db),
+            runtime_academy_id,
+        ):
+            with tenant_scope(academy_id):
+                result = await app.state.enrollment_holds.expire_due_holds.execute()
+            totals["academy_count"] += 1
+            totals["processed"] += result.processed
+            totals["expired"] += result.expired
+            totals["failed"] += result.failed
+        if totals["processed"]:
+            log.info("enrollment_holds_expired", extra=totals)
+
+    async def _process_stalled_hold_reclaims() -> None:
+        await _run_leased_job(
+            "process_stalled_hold_reclaims",
+            timedelta(minutes=10),
+            _process_stalled_hold_reclaims_body,
+        )
+
+    async def _process_stalled_hold_reclaims_body() -> None:
+        totals = {"academy_count": 0, "finalized": 0}
+        for academy_id in await _scheduler_academy_ids(
+            MongoAcademyRepository(db),
+            runtime_academy_id,
+        ):
+            with tenant_scope(academy_id):
+                finalized = await app.state.enrollment_holds.process_stalled_reclaims.execute()
+            totals["academy_count"] += 1
+            totals["finalized"] += finalized
+        if totals["finalized"]:
+            log.info("hold_reclaims_recovered", extra=totals)
+
+    async def _send_hold_reminders() -> None:
+        await _run_leased_job(
+            "send_hold_reminders", timedelta(minutes=5), _send_hold_reminders_body
+        )
+
+    async def _send_hold_reminders_body() -> None:
+        # Contract §4.3 [DERIVED]: DAILY, 30-day steps — not a monthly cron,
+        # which would send every family's reminder on the same calendar day
+        # and skip a whole month for any hold whose anniversary fell on a
+        # day the job did not run.
+        totals = {"academy_count": 0, "sent": 0}
+        for academy_id in await _scheduler_academy_ids(
+            MongoAcademyRepository(db),
+            runtime_academy_id,
+        ):
+            with tenant_scope(academy_id):
+                sent = await app.state.enrollment_holds.send_hold_reminders.execute()
+            totals["academy_count"] += 1
+            totals["sent"] += sent
+        if totals["sent"]:
+            log.info("hold_reminders_sent", extra=totals)
 
     async def _process_stripe_webhook_events() -> None:
         # 60s interval: keep TTL just under the interval so a clean run's early
@@ -1095,6 +1197,38 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         hour=2,
         minute=30,
         id="expire_makeup_requests",
+        replace_existing=True,
+        max_instances=1,
+    )
+    # Issue #697 (defect #4 fix): these three use cases were composed onto
+    # app.state.enrollment_holds but never registered with the scheduler, so
+    # no hold ever expired, no crashed reclaim was ever recovered, and no
+    # reminder was ever sent. The reminder sweep is DAILY, not monthly — a
+    # monthly cron that misses a single tick would skip a whole month
+    # (contract §4.3 [DERIVED]).
+    scheduler.add_job(
+        _expire_due_holds,
+        "cron",
+        hour=2,
+        minute=45,
+        id="expire_due_holds",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _send_hold_reminders,
+        "cron",
+        hour=4,
+        minute=0,
+        id="send_hold_reminders",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _process_stalled_hold_reclaims,
+        "interval",
+        minutes=15,
+        id="process_stalled_hold_reclaims",
         replace_existing=True,
         max_instances=1,
     )

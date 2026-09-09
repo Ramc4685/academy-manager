@@ -39,6 +39,14 @@ class MongoHoldNoticeSendRepository(TenantScopedRepository):
             "academy_id": academy_id,
             "enrollment_id": enrollment_id,
             "notice_key": notice_key,
+            # `claim_digest_send`'s post-insert verify (and its fallback
+            # `reclaim_retryable_send`) both filter on `digest_date` — not on
+            # `notice_key` — so this field is load-bearing, not decorative.
+            # Without it every claim's own insert fails the "am I alone"
+            # check, withdraws itself, and returns None forever: no hold
+            # reclaim notice or reminder would ever send. Caught by the
+            # departures contract's C9 test.
+            "digest_date": notice_key,
             "status": str(DigestSendStatus.QUEUED),
             "provider_message_id": None,
             "failed_reason": None,
