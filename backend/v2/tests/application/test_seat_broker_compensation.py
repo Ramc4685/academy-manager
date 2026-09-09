@@ -117,7 +117,7 @@ async def test_transfer_enrollment_compensates_via_broker_when_update_session_fa
     )
     sessions.reserved_seats["sess-source"] = 1
     sessions.reserved_seats["sess-target"] = 1
-    broker, holds, billing, notifier, events = _broker(enrollments, sessions)
+    broker, _holds, _billing, _notifier, events = _broker(enrollments, sessions)
 
     transfer = TransferEnrollment(
         enrollments=enrollments, sessions=sessions, seat_broker=broker, clock=lambda: NOW
@@ -160,7 +160,7 @@ async def test_resume_enrollment_compensates_via_broker_when_update_status_fails
     )
     sessions = FakeSessionWriter(sessions={"sess-1": make_session("sess-1", capacity=1)})
     sessions.reserved_seats["sess-1"] = 1
-    broker, holds, billing, notifier, events = _broker(enrollments, sessions)
+    broker, _holds, _billing, _notifier, events = _broker(enrollments, sessions)
 
     resume = ResumeEnrollment(
         enrollments=enrollments, sessions=sessions, seat_broker=broker, clock=lambda: NOW
@@ -193,7 +193,7 @@ async def test_promote_from_waitlist_compensates_via_broker_when_create_fails() 
     )
     sessions = FakeSessionWriter(sessions={"sess-1": make_session("sess-1", capacity=1)})
     sessions.reserved_seats["sess-1"] = 1
-    broker, holds, billing, notifier, events = _broker(enrollments, sessions)
+    broker, _holds, _billing, _notifier, events = _broker(enrollments, sessions)
 
     @dataclass
     class _Waitlist:

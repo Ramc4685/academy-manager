@@ -11,6 +11,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import get_args
 
 import pytest
+from pydantic import ValidationError
 
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     PauseEnrollment,
@@ -142,9 +143,9 @@ def test_compute_hold_expiry_is_a_pure_snapshot() -> None:
 
 @pytest.mark.asyncio
 async def test_max_hold_days_bounds_422_at_the_domain_layer() -> None:
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         EnrollmentDeparturePolicy(academy_id="acad", max_hold_days=0)
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         EnrollmentDeparturePolicy(academy_id="acad", max_hold_days=366)
     # in-bounds values are fine
     EnrollmentDeparturePolicy(academy_id="acad", max_hold_days=1)
@@ -159,7 +160,7 @@ async def test_c5_return_called_twice_second_is_conflict_and_never_reserves_a_se
     """Direct regression guard for the double-count bug §2.4 warns about:
     Return must NEVER call try_reserve_seat, so a session object with
     try_reserve_seat wired to always raise proves it was never touched."""
-    enrollments, _policy, billing, _events, hold_uc, return_uc = _harness()
+    _enrollments, _policy, billing, _events, hold_uc, return_uc = _harness()
     await hold_uc.execute("enr-1", return_on=date(2026, 10, 1))
 
     first = await return_uc.execute("enr-1")
