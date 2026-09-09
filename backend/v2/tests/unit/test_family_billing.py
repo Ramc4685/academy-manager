@@ -376,6 +376,40 @@ def test_view_header_next_charge_and_paid_cents() -> None:
     assert view["warnings"] == []
 
 
+def test_view_enrollment_counts_buckets_held_and_reclaim_pending_separately() -> None:
+    students = (
+        StudentFacts(
+            student_id="s-1",
+            name="Arjun",
+            status="active",
+            enrollments=(
+                _enrollment("e-1", status="active"),
+                _enrollment("e-2", status="paused"),
+                _enrollment("e-3", status="held"),
+                _enrollment("e-4", status="reclaim_pending"),
+                _enrollment("e-5", status="dropped"),
+                _enrollment("e-6", status="withdrawn"),
+                _enrollment("e-7", status="cancelled"),
+                _enrollment("e-8", status="deleted"),
+            ),
+        ),
+    )
+    view = build_family_billing_view(
+        _facts(students=students),
+        timezone="America/Chicago",
+        generated_at=NOW,
+        today=TODAY,
+    )
+    # A held or reclaim_pending row must land in the held bucket, not vanish
+    # from every bucket (the bug this test guards against).
+    assert view["header"]["enrollment_counts"] == {
+        "active": 1,
+        "paused": 1,
+        "held": 2,
+        "cancelled": 4,
+    }
+
+
 def test_view_unlinked_paid_invoice_reports_total_minus_balance() -> None:
     legacy = _invoice("inv-legacy", status="paid", balance=0, allocations=[])
     view = build_family_billing_view(
