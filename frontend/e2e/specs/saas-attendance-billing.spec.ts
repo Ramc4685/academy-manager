@@ -50,6 +50,11 @@ test.describe("SaaS v2 — coach attendance is tenant-scoped", () => {
       academy_id: COACH_USER_A.academy_id,
       roles: ["coach"],
     });
+    // See the note in saas-tenant-isolation.spec.ts: /me/memberships is
+    // fetched on landing and 500s if left unstubbed.
+    await stubMemberships(page, [
+      { academy_id: ACADEMY_A, academy_name: "Aces Academy", role: "coach" },
+    ]);
     await stubCoachMessages(page);
 
     const today = "2026-05-22";

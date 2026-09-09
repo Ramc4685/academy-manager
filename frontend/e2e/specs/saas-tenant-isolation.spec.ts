@@ -184,6 +184,15 @@ test.describe("SaaS v2 — cross-tenant data isolation (admin sessions)", () => 
     const errors = collectConsoleErrors(page);
 
     await stubMe(page, ADMIN_USER_A);
+    // The shell fetches /me/memberships as the user lands; unstubbed it
+    // reaches the dev server with no backend behind it and 500s, which the
+    // clean-console assertion below catches. Both academies are listed on
+    // purpose: the admin genuinely belongs to A and B, and the point of this
+    // test is that only A's sessions render anyway.
+    await stubMemberships(page, [
+      { academy_id: ACADEMY_A, academy_name: "Aces Academy", role: "admin" },
+      { academy_id: ACADEMY_B, academy_name: "Rally Academy", role: "admin" },
+    ]);
     await stubAcademy(page, ACADEMY_A);
     await page.route("**/api/v2/admin/**", (route) => {
       if (route.request().method() !== "GET") return route.fallback();
