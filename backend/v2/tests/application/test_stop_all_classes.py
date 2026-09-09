@@ -115,14 +115,14 @@ async def test_stop_all_classes_drops_every_active_and_held_row_for_the_student(
     assert result.dropped_count == 2
     assert result.failed_count == 0
     assert {r.enrollment_id for r in result.results} == {"e1", "e2"}
-    assert writer.rows["e1"].status == "withdrawn"
-    assert writer.rows["e2"].status == "withdrawn"
+    assert writer.rows["e1"].status == "dropped"
+    assert writer.rows["e2"].status == "dropped"
     # Untouched.
     assert writer.rows["e3"].status == "active"
     assert writer.rows["e4"].status == "withdrawn"
 
     # One lifecycle event PER ENROLLMENT, not one for the batch.
-    withdrawn_events = [e for e in events.rows if e.event_type == "withdrawn"]
+    withdrawn_events = [e for e in events.rows if e.event_type == "dropped"]
     assert len(withdrawn_events) == 2
     assert {e.enrollment_id for e in withdrawn_events} == {"e1", "e2"}
 
@@ -173,8 +173,8 @@ async def test_stop_all_classes_partial_failure_is_visible_not_swallowed():
     assert result.dropped_count == 2
     assert result.failed_count == 1
     # No rollback of the successful drops.
-    assert writer.rows["e1"].status == "withdrawn"
-    assert writer.rows["e3"].status == "withdrawn"
+    assert writer.rows["e1"].status == "dropped"
+    assert writer.rows["e3"].status == "dropped"
     # Only the two real rows released a seat; the ghost never touched it.
     assert sessions.release_calls == ["s1", "s1"]
 
@@ -228,7 +228,7 @@ async def test_leaving_report_reads_withdrawn_events_with_revenue_effect():
     row = rows[0]
     assert row.student_id == "stu-1"
     assert row.student_name == "Ada Lovelace"
-    assert row.event_type == "withdrawn"
+    assert row.event_type == "dropped"
     assert row.is_system_action is False
     assert row.monthly_revenue_effect_cents == -15000
 
