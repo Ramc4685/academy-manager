@@ -76,7 +76,10 @@ class SeatBroker:
         policy = await self._departure_policy.get_or_default()
         if getattr(policy, "hold_reclaim_policy", "never") != "longest_held":
             return SeatAcquisition(
-                granted=False, via_reclaim=False, reclaimed_enrollment_id=None, session_id=session_id
+                granted=False,
+                via_reclaim=False,
+                reclaimed_enrollment_id=None,
+                session_id=session_id,
             )
 
         now = self._now()
@@ -85,7 +88,10 @@ class SeatBroker:
         )
         if victim is None:
             return SeatAcquisition(
-                granted=False, via_reclaim=False, reclaimed_enrollment_id=None, session_id=session_id
+                granted=False,
+                via_reclaim=False,
+                reclaimed_enrollment_id=None,
+                session_id=session_id,
             )
 
         # No release_seat, no second try_reserve_seat — the handover: the
@@ -129,9 +135,8 @@ class SeatBroker:
                 },
             )
             if self._enrollment_events is not None:
-                from backend.v2.shared.ids import new_ulid
-
                 from backend.v2.contexts.enrollment.domain.events import EnrollmentLifecycleEvent
+                from backend.v2.shared.ids import new_ulid
 
                 try:
                     await self._enrollment_events.record(
@@ -144,7 +149,9 @@ class SeatBroker:
                             student_id=acquisition.reclaimed_student_id or "",
                             effective_at=self._now(),
                             occurred_at=self._now(),
-                            metadata={"reclaimed_enrollment_id": acquisition.reclaimed_enrollment_id},
+                            metadata={
+                                "reclaimed_enrollment_id": acquisition.reclaimed_enrollment_id
+                            },
                         )
                     )
                 except Exception:
@@ -192,13 +199,14 @@ async def finalize_reclaim(
             )
             billing_result = str(result.get("billing_result")) if result else None
         except Exception:
-            log.exception("hold_reclaim_billing_sync_failed", extra={"enrollment_id": victim.enrollment_id})
+            log.exception(
+                "hold_reclaim_billing_sync_failed", extra={"enrollment_id": victim.enrollment_id}
+            )
             billing_result = "billing_sync_failed"
 
     if enrollment_events is not None:
-        from backend.v2.shared.ids import new_ulid
-
         from backend.v2.contexts.enrollment.domain.events import EnrollmentLifecycleEvent
+        from backend.v2.shared.ids import new_ulid
 
         try:
             await enrollment_events.record(
@@ -233,4 +241,6 @@ async def finalize_reclaim(
                 billing_result=billing_result,
             )
         except Exception:
-            log.exception("hold_reclaim_notify_failed", extra={"enrollment_id": victim.enrollment_id})
+            log.exception(
+                "hold_reclaim_notify_failed", extra={"enrollment_id": victim.enrollment_id}
+            )

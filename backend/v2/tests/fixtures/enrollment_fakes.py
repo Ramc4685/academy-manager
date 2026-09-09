@@ -207,9 +207,7 @@ class FakeEnrollmentWriter:
 
     async def count_active_for_session(self, session_id: str) -> int:
         return sum(
-            1
-            for e in self.rows.values()
-            if e.session_id == session_id and e.status in SEAT_HOLDING
+            1 for e in self.rows.values() if e.session_id == session_id and e.status in SEAT_HOLDING
         )
 
 
@@ -378,9 +376,7 @@ class FakeEnrollmentEvents:
         """Issue #698's leaving report read. Mirrors the real Mongo repo's
         range-scan filter."""
         return [
-            e
-            for e in self.rows
-            if e.event_type in event_types and start <= e.occurred_at < end
+            e for e in self.rows if e.event_type in event_types and start <= e.occurred_at < end
         ]
 
 

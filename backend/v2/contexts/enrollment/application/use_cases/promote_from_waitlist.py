@@ -92,9 +92,7 @@ class PromoteFromWaitlist:
     def set_seat_broker(self, seat_broker: SeatBroker) -> None:
         self._seat_broker = seat_broker
 
-    async def _release_quietly(
-        self, session_id: str, acquisition: SeatAcquisition | None
-    ) -> None:
+    async def _release_quietly(self, session_id: str, acquisition: SeatAcquisition | None) -> None:
         """Give a just-acquired seat back without masking the error being handled.
 
         Mirrors ``EditRosterAdd._release_quietly`` (contract §3.8): when the

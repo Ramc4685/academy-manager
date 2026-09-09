@@ -35,7 +35,9 @@ class DeparturesComposition:
     leaving_report: GetLeavingReport
 
 
-def compose_departures(db: Any, *, withdraw_enrollment: WithdrawEnrollment) -> DeparturesComposition:
+def compose_departures(
+    db: Any, *, withdraw_enrollment: WithdrawEnrollment
+) -> DeparturesComposition:
     enrollments = MongoEnrollmentRepository(db)
     events = MongoEnrollmentEventRepository(db)
     sessions = MongoSessionRepository(db)

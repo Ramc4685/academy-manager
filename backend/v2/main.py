@@ -709,9 +709,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # stalled reclaim was ever recovered, and no reminder was ever sent.
 
     async def _expire_due_holds() -> None:
-        await _run_leased_job(
-            "expire_due_holds", timedelta(minutes=5), _expire_due_holds_body
-        )
+        await _run_leased_job("expire_due_holds", timedelta(minutes=5), _expire_due_holds_body)
 
     async def _expire_due_holds_body() -> None:
         totals = {"academy_count": 0, "processed": 0, "expired": 0, "failed": 0}

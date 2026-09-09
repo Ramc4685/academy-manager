@@ -1466,9 +1466,7 @@ class TransferEnrollment:
         )
         return enrollment.model_copy(update={"session_id": cmd.target_session_id})
 
-    async def _release_quietly(
-        self, session_id: str, acquisition: SeatAcquisition | None
-    ) -> None:
+    async def _release_quietly(self, session_id: str, acquisition: SeatAcquisition | None) -> None:
         """Give a just-acquired target seat back without masking the error.
 
         Mirrors ``EditRosterAdd._release_quietly`` (contract §3.8): when the
@@ -2207,9 +2205,7 @@ class ResumeEnrollment:
             actor_id=actor_id,
         )
 
-    async def _release_quietly(
-        self, session_id: str, acquisition: SeatAcquisition | None
-    ) -> None:
+    async def _release_quietly(self, session_id: str, acquisition: SeatAcquisition | None) -> None:
         """Give a just-acquired seat back without masking the error being handled.
 
         Mirrors ``EditRosterAdd._release_quietly`` (contract §3.8): when the

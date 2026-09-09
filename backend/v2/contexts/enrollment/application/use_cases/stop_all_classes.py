@@ -107,7 +107,7 @@ class StopAllClasses:
                         outcome="dropped",
                     )
                 )
-            except Exception as exc:  # noqa: BLE001 - partial failure must be visible, not swallowed
+            except Exception as exc:
                 log.exception(
                     "stop_all_classes_enrollment_failed",
                     extra={"student_id": cmd.student_id, "enrollment_id": row.enrollment_id},
