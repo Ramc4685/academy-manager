@@ -35,6 +35,7 @@ from backend.v2.contexts.enrollment.application.use_cases.cancel_session_occurre
     CancelSessionOccurrenceCommand,
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
+from backend.v2.interfaces.admin.owner_gate import ensure_owner_for_withdrawal_credit
 from backend.v2.interfaces.admin.views import (
     AddSessionReplacementRequest,
     AdminCoachAttendanceView,
@@ -658,6 +659,8 @@ async def withdraw_enrollment(
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> None:
+    # Issue #670: one withdraw path. The credit outcome is money governance.
+    ensure_owner_for_withdrawal_credit(claims, body.outcome)
     await use_cases.withdraw_enrollment.execute(
         WithdrawEnrollmentCommand(
             enrollment_id=enrollment_id,

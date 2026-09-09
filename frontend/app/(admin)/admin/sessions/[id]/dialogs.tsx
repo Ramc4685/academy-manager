@@ -5,7 +5,6 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
 
 import {
-  approveWithdrawalCredit,
   createEnrollment,
   deleteEnrollment,
   listAdminSessions,
@@ -23,7 +22,16 @@ import {
   type CreateEnrollmentRequest,
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
+import {
+  buildWithdrawRequest,
+  defaultWithdrawalOutcome,
+  withdrawErrorMessage,
+  withdrawalOutcomeOptions,
+  type WithdrawalOutcome,
+} from "@/lib/admin/withdrawal";
+import type { ApiError } from "@/lib/api/client";
 
+import { useIsOwner } from "@/components/admin/owner-context";
 import { Button } from "@/components/ds/button";
 import { DialogActions, DialogError, Field, RallyModal as RallyDialog } from "@/components/ds/dialog-chrome";
 
@@ -521,8 +529,15 @@ export function WithdrawalCreditDialog({
   onClose: () => void;
   onApproved: () => void;
 }) {
+  // Issue #670: one withdraw path. The backend issues the credit itself for
+  // `outcome: "credit"` and refuses that outcome to non-owners, so the option
+  // is disabled here for plain admins instead of failing on submit.
+  const isOwner = useIsOwner();
+  const outcomeOptions = withdrawalOutcomeOptions(isOwner);
   const [withdrawalDate, setWithdrawalDate] = useState(todayDateInput);
-  const [outcome, setOutcome] = useState<"credit" | "refund" | "adjustment">("credit");
+  const [outcome, setOutcome] = useState<WithdrawalOutcome>(() =>
+    defaultWithdrawalOutcome(isOwner),
+  );
   const [adminNote, setAdminNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   const previewMutation = useMutation({
@@ -533,27 +548,18 @@ export function WithdrawalCreditDialog({
     onError: (err: Error) => setError(err.message ?? "Could not preview credit."),
   });
   const approveMutation = useMutation({
-    mutationFn: async () => {
-      if (outcome === "credit") {
-        await approveWithdrawalCredit(enrollment!.enrollment_id, {
-          withdrawal_date: `${withdrawalDate}T00:00:00.000Z`,
-          admin_note: adminNote,
-        });
-        return;
-      }
-      await withdrawEnrollment(enrollment!.enrollment_id, {
-        effective_date: withdrawalDate,
-        outcome,
-        reason: adminNote || `Withdrawal ${outcome}`,
-      });
-    },
+    mutationFn: () =>
+      withdrawEnrollment(
+        enrollment!.enrollment_id,
+        buildWithdrawRequest({ withdrawalDate, outcome, adminNote }),
+      ),
     onSuccess: () => {
-      setOutcome("credit");
+      setOutcome(defaultWithdrawalOutcome(isOwner));
       setAdminNote("");
       setError(null);
       onApproved();
     },
-    onError: (err: Error) => setError(err.message ?? "Could not approve credit."),
+    onError: (err: ApiError) => setError(withdrawErrorMessage(err)),
   });
   const preview = previewMutation.data;
   return (
@@ -578,16 +584,27 @@ export function WithdrawalCreditDialog({
               <select
                 value={outcome}
                 onChange={(event) => {
-                  setOutcome(event.target.value as "credit" | "refund" | "adjustment");
+                  setOutcome(event.target.value as WithdrawalOutcome);
                   previewMutation.reset();
                 }}
                 className={inputClass}
               >
-                <option value="credit">Account credit</option>
-                <option value="refund">Refund</option>
-                <option value="adjustment">Admin adjustment</option>
+                {outcomeOptions.map((option) => (
+                  <option
+                    key={option.value}
+                    value={option.value}
+                    disabled={option.disabledReason !== undefined}
+                  >
+                    {option.label}
+                  </option>
+                ))}
               </select>
             </Field>
+            {outcomeOptions.some((option) => option.disabledReason) && (
+              <p className="text-xs text-neutral-500">
+                {outcomeOptions.find((option) => option.disabledReason)?.disabledReason}
+              </p>
+            )}
             <Field label="Withdrawal date" required>
               <input
                 type="date"

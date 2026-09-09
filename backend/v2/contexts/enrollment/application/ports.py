@@ -165,6 +165,19 @@ class EnrollmentWriter(Protocol):
         self, enrollment_id: str, enrolled_at: datetime
     ) -> None: ...
 
+    async def mark_withdrawn_if_open(
+        self, enrollment_id: str, *, withdrawal_date: datetime
+    ) -> Enrollment | None:
+        """Atomically move an ``active``/``paused`` row to ``withdrawn`` and
+        stamp ``withdrawal_date`` (issue #670).
+
+        Returns the row AS IT WAS before the write, or ``None`` when the row
+        was not open (already withdrawn/cancelled, or missing). The pre-image
+        is the seat token: only the caller that flipped an ``active`` row
+        releases its seat, so a concurrent double-submit or a retry can never
+        decrement ``reserved_seats`` twice.
+        """
+
     async def get(self, enrollment_id: str) -> Enrollment | None: ...
 
     async def find_for_session_student(
@@ -358,6 +371,10 @@ class OccurrenceCancellationNotifier(Protocol):
     ) -> None: ...
 
 
+#: What the admin chose for the money side of a withdrawal (issue #670).
+WithdrawalOutcome = Literal["credit", "refund", "adjustment"]
+
+
 class EnrollmentMoveBillingSync(Protocol):
     """Cross-context port (issue #669): tell billing an enrollment changed
     session so the CURRENT period is re-priced for the classes still to come
@@ -383,12 +400,36 @@ class EnrollmentMoveBillingSync(Protocol):
     ) -> dict[str, Any]: ...
 
 
-class EnrollmentLifecycleBillingPort(Protocol):
+class EnrollmentWithdrawalDecisionPort(Protocol):
+    """Cross-context port (issue #670): the billing-side half of a withdrawal.
+
+    ``WithdrawEnrollment`` is the only writer of the lifecycle transition; it
+    calls this port AFTER winning the status CAS, so only one caller can ever
+    reach the money side of a given withdrawal. The adapter lives in
+    ``composition/lifecycle_billing.py``.
+
+    Contract:
+
+    * Implementations MUST NOT refuse a withdrawal. A family with nothing to
+      credit is a zero-credit result (``credit_none`` plus a
+      ``no_credit_reason``), never an exception: the row is already withdrawn
+      by the time this runs, and a raise would strand it.
+    * ``outcome == "credit"`` issues the early-withdrawal credit ledger entry
+      (idempotent on the ledger: a retry returns the entry it already made,
+      never a second one) and cancels the legacy Stripe subscription
+      (best effort — a failed cancel is reported in ``metadata``).
+    * ``refund`` / ``adjustment`` have no automation; the result must say so
+      (``refund_manual`` / ``adjustment_manual``) rather than pretend a
+      decision was recorded.
+    * Returns ``billing_policy``, ``billing_result``, optional ``credit_id``
+      and a ``metadata`` dict of strings, all copied onto the lifecycle event.
+    """
+
     async def record_withdrawal_decision(
         self,
         *,
         enrollment: Enrollment,
-        outcome: str,
+        outcome: WithdrawalOutcome,
         effective_at: datetime,
         actor_id: str,
         reason: str,

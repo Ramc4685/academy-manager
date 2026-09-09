@@ -22,10 +22,10 @@ from pymongo.errors import DuplicateKeyError
 from backend.v2.contexts.enrollment.application.ports import (
     EnrollmentBillingSync,
     EnrollmentEventRepository,
-    EnrollmentLifecycleBillingPort,
     EnrollmentMoveBillingSync,
     EnrollmentQuery,
     EnrollmentWelcomeNotifier,
+    EnrollmentWithdrawalDecisionPort,
     EnrollmentWriter,
     OccurrenceRosterCleanup,
     RosterChangeKind,
@@ -34,6 +34,7 @@ from backend.v2.contexts.enrollment.application.ports import (
     StudentQuery,
     StudentWriter,
     WaitlistRepository,
+    WithdrawalOutcome,
 )
 from backend.v2.contexts.enrollment.application.use_cases.billing_deferrals import (
     BillingDeferral,
@@ -53,6 +54,7 @@ from backend.v2.contexts.enrollment.domain.errors import (
     DuplicateSessionSeries,
     EnrollmentNotFound,
     EnrollmentNotTransferable,
+    EnrollmentNotWithdrawable,
     SeatCounterDrift,
     SessionNotEnrollable,
     SessionNotFound,
@@ -1702,24 +1704,99 @@ class WithdrawEnrollmentCommand(BaseModel):
     model_config = {"frozen": True}
     enrollment_id: str
     effective_at: datetime
-    outcome: Literal["credit", "refund", "adjustment"] = "credit"
+    outcome: WithdrawalOutcome = "credit"
     actor_id: str
     reason: str = Field(min_length=1)
 
 
-class WithdrawEnrollment:
-    """Mid-term withdrawal: records the credit/refund decision, stops
-    billing, and — issue #651 — releases the seat and offers it to the
-    waitlist exactly as a cancel does. A withdrawn row that still counted
-    against ``reserved_seats`` kept a class "full" for the next family.
+async def _decide_withdrawal_billing(
+    billing: EnrollmentWithdrawalDecisionPort | None,
+    *,
+    enrollment: Enrollment,
+    outcome: WithdrawalOutcome,
+    effective_at: datetime,
+    actor_id: str,
+    reason: str,
+) -> dict[str, Any]:
+    """Run the billing-side half of a withdrawal (issue #670).
+
+    Like ``_sync_billing`` this never raises into the caller. It runs AFTER
+    the status CAS, so the caller has already won the right to withdraw this
+    row: raising here would leave a half-withdrawn enrollment (no seat
+    release, no billing_sync, no lifecycle event) that no retry can finish,
+    because the retry loses the CAS. A failed decision is recorded on the
+    event as ``withdrawal_decision_failed`` so the money side is visibly
+    outstanding instead of silently dropped. A missing port is a wiring bug
+    and is recorded as such.
     """
+    if billing is None:
+        log.error(
+            "enrollment_withdrawal_decision_unwired: outcome=%s for enrollment_id=%s "
+            "recorded nowhere — no credit was issued",
+            outcome,
+            enrollment.enrollment_id,
+        )
+        return {
+            "billing_policy": f"withdrawal_{outcome}",
+            "billing_result": "withdrawal_decision_unwired",
+            "metadata": {"outcome": outcome},
+        }
+    try:
+        return await billing.record_withdrawal_decision(
+            enrollment=enrollment,
+            outcome=outcome,
+            effective_at=effective_at,
+            actor_id=actor_id,
+            reason=reason,
+        )
+    except Exception:
+        log.exception(
+            "enrollment_withdrawal_decision_failed: outcome=%s for enrollment_id=%s — "
+            "the withdrawal completes; the money side must be settled by hand",
+            outcome,
+            enrollment.enrollment_id,
+        )
+        return {
+            "billing_policy": f"withdrawal_{outcome}",
+            "billing_result": "withdrawal_decision_failed",
+            "metadata": {"outcome": outcome, "automation": "failed"},
+        }
+
+
+class WithdrawEnrollment:
+    """Mid-term withdrawal — the ONE withdraw path (issue #670).
+
+    Order matters:
+
+    1. The status flip is a CAS (``mark_withdrawn_if_open``): only ``active``
+       / ``paused`` rows move, a loser gets ``EnrollmentNotWithdrawable``.
+    2. The billing decision runs second, through
+       ``EnrollmentWithdrawalDecisionPort`` (credit ledger entry for
+       ``outcome="credit"``, honest ``*_manual`` for the rest), and ONLY for
+       the caller that won the CAS. Money after the CAS, never before: a
+       loser must not leave an APPROVED credit on the parent's balance with
+       no withdrawal event to explain it. The port is idempotent on the
+       ledger and never raises into this use case — a failure is recorded as
+       ``withdrawal_decision_failed`` rather than abandoning a half-withdrawn
+       row that no retry can finish.
+    3. The seat is released only when the CAS pre-image was ``active`` — a
+       paused row released its seat when it paused — so a retry or a
+       concurrent submit can never double-decrement ``reserved_seats``.
+    4. Future one-time roster rows drop, ``billing_sync`` voids future
+       invoices and disables autopay (issue #651), the lifecycle event
+       carries the decision, ``EnrollmentCancelled`` offers the seat to the
+       waitlist, and staff are told last.
+    """
+
+    #: Statuses a withdrawal may start from. Anything else is a conflict.
+    _WITHDRAWABLE = frozenset({"active", "paused"})
 
     def __init__(
         self,
         *,
         enrollments: EnrollmentWriter,
         enrollment_events: EnrollmentEventRepository | None = None,
-        billing: EnrollmentLifecycleBillingPort | None = None,
+        billing: EnrollmentWithdrawalDecisionPort | None = None,
         roster_notifier: RosterChangeNotifier | None = None,
         billing_sync: EnrollmentBillingSync | None = None,
         sessions: SessionWriter | None = None,
@@ -1742,32 +1819,44 @@ class WithdrawEnrollment:
     async def execute(self, cmd: WithdrawEnrollmentCommand) -> None:
         e = await self._enrollments.get(cmd.enrollment_id)
         if e is None:
-            raise EnrollmentNotFound("enrollment missing")
-        if e.status == "withdrawn":
-            return
-        now = self._now()
-        # The audit row must not claim a credit/refund decision was recorded
-        # when no decision port is wired (issue #651).
-        billing_decision: dict[str, Any] = {
-            "billing_policy": f"withdrawal_{cmd.outcome}",
-            "billing_result": "decision_not_recorded",
-            "metadata": {"outcome": cmd.outcome},
-        }
-        if self._billing is not None:
-            billing_decision = await self._billing.record_withdrawal_decision(
-                enrollment=e,
-                outcome=cmd.outcome,
-                effective_at=cmd.effective_at,
-                actor_id=cmd.actor_id,
-                reason=cmd.reason,
+            raise EnrollmentNotFound("enrollment missing", enrollment_id=cmd.enrollment_id)
+        if e.status not in self._WITHDRAWABLE:
+            raise EnrollmentNotWithdrawable(
+                f"Enrollment is already {e.status}; it cannot be withdrawn again.",
+                enrollment_id=e.enrollment_id,
+                status=e.status,
             )
-        await self._enrollments.update_status(e.enrollment_id, "withdrawn")
+        now = self._now()
+        before = await self._enrollments.mark_withdrawn_if_open(
+            e.enrollment_id, withdrawal_date=cmd.effective_at
+        )
+        if before is None:
+            # Lost a race with another withdraw/cancel between the read and
+            # the CAS. The winner owns the seat release and the outbox event.
+            # Nothing has been written on the money side yet — the credit is
+            # issued below, only by the caller that won this CAS.
+            raise EnrollmentNotWithdrawable(
+                "Enrollment was withdrawn or cancelled by another action.",
+                enrollment_id=e.enrollment_id,
+                status=e.status,
+            )
+        # Only the CAS winner reaches the money side, so a concurrent cancel
+        # can never leave an APPROVED credit behind with no withdrawal event.
+        billing_decision = await _decide_withdrawal_billing(
+            self._billing,
+            enrollment=e,
+            outcome=cmd.outcome,
+            effective_at=cmd.effective_at,
+            actor_id=cmd.actor_id,
+            reason=cmd.reason,
+        )
         # Issue #674: withdrawals stamp the actor and reason too, so the
         # student's past-enrollment row is not blank for every withdrawal.
+        # ``withdrawal_date`` was stamped by the CAS in the same write as the
+        # status flip, so only the actor/reason are left to persist here.
         await _persist_lifecycle_dates(
             self._enrollments,
             e.enrollment_id,
-            withdrawal_date=cmd.effective_at,
             cancelled_by="admin",
             cancellation_reason=cmd.reason,
         )
@@ -1775,8 +1864,9 @@ class WithdrawEnrollment:
             self._scheduled_actions, e.enrollment_id, reason="enrollment_withdrawn"
         )
         # Issue #651: a withdrawn student no longer holds a seat. A paused row
-        # released its seat when it paused, so only an active row releases.
-        if self._sessions is not None and e.status != "paused":
+        # released its seat when it paused, so only an active row releases —
+        # judged on the CAS pre-image, the only read that cannot be stale.
+        if self._sessions is not None and before.status == "active":
             await self._sessions.release_seat(e.session_id)
         await _drop_future_occurrence_roster(
             self._occurrence_roster,
@@ -1818,7 +1908,9 @@ class WithdrawEnrollment:
         if self._outbox is not None:
             # Issue #651: the same seat-released signal a cancel emits, so the
             # waitlist-promotion handler fills the seat. `admin_cancel` is the
-            # payload's vocabulary for an admin-initiated seat release.
+            # payload's vocabulary for an admin-initiated seat release. Emitted
+            # once per successful CAS, so a retry that lost the CAS above never
+            # re-offers a seat that was already offered.
             await self._outbox.append(
                 EnrollmentCancelled(
                     aggregate_id=e.enrollment_id,

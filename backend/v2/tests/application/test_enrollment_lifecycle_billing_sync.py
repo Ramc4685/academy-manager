@@ -45,6 +45,7 @@ from backend.v2.tests.application.test_enrollment_lifecycle_actions import (
     FakeSessions,
     FakeStudents,
     FakeWaitlist,
+    FakeWithdrawalDecision,
     _enrollment,
     _now,
 )
@@ -161,6 +162,17 @@ class DatedEnrollments(FakeEnrollments):
     async def set_lifecycle_dates(self, enrollment_id: str, **fields: object) -> None:
         self.dates.append({"enrollment_id": enrollment_id, **fields})
 
+    async def mark_withdrawn_if_open(
+        self, enrollment_id: str, *, withdrawal_date: datetime
+    ) -> Enrollment | None:
+        # The Mongo CAS stamps withdrawal_date in the same write as the flip.
+        before = await super().mark_withdrawn_if_open(
+            enrollment_id, withdrawal_date=withdrawal_date
+        )
+        if before is not None:
+            self.dates.append({"enrollment_id": enrollment_id, "withdrawal_date": withdrawal_date})
+        return before
+
 
 @pytest.mark.asyncio
 async def test_cancel_enrollment_syncs_billing_persists_date_and_records_result() -> None:
@@ -248,13 +260,14 @@ async def test_cancel_without_sync_wired_marks_the_event_unwired() -> None:
 
 
 @pytest.mark.asyncio
-async def test_withdraw_syncs_billing_and_never_claims_a_decision_was_recorded() -> None:
+async def test_withdraw_syncs_billing_and_carries_the_real_credit_decision() -> None:
     enrollments = DatedEnrollments(rows={"enr-1": _enrollment()})
     events = FakeEnrollmentEvents()
     sync = RecordingBillingSync()
     await WithdrawEnrollment(
         enrollments=enrollments,
         enrollment_events=events,
+        billing=FakeWithdrawalDecision(),
         billing_sync=sync,
         clock=_now,
     ).execute(
@@ -268,15 +281,42 @@ async def test_withdraw_syncs_billing_and_never_claims_a_decision_was_recorded()
     )
     assert sync.calls[0]["transition"] == "withdrawn"
     assert sync.calls[0]["effective_at"] == EFFECTIVE
+    # Issue #670 stamps the date inside the CAS; issue #674 stamps the actor
+    # and reason right after it.
     assert enrollments.dates == [
+        {"enrollment_id": "enr-1", "withdrawal_date": EFFECTIVE},
         {
             "enrollment_id": "enr-1",
-            "withdrawal_date": EFFECTIVE,
             "cancelled_by": "admin",
             "cancellation_reason": "moving",
-        }
+        },
     ]
-    assert events.rows[0].billing_result == "decision_not_recorded;voided=1,autopay=disabled"
+    # Issue #670: the event carries what billing did, then what sync did.
+    assert events.rows[0].billing_result == "credit_approved;voided=1,autopay=disabled"
+    assert events.rows[0].credit_id == "credit-enr-1"
+
+
+@pytest.mark.asyncio
+async def test_withdraw_without_decision_port_says_so_instead_of_pretending() -> None:
+    events = FakeEnrollmentEvents()
+    await WithdrawEnrollment(
+        enrollments=DatedEnrollments(rows={"enr-1": _enrollment()}),
+        enrollment_events=events,
+        billing_sync=RecordingBillingSync(),
+        clock=_now,
+    ).execute(
+        WithdrawEnrollmentCommand(
+            enrollment_id="enr-1",
+            effective_at=EFFECTIVE,
+            outcome="credit",
+            actor_id="admin-1",
+            reason="moving",
+        )
+    )
+    assert events.rows[0].billing_result == (
+        "withdrawal_decision_unwired;voided=1,autopay=disabled"
+    )
+    assert events.rows[0].credit_id is None
 
 
 @pytest.mark.asyncio

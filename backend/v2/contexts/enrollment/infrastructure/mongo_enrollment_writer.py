@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import ClassVar
 
 from pymongo.errors import DuplicateKeyError
 
@@ -73,9 +74,21 @@ class MongoEnrollmentWriter(TenantScopedRepository):
             fields["cancellation_reason"] = cancellation_reason.strip()
         await self._update_one({"enrollment_id": enrollment_id}, {"$set": fields})
 
-    async def mark_withdrawn(self, enrollment_id: str, *, withdrawal_date: datetime) -> None:
-        await self._update_one(
-            {"enrollment_id": enrollment_id},
+    #: Statuses a withdrawal may start from (issue #670). Legacy rows with no
+    #: ``status`` field read as ``active`` everywhere else, so they are open too.
+    _WITHDRAWABLE_FILTER: ClassVar[dict[str, object]] = {
+        "$or": [{"status": {"$in": ["active", "paused"]}}, {"status": {"$exists": False}}]
+    }
+
+    async def mark_withdrawn_if_open(
+        self, enrollment_id: str, *, withdrawal_date: datetime
+    ) -> Enrollment | None:
+        """CAS ``active``/``paused`` -> ``withdrawn`` (issue #670). Returns the
+        pre-image so the caller knows whether the row held a seat; ``None``
+        when the row was not open, which is how a concurrent double-submit
+        loses without a second seat release."""
+        doc = await self._find_one_and_update(
+            {"enrollment_id": enrollment_id, **self._WITHDRAWABLE_FILTER},
             {
                 "$set": {
                     "status": "withdrawn",
@@ -83,7 +96,9 @@ class MongoEnrollmentWriter(TenantScopedRepository):
                     "updated_at": datetime.now(UTC),
                 }
             },
+            return_document_after=False,
         )
+        return self._to_domain(doc) if doc else None
 
     async def mark_cancelled_by_parent(
         self,
@@ -94,7 +109,7 @@ class MongoEnrollmentWriter(TenantScopedRepository):
         cancelled_at: datetime,
     ) -> Enrollment | None:
         """Atomically transition active -> cancelled for a parent self-cancel
-        (R4). Mirrors ``mark_withdrawn`` but, unlike it, uses the CAS helper
+        (R4). Same CAS shape as ``mark_withdrawn_if_open``: it uses the helper
         (``_find_one_and_update`` filtered on ``status: "active"``) so a
         double-submitted cancel can't both succeed — the loser gets ``None``
         back and the use case raises ``EnrollmentNotCancellable``. Always

@@ -6,14 +6,14 @@ from datetime import UTC, datetime
 import pytest
 
 from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import (
-    ApproveWithdrawalCredit,
-    ApproveWithdrawalCreditCommand,
     PreviewWithdrawalCredit,
     PreviewWithdrawalCreditCommand,
+    RecordWithdrawalDecision,
+    RecordWithdrawalDecisionCommand,
 )
+from backend.v2.contexts.billing.domain.errors import PaymentNotFound
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry, Payment, Subscription
 from backend.v2.contexts.billing.domain.proration import BillingCalculationSnapshot
-from backend.v2.contexts.enrollment.domain.events import EnrollmentLifecycleEvent
 from backend.v2.contexts.enrollment.domain.models import Enrollment
 
 
@@ -57,6 +57,8 @@ class FakeCredits:
     entries: list[CreditLedgerEntry] = field(default_factory=list)
 
     async def create(self, entry):
+        # Real repo: `credit_id` is the unique key; a second insert raises.
+        assert all(e.credit_id != entry.credit_id for e in self.entries)
         self.entries.append(entry)
 
     async def balance_for_parent(self, parent_id):
@@ -76,13 +78,9 @@ class FakeCredits:
 @dataclass
 class FakeEnrollments:
     enrollment: Enrollment
-    withdrawn: tuple[str, datetime] | None = None
 
     async def get(self, enrollment_id):
         return self.enrollment if enrollment_id == self.enrollment.enrollment_id else None
-
-    async def mark_withdrawn(self, enrollment_id, *, withdrawal_date):
-        self.withdrawn = (enrollment_id, withdrawal_date)
 
 
 @dataclass
@@ -103,44 +101,6 @@ class FakeStripe:
 
     async def cancel_subscription(self, stripe_subscription_id, *, at_period_end):
         self.cancelled.append((stripe_subscription_id, at_period_end))
-
-
-@dataclass
-class FakeEnrollmentEvents:
-    rows: list[EnrollmentLifecycleEvent] = field(default_factory=list)
-
-    async def record_withdrawal(
-        self,
-        *,
-        academy_id,
-        enrollment_id,
-        session_id,
-        student_id,
-        actor_id,
-        reason,
-        effective_at,
-        occurred_at,
-        billing_policy,
-        billing_result,
-        credit_id,
-    ):
-        self.rows.append(
-            EnrollmentLifecycleEvent(
-                event_id="event-1",
-                academy_id=academy_id,
-                event_type="withdrawn",
-                enrollment_id=enrollment_id,
-                session_id=session_id,
-                student_id=student_id,
-                actor_id=actor_id,
-                reason=reason,
-                effective_at=effective_at,
-                occurred_at=occurred_at,
-                billing_policy=billing_policy,
-                billing_result=billing_result,
-                credit_id=credit_id,
-            )
-        )
 
 
 @pytest.mark.asyncio
@@ -184,9 +144,8 @@ async def test_preview_withdrawal_credit_uses_net_paid_and_original_snapshot() -
     assert result.paid_period_eligible_classes == 3
 
 
-@pytest.mark.asyncio
-async def test_approve_withdrawal_creates_credit_and_cancels_subscription() -> None:
-    payment = Payment(
+def _paid_payment() -> Payment:
+    return Payment(
         payment_id="pay-1",
         academy_id="acad",
         parent_id="parent-1",
@@ -198,81 +157,234 @@ async def test_approve_withdrawal_creates_credit_and_cancels_subscription() -> N
         created_at=datetime(2026, 5, 16, tzinfo=UTC),
         updated_at=datetime(2026, 5, 16, tzinfo=UTC),
     )
+
+
+def _live_subscription() -> Subscription:
+    return Subscription(
+        subscription_id="sub-1",
+        academy_id="acad",
+        parent_id="parent-1",
+        enrollment_id="enroll-1",
+        session_id="sess-1",
+        stripe_subscription_id="sub_stripe_1",
+        status="active",
+        created_at=datetime(2026, 5, 1, tzinfo=UTC),
+        updated_at=datetime(2026, 5, 1, tzinfo=UTC),
+    )
+
+
+def _decision(outcome: str = "credit") -> RecordWithdrawalDecisionCommand:
+    return RecordWithdrawalDecisionCommand(
+        enrollment_id="enroll-1",
+        academy_id="acad",
+        student_id="student-1",
+        outcome=outcome,  # type: ignore[arg-type]
+        withdrawal_date=datetime(2026, 5, 21, tzinfo=UTC),
+        actor_id="admin-1",
+        reason="moving",
+    )
+
+
+@pytest.mark.asyncio
+async def test_credit_decision_creates_credit_and_cancels_subscription_once() -> None:
     credits = FakeCredits()
-    enrollments = FakeEnrollments(
-        Enrollment(
-            enrollment_id="enroll-1",
-            academy_id="acad",
-            session_id="sess-1",
-            student_id="student-1",
-            status="active",
-        )
-    )
-    subscriptions = FakeSubscriptions(
-        Subscription(
-            subscription_id="sub-1",
-            academy_id="acad",
-            parent_id="parent-1",
-            enrollment_id="enroll-1",
-            session_id="sess-1",
-            stripe_subscription_id="sub_stripe_1",
-            status="active",
-            created_at=datetime(2026, 5, 1, tzinfo=UTC),
-            updated_at=datetime(2026, 5, 1, tzinfo=UTC),
-        )
-    )
+    subscriptions = FakeSubscriptions(_live_subscription())
     stripe = FakeStripe()
-    events = FakeEnrollmentEvents()
-    uc = ApproveWithdrawalCredit(
-        payments=FakePayments(payment=payment, snapshot=_snapshot()),
+    uc = RecordWithdrawalDecision(
+        payments=FakePayments(payment=_paid_payment(), snapshot=_snapshot()),
         credits=credits,
-        enrollments=enrollments,
         subscriptions=subscriptions,
         stripe=stripe,
-        enrollment_events=events,
-        academy_id="acad",
         clock=lambda: datetime(2026, 5, 20, tzinfo=UTC),
     )
 
-    result = await uc.execute(
-        ApproveWithdrawalCreditCommand(
-            enrollment_id="enroll-1",
-            withdrawal_date=datetime(2026, 5, 21, tzinfo=UTC),
-            actor_id="admin-1",
-            admin_note="moving",
-        )
-    )
+    result = await uc.execute(_decision("credit"))
 
+    assert result.billing_policy == "early_withdrawal_credit"
+    assert result.billing_result == "credit_approved"
     assert result.credit_amount_cents == 2667
     assert result.credit_balance_cents == 2667
+    assert result.credit_id == credits.entries[0].credit_id
     assert credits.entries[0].type == "EARLY_WITHDRAWAL_CREDIT"
     assert credits.entries[0].status == "APPROVED"
-    assert enrollments.withdrawn is not None
+    assert credits.entries[0].reason == "moving"
+    assert credits.entries[0].approved_by == "admin-1"
     assert stripe.cancelled == [("sub_stripe_1", True)]
     assert subscriptions.saved is not None
     assert subscriptions.saved.status == "cancelled"
-    assert len(events.rows) == 1
-    assert events.rows[0].event_type == "withdrawn"
-    assert events.rows[0].enrollment_id == "enroll-1"
-    assert events.rows[0].student_id == "student-1"
-    assert events.rows[0].actor_id == "admin-1"
-    assert events.rows[0].reason == "moving"
-    assert events.rows[0].effective_at == datetime(2026, 5, 21, tzinfo=UTC)
-    assert events.rows[0].credit_id == result.credit_id
+    assert result.metadata == {
+        "outcome": "credit",
+        "credit_amount_cents": "2667",
+        "subscription": "cancelled_at_period_end",
+    }
 
-    # Idempotency: a second approval must not insert a duplicate credit.
-    result2 = await uc.execute(
-        ApproveWithdrawalCreditCommand(
-            enrollment_id="enroll-1",
-            withdrawal_date=datetime(2026, 5, 21, tzinfo=UTC),
-            actor_id="admin-1",
-            admin_note="moving",
-        )
-    )
+    # Idempotency (issue #670): a retried withdraw must not insert a second
+    # credit, must not cancel the subscription again, and must hand back the
+    # credit it already made so the lifecycle event can carry its id.
+    subscriptions.subscription = subscriptions.saved
+    result2 = await uc.execute(_decision("credit"))
+    assert result2.billing_result == "credit_already_approved"
     assert result2.credit_id == result.credit_id
     assert result2.credit_amount_cents == result.credit_amount_cents
-    # Still exactly one ledger entry.
     assert len(credits.entries) == 1
-    assert len(events.rows) == 1
-    # Stripe cancel is not re-invoked on the idempotent branch.
     assert stripe.cancelled == [("sub_stripe_1", True)]
+
+
+@pytest.mark.asyncio
+async def test_credit_decision_reports_zero_credit_honestly() -> None:
+    fully_refunded = _paid_payment().model_copy(
+        update={"refunded_cents": 4000, "status": "refunded"}
+    )
+    credits = FakeCredits()
+    uc = RecordWithdrawalDecision(
+        payments=FakePayments(payment=fully_refunded, snapshot=_snapshot()),
+        credits=credits,
+        subscriptions=FakeSubscriptions(None),
+        stripe=FakeStripe(),
+        clock=lambda: datetime(2026, 5, 20, tzinfo=UTC),
+    )
+
+    result = await uc.execute(_decision("credit"))
+
+    assert result.billing_result == "credit_none"
+    assert result.credit_id is None
+    assert credits.entries == []
+    assert result.metadata["subscription"] == "none"
+    assert result.metadata.get("no_credit_reason")
+
+
+@dataclass
+class NoPayments:
+    """A family billed only through the v2 invoice/AR ledger: no legacy
+    `payments` doc carrying a calculation_snapshot_id anywhere."""
+
+    async def latest_paid_payment_for_enrollment(self, _enrollment_id: str):
+        return None
+
+    async def get_snapshot(self, _snapshot_id: str):
+        return None
+
+
+@pytest.mark.asyncio
+async def test_ledger_only_family_is_zero_credit_not_a_refusal() -> None:
+    """Issue #670 review: raising here refused the WITHDRAWAL itself, so the
+    seat stayed held and the family kept being invoiced for a student who
+    had left. No paid tuition to prorate is an honest zero, not a 404."""
+    credits = FakeCredits()
+    subscriptions = FakeSubscriptions(_live_subscription())
+    stripe = FakeStripe()
+    uc = RecordWithdrawalDecision(
+        payments=NoPayments(),
+        credits=credits,
+        subscriptions=subscriptions,
+        stripe=stripe,
+        clock=lambda: datetime(2026, 5, 20, tzinfo=UTC),
+    )
+
+    result = await uc.execute(_decision("credit"))
+
+    assert result.billing_policy == "early_withdrawal_credit"
+    assert result.billing_result == "credit_none"
+    assert result.credit_id is None
+    assert result.credit_amount_cents == 0
+    assert result.no_credit_reason == "no_paid_tuition_snapshot"
+    assert result.metadata == {
+        "outcome": "credit",
+        "credit_amount_cents": "0",
+        "no_credit_reason": "no_paid_tuition_snapshot",
+        "subscription": "cancelled_at_period_end",
+    }
+    assert credits.entries == []
+    # the legacy subscription still has to stop, credit or no credit
+    assert stripe.cancelled == [("sub_stripe_1", True)]
+
+
+@pytest.mark.asyncio
+async def test_preview_still_refuses_without_a_paid_snapshot() -> None:
+    """The preview route answers a question ("how much?"), so an honest 404
+    is right there — only the withdrawal itself must never be blocked."""
+    uc = PreviewWithdrawalCredit(
+        payments=NoPayments(),
+        enrollments=FakeEnrollments(
+            Enrollment(
+                enrollment_id="enroll-1",
+                academy_id="acad",
+                session_id="sess-1",
+                student_id="student-1",
+                status="active",
+            )
+        ),
+    )
+    with pytest.raises(PaymentNotFound):
+        await uc.execute(
+            PreviewWithdrawalCreditCommand(
+                enrollment_id="enroll-1",
+                withdrawal_date=datetime(2026, 5, 21, tzinfo=UTC),
+                actor_id="admin-1",
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_stripe_cancel_failure_is_recorded_not_raised() -> None:
+    """A Stripe outage must not abort a withdrawal that already wrote a
+    credit, and must not be forgotten behind the idempotency guard."""
+
+    @dataclass
+    class BrokenStripe:
+        calls: list[str] = field(default_factory=list)
+        broken: bool = True
+
+        async def cancel_subscription(self, stripe_subscription_id, *, at_period_end):
+            self.calls.append(stripe_subscription_id)
+            if self.broken:
+                raise RuntimeError("stripe is down")
+
+    credits = FakeCredits()
+    subscriptions = FakeSubscriptions(_live_subscription())
+    stripe = BrokenStripe()
+    uc = RecordWithdrawalDecision(
+        payments=FakePayments(payment=_paid_payment(), snapshot=_snapshot()),
+        credits=credits,
+        subscriptions=subscriptions,
+        stripe=stripe,
+        clock=lambda: datetime(2026, 5, 20, tzinfo=UTC),
+    )
+
+    result = await uc.execute(_decision("credit"))
+
+    assert result.billing_result == "credit_approved"
+    assert result.metadata["subscription"] == "cancel_failed"
+    assert len(credits.entries) == 1
+    # not marked cancelled locally, so the next run tries Stripe again
+    assert subscriptions.saved is None
+
+    stripe.broken = False
+    retry = await uc.execute(_decision("credit"))
+
+    assert retry.billing_result == "credit_already_approved"
+    assert retry.metadata["subscription"] == "cancelled_at_period_end"
+    assert stripe.calls == ["sub_stripe_1", "sub_stripe_1"]
+    assert len(credits.entries) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["refund", "adjustment"])
+async def test_manual_outcomes_record_nothing_and_say_so(outcome: str) -> None:
+    credits = FakeCredits()
+    stripe = FakeStripe()
+    uc = RecordWithdrawalDecision(
+        payments=FakePayments(payment=_paid_payment(), snapshot=_snapshot()),
+        credits=credits,
+        subscriptions=FakeSubscriptions(_live_subscription()),
+        stripe=stripe,
+    )
+
+    result = await uc.execute(_decision(outcome))
+
+    assert result.billing_policy == f"withdrawal_{outcome}"
+    assert result.billing_result == f"{outcome}_manual"
+    assert result.credit_id is None
+    assert result.metadata == {"outcome": outcome, "automation": "none"}
+    assert credits.entries == []
+    assert stripe.cancelled == []

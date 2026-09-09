@@ -50,6 +50,7 @@ from backend.v2.composition.lifecycle_billing import (
     build_void_billing_invoice,
     compose_enrollment_billing_sync,
     compose_enrollment_move_billing_sync,
+    compose_withdrawal_decision,
 )
 from backend.v2.composition.occurrence_cancellation import compose_cancel_session_occurrence
 from backend.v2.composition.pathway import (
@@ -168,7 +169,6 @@ from backend.v2.contexts.billing.application.use_cases.tuition_discounts import 
     SetTuitionDiscount,
 )
 from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import (
-    ApproveWithdrawalCredit,
     PreviewWithdrawalCredit,
 )
 from backend.v2.contexts.billing.domain.billing_audit import BillingAuditEntry
@@ -326,7 +326,6 @@ from backend.v2.contexts.enrollment.application.use_cases.trial_requests import 
     ListTrialRequestsForAdmin,
 )
 from backend.v2.contexts.enrollment.domain.events import (
-    EnrollmentLifecycleEvent,
     StudentSessionTypeChanged,
     StudentSessionTypeChangedPayload,
 )
@@ -762,16 +761,6 @@ def compose_admin(
         billing_sync=enrollment_billing_sync,
         roster_notifier=notifiers.roster,
     )
-    withdraw_enrollment = WithdrawEnrollment(
-        enrollments=enrollments_w,
-        enrollment_events=enrollment_events,
-        roster_notifier=notifiers.roster,
-        billing_sync=enrollment_billing_sync,
-        sessions=sessions_w,
-        outbox=outbox,
-        occurrence_roster=occurrence_roster_repo,
-        scheduled_actions=scheduled_actions,
-    )
     edit_roster_add = EditRosterAdd(
         sessions=sessions_w,
         enrollments=enrollments_w,
@@ -921,14 +910,24 @@ def compose_admin(
         payments=payments_repo,
         enrollments=enrollments_w,
     )
-    approve_withdrawal_credit = ApproveWithdrawalCredit(
-        payments=payments_repo,
-        credits=credits_repo,
+    # Issue #670: one withdraw path. The credit decision is a billing step
+    # invoked BY WithdrawEnrollment, which stays the only lifecycle writer.
+    withdraw_enrollment = WithdrawEnrollment(
         enrollments=enrollments_w,
-        subscriptions=subscriptions_repo,
-        stripe=stripe,
-        enrollment_events=_EnrollmentLifecycleEventSink(enrollment_events),
-        academy_id=academy_id,
+        enrollment_events=enrollment_events,
+        billing=compose_withdrawal_decision(
+            payments=payments_repo,
+            credits=credits_repo,
+            subscriptions=subscriptions_repo,
+            stripe=stripe,
+        ),
+        roster_notifier=notifiers.roster,
+        billing_sync=enrollment_billing_sync,
+        sessions=sessions_w,
+        outbox=outbox,
+        occurrence_roster=occurrence_roster_repo,
+        # #682: a withdraw clears any pending end-of-period cancellation.
+        scheduled_actions=scheduled_actions,
     )
 
     # Finance (# FINANCE)
@@ -4045,7 +4044,6 @@ def compose_admin(
         issue_refund=issue_refund,
         quote_enrollment=quote_enrollment,
         preview_withdrawal_credit=preview_withdrawal_credit,
-        approve_withdrawal_credit=approve_withdrawal_credit,
         list_payments_recent=list_payments_recent,
         list_payments_filtered=list_payments_filtered,
         list_payment_feed=list_payment_feed,
@@ -4251,44 +4249,6 @@ def compose_admin(
     install_dunning_notifier(_invoice_email_port())
 
     return admin
-
-
-class _EnrollmentLifecycleEventSink:
-    def __init__(self, enrollment_events: MongoEnrollmentEventRepository) -> None:
-        self._enrollment_events = enrollment_events
-
-    async def record_withdrawal(
-        self,
-        *,
-        academy_id: str,
-        enrollment_id: str,
-        session_id: str,
-        student_id: str,
-        actor_id: str,
-        reason: str,
-        effective_at: datetime,
-        occurred_at: datetime,
-        billing_policy: str,
-        billing_result: str,
-        credit_id: str | None,
-    ) -> None:
-        await self._enrollment_events.record(
-            EnrollmentLifecycleEvent(
-                event_id=str(new_ulid()),
-                academy_id=academy_id,
-                event_type="withdrawn",
-                enrollment_id=enrollment_id,
-                session_id=session_id,
-                student_id=student_id,
-                actor_id=actor_id,
-                reason=reason,
-                effective_at=effective_at,
-                occurred_at=occurred_at,
-                billing_policy=billing_policy,
-                billing_result=billing_result,
-                credit_id=credit_id,
-            )
-        )
 
 
 class _RegistrationRefundExecutor:

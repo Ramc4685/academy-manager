@@ -46,7 +46,6 @@ from backend.v2.contexts.billing.application.use_cases.session_type_ops import (
     UpdateSessionType,
 )
 from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import (
-    ApproveWithdrawalCredit,
     PreviewWithdrawalCredit,
 )
 from backend.v2.contexts.coaching.application.use_cases.generate_daily_teaching_plan import (
@@ -218,7 +217,6 @@ class AdminUseCases:
     issue_refund: IssueRefund
     quote_enrollment: object  # callable
     preview_withdrawal_credit: PreviewWithdrawalCredit
-    approve_withdrawal_credit: ApproveWithdrawalCredit
     list_payments_recent: object  # callable
     list_billing_invoices: object  # async (limit: int = 100) -> list[dict]
     get_billing_invoice_detail: object  # async (invoice_id: str) -> dict

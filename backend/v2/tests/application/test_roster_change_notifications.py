@@ -111,6 +111,16 @@ class FakeEnrollments:
         row = self.rows[enrollment_id]
         self.rows[enrollment_id] = row.model_copy(update={"status": status})
 
+    async def mark_withdrawn_if_open(
+        self, enrollment_id: str, *, withdrawal_date: datetime
+    ) -> Enrollment | None:
+        # Mirrors the Mongo CAS: only active/paused flip; returns the pre-image.
+        before = self.rows.get(enrollment_id)
+        if before is None or before.status not in {"active", "paused"}:
+            return None
+        self.rows[enrollment_id] = before.model_copy(update={"status": "withdrawn"})
+        return before
+
     async def update_session(self, enrollment_id: str, session_id: str) -> None:
         row = self.rows[enrollment_id]
         self.rows[enrollment_id] = row.model_copy(update={"session_id": session_id})
