@@ -1,11 +1,15 @@
 "use client";
 
+import { useState } from "react";
 import type { Route } from "next";
 import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
 
 import { Card, Chip, Overline, type ChipVariant } from "@/components/ds";
 import type { FamilyStudent } from "@/lib/api/admin-families";
 import { formatCents } from "@/lib/money";
+import { getDeparturePolicy } from "@/lib/api/v2/departure-policy";
+import { StopAllClassesDialog } from "@/components/admin/enrollment/stop-all-classes-dialog";
 
 import { shortDate } from "./family-view";
 
@@ -27,6 +31,16 @@ export function StudentsPanel({
   students: FamilyStudent[];
   isOwner: boolean;
 }) {
+  const [stopAllClassesFor, setStopAllClassesFor] = useState<{
+    studentId: string;
+    studentName: string;
+  } | null>(null);
+  const departurePolicyQuery = useQuery({
+    queryKey: ["admin", "enrollment", "departure-policy"],
+    queryFn: getDeparturePolicy,
+    enabled: stopAllClassesFor !== null,
+  });
+
   return (
     <Card p={20} data-testid="family-students">
       <Overline>Students and classes</Overline>
@@ -50,7 +64,7 @@ export function StudentsPanel({
                     <span className="text-rally-muted">no classes</span>
                   </li>,
                 ]
-              : s.enrollments.map((e) => {
+              : s.enrollments.map((e, idx) => {
                   const chip = STATUS_CHIP[e.status] ?? {
                     variant: "pending" as const,
                     label: e.status,
@@ -109,12 +123,32 @@ export function StudentsPanel({
                             Recurring discount
                           </Link>
                         )}
+                        {idx === 0 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setStopAllClassesFor({ studentId: s.student_id, studentName: s.name })
+                            }
+                            className="text-rally-red-700 hover:underline"
+                            data-testid={`stop-all-classes-${s.student_id}`}
+                          >
+                            Stop all classes
+                          </button>
+                        )}
                       </span>
                     </li>
                   );
                 }),
           )}
         </ul>
+      )}
+      {stopAllClassesFor && (
+        <StopAllClassesDialog
+          studentId={stopAllClassesFor.studentId}
+          studentName={stopAllClassesFor.studentName}
+          policyDefaultOutcome={departurePolicyQuery.data?.drop_default_outcome}
+          onClose={() => setStopAllClassesFor(null)}
+        />
       )}
     </Card>
   );

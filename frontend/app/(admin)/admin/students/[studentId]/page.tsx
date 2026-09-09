@@ -25,11 +25,14 @@ import { listAdminUsers } from "@/lib/api/admin";
 import { getAdminStudent, type AdminStudentDetail } from "@/lib/api/v2/students";
 import { getActiveAcademyId } from "@/lib/api/client";
 import { getStudentProgress, listPrograms } from "@/lib/api/curriculum";
+import { getDeparturePolicy } from "@/lib/api/v2/departure-policy";
 import { buildStudentProgressHref } from "@/lib/navigation/admin-student-progress-return";
 import { queryKeys } from "@/lib/query/keys";
 import { Avatar } from "@/components/ds/avatar";
+import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
+import { StopAllClassesDialog } from "@/components/admin/enrollment/stop-all-classes-dialog";
 
 import { BillingEnrollmentsPanel } from "./BillingEnrollmentsPanel";
 import { DetailList } from "./DetailList";
@@ -54,6 +57,12 @@ export default function AdminStudentDetailPage() {
   const studentId = params?.studentId ?? "";
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<StudentTab>("overview");
+  const [stopAllClassesOpen, setStopAllClassesOpen] = useState(false);
+
+  const departurePolicyQuery = useQuery({
+    queryKey: queryKeys.admin.departurePolicy(),
+    queryFn: getDeparturePolicy,
+  });
 
   const studentQuery = useQuery({
     queryKey: queryKeys.admin.studentDetail(studentId),
@@ -124,7 +133,23 @@ export default function AdminStudentDetailPage() {
       data-student-id={student.student_id}
     >
       <BackLink />
-      <Header student={student} />
+      <Header
+        student={student}
+        onStopAllClasses={() => setStopAllClassesOpen(true)}
+      />
+      {stopAllClassesOpen && (
+        <StopAllClassesDialog
+          studentId={student.student_id}
+          studentName={student.full_name}
+          policyDefaultOutcome={departurePolicyQuery.data?.drop_default_outcome}
+          onClose={() => setStopAllClassesOpen(false)}
+          onDone={() => {
+            void queryClient.invalidateQueries({
+              queryKey: queryKeys.admin.studentDetail(studentId),
+            });
+          }}
+        />
+      )}
       <StudentSummaryStrip student={student} />
       <StudentTabs activeTab={activeTab} onChange={setActiveTab} />
 
@@ -586,7 +611,13 @@ function BackLink() {
   );
 }
 
-function Header({ student }: { student: AdminStudentDetail }) {
+function Header({
+  student,
+  onStopAllClasses,
+}: {
+  student: AdminStudentDetail;
+  onStopAllClasses: () => void;
+}) {
   return (
     <Card p={20}>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -601,26 +632,31 @@ function Header({ student }: { student: AdminStudentDetail }) {
             </div>
           </div>
         </div>
-        <div className="text-sm text-rally-muted">
-          <div className="font-medium text-rally-ink">
-            {student.parent_name ?? student.parent_email ?? "Parent on file"}
+        <div className="flex items-start gap-4">
+          <Button size="sm" variant="ghost" onClick={onStopAllClasses}>
+            Stop all classes
+          </Button>
+          <div className="text-sm text-rally-muted">
+            <div className="font-medium text-rally-ink">
+              {student.parent_name ?? student.parent_email ?? "Parent on file"}
+            </div>
+            {student.parent_email && (
+              <a
+                href={`mailto:${student.parent_email}`}
+                className="block hover:underline focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600 rounded"
+              >
+                {student.parent_email}
+              </a>
+            )}
+            {student.parent_phone && (
+              <a
+                href={`tel:${student.parent_phone}`}
+                className="block hover:underline focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600 rounded"
+              >
+                {student.parent_phone}
+              </a>
+            )}
           </div>
-          {student.parent_email && (
-            <a
-              href={`mailto:${student.parent_email}`}
-              className="block hover:underline focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600 rounded"
-            >
-              {student.parent_email}
-            </a>
-          )}
-          {student.parent_phone && (
-            <a
-              href={`tel:${student.parent_phone}`}
-              className="block hover:underline focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600 rounded"
-            >
-              {student.parent_phone}
-            </a>
-          )}
         </div>
       </div>
     </Card>

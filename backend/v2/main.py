@@ -532,6 +532,13 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.admin.hold_enrollment = _holds.hold_enrollment
     app.state.admin.return_from_hold = _holds.return_from_hold
     app.state.enrollment_holds = _holds
+    # Stop-all-classes + leaving report (issue #698; also outside
+    # composition/admin.py's line budget).
+    from backend.v2.composition.departures import compose_departures
+
+    _departures = compose_departures(db, withdraw_enrollment=app.state.admin.withdraw_enrollment)
+    app.state.admin.stop_all_classes = _departures.stop_all_classes
+    app.state.admin.leaving_report = _departures.leaving_report
     # Payments bucket view (composition/admin.py is at its line budget).
     app.state.admin_collections = compose_admin_collections(db)
     app.state.admin_billing_rules = compose_admin_billing_rules(db, app.state.admin)

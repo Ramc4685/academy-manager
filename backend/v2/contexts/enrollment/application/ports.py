@@ -105,6 +105,17 @@ class EnrollmentQuery(Protocol):
     async def is_active(self, session_id: str, student_id: str) -> bool: ...
     async def active_for_student(self, student_id: str) -> list[Enrollment]: ...
 
+    async def departable_for_student(self, student_id: str) -> list[Enrollment]:
+        """Every row for one student that a Drop can still act on (issue #698).
+
+        ``active`` and ``held`` still hold a seat; ``paused`` has already
+        released it but is still a live commitment on the roster (#641).
+        ``StopAllClasses`` composes over the single-enrollment ``Drop`` use
+        case for each of these rows — this method is the read half of that
+        loop, kept separate from ``active_or_paused_for_student`` (coach
+        passport reads) because the two lists must evolve independently.
+        """
+
 
 class StudentQuery(Protocol):
     async def by_ids(self, student_ids: list[str]) -> list[Student]: ...
@@ -264,6 +275,13 @@ class EnrollmentEventRepository(Protocol):
     async def record(self, event: EnrollmentLifecycleEvent) -> None: ...
 
     async def list_for_enrollment(self, enrollment_id: str) -> list[EnrollmentLifecycleEvent]: ...
+
+    async def list_in_range(
+        self, *, start: datetime, end: datetime, event_types: frozenset[str]
+    ) -> list[EnrollmentLifecycleEvent]:
+        """Every event of one of ``event_types`` whose ``occurred_at`` falls in
+        ``[start, end)`` (issue #698's leaving report). Read-only; the report
+        never writes."""
 
 
 class EnrollmentBillingSync(Protocol):

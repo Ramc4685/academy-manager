@@ -1150,6 +1150,39 @@
       ]
     },
     {
+      "route": "/admin/reports/leaving",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/reports/leaving/page.tsx",
+      "workflows": [
+        "Review who left this month and why",
+        "Review the monthly revenue effect of departures"
+      ],
+      "controls": {
+        "buttons": [],
+        "inputs": [
+          "Month"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty",
+        "load error"
+      ],
+      "risk_edges": [
+        "Tenant data leakage in the leaving report",
+        "Non-owner reaches an owner-only financial report"
+      ],
+      "acceptance": [
+        "Departure rows are tenant-scoped and match enrollment_events",
+        "A plain admin gets 404 from GET /api/v2/admin/reports/leaving",
+        "Workflow evidence: \"Review who left this month and why\" completes for the admin route /admin/reports/leaving with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Review the monthly revenue effect of departures\" completes for the admin route /admin/reports/leaving with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Tenant data leakage in the leaving report\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Non-owner reaches an owner-only financial report\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
       "route": "/admin/reports/revenue-by-category",
       "role": "admin",
       "source": "frontend/app/(admin)/admin/reports/revenue-by-category/page.tsx",
