@@ -20,6 +20,7 @@ from backend.v2.contexts.enrollment.application.ports import (
     SessionWriter,
     WaitlistRepository,
 )
+from backend.v2.contexts.enrollment.application.seat_broker import SeatBroker
 from backend.v2.contexts.enrollment.domain.errors import CapacityExceeded, SessionNotEnrollable
 from backend.v2.contexts.enrollment.domain.events import (
     EnrollmentLifecycleEvent,
@@ -67,6 +68,7 @@ class PromoteFromWaitlist:
         enrollment_events: EnrollmentEventRepository | None = None,
         roster_notifier: RosterChangeNotifier | None = None,
         resume: PausedEnrollmentResumer | None = None,
+        seat_broker: SeatBroker | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._waitlist = waitlist
@@ -77,7 +79,15 @@ class PromoteFromWaitlist:
         self._enrollment_events = enrollment_events
         self._roster_notifier = roster_notifier
         self._resume = resume
+        # Departures design contract §3.1 — optional so existing callers/
+        # tests keep working unwired; production wiring injects this via
+        # `set_seat_broker` from main.py (composition/admin.py is at its
+        # line-budget cap, and SeatBroker is composed later).
+        self._seat_broker = seat_broker
         self._now = clock
+
+    def set_seat_broker(self, seat_broker: SeatBroker) -> None:
+        self._seat_broker = seat_broker
 
     async def execute(
         self,
@@ -125,7 +135,13 @@ class PromoteFromWaitlist:
             enrollment = existing.model_copy(update={"status": "active"})
             resumed = True
         else:
-            reserved = await self._sessions.try_reserve_seat(entry.session_id)
+            if self._seat_broker is not None:
+                acquisition = await self._seat_broker.acquire(
+                    entry.session_id, requested_by=f"waitlist_promotion:{entry.waitlist_id}"
+                )
+                reserved = acquisition.granted
+            else:
+                reserved = await self._sessions.try_reserve_seat(entry.session_id)
             if not reserved:
                 return None
             if existing is not None and existing.status == "paused":

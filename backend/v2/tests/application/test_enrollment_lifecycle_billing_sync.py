@@ -609,9 +609,19 @@ async def test_withdraw_of_a_paused_row_does_not_release_a_second_seat() -> None
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("status", ["paused", "withdrawn"])
+@pytest.mark.parametrize("status", ["paused", "withdrawn", "reclaim_pending"])
 async def test_cancel_enrollment_does_not_release_a_seat_it_no_longer_holds(status: str) -> None:
-    """Item 4: a paused/withdrawn row already released its seat."""
+    """Item 4: a paused/withdrawn row already released its seat.
+
+    Defect #6 reproduction: ``reclaim_pending`` is a persisted status in
+    NEITHER ``SEAT_HOLDING`` nor ``SEATLESS`` — it is the transient
+    in-flight state of a reclaim claim, mid-handover to the incoming child.
+    The old predicate (``e.status not in _SEATLESS_STATUSES``) treated
+    anything outside ``SEATLESS`` as seat-holding-and-releasable, so
+    cancelling a ``reclaim_pending`` row released a seat that was already
+    handed over — this parametrize case fails on that bug and passes once
+    the release predicate is ``e.status in SEAT_HOLDING`` (the only
+    exhaustive partition of every ``EnrollmentStatus`` member)."""
     sessions = FakeSessions(reserved={"sess-1": 1})
     await CancelEnrollment(
         enrollments=FakeEnrollments(rows={"enr-1": _enrollment(status)}),

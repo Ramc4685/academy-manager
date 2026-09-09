@@ -82,6 +82,20 @@ class EnrollmentNotHoldable(DomainError):
     status_code = 409
 
 
+class EnrollmentNotPausable(DomainError):
+    """The row cannot be paused from its current status (issue #697, T9).
+
+    In particular a ``held`` row must not be pausable: Pause releases the
+    seat, parks the student on the waitlist and can promote someone else —
+    exactly what a hold promises the family will NOT happen to their seat.
+    The admin path is Return, then Pause, so the seat release is always an
+    explicit, individually-safe step.
+    """
+
+    code = "Enrollment.NotPausable"
+    status_code = 409
+
+
 class EnrollmentNotReturnable(DomainError):
     """The row is not ``held`` (already returned, or its hold was reclaimed
     or expired) so Return cannot apply."""

@@ -8,15 +8,19 @@ policy window bounds (§6.3), and the invariant that Return never touches
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
+from typing import get_args
 
 import pytest
 
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
+    PauseEnrollment,
+    PauseEnrollmentCommand,
     TransferEnrollment,
     TransferEnrollmentCommand,
 )
 from backend.v2.contexts.enrollment.application.use_cases.holds import (
     STALLED_RECLAIM_AFTER,
+    ExpireDueHolds,
     HoldEnrollment,
     ProcessStalledReclaims,
     ReturnFromHold,
@@ -24,9 +28,15 @@ from backend.v2.contexts.enrollment.application.use_cases.holds import (
 from backend.v2.contexts.enrollment.domain.departure_policy import (
     EnrollmentDeparturePolicy,
     EnrollmentNotHoldable,
+    EnrollmentNotPausable,
     EnrollmentNotReturnable,
     HoldWindowExceeded,
     compute_hold_expiry,
+)
+from backend.v2.contexts.enrollment.domain.models import (
+    SEAT_HOLDING,
+    SEATLESS,
+    EnrollmentStatus,
 )
 from backend.v2.tests.fixtures.enrollment_fakes import (
     FakeBillingSync,
@@ -390,3 +400,130 @@ async def test_c10_a_reclaim_pending_row_not_yet_stale_is_left_alone() -> None:
 
     assert finalized == 0
     assert enrollments.rows["held-1"].status == "reclaim_pending"
+
+
+# -- Defect #1: ExpireDueHolds must drop the EXPIRED row, never the -----
+# -- longest-held row on the same session --------------------------------
+
+
+@pytest.mark.asyncio
+async def test_expire_due_holds_drops_the_expired_row_not_the_longest_held() -> None:
+    """Two held rows on ONE session: 'old-not-expired' started first (so it
+    is the longest-held) but its own hold_expires_at has NOT passed yet;
+    'due-for-expiry' started later but its hold_expires_at HAS passed.
+
+    A correct expiry sweep claims and drops 'due-for-expiry' by id.
+    Claiming by session + longest-held-sort (the pre-fix bug) picks
+    'old-not-expired' instead — dropping the wrong child while the actually
+    -expired hold is left untouched forever.
+    """
+    enrollments = FakeEnrollmentWriter(
+        rows={
+            "old-not-expired": make_enrollment(
+                "old-not-expired",
+                session_id="sess-1",
+                student_id="stu-old",
+                status="held",
+                hold_started_at=NOW - timedelta(days=50),
+                hold_expires_at=NOW + timedelta(days=10),  # NOT yet expired
+                hold_seq=1,
+            ),
+            "due-for-expiry": make_enrollment(
+                "due-for-expiry",
+                session_id="sess-1",
+                student_id="stu-due",
+                status="held",
+                hold_started_at=NOW - timedelta(days=5),
+                hold_expires_at=NOW - timedelta(hours=1),  # expired
+                hold_seq=1,
+            ),
+        }
+    )
+    sessions = FakeSessionWriter(sessions={"sess-1": make_session("sess-1", capacity=5)})
+    sessions.reserved_seats["sess-1"] = 2
+    holds = FakeHoldRepository(enrollments=enrollments)
+    billing = FakeBillingSync()
+    notifier = FakeHoldNotifier()
+    events = FakeEnrollmentEvents()
+    policy_repo = FakeDeparturePolicyRepo()
+
+    sweep = ExpireDueHolds(
+        holds=holds,
+        sessions=sessions,
+        departure_policy=policy_repo,
+        billing_sync=billing,
+        notifier=notifier,
+        enrollment_events=events,
+        clock=lambda: NOW,
+    )
+
+    result = await sweep.execute()
+
+    assert result.expired == 1
+    assert result.failed == 0
+    # The row that actually expired is the one dropped...
+    assert enrollments.rows["due-for-expiry"].status == "withdrawn"
+    # ...and the still-valid hold is left completely untouched.
+    assert enrollments.rows["old-not-expired"].status == "held"
+    assert enrollments.rows["old-not-expired"].hold_reclaim_claimed_at is None
+    assert [c.get("enrollment_id") for c in notifier.reclaimed_calls] == ["due-for-expiry"]
+    assert [c["enrollment_id"] for c in billing.calls] == ["due-for-expiry"]
+    # Nobody is waiting for an expired hold's seat — it is released, exactly
+    # once, for the row that actually expired.
+    assert sessions.release_calls == ["sess-1"]
+
+
+# -- Defect #5 / T9: held -> paused must be REFUSED, not silently allowed --
+
+
+@pytest.mark.asyncio
+async def test_pause_a_held_enrollment_is_refused_with_409() -> None:
+    """T9: a held row's seat is retained precisely so the family is safe
+    from losing it. PauseEnrollment must not be allowed to release that
+    seat, park the student on the waitlist and promote someone else out from
+    under a family that was told their seat was safe."""
+    enrollments = FakeEnrollmentWriter(
+        rows={"enr-1": make_enrollment(status="held", hold_started_at=NOW)}
+    )
+    sessions = FakeSessionWriter(sessions={"sess-1": make_session(capacity=1)})
+    sessions.reserved_seats["sess-1"] = 1
+    pause = PauseEnrollment(enrollments=enrollments, sessions=sessions, clock=lambda: NOW)
+
+    with pytest.raises(EnrollmentNotPausable):
+        await pause.execute(PauseEnrollmentCommand(enrollment_id="enr-1"))
+
+    # Refused before any side effect: status, seat and release-call count
+    # are all untouched.
+    assert enrollments.rows["enr-1"].status == "held"
+    assert sessions.release_calls == []
+    assert sessions.reserved_seats["sess-1"] == 1
+
+
+# -- Defect #6: every seat-release predicate must be exhaustive over the --
+# -- full EnrollmentStatus set --------------------------------------------
+
+
+def test_every_enrollment_status_is_classified_for_seat_release() -> None:
+    """`SEAT_HOLDING` and `SEATLESS` are deliberately not full complements —
+    `reclaim_pending` is the ONE named, transient exception (mid-handover:
+    neither holding nor released until finalize() runs). This test fails
+    for any OTHER status the model can write that neither set classifies,
+    which is exactly the gap that let `CancelEnrollment`'s old `not in
+    SEATLESS` predicate silently treat `reclaim_pending` as releasable
+    (defect #6). If `EnrollmentStatus` ever grows a new member, this test
+    forces an explicit decision about it rather than a silent fall-through.
+    """
+    all_statuses = set(get_args(EnrollmentStatus))
+    transient_exceptions = {"reclaim_pending"}
+
+    assert SEAT_HOLDING.isdisjoint(SEATLESS)
+    assert SEAT_HOLDING.isdisjoint(transient_exceptions)
+    assert SEATLESS.isdisjoint(transient_exceptions)
+    unclassified = all_statuses - SEAT_HOLDING - SEATLESS - transient_exceptions
+    assert unclassified == set(), (
+        f"EnrollmentStatus member(s) {unclassified} are classified by NEITHER "
+        "SEAT_HOLDING nor SEATLESS nor the named transient exception — every "
+        "seat-release call site must decide `in SEAT_HOLDING`, never "
+        "`not in SEATLESS`, or a status like this silently releases a seat "
+        "it should not (see defect #6)."
+    )
