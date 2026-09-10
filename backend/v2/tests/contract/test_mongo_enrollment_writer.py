@@ -138,7 +138,8 @@ async def test_mark_withdrawn_if_open_is_a_cas_that_returns_the_pre_image(db, ac
     assert second is None
     doc = await db["enrollments"].find_one({"enrollment_id": "enr-active"})
     assert doc is not None
-    assert doc["status"] == "withdrawn"
+    # Issue #699: canonical spelling is "dropped" (was "withdrawn").
+    assert doc["status"] == "dropped"
     # mongomock hands naive datetimes back; the instant is what matters.
     assert doc["withdrawal_date"].replace(tzinfo=UTC) == when
 

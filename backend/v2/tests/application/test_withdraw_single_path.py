@@ -92,7 +92,7 @@ async def test_credit_withdraw_runs_every_side_effect_exactly_once() -> None:
 
     await h.use_case.execute(_cmd("credit"))
 
-    assert h.enrollments.rows["enr-1"].status == "withdrawn"
+    assert h.enrollments.rows["enr-1"].status == "dropped"
     # the credit decision ran once, for the CAS winner, with the admin's inputs
     assert [c["outcome"] for c in h.decision.calls] == ["credit"]
     assert h.decision.credits == {"enr-1": "credit-enr-1"}
@@ -103,7 +103,7 @@ async def test_credit_withdraw_runs_every_side_effect_exactly_once() -> None:
     assert h.sync.calls[0]["effective_at"] == EFFECTIVE
     # the event carries the credit and the sync result
     assert len(h.events.rows) == 1
-    assert h.events.rows[0].event_type == "withdrawn"
+    assert h.events.rows[0].event_type == "dropped"
     assert h.events.rows[0].billing_policy == "early_withdrawal_credit"
     assert h.events.rows[0].billing_result == "credit_approved;voided=1,autopay=disabled"
     assert h.events.rows[0].credit_id == "credit-enr-1"
@@ -124,7 +124,7 @@ async def test_second_withdraw_is_a_conflict_and_touches_nothing() -> None:
         await h.use_case.execute(_cmd("refund"))
 
     assert excinfo.value.status_code == 409
-    assert excinfo.value.details["status"] == "withdrawn"
+    assert excinfo.value.details["status"] == "dropped"
     # nothing ran twice: no second decision, seat stays at 0, one event, one offer
     assert len(h.decision.calls) == 1
     assert h.sessions.reserved["sess-1"] == 0
@@ -153,7 +153,7 @@ async def test_withdraw_after_cancel_is_a_conflict_not_a_second_seat_release() -
 
     assert h.decision.calls == []
     assert h.sessions.reserved["sess-1"] == 0
-    assert h.enrollments.rows["enr-1"].status == "cancelled"
+    assert h.enrollments.rows["enr-1"].status == "deleted"
 
 
 @pytest.mark.asyncio
@@ -164,7 +164,7 @@ async def test_paused_row_withdraws_without_releasing_a_seat_it_no_longer_holds(
 
     await h.use_case.execute(_cmd("refund"))
 
-    assert h.enrollments.rows["enr-1"].status == "withdrawn"
+    assert h.enrollments.rows["enr-1"].status == "dropped"
     assert h.sessions.reserved["sess-1"] == 0
     assert [c["transition"] for c in h.sync.calls] == ["withdrawn"]
     assert h.events.rows[0].billing_result == "refund_manual;voided=1,autopay=disabled"
@@ -180,7 +180,7 @@ async def test_failed_credit_decision_still_withdraws_and_says_so() -> None:
 
     await h.use_case.execute(_cmd("credit"))
 
-    assert h.enrollments.rows["enr-1"].status == "withdrawn"
+    assert h.enrollments.rows["enr-1"].status == "dropped"
     assert h.sessions.reserved["sess-1"] == 0
     assert [c["transition"] for c in h.sync.calls] == ["withdrawn"]
     assert len(h.outbox.rows) == 1
@@ -211,7 +211,7 @@ async def test_lost_cas_race_is_a_conflict_and_issues_no_credit() -> None:
     with pytest.raises(EnrollmentNotWithdrawable):
         await h.use_case.execute(_cmd("credit"))
 
-    assert h.enrollments.rows["enr-1"].status == "withdrawn"
+    assert h.enrollments.rows["enr-1"].status == "dropped"
     # the loser released nothing, offered nothing and credited nothing
     assert h.sessions.reserved["sess-1"] == 1
     assert h.outbox.rows == []
@@ -233,7 +233,7 @@ async def test_two_concurrent_withdraws_issue_exactly_one_credit() -> None:
 
     conflicts = [r for r in results if isinstance(r, EnrollmentNotWithdrawable)]
     assert len(conflicts) == 1, results
-    assert h.enrollments.rows["enr-1"].status == "withdrawn"
+    assert h.enrollments.rows["enr-1"].status == "dropped"
     assert len(h.decision.calls) == 1
     assert h.decision.credits == {"enr-1": "credit-enr-1"}
     assert h.sessions.reserved["sess-1"] == 0

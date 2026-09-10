@@ -719,7 +719,7 @@ class SelfCancelEnrollment:
                     EnrollmentLifecycleEvent(
                         event_id=str(new_ulid()),
                         academy_id=enrollment.academy_id,
-                        event_type="cancelled",
+                        event_type="cancelled",  # Issue #699: parent self-cancel surface out of scope
                         enrollment_id=enrollment.enrollment_id,
                         session_id=enrollment.session_id,
                         student_id=enrollment.student_id,

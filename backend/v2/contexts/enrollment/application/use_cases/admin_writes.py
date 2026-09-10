@@ -73,6 +73,7 @@ from backend.v2.contexts.enrollment.domain.models import (
     Enrollment,
     Session,
     Student,
+    canonical_status,
 )
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 from backend.v2.shared.events import Outbox
@@ -649,7 +650,9 @@ class CancelSession:
         now = self._now()
         for e in rows:
             was_seat_holding = e.status in SEAT_HOLDING
-            await self._enrollments_w.update_status(e.enrollment_id, "cancelled")
+            # Issue #699: renamed from "cancelled" — see domain/models.py
+            # canonical_status().
+            await self._enrollments_w.update_status(e.enrollment_id, "deleted")
             await _persist_lifecycle_dates(
                 self._enrollments_w,
                 e.enrollment_id,
@@ -687,7 +690,9 @@ class CancelSession:
             await _record_lifecycle_event(
                 self._enrollment_events,
                 academy_id=self._academy_id,
-                event_type="cancelled",
+                # Issue #699: renamed from "cancelled" — see domain/models.py
+                # canonical_status().
+                event_type="deleted",
                 enrollment_id=e.enrollment_id,
                 session_id=e.session_id,
                 student_id=e.student_id,
@@ -1234,9 +1239,11 @@ class CancelEnrollment:
         e = await self._enrollments.get(cmd.enrollment_id)
         if e is None:
             raise EnrollmentNotFound("enrollment missing", enrollment_id=cmd.enrollment_id)
-        if e.status == "cancelled":
+        if canonical_status(e.status) == "deleted":
             return
-        await self._enrollments.update_status(e.enrollment_id, "cancelled")
+        # Issue #699: renamed from "cancelled" — see domain/models.py
+        # canonical_status().
+        await self._enrollments.update_status(e.enrollment_id, "deleted")
         now = self._now()
         effective_at = cmd.effective_at or now
         # Issue #674: the past-enrollment row reads actor + reason off the
@@ -2014,7 +2021,7 @@ class WithdrawEnrollment:
         await _record_lifecycle_event(
             self._enrollment_events,
             academy_id=e.academy_id,
-            event_type="withdrawn",
+            event_type="dropped",  # Issue #699: renamed from "withdrawn"
             enrollment_id=e.enrollment_id,
             session_id=e.session_id,
             student_id=e.student_id,

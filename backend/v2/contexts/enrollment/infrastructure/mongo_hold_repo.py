@@ -82,7 +82,9 @@ class MongoHoldRepository(TenantScopedRepository):
             {"enrollment_id": enrollment_id, "status": "reclaim_pending"},
             {
                 "$set": {
-                    "status": "withdrawn",
+                    # Issue #699: renamed from "withdrawn" — see
+                    # domain/models.py canonical_status().
+                    "status": "dropped",
                     "withdrawal_date": withdrawal_date,
                     "updated_at": withdrawal_date,
                 }

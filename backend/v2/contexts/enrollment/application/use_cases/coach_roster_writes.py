@@ -113,4 +113,6 @@ class CoachRemoveStudentFromRoster:
                 session_id=cmd.session_id,
                 student_id=cmd.student_id,
             )
-        await self._enrollments.update_status(enrollment.enrollment_id, "cancelled")
+        # Issue #699: renamed from "cancelled" — see domain/models.py
+        # canonical_status().
+        await self._enrollments.update_status(enrollment.enrollment_id, "deleted")

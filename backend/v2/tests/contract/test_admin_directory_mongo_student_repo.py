@@ -1479,7 +1479,8 @@ async def test_admin_cancel_through_real_writer_shows_actor_and_reason_on_past_r
     assert detail is not None
     assert detail.enrolled_sessions == []
     (row,) = detail.past_enrollments
-    assert row.status == "cancelled"
+    # Issue #699: canonical spelling is "deleted" (was "cancelled").
+    assert row.status == "deleted"
     assert row.cancelled_at == effective_at
     assert row.ended_at == effective_at
     assert row.cancelled_by == "admin"
@@ -1511,7 +1512,8 @@ async def test_admin_withdraw_through_real_writer_shows_actor_and_reason_on_past
     detail = await MongoStudentRepository(db).get_admin_student("st-alice")
     assert detail is not None
     (row,) = detail.past_enrollments
-    assert row.status == "withdrawn"
+    # Issue #699: canonical spelling is "dropped" (was "withdrawn").
+    assert row.status == "dropped"
     assert row.withdrawal_date == effective_at
     assert row.ended_at == effective_at
     assert row.cancelled_at is None

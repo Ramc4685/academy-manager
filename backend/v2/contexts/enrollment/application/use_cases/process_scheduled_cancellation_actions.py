@@ -229,7 +229,7 @@ class ProcessScheduledCancellationActions:
         await _record_lifecycle_event(
             self._enrollment_events,
             academy_id=before.academy_id,
-            event_type="cancelled",
+            event_type="cancelled",  # Issue #699: parent self-cancel surface out of scope
             enrollment_id=before.enrollment_id,
             session_id=before.session_id,
             student_id=before.student_id,

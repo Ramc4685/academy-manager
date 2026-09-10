@@ -114,11 +114,13 @@ class FakeEnrollments:
     async def mark_withdrawn_if_open(
         self, enrollment_id: str, *, withdrawal_date: datetime
     ) -> Enrollment | None:
-        # Mirrors the Mongo CAS: only active/paused flip; returns the pre-image.
+        # Mirrors the Mongo CAS: only active/paused flip; returns the
+        # pre-image. Issue #699: writes the canonical "dropped" spelling
+        # (was "withdrawn").
         before = self.rows.get(enrollment_id)
         if before is None or before.status not in {"active", "paused"}:
             return None
-        self.rows[enrollment_id] = before.model_copy(update={"status": "withdrawn"})
+        self.rows[enrollment_id] = before.model_copy(update={"status": "dropped"})
         return before
 
     async def update_session(self, enrollment_id: str, session_id: str) -> None:
@@ -283,7 +285,8 @@ async def test_cancel_survives_a_raising_notifier() -> None:
 
     await use_case.execute(CancelEnrollmentCommand(enrollment_id="enr-1"))
 
-    assert enrollments.rows["enr-1"].status == "cancelled"
+    # Issue #699: canonical spelling is "deleted" (was "cancelled").
+    assert enrollments.rows["enr-1"].status == "deleted"
 
 
 @pytest.mark.asyncio
@@ -404,7 +407,7 @@ async def test_withdraw_survives_a_raising_notifier() -> None:
         )
     )
 
-    assert enrollments.rows["enr-1"].status == "withdrawn"
+    assert enrollments.rows["enr-1"].status == "dropped"
 
 
 # --- waitlist promotion -------------------------------------------------

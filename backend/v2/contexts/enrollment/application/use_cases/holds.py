@@ -35,7 +35,10 @@ from backend.v2.contexts.enrollment.domain.departure_policy import (
     compute_hold_expiry,
 )
 from backend.v2.contexts.enrollment.domain.errors import EnrollmentNotFound
-from backend.v2.contexts.enrollment.domain.events import EnrollmentLifecycleEvent
+from backend.v2.contexts.enrollment.domain.events import (
+    EnrollmentLifecycleEvent,
+    EnrollmentLifecycleEventType,
+)
 from backend.v2.contexts.enrollment.domain.models import Enrollment
 from backend.v2.shared.ids import new_ulid
 
@@ -58,7 +61,7 @@ async def _record_event(
     events: EnrollmentEventRepository | None,
     *,
     academy_id: str,
-    event_type: str,
+    event_type: EnrollmentLifecycleEventType,
     enrollment_id: str,
     session_id: str,
     student_id: str,

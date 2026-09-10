@@ -317,7 +317,12 @@ async def test_full_family_view(db, acad) -> None:
     assert header["autopay"]["next_charge_invoice_id"] == "inv-sep-arjun"
     assert header["last_payment"]["amount_cents"] == 6000
     assert header["last_payment"]["invoice_ids"] == ["inv-aug-arjun"]
-    assert header["enrollment_counts"] == {"active": 1, "paused": 1, "cancelled": 0}
+    assert header["enrollment_counts"] == {
+        "active": 1,
+        "held": 0,
+        "paused": 1,
+        "cancelled": 0,
+    }
 
     students = {s["name"]: s for s in view["students"]}
     hannah = students["Hannah"]["enrollments"][0]

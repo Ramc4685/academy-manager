@@ -38,8 +38,9 @@ class MongoEnrollmentWriter(TenantScopedRepository):
     #: Statuses that END an enrollment. Reaching one retires any scheduled
     #: end-of-period cancel marker: an admin who cancels or withdraws on the
     #: 20th must not leave the roster showing "Ends Sep 30" for a student who
-    #: is already off it (issue #675 follow-up).
-    _TERMINAL_STATUSES = frozenset({"cancelled", "withdrawn"})
+    #: is already off it (issue #675 follow-up). Issue #699: both spellings of
+    #: each terminal status, so this still catches legacy rows.
+    _TERMINAL_STATUSES = frozenset({"cancelled", "deleted", "withdrawn", "dropped"})
 
     async def update_status(self, enrollment_id: str, status: str) -> None:
         fields: dict[str, object] = {"status": status}
@@ -156,15 +157,17 @@ class MongoEnrollmentWriter(TenantScopedRepository):
     async def mark_withdrawn_if_open(
         self, enrollment_id: str, *, withdrawal_date: datetime
     ) -> Enrollment | None:
-        """CAS ``active``/``paused`` -> ``withdrawn`` (issue #670). Returns the
-        pre-image so the caller knows whether the row held a seat; ``None``
-        when the row was not open, which is how a concurrent double-submit
-        loses without a second seat release."""
+        """CAS ``active``/``paused``/``held`` -> ``dropped`` (issue #670,
+        widened #697, renamed #699 — was "withdrawn"; see
+        domain/models.py canonical_status()). Returns the pre-image so the
+        caller knows whether the row held a seat; ``None`` when the row was
+        not open, which is how a concurrent double-submit loses without a
+        second seat release."""
         doc = await self._find_one_and_update(
             {"enrollment_id": enrollment_id, **self._WITHDRAWABLE_FILTER},
             {
                 "$set": {
-                    "status": "withdrawn",
+                    "status": "dropped",
                     "withdrawal_date": withdrawal_date,
                     "updated_at": datetime.now(UTC),
                 }
@@ -193,6 +196,16 @@ class MongoEnrollmentWriter(TenantScopedRepository):
             {"enrollment_id": enrollment_id, "status": "active"},
             {
                 "$set": {
+                    # Issue #699 deliberately does NOT rename this write:
+                    # the parent self-cancel surface (R4) is out of scope
+                    # for the departures vocabulary migration (same boundary
+                    # as the design contract's self-service protections in
+                    # #697 §5.2) and its response DTO
+                    # (SelfCancelEnrollmentResult.status) is a documented
+                    # parent-facing API contract this slice does not touch.
+                    # Read paths already accept both spellings via
+                    # canonical_status()/SEATLESS, so this row is read
+                    # correctly either way.
                     "status": "cancelled",
                     "cancelled_by": "parent",
                     "cancellation_reason": cancellation_reason,
@@ -258,6 +271,10 @@ class MongoEnrollmentWriter(TenantScopedRepository):
             },
             {
                 "$set": {
+                    # Issue #699: deliberately NOT renamed — this is the
+                    # end-of-period arm of the same parent self-cancel
+                    # surface as mark_cancelled_by_parent above; see that
+                    # method's comment for why it stays out of scope here.
                     "status": "cancelled",
                     "cancelled_by": "parent",
                     "cancelled_at": cancelled_at,
@@ -348,6 +365,11 @@ class MongoEnrollmentWriter(TenantScopedRepository):
 
     @staticmethod
     def _to_domain(doc: dict[str, object]) -> Enrollment:
+        # Older rows stored the hold return date as an ISO string; newer ones
+        # store a real date. Narrow it once, here, rather than at every field.
+        hold_return_on = doc.get("hold_return_on")
+        if isinstance(hold_return_on, str):
+            hold_return_on = date.fromisoformat(hold_return_on)
         return Enrollment(
             enrollment_id=str(doc["enrollment_id"]),
             academy_id=str(doc["academy_id"]),
@@ -365,11 +387,7 @@ class MongoEnrollmentWriter(TenantScopedRepository):
             pending_cancellation_at=doc.get("pending_cancellation_at"),
             pending_cancellation_requested_at=doc.get("pending_cancellation_requested_at"),
             hold_started_at=doc.get("hold_started_at"),
-            hold_return_on=(
-                date.fromisoformat(hold_return_on_raw)
-                if isinstance(hold_return_on_raw := doc.get("hold_return_on"), str)
-                else hold_return_on_raw
-            ),
+            hold_return_on=hold_return_on,
             hold_expires_at=doc.get("hold_expires_at"),
             hold_reason=doc.get("hold_reason"),
             hold_seq=doc.get("hold_seq", 0),

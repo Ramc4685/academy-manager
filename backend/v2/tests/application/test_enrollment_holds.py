@@ -209,7 +209,7 @@ async def test_c6_hold_then_drop_releases_the_seat_exactly_once() -> None:
         )
     )
 
-    assert enrollments.rows["enr-1"].status == "withdrawn"
+    assert enrollments.rows["enr-1"].status == "dropped"
     assert sessions.release_calls == ["sess-1"]
     assert sessions.reserved_seats["sess-1"] == 0
 
@@ -362,7 +362,7 @@ async def test_c10_stalled_reclaim_is_finalized_exactly_once_seats_unchanged() -
 
     finalized_first = await sweep.execute()
     assert finalized_first == 1
-    assert enrollments.rows["held-1"].status == "withdrawn"
+    assert enrollments.rows["held-1"].status == "dropped"
     # Handed-over disposition: no seat arithmetic from the sweep.
     assert sessions.release_calls == []
     assert sessions.reserved_seats["sess-1"] == 1
@@ -446,7 +446,7 @@ async def test_stalled_reclaim_from_an_expiry_claim_finalizes_as_expiry_not_recl
     finalized = await sweep.execute()
 
     assert finalized == 1
-    assert enrollments.rows["held-1"].status == "withdrawn"
+    assert enrollments.rows["held-1"].status == "dropped"
     # The defining assertion: the seat is RELEASED (nobody takes it), unlike
     # a real reclaim's handed-over disposition which leaves the counter
     # alone.
@@ -519,7 +519,7 @@ async def test_expire_due_holds_drops_the_expired_row_not_the_longest_held() -> 
     assert result.expired == 1
     assert result.failed == 0
     # The row that actually expired is the one dropped...
-    assert enrollments.rows["due-for-expiry"].status == "withdrawn"
+    assert enrollments.rows["due-for-expiry"].status == "dropped"
     # ...and the still-valid hold is left completely untouched.
     assert enrollments.rows["old-not-expired"].status == "held"
     assert enrollments.rows["old-not-expired"].hold_reclaim_claimed_at is None

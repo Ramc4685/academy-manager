@@ -160,7 +160,21 @@ export interface EditSessionRequest {
   reason?: string;
 }
 
-export type EnrollmentStatus = "active" | "paused" | "cancelled" | "withdrawn";
+// Issue #699 (vocabulary migration): "withdrawn"/"cancelled" are the legacy
+// spellings of "dropped"/"deleted"; "held"/"reclaim_pending" are issue #697's
+// hold states. Both spellings of each renamed status are accepted for the
+// dual-read era — see backend/v2/contexts/enrollment/domain/models.py
+// canonical_status(). "paused" -> "held" is NOT a rename (see that file's
+// docstring); both remain distinct statuses.
+export type EnrollmentStatus =
+  | "active"
+  | "paused"
+  | "held"
+  | "reclaim_pending"
+  | "cancelled"
+  | "deleted"
+  | "withdrawn"
+  | "dropped";
 
 export interface AdminEnrollmentView {
   enrollment_id: string;

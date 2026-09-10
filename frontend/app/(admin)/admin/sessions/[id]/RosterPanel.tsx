@@ -24,11 +24,21 @@ import { pendingCancellationLabel } from "@/lib/format/cancellation-copy";
 
 import { actionCellClass, actionHeaderClass, formatDateOnly, formatEnrollmentDate, formatLifecycleType } from "./format";
 
+// Issue #699: "cancelled"/"withdrawn" are the legacy spellings of
+// "deleted"/"dropped" — both map to the same chip so a roster row from
+// either era of backend code renders identically. "held"/"reclaim_pending"
+// are issue #697's hold states; the roster does not yet have dedicated hold
+// chip copy (frontend hold UI is #697's own follow-up), so they fall back to
+// the same treatment as "paused" (seat-safe but not attending right now).
 const ENROLL_CHIP: Record<EnrollmentStatus, { variant: ChipVariant; label: string }> = {
   active: { variant: "enrolled", label: "ACTIVE" },
   paused: { variant: "paused", label: "PAUSED" },
+  held: { variant: "paused", label: "ON HOLD" },
+  reclaim_pending: { variant: "paused", label: "ON HOLD" },
   cancelled: { variant: "expired", label: "CANCELLED" },
+  deleted: { variant: "expired", label: "CANCELLED" },
   withdrawn: { variant: "expired", label: "WITHDRAWN" },
+  dropped: { variant: "expired", label: "WITHDRAWN" },
 };
 
 export function RosterMetrics({

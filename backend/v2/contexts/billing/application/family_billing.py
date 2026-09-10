@@ -37,7 +37,29 @@ FAILURE_ATTEMPT_STATUSES: frozenset[str] = frozenset(
 )
 
 _PAUSED = "paused"
-_CANCELLED_ENROLLMENT_STATUSES: frozenset[str] = frozenset({"cancelled", "withdrawn"})
+#: Terminal ("dead") enrollment statuses, in BOTH the legacy and #699
+#: canonical spellings ("withdrawn"->"dropped", "cancelled"->"deleted").
+#: Billing cannot import contexts.enrollment.domain.models.canonical_status
+#: (Rule 5, no cross-context imports — enforced by
+#: tests/structural/test_layering.py::test_no_cross_context_imports), so the
+#: dual-spelling set is duplicated here rather than normalized through a
+#: shared function. Before this widened, a dropped/deleted enrollment
+#: written by #699-migrated code read as neither "cancelled" nor "withdrawn"
+#: and therefore counted as LIVE here — the family billing page kept billing
+#: (and computing autopay eligibility for) a child who had actually left.
+_CANCELLED_ENROLLMENT_STATUSES: frozenset[str] = frozenset(
+    {"cancelled", "deleted", "withdrawn", "dropped"}
+)
+#: Issue #697's "held" (keeps the seat, unlike "paused") plus
+#: "reclaim_pending" (the transient in-flight state between a reclaim claim
+#: and its finalize() — the row is still the family's, mid-handover, not yet
+#: dropped). Billing cannot import contexts.enrollment.domain.models.SEAT_HOLDING
+#: (Rule 5, no cross-context imports), so this is duplicated here rather than
+#: normalized through a shared function, same reasoning as
+#: _CANCELLED_ENROLLMENT_STATUSES above. Before this existed, a held row
+#: landed in none of active/paused/cancelled and silently under-reported the
+#: family's enrollment_counts.
+_HELD_ENROLLMENT_STATUSES: frozenset[str] = frozenset({"held", "reclaim_pending"})
 _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 _EPOCH = datetime.min.replace(tzinfo=UTC)
 
@@ -367,15 +389,32 @@ _AUDIT_SUMMARIES: dict[str, str] = {
     "invoice_schedule_changed": "Invoice schedule changed",
 }
 
+#: Every value backend.v2.contexts.enrollment.domain.events.EnrollmentLifecycleEventType
+#: can take must have an entry here or it renders as its raw event_type in
+#: the family timeline instead of admin-readable text. Billing cannot import
+#: that Literal directly (Rule 5, no cross-context imports), so
+#: tests/unit/test_family_billing_event_summaries.py hardcodes the same
+#: type's members and asserts coverage against them — update both together.
 _EVENT_SUMMARIES: dict[str, str] = {
     "created": "enrolled",
     "paused": "paused",
     "resumed": "resumed",
     "cancelled": "cancelled",
+    "removed": "removed",
     "withdrawn": "withdrawn",
+    "dropped": "dropped",
+    "deleted": "deleted",
     "moved": "moved to another class",
     "promoted": "promoted from waitlist",
     "waitlisted": "waitlisted",
+    "occurrence_cancelled": "class cancelled for one occurrence",
+    "cancellation_scheduled": "cancellation scheduled for end of period",
+    # Issue #697: hold lifecycle.
+    "held": "put on hold",
+    "returned": "returned from hold",
+    "hold_reclaimed": "hold ended — seat given to another family",
+    "hold_expired": "hold expired",
+    "hold_reclaim_orphaned": "hold reclaim needs review",
 }
 
 
@@ -758,6 +797,7 @@ def build_family_billing_view(
             "enrollment_counts": {
                 "active": sum(1 for e in enrollments if e.status == "active"),
                 "paused": sum(1 for e in enrollments if e.status == _PAUSED),
+                "held": sum(1 for e in enrollments if e.status in _HELD_ENROLLMENT_STATUSES),
                 "cancelled": sum(
                     1 for e in enrollments if e.status in _CANCELLED_ENROLLMENT_STATUSES
                 ),
