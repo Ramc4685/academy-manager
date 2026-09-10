@@ -25,6 +25,7 @@ from backend.v2.contexts.coaching.application.use_cases.mark_attendance import (
     MarkAttendance,
     MarkAttendanceCommand,
 )
+from backend.v2.contexts.enrollment.application.use_cases.admin_writes import EditRosterAdd
 from backend.v2.contexts.enrollment.application.use_cases.coach_roster_writes import (
     CoachAddStudentToRoster,
     CoachAddStudentToRosterCommand,
@@ -249,11 +250,13 @@ async def test_coach_add_student_to_roster_writes_land_in_request_tenant() -> No
     enrollments = FakeEnrollmentWriter()
     students = FakeStudentWriter()
     uc = CoachAddStudentToRoster(
-        sessions=FakeSessionWriter(),
-        enrollments=enrollments,
-        students=students,
+        edit_roster_add=EditRosterAdd(
+            sessions=FakeSessionWriter(),
+            enrollments=enrollments,
+            students=students,
+            academy_id=_boot_fallback_provider(),
+        ),
         assigned_sessions=_AlwaysAssigned(),
-        academy_id=_boot_fallback_provider(),
     )
     cmd = CoachAddStudentToRosterCommand(
         coach_id="coach-1",
@@ -583,7 +586,7 @@ def test_compose_coach_providers_resolve_request_tenant(db) -> None:
     for provider in (
         coach.mark_attendance._academy_id,
         coach.bulk_mark_attendance._academy_id,
-        coach.add_student_to_roster._academy_id,
+        coach.add_student_to_roster._delegate._academy_id,
     ):
         assert callable(provider)
         with tenant_scope(REQUEST):

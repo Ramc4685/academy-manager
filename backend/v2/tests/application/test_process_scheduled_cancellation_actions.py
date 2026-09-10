@@ -89,7 +89,9 @@ class _FakeScheduledActions:
 
 class _FakeEnrollments:
     """Mirrors ``MongoEnrollmentWriter.complete_pending_cancellation``: CAS on
-    active-or-paused AND pending marker set; returns the PRE-image."""
+    active/paused/held AND pending marker set; returns the PRE-image. ``held``
+    is included because a hold keeps both the seat and the pending marker —
+    it is not an "ended" status (see the held-enrollment test below)."""
 
     def __init__(self, rows: dict[str, Enrollment]) -> None:
         self.rows = rows
@@ -104,7 +106,7 @@ class _FakeEnrollments:
         before = self.rows.get(enrollment_id)
         if (
             before is None
-            or before.status not in {"active", "paused"}
+            or before.status not in {"active", "paused", "held"}
             or before.pending_cancellation_at is None
         ):
             return None
@@ -271,6 +273,103 @@ async def test_paused_enrollment_is_cancelled_without_releasing_its_seat_again()
     assert enrollments.rows["enr-1"].status == "cancelled"
     assert sessions.released == []
     assert len(outbox.events) == 1
+
+
+@pytest.mark.asyncio
+async def test_held_enrollment_is_cancelled_and_releases_its_seat() -> None:
+    """A parent self-cancels at end of period (pending_cancellation_at
+    stamped, status stays active), then an admin holds the child before
+    month end (status -> held; a hold never releases the seat). The CAS
+    must recognize `held` as "not yet ended" and still complete the
+    cancellation, releasing the seat exactly once — not the bug this
+    guards against, where the row matched nothing, was logged as
+    `enrollment_already_ended:held` (false — the enrollment was never
+    ended), and the scheduled action was retired forever while the seat
+    (and the invoicing) never stopped."""
+    actions = _FakeScheduledActions([_action()])
+    enrollments = _FakeEnrollments({"enr-1": _enrollment("held")})
+    sessions = _FakeSessions()
+    outbox = _FakeOutbox()
+
+    result = await _use_case(actions, enrollments, sessions=sessions, outbox=outbox).execute()
+
+    assert (result.succeeded, result.skipped_already_ended, result.failed) == (1, 0, 0)
+    assert enrollments.rows["enr-1"].status == "cancelled"
+    assert enrollments.rows["enr-1"].cancelled_by == "parent"
+    assert enrollments.rows["enr-1"].pending_cancellation_at is None
+    assert sessions.released == ["session-1"]
+    assert len(outbox.events) == 1
+    assert actions.statuses == [("action-1", "succeeded", None)]
+
+
+@pytest.mark.asyncio
+async def test_self_cancel_then_hold_then_month_end_cancels_and_releases_seat() -> None:
+    """End-to-end: a parent's end-of-period self-cancel stamps
+    ``pending_cancellation_at`` and enqueues the scheduled action; before
+    month end an admin places a REAL hold (``HoldEnrollment``, real CAS,
+    real ``FakeEnrollmentWriter`` shared with the rest of the hold suite —
+    see the departures design contract §6.1 on why fakes must mirror real
+    store semantics); then the month-end job runs against that same row.
+    Without the fix, the CAS in ``complete_pending_cancellation`` (and the
+    seated-status set here) does not recognize ``held`` as still pending,
+    so the job would report ``enrollment_already_ended:held`` and never
+    release the seat.
+    """
+    from backend.v2.contexts.enrollment.application.use_cases.holds import HoldEnrollment
+    from backend.v2.tests.fixtures.enrollment_fakes import (
+        FakeDeparturePolicyRepo,
+        FakeEnrollmentWriter,
+        make_enrollment,
+    )
+
+    enrollments = FakeEnrollmentWriter(
+        rows={"enr-1": make_enrollment("enr-1", session_id="session-1", student_id="student-1")}
+    )
+
+    # Step 1: parent self-cancels end-of-period. Stamps the pending marker
+    # without flipping status — the same write `SelfCancelEnrollment` makes.
+    requested_at = MONTH_END - timedelta(days=25)
+    stamped = await enrollments.mark_pending_cancellation_by_parent(
+        "enr-1",
+        cancellation_reason="moving",
+        cancellation_policy_snapshot={},
+        pending_cancellation_at=MONTH_END,
+        requested_at=requested_at,
+    )
+    assert stamped is not None
+    assert enrollments.rows["enr-1"].status == "active"
+
+    scheduled_actions = _FakeScheduledActions([_action()])
+
+    # Step 2: admin places a hold BEFORE month end, through the real use case.
+    hold_clock = MONTH_END - timedelta(days=2)
+    hold_uc = HoldEnrollment(
+        enrollments=enrollments,
+        departure_policy=FakeDeparturePolicyRepo(),
+        clock=lambda: hold_clock,
+    )
+    await hold_uc.execute(
+        "enr-1",
+        return_on=(MONTH_END + timedelta(days=10)).date(),
+        actor_id="admin-1",
+    )
+    assert enrollments.rows["enr-1"].status == "held"
+    # The pending cancellation must survive the hold untouched.
+    assert enrollments.rows["enr-1"].pending_cancellation_at == MONTH_END
+
+    # Step 3: the month-end job runs.
+    sessions = _FakeSessions()
+    outbox = _FakeOutbox()
+    result = await _use_case(
+        scheduled_actions, enrollments, sessions=sessions, outbox=outbox
+    ).execute()
+
+    assert (result.succeeded, result.skipped_already_ended, result.failed) == (1, 0, 0)
+    assert enrollments.rows["enr-1"].status == "cancelled"
+    assert enrollments.rows["enr-1"].cancelled_by == "parent"
+    assert sessions.released == ["session-1"]
+    assert len(outbox.events) == 1
+    assert scheduled_actions.statuses == [("action-1", "succeeded", None)]
 
 
 @pytest.mark.asyncio

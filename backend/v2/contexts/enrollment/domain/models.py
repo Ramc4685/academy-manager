@@ -248,6 +248,14 @@ class Enrollment(BaseModel):
     hold_seq: int = 0  # +1 on every hold START; part of every email idempotency key
     hold_reclaim_claimed_at: datetime | None = None  # set by the reclaim CAS; None while claimable
     hold_reclaim_for: str | None = None  # the requester the seat was handed to (audit)
+    # Set when SeatBroker.acquire's own finalize_reclaim call raised (a Mongo
+    # blip, a primary step-down) AFTER claiming this row but BEFORE the
+    # withdrawal committed — the requester's transaction failed too, so
+    # nobody actually received this seat. Distinguishes a genuine orphan from
+    # a real, completed hand-over for the stalled-reclaim crash-recovery
+    # sweep, which otherwise cannot tell the two apart from `hold_reclaim_for`
+    # alone (see ProcessStalledReclaims).
+    hold_reclaim_failed_at: datetime | None = None
 
 
 class RosterEntry(BaseModel):

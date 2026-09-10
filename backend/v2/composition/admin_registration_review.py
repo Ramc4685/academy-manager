@@ -18,6 +18,7 @@ from backend.v2.contexts.enrollment.application.ports import (
     StudentWriter,
     WaitlistRepository,
 )
+from backend.v2.contexts.enrollment.application.seat_broker import SeatAcquisition, SeatBroker
 from backend.v2.contexts.enrollment.domain.events import (
     EnrollmentLifecycleEvent,
     EnrollmentLifecycleEventType,
@@ -205,6 +206,7 @@ class AdminRegistrationReview:
         paid_period_resolver: PaidPeriodResolver | None = None,
         welcome_notifier: EnrollmentWelcomeNotifier | None = None,
         roster_notifier: RosterChangeNotifier | None = None,
+        seat_broker: SeatBroker | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._apps = apps
@@ -222,7 +224,18 @@ class AdminRegistrationReview:
         self._paid_period_resolver = paid_period_resolver
         self._welcome_notifier = welcome_notifier
         self._roster_notifier = roster_notifier
+        # Departures design contract §3.1: every caller that needs a seat
+        # routes through SeatBroker.acquire so a class that is full only
+        # because held enrollments occupy it reclaims the longest-held hold
+        # instead of just refusing. Optional + a setter (rather than a
+        # required constructor argument) so existing callers/tests keep
+        # working unwired; production wiring injects this from main.py via
+        # `set_seat_broker`, the same pattern as EditRosterAdd et al.
+        self._seat_broker = seat_broker
         self._now = clock
+
+    def set_seat_broker(self, seat_broker: SeatBroker) -> None:
+        self._seat_broker = seat_broker
 
     async def list_pending(self) -> list[AdminRegistrationRow]:
         apps = await self._apps.list_by_status(
@@ -307,8 +320,15 @@ class AdminRegistrationReview:
                 raise ApplicationNotEditable(
                     "This child is already enrolled. Manage their existing classes instead."
                 )
+            acquisition: SeatAcquisition | None = None
             if existing is None:
-                reserved = await self._sessions.try_reserve_seat(session_id)
+                if self._seat_broker is not None:
+                    acquisition = await self._seat_broker.acquire(
+                        session_id, requested_by=f"registration:{app.application_id}"
+                    )
+                    reserved = acquisition.granted
+                else:
+                    reserved = await self._sessions.try_reserve_seat(session_id)
                 if not reserved:
                     raise ApplicationNotEditable("Selected session is full; waitlist instead")
             enrollment = Enrollment(
@@ -326,10 +346,10 @@ class AdminRegistrationReview:
                 try:
                     created = await self._enrollments.create_if_absent(enrollment)
                 except Exception:
-                    await self._sessions.release_seat(session_id)
+                    await self._release_quietly(session_id, acquisition)
                     raise
                 if not created:
-                    await self._sessions.release_seat(session_id)
+                    await self._release_quietly(session_id, acquisition)
                     existing = await self._enrollments.get(expected_enrollment_id)
                     if (
                         existing is None
@@ -419,6 +439,23 @@ class AdminRegistrationReview:
                 updated_at=self._now(),
             )
             raise
+
+    async def _release_quietly(self, session_id: str, acquisition: SeatAcquisition | None) -> None:
+        """Give a just-acquired seat back without masking the error being
+        handled. Mirrors ``admin_writes.EditRosterAdd._release_quietly``
+        (contract §3.8): when the seat came from ``SeatBroker.acquire``
+        (``acquisition`` is not ``None``), compensation MUST go through
+        ``SeatBroker.release`` rather than a bare ``sessions.release_seat`` —
+        a reclaim-granted acquisition already dropped and emailed a
+        different family for THEIR seat, and only the broker knows to
+        record that ``hold_reclaim_orphaned`` audit event."""
+        try:
+            if self._seat_broker is not None and acquisition is not None:
+                await self._seat_broker.release(acquisition)
+            else:
+                await self._sessions.release_seat(session_id)
+        except Exception:
+            logger.exception("registration_seat_release_failed", extra={"session_id": session_id})
 
     async def _notify_welcome(
         self,

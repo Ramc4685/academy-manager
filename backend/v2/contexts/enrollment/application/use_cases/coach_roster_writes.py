@@ -7,16 +7,12 @@ mutate rosters for sessions they are assigned to.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Protocol
 
 from pydantic import BaseModel
 
-from backend.v2.contexts.enrollment.application.ports import (
-    EnrollmentWriter,
-    SessionWriter,
-    StudentWriter,
-)
+from backend.v2.contexts.enrollment.application.ports import EnrollmentWriter
+from backend.v2.contexts.enrollment.application.seat_broker import SeatBroker
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     EditRosterAdd,
     EditRosterAddCommand,
@@ -42,35 +38,40 @@ class CoachAddStudentToRosterCommand(BaseModel):
 
 
 class CoachAddStudentToRoster:
-    """Guard on assignment then delegate to EditRosterAdd."""
+    """Guard on assignment then delegate to EditRosterAdd.
+
+    Issue #704 (second-review correction): this used to build a fresh
+    ``EditRosterAdd`` on every ``execute()`` call, entirely outside
+    ``composition/`` — the structural wiring test only scanned
+    ``composition/*.py`` for constructions of brokerable seat-reservation
+    classes, so this call site was both unbrokered in production AND
+    invisible to the test meant to catch exactly that. A class full only
+    because of held seats told a coach "session full" instead of reclaiming
+    the longest hold, the same defect #704 already fixed for the admin
+    roster-add path.
+
+    ``EditRosterAdd`` already resolves ``academy_id`` at execute time when
+    given a callable (see its constructor), so building ONE instance here at
+    composition time — exactly how ``composition/admin.py`` wires the admin
+    roster-add path — loses nothing: the request tenant still wins.
+    """
 
     def __init__(
         self,
         *,
-        sessions: SessionWriter,
-        enrollments: EnrollmentWriter,
-        students: StudentWriter,
+        edit_roster_add: EditRosterAdd,
         assigned_sessions: CoachSessionLookup,
-        academy_id: Callable[[], str],
     ) -> None:
         self._assigned_sessions = assigned_sessions
-        self._sessions = sessions
-        self._enrollments = enrollments
-        self._students = students
-        self._academy_id = academy_id
+        self._delegate = edit_roster_add
+
+    def set_seat_broker(self, seat_broker: SeatBroker) -> None:
+        self._delegate.set_seat_broker(seat_broker)
 
     async def execute(self, cmd: CoachAddStudentToRosterCommand) -> Enrollment:
         if not await self._assigned_sessions.is_coach_assigned(cmd.coach_id, cmd.session_id):
             raise SessionNotAssigned("session not assigned to coach", session_id=cmd.session_id)
-        # EditRosterAdd resolves the provider at execute time, so the request
-        # tenant wins over anything frozen at composition time.
-        delegate = EditRosterAdd(
-            sessions=self._sessions,
-            enrollments=self._enrollments,
-            students=self._students,
-            academy_id=self._academy_id,
-        )
-        return await delegate.execute(
+        return await self._delegate.execute(
             EditRosterAddCommand(
                 session_id=cmd.session_id,
                 student_id=cmd.student_id,

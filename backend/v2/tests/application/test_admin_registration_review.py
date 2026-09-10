@@ -14,6 +14,7 @@ from backend.v2.composition.admin_registration_review import (
     RejectRegistrationCommand,
     WaitlistRegistrationCommand,
 )
+from backend.v2.contexts.enrollment.application.seat_broker import SeatBroker
 from backend.v2.contexts.enrollment.domain.models import Enrollment, Session, Student
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 from backend.v2.contexts.onboarding.domain.errors import (
@@ -28,6 +29,7 @@ from backend.v2.contexts.onboarding.domain.models import (
     WaiverSignature,
 )
 from backend.v2.shared.ids import stable_ulid
+from backend.v2.tests.fixtures.enrollment_fakes import FakeDeparturePolicyRepo
 
 NOW = datetime(2026, 5, 24, tzinfo=UTC)
 ACADEMY_ID = "acad-1"
@@ -1497,3 +1499,107 @@ async def test_approve_still_rejects_when_a_paused_enrollment_exists_in_the_sess
 
     assert sessions.reserve_calls == 0
     assert enrollments.created == []
+
+
+class _FullSessions(InMemorySessions):
+    """A session ``try_reserve_seat`` always refuses — full by direct
+    reservation, but (per the scenario below) only because a held
+    enrollment occupies the seat SeatBroker can reclaim."""
+
+    async def try_reserve_seat(self, session_id: str) -> bool:
+        self.reserve_calls += 1
+        return False
+
+
+class _OneShotHoldRepository:
+    """Minimal ``HoldRepository``: exactly one held victim, claimable once,
+    on one session — the CAS shape ``MongoHoldRepository`` implements,
+    without needing a full enrollment store behind it."""
+
+    def __init__(self, victim: Enrollment) -> None:
+        self._victim = victim
+        self.claimed = False
+        self.finalized = False
+
+    async def claim_longest_held(
+        self, *, session_id: str, now, requested_by: str
+    ) -> Enrollment | None:
+        if self.claimed or self._victim.session_id != session_id:
+            return None
+        self.claimed = True
+        return self._victim
+
+    async def finalize_reclaim(self, enrollment_id: str, *, withdrawal_date) -> Enrollment | None:
+        if not self.claimed or self.finalized or enrollment_id != self._victim.enrollment_id:
+            return None
+        self.finalized = True
+        return self._victim
+
+
+@pytest.mark.asyncio
+async def test_approve_reclaims_a_held_seat_instead_of_reporting_the_session_full() -> None:
+    """The fifth seat-reservation site (the defect this test guards against):
+    approving a registration into a class that is full only because a held
+    enrollment occupies it must route through SeatBroker and reclaim the
+    longest-held hold — not raise "Selected session is full; waitlist
+    instead" the way a direct, unbrokered ``try_reserve_seat`` call did."""
+    app = _application(student_id="student-new")
+    apps = InMemoryApplications(app)
+    sessions = _FullSessions([_session()])
+    enrollments = InMemoryEnrollments()
+    students = InMemoryStudents()
+    victim = Enrollment(
+        enrollment_id="enr-held-victim",
+        academy_id=ACADEMY_ID,
+        session_id="sess-1",
+        student_id="student-held",
+        status="held",
+    )
+    holds = _OneShotHoldRepository(victim)
+    seat_broker = SeatBroker(
+        sessions=sessions,
+        holds=holds,
+        departure_policy=FakeDeparturePolicyRepo(),
+    )
+
+    review = AdminRegistrationReview(
+        apps=apps,
+        sessions=sessions,
+        students=students,
+        enrollments=enrollments,
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        clock=lambda: NOW,
+    )
+    review.set_seat_broker(seat_broker)
+
+    detail = await review.approve(
+        ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1")
+    )
+
+    assert detail.status == "APPROVED"
+    assert holds.claimed is True
+    assert holds.finalized is True
+    [created] = enrollments.created
+    assert created.student_id == "student-new"
+    assert created.status == "active"
+
+
+@pytest.mark.asyncio
+async def test_approve_without_a_seat_broker_still_reports_the_session_full() -> None:
+    """No regression for the unwired (test/legacy) path: without a broker,
+    a full session still raises the plain "session is full" error — reclaim
+    is additive, not a change to the no-broker fallback."""
+    app = _application(student_id="student-new")
+    review = AdminRegistrationReview(
+        apps=InMemoryApplications(app),
+        sessions=_FullSessions([_session()]),
+        students=InMemoryStudents(),
+        enrollments=InMemoryEnrollments(),
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(ApplicationNotEditable, match="Selected session is full"):
+        await review.approve(ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1"))
