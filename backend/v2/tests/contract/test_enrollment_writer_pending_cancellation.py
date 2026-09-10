@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
@@ -158,6 +158,64 @@ async def test_withdraw_status_write_clears_the_pending_cancellation_marker() ->
 
     assert row["status"] == "withdrawn"
     assert row["pending_cancellation_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_hold_keeps_the_pending_cancellation_marker() -> None:
+    """A hold is not an ending either — same as pause above, except a hold
+    keeps the seat (``mark_held_if_active`` never touches ``reserved_seats``,
+    unlike pause)."""
+    db = _db("pending-cancel-admin-hold")
+    writer = MongoEnrollmentWriter(db)
+
+    with tenant_scope("acad-1"):
+        await _seed(db)
+        await _mark_pending(writer)
+        held = await writer.mark_held_if_active(
+            "enr-1",
+            started_at=NOW,
+            return_on=date(2026, 10, 15),
+            expires_at=NOW + timedelta(days=60),
+            reason="family trip",
+        )
+        row = await db["enrollments"].find_one({"enrollment_id": "enr-1"})
+
+    assert held is not None
+    assert row["status"] == "held"
+    assert _utc(row["pending_cancellation_at"]) == MONTH_END
+
+
+@pytest.mark.asyncio
+async def test_complete_pending_cancellation_succeeds_for_a_held_row() -> None:
+    """The core regression this guards: a parent self-cancels at end of
+    period, then an admin holds the child before month end. The CAS must
+    still recognize the row as "not yet ended" — before this fix the filter
+    only allowed active/paused, so this returned ``None`` and the month-end
+    job logged the dishonest reason ``enrollment_already_ended:held`` (the
+    enrollment was never ended) and retired the scheduled action for good."""
+    db = _db("pending-cancel-complete-held")
+    await _seed(db)
+    writer = MongoEnrollmentWriter(db)
+    with tenant_scope("acad-1"):
+        await _mark_pending(writer)
+        await writer.mark_held_if_active(
+            "enr-1",
+            started_at=NOW,
+            return_on=date(2026, 10, 15),
+            expires_at=NOW + timedelta(days=60),
+            reason="family trip",
+        )
+        before = await writer.complete_pending_cancellation("enr-1", cancelled_at=MONTH_END)
+        after = await writer.get("enr-1")
+
+    # Pre-image is still "held" — the processor uses this to know the row
+    # held a seat (a hold never released it) and must release it now.
+    assert before is not None and before.status == "held"
+    assert after is not None
+    assert after.status == "cancelled"
+    assert after.cancelled_by == "parent"
+    assert _utc(after.cancelled_at) == MONTH_END
+    assert after.pending_cancellation_at is None
 
 
 @pytest.mark.asyncio
