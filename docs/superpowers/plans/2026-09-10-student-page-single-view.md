@@ -395,26 +395,34 @@ for e2e. No backend changes — this is a frontend-only plan.
   ```ts
   /**
    * Spec 2026-09-10-student-page-single-view §3.5: Compliance auto-opens when
-   * "a waiver or medical answer is outstanding". `AdminStudentDetail` has no
-   * separate medical-questionnaire-completed flag today (only free-text
-   * `medical_notes`), so this only gates on waiver status until such a field
-   * exists — documented here rather than guessed at.
+   * "a waiver or medical answer is outstanding".
+   *
+   * The medical half mirrors the backend's canonical rule exactly —
+   * `medical_notes_answered(value) = not _blank(value)`
+   * (`backend/v2/shared/profile/completeness.py:78-81`, used by `child_gaps`
+   * to emit the `medical_notes` gap). Blank IS the definition of unanswered:
+   * per the parent-profile-completion design (2026-07-29), a parent with
+   * nothing to report ticks "no known conditions", which writes a sentinel
+   * string. So free text and the sentinel both read as answered, and only a
+   * genuinely empty field is a gap. No new backend field is needed.
    *
    * `waiver_status` is optional on the wire (`lib/api/v2/students.ts:106`), so
    * an omitted field is treated as outstanding and opens the section. That is
    * the safe direction: a missing waiver fact should be visible, not hidden.
    */
   function complianceNeedsAttention(student: AdminStudentDetail): boolean {
-    return student.waiver_status !== "signed";
+    const medicalAnswered = (student.medical_notes ?? "").trim().length > 0;
+    return student.waiver_status !== "signed" || !medicalAnswered;
   }
   ```
 
-OPEN QUESTION (owner): spec §3.5 says Compliance opens "when a waiver **or medical answer** is
-outstanding", but `AdminStudentDetail` exposes no medical-answered flag — only the free-text
-`medical_notes` (`lib/api/v2/students.ts:98`), which is blank for most students and cannot
-distinguish "not asked" from "nothing to report". Adding one is a backend read-model change,
-which spec §5 puts out of scope. Confirm that waiver-only auto-open is acceptable for v1, or
-re-scope to add the field.
+**Owner decision 2026-09-10 — spec §3.5 is fully implemented, not half.** The earlier draft
+deferred the medical half on the grounds that blank "cannot distinguish 'not asked' from
+'nothing to report'". That reasoning was wrong: the system already defines blank as
+unanswered, and the "no known conditions" checkbox is what makes the distinction. Mirroring
+`medical_notes_answered` client-side needs no read-model change, so nothing here is out of
+scope. Keep the two rules in sync — if the backend's definition of answered ever changes,
+this function changes with it.
 - [ ] Run: `cd frontend && pnpm typecheck` — expected **FAIL, with exactly one class of error**: `page.tsx`'s three `StudentEditForm` call sites still pass `mode`, which Task 4 removed. Confirm the only errors reported are those `mode` prop errors (`grep`-check the output) and that `complianceNeedsAttention` itself compiles; both are cleared by Task 6. The earlier draft claimed PASS here, which was wrong.
 - [ ] Commit: `git add frontend/app/\(admin\)/admin/students/\[studentId\]/page.tsx` then:
   ```
@@ -575,13 +583,18 @@ re-scope to add the field.
   ```
 - [ ] Replace the `Header` function (lines 614-664) with `RailCard`, matching spec §3's rail contents (avatar, name, status chip, level, DOB/age, Stop all classes, family card, section jump links — jump links extracted to `SectionJumpLinks` below). Every field used is verified present: `level`, `date_of_birth`, `parent_phone` on `AdminStudentDetail` (`lib/api/v2/students.ts:91-99`) and `parent_id`/`parent_name`/`parent_email`/`full_name`/`status` on the inherited `AdminStudentView` (`lib/api/admin.ts:1283-1289`). The interpolated `Link href` needs no cast even under `typedRoutes: true` (`next.config.ts:56`) because `/admin/families/[parentId]` is a real route — `FamilyBillingLink.tsx:27` already does exactly this.
 
-OPEN QUESTION (owner): spec §3's rail lists a **login badge** in the family card ("parent name,
-email, phone, login badge"). Neither `AdminStudentDetail` nor its base `AdminStudentView`
-carries any parent-login/invite-status field, and the parent list this page already fetches
-(`listAdminUsers("parent")` → `AdminUserView`) is slated for removal in Task 8. Options: (a) drop
-the badge for v1, (b) derive it from `AdminUserView.status` and keep `parentsQuery` alive past
-Task 8, or (c) add the field to the student read model — which spec §5 puts out of scope. The
-`RailCard` below implements (a); confirm before building.
+**Owner decision 2026-09-10 — option (a): no login badge on this rail.** Spec §3's rail
+listed one, but neither `AdminStudentDetail` nor its base `AdminStudentView` carries a
+parent-login/invite field, and the parent list that could supply it
+(`listAdminUsers("parent")` → `AdminUserView`) is removed in Task 8. Keeping that query
+alive purely for a badge would preserve exactly the duplication this whole cycle exists to
+remove: **login state is the family page's job**, and the family card links there. Build
+`RailCard` without the badge, and do not add the field to the student read model — that
+would be a third place parent identity lives.
+
+The rail's family card therefore shows: parent name, email (mailto), phone (tel), and
+"Open family →". Spec §3 is amended accordingly; recorded in Self-review as a deliberate
+deviation, not an omission.
   ```tsx
   function RailCard({
     student,
@@ -969,18 +982,27 @@ empty, starts with `<`, or contains a placeholder marker (lines 89-104). So the 
   commits (cherry-pick is the documented workaround). The gate re-runs on every `synchronize`
   event, so a follow-up commit is enough to turn it green.
 
-## Open questions roll-up
+## Open questions roll-up — ALL ANSWERED 2026-09-10
 
-Three spec requirements are not fully answerable from the spec plus the code as it stands.
-Each is marked `OPEN QUESTION (owner):` at the task where it bites. Get answers before the
-task that needs them, not after.
+Three spec requirements could not be answered from the spec plus the code alone. The owner
+answered all three on 2026-09-10; each decision is recorded in full at the task where it
+bites. **Nothing in this plan is blocked.**
 
-1. **Task 5** — §3.5's "or medical answer is outstanding" has no backing field on
-   `AdminStudentDetail`; the plan gates auto-open on waiver status only.
-2. **Task 6** — §3's rail "login badge" has no backing field on `AdminStudentDetail` /
-   `AdminStudentView`; the plan omits the badge.
-3. **Self-review** — §3.1's "One table, not two" cannot be built client-side (no shared key
-   between the two read models) without the backend work §5 forbids.
+1. **Task 5 — §3.5 "or medical answer is outstanding": BUILD IT.** The earlier objection was
+   wrong. The backend already defines answered as non-blank
+   (`medical_notes_answered`, `backend/v2/shared/profile/completeness.py:78-81`) — a parent
+   with nothing to report ticks "no known conditions", which writes a sentinel. `medical_notes`
+   is already on `AdminStudentDetail` (`lib/api/v2/students.ts:102`), so
+   `complianceNeedsAttention` mirrors the backend rule client-side with **no** read-model
+   change. §3.5 is fully implemented.
+2. **Task 6 — §3's rail "login badge": DROP IT.** Keeping `listAdminUsers("parent")` alive
+   just to render a badge would preserve exactly the duplication this cycle removes. Login
+   state belongs to the family page, which the family card links to. Spec §3 amended.
+3. **Self-review — §3.1 "One table, not two": AMENDED to one section, two stacked tables.**
+   No shared join key exists between the two read models, and widening a backend read model
+   for a layout sentence is not worth it. The goal (no tab-hopping, one place to look) is
+   met. The enabling change, if ever wanted: carry a shared key on
+   `AdminBillingEnrollmentView`.
 
 ## Self-review
 
@@ -995,7 +1017,7 @@ task that needs them, not after.
 | §2 No aggregate endpoint; panels keep own queries | Task 6 (each panel's existing `useQuery` untouched) |
 | §3 Rail contents (avatar, name, status, level, DOB/age, Stop all classes, family card, jump links) | Task 6 (`RailCard`, `SectionJumpLinks`) — **login badge NOT covered**, see OPEN QUESTION in Task 6 |
 | §3.1 Enrollments: past collapsed after 5 | Task 3 |
-| §3.1 Enrollments: "one table, not two" | **NOT covered** — see OPEN QUESTION below |
+| §3.1 Enrollments: "one table, not two" | **Amended by owner 2026-09-10** — one *section*, two stacked tables. See the decision below. |
 | §3.2 Training & attendance panels | Task 6 (mounts `SkillPathwayPanel`, `TrainingSnapshot`, `RecentAttendancePanel`, `EngagementPanel`) |
 | §3.3 Billing summary line + link, detail collapsed | Task 6 |
 | §3.4 Profile: one `StudentEditForm`, `mode` gone | Task 4 |
@@ -1011,8 +1033,20 @@ task that needs them, not after.
 
 **Deliberately deferred / not fully resolved, with reason:**
 
-OPEN QUESTION (owner): **spec §3.1 "One table, not two" is not buildable inside spec §5's
-scope.** Verified against the code, not assumed:
+**Owner decision 2026-09-10 — spec §3.1 is amended to "one section, two stacked tables".**
+A literal single table is not buildable inside spec §5's frontend-only scope (the evidence
+is below, and it was verified against the code rather than assumed). Rather than widen a
+backend read model to satisfy a layout sentence, the Enrollments section renders
+`SessionsPanel`'s table with `BillingEnrollmentsPanel` directly beneath it, under one
+heading with no tab between them.
+
+This meets the actual goal — no tab-hopping, one place to look for "what is this kid in and
+what does it cost" — and gives up only the visual merge. If a true single table is wanted
+later, the enabling change is a backend one: carry `session_type_id` (or the session
+enrollment's id) on `AdminBillingEnrollmentView` so a join key exists. Do not attempt a
+client-side merge without it; there is no shared key today and any stub would be dead code.
+
+The verified evidence for why the literal reading fails:
 
 - `AdminStudentSessionSummary` (`frontend/lib/api/v2/students.ts:39-59`) keys on `enrollment_id`
   and `session_id`.
