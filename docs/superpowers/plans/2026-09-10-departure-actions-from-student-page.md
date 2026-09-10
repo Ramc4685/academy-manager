@@ -1,756 +1,438 @@
-# Departure Actions From The Student Page Implementation Plan
+# Departure Actions From Student Page Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Let an admin Hold, Return, Drop or Delete a single enrollment from the student page's Sessions tab (today it only offers Transfer), reusing the existing `DepartureActions` vocabulary and the `/hold` `/return` `/withdraw` backend routes, and add an opt-in family-notification email to all three.
+**Goal:** Let an admin Hold, Return, Drop or Delete a child's enrollment from the student page's Sessions tab — the same `DepartureActions` vocabulary and dialogs the class roster uses — instead of forcing every departure through the roster, and notify the family by email when the admin opts in.
 
-**Architecture:** `resolveDepartureActions` (pure gating logic) gains a sibling `departureActionsFor(status)` helper that both the class roster and the student page call, so the two surfaces render the same action set from the same status; the five enrollment dialogs (Transfer, Hold, Return, Drop, Delete) move out of the session-detail page into `components/admin/enrollment/` so both surfaces mount the identical components. On the backend, `HoldEnrollmentRequest`/`ReturnFromHoldRequest`/`WithdrawEnrollmentRequest` each gain `notify_family: bool = False`; a `notify_family=True` call reaches a best-effort notifier (`HoldNotifier.hold_started`/`hold_returned`, new `WithdrawalNotifier.dropped`) through the same claim-then-send idempotency pattern `HoldNotificationAdapter`/`AbsenceNoticeNotificationAdapter` already use, so a retried or re-run request never double-emails a family.
+**Architecture:** One shared pure helper (`departureActionsFor`) decides which departure actions a row offers per status; one shared set of dialog components (moved out of the roster's `dialogs.tsx` into `components/admin/enrollment/`) is mounted by both the roster page and the student Sessions panel. On the backend, `HoldEnrollment`/`ReturnFromHold`/`WithdrawEnrollment` each gain an optional `notify_family` flag on their request DTO and an optional best-effort notifier collaborator, wired through a claim-based send (the `digest_claim` pattern already proven by `hold_notifications.py` and `absence_notifications.py`) so a mail failure never fails the write and a retried request never double-sends.
 
-**Tech Stack:** Next.js 16 (webpack) + TanStack Query + Tailwind on the frontend; FastAPI + Pydantic + Motor(Mongo) on the backend; vitest for frontend units, pytest for backend, Playwright for e2e.
+**Tech Stack:** Next.js 16 (webpack build) + TanStack Query + Tailwind on the frontend; FastAPI + Motor(Mongo) DDD contexts on the backend; vitest (frontend unit), pytest (backend), Playwright (e2e).
 
 ## Global Constraints
 
-- Vocabulary: Transfer, Hold, Return, Drop, Delete — never "Cancel" (`departure-actions.logic.ts` already enforces this in a test).
-- `departureActionsFor(status)`: `active` → `[transfer, hold, drop, delete]`; `held` / `reclaim_pending` → `[return, transfer, drop, delete]`; `paused` → `[return, transfer, drop, delete]` (legacy rows, per the design contract §3 — `Return` still posts to `/return` even though the backend CAS only accepts `held`; #703 is tracked separately to reconcile this, not fixed here); anything else → `[delete]`.
-  - OPEN QUESTION (owner): the design spec §3's table lists only `active`, `held`, `paused` and `other: [delete]`. `reclaim_pending` is not in it, so under a literal reading it falls to `other` → `[delete]` only. This plan groups it with `held` because `RosterPanel`'s `ENROLL_CHIP` already renders it as "ON HOLD" and an admin looking at an on-hold row would reasonably expect Return. But `reclaim_pending` means the seat is mid-hand-over to another family, and `ReturnFromHold`'s `mark_active_if_held` CAS does not accept it — so Return would 409, and Transfer/Drop could race the reclaim. Decide before implementing Task 1: (a) group with `held` as written here, or (b) follow the spec literally and let `reclaim_pending` fall through to `[delete]`. If (b), delete the `reclaim_pending` case and its unit test from Task 1.
-- Only `transfer` ever renders as an inline button; `hold`, `return`, `drop` and `delete` always render inside the overflow menu, in both `layout="inline"` and `layout="menu"` (this changes `ALWAYS_OVERFLOW_ACTIONS`, which today only forces `delete`).
-- `pause` and `resume` are removed from the `DepartureAction` union and `DEPARTURE_ACTION_LABEL`, `PauseEnrollmentDialog` is deleted, and `RosterPanel`/`page.tsx` stop wiring them — **all in Task 8, in one commit**, because those four edits are mutually dependent (see the typecheck constraint above). The `/pause` and `/resume` HTTP routes and their backend use cases are untouched (they still serve the parent pause-request approval flow, #616).
-- **Every dialog's notify toggle names who will be emailed** (design spec §2: "The dialog always names who will be emailed"). The three dialogs take an optional `familyLabel?: string | null`; when present the checkbox reads `Email {familyLabel}` (e.g. "Email Parent Example"), otherwise it falls back to "Email the family". The student page has `student.parent_name` and passes it; see the OPEN QUESTION on the roster surface in Task 8.
-- Hold dialog: return date required, default `today + 30`, max `today + max_hold_days` (from `GET /admin/enrollment/departure-policy`'s `max_hold_days`), reason optional, **Email the family** toggle default **off**.
-- Return dialog: reason optional, **Email the family** toggle default **off**.
-- Drop dialog (`WithdrawalCreditDialog`): unchanged fields, gains **Email the family** toggle default **on**.
-- `notify_family` defaults to `false` on every backend request DTO so existing (untoggled) callers and tests are unchanged.
-- `composition/admin.py` is at 4318/4500 lines (`test_composition_is_wiring.py::ADMIN_COMPOSITION_LINE_BUDGET`) — no edits to it. New wiring follows the existing `set_seat_broker`-style setter pattern, attached in `main.py` outside `compose_admin`, exactly like `compose_enrollment_holds`/`compose_departures` already do.
-- **Playwright project names**: `frontend/playwright.config.ts` defines only `chromium-mobile`, `webkit-mobile` and `chromium-desktop`. There is no project called `chromium`; `--project=chromium` errors out. `admin-enrollment-withdraw.spec.ts` does not match the `chromium-desktop` `testMatch` regex (`admin-(shell|students|registrations|level-ups-lifecycle)`), so it runs under `chromium-mobile` / `webkit-mobile` — every e2e command below uses `--project=chromium-mobile`.
-- **Every task must leave `pnpm typecheck` green.** That is why the `pause`/`resume` union removal is NOT in Task 1: deleting those members while `RosterPanel.rosterActionsFor` still pushes them is a compile error that would persist across Tasks 2-7. Task 1 only *adds* `departureActionsFor` and changes `ALWAYS_OVERFLOW_ACTIONS` (both safe standalone — the roster renders `layout="menu"` and the student page passes `["transfer"]` today, so neither surface changes appearance). The union removal, `PauseEnrollmentDialog` deletion and roster rewrite all land together in Task 8.
-- No new HTTP route and no new `app/` route is added by this plan, so neither the 404-not-403 persona rule nor the "New Frontend Route Checklist" (`docs/qa/2026-06-28-production-scale-local-inventory-manifest.json` + the two hardcoded route counts) needs a change — Task 9 verifies that rather than assuming it. No migration either: the family-email claim reuses the existing `enrollment_hold_notice_sends` collection and its index, so there is nothing for prod's by-hand `run_pending_migrations` to apply.
+- Vocabulary: Transfer, Hold, Return, Drop, Delete — never "Cancel", never "Pause"/"Resume" (those are removed from `DepartureAction`).
+- `departureActionsFor(status)`: `active → [transfer, hold, drop, delete]`; `held → [return, transfer, drop, delete]`; `paused → [return, transfer, drop, delete]` (Return calls `/return` even for legacy paused rows — an accepted, spec-directed rough edge, see Self-review); every other status → `[delete]`.
+- Student page layout: Transfer is the only inline button; Hold/Return, Drop and Delete render in the row's overflow menu, Delete last behind a separator.
+- Hold dialog defaults: return date defaults to today + 30, capped at today + `EnrollmentDeparturePolicyView.max_hold_days` (NOT `hold_max_days` — that is the spec prose's shorthand, the real field on `EnrollmentDeparturePolicyView` and the backend policy object is `max_hold_days`). Reason optional. "Email the family" toggle defaults **off**.
+- Return dialog: reason optional, "Email the family" toggle defaults **off**.
+- Drop dialog (`WithdrawalCreditDialog`): "Email the family" toggle defaults **on**. Everything else about the dialog is unchanged.
+- `notify_family: bool = False` is added to `HoldEnrollmentRequest`, `ReturnFromHoldRequest` and `WithdrawEnrollmentRequest` on both sides (frontend request type + backend Pydantic model) — the default keeps every existing caller and test unchanged.
+- Notification send is best-effort, TRANSACTIONAL category, claimed once per `(academy_id, enrollment_id, notice_key)` via `claim_digest_send` — never allowed to fail the write it rides on.
+- `/pause` and `/resume` backend routes and their Pydantic models are untouched (issue #616's parent-approval flow still uses them); only the admin session-detail and student-page UI stop calling them.
+- `backend/v2/composition/admin.py` is at 4318/4500 lines (verified: `ADMIN_COMPOSITION_LINE_BUDGET = 4_500` in `backend/v2/tests/structural/test_composition_is_wiring.py`) — do not add lines to it. New collaborators attach onto the already-built `AdminUseCases` object in `main.py`, exactly like `compose_enrollment_holds` already does for Hold/Return.
+- **Cross-plan contracts this plan owns** (build order for the four 2026-09-10 admin-UX plans is 1 → 2 → 4 → 3; this is plan 1, first):
+  - Migration number **`0173` is claimed by this plan** (`0173_withdrawal_notice_sends`). Plan 3 (`2026-09-10-birthdays-and-profile-nudges.md`) uses 0174/0175/0176 accordingly. Verify `0172` is still the highest on `main` before creating the file.
+  - `departureActionsFor`, the `notify_family` flag and the five dialog modules under `frontend/components/admin/enrollment/` (`hold-dialog.tsx`, `return-dialog.tsx`, `transfer-dialog.tsx`, `withdrawal-credit-dialog.tsx`, `remove-dialog.tsx`) are defined here and consumed as-is by later plans. Do not rename them after this lands.
+  - Task 9 makes `studentName` a **required** prop on `SessionsPanel` and passes `student.full_name` from `students/[studentId]/page.tsx`. Plan 4 (`2026-09-10-student-page-single-view.md`, Task 6) rewrites that page's layout on top of this and must keep the prop — its plan already carries that note.
+- No NEW backend route and no new frontend `app/` route is created by this plan. `POST /admin/enrollments/{id}/hold`, `/return` and `/withdraw` all already exist and already guard with `require_persona("admin")` (wrong persona → 404, per the repo's persona rule) — that guard is unchanged, so no persona test is added.
+- Because no `app/` route is added, `docs/qa/2026-06-28-production-scale-local-inventory-manifest.json` and the two hardcoded route counts are NOT touched. Every new file is under `components/` or `lib/` (frontend) or `composition/`/`contexts/` (backend). Re-verify this before committing Task 9 if the implementation ends up adding a route file.
+- Frontend unit tests run under vitest with `environment: "node"`, `globals: false`, and the repo has **no** `@testing-library/react`, `jsdom` or `happy-dom` dependency (see `frontend/vitest.config.ts` and `frontend/package.json`). Every new frontend unit test in this plan must therefore test a **pure module** — never render a component. Adding a DOM testing dependency is out of scope (`Frontend Static` goes red repo-wide on new advisories; see `components/ds/menu.tsx`'s own header comment).
 
 ## File structure
 
 | File | Responsibility |
 |---|---|
-| `frontend/components/admin/enrollment/departure-actions.logic.ts` | Vocabulary, gating (`resolveDepartureActions`), new `departureActionsFor(status)` |
-| `frontend/components/admin/enrollment/departure-actions.test.tsx` | Unit coverage for both, updated for the removed pause/resume and the new overflow rule |
-| `frontend/components/admin/enrollment/dialog-shared.ts` | New: `inputClass`, `formatLocalDateInput`, `todayDateInput`, `dateInputValueFromOffset`, `formatCents`, `formatShortDateTime`, plus the pure `defaultReturnOn`/`maxReturnOn` — extracted so the moved dialogs don't reach into a route-group-local file |
-| `frontend/components/admin/enrollment/dialog-shared.test.ts` | New: return-date bounds (a `.ts` test, since vitest runs `environment: "node"`) |
-| `frontend/components/admin/enrollment/transfer-enrollment-dialog.tsx` | Moved `TransferEnrollmentDialog` + `RallySessionPicker`, unchanged behavior |
-| `frontend/components/admin/enrollment/withdrawal-credit-dialog.tsx` | Moved `WithdrawalCreditDialog` ("Drop"), gains the notify-family toggle |
-| `frontend/components/admin/enrollment/remove-enrollment-dialog.tsx` | Moved `RemoveEnrollmentDialog` ("Delete"), unchanged |
-| `frontend/components/admin/enrollment/hold-enrollment-dialog.tsx` | New `HoldEnrollmentDialog` |
-| `frontend/components/admin/enrollment/return-from-hold-dialog.tsx` | New `ReturnFromHoldDialog` |
-| `frontend/app/(admin)/admin/sessions/[id]/dialogs.tsx` | Loses the five moved/deleted dialogs; keeps `AddToRosterDialog`, `StudentSelect`, `CoachSelect`, `DaySelect` |
-| `frontend/app/(admin)/admin/sessions/[id]/format.ts` | Imports **and** re-exports the six helpers from `dialog-shared.ts` instead of defining them (the plain import is required — `toDateInputValue` calls `formatLocalDateInput` locally); `formatLifecycleType` gains `held`/`returned`/`dropped` |
-| `frontend/app/(admin)/admin/sessions/[id]/RosterPanel.tsx` | `rosterActionsFor`/`dispatchRosterAction` replaced by the shared `departureActionsFor`; `onPause`/`onResume` renamed `onHold`/`onReturn` |
-| `frontend/app/(admin)/admin/sessions/[id]/page.tsx` | Swaps `PauseEnrollmentDialog` for `HoldEnrollmentDialog` + `ReturnFromHoldDialog`; imports the moved dialogs from `components/admin/enrollment/` |
-| `frontend/app/(admin)/admin/students/[studentId]/SessionsPanel.tsx` | Renders the full action set per row and mounts all five dialogs |
-| `frontend/app/(admin)/admin/students/[studentId]/page.tsx` | Passes `studentName={student.full_name}` and `familyLabel={student.parent_name}` into `SessionsPanel` |
-| `frontend/lib/api/admin.ts` | `WithdrawEnrollmentRequest` gains `notify_family?: boolean` |
-| `frontend/lib/admin/withdrawal.ts` | `buildWithdrawRequest` takes and forwards `notifyFamily` |
-| `frontend/lib/admin/withdrawal.test.ts` | Its two `buildWithdrawRequest` cases gain the new field (otherwise typecheck fails) |
-| `frontend/lib/api/v2/departure-policy.ts` | `HoldEnrollmentRequest`/`ReturnFromHoldRequest` gain `notify_family?: boolean` |
-| `backend/v2/interfaces/admin/hold_routes.py` | `HoldEnrollmentRequest`/`ReturnFromHoldRequest` gain `notify_family: bool = False`; routes pass it through |
-| `backend/v2/interfaces/admin/views.py` | `WithdrawEnrollmentRequest` gains `notify_family: bool = False` |
-| `backend/v2/interfaces/admin/sessions_routes.py` | `withdraw_enrollment` route passes `body.notify_family` into `WithdrawEnrollmentCommand` |
-| `backend/v2/contexts/enrollment/application/ports.py` | `HoldNotifier` gains `hold_started`/`hold_returned`; new `WithdrawalNotifier` protocol |
-| `backend/v2/contexts/enrollment/application/use_cases/holds.py` | `HoldEnrollment`/`ReturnFromHold` take a `notifier: HoldNotifier | None`, call it when `notify_family=True` |
-| `backend/v2/contexts/enrollment/application/use_cases/admin_writes.py` | `WithdrawEnrollmentCommand` gains `notify_family`; `WithdrawEnrollment` takes an optional `WithdrawalNotifier`, with a `set_withdrawal_notifier` setter, calls it when the flag is set |
-| `backend/v2/composition/hold_notifications.py` | `HoldNotificationAdapter` implements `hold_started`/`hold_returned` |
-| `backend/v2/composition/enrollment_holds.py` | Wires `notifier=hold_notifier` into `HoldEnrollment`/`ReturnFromHold` |
-| `backend/v2/composition/withdrawal_notifications.py` | New: `WithdrawalNotificationAdapter` implementing `WithdrawalNotifier.dropped`, reusing `MongoHoldNoticeSendRepository` |
-| `backend/v2/main.py` | Calls `app.state.admin.withdraw_enrollment.set_withdrawal_notifier(...)` after `compose_departures` |
-| `backend/v2/tests/fixtures/enrollment_fakes.py` | `FakeHoldNotifier` gains `hold_started_calls`/`hold_returned_calls`; new `FakeWithdrawalNotifier` |
-| `backend/v2/tests/application/test_enrollment_holds.py` | Notifier-call tests for Hold/Return |
-| `backend/v2/tests/application/test_withdraw_single_path.py` | Notifier-call tests for Drop |
-| `frontend/e2e/specs/admin-enrollment-withdraw.spec.ts` | Gains Hold → Return and Drop from the student page; Drop's request-body assertions gain `notify_family`; a roster-label assertion for Hold |
-| `docs/release-notes/2026-09-10-departure-actions-from-student-page.md` | Release note |
+| `frontend/components/admin/enrollment/departure-actions.logic.ts` | Modify: drop `pause`/`resume` from `DepartureAction`; add `departureActionsFor(status)`; fix inline-layout gating so only `transfer` is inline-eligible; add `separatorBefore` to `ResolvedDepartureAction`. |
+| `frontend/components/admin/enrollment/departure-actions.test.tsx` | Modify: remove pause/resume assertions, fix the two existing assertions the inline-gating change invalidates, add `departureActionsFor` + inline-overflow + separator coverage. |
+| `frontend/components/admin/enrollment/departure-actions.tsx` | Modify: re-export `departureActionsFor` from the barrel; drop the stale "Pause/Resume are a *transitional* group" paragraph from the module doc comment; pass `separatorBefore` into the overflow `MenuItem`s. |
+| `frontend/components/ds/menu.tsx` | Modify: `MenuItem.separatorBefore` + divider rendering, so Delete can render behind a separator. No test file (component render is untestable in this repo's node-env vitest — see Global Constraints); the placement decision is unit-tested as pure logic in `departure-actions.logic.ts` instead. |
+| `frontend/components/admin/enrollment/hold-dialog.tsx` | Create: `HoldEnrollmentDialog`. |
+| `frontend/components/admin/enrollment/return-dialog.tsx` | Create: `ReturnFromHoldDialog`. |
+| `frontend/components/admin/enrollment/transfer-dialog.tsx` | Create (moved from `sessions/[id]/dialogs.tsx`): `TransferEnrollmentDialog`. |
+| `frontend/components/admin/enrollment/withdrawal-credit-dialog.tsx` | Create (moved): `WithdrawalCreditDialog` + notify toggle (default on). |
+| `frontend/components/admin/enrollment/remove-dialog.tsx` | Create (moved): `RemoveEnrollmentDialog`. |
+| `frontend/app/(admin)/admin/sessions/[id]/dialogs.tsx` | Modify: delete `PauseEnrollmentDialog` (retired), and move out `TransferEnrollmentDialog` + its `RallySessionPicker` helper, `WithdrawalCreditDialog`, `RemoveEnrollmentDialog`. Keep `AddToRosterDialog`, `StudentSelect`, `CoachSelect`, `DaySelect`, `DAYS_OF_WEEK`. (`RallySessionPicker` is exported but its ONLY caller is `TransferEnrollmentDialog` — verified by grep across `app/`, `components/`, `lib/`, `e2e/` — so it moves with it.) |
+| `frontend/app/(admin)/admin/sessions/[id]/RosterPanel.tsx` | Modify: `rosterActionsFor` → shared `departureActionsFor`; `dispatchRosterAction` gains hold/return, drops pause/resume. |
+| `frontend/app/(admin)/admin/sessions/[id]/page.tsx` | Modify: remove Pause dialog + `pauseTarget`/`resumeMutation`; add `holdTarget`/`returnTarget` state and the two new dialogs; update dialog imports to the new `components/admin/enrollment/` paths. |
+| `frontend/app/(admin)/admin/students/[studentId]/SessionsPanel.tsx` | Modify: `actions={departureActionsFor(session.status)}`; mount Hold/Return/Drop/Delete dialogs; keep Transfer's existing inline "Move student session" flow untouched; take a new `studentName` prop (today the panel passes `studentName={session.session_title}` into `DepartureActions` — the session title, not the child — so the dialogs have no name to show). |
+| `frontend/app/(admin)/admin/students/[studentId]/page.tsx` | Modify: pass `studentName={student.full_name}` into `<SessionsPanel …>` (the sibling `<ProfileHeader … studentName={student.full_name}>` at line 143 already proves the field exists on `AdminStudentDetail`). |
+| `frontend/lib/api/v2/departure-policy.ts` | Modify: `notify_family?: boolean` on `HoldEnrollmentRequest`/`ReturnFromHoldRequest`. |
+| `frontend/lib/api/admin.ts` | Modify: `notify_family?: boolean` on `WithdrawEnrollmentRequest`. |
+| `frontend/lib/admin/withdrawal.ts` | Modify: `buildWithdrawRequest` accepts and forwards `notifyFamily`. |
+| `backend/v2/interfaces/admin/hold_routes.py` | Modify: `notify_family: bool = False` on both request models, forwarded to the use cases. |
+| `backend/v2/interfaces/admin/views.py` | Modify: `notify_family: bool = False` on `WithdrawEnrollmentRequest`. |
+| `backend/v2/interfaces/admin/sessions_routes.py` | Modify: forward `body.notify_family` into `WithdrawEnrollmentCommand`. |
+| `backend/v2/contexts/enrollment/application/use_cases/holds.py` | Modify: `HoldEnrollment`/`ReturnFromHold` take an optional `notifier: HoldNotifier`, `execute(..., notify_family: bool = False)`, best-effort call at the end. |
+| `backend/v2/contexts/enrollment/application/use_cases/admin_writes.py` | Modify: `WithdrawEnrollmentCommand.notify_family`; `WithdrawEnrollment` gains `set_notifier` + best-effort call. |
+| `backend/v2/contexts/enrollment/application/ports.py` | Modify: `HoldNotifier` gains `hold_started`/`hold_returned`; new `WithdrawalNotifier` protocol with `dropped`. |
+| `backend/v2/composition/hold_notifications.py` | Modify: `HoldNotificationAdapter` implements `hold_started`/`hold_returned`. |
+| `backend/v2/composition/enrollment_holds.py` | Modify: pass `notifier=hold_notifier` into `HoldEnrollment`/`ReturnFromHold`. |
+| `backend/v2/composition/withdrawal_notice_send_repo.py` | Create: `MongoWithdrawalNoticeSendRepository` (claim, mirrors `hold_notice_send_repo.py`). |
+| `backend/v2/composition/withdrawal_notifications.py` | Create: `WithdrawalNotificationAdapter` + `compose_withdrawal_notifications`. |
+| `backend/v2/migrations/0173_withdrawal_notice_sends.py` | Create: unique index on the new claim collection. |
+| `backend/v2/main.py` | Modify: build the withdrawal notifier and call `app.state.admin.withdraw_enrollment.set_notifier(...)`. |
+| `backend/v2/tests/fixtures/enrollment_fakes.py` | Modify: `FakeHoldNotifier` gains `hold_started`/`hold_returned` recording + a new `FakeWithdrawalNotifier`. |
+| `backend/v2/tests/application/test_enrollment_holds.py` | Modify: notify-flag coverage for Hold/Return. |
+| `backend/v2/tests/application/test_withdraw_single_path.py` | Modify: notify-flag coverage for Withdraw. |
+| `frontend/e2e/specs/admin-enrollment-withdraw.spec.ts` | Modify: Hold → Return from the student page; Drop from the student page asserting the past-enrollments row. |
+| ~~roster Pause e2e spec~~ | **No such file exists.** Verified: every `pause` reference under `frontend/e2e/specs/` is the parent pause-**request** flow (#616) — `/admin/pause-requests`, `/api/v2/parent/pause-requests`, `/admin/families/{id}/autopay/pause` — none of which this plan touches. The roster's Pause/Resume departure buttons have no e2e coverage today, so spec §8's "Roster spec updates Pause → Hold labels" is a no-op. Task 10 re-runs the grep to confirm before skipping. |
+| `docs/release-notes/2026-09-10-departure-actions-from-student-page.md` | Create: release note. |
 
-## Task 1: Gating — add `departureActionsFor`, make hold/return/drop always overflow
-
-> Scope note: this task does NOT remove `pause`/`resume` from the union. Doing
-> so here would break `RosterPanel.rosterActionsFor` and stay broken through
-> Tasks 2-7. The removal is Task 8, together with its consumers.
+## Task 1: Frontend — `departureActionsFor` and vocabulary cleanup
 
 **Files:**
 - Modify: `frontend/components/admin/enrollment/departure-actions.logic.ts`
-- Modify: `frontend/components/admin/enrollment/departure-actions.test.tsx`
+- Modify: `frontend/components/admin/enrollment/departure-actions.tsx` (barrel re-export + doc comment)
+- Test: `frontend/components/admin/enrollment/departure-actions.test.tsx`
 
 **Interfaces:**
 - Consumes: nothing new.
-- Produces: `departureActionsFor(status: string): DepartureAction[]`, exported from `departure-actions.logic.ts` and re-exported from `departure-actions.tsx` (mirroring how `resolveDepartureActions` is already re-exported at `departure-actions.tsx:35-40`).
+- Produces: `export function departureActionsFor(status: string): DepartureAction[]`; `DepartureAction` narrowed to `"transfer" | "hold" | "return" | "drop" | "delete" | "stop_all_classes"`; `ResolvedDepartureAction.separatorBefore: boolean`.
 
-- [ ] Write the failing tests first — replace the one test the new overflow rule invalidates, and add coverage for `departureActionsFor`. Edit `frontend/components/admin/enrollment/departure-actions.test.tsx`:
-  - Leave `"never owner-gates a non-delete action"` (lines 42-48) and `"does not flag transfer, hold, return, pause or resume as danger"` (lines 83-89) ALONE — they still reference `pause`/`resume`, which are still in the union until Task 8.
-  - Replace `"keeps non-delete actions inline in inline layout"` (lines 57-63 — it asserts `["transfer", "drop"]` are both inline, which the new rule makes false) with:
+- [ ] Write the failing tests. Replace the pause/resume-touching assertions and add the new ones. Edit `frontend/components/admin/enrollment/departure-actions.test.tsx`:
+  - In `"never owner-gates a non-delete action"` (line 42), change the actions array from `["transfer", "hold", "return", "drop", "pause", "resume", "stop_all_classes"]` to `["transfer", "hold", "return", "drop", "stop_all_classes"]`.
+  - In `"does not flag transfer, hold, return, pause or resume as danger"` (line 83), rename it to `"does not flag transfer, hold or return as danger"` and change the actions array from `["transfer", "hold", "return", "pause", "resume"]` to `["transfer", "hold", "return"]`.
+  - **`"pushes every action into the overflow menu in menu layout"` (line 65) passes `["transfer", "drop", "pause"]`** — `"pause"` stops being a valid `DepartureAction` in this task, so this file will not compile until it is changed to `["transfer", "drop", "hold"]`. Change it.
+  - **`"keeps non-delete actions inline in inline layout"` (line 57) passes `["transfer", "drop"]` and asserts `resolved.every((entry) => !entry.inOverflow)`** — the `INLINE_LAYOUT_ALLOWED` change below deliberately breaks that assumption (`drop` moves to overflow). Rewrite it to state the new rule:
     ```ts
-    it("keeps only transfer inline in inline layout; hold/return/drop/delete overflow", () => {
-      const resolved = resolveDepartureActions(["transfer", "hold", "return", "drop", "delete"], {
+    it("keeps transfer inline in inline layout", () => {
+      const resolved = resolveDepartureActions(["transfer"], {
         isOwner: true,
         layout: "inline",
       });
-      expect(resolved.find((e) => e.action === "transfer")!.inOverflow).toBe(false);
-      for (const action of ["hold", "return", "drop", "delete"] as const) {
-        expect(resolved.find((e) => e.action === action)!.inOverflow).toBe(true);
-      }
+      expect(resolved.every((entry) => !entry.inOverflow)).toBe(true);
     });
     ```
-  - Append a new top-level `describe` block for the new helper:
+  - Append at the end of the file, before the final closing `});`:
     ```ts
+    describe("inline layout only allows transfer inline", () => {
+      it("keeps transfer inline but pushes hold/return/drop to overflow", () => {
+        const resolved = resolveDepartureActions(["transfer", "hold", "drop"], {
+          isOwner: true,
+          layout: "inline",
+        });
+        const byAction = Object.fromEntries(resolved.map((r) => [r.action, r.inOverflow]));
+        expect(byAction.transfer).toBe(false);
+        expect(byAction.hold).toBe(true);
+        expect(byAction.drop).toBe(true);
+      });
+    });
+
+    describe("overflow separator", () => {
+      it("puts a separator before delete when something precedes it in the menu", () => {
+        const resolved = resolveDepartureActions(["transfer", "hold", "drop", "delete"], {
+          isOwner: true,
+          layout: "menu",
+        });
+        const byAction = Object.fromEntries(resolved.map((r) => [r.action, r.separatorBefore]));
+        expect(byAction.delete).toBe(true);
+        expect(byAction.transfer).toBe(false);
+        expect(byAction.hold).toBe(false);
+        expect(byAction.drop).toBe(false);
+      });
+
+      it("does not separate delete when it is the only overflow entry", () => {
+        const resolved = resolveDepartureActions(["delete"], { isOwner: true, layout: "inline" });
+        expect(resolved[0].separatorBefore).toBe(false);
+      });
+    });
+
     describe("departureActionsFor", () => {
-      it("offers transfer/hold/drop/delete for an active enrollment", () => {
+      it("offers hold/drop/delete (and transfer) for an active enrollment", () => {
         expect(departureActionsFor("active")).toEqual(["transfer", "hold", "drop", "delete"]);
       });
 
-      it("offers return/transfer/drop/delete for a held enrollment", () => {
+      it("offers return in front for a held enrollment", () => {
         expect(departureActionsFor("held")).toEqual(["return", "transfer", "drop", "delete"]);
       });
 
-      it("offers return/transfer/drop/delete for a reclaim_pending enrollment", () => {
-        expect(departureActionsFor("reclaim_pending")).toEqual([
-          "return",
-          "transfer",
-          "drop",
-          "delete",
-        ]);
-      });
-
-      it("offers return/transfer/drop/delete for a legacy paused enrollment", () => {
+      it("offers return for a legacy paused enrollment too", () => {
         expect(departureActionsFor("paused")).toEqual(["return", "transfer", "drop", "delete"]);
       });
 
-      it("offers only delete for any other status", () => {
-        expect(departureActionsFor("dropped")).toEqual(["delete"]);
-        expect(departureActionsFor("deleted")).toEqual(["delete"]);
+      it("offers only delete for every other status", () => {
+        for (const status of ["reclaim_pending", "cancelled", "deleted", "withdrawn", "dropped"]) {
+          expect(departureActionsFor(status)).toEqual(["delete"]);
+        }
       });
     });
     ```
-  - Add `departureActionsFor` to the top-of-file import: `import { DEPARTURE_ACTION_LABEL, departureActionsFor, resolveDepartureActions, type DepartureAction } from "./departure-actions.logic";`.
-
-- [ ] Run it (expect failure — `departureActionsFor` doesn't exist yet, and the new overflow assertion fails against today's `ALWAYS_OVERFLOW_ACTIONS`): `cd frontend && pnpm vitest run components/admin/enrollment/departure-actions.test.tsx`
-
-- [ ] Implement. Edit `frontend/components/admin/enrollment/departure-actions.logic.ts`. The union and `DEPARTURE_ACTION_LABEL` (lines 8-27) are UNCHANGED in this task; only line 36's set changes:
-  ```ts
-  /**
-   * Actions that always render inside the overflow menu, never as an inline
-   * button. Only Transfer is ever an inline button (design contract §3) — Hold,
-   * Return, Drop and Delete overflow in EVERY layout, not just "menu".
-   */
-  const ALWAYS_OVERFLOW_ACTIONS = new Set<DepartureAction>(["hold", "return", "drop", "delete"]);
-  ```
-  (`resolveDepartureActions` itself is unchanged — it already reads from `ALWAYS_OVERFLOW_ACTIONS`. `pause`/`resume` stay in the union and the label map until Task 8; they are not listed in `ALWAYS_OVERFLOW_ACTIONS` because they are about to be deleted and no surface renders them inline anyway.)
-  Append below `resolveDepartureActions`:
-  ```ts
-  /**
-   * Which departure actions apply to one enrollment row, by status — the ONE
-   * table both the class roster and the student page read from (design
-   * contract §3). `paused` is the legacy pre-#697 status; it still offers
-   * Return even though `ReturnFromHold`'s CAS only accepts `held` today —
-   * tracked separately under #703, not resolved here.
-   */
-  export function departureActionsFor(status: string): DepartureAction[] {
-    switch (status) {
-      case "active":
-        return ["transfer", "hold", "drop", "delete"];
-      case "held":
-      case "reclaim_pending":
-      case "paused":
-        return ["return", "transfer", "drop", "delete"];
-      default:
-        return ["delete"];
+  - Add `departureActionsFor` to the top `import` from `./departure-actions.logic`.
+- [ ] Run it and confirm the expected failure: `cd frontend && pnpm vitest run components/admin/enrollment/departure-actions.test.tsx`. Expected failure, precisely: `departureActionsFor is not a function` (the new `departureActionsFor` describe block), plus `expected undefined to be true` in the new `overflow separator` block (`separatorBefore` is not on `ResolvedDepartureAction` yet), plus the new `inline layout only allows transfer inline` block failing on `byAction.hold` / `byAction.drop` being `false`. The four edited existing tests still PASS at this point (vitest does not typecheck, so the `"pause"` literal still runs) — they are edited now so the type change below does not leave the file uncompilable for `pnpm typecheck`.
+- [ ] Implement. Edit `frontend/components/admin/enrollment/departure-actions.logic.ts`:
+  - Change the `DepartureAction` union (remove `"pause"` and `"resume"`):
+    ```ts
+    export type DepartureAction =
+      | "transfer"
+      | "hold"
+      | "return"
+      | "drop"
+      | "delete"
+      | "stop_all_classes";
+    ```
+  - Remove the `pause`/`resume` entries from `DEPARTURE_ACTION_LABEL`.
+  - **The "Pause/Resume are a *transitional* group…" paragraph is NOT in this file** — it is the module doc comment of `frontend/components/admin/enrollment/departure-actions.tsx`, lines 12-18. Edit **that** file and replace that paragraph's second half with:
+    ```ts
+     * Vocabulary (owner-settled, see the departures design contract):
+     *   Transfer, Hold, Return, Drop, Delete — never "Cancel", which is reserved
+     *   for classes and dates, not a child. Pause/Resume are retired (2026-09-10
+     *   departures spec): Hold/Return cover the same ground with a seat-keeping
+     *   guarantee Pause never had.
+    ```
+  - In the same file (`departure-actions.tsx`), add `departureActionsFor` to the existing barrel re-export block (lines 35-40) — Task 9 imports it from `@/components/admin/enrollment/departure-actions`, not from the `.logic` module:
+    ```ts
+    export {
+      DEPARTURE_ACTION_LABEL,
+      departureActionsFor,
+      resolveDepartureActions,
+      type DepartureAction,
+      type ResolvedDepartureAction,
+    } from "./departure-actions.logic";
+    ```
+  - Add, after `ALWAYS_OVERFLOW_ACTIONS`:
+    ```ts
+    /**
+     * In "inline" layout, only these actions render as inline buttons; every
+     * other action (besides the always-overflow ones above) still goes to the
+     * overflow menu. "menu" layout is unaffected — everything there already
+     * goes to overflow. Today only the student Sessions panel uses "inline"
+     * layout, and only Transfer is meant to sit next to the row.
+     */
+    const INLINE_LAYOUT_ALLOWED = new Set<DepartureAction>(["transfer"]);
+    ```
+  - Add `separatorBefore: boolean;` to the `ResolvedDepartureAction` interface, documented as: "True when a `role=\"separator\"` divider should render above this entry in the overflow menu. Today only `delete` asks for one, and only when it is not the menu's first entry."
+  - Rewrite the body of `resolveDepartureActions` so `inOverflow` honours the inline allow-list and `separatorBefore` can see the entries before it (the current one-pass `.map` cannot, so compute `inOverflow` first):
+    ```ts
+    export function resolveDepartureActions(
+      actions: readonly DepartureAction[],
+      { isOwner, layout }: { isOwner: boolean; layout: "menu" | "inline" },
+    ): ResolvedDepartureAction[] {
+      const placed = actions.map((action) => ({
+        action,
+        inOverflow:
+          layout === "menu" ||
+          ALWAYS_OVERFLOW_ACTIONS.has(action) ||
+          (layout === "inline" && !INLINE_LAYOUT_ALLOWED.has(action)),
+      }));
+      let overflowSeen = 0;
+      return placed.map(({ action, inOverflow }) => {
+        const ownerGated = OWNER_ONLY_ACTIONS.has(action) && !isOwner;
+        const separatorBefore =
+          inOverflow && SEPARATED_ACTIONS.has(action) && overflowSeen > 0;
+        if (inOverflow) overflowSeen += 1;
+        return {
+          action,
+          label: DEPARTURE_ACTION_LABEL[action],
+          disabled: ownerGated,
+          ownerGated,
+          inOverflow,
+          separatorBefore,
+          danger: DANGER_ACTIONS.has(action),
+        };
+      });
     }
-  }
-  ```
+    ```
+    with, next to `ALWAYS_OVERFLOW_ACTIONS`:
+    ```ts
+    /** Actions that sit apart from the rest of the overflow menu. */
+    const SEPARATED_ACTIONS = new Set<DepartureAction>(["delete"]);
+    ```
+  - Append at the end of the file:
+    ```ts
+    /**
+     * Which departure actions a row offers, purely from enrollment status
+     * (2026-09-10 departures-from-student-page spec §3). Shared by the class
+     * roster and the student Sessions panel so both surfaces show the same
+     * set — this replaces `RosterPanel.rosterActionsFor`, which only the
+     * roster had.
+     *
+     * `paused` still renders Return (not Resume — that action is retired) even
+     * though `ReturnFromHold` only transitions a `held` row today; a legacy
+     * paused row surfaces the same button and may 409 until issue #703 folds
+     * paused into the hold vocabulary. That gap is accepted by the spec, not
+     * fixed here.
+     */
+    export function departureActionsFor(status: string): DepartureAction[] {
+      switch (status) {
+        case "active":
+          return ["transfer", "hold", "drop", "delete"];
+        case "held":
+        case "paused":
+          return ["return", "transfer", "drop", "delete"];
+        default:
+          return ["delete"];
+      }
+    }
+    ```
+- [ ] Run it and confirm PASS: `cd frontend && pnpm vitest run components/admin/enrollment/departure-actions.test.tsx`.
+- [ ] Run the frontend typecheck to catch any other file still using `"pause"`/`"resume"` as a `DepartureAction` literal (expected to fail here — later tasks fix the call sites): `cd frontend && pnpm typecheck`. Expect failures only in `app/(admin)/admin/sessions/[id]/RosterPanel.tsx` (`rosterActionsFor` pushes `"pause"`/`"resume"`, `dispatchRosterAction` switches on them). Note them for Task 9; do not fix them in this task. Any OTHER failing file is an unmapped call site — add it to Task 9 before continuing.
+- [ ] Commit: `git add frontend/components/admin/enrollment/departure-actions.logic.ts frontend/components/admin/enrollment/departure-actions.tsx frontend/components/admin/enrollment/departure-actions.test.tsx` then `git commit -m "feat(enrollment): add departureActionsFor and retire pause/resume vocabulary\n\nCo-Authored-By: Claude Opus 5 <noreply@anthropic.com>"`.
 
-- [ ] Update the re-export barrel. Edit `frontend/components/admin/enrollment/departure-actions.tsx` lines 35-40:
-  ```ts
-  export {
-    DEPARTURE_ACTION_LABEL,
-    departureActionsFor,
-    resolveDepartureActions,
-    type DepartureAction,
-    type ResolvedDepartureAction,
-  } from "./departure-actions.logic";
-  ```
-
-- [ ] Run it (expect PASS): `cd frontend && pnpm vitest run components/admin/enrollment/departure-actions.test.tsx`
-
-- [ ] Typecheck and lint (expect PASS — nothing was removed from the union, so no consumer breaks): `cd frontend && pnpm typecheck && pnpm lint`
-
-- [ ] Commit:
-  ```
-  git add frontend/components/admin/enrollment/departure-actions.logic.ts frontend/components/admin/enrollment/departure-actions.tsx frontend/components/admin/enrollment/departure-actions.test.tsx
-  git commit -m "feat(enrollment): add departureActionsFor, keep only Transfer inline
-
-  Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
-  ```
-
-## Task 2: Extract shared dialog utilities
-
-**Files:**
-- Create: `frontend/components/admin/enrollment/dialog-shared.ts`
-- Modify: `frontend/app/(admin)/admin/sessions/[id]/format.ts`
-
-**Interfaces:**
-- Produces: `inputClass: string`, `formatLocalDateInput(value: Date): string`, `todayDateInput(): string`, `dateInputValueFromOffset(days: number): string`, `formatCents(cents: number): string`, `formatShortDateTime(value: string): string`, `defaultReturnOn(): string`, `maxReturnOn(maxHoldDays: number): string`.
-
-- [ ] No test — this is a pure move with no behavior change; the safety net is `pnpm typecheck` after the move (a broken import path fails typecheck immediately). Note there is NO `format.test.ts` under `app/(admin)/admin/sessions/[id]/` (the only `format.test.ts` in the tree is `app/(admin)/admin/students/[studentId]/format.test.ts`, a different module) — do not try to run one.
-
-- [ ] Create `frontend/components/admin/enrollment/dialog-shared.ts`:
-  ```ts
-  /**
-   * Small formatting/style helpers shared by every enrollment departure
-   * dialog (Transfer/Hold/Return/Drop/Delete). Extracted from
-   * `app/(admin)/admin/sessions/[id]/format.ts` (issue #700 follow-up) so the
-   * dialogs can live in `components/admin/enrollment/` and be mounted from
-   * both the class roster and the student page without reaching into a
-   * route-group-local file.
-   */
-
-  export const inputClass =
-    "w-full rounded-md border border-rally-line bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30";
-
-  export function formatLocalDateInput(value: Date): string {
-    const year = value.getFullYear();
-    const month = String(value.getMonth() + 1).padStart(2, "0");
-    const day = String(value.getDate()).padStart(2, "0");
-    return `${year}-${month}-${day}`;
-  }
-
-  export function todayDateInput(): string {
-    return formatLocalDateInput(new Date());
-  }
-
-  export function dateInputValueFromOffset(days: number): string {
-    const value = new Date();
-    value.setDate(value.getDate() + days);
-    return formatLocalDateInput(value);
-  }
-
-  export function formatCents(cents: number): string {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-    }).format(cents / 100);
-  }
-
-  export function formatShortDateTime(value: string): string {
-    return new Date(value).toLocaleString(undefined, {
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    });
-  }
-
-  /**
-   * Hold return-date bounds (design spec §4.1). Kept here, in a pure `.ts`
-   * module, rather than in the dialog `.tsx`: `vitest.config.ts` runs
-   * `environment: "node"`, so a unit test must not have to import a React
-   * component (and through it `@/components/ds/modal`, which reaches for
-   * `react-dom`'s `createPortal`). Same reason `departure-actions.logic.ts`
-   * exists separately from `departure-actions.tsx`.
-   */
-  export function defaultReturnOn(): string {
-    return dateInputValueFromOffset(30);
-  }
-
-  export function maxReturnOn(maxHoldDays: number): string {
-    return dateInputValueFromOffset(maxHoldDays);
-  }
-  ```
-
-- [ ] Edit `frontend/app/(admin)/admin/sessions/[id]/format.ts`: delete the now-duplicated definitions of `inputClass` (lines 33-34), `formatLocalDateInput`/`todayDateInput`/`dateInputValueFromOffset` (lines 202-217), and `formatCents`/`formatShortDateTime` (lines 223-237), replacing them with an **import plus a re-export** so every other importer of `"./format"` (`dialogs.tsx`'s `AddToRosterDialog`, `SessionEditing.tsx`) is unaffected:
-  ```ts
-  import {
-    dateInputValueFromOffset,
-    formatCents,
-    formatLocalDateInput,
-    formatShortDateTime,
-    inputClass,
-    todayDateInput,
-  } from "@/components/admin/enrollment/dialog-shared";
-
-  export {
-    inputClass,
-    formatLocalDateInput,
-    todayDateInput,
-    dateInputValueFromOffset,
-    formatCents,
-    formatShortDateTime,
-  };
-  ```
-  The plain `import` is NOT optional and a bare `export { … } from "…"` will NOT do: `toDateInputValue` (lines 219-221, still used by `SessionEditing.tsx:44,354` — verified by grep, so it stays) calls `formatLocalDateInput` as a **local** binding, and a re-export-from creates no local binding. Without the import line, `format.ts` fails to compile. Put the import with the other imports at the top and the `export { … }` block right after it (before `DEFAULT_TIMEZONE`), then remove the five now-orphaned local definitions further down.
-
-- [ ] Run typecheck and lint (expect PASS — this step is a pure move, no callers change): `cd frontend && pnpm typecheck && pnpm lint`
-
-- [ ] Commit:
-  ```
-  git add frontend/components/admin/enrollment/dialog-shared.ts "frontend/app/(admin)/admin/sessions/[id]/format.ts"
-  git commit -m "refactor(enrollment): extract shared dialog formatting helpers
-
-  Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
-  ```
-
-## Task 3: Move Transfer and Remove dialogs, unchanged
+## Task 2: Frontend — overflow-menu separator
 
 **Files:**
-- Create: `frontend/components/admin/enrollment/transfer-enrollment-dialog.tsx` (moved `TransferEnrollmentDialog` + `RallySessionPicker`, `dialogs.tsx:316-522`)
-- Create: `frontend/components/admin/enrollment/remove-enrollment-dialog.tsx` (moved `RemoveEnrollmentDialog`, `dialogs.tsx:686-768`)
-- Modify: `frontend/app/(admin)/admin/sessions/[id]/dialogs.tsx` (delete the two moved dialogs only — `PauseEnrollmentDialog` STAYS until Task 8)
-- Modify: `frontend/app/(admin)/admin/sessions/[id]/page.tsx` (import path only)
+- Modify: `frontend/components/ds/menu.tsx`
+- Modify: `frontend/components/admin/enrollment/departure-actions.tsx`
+- Test: none new. **This repo cannot render-test a component**: `frontend/vitest.config.ts` sets `environment: "node"` and there is no `@testing-library/react`, `jsdom` or `happy-dom` in `frontend/package.json`. The *decision* of which entry gets a separator is already unit-tested as pure logic (`separatorBefore` on `ResolvedDepartureAction`, Task 1's `overflow separator` describe block); the *rendering* of the divider is covered by `pnpm typecheck` + `pnpm lint` here and by Task 10's Playwright run, which drives the real menu.
 
 **Interfaces:**
-- Consumes: `transferEnrollment` from `@/lib/api/admin`; `listAdminSessions` from `@/lib/api/admin`; `inputClass`/`todayDateInput` from `@/components/admin/enrollment/dialog-shared`.
-- Produces: `TransferEnrollmentDialog`, `RallySessionPicker`, `RemoveEnrollmentDialog` — same props as today.
+- Consumes: `ResolvedDepartureAction.separatorBefore` from Task 1.
+- Produces: `MenuItem.separatorBefore?: boolean`, rendered as a `role="separator"` divider immediately before that item.
 
-- [ ] No new test — behavior is unchanged; the existing `frontend/e2e/specs/admin-enrollment-withdraw.spec.ts` (re-run in Tasks 4, 8 and 9), `pnpm typecheck` and `pnpm lint` are the safety net.
+- [ ] Implement. Edit `frontend/components/ds/menu.tsx`:
+  - Add to the `MenuItem` interface (after `danger?: boolean;`, line 32):
+    ```ts
+    /** Renders a `role="separator"` divider immediately above this item. */
+    separatorBefore?: boolean;
+    ```
+  - In the `items.map((item, index) => (...))` render block (line 162), wrap each button in a keyed `<div>` that renders the divider first. **Copy the existing `<button>` verbatim from the file** — the only changes are the wrapping `<div key={item.key}>`, the divider, and removing `key={item.key}` from the inner `<button>` (it moved to the wrapper). For reference, the button's real danger classes are `text-status-red-800 hover:bg-status-red-50` (NOT `text-red-700`/`bg-red-50`) and its children are `<span>{item.label}</span>` then `{item.hint}`:
+    ```tsx
+    {items.map((item, index) => (
+      <div key={item.key}>
+        {item.separatorBefore && (
+          <div role="separator" className="my-1 border-t border-rally-line" />
+        )}
+        <button
+          ref={(el) => {
+            itemRefs.current[index] = el;
+          }}
+          type="button"
+          role="menuitem"
+          /* …every remaining prop, className and child copied unchanged… */
+        >
+          <span>{item.label}</span>
+          {item.hint}
+        </button>
+      </div>
+    ))}
+    ```
+    Note the divider is a sibling *inside* the wrapper, so `itemRefs.current[index]` still points at the button and the roving-focus/`enabledIndexes` maths in this component is unaffected.
+- [ ] Edit `frontend/components/admin/enrollment/departure-actions.tsx`: in the `overflowItems: MenuItem[]` mapping (line 66), forward the new flag — `separatorBefore: entry.separatorBefore,`.
+- [ ] Run typecheck and lint: `cd frontend && pnpm typecheck && pnpm lint`. (`pnpm typecheck` still fails on `RosterPanel.tsx`'s retired `pause`/`resume` literals until Task 9 — confirm no NEW error names `menu.tsx` or `departure-actions.tsx`.)
+- [ ] Re-run Task 1's unit suite to confirm the separator logic still passes end to end: `cd frontend && pnpm vitest run components/admin/enrollment/departure-actions.test.tsx`.
+- [ ] Commit: `git add frontend/components/ds/menu.tsx frontend/components/admin/enrollment/departure-actions.tsx` then `git commit -m "feat(ds): support a separator before an overflow-menu item\n\nCo-Authored-By: Claude Opus 5 <noreply@anthropic.com>"`.
 
-- [ ] Create `frontend/components/admin/enrollment/transfer-enrollment-dialog.tsx` with this content (copied verbatim from `dialogs.tsx` lines 316-522 — `TransferEnrollmentDialog` (316-449) and its `RallySessionPicker` helper (450-453 comment, 454-522) — with only the import block changed):
-  ```tsx
-  "use client";
-
-  import { useState } from "react";
-  import { useMutation, useQuery } from "@tanstack/react-query";
-
-  import {
-    listAdminSessions,
-    transferEnrollment,
-    type AdminEnrollmentView,
-    type AdminSessionView,
-  } from "@/lib/api/admin";
-
-  import { Button } from "@/components/ds/button";
-  import { DialogActions, DialogError, Field, RallyModal as RallyDialog } from "@/components/ds/dialog-chrome";
-
-  import { inputClass, todayDateInput } from "./dialog-shared";
-
-  export function TransferEnrollmentDialog({
-    enrollment,
-    currentSessionId,
-    currentSessionTitle,
-    onClose,
-    onMoved,
-  }: {
-    enrollment: AdminEnrollmentView | null;
-    currentSessionId: string;
-    currentSessionTitle: string;
-    onClose: () => void;
-    onMoved: () => void;
-  }) {
-    // ... body identical to dialogs.tsx lines 328-449 (unchanged) ...
-  }
-
-  // Rally-styled session picker — replaces native <select> whose OS dropdown
-  // renders as a giant unstyled overlay on macOS Chrome. Click the button to
-  // toggle an absolute-positioned options list constrained to the dialog.
-  export function RallySessionPicker({
-    sessions,
-    value,
-    onChange,
-    loading,
-  }: {
-    sessions: AdminSessionView[];
-    value: string;
-    onChange: (value: string) => void;
-    loading: boolean;
-  }) {
-    // ... body identical to dialogs.tsx lines 465-521 (unchanged) ...
-  }
-  ```
-  Copy the two function bodies byte-for-byte from the current `dialogs.tsx` (lines 329-448 for `TransferEnrollmentDialog`'s body, 465-521 for `RallySessionPicker`'s body) — only the import list at the top changes to the one shown above (drop everything `TransferEnrollmentDialog` didn't itself use: `createEnrollment`, `deleteEnrollment`, `listAdminStudents`, `pauseEnrollment`, `previewWithdrawalCredit`, `quoteAdminEnrollment`, `withdrawEnrollment`, `useIsOwner`, `buildWithdrawRequest`/etc., `ApiError`, `Dialog` from radix, `formatCents`/`formatShortDateTime`, `DAYS_OF_WEEK` — none of those are referenced by `TransferEnrollmentDialog` or `RallySessionPicker`).
-
-- [ ] Create `frontend/components/admin/enrollment/remove-enrollment-dialog.tsx`, copied verbatim from `dialogs.tsx` lines 686-768:
-  ```tsx
-  "use client";
-
-  import { useState } from "react";
-  import { useMutation } from "@tanstack/react-query";
-
-  import { deleteEnrollment, type AdminEnrollmentView } from "@/lib/api/admin";
-
-  import { Button } from "@/components/ds/button";
-  import { DialogActions, DialogError, Field, RallyModal as RallyDialog } from "@/components/ds/dialog-chrome";
-
-  import { inputClass, todayDateInput } from "./dialog-shared";
-
-  export function RemoveEnrollmentDialog({
-    enrollment,
-    onClose,
-    onRemoved,
-  }: {
-    enrollment: AdminEnrollmentView | null;
-    onClose: () => void;
-    onRemoved: () => void;
-  }) {
-    // ... body identical to dialogs.tsx lines 695-767 (unchanged) ...
-  }
-  ```
-
-- [ ] Edit `frontend/app/(admin)/admin/sessions/[id]/dialogs.tsx`:
-  - Delete `TransferEnrollmentDialog` and `RallySessionPicker` (lines 316-522, now moved).
-  - Delete `RemoveEnrollmentDialog` (lines 686-768, now moved).
-  - `PauseEnrollmentDialog` (lines 175-314) STAYS in this file — deleting it now would leave `page.tsx`'s `<PauseEnrollmentDialog>` at lines 563-572 and `RosterTable`'s REQUIRED `onPause`/`onResume` props with nothing behind them, and `pnpm typecheck` would be red for the rest of the plan. It is deleted in Task 8, together with the union change and the roster rewrite.
-  - `WithdrawalCreditDialog` (lines 528-684) stays in this file for now — it moves in Task 4.
-  - Trim the top import block (lines 3-38) to only what the remaining members (`AddToRosterDialog`, `PauseEnrollmentDialog`, `WithdrawalCreditDialog`, `StudentSelect`, `CoachSelect`, `DaySelect`) still use. Verified against the current file:
-    - **Drop** `deleteEnrollment` (only `RemoveEnrollmentDialog` used it), `transferEnrollment`, `listAdminSessions` and `type AdminSessionView` (only `TransferEnrollmentDialog`/`RallySessionPicker` used those — `AddToRosterDialog` does NOT list sessions; its quote flow calls `quoteAdminEnrollment` with the `sessionId` prop it is already given).
-    - **Keep** `createEnrollment`, `listAdminStudents`, `pauseEnrollment`, `previewWithdrawalCredit`, `quoteAdminEnrollment`, `withdrawEnrollment`, `AdminEnrollmentQuote`, `AdminEnrollmentView`, `AdminStudentView`, `AdminUserView`, `CreateEnrollmentRequest`, `queryKeys`, the withdrawal helpers, `ApiError`, `useIsOwner`, `Dialog` (radix), `DAYS_OF_WEEK`, and from `./format`: `dateInputValueFromOffset`, `formatCents`, `formatShortDateTime`, `inputClass`, `todayDateInput`.
-    - `pnpm lint` is the check: eslint flags any import that is now unused, so run it before committing rather than reasoning further.
-
-- [ ] Edit `frontend/app/(admin)/admin/sessions/[id]/page.tsx` line 43 — split the single `./dialogs` import into the moved-dialog imports plus the remaining local ones. Nothing else in this file changes in this task:
-  ```ts
-  import { AddToRosterDialog, PauseEnrollmentDialog, WithdrawalCreditDialog } from "./dialogs";
-  import { TransferEnrollmentDialog } from "@/components/admin/enrollment/transfer-enrollment-dialog";
-  import { RemoveEnrollmentDialog } from "@/components/admin/enrollment/remove-enrollment-dialog";
-  ```
-
-- [ ] Run typecheck (expect PASS): `cd frontend && pnpm typecheck`
-
-- [ ] Run lint: `cd frontend && pnpm lint`
-
-- [ ] Commit:
-  ```
-  git add frontend/components/admin/enrollment/transfer-enrollment-dialog.tsx frontend/components/admin/enrollment/remove-enrollment-dialog.tsx "frontend/app/(admin)/admin/sessions/[id]/dialogs.tsx" "frontend/app/(admin)/admin/sessions/[id]/page.tsx"
-  git commit -m "refactor(enrollment): move Transfer and Remove dialogs into components/admin/enrollment
-
-  Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
-  ```
-
-## Task 4: Move the Drop dialog and add the notify-family toggle
+## Task 3: Backend — `notify_family` on Hold/Return + `HoldNotifier.hold_started`/`hold_returned`
 
 **Files:**
-- Create: `frontend/components/admin/enrollment/withdrawal-credit-dialog.tsx` (moved `WithdrawalCreditDialog`, `dialogs.tsx:528-684`, plus the toggle)
-- Modify: `frontend/app/(admin)/admin/sessions/[id]/dialogs.tsx` (delete the moved dialog)
-- Modify: `frontend/app/(admin)/admin/sessions/[id]/page.tsx` (import path)
-- Modify: `frontend/lib/api/admin.ts` (`WithdrawEnrollmentRequest` gains `notify_family?: boolean`)
-- Modify: `frontend/lib/admin/withdrawal.ts` (`buildWithdrawRequest` accepts and forwards `notifyFamily`)
-- Modify: `frontend/lib/admin/withdrawal.test.ts` (its two `buildWithdrawRequest` cases must pass the new field — see below)
-- Modify: `frontend/e2e/specs/admin-enrollment-withdraw.spec.ts` (existing body assertions gain `notify_family: true`)
+- Modify: `backend/v2/contexts/enrollment/application/ports.py`
+- Modify: `backend/v2/contexts/enrollment/application/use_cases/holds.py`
+- Modify: `backend/v2/interfaces/admin/hold_routes.py`
+- Modify: `backend/v2/tests/fixtures/enrollment_fakes.py`
+- Test: `backend/v2/tests/application/test_enrollment_holds.py`
 
 **Interfaces:**
-- Consumes: `withdrawEnrollment`, `previewWithdrawalCredit` from `@/lib/api/admin`; `useIsOwner` from `@/components/admin/owner-context`; `buildWithdrawRequest`/`defaultWithdrawalOutcome`/`withdrawalOutcomeOptions`/`withdrawErrorMessage` from `@/lib/admin/withdrawal`.
-- Produces: `WithdrawalCreditDialog` — same props, body now also POSTs `notify_family`.
+- Consumes: existing `HoldNotifier` Protocol (`hold_reclaimed`, `hold_reminder`) at `ports.py:638`. Both existing methods take `hold_seq: int` and `HoldNotificationAdapter` keys its claim off it (`hold-reclaim:{hold_seq}`, `hold-reminder:{hold_seq}:{n}`) — the two new methods MUST do the same, or a second hold-and-return cycle on the same enrollment would silently never email again.
+- Produces: `HoldNotifier.hold_started(...)`, `HoldNotifier.hold_returned(...)` (both carrying `hold_seq: int`); `HoldEnrollment.execute(..., notify_family: bool = False)`; `ReturnFromHold.execute(..., notify_family: bool = False)`.
 
-- [ ] Write the failing test first. Edit `frontend/e2e/specs/admin-enrollment-withdraw.spec.ts`: the two request-body assertions at lines 173-175 and 196-198 currently expect exactly `{ effective_date, outcome, reason }`. Update them for the new default-on toggle:
-  ```ts
-  expect(stub.withdrawBodies).toEqual([
-    { effective_date: "2026-09-15", outcome: "credit", reason: "Moving away", notify_family: true },
-  ]);
-  ```
-  and
-  ```ts
-  expect(stub.withdrawBodies).toEqual([
-    { effective_date: "2026-09-15", outcome: "refund", reason: "Withdrawal refund", notify_family: true },
-  ]);
-  ```
-  (Leave the 409/404 tests' assertions — they only check `stub.withdrawBodies` length, not shape.)
+- [ ] Write the failing tests. Append to `backend/v2/tests/application/test_enrollment_holds.py` (after the existing `test_hold_keeps_status_moves_to_held_and_billing_syncs_once`, and update `_harness` to accept a notifier):
+  - Change `_harness`'s signature and body to:
+    ```python
+    def _harness(status: str = "active", *, notifier: FakeHoldNotifier | None = None):
+        enrollments = FakeEnrollmentWriter(rows={"enr-1": make_enrollment(status=status)})
+        policy_repo = FakeDeparturePolicyRepo()
+        billing = FakeBillingSync()
+        events = FakeEnrollmentEvents()
+        hold_uc = HoldEnrollment(
+            enrollments=enrollments,
+            departure_policy=policy_repo,
+            enrollment_events=events,
+            billing_sync=billing,
+            notifier=notifier,
+            clock=_clock,
+        )
+        return_uc = ReturnFromHold(
+            enrollments=enrollments,
+            enrollment_events=events,
+            billing_sync=billing,
+            notifier=notifier,
+            clock=_clock,
+        )
+        return enrollments, policy_repo, billing, events, hold_uc, return_uc
+    ```
+    (Every existing call site of `_harness(...)` in this file keeps working unchanged since `notifier` defaults to `None`.)
+  - Append. **Note each hold gets its OWN `_harness()`**: `FakeEnrollmentWriter.mark_held_if_active` mutates `self.rows` to `status="held"`, and `HoldEnrollment.execute` raises `EnrollmentNotHoldable` for anything but `active` — so calling `hold_uc.execute` twice against one harness fails on the second call, not on the assertion.
+    ```python
+    @pytest.mark.asyncio
+    async def test_hold_does_not_notify_family_by_default() -> None:
+        notifier = FakeHoldNotifier()
+        _enrollments, _policy, _billing, _events, hold_uc, _return_uc = _harness(notifier=notifier)
 
-- [ ] Run it (expect failure — the dialog doesn't send `notify_family` yet): `cd frontend && pnpm exec playwright test admin-enrollment-withdraw --project=chromium-mobile`
+        await hold_uc.execute("enr-1", return_on=date(2026, 10, 1), notify_family=False)
+        assert notifier.hold_started_calls == []
 
-- [ ] Edit `frontend/lib/api/admin.ts` line 227-231:
-  ```ts
-  export interface WithdrawEnrollmentRequest {
-    effective_date: string;
-    outcome?: "credit" | "refund" | "adjustment";
-    reason: string;
-    notify_family?: boolean;
-  }
-  ```
+    @pytest.mark.asyncio
+    async def test_hold_notifies_family_once_when_flag_is_set() -> None:
+        notifier = FakeHoldNotifier()
+        _enrollments, _policy, _billing, _events, hold_uc, _return_uc = _harness(notifier=notifier)
 
-- [ ] Edit `frontend/lib/admin/withdrawal.ts` — `buildWithdrawRequest` (lines 42-52) gains a `notifyFamily` input and forwards it:
-  ```ts
-  export function buildWithdrawRequest(input: {
-    withdrawalDate: string;
-    outcome: WithdrawalOutcome;
-    adminNote: string;
-    notifyFamily: boolean;
-  }): WithdrawEnrollmentRequest {
-    const note = input.adminNote.trim();
-    return {
-      effective_date: input.withdrawalDate,
-      outcome: input.outcome,
-      reason: note || `Withdrawal ${input.outcome}`,
-      notify_family: input.notifyFamily,
-    };
-  }
-  ```
+        await hold_uc.execute("enr-1", return_on=date(2026, 10, 1), notify_family=True)
+        assert len(notifier.hold_started_calls) == 1
+        assert notifier.hold_started_calls[0]["enrollment_id"] == "enr-1"
+        assert notifier.hold_started_calls[0]["return_on"] == date(2026, 10, 1)
+        # The claim key is hold_seq-scoped, exactly like hold_reclaimed /
+        # hold_reminder, so a second hold-and-return cycle emails again.
+        # make_enrollment() starts at hold_seq=0 and the CAS stamps +1.
+        assert notifier.hold_started_calls[0]["hold_seq"] == 1
 
-- [ ] Edit `frontend/lib/admin/withdrawal.test.ts` — its two existing `buildWithdrawRequest` cases (lines 33-45) call the helper with three fields and `toEqual` a three-field body. Adding a REQUIRED `notifyFamily` breaks both at typecheck. Update them (and keep one covering each toggle state, since the caller now sends both):
-  ```ts
-  describe("buildWithdrawRequest", () => {
-    it("sends every outcome through the same withdraw body", () => {
-      expect(
-        buildWithdrawRequest({
-          withdrawalDate: "2026-09-15",
-          outcome: "credit",
-          adminNote: " moving ",
-          notifyFamily: true,
-        }),
-      ).toEqual({
-        effective_date: "2026-09-15",
-        outcome: "credit",
-        reason: "moving",
-        notify_family: true,
-      });
-    });
+    @pytest.mark.asyncio
+    async def test_hold_notifier_failure_does_not_fail_the_write() -> None:
+        class BoomNotifier(FakeHoldNotifier):
+            async def hold_started(self, **kwargs):  # type: ignore[override]
+                raise RuntimeError("mail outage")
 
-    it("falls back to a reason naming the outcome when the note is blank", () => {
-      expect(
-        buildWithdrawRequest({
-          withdrawalDate: "2026-09-15",
-          outcome: "refund",
-          adminNote: "",
-          notifyFamily: false,
-        }),
-      ).toEqual({
-        effective_date: "2026-09-15",
-        outcome: "refund",
-        reason: "Withdrawal refund",
-        notify_family: false,
-      });
-    });
-  });
-  ```
+        enrollments = FakeEnrollmentWriter(rows={"enr-1": make_enrollment(status="active")})
+        policy_repo = FakeDeparturePolicyRepo()
+        billing = FakeBillingSync()
+        events = FakeEnrollmentEvents()
+        hold_uc = HoldEnrollment(
+            enrollments=enrollments,
+            departure_policy=policy_repo,
+            enrollment_events=events,
+            billing_sync=billing,
+            notifier=BoomNotifier(),
+            clock=_clock,
+        )
 
-- [ ] Run it (expect PASS): `cd frontend && pnpm vitest run lib/admin/withdrawal.test.ts`
+        result = await hold_uc.execute("enr-1", return_on=date(2026, 10, 1), notify_family=True)
+        assert result.status == "held"
 
-- [ ] Create `frontend/components/admin/enrollment/withdrawal-credit-dialog.tsx`, copied from `dialogs.tsx:528-684` with the toggle added. Full content:
-  ```tsx
-  "use client";
+    @pytest.mark.asyncio
+    async def test_return_does_not_notify_family_by_default() -> None:
+        notifier = FakeHoldNotifier()
+        _enrollments, _policy, _billing, _events, hold_uc, return_uc = _harness(notifier=notifier)
+        await hold_uc.execute("enr-1", return_on=date(2026, 10, 1))
 
-  import { useState } from "react";
-  import { useMutation } from "@tanstack/react-query";
-  import * as Dialog from "@radix-ui/react-dialog";
+        await return_uc.execute("enr-1", notify_family=False)
+        assert notifier.hold_returned_calls == []
 
-  import {
-    previewWithdrawalCredit,
-    withdrawEnrollment,
-    type AdminEnrollmentView,
-  } from "@/lib/api/admin";
-  import {
-    buildWithdrawRequest,
-    defaultWithdrawalOutcome,
-    withdrawErrorMessage,
-    withdrawalOutcomeOptions,
-    type WithdrawalOutcome,
-  } from "@/lib/admin/withdrawal";
-  import type { ApiError } from "@/lib/api/client";
+    @pytest.mark.asyncio
+    async def test_return_notifies_family_once_when_flag_is_set() -> None:
+        notifier = FakeHoldNotifier()
+        _enrollments, _policy, _billing, _events, hold_uc, return_uc = _harness(notifier=notifier)
+        await hold_uc.execute("enr-1", return_on=date(2026, 10, 1))
 
-  import { useIsOwner } from "@/components/admin/owner-context";
-  import { Field } from "@/components/ds/dialog-chrome";
+        await return_uc.execute("enr-1", notify_family=True)
+        assert len(notifier.hold_returned_calls) == 1
+        assert notifier.hold_returned_calls[0]["enrollment_id"] == "enr-1"
+        # `before` (the mark_active_if_held pre-image) carries the seq of the
+        # hold that is closing, so the return notice pairs with its start.
+        assert notifier.hold_returned_calls[0]["hold_seq"] == 1
 
-  import { inputClass, todayDateInput } from "./dialog-shared";
+    @pytest.mark.asyncio
+    async def test_return_notifier_failure_does_not_fail_the_write() -> None:
+        class BoomNotifier(FakeHoldNotifier):
+            async def hold_returned(self, **kwargs):  # type: ignore[override]
+                raise RuntimeError("mail outage")
 
-  export function WithdrawalCreditDialog({
-    enrollment,
-    familyLabel,
-    onClose,
-    onApproved,
-  }: {
-    enrollment: AdminEnrollmentView | null;
-    /** Design spec §2: the dialog names who will be emailed. */
-    familyLabel?: string | null;
-    onClose: () => void;
-    onApproved: () => void;
-  }) {
-    const isOwner = useIsOwner();
-    const outcomeOptions = withdrawalOutcomeOptions(isOwner);
-    const [withdrawalDate, setWithdrawalDate] = useState(todayDateInput);
-    const [outcome, setOutcome] = useState<WithdrawalOutcome>(() =>
-      defaultWithdrawalOutcome(isOwner),
-    );
-    const [adminNote, setAdminNote] = useState("");
-    // Design contract §2: default ON for Drop (opposite of Hold/Return).
-    const [notifyFamily, setNotifyFamily] = useState(true);
-    const [error, setError] = useState<string | null>(null);
-    const previewMutation = useMutation({
-      mutationFn: () =>
-        previewWithdrawalCredit(enrollment!.enrollment_id, {
-          withdrawal_date: `${withdrawalDate}T00:00:00.000Z`,
-        }),
-      onError: (err: Error) => setError(err.message ?? "Could not preview credit."),
-    });
-    const approveMutation = useMutation({
-      mutationFn: () =>
-        withdrawEnrollment(
-          enrollment!.enrollment_id,
-          buildWithdrawRequest({ withdrawalDate, outcome, adminNote, notifyFamily }),
-        ),
-      onSuccess: () => {
-        setOutcome(defaultWithdrawalOutcome(isOwner));
-        setAdminNote("");
-        setNotifyFamily(true);
-        setError(null);
-        onApproved();
-      },
-      onError: (err: ApiError) => setError(withdrawErrorMessage(err)),
-    });
-    const preview = previewMutation.data;
-    return (
-      <Dialog.Root open={enrollment !== null} onOpenChange={(open) => !open && onClose()}>
-        <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40" />
-          <Dialog.Content
-            className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl bg-white p-6 shadow-xl focus:outline-none dark:bg-neutral-900"
-            aria-describedby="withdrawal-credit-desc"
-          >
-            <Dialog.Title className="mb-1 text-lg font-semibold">Drop enrollment</Dialog.Title>
-            <Dialog.Description id="withdrawal-credit-desc" className="mb-4 text-sm text-neutral-500">
-              {enrollment
-                ? `Drop ${enrollment.full_name} — releases the seat, stops autopay, and settles unused-class credit per the outcome below.`
-                : ""}
-            </Dialog.Description>
-            {error && (
-              <p role="alert" className="mb-3 rounded-md bg-red-50 p-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
-                {error}
-              </p>
-            )}
-            <div className="space-y-3">
-              <Field label="Outcome" required>
-                <select
-                  value={outcome}
-                  onChange={(event) => {
-                    setOutcome(event.target.value as WithdrawalOutcome);
-                    previewMutation.reset();
-                  }}
-                  className={inputClass}
-                >
-                  {outcomeOptions.map((option) => (
-                    <option
-                      key={option.value}
-                      value={option.value}
-                      disabled={option.disabledReason !== undefined}
-                    >
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              {outcomeOptions.some((option) => option.disabledReason) && (
-                <p className="text-xs text-neutral-500">
-                  {outcomeOptions.find((option) => option.disabledReason)?.disabledReason}
-                </p>
-              )}
-              <Field label="Drop date" required>
-                <input
-                  type="date"
-                  required
-                  value={withdrawalDate}
-                  onChange={(event) => {
-                    setWithdrawalDate(event.target.value);
-                    previewMutation.reset();
-                  }}
-                  className={inputClass}
-                />
-              </Field>
-              {outcome === "credit" && (
-                <button
-                  type="button"
-                  disabled={!withdrawalDate || previewMutation.isPending}
-                  onClick={() => previewMutation.mutate()}
-                  className="min-h-touch rounded-md border border-blue-300 px-3 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-60 dark:border-blue-700 dark:text-blue-300"
-                >
-                  {previewMutation.isPending ? "Previewing..." : "Preview credit"}
-                </button>
-              )}
-              {preview && (
-                <div className="rounded-md bg-neutral-50 p-3 text-sm dark:bg-neutral-800">
-                  <p className="font-medium">Credit: {preview.display_amount}</p>
-                  <p className="mt-1 text-neutral-500">
-                    {preview.unused_classes} of {preview.total_classes} unused classes.
-                  </p>
-                  <p className="mt-1 text-xs text-neutral-500">{preview.message}</p>
-                </div>
-              )}
-              <Field label="Admin note">
-                <textarea
-                  value={adminNote}
-                  onChange={(event) => setAdminNote(event.target.value)}
-                  rows={3}
-                  className={inputClass}
-                />
-              </Field>
-              <label className="flex items-center gap-2 text-sm text-rally-ink">
-                <input
-                  type="checkbox"
-                  checked={notifyFamily}
-                  onChange={(event) => setNotifyFamily(event.target.checked)}
-                />
-                {familyLabel ? `Email ${familyLabel}` : "Email the family"}
-              </label>
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="min-h-touch rounded-md border border-neutral-300 px-4 text-sm dark:border-neutral-700"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  disabled={
-                    !withdrawalDate ||
-                    approveMutation.isPending ||
-                    (outcome === "credit" && !preview)
-                  }
-                  onClick={() => approveMutation.mutate()}
-                  className="min-h-touch rounded-md bg-orange-600 px-4 text-sm font-medium text-white hover:bg-orange-700 disabled:opacity-60"
-                >
-                  {approveMutation.isPending ? "Saving..." : "Drop"}
-                </button>
-              </div>
-            </div>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
-    );
-  }
-  ```
+        _enrollments, _policy, _billing, _events, hold_uc, return_uc = _harness(
+            notifier=BoomNotifier()
+        )
+        await hold_uc.execute("enr-1", return_on=date(2026, 10, 1))
 
-- [ ] Edit `frontend/app/(admin)/admin/sessions/[id]/dialogs.tsx`: delete `WithdrawalCreditDialog` (lines 528-684) and trim its now-unused imports (`Dialog` from `@radix-ui/react-dialog`, `previewWithdrawalCredit`, `withdrawEnrollment`, `useIsOwner`, `buildWithdrawRequest`/`defaultWithdrawalOutcome`/`withdrawErrorMessage`/`withdrawalOutcomeOptions`/`WithdrawalOutcome`, `ApiError`) — check each is not still used by `AddToRosterDialog`/`StudentSelect`/`CoachSelect`/`DaySelect` before removing.
-
-- [ ] Edit `frontend/app/(admin)/admin/sessions/[id]/page.tsx`: replace the `./dialogs` import (from Task 3) with (`PauseEnrollmentDialog` still comes from `./dialogs` — it is not deleted until Task 8):
-  ```ts
-  import { AddToRosterDialog, PauseEnrollmentDialog } from "./dialogs";
-  import { TransferEnrollmentDialog } from "@/components/admin/enrollment/transfer-enrollment-dialog";
-  import { RemoveEnrollmentDialog } from "@/components/admin/enrollment/remove-enrollment-dialog";
-  import { WithdrawalCreditDialog } from "@/components/admin/enrollment/withdrawal-credit-dialog";
-  ```
-
-- [ ] Run it (expect PASS): `cd frontend && pnpm exec playwright test admin-enrollment-withdraw --project=chromium-mobile`
-
-- [ ] Run typecheck and lint: `cd frontend && pnpm typecheck && pnpm lint`
-
-- [ ] Commit:
-  ```
-  git add frontend/components/admin/enrollment/withdrawal-credit-dialog.tsx "frontend/app/(admin)/admin/sessions/[id]/dialogs.tsx" "frontend/app/(admin)/admin/sessions/[id]/page.tsx" frontend/lib/api/admin.ts frontend/lib/admin/withdrawal.ts frontend/lib/admin/withdrawal.test.ts frontend/e2e/specs/admin-enrollment-withdraw.spec.ts
-  git commit -m "feat(enrollment): move the Drop dialog into components/admin/enrollment, add the email-family toggle
-
-  Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
-  ```
-
-## Task 5: Backend — notify_family on Hold and Return
-
-**Files:**
-- Modify: `backend/v2/contexts/enrollment/application/ports.py` (`HoldNotifier` gains `hold_started`/`hold_returned`, after line 668)
-- Modify: `backend/v2/contexts/enrollment/application/use_cases/holds.py` (`HoldEnrollment`/`ReturnFromHold` take `notifier`, call it)
-- Modify: `backend/v2/composition/hold_notifications.py` (`HoldNotificationAdapter` implements the two new methods)
-- Modify: `backend/v2/composition/enrollment_holds.py` (wire `notifier=hold_notifier`)
-- Modify: `backend/v2/interfaces/admin/hold_routes.py` (`notify_family` on both request DTOs, passed to `.execute()`)
-- Modify: `frontend/lib/api/v2/departure-policy.ts` (`HoldEnrollmentRequest`/`ReturnFromHoldRequest` gain `notify_family?: boolean`)
-- Modify: `backend/v2/tests/fixtures/enrollment_fakes.py` (`FakeHoldNotifier` records the two new calls)
-- Modify: `backend/v2/tests/application/test_enrollment_holds.py` (notifier-call tests)
-
-**Interfaces:**
-- Consumes: existing `HoldEnrollment.execute(enrollment_id, *, return_on, reason=None, actor_id=None)`, `ReturnFromHold.execute(enrollment_id, *, reason=None, actor_id=None, close_billing_deferral=True)`.
-- Produces: both `.execute()` methods gain `notify_family: bool = False`; `HoldNotifier.hold_started(*, enrollment_id, hold_seq, session_id, student_id, return_on, reason)`, `HoldNotifier.hold_returned(*, enrollment_id, hold_seq, session_id, student_id, reason)`.
-
-- [ ] Write the failing test first. Edit `backend/v2/tests/fixtures/enrollment_fakes.py` — extend `FakeHoldNotifier` (line 414-422):
+        result = await return_uc.execute("enr-1", notify_family=True)
+        assert result.status == "active"
+    ```
+  - Update this test file's `FakeHoldNotifier` import site — it already imports it from `backend.v2.tests.fixtures.enrollment_fakes` (line ~51), no import change needed once the fixture (below) gains the two methods.
+- [ ] Run it and confirm the expected failure: `cd backend && .venv/bin/pytest v2/tests/application/test_enrollment_holds.py -q -k "notif"`. Expect `TypeError: __init__() got an unexpected keyword argument 'notifier'`.
+- [ ] Implement, part 1 — extend the fixture. Edit `backend/v2/tests/fixtures/enrollment_fakes.py`, in `FakeHoldNotifier` (line 414; **the `@dataclass` decorator on line 413 stays — it is what makes `field(default_factory=…)` work**):
   ```python
   @dataclass
   class FakeHoldNotifier:
       reclaimed_calls: list[dict[str, Any]] = field(default_factory=list)
       reminder_calls: list[dict[str, Any]] = field(default_factory=list)
-      started_calls: list[dict[str, Any]] = field(default_factory=list)
-      returned_calls: list[dict[str, Any]] = field(default_factory=list)
+      hold_started_calls: list[dict[str, Any]] = field(default_factory=list)
+      hold_returned_calls: list[dict[str, Any]] = field(default_factory=list)
 
       async def hold_reclaimed(self, **kwargs: Any) -> None:
           self.reclaimed_calls.append(kwargs)
@@ -759,89 +441,12 @@
           self.reminder_calls.append(kwargs)
 
       async def hold_started(self, **kwargs: Any) -> None:
-          self.started_calls.append(kwargs)
+          self.hold_started_calls.append(kwargs)
 
       async def hold_returned(self, **kwargs: Any) -> None:
-          self.returned_calls.append(kwargs)
+          self.hold_returned_calls.append(kwargs)
   ```
-
-  Edit `backend/v2/tests/application/test_enrollment_holds.py`: `FakeHoldNotifier` is ALREADY in the fixtures import (line 50) — no import change is needed. Append three tests after `test_hold_keeps_status_moves_to_held_and_billing_syncs_once` (which ends at line 95). Note each case needs its own `FakeEnrollmentWriter` row: a second `execute` against the same row raises `EnrollmentNotHoldable`, because it is now `held`.
-  ```python
-  @pytest.mark.asyncio
-  async def test_hold_notifies_the_family_only_when_asked() -> None:
-      notifier = FakeHoldNotifier()
-
-      silent = FakeEnrollmentWriter(rows={"enr-1": make_enrollment(status="active")})
-      silent_uc = HoldEnrollment(
-          enrollments=silent,
-          departure_policy=FakeDeparturePolicyRepo(),
-          notifier=notifier,
-          clock=_clock,
-      )
-      await silent_uc.execute("enr-1", return_on=date(2026, 10, 1), notify_family=False)
-      assert notifier.started_calls == []
-
-      loud = FakeEnrollmentWriter(rows={"enr-2": make_enrollment(status="active")})
-      loud_uc = HoldEnrollment(
-          enrollments=loud,
-          departure_policy=FakeDeparturePolicyRepo(),
-          notifier=notifier,
-          clock=_clock,
-      )
-      await loud_uc.execute(
-          "enr-2", return_on=date(2026, 10, 1), reason="family trip", notify_family=True
-      )
-      assert len(notifier.started_calls) == 1
-      call = notifier.started_calls[0]
-      assert call["enrollment_id"] == "enr-2"
-      assert call["hold_seq"] == 1
-      assert call["return_on"] == date(2026, 10, 1)
-      assert call["reason"] == "family trip"
-
-
-  @pytest.mark.asyncio
-  async def test_return_notifies_the_family_only_when_asked() -> None:
-      notifier = FakeHoldNotifier()
-
-      silent = FakeEnrollmentWriter(rows={"enr-1": make_enrollment(status="held")})
-      silent_uc = ReturnFromHold(enrollments=silent, notifier=notifier, clock=_clock)
-      await silent_uc.execute("enr-1", notify_family=False)
-      assert notifier.returned_calls == []
-
-      loud = FakeEnrollmentWriter(rows={"enr-2": make_enrollment(status="held")})
-      loud_uc = ReturnFromHold(enrollments=loud, notifier=notifier, clock=_clock)
-      await loud_uc.execute("enr-2", reason="back early", notify_family=True)
-      assert len(notifier.returned_calls) == 1
-      assert notifier.returned_calls[0]["enrollment_id"] == "enr-2"
-      assert notifier.returned_calls[0]["reason"] == "back early"
-
-
-  @pytest.mark.asyncio
-  async def test_a_failing_family_notifier_does_not_fail_the_hold() -> None:
-      """Design spec §8: a notifier failure must never fail the write."""
-
-      class _Exploding:
-          async def hold_started(self, **_: object) -> None:
-              raise RuntimeError("resend is down")
-
-      enrollments = FakeEnrollmentWriter(rows={"enr-1": make_enrollment(status="active")})
-      uc = HoldEnrollment(
-          enrollments=enrollments,
-          departure_policy=FakeDeparturePolicyRepo(),
-          notifier=_Exploding(),  # type: ignore[arg-type]
-          clock=_clock,
-      )
-
-      result = await uc.execute("enr-1", return_on=date(2026, 10, 1), notify_family=True)
-
-      assert result.status == "held"
-      assert enrollments.rows["enr-1"].status == "held"
-  ```
-  (`make_enrollment(status="held")` takes `**extra` straight through to the `Enrollment` model, so `hold_seq` gets the model's default. These assertions never read `hold_seq` off a returned row, so no explicit `hold_seq=` is needed — but if a future assertion does, pass `hold_seq=1` in the `make_enrollment(...)` call.)
-
-- [ ] Run it (expect failure — `HoldEnrollment`/`ReturnFromHold` accept no `notifier` kwarg yet): `cd backend && .venv/bin/pytest v2/tests/application/test_enrollment_holds.py -k "notifies_the_family or failing_family_notifier" -q`
-
-- [ ] Implement. Edit `backend/v2/contexts/enrollment/application/ports.py`, add two methods to `HoldNotifier` right after `hold_reminder` (before the file ends at line 668):
+- [ ] Implement, part 2 — the port. Edit `backend/v2/contexts/enrollment/application/ports.py`, inside `HoldNotifier` (after `hold_reminder`, before the closing of the class at line 668). `date`, `datetime`, `Literal` and `Protocol` are already imported at the top of this module (line 6-7) — nothing to add:
   ```python
       async def hold_started(
           self,
@@ -864,15 +469,17 @@
           reason: str | None,
       ) -> None: ...
   ```
-
-- [ ] Edit `backend/v2/contexts/enrollment/application/use_cases/holds.py`:
-  - `HoldEnrollment.__init__` (line 129-146): add `notifier: HoldNotifier | None = None,` next to `roster_notifier`, store as `self._notifier = notifier`. Add `HoldNotifier` to the `ports` import at the top (it's already imported at line 22 for the module-level type hints used elsewhere — confirm and reuse).
-  - `HoldEnrollment.execute` (line 148-266): add `notify_family: bool = False` to the signature, and after the existing `if self._roster_notifier is not None:` staff-alert block (lines 246-256), add:
+  (`hold_seq` is not decoration: `HoldNotificationAdapter` keys its `digest_claim` off it, so without it the "hold-started"/"hold-returned" claim would be a single row per enrollment for life and only the FIRST hold cycle would ever email. Both existing `HoldNotifier` methods already carry it for exactly this reason.)
+- [ ] Implement, part 3 — the use cases. Edit `backend/v2/contexts/enrollment/application/use_cases/holds.py`:
+  - `HoldEnrollment.__init__`: add `notifier: HoldNotifier | None = None,` after `roster_notifier: RosterChangeNotifier | None = None,` and `self._notifier = notifier` after `self._roster_notifier = roster_notifier`.
+  - `HoldEnrollment.execute`: add `notify_family: bool = False,` to the signature (after `reason: str | None = None,`), and right after the existing `if self._roster_notifier is not None:` block (before the `return e.model_copy(...)`), add:
     ```python
             if notify_family and self._notifier is not None:
                 try:
                     await self._notifier.hold_started(
                         enrollment_id=enrollment_id,
+                        # The CAS above stamped `hold_seq + 1`; the return
+                        # value's model_copy uses the same expression.
                         hold_seq=e.hold_seq + 1,
                         session_id=e.session_id,
                         student_id=e.student_id,
@@ -882,13 +489,16 @@
                 except Exception:
                     log.exception("hold_started_notify_failed", extra={"enrollment_id": enrollment_id})
     ```
-  - `ReturnFromHold.__init__` (lines 272-287): same addition — `notifier: HoldNotifier | None = None,` / `self._notifier = notifier`. (`ReturnFromHold` has no `departure_policy` collaborator; put `notifier` next to `roster_notifier` here too.)
-  - `ReturnFromHold.execute` (lines 289-356): add `notify_family: bool = False` to the signature, and after the existing `if self._roster_notifier is not None:` block (lines 345-355), immediately before `return before.model_copy(update={"status": "active"})` at line 356, add:
+  - `ReturnFromHold.__init__`: add `notifier: HoldNotifier | None = None,` after `roster_notifier: RosterChangeNotifier | None = None,` and `self._notifier = notifier`.
+  - `ReturnFromHold.execute`: add `notify_family: bool = False,` to the signature (after `reason: str | None = None,`), and right after the existing `if self._roster_notifier is not None:` block (before `return before.model_copy(...)`), add:
     ```python
             if notify_family and self._notifier is not None:
                 try:
                     await self._notifier.hold_returned(
                         enrollment_id=enrollment_id,
+                        # `before` is mark_active_if_held's pre-image — the
+                        # held row that is closing — so its seq pairs this
+                        # notice with its matching hold_started.
                         hold_seq=before.hold_seq,
                         session_id=e.session_id,
                         student_id=e.student_id,
@@ -897,169 +507,88 @@
                 except Exception:
                     log.exception("hold_returned_notify_failed", extra={"enrollment_id": enrollment_id})
     ```
+- [ ] Implement, part 4 — the route. Edit `backend/v2/interfaces/admin/hold_routes.py`:
+  - `HoldEnrollmentRequest`: add `notify_family: bool = False`.
+  - `ReturnFromHoldRequest`: add `notify_family: bool = False`.
+  - `hold_enrollment` route: pass `notify_family=body.notify_family` into `.execute(...)`.
+  - `return_from_hold` route: pass `notify_family=body.notify_family` into `.execute(...)`.
+- [ ] Run it and confirm PASS: `cd backend && .venv/bin/pytest v2/tests/application/test_enrollment_holds.py -q`.
+- [ ] Run the full holds test module plus ruff to catch any signature drift: `cd backend && .venv/bin/pytest v2/tests/application/test_enrollment_holds.py v2/tests/application/test_hold_reclaim_races.py -q && .venv/bin/ruff check v2/contexts/enrollment/application/use_cases/holds.py v2/contexts/enrollment/application/ports.py v2/interfaces/admin/hold_routes.py`.
+- [ ] Commit: `git add backend/v2/contexts/enrollment/application/ports.py backend/v2/contexts/enrollment/application/use_cases/holds.py backend/v2/interfaces/admin/hold_routes.py backend/v2/tests/fixtures/enrollment_fakes.py backend/v2/tests/application/test_enrollment_holds.py` then `git commit -m "feat(enrollment): notify_family flag for Hold and Return\n\nCo-Authored-By: Claude Opus 5 <noreply@anthropic.com>"`.
 
-- [ ] Run it (expect PASS): `cd backend && .venv/bin/pytest v2/tests/application/test_enrollment_holds.py -k "notifies_the_family or failing_family_notifier" -q`
-
-- [ ] Run the full hold suite (guard against regressions in the 40+ existing tests): `cd backend && .venv/bin/pytest v2/tests/application/test_enrollment_holds.py -q`
-
-- [ ] Implement the adapter. Edit `backend/v2/composition/hold_notifications.py`, add two methods to `HoldNotificationAdapter` (after `hold_reminder`, before `# -- shared plumbing --` at line 124):
-  ```python
-      async def hold_started(
-          self,
-          *,
-          enrollment_id: str,
-          hold_seq: int,
-          session_id: str,
-          student_id: str,
-          return_on: date,
-          reason: str | None,
-      ) -> None:
-          notice_key = f"hold-started:{hold_seq}"
-          await self._send_claimed(
-              enrollment_id=enrollment_id,
-              notice_key=notice_key,
-              session_id=session_id,
-              student_id=student_id,
-              build=lambda session, student_name: (
-                  f"{student_name} is on hold for {session.title}",
-                  self._render_started_body(
-                      session=session,
-                      student_name=student_name,
-                      return_on=return_on,
-                      reason=reason,
-                  ),
-              ),
-          )
-
-      async def hold_returned(
-          self,
-          *,
-          enrollment_id: str,
-          hold_seq: int,
-          session_id: str,
-          student_id: str,
-          reason: str | None,
-      ) -> None:
-          notice_key = f"hold-returned:{hold_seq}"
-          await self._send_claimed(
-              enrollment_id=enrollment_id,
-              notice_key=notice_key,
-              session_id=session_id,
-              student_id=student_id,
-              build=lambda session, student_name: (
-                  f"{student_name} is back for {session.title}",
-                  self._render_returned_body(session=session, student_name=student_name),
-              ),
-          )
-  ```
-  And two static rendering helpers next to `_render_reclaim_body`/`_render_reminder_body` (after line 250):
-  ```python
-      @staticmethod
-      def _render_started_body(
-          *, session: Session, student_name: str, return_on: date, reason: str | None
-      ) -> str:
-          safe_name = html.escape(student_name)
-          safe_title = html.escape(session.title)
-          parts = [
-              _para(f"<strong>{safe_name}</strong>'s seat in {safe_title} is on hold."),
-              _para(
-                  f"Billing pauses starting with the next invoice and resumes on "
-                  f"{html.escape(return_on.isoformat())}, when {safe_name} is expected back."
-              ),
-          ]
-          if reason:
-              parts.append(_para(f"Reason: {html.escape(reason)}."))
-          return "".join(parts)
-
-      @staticmethod
-      def _render_returned_body(*, session: Session, student_name: str) -> str:
-          safe_name = html.escape(student_name)
-          safe_title = html.escape(session.title)
-          return _para(
-              f"<strong>{safe_name}</strong> is back in {safe_title}. Billing resumes with the "
-              "next invoice."
-          )
-  ```
-
-- [ ] Wire it. Edit `backend/v2/composition/enrollment_holds.py`: pass `notifier=hold_notifier` into both `HoldEnrollment(...)` (line 82-89) and `ReturnFromHold(...)` (line 90-96) constructor calls.
-
-- [ ] Edit `backend/v2/interfaces/admin/hold_routes.py`:
-  ```python
-  class HoldEnrollmentRequest(BaseModel):
-      return_on: date
-      reason: str | None = None
-      notify_family: bool = False
-
-
-  class ReturnFromHoldRequest(BaseModel):
-      reason: str | None = None
-      notify_family: bool = False
-  ```
-  and pass the flag through both routes:
-  ```python
-      await _hold_enrollment(use_cases).execute(
-          enrollment_id,
-          return_on=body.return_on,
-          reason=body.reason,
-          actor_id=claims.user_id,
-          notify_family=body.notify_family,
-      )
-  ```
-  and
-  ```python
-      await _return_from_hold(use_cases).execute(
-          enrollment_id,
-          reason=body.reason,
-          actor_id=claims.user_id,
-          notify_family=body.notify_family,
-      )
-  ```
-
-- [ ] Edit `frontend/lib/api/v2/departure-policy.ts` lines 42-49:
-  ```ts
-  export interface HoldEnrollmentRequest {
-    return_on: string;
-    reason?: string | null;
-    notify_family?: boolean;
-  }
-
-  export interface ReturnFromHoldRequest {
-    reason?: string | null;
-    notify_family?: boolean;
-  }
-  ```
-
-- [ ] Run the backend hold interface test (guards the route wiring): `cd backend && .venv/bin/pytest v2/tests/interface -k hold -q`
-
-- [ ] Run `cd backend && .venv/bin/ruff check v2/contexts/enrollment/application/ports.py v2/contexts/enrollment/application/use_cases/holds.py v2/composition/hold_notifications.py v2/composition/enrollment_holds.py v2/interfaces/admin/hold_routes.py`
-
-- [ ] Run `cd frontend && pnpm typecheck`
-
-- [ ] Commit:
-  ```
-  git add backend/v2/contexts/enrollment/application/ports.py backend/v2/contexts/enrollment/application/use_cases/holds.py backend/v2/composition/hold_notifications.py backend/v2/composition/enrollment_holds.py backend/v2/interfaces/admin/hold_routes.py backend/v2/tests/fixtures/enrollment_fakes.py backend/v2/tests/application/test_enrollment_holds.py frontend/lib/api/v2/departure-policy.ts
-  git commit -m "feat(enrollment): add opt-in family email to Hold and Return
-
-  Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
-  ```
-
-## Task 6: Backend — notify_family on Drop (WithdrawalNotifier)
+## Task 4: Backend — `notify_family` on Withdraw + `WithdrawalNotifier` port
 
 **Files:**
-- Modify: `backend/v2/contexts/enrollment/application/ports.py` (new `WithdrawalNotifier` protocol, after `HoldNotifier`)
-- Modify: `backend/v2/contexts/enrollment/application/use_cases/admin_writes.py` (`WithdrawEnrollmentCommand` gains `notify_family`; `WithdrawEnrollment` gains optional notifier + setter + call)
-- Create: `backend/v2/composition/withdrawal_notifications.py` (`WithdrawalNotificationAdapter`, `compose_withdrawal_notifications`)
-- Modify: `backend/v2/main.py` (wire the setter after `compose_departures`)
-- Modify: `backend/v2/interfaces/admin/views.py` (`WithdrawEnrollmentRequest` gains `notify_family: bool = False`)
-- Modify: `backend/v2/interfaces/admin/sessions_routes.py` (pass `body.notify_family` into the command)
-- Modify: `backend/v2/tests/fixtures/enrollment_fakes.py` (new `FakeWithdrawalNotifier`)
-- Modify: `backend/v2/tests/application/test_withdraw_single_path.py` (notifier-call tests)
+- Modify: `backend/v2/contexts/enrollment/application/ports.py`
+- Modify: `backend/v2/contexts/enrollment/application/use_cases/admin_writes.py`
+- Modify: `backend/v2/interfaces/admin/views.py`
+- Modify: `backend/v2/interfaces/admin/sessions_routes.py`
+- Test: `backend/v2/tests/application/test_withdraw_single_path.py`
+- Modify: `backend/v2/tests/fixtures/enrollment_fakes.py`
 
 **Interfaces:**
-- Consumes: `MongoHoldNoticeSendRepository.try_claim(*, academy_id, enrollment_id, notice_key)` (reused as-is from `backend/v2/composition/hold_notice_send_repo.py` — generic on `enrollment_id`/`notice_key`, not hold-specific despite the class name).
-- Produces: `WithdrawalNotifier.dropped(*, enrollment_id, session_id, student_id, effective_at, outcome, billing_result, reason)`; `WithdrawEnrollment.set_withdrawal_notifier(notifier: WithdrawalNotifier) -> None`.
+- Consumes: `WithdrawEnrollmentCommand` at `admin_writes.py:1831`; `WithdrawEnrollment` at `admin_writes.py:1894`.
+- Produces: `WithdrawalNotifier` protocol (`dropped`); `WithdrawEnrollmentCommand.notify_family`; `WithdrawEnrollment.set_notifier(notifier)`.
 
-- [ ] Write the failing test first. Edit `backend/v2/tests/fixtures/enrollment_fakes.py`, add next to `FakeHoldNotifier`:
+- [ ] Write the failing tests. Edit `backend/v2/tests/application/test_withdraw_single_path.py`:
+  - Add `FakeWithdrawalNotifier` to the import from `backend.v2.tests.fixtures.enrollment_fakes` (created below) — add the import line:
+    ```python
+    from backend.v2.tests.fixtures.enrollment_fakes import FakeWithdrawalNotifier
+    ```
+  - Append at the end of the file:
+    ```python
+    @pytest.mark.asyncio
+    async def test_withdraw_notifies_family_only_when_flag_is_set() -> None:
+        h = _build()
+        notifier = FakeWithdrawalNotifier()
+        h.use_case.set_notifier(notifier)
+
+        cmd = WithdrawEnrollmentCommand(
+            enrollment_id="enr-1",
+            effective_at=EFFECTIVE,
+            outcome="credit",
+            actor_id="owner-1",
+            reason="moving away",
+            notify_family=True,
+        )
+        await h.use_case.execute(cmd)
+
+        assert len(notifier.dropped_calls) == 1
+        assert notifier.dropped_calls[0]["enrollment_id"] == "enr-1"
+        assert notifier.dropped_calls[0]["outcome"] == "credit"
+
+    @pytest.mark.asyncio
+    async def test_withdraw_does_not_notify_by_default() -> None:
+        h = _build()
+        notifier = FakeWithdrawalNotifier()
+        h.use_case.set_notifier(notifier)
+
+        await h.use_case.execute(_cmd("credit"))
+
+        assert notifier.dropped_calls == []
+
+    @pytest.mark.asyncio
+    async def test_withdraw_notifier_failure_does_not_fail_the_write() -> None:
+        h = _build()
+
+        class BoomNotifier:
+            async def dropped(self, **kwargs):
+                raise RuntimeError("mail outage")
+
+        h.use_case.set_notifier(BoomNotifier())
+        cmd = WithdrawEnrollmentCommand(
+            enrollment_id="enr-1",
+            effective_at=EFFECTIVE,
+            outcome="credit",
+            actor_id="owner-1",
+            reason="moving away",
+            notify_family=True,
+        )
+        await h.use_case.execute(cmd)
+        assert h.enrollments.rows["enr-1"].status == "dropped"
+    ```
+- [ ] Run it and confirm the expected failure: `cd backend && .venv/bin/pytest v2/tests/application/test_withdraw_single_path.py -q -k notif`. Expect a `pydantic.ValidationError` (`notify_family` is not a field on `WithdrawEnrollmentCommand`) or `ImportError` for `FakeWithdrawalNotifier`.
+- [ ] Implement, part 1 — the fixture. Edit `backend/v2/tests/fixtures/enrollment_fakes.py`, add after `FakeHoldNotifier`:
   ```python
   @dataclass
   class FakeWithdrawalNotifier:
@@ -1068,92 +597,13 @@
       async def dropped(self, **kwargs: Any) -> None:
           self.dropped_calls.append(kwargs)
   ```
-
-  Edit `backend/v2/tests/application/test_withdraw_single_path.py`: this file imports its fakes from `test_enrollment_lifecycle_actions`, not from `enrollment_fakes`, so add a NEW import line (`from backend.v2.tests.fixtures.enrollment_fakes import FakeWithdrawalNotifier`). Give `Harness` a `notifier: FakeWithdrawalNotifier` field, build one in `_build` (lines 67-84) and attach it **via the setter**, not a constructor kwarg — that is how production wires it (`main.py`), and `WithdrawEnrollment.__init__` deliberately gains no new kwarg:
+- [ ] Implement, part 2 — the port. Edit `backend/v2/contexts/enrollment/application/ports.py`, add after `HoldNotifier`:
   ```python
-  def _build(status: str = "active") -> Harness:
-      enrollments = FakeEnrollments(rows={"enr-1": _enrollment(status)})
-      sessions = FakeSessions()
-      outbox = FakeOutbox()
-      events = FakeEnrollmentEvents()
-      decision = FakeWithdrawalDecision()
-      sync = RecordingBillingSync()
-      roster = RecordingRoster()
-      notifier = FakeWithdrawalNotifier()
-      use_case = WithdrawEnrollment(
-          enrollments=enrollments,
-          enrollment_events=events,
-          billing=decision,
-          roster_notifier=roster,
-          billing_sync=sync,
-          sessions=sessions,
-          outbox=outbox,
-          clock=_now,
-      )
-      use_case.set_withdrawal_notifier(notifier)
-      return Harness(use_case, enrollments, sessions, outbox, events, decision, sync, roster, notifier)
-  ```
-  (add `notifier: FakeWithdrawalNotifier` as the last field of the `Harness` dataclass, lines 55-64.)
-
-  Append two tests at the end of the file:
-  ```python
-  @pytest.mark.asyncio
-  async def test_drop_notifies_the_family_only_when_asked() -> None:
-      harness = _build()
-      cmd_silent = WithdrawEnrollmentCommand(
-          enrollment_id="enr-1", effective_at=EFFECTIVE, outcome="credit",
-          actor_id="owner-1", reason="moving away", notify_family=False,
-      )
-      await harness.use_case.execute(cmd_silent)
-      assert harness.notifier.dropped_calls == []
-
-
-  @pytest.mark.asyncio
-  async def test_drop_notifies_the_family_when_asked() -> None:
-      harness = _build()
-      cmd_loud = WithdrawEnrollmentCommand(
-          enrollment_id="enr-1", effective_at=EFFECTIVE, outcome="refund",
-          actor_id="owner-1", reason="moving away", notify_family=True,
-      )
-      await harness.use_case.execute(cmd_loud)
-      assert len(harness.notifier.dropped_calls) == 1
-      call = harness.notifier.dropped_calls[0]
-      assert call["enrollment_id"] == "enr-1"
-      assert call["outcome"] == "refund"
-      assert call["reason"] == "moving away"
-
-
-  @pytest.mark.asyncio
-  async def test_a_failing_family_notifier_does_not_fail_the_drop() -> None:
-      """Design spec §8: a notifier failure must never fail the write."""
-
-      class _Exploding:
-          async def dropped(self, **_: object) -> None:
-              raise RuntimeError("resend is down")
-
-      harness = _build()
-      harness.use_case.set_withdrawal_notifier(_Exploding())  # type: ignore[arg-type]
-
-      await harness.use_case.execute(
-          WithdrawEnrollmentCommand(
-              enrollment_id="enr-1", effective_at=EFFECTIVE, outcome="refund",
-              actor_id="owner-1", reason="moving away", notify_family=True,
-          )
-      )
-
-      assert harness.enrollments.rows["enr-1"].status == "dropped"
-  ```
-
-- [ ] Run it (expect failure — `WithdrawEnrollmentCommand` has no `notify_family` field, `WithdrawEnrollment` has no `set_withdrawal_notifier`): `cd backend && .venv/bin/pytest v2/tests/application/test_withdraw_single_path.py -k "notifies_the_family or failing_family_notifier" -q`
-
-- [ ] Implement. Edit `backend/v2/contexts/enrollment/application/ports.py`, append after `HoldNotifier` (end of file, after line 668):
-  ```python
-
-
   class WithdrawalNotifier(Protocol):
-      """Best-effort family email for a Drop (issue #700). Same idempotency
-      contract as ``HoldNotifier``: implementations claim before sending, and
-      this never raises into the caller's write path."""
+      """Best-effort family email for a Drop (issue #700's departures spec).
+      Never raises into the caller's write path; the send is claimed exactly
+      like ``HoldNotifier``'s sends, see
+      ``communications/infrastructure/digest_claim.py``."""
 
       async def dropped(
           self,
@@ -1162,86 +612,84 @@
           session_id: str,
           student_id: str,
           effective_at: datetime,
+          reason: str | None,
           outcome: WithdrawalOutcome,
           billing_result: str | None,
-          reason: str | None,
       ) -> None: ...
   ```
-  (`WithdrawalOutcome` is already defined at line 426 in this same file — no new import needed.)
-
-- [ ] Edit `backend/v2/contexts/enrollment/application/use_cases/admin_writes.py`:
-  - `WithdrawEnrollmentCommand` (lines 1831-1837, `model_config = {"frozen": True}`): add `notify_family: bool = False` as the last field.
-  - Add `WithdrawalNotifier` to the `ports` import block at lines 22-38, alphabetically — between `WaitlistRepository` and `WithdrawalOutcome`.
-  - `WithdrawEnrollment.__init__` (lines 1922-1945): add `self._withdrawal_notifier: WithdrawalNotifier | None = None` (not a constructor kwarg — set only via the setter below, mirroring `ResumeEnrollment.set_seat_broker`'s pattern exactly since `admin.py`'s line budget forbids adding a new constructor kwarg there).
-  - Add a setter right after `__init__`:
+  (`datetime`, `Literal` and `Protocol` are already imported at the top of `ports.py` (lines 6-7) — nothing to add. Use the existing `WithdrawalOutcome = Literal["credit", "refund", "adjustment"]` alias already defined in this same module at `ports.py:426` rather than re-spelling the Literal, so the port cannot drift from `WithdrawEnrollmentCommand.outcome`, which is typed with that alias.)
+- [ ] Implement, part 3 — the use case. Edit `backend/v2/contexts/enrollment/application/use_cases/admin_writes.py`:
+  - `WithdrawEnrollmentCommand` (line 1831, `model_config = {"frozen": True}`): add `notify_family: bool = False` after `reason`.
+  - Import `WithdrawalNotifier` from `..ports` alongside the other port imports already used in this file.
+  - `WithdrawEnrollment.__init__` (ends with `self._now = clock`, ~line 1938): add `self._notifier: WithdrawalNotifier | None = None` right after `self._now = clock` (do NOT add it as a constructor parameter — mirrors `set_seat_broker`'s pattern at line 832 exactly, because `composition/admin.py` builds this use case and is at its wiring line-budget cap; a new required or even optional constructor kwarg there is still a line added to a file this plan must not grow).
+  - Add a `set_notifier` method right after `__init__`:
     ```python
-        def set_withdrawal_notifier(self, notifier: WithdrawalNotifier) -> None:
-            self._withdrawal_notifier = notifier
+        def set_notifier(self, notifier: WithdrawalNotifier) -> None:
+            self._notifier = notifier
     ```
-  - In `execute` (starts at line 1947), after the existing `await _notify_roster_change(...)` call that ends the method, add (`billing_decision` is the local dict built earlier in the same method — it exists and is re-assigned once with the sync result appended):
+  - At the very end of `execute` (after the existing `await _notify_roster_change(...)` call, before the method ends), add:
     ```python
-        if cmd.notify_family and self._withdrawal_notifier is not None:
+        if cmd.notify_family and self._notifier is not None:
             try:
-                await self._withdrawal_notifier.dropped(
+                await self._notifier.dropped(
                     enrollment_id=e.enrollment_id,
                     session_id=e.session_id,
                     student_id=e.student_id,
                     effective_at=cmd.effective_at,
+                    reason=cmd.reason,
                     outcome=cmd.outcome,
                     billing_result=billing_decision.get("billing_result"),
-                    reason=cmd.reason,
                 )
             except Exception:
-                log.exception("withdrawal_notify_failed", extra={"enrollment_id": e.enrollment_id})
+                log.exception(
+                    "withdrawal_notify_failed", extra={"enrollment_id": e.enrollment_id}
+                )
     ```
+- [ ] Implement, part 4 — the route. Edit `backend/v2/interfaces/admin/views.py`, `WithdrawEnrollmentRequest` (line 621): add `notify_family: bool = False`.
+  Edit `backend/v2/interfaces/admin/sessions_routes.py`, the `withdraw_enrollment` route (line 656): add `notify_family=body.notify_family,` inside the `WithdrawEnrollmentCommand(...)` call.
+- [ ] Run it and confirm PASS: `cd backend && .venv/bin/pytest v2/tests/application/test_withdraw_single_path.py -q`.
+- [ ] Run the wider withdrawal suite plus ruff: `cd backend && .venv/bin/pytest v2/tests/application/test_withdraw_single_path.py v2/tests/interface/test_admin_withdrawal_credit.py -q && .venv/bin/ruff check v2/contexts/enrollment/application/use_cases/admin_writes.py v2/contexts/enrollment/application/ports.py v2/interfaces/admin/views.py v2/interfaces/admin/sessions_routes.py`.
+- [ ] Commit: `git add backend/v2/contexts/enrollment/application/ports.py backend/v2/contexts/enrollment/application/use_cases/admin_writes.py backend/v2/interfaces/admin/views.py backend/v2/interfaces/admin/sessions_routes.py backend/v2/tests/fixtures/enrollment_fakes.py backend/v2/tests/application/test_withdraw_single_path.py` then `git commit -m "feat(enrollment): notify_family flag and WithdrawalNotifier port for Drop\n\nCo-Authored-By: Claude Opus 5 <noreply@anthropic.com>"`.
 
-- [ ] Run it (expect PASS): `cd backend && .venv/bin/pytest v2/tests/application/test_withdraw_single_path.py -k "notifies_the_family or failing_family_notifier" -q`
+## Task 5: Backend — wire the notifier adapters (composition + migration + main.py)
 
-- [ ] Run the full withdraw suite: `cd backend && .venv/bin/pytest v2/tests/application/test_withdraw_single_path.py -q`
+**Files:**
+- Modify: `backend/v2/composition/hold_notifications.py`
+- Modify: `backend/v2/composition/enrollment_holds.py`
+- Create: `backend/v2/composition/withdrawal_notice_send_repo.py`
+- Create: `backend/v2/composition/withdrawal_notifications.py`
+- Create: `backend/v2/migrations/0173_withdrawal_notice_sends.py`
+- Modify: `backend/v2/main.py`
+- Test: `backend/v2/tests/contract/test_hold_notice_send_claim_mongo.py` (extend) and a new `backend/v2/tests/contract/test_withdrawal_notice_send_claim_mongo.py`
 
-- [ ] Create `backend/v2/composition/withdrawal_notifications.py`, reusing `hold_notifications.py`'s send-claim repo AND its claim/resolve/send plumbing (do not create a new Mongo collection — `MongoHoldNoticeSendRepository` claims on `(academy_id, enrollment_id, notice_key)`, which is exactly what a one-time "dropped" notice needs).
+**Interfaces:**
+- Consumes: `MongoHoldNoticeSendRepository` pattern at `backend/v2/composition/hold_notice_send_repo.py`; `claim_digest_send` at `backend/v2/contexts/communications/infrastructure/digest_claim.py`.
+- Produces: `HoldNotificationAdapter.hold_started`/`hold_returned`; `MongoWithdrawalNoticeSendRepository`; `WithdrawalNotificationAdapter`; `compose_withdrawal_notifications(db, settings)`.
 
-  **Reuse, do not copy.** `HoldNotificationAdapter._send_claimed` and `._resolve_parent` (`hold_notifications.py:126-190`) are entirely generic over `(enrollment_id, notice_key, session_id, student_id, build)` — nothing in them is hold-specific. Copying them would fork ~65 lines of the claim/suppression/mark-failed contract that the 2026-09-02 duplicate-digest incident is the reason for, and the two copies would drift. Instead, `WithdrawalNotificationAdapter` holds a `HoldNotificationAdapter` and delegates:
-
+- [ ] Write the failing test. Create `backend/v2/tests/contract/test_withdrawal_notice_send_claim_mongo.py` by copying the structure of `backend/v2/tests/contract/test_hold_notice_send_claim_mongo.py` verbatim first (`cp backend/v2/tests/contract/test_hold_notice_send_claim_mongo.py backend/v2/tests/contract/test_withdrawal_notice_send_claim_mongo.py`), then edit the copy:
+  - Replace the import of `MongoHoldNoticeSendRepository` with `MongoWithdrawalNoticeSendRepository` from `backend.v2.composition.withdrawal_notice_send_repo`.
+  - Replace every `try_claim(academy_id=..., enrollment_id=..., notice_key=...)` call's repository instantiation (`MongoHoldNoticeSendRepository(db)` → `MongoWithdrawalNoticeSendRepository(db)`); the `try_claim` call signature is identical (`academy_id`, `enrollment_id`, `notice_key`), so no other line in the copied file needs to change beyond the import and class name.
+  - Rename the test functions from `test_hold_notice_...` to `test_withdrawal_notice_...` (mechanical rename, same assertions).
+- [ ] Run it and confirm the expected failure: `cd backend && .venv/bin/pytest v2/tests/contract/test_withdrawal_notice_send_claim_mongo.py -q`. Expect `ModuleNotFoundError: No module named 'backend.v2.composition.withdrawal_notice_send_repo'`. (This test needs a running Mongo — same prerequisite as `test_hold_notice_send_claim_mongo.py`; run it however that file's suite is normally run in this repo, e.g. via the Mongo-backed contract test target.)
+- [ ] Implement, part 1 — the claim repo. Create `backend/v2/composition/withdrawal_notice_send_repo.py` by copying `backend/v2/composition/hold_notice_send_repo.py` and adjusting only:
+  - Module docstring: replace "Mongo-backed hold-notice-send claim (issue #697)" with "Mongo-backed withdrawal-notice-send claim (2026-09-10 departures-from-student-page spec)"; keep the rest of the docstring's reasoning about `digest_claim`/cross-context imports verbatim — it applies unchanged.
+  - Class rename `MongoHoldNoticeSendRepository` → `MongoWithdrawalNoticeSendRepository`.
+  - `collection_name = "enrollment_withdrawal_notice_sends"`.
+  - `try_claim`'s parameter names, body, `mark_sent`, `mark_failed` stay byte-for-byte identical (same shape: `academy_id`, `enrollment_id`, `notice_key`).
+- [ ] Implement, part 2 — the adapter. Create `backend/v2/composition/withdrawal_notifications.py`:
   ```python
-  class WithdrawalNotificationAdapter:
-      def __init__(self, *, sends: HoldNotificationAdapter) -> None:
-          self._sends = sends
+  """WithdrawalNotifier adapter — family email for a Drop.
 
-      async def dropped(self, *, enrollment_id, session_id, student_id,
-                        effective_at, outcome, billing_result, reason) -> None:
-          await self._sends._send_claimed(
-              enrollment_id=enrollment_id,
-              notice_key=_NOTICE_KEY,
-              session_id=session_id,
-              student_id=student_id,
-              build=lambda session, student_name: (
-                  f"{student_name} has been dropped from {session.title}",
-                  self._render_body(session=session, student_name=student_name,
-                                    effective_at=effective_at, outcome=outcome, reason=reason),
-              ),
-          )
-  ```
+  2026-09-10 departures-from-student-page spec §5. Structurally
+  `HoldNotificationAdapter` (`composition/hold_notifications.py`) with one
+  send instead of two and a plain-words billing outcome instead of a hold
+  reason. Reuses the same claim primitive
+  (`communications/infrastructure/digest_claim.py`) for the same reason that
+  module documents: a freshly written claim would be unsafe (2026-09-02
+  production incident).
 
-  Reaching into `_send_claimed` across module boundaries is the one wart; fix it by renaming `HoldNotificationAdapter._send_claimed` → `send_claimed` (public) and `._resolve_parent` stays private, updating its two call sites in `hold_notifications.py`, and adding `send_claimed` to a short `ClaimedSender` Protocol in that module. `compose_withdrawal_notifications(db, settings)` then returns `WithdrawalNotificationAdapter(sends=compose_hold_notifications(db, settings))`. Keep `_NOTICE_KEY = "dropped"`, `_OUTCOME_WORDS` and `_render_body` (below) in the new module — the copy is the only genuinely withdrawal-specific part.
-
-  The fully-expanded version below is what you would write if the delegation above is rejected in review; it is kept for the exact copy, claim semantics and `TRANSACTIONAL` category, NOT as the preferred shape:
-  ```python
-  """WithdrawalNotifier adapter — family email for a Drop (issue #700).
-
-  Lives outside ``composition/admin.py`` for the same reason
-  ``hold_notifications.py`` does (that module's wiring line-budget test).
-  Reuses ``MongoHoldNoticeSendRepository`` (issue #697) rather than a fourth
-  send-claim collection — its claim key is ``(academy_id, enrollment_id,
-  notice_key)``, generic on both fields despite the class's name; every other
-  enrollment/communications bridge already reuses this repo the same way
-  (``compose_hold_notifications`` for reclaim/reminder, this module for
-  drop). ``notice_key="dropped"`` is enough: ``WithdrawEnrollment``'s CAS
-  guarantees a given ``enrollment_id`` can be dropped at most once.
-
-  Best-effort from the caller's point of view (never raises) and
-  TRANSACTIONAL — a family whose child's enrollment just ended must get the
-  notice regardless of marketing preferences.
+  Best-effort and TRANSACTIONAL: `WithdrawEnrollment.execute` never lets this
+  adapter's failure undo a completed withdrawal.
   """
 
   from __future__ import annotations
@@ -1249,9 +697,11 @@
   import html
   import logging
   from datetime import datetime
-  from typing import Any, Protocol
+  from typing import Any, Literal, Protocol
 
-  from backend.v2.composition.hold_notice_send_repo import MongoHoldNoticeSendRepository
+  from backend.v2.composition.withdrawal_notice_send_repo import (
+      MongoWithdrawalNoticeSendRepository,
+  )
   from backend.v2.contexts.communications.application.ports import (
       AudienceResolver,
       EmailSendPort,
@@ -1259,18 +709,15 @@
   )
   from backend.v2.contexts.communications.domain.email_category import EmailCategory
   from backend.v2.contexts.communications.domain.models import SelectedRecipientsAudience
-  from backend.v2.contexts.enrollment.application.ports import WithdrawalOutcome
   from backend.v2.contexts.enrollment.domain.models import Session, Student
   from backend.v2.shared.tenancy import current_academy_id
 
   logger = logging.getLogger(__name__)
 
-  _NOTICE_KEY = "dropped"
-
   _OUTCOME_WORDS: dict[str, str] = {
       "credit": "an account credit",
       "refund": "a refund",
-      "adjustment": "no credit — an admin adjustment",
+      "adjustment": "an admin adjustment — no credit or refund",
   }
 
 
@@ -1294,7 +741,7 @@
           students: StudentLookup,
           audiences: AudienceResolver,
           sender: EmailSendPort,
-          notice_sends: MongoHoldNoticeSendRepository,
+          notice_sends: MongoWithdrawalNoticeSendRepository,
       ) -> None:
           self._sessions = sessions
           self._students = students
@@ -1309,13 +756,13 @@
           session_id: str,
           student_id: str,
           effective_at: datetime,
-          outcome: WithdrawalOutcome,
-          billing_result: str | None,
           reason: str | None,
+          outcome: Literal["credit", "refund", "adjustment"],
+          billing_result: str | None,
       ) -> None:
           academy_id = current_academy_id()
           claim = await self._notice_sends.try_claim(
-              academy_id=academy_id, enrollment_id=enrollment_id, notice_key=_NOTICE_KEY
+              academy_id=academy_id, enrollment_id=enrollment_id, notice_key="dropped"
           )
           if claim is None:
               return
@@ -1342,10 +789,9 @@
               student_name=student_name,
               effective_at=effective_at,
               outcome=outcome,
-              reason=reason,
           )
           try:
-              outcome_result = await self._sender.send(
+              result = await self._sender.send(
                   recipient=recipient,
                   subject=subject,
                   body=body,
@@ -1356,14 +802,12 @@
               await self._notice_sends.mark_failed(claim["send_id"], "send_exception")
               return
 
-          if outcome_result.ok:
+          if result.ok:
               await self._notice_sends.mark_sent(claim["send_id"])
-          elif outcome_result.suppressed:
+          elif result.suppressed:
               await self._notice_sends.mark_failed(claim["send_id"], "suppressed", retryable=False)
           else:
-              await self._notice_sends.mark_failed(
-                  claim["send_id"], outcome_result.failed_reason or "send_failed"
-              )
+              await self._notice_sends.mark_failed(claim["send_id"], result.failed_reason or "send_failed")
 
       async def _resolve_parent(self, parent_id: str) -> ResolvedRecipient | None:
           try:
@@ -1381,26 +825,29 @@
           session: Session,
           student_name: str,
           effective_at: datetime,
-          outcome: WithdrawalOutcome,
-          reason: str | None,
+          outcome: Literal["credit", "refund", "adjustment"],
       ) -> str:
           safe_name = html.escape(student_name)
           safe_title = html.escape(session.title)
-          words = _OUTCOME_WORDS.get(outcome, outcome)
-          parts = [
-              _para(
-                  f"<strong>{safe_name}</strong> has been dropped from {safe_title}, effective "
-                  f"{html.escape(effective_at.date().isoformat())}."
-              ),
-              _para(f"Billing outcome: {html.escape(words)}."),
-          ]
-          if reason:
-              parts.append(_para(f"Reason: {html.escape(reason)}."))
-          return "".join(parts)
+          outcome_words = _OUTCOME_WORDS[outcome]
+          return "".join(
+              [
+                  _para(
+                      f"<strong>{safe_name}</strong> has been dropped from {safe_title}, "
+                      f"effective {html.escape(effective_at.date().isoformat())}."
+                  ),
+                  _para(f"Billing: {outcome_words}."),
+                  _para(
+                      "If this was not expected, or you would like to re-enroll, please "
+                      "contact the academy."
+                  ),
+              ]
+          )
 
 
   def compose_withdrawal_notifications(db: Any, settings: Any) -> WithdrawalNotificationAdapter:
-      """Convenience constructor mirroring ``compose_hold_notifications``."""
+      """Mirrors `compose_hold_notifications`: builds every Mongo-backed
+      collaborator itself so a caller need only pass `db`/`settings`."""
       from backend.v2.composition.digests import _build_email_sender
       from backend.v2.contexts.communications.infrastructure.mongo_audience_resolver import (
           MongoAudienceResolver,
@@ -1417,126 +864,326 @@
           students=MongoStudentRepository(db),
           audiences=MongoAudienceResolver(db=db),
           sender=_build_email_sender(settings, db),
-          notice_sends=MongoHoldNoticeSendRepository(db),
+          notice_sends=MongoWithdrawalNoticeSendRepository(db),
       )
   ```
+- [ ] Implement, part 3 — `HoldNotificationAdapter` gets the two new methods (satisfying the extended `HoldNotifier` Protocol from Task 3). Edit `backend/v2/composition/hold_notifications.py`, add after `hold_reminder` (before `# -- shared plumbing --`):
+  ```python
+      async def hold_started(
+          self,
+          *,
+          enrollment_id: str,
+          hold_seq: int,
+          session_id: str,
+          student_id: str,
+          return_on: date,
+          reason: str | None,
+      ) -> None:
+          notice_key = f"hold-started:{hold_seq}"
+          await self._send_claimed(
+              enrollment_id=enrollment_id,
+              notice_key=notice_key,
+              session_id=session_id,
+              student_id=student_id,
+              build=lambda session, student_name: (
+                  f"{student_name} is on hold for {session.title}",
+                  self._render_started_body(
+                      session=session, student_name=student_name, return_on=return_on
+                  ),
+              ),
+          )
 
-- [ ] Wire it in `backend/v2/main.py`, right after the existing `_departures = compose_departures(...)` block (after line 595-597, which sets `app.state.admin.stop_all_classes`/`leaving_report`):
+      async def hold_returned(
+          self,
+          *,
+          enrollment_id: str,
+          hold_seq: int,
+          session_id: str,
+          student_id: str,
+          reason: str | None,
+      ) -> None:
+          notice_key = f"hold-returned:{hold_seq}"
+          await self._send_claimed(
+              enrollment_id=enrollment_id,
+              notice_key=notice_key,
+              session_id=session_id,
+              student_id=student_id,
+              build=lambda session, student_name: (
+                  f"{student_name} is back for {session.title}",
+                  self._render_returned_body(session=session, student_name=student_name),
+              ),
+          )
+  ```
+  Add the two matching `@staticmethod` renderers next to `_render_reclaim_body`/`_render_reminder_body`:
+  ```python
+      @staticmethod
+      def _render_started_body(*, session: Session, student_name: str, return_on: date) -> str:
+          safe_name = html.escape(student_name)
+          safe_title = html.escape(session.title)
+          return "".join(
+              [
+                  _para(f"<strong>{safe_name}</strong>'s seat in {safe_title} is on hold."),
+                  _para(
+                      f"Billing pauses starting with the next invoice and resumes on "
+                      f"{html.escape(return_on.isoformat())}, when {safe_name} is expected back."
+                  ),
+              ]
+          )
+
+      @staticmethod
+      def _render_returned_body(*, session: Session, student_name: str) -> str:
+          safe_name = html.escape(student_name)
+          safe_title = html.escape(session.title)
+          return "".join(
+              [
+                  _para(f"<strong>{safe_name}</strong> is back in {safe_title}."),
+                  _para("Billing resumes with the next invoice."),
+              ]
+          )
+  ```
+  Both notice keys are `hold_seq`-scoped, matching `hold_reclaimed`'s `f"hold-reclaim:{hold_seq}"` and `hold_reminder`'s `f"hold-reminder:{hold_seq}:{notice_index}"`. This is required, not stylistic: `MongoHoldNoticeSendRepository.try_claim` dedups on `(academy_id, enrollment_id, digest_date=notice_key)`, so an unscoped `"hold-started"` key would claim once per enrollment for life and every hold cycle after the first would silently send nothing. `hold_seq` is threaded in from Task 3's port signature — no repo lookup is needed or available here.
+- [ ] Implement, part 4 — wire `notifier=hold_notifier` into the use cases. Edit `backend/v2/composition/enrollment_holds.py`: in `compose_enrollment_holds`, add `notifier=hold_notifier,` to both the `HoldEnrollment(...)` and `ReturnFromHold(...)` constructor calls.
+- [ ] Implement, part 5 — the migration. Create `backend/v2/migrations/0173_withdrawal_notice_sends.py` (model: `backend/v2/migrations/0172_absence_notice_sends.py`):
+  ```python
+  """Withdrawal (Drop) notice send claims (2026-09-10 departures spec).
+
+  Adds the claim collection behind `composition/withdrawal_notifications.py`:
+  one row per (academy_id, enrollment_id, notice_key) for the family's Drop
+  email. The claim itself (`digest_claim.claim_digest_send`) is already safe
+  without this index — see 0170/0172 for the same reasoning — the index only
+  keeps the collection from growing near-duplicate rows under a stuck or
+  retried request.
+
+  No data change and no validator change.
+
+  Production does NOT run migrations on boot (`V2_RUN_MIGRATIONS_ON_BOOT` is
+  false there, #629): apply with `run_pending_migrations` by hand after
+  deploy.
+  """
+
+  from __future__ import annotations
+
+  from motor.motor_asyncio import AsyncIOMotorDatabase
+
+  version = "0173_withdrawal_notice_sends"
+
+
+  async def up(db: AsyncIOMotorDatabase) -> None:  # type: ignore[type-arg]
+      await db["enrollment_withdrawal_notice_sends"].create_index(
+          [("academy_id", 1), ("enrollment_id", 1), ("notice_key", 1)],
+          unique=True,
+          name="enrollment_withdrawal_notice_sends_key_unique",
+      )
+  ```
+- [ ] Implement, part 6 — `main.py`. Edit `backend/v2/main.py`, right after the existing hold/departures block (after `app.state.admin.return_from_hold = _holds.return_from_hold` and before `app.state.enrollment_holds = _holds`, or immediately after that line — either is fine since order among these three lines doesn't matter), add:
   ```python
       from backend.v2.composition.withdrawal_notifications import compose_withdrawal_notifications
 
-      app.state.admin.withdraw_enrollment.set_withdrawal_notifier(
+      app.state.admin.withdraw_enrollment.set_notifier(
           compose_withdrawal_notifications(db, settings)
       )
   ```
+- [ ] Run it and confirm PASS: `cd backend && .venv/bin/pytest v2/tests/contract/test_withdrawal_notice_send_claim_mongo.py v2/tests/application/test_enrollment_holds.py v2/tests/application/test_withdraw_single_path.py -q`.
+- [ ] Run the composition-wiring structural test to confirm `admin.py`'s line budget and cross-context import rules are still satisfied: `cd backend && .venv/bin/pytest v2/tests/structural/ -q`.
+- [ ] Run ruff over every touched file: `cd backend && .venv/bin/ruff check v2/composition/hold_notifications.py v2/composition/enrollment_holds.py v2/composition/withdrawal_notice_send_repo.py v2/composition/withdrawal_notifications.py v2/migrations/0173_withdrawal_notice_sends.py v2/main.py`.
+- [ ] Commit: `git add backend/v2/composition/hold_notifications.py backend/v2/composition/enrollment_holds.py backend/v2/composition/withdrawal_notice_send_repo.py backend/v2/composition/withdrawal_notifications.py backend/v2/migrations/0173_withdrawal_notice_sends.py backend/v2/main.py backend/v2/tests/contract/test_withdrawal_notice_send_claim_mongo.py backend/v2/contexts/enrollment/application/use_cases/holds.py backend/v2/contexts/enrollment/application/ports.py backend/v2/tests/application/test_enrollment_holds.py backend/v2/tests/fixtures/enrollment_fakes.py` then `git commit -m "feat(enrollment): wire hold_started/hold_returned/dropped notifier adapters\n\nCo-Authored-By: Claude Opus 5 <noreply@anthropic.com>"`.
 
-- [ ] Edit `backend/v2/interfaces/admin/views.py` line 621-624:
-  ```python
-  class WithdrawEnrollmentRequest(BaseModel):
-      effective_date: date
-      outcome: Literal["credit", "refund", "adjustment"] = "credit"
-      reason: str = Field(min_length=1, max_length=500)
-      notify_family: bool = False
-  ```
-
-- [ ] Edit `backend/v2/interfaces/admin/sessions_routes.py` lines 664-672 — add `notify_family=body.notify_family` to the `WithdrawEnrollmentCommand(...)` call:
-  ```python
-      await use_cases.withdraw_enrollment.execute(
-          WithdrawEnrollmentCommand(
-              enrollment_id=enrollment_id,
-              effective_at=_start_of_day_utc(body.effective_date),
-              outcome=body.outcome,
-              actor_id=claims.user_id,
-              reason=body.reason,
-              notify_family=body.notify_family,
-          )
-      )
-  ```
-
-- [ ] Run the withdraw interface tests: `cd backend && .venv/bin/pytest v2/tests/interface/test_admin_withdrawal_credit.py -q`
-
-- [ ] Run structural/wiring tests that assert on `composition/admin.py`'s line count and on `main.py`'s wiring shape, to confirm this task didn't touch the guarded file: `cd backend && .venv/bin/pytest v2/tests/structural -q`
-
-- [ ] Run `cd backend && .venv/bin/ruff check v2/contexts/enrollment/application/ports.py v2/contexts/enrollment/application/use_cases/admin_writes.py v2/composition/withdrawal_notifications.py v2/main.py v2/interfaces/admin/views.py v2/interfaces/admin/sessions_routes.py`
-
-- [ ] Commit:
-  ```
-  git add backend/v2/contexts/enrollment/application/ports.py backend/v2/contexts/enrollment/application/use_cases/admin_writes.py backend/v2/composition/withdrawal_notifications.py backend/v2/main.py backend/v2/interfaces/admin/views.py backend/v2/interfaces/admin/sessions_routes.py backend/v2/tests/fixtures/enrollment_fakes.py backend/v2/tests/application/test_withdraw_single_path.py
-  git commit -m "feat(enrollment): add opt-in family email to Drop
-
-  Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
-  ```
-
-## Task 7: New Hold and Return dialogs
+## Task 6: Frontend — API client types for `notify_family`
 
 **Files:**
-- Create: `frontend/components/admin/enrollment/hold-enrollment-dialog.tsx`
-- Create: `frontend/components/admin/enrollment/return-from-hold-dialog.tsx`
-- Create: `frontend/components/admin/enrollment/dialog-shared.test.ts` (return-date bounds — a plain `.ts` test against the pure helpers added to `dialog-shared.ts` in Task 2)
+- Modify: `frontend/lib/api/v2/departure-policy.ts`
+- Modify: `frontend/lib/api/admin.ts`
+- Modify: `frontend/lib/admin/withdrawal.ts`
+- Test: `frontend/lib/admin/withdrawal.test.ts` (new)
 
 **Interfaces:**
-- Consumes: `holdEnrollment`, `returnFromHold`, `getDeparturePolicy` from `@/lib/api/v2/departure-policy`; `queryKeys.admin.departurePolicy()` from `@/lib/query/keys`; `defaultReturnOn`/`maxReturnOn`/`dateInputValueFromOffset`/`inputClass` from `./dialog-shared`.
-- Produces: `HoldEnrollmentDialog({ enrollment, familyLabel, onClose, onHeld })`, `ReturnFromHoldDialog({ enrollment, familyLabel, onClose, onReturned })` where `enrollment: HoldableEnrollment | null` and `HoldableEnrollment = { enrollment_id: string; full_name: string }` (a structural subset of `AdminEnrollmentView`, so the student page — whose rows are `AdminStudentSessionSummary`, not `AdminEnrollmentView` — can build a matching object).
+- Consumes: `WithdrawEnrollmentRequest` at `frontend/lib/api/admin.ts:227`; `buildWithdrawRequest` at `frontend/lib/admin/withdrawal.ts:42`.
+- Produces: `HoldEnrollmentRequest.notify_family`, `ReturnFromHoldRequest.notify_family`, `WithdrawEnrollmentRequest.notify_family`; `buildWithdrawRequest({ ..., notifyFamily })`.
 
-- [ ] Write the failing test first. Create `frontend/components/admin/enrollment/dialog-shared.test.ts`. Note it targets `dialog-shared.ts`, NOT the dialog `.tsx`: `vitest.config.ts` sets `environment: "node"`, and importing the dialog would drag in `@/components/ds/modal` → `react-dom`'s `createPortal`. Note also that the expectation is built with `formatLocalDateInput` (local calendar parts), NOT `toISOString().slice(0,10)` (UTC) — nothing pins `TZ` for vitest, so a UTC comparison is off by one for most of the day in any negative-offset zone, including the academy's own `America/Chicago`:
+- [ ] Write the failing test. Create `frontend/lib/admin/withdrawal.test.ts`:
   ```ts
   import { describe, expect, it } from "vitest";
+  import { buildWithdrawRequest } from "./withdrawal";
 
-  import { defaultReturnOn, formatLocalDateInput, maxReturnOn } from "./dialog-shared";
-
-  describe("hold dialog return-date bounds", () => {
-    it("defaults to 30 days out", () => {
-      const expected = new Date();
-      expected.setDate(expected.getDate() + 30);
-      expect(defaultReturnOn()).toBe(formatLocalDateInput(expected));
+  describe("buildWithdrawRequest", () => {
+    it("forwards notifyFamily as notify_family", () => {
+      const req = buildWithdrawRequest({
+        withdrawalDate: "2026-09-10",
+        outcome: "refund",
+        adminNote: "",
+        notifyFamily: true,
+      });
+      expect(req.notify_family).toBe(true);
     });
 
-    it("caps at max_hold_days out", () => {
-      const expected = new Date();
-      expected.setDate(expected.getDate() + 60);
-      expect(maxReturnOn(60)).toBe(formatLocalDateInput(expected));
+    it("defaults notify_family to false when omitted", () => {
+      const req = buildWithdrawRequest({
+        withdrawalDate: "2026-09-10",
+        outcome: "refund",
+        adminNote: "",
+      });
+      expect(req.notify_family).toBe(false);
     });
   });
   ```
+- [ ] Run it and confirm the expected failure: `cd frontend && pnpm vitest run lib/admin/withdrawal.test.ts`. Expect `expect(received).toBe(expected)` — `received` is `undefined`.
+- [ ] Implement. Edit `frontend/lib/api/v2/departure-policy.ts`:
+  - `HoldEnrollmentRequest`: add `notify_family?: boolean;`.
+  - `ReturnFromHoldRequest`: add `notify_family?: boolean;`.
+  Edit `frontend/lib/api/admin.ts`, `WithdrawEnrollmentRequest` (line 227): add `notify_family?: boolean;`.
+  Edit `frontend/lib/admin/withdrawal.ts`, `buildWithdrawRequest`:
+  ```ts
+  export function buildWithdrawRequest(input: {
+    withdrawalDate: string;
+    outcome: WithdrawalOutcome;
+    adminNote: string;
+    notifyFamily?: boolean;
+  }): WithdrawEnrollmentRequest {
+    const note = input.adminNote.trim();
+    return {
+      effective_date: input.withdrawalDate,
+      outcome: input.outcome,
+      reason: note || `Withdrawal ${input.outcome}`,
+      notify_family: input.notifyFamily ?? false,
+    };
+  }
+  ```
+- [ ] Run it and confirm PASS: `cd frontend && pnpm vitest run lib/admin/withdrawal.test.ts`.
+- [ ] Commit: `git add frontend/lib/api/v2/departure-policy.ts frontend/lib/api/admin.ts frontend/lib/admin/withdrawal.ts frontend/lib/admin/withdrawal.test.ts` then `git commit -m "feat(enrollment): notify_family on Hold/Return/Withdraw request types\n\nCo-Authored-By: Claude Opus 5 <noreply@anthropic.com>"`.
 
-- [ ] Run it (expect failure — `defaultReturnOn`/`maxReturnOn` are added to `dialog-shared.ts` in Task 2, so this passes as soon as Task 2 landed; if Task 2 was already done, skip straight to green and note it): `cd frontend && pnpm vitest run components/admin/enrollment/dialog-shared.test.ts`
+## Task 7: Frontend — move Transfer/Withdrawal/Remove dialogs, delete Pause dialog, add notify toggle
 
-- [ ] Implement. Create `frontend/components/admin/enrollment/hold-enrollment-dialog.tsx`:
+**Files:**
+- Create: `frontend/components/admin/enrollment/transfer-dialog.tsx`
+- Create: `frontend/components/admin/enrollment/withdrawal-credit-dialog.tsx`
+- Create: `frontend/components/admin/enrollment/remove-dialog.tsx`
+- Modify: `frontend/app/(admin)/admin/sessions/[id]/dialogs.tsx`
+
+**Interfaces:**
+- Consumes: `RallyModal`, `Field`, `DialogActions`, `DialogError` from `@/components/ds/dialog-chrome`; `dateInputValueFromOffset`, `formatCents`, `formatShortDateTime`, `inputClass`, `todayDateInput` from `@/app/(admin)/admin/sessions/[id]/format`; `useIsOwner` from `@/components/admin/owner-context`; `withdrawalOutcomeOptions`/`defaultWithdrawalOutcome`/`buildWithdrawRequest`/`withdrawErrorMessage` from `@/lib/admin/withdrawal`.
+- Produces: `TransferEnrollmentDialog`, `WithdrawalCreditDialog` (now with a notify toggle, default checked), `RemoveEnrollmentDialog` — same prop shapes as today, importable from their new paths.
+
+- [ ] Create `frontend/components/admin/enrollment/transfer-dialog.tsx` — move `TransferEnrollmentDialog` and its helper `RallySessionPicker` verbatim out of `frontend/app/(admin)/admin/sessions/[id]/dialogs.tsx` (lines 316-522 as read in this plan's research), changing only the imports at the top of the new file to:
   ```tsx
   "use client";
 
   import { useState } from "react";
   import { useMutation, useQuery } from "@tanstack/react-query";
 
-  import { getDeparturePolicy, holdEnrollment } from "@/lib/api/v2/departure-policy";
-  import { queryKeys } from "@/lib/query/keys";
+  import {
+    listAdminSessions,
+    transferEnrollment,
+    type AdminEnrollmentView,
+    type AdminSessionView,
+  } from "@/lib/api/admin";
+  import { Button } from "@/components/ds/button";
+  import { DialogActions, Field, RallyModal as RallyDialog, DialogError } from "@/components/ds/dialog-chrome";
+  import {
+    dateInputValueFromOffset,
+    inputClass,
+    todayDateInput,
+  } from "@/app/(admin)/admin/sessions/[id]/format";
+  ```
+  (Drop `dateInputValueFromOffset` from that import list if the moved code does not use it — `TransferEnrollmentDialog` itself only uses `todayDateInput` and `inputClass`; verify against the body being moved and keep only what is referenced, to avoid an unused-import lint failure.)
+  The component bodies (`TransferEnrollmentDialog`, `RallySessionPicker`) are copied unchanged.
+- [ ] Create `frontend/components/admin/enrollment/remove-dialog.tsx` — move `RemoveEnrollmentDialog` verbatim (lines 686-768), with imports trimmed to:
+  ```tsx
+  "use client";
 
+  import { useState } from "react";
+  import { useMutation } from "@tanstack/react-query";
+
+  import { deleteEnrollment, type AdminEnrollmentView } from "@/lib/api/admin";
   import { Button } from "@/components/ds/button";
   import { DialogActions, DialogError, Field, RallyModal as RallyDialog } from "@/components/ds/dialog-chrome";
+  import { inputClass, todayDateInput } from "@/app/(admin)/admin/sessions/[id]/format";
+  ```
+- [ ] Create `frontend/components/admin/enrollment/withdrawal-credit-dialog.tsx` — move `WithdrawalCreditDialog` (lines 528-684) with imports trimmed to:
+  ```tsx
+  "use client";
 
-  import { dateInputValueFromOffset, defaultReturnOn, inputClass, maxReturnOn } from "./dialog-shared";
+  import { useState } from "react";
+  import { useMutation } from "@tanstack/react-query";
+  import * as Dialog from "@radix-ui/react-dialog";
 
-  export interface HoldableEnrollment {
-    enrollment_id: string;
-    full_name: string;
-  }
+  import {
+    previewWithdrawalCredit,
+    withdrawEnrollment,
+    type AdminEnrollmentView,
+  } from "@/lib/api/admin";
+  import {
+    buildWithdrawRequest,
+    defaultWithdrawalOutcome,
+    withdrawErrorMessage,
+    withdrawalOutcomeOptions,
+    type WithdrawalOutcome,
+  } from "@/lib/admin/withdrawal";
+  import type { ApiError } from "@/lib/api/client";
+  import { useIsOwner } from "@/components/admin/owner-context";
+  import { Field } from "@/components/ds/dialog-chrome";
+  import { inputClass, todayDateInput } from "@/app/(admin)/admin/sessions/[id]/format";
+  ```
+  Then add the notify toggle: introduce `const [notifyFamily, setNotifyFamily] = useState(true);` (default ON per spec §4.3) alongside the existing `adminNote` state, forward it into `buildWithdrawRequest({ withdrawalDate, outcome, adminNote, notifyFamily })` inside `approveMutation`'s `mutationFn`, reset it to `true` in `onSuccess` alongside the other resets, and render the toggle in the form body right before the "Admin note" `Field` (matching the existing "Email the families and the coach" pattern at `frontend/app/(admin)/admin/sessions/[id]/SessionEditing.tsx:299-306`):
+  ```tsx
+  <label className="flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400">
+    <input
+      type="checkbox"
+      checked={notifyFamily}
+      onChange={(event) => setNotifyFamily(event.target.checked)}
+    />
+    Email the family
+  </label>
+  ```
+- [ ] Edit `frontend/app/(admin)/admin/sessions/[id]/dialogs.tsx`: delete the bodies of `PauseEnrollmentDialog`, `TransferEnrollmentDialog`, `RallySessionPicker`, `WithdrawalCreditDialog`, `RemoveEnrollmentDialog` (now living in the three new files above; `PauseEnrollmentDialog` is not moved anywhere — it is retired). Remove now-unused imports from the top of the file: `pauseEnrollment`, `previewWithdrawalCredit`, `transferEnrollment`, `withdrawEnrollment`, `deleteEnrollment`, `AdminEnrollmentQuote` (check — still used by `AddToRosterDialog`'s `quoteQuery`, keep it), `AdminSessionView` (still used? check — `AddToRosterDialog` doesn't use it; `RallySessionPicker` did, now moved — remove), `buildWithdrawRequest`/`defaultWithdrawalOutcome`/`withdrawErrorMessage`/`withdrawalOutcomeOptions`/`WithdrawalOutcome` (moved, remove), `ApiError` (moved, remove), `useIsOwner` (moved — check if `AddToRosterDialog`/`AddToRosterDialog`'s siblings still need it; they don't, remove), `Dialog` from `@radix-ui/react-dialog` (only `WithdrawalCreditDialog` used it — remove), `dateInputValueFromOffset`/`formatShortDateTime` (check what `AddToRosterDialog`, `CoachSelect`, `DaySelect` still use — keep `formatCents`, `formatShortDateTime`, `inputClass`, `todayDateInput` only if still referenced by the remaining `AddToRosterDialog`; `AddToRosterDialog` uses `formatCents`, `formatShortDateTime`, `inputClass`, `todayDateInput` is not used by it so drop it from this file's import if nothing else in the file needs it — verify by reading the trimmed file after deletion, not by guessing). What remains in this file: `AddToRosterDialog`, `RallySessionPicker` is GONE (moved) so remove any leftover reference, `StudentSelect`, `CoachSelect`, `DaySelect`, and the `DAYS_OF_WEEK` constant.
+- [ ] Run the frontend typecheck to catch every remaining call site that still imports from the old paths (expected to fail — fixed in Tasks 8-9): `cd frontend && pnpm typecheck 2>&1 | tee /tmp/typecheck-after-move.txt`. Confirm the failures are exactly in `RosterPanel.tsx`, `page.tsx`, and `SessionsPanel.tsx` (the files Tasks 8-9 touch) and nowhere else — if any other file breaks, its import needs updating here too.
+- [ ] Run the moved dialogs' existing coverage, if any (there is no dedicated dialog test file today — this step is a smoke check via lint, not a test run): `cd frontend && pnpm lint --filter dialogs 2>/dev/null || pnpm eslint frontend/components/admin/enrollment/transfer-dialog.tsx frontend/components/admin/enrollment/remove-dialog.tsx frontend/components/admin/enrollment/withdrawal-credit-dialog.tsx frontend/app/\(admin\)/admin/sessions/\[id\]/dialogs.tsx`.
+- [ ] Commit: `git add frontend/components/admin/enrollment/transfer-dialog.tsx frontend/components/admin/enrollment/remove-dialog.tsx frontend/components/admin/enrollment/withdrawal-credit-dialog.tsx "frontend/app/(admin)/admin/sessions/[id]/dialogs.tsx"` then `git commit -m "refactor(enrollment): move Transfer/Withdrawal/Remove dialogs into components/admin/enrollment, add notify toggle to Drop\n\nCo-Authored-By: Claude Opus 5 <noreply@anthropic.com>"`.
 
+## Task 8: Frontend — Hold and Return dialogs
+
+**Files:**
+- Create: `frontend/components/admin/enrollment/hold-dialog.tsx`
+- Create: `frontend/components/admin/enrollment/return-dialog.tsx`
+
+**Interfaces:**
+- Consumes: `holdEnrollment`, `returnFromHold`, `getDeparturePolicy` from `@/lib/api/v2/departure-policy`; `AdminEnrollmentView` from `@/lib/api/admin`.
+- Produces: `HoldEnrollmentDialog({ enrollment, onClose, onHeld })`, `ReturnFromHoldDialog({ enrollment, onClose, onReturned })`.
+
+- [ ] Create `frontend/components/admin/enrollment/hold-dialog.tsx`:
+  ```tsx
+  "use client";
+
+  import { useEffect, useState } from "react";
+  import { useMutation, useQuery } from "@tanstack/react-query";
+
+  import {
+    getDeparturePolicy,
+    holdEnrollment,
+  } from "@/lib/api/v2/departure-policy";
+  import type { AdminEnrollmentView } from "@/lib/api/admin";
+  import { queryKeys } from "@/lib/query/keys";
+  import { Button } from "@/components/ds/button";
+  import { DialogActions, DialogError, Field, RallyModal as RallyDialog } from "@/components/ds/dialog-chrome";
+  import { dateInputValueFromOffset } from "@/app/(admin)/admin/sessions/[id]/format";
+
+  /**
+   * Hold dialog (2026-09-10 departures-from-student-page spec §4.1). Keeps
+   * the seat, pauses billing, and requires a return date bounded by the
+   * academy's `EnrollmentDeparturePolicyView.max_hold_days`.
+   */
   export function HoldEnrollmentDialog({
     enrollment,
-    familyLabel,
     onClose,
     onHeld,
   }: {
-    enrollment: HoldableEnrollment | null;
-    /** Design spec §2: the dialog names who will be emailed. */
-    familyLabel?: string | null;
+    enrollment: AdminEnrollmentView | null;
     onClose: () => void;
     onHeld: () => void;
   }) {
-    // `queryKeys.admin.departurePolicy()` is ["admin","enrollment","departure-policy"],
-    // the SAME key the student page and the settings panel already use — so the
-    // dialog reuses their cached policy instead of refetching, and one
-    // Playwright route stub covers all three. Do NOT invent a new key here.
+    // `queryKeys.admin.departurePolicy()` — NOT a hand-rolled key. The
+    // student page already fetches this policy under that exact key
+    // (`app/(admin)/admin/students/[studentId]/page.tsx:62`), so reusing it
+    // hits cache instead of firing a second request per dialog open.
     const policyQuery = useQuery({
       queryKey: queryKeys.admin.departurePolicy(),
       queryFn: getDeparturePolicy,
@@ -1544,24 +1191,28 @@
       staleTime: 60_000,
     });
     const maxHoldDays = policyQuery.data?.max_hold_days ?? 60;
-    const [returnOn, setReturnOn] = useState(defaultReturnOn);
+    const [returnOn, setReturnOn] = useState(dateInputValueFromOffset(30));
     const [reason, setReason] = useState("");
-    // Design contract §2: default OFF for Hold (opposite of Drop).
     const [notifyFamily, setNotifyFamily] = useState(false);
     const [error, setError] = useState<string | null>(null);
+
+    useEffect(() => {
+      if (enrollment) {
+        setReturnOn(dateInputValueFromOffset(30));
+        setReason("");
+        setNotifyFamily(false);
+        setError(null);
+      }
+    }, [enrollment]);
 
     const mutation = useMutation({
       mutationFn: () =>
         holdEnrollment(enrollment!.enrollment_id, {
           return_on: returnOn,
-          reason: reason || null,
+          reason: reason || undefined,
           notify_family: notifyFamily,
         }),
       onSuccess: () => {
-        setReturnOn(defaultReturnOn());
-        setReason("");
-        setNotifyFamily(false);
-        setError(null);
         onHeld();
       },
       onError: (err: Error) => setError(err.message ?? "Could not place this enrollment on hold."),
@@ -1572,7 +1223,7 @@
         open={enrollment !== null}
         onOpenChange={(open) => !open && onClose()}
         title="Hold enrollment"
-        description={enrollment ? `Hold ${enrollment.full_name}'s seat until they return.` : ""}
+        description={enrollment ? `Hold ${enrollment.full_name}'s seat without releasing it.` : ""}
         overline="Lifecycle"
       >
         {error && <DialogError message={error} />}
@@ -1584,45 +1235,49 @@
           }}
         >
           <Field label="Return date" required>
+            {/* min/max mirror HoldEnrollment.execute's own window check
+                (`return_on <= today || return_on > today + max_hold_days`
+                raises HoldWindowExceeded) so the cap in spec §4.1 is
+                enforced, not merely described in the helper text. */}
             <input
               type="date"
               required
               min={dateInputValueFromOffset(1)}
-              max={maxReturnOn(maxHoldDays)}
+              max={dateInputValueFromOffset(maxHoldDays)}
               value={returnOn}
               onChange={(event) => setReturnOn(event.target.value)}
-              className={inputClass}
+              className="min-h-touch w-full rounded-md border border-rally-line bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30"
             />
             <p className="mt-1 text-xs text-rally-subtle">
               Up to {maxHoldDays} days from today.
             </p>
           </Field>
-          <p className="text-xs text-rally-subtle">
-            Seat is kept. Billing pauses from the next invoice and resumes on the return date. If
-            the class fills, the longest-held family is asked to return or drop first.
-          </p>
           <Field label="Reason">
             <textarea
               value={reason}
               onChange={(event) => setReason(event.target.value)}
               rows={3}
-              className={inputClass}
+              className="w-full rounded-md border border-rally-line bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30"
             />
           </Field>
-          <label className="flex items-center gap-2 text-sm text-rally-ink">
+          <p className="text-xs text-rally-subtle">
+            Seat is kept. Billing pauses from the next invoice and resumes on the return date.
+            If the class fills, the longest-held family is asked to return or drop first.
+          </p>
+          <label className="flex items-center gap-2 text-sm text-rally-subtle">
             <input
               type="checkbox"
               checked={notifyFamily}
               onChange={(event) => setNotifyFamily(event.target.checked)}
             />
-            {familyLabel ? `Email ${familyLabel}` : "Email the family"}
+            Email the family
           </label>
           <DialogActions>
             <Button variant="secondary" size="sm" type="button" onClick={onClose}>
               Cancel
             </Button>
             <Button variant="primary" size="sm" type="submit" disabled={!returnOn || mutation.isPending}>
-              {mutation.isPending ? "Holding..." : "Hold"}
+              {mutation.isPending ? "Placing on hold…" : "Hold"}
             </Button>
           </DialogActions>
         </form>
@@ -1630,31 +1285,29 @@
     );
   }
   ```
-
-- [ ] Create `frontend/components/admin/enrollment/return-from-hold-dialog.tsx`:
+- [ ] Create `frontend/components/admin/enrollment/return-dialog.tsx`:
   ```tsx
   "use client";
 
-  import { useState } from "react";
+  import { useEffect, useState } from "react";
   import { useMutation } from "@tanstack/react-query";
 
   import { returnFromHold } from "@/lib/api/v2/departure-policy";
-
+  import type { AdminEnrollmentView } from "@/lib/api/admin";
   import { Button } from "@/components/ds/button";
   import { DialogActions, DialogError, Field, RallyModal as RallyDialog } from "@/components/ds/dialog-chrome";
 
-  import { inputClass } from "./dialog-shared";
-  import type { HoldableEnrollment } from "./hold-enrollment-dialog";
-
+  /**
+   * Return dialog (2026-09-10 departures-from-student-page spec §4.2).
+   * Billing resumes with the next invoice; the seat was never released so
+   * there is nothing to reserve.
+   */
   export function ReturnFromHoldDialog({
     enrollment,
-    familyLabel,
     onClose,
     onReturned,
   }: {
-    enrollment: HoldableEnrollment | null;
-    /** Design spec §2: the dialog names who will be emailed. */
-    familyLabel?: string | null;
+    enrollment: AdminEnrollmentView | null;
     onClose: () => void;
     onReturned: () => void;
   }) {
@@ -1662,16 +1315,21 @@
     const [notifyFamily, setNotifyFamily] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    const mutation = useMutation({
-      mutationFn: () =>
-        returnFromHold(enrollment!.enrollment_id, {
-          reason: reason || null,
-          notify_family: notifyFamily,
-        }),
-      onSuccess: () => {
+    useEffect(() => {
+      if (enrollment) {
         setReason("");
         setNotifyFamily(false);
         setError(null);
+      }
+    }, [enrollment]);
+
+    const mutation = useMutation({
+      mutationFn: () =>
+        returnFromHold(enrollment!.enrollment_id, {
+          reason: reason || undefined,
+          notify_family: notifyFamily,
+        }),
+      onSuccess: () => {
         onReturned();
       },
       onError: (err: Error) => setError(err.message ?? "Could not return this enrollment from hold."),
@@ -1682,7 +1340,7 @@
         open={enrollment !== null}
         onOpenChange={(open) => !open && onClose()}
         title="Return from hold"
-        description={enrollment ? `Return ${enrollment.full_name} to active billing.` : ""}
+        description={enrollment ? `Return ${enrollment.full_name} from hold to active.` : ""}
         overline="Lifecycle"
       >
         {error && <DialogError message={error} />}
@@ -1693,29 +1351,29 @@
             mutation.mutate();
           }}
         >
-          <p className="text-xs text-rally-subtle">Billing resumes with the next invoice.</p>
           <Field label="Reason">
             <textarea
               value={reason}
               onChange={(event) => setReason(event.target.value)}
               rows={3}
-              className={inputClass}
+              className="w-full rounded-md border border-rally-line bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30"
             />
           </Field>
-          <label className="flex items-center gap-2 text-sm text-rally-ink">
+          <p className="text-xs text-rally-subtle">Billing resumes with the next invoice.</p>
+          <label className="flex items-center gap-2 text-sm text-rally-subtle">
             <input
               type="checkbox"
               checked={notifyFamily}
               onChange={(event) => setNotifyFamily(event.target.checked)}
             />
-            {familyLabel ? `Email ${familyLabel}` : "Email the family"}
+            Email the family
           </label>
           <DialogActions>
             <Button variant="secondary" size="sm" type="button" onClick={onClose}>
               Cancel
             </Button>
             <Button variant="primary" size="sm" type="submit" disabled={mutation.isPending}>
-              {mutation.isPending ? "Returning..." : "Return"}
+              {mutation.isPending ? "Returning…" : "Return"}
             </Button>
           </DialogActions>
         </form>
@@ -1723,66 +1381,22 @@
     );
   }
   ```
+- [ ] Run typecheck for these two new files in isolation (full-project typecheck still fails until Task 9 finishes wiring — that is expected): `cd frontend && pnpm tsc --noEmit -p . 2>&1 | grep -E "hold-dialog|return-dialog"` — expect no output (no errors attributable to these two files).
+- [ ] Commit: `git add frontend/components/admin/enrollment/hold-dialog.tsx frontend/components/admin/enrollment/return-dialog.tsx` then `git commit -m "feat(enrollment): add Hold and Return dialogs\n\nCo-Authored-By: Claude Opus 5 <noreply@anthropic.com>"`.
 
-- [ ] Run it (expect PASS): `cd frontend && pnpm vitest run components/admin/enrollment/dialog-shared.test.ts`
-
-- [ ] Run typecheck and lint: `cd frontend && pnpm typecheck && pnpm lint`
-
-- [ ] Commit:
-  ```
-  git add frontend/components/admin/enrollment/hold-enrollment-dialog.tsx frontend/components/admin/enrollment/dialog-shared.test.ts frontend/components/admin/enrollment/return-from-hold-dialog.tsx
-  git commit -m "feat(enrollment): add Hold and Return dialogs
-
-  Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
-  ```
-
-## Task 8: Retire pause/resume and wire the class roster
-
-This is the one task that removes `pause`/`resume` from the vocabulary. Every
-edit below is part of the same compile unit — do them in one pass and commit
-once; splitting them leaves `pnpm typecheck` red.
+## Task 9: Frontend — wire the roster and student-page surfaces
 
 **Files:**
-- Modify: `frontend/components/admin/enrollment/departure-actions.logic.ts` (drop `"pause"`/`"resume"` from the `DepartureAction` union at lines 8-16 and from `DEPARTURE_ACTION_LABEL` at lines 18-27)
-- Modify: `frontend/components/admin/enrollment/departure-actions.test.tsx` (three tests still name the removed members — see below)
-- Modify: `frontend/app/(admin)/admin/sessions/[id]/dialogs.tsx` (delete `PauseEnrollmentDialog`, lines 175-314, and the now-unused `pauseEnrollment` import)
-- Modify: `frontend/app/(admin)/admin/sessions/[id]/RosterPanel.tsx` (`rosterActionsFor`/`dispatchRosterAction` → shared helper; `onPause`/`onResume` props → `onHold`/`onReturn`)
-- Modify: `frontend/app/(admin)/admin/sessions/[id]/page.tsx` (remove `pauseTarget`/`resumeMutation`/`PauseEnrollmentDialog`; add `holdTarget`/`returnTarget`/`HoldEnrollmentDialog`/`ReturnFromHoldDialog`)
-- Modify: `frontend/app/(admin)/admin/sessions/[id]/format.ts` (`formatLifecycleType` gains `held`/`returned`/`dropped`)
-- Modify: `frontend/e2e/specs/admin-enrollment-withdraw.spec.ts` (roster Hold-label assertion, since no dedicated roster-pause e2e spec exists today — grepped and confirmed none does)
+- Modify: `frontend/app/(admin)/admin/sessions/[id]/RosterPanel.tsx`
+- Modify: `frontend/app/(admin)/admin/sessions/[id]/page.tsx`
+- Modify: `frontend/app/(admin)/admin/students/[studentId]/SessionsPanel.tsx`
 
 **Interfaces:**
-- Consumes: `departureActionsFor` from `@/components/admin/enrollment/departure-actions`.
-- Produces: `RosterTable` props `onHold: (enrollment: AdminEnrollmentView) => void`, `onReturn: (enrollment: AdminEnrollmentView) => void` (replacing `onPause: (enrollment) => void` / `onResume: (id: string) => void` — note `onResume` took an id, `onReturn` takes the whole row, because the Return dialog needs `full_name` for its copy).
-
-- [ ] OPEN QUESTION (owner): `familyLabel` on the roster surface. Design spec §2 says the dialog "always names who will be emailed". The student page has `student.parent_name` (Task 9 passes it). `AdminEnrollmentView` — the roster's row shape — carries `parent_id` but no parent name, and `GET /admin/sessions/{id}/enrollments` does not return one. Options: (a) ship the roster with the generic "Email the family" fallback and only the student page naming the parent; (b) add `parent_name` to `AdminEnrollmentView` and the roster read model (a backend change this plan does not otherwise need). Decide before writing the roster wiring below; (a) is assumed by the code as written.
-
-- [ ] Write the failing test first. Add to `frontend/e2e/specs/admin-enrollment-withdraw.spec.ts`, inside the existing `test.describe` block, a new test asserting the roster overflow menu now says "Hold" for an active row (the roster spec's closest existing coverage — there is no dedicated pause/resume roster e2e spec to update, confirmed via `grep -rln "PauseEnrollmentDialog\|pauseEnrollment" frontend/e2e/specs/`):
-  ```ts
-  test("roster overflow menu offers Hold, not Pause, for an active enrollment", async ({ page }) => {
-    await stubAdminShell(page, ["admin", "owner"]);
-    await stubSessionDetail(page, "active");
-    await page.goto(`/admin/sessions/${SESSION_ID}`);
-    await expect(page.getByText("Alice Example")).toBeVisible();
-    await page.getByRole("button", { name: "More actions for Alice Example" }).click();
-    await expect(page.getByRole("menuitem", { name: "Hold" })).toBeVisible();
-    await expect(page.getByRole("menuitem", { name: "Pause" })).toHaveCount(0);
-  });
-  ```
-
-- [ ] Run it (expect failure — the roster still offers Pause): `cd frontend && pnpm exec playwright test admin-enrollment-withdraw --project=chromium-mobile -g "Hold, not Pause"`
-
-- [ ] Edit `frontend/components/admin/enrollment/departure-actions.logic.ts`: delete `| "pause"` and `| "resume"` from the `DepartureAction` union (lines 14-15) and the `pause: "Pause"` / `resume: "Resume"` entries from `DEPARTURE_ACTION_LABEL` (lines 24-25). Nothing else in this file mentions them.
-
-- [ ] Edit `frontend/components/admin/enrollment/departure-actions.test.tsx` — three tests name the removed members and stop compiling:
-  - `"never owner-gates a non-delete action"` (lines 42-48): change the array to `["transfer", "hold", "return", "drop", "stop_all_classes"]`.
-  - `"pushes every action into the overflow menu in menu layout"` (lines 65-71): change `["transfer", "drop", "pause"]` to `["transfer", "drop", "hold"]`.
-  - `"does not flag transfer, hold, return, pause or resume as danger"` (lines 83-89): rename to `"does not flag transfer, hold or return as danger"` and change the array to `["transfer", "hold", "return"]`.
-
-- [ ] Edit `frontend/app/(admin)/admin/sessions/[id]/dialogs.tsx`: delete `PauseEnrollmentDialog` (lines 175-314) and drop `pauseEnrollment` (and anything else it alone used — `pnpm lint` names them) from the import block.
+- Consumes: `departureActionsFor` from `@/components/admin/enrollment/departure-actions`; `HoldEnrollmentDialog`, `ReturnFromHoldDialog` from Task 8; `TransferEnrollmentDialog`, `WithdrawalCreditDialog`, `RemoveEnrollmentDialog` from Task 7's new paths.
+- Produces: both the roster and the student Sessions panel offering Hold/Return/Drop/Delete alongside Transfer, sharing the same dialogs.
 
 - [ ] Edit `frontend/app/(admin)/admin/sessions/[id]/RosterPanel.tsx`:
-  - Line 18-21 import: change `DepartureActions, type DepartureAction` to also pull `departureActionsFor`:
+  - Replace the import `import { DepartureActions, type DepartureAction } from "@/components/admin/enrollment/departure-actions";` with:
     ```ts
     import {
       DepartureActions,
@@ -1790,33 +1404,16 @@ once; splitting them leaves `pnpm typecheck` red.
       type DepartureAction,
     } from "@/components/admin/enrollment/departure-actions";
     ```
-  - `RosterTable`'s destructured parameter list (lines 128-129, `onPause,` / `onResume,`) and its prop TYPES (lines 144-145, `onPause: (enrollment: AdminEnrollmentView) => void;` / `onResume: (id: string) => void;`) — rename both to:
+  - Delete the `rosterActionsFor` function **and its doc comment (lines 279-295)** entirely — the comment is the "#697 replaces this with a list the backend returns" block directly above it. `departureActionsFor` takes `status: string`; `rosterActionsFor` took `status: EnrollmentStatus`, which is a string union, so the call site needs no cast.
+  - In `RosterTable`'s props, replace `onPause`/`onResume` with `onHold`/`onReturn`:
     ```ts
-    onHold: (enrollment: AdminEnrollmentView) => void;
-    onReturn: (enrollment: AdminEnrollmentView) => void;
+      onHold: (enrollment: AdminEnrollmentView) => void;
+      onReturn: (enrollment: AdminEnrollmentView) => void;
     ```
-  - The `<DepartureActions>` call (lines 252-268): replace `actions={rosterActionsFor(e.status)}` with `actions={departureActionsFor(e.status)}`, and update `onAction`'s handler map:
-    ```tsx
-    <DepartureActions
-      enrollmentId={e.enrollment_id}
-      studentName={e.full_name}
-      status={e.status}
-      layout="menu"
-      isOwner={isOwner}
-      actions={departureActionsFor(e.status)}
-      onAction={(action, enrollmentId) =>
-        dispatchRosterAction(action, enrollmentId, e, {
-          onDelete,
-          onHold,
-          onReturn,
-          onTransfer,
-          onWithdraw,
-        })
-      }
-    />
-    ```
-  - Delete `rosterActionsFor` (lines 280-294, docstring included) entirely, and drop the now-unused `type EnrollmentStatus` from the `@/lib/api/admin` import at lines 6-10 ONLY if `ENROLL_CHIP` at line 33 no longer needs it — it does need it, so keep it.
-  - Rewrite `dispatchRosterAction` (lines 296-329):
+    (Note: `onReturn` takes the full `AdminEnrollmentView`, not just an id — `returnFromHold` needs `enrollment.enrollment_id` and the dialog needs the full enrollment for its title, matching the `onWithdraw`/`onDelete` shape already used here, unlike the old `onResume: (id: string) => void`.)
+  - Update the destructured props list (`onPathwayLevelChange, onDelete, onPause, onResume, onTransfer, onWithdraw` → `onPathwayLevelChange, onDelete, onHold, onReturn, onTransfer, onWithdraw`).
+  - In the `<DepartureActions .../>` call: replace `actions={rosterActionsFor(e.status)}` with `actions={departureActionsFor(e.status)}`, and in the `onAction` handler's `dispatchRosterAction(...)` call, replace the `handlers` object's `onPause, onResume,` with `onHold, onReturn,`.
+  - Rewrite `dispatchRosterAction`:
     ```ts
     function dispatchRosterAction(
       action: DepartureAction,
@@ -1852,41 +1449,36 @@ once; splitting them leaves `pnpm typecheck` red.
       }
     }
     ```
-
-- [ ] Edit `frontend/app/(admin)/admin/sessions/[id]/format.ts`'s `formatLifecycleType` (near the end of the file) to add the three labels that would otherwise fall back to "Updated" once Hold/Return/Drop start appearing in `EnrollmentHistory`:
-  ```ts
-  export function formatLifecycleType(value: string): string {
-    const labels: Record<string, string> = {
-      created: "Added",
-      moved: "Moved",
-      paused: "Paused",
-      resumed: "Resumed",
-      held: "Held",
-      returned: "Returned",
-      withdrawn: "Withdrawn",
-      dropped: "Dropped",
-      removed: "Removed",
-      cancelled: "Cancelled",
-      waitlisted: "Waitlisted",
-      promoted: "Promoted",
-    };
-    return labels[value] ?? "Updated";
-  }
-  ```
-
 - [ ] Edit `frontend/app/(admin)/admin/sessions/[id]/page.tsx`:
-  - Replace the `[pauseTarget, setPauseTarget]` state (line 80) with:
+  - Import change: replace
+    `import { AddToRosterDialog, PauseEnrollmentDialog, RemoveEnrollmentDialog, TransferEnrollmentDialog, WithdrawalCreditDialog } from "./dialogs";`
+    with:
+    ```ts
+    import { AddToRosterDialog } from "./dialogs";
+    import { HoldEnrollmentDialog } from "@/components/admin/enrollment/hold-dialog";
+    import { ReturnFromHoldDialog } from "@/components/admin/enrollment/return-dialog";
+    import { RemoveEnrollmentDialog } from "@/components/admin/enrollment/remove-dialog";
+    import { TransferEnrollmentDialog } from "@/components/admin/enrollment/transfer-dialog";
+    import { WithdrawalCreditDialog } from "@/components/admin/enrollment/withdrawal-credit-dialog";
+    ```
+  - Remove `resumeEnrollment` from the `@/lib/api/admin` import (line 24) — it is no longer called from this file (Return now calls `returnFromHold`, not `resumeEnrollment`).
+  - Replace the `pauseTarget` state declaration (line 80) with `holdTarget`/`returnTarget`:
     ```ts
     const [holdTarget, setHoldTarget] = useState<AdminEnrollmentView | null>(null);
     const [returnTarget, setReturnTarget] = useState<AdminEnrollmentView | null>(null);
     ```
-  - Delete `resumeMutation` (lines 147-154) — Return is now a dialog (with an optional reason + notify toggle), not a one-click mutation.
-  - Replace the `onPause`/`onResume` props passed into `<RosterTable>` (lines 419-420) with:
-    ```tsx
+  - Delete the `resumeMutation` block (lines 148-154) entirely.
+  - In the `<RosterTable .../>` call, replace:
+    ```ts
+    onPause={(enrollment) => setPauseTarget(enrollment)}
+    onResume={(id) => resumeMutation.mutate(id)}
+    ```
+    with:
+    ```ts
     onHold={(enrollment) => setHoldTarget(enrollment)}
     onReturn={(enrollment) => setReturnTarget(enrollment)}
     ```
-  - Replace the `<PauseEnrollmentDialog ... />` block (lines 563-572) with:
+  - Replace the `<PauseEnrollmentDialog .../>` block (lines 563-571) with:
     ```tsx
     <HoldEnrollmentDialog
       enrollment={holdTarget}
@@ -1908,248 +1500,47 @@ once; splitting them leaves `pnpm typecheck` red.
       }}
     />
     ```
-  - Add the two new imports next to the other moved-dialog imports (Task 4), and drop `PauseEnrollmentDialog` from the `./dialogs` import:
-    ```ts
-    import { AddToRosterDialog } from "./dialogs";
-    import { HoldEnrollmentDialog } from "@/components/admin/enrollment/hold-enrollment-dialog";
-    import { ReturnFromHoldDialog } from "@/components/admin/enrollment/return-from-hold-dialog";
-    ```
-  - Remove the now-unused `resumeEnrollment` import (line 24).
-
-- [ ] Run it (expect PASS): `cd frontend && pnpm exec playwright test admin-enrollment-withdraw --project=chromium-mobile -g "Hold, not Pause"`
-
-- [ ] Run the full withdraw e2e file (regression guard on everything Tasks 1-8 touched): `cd frontend && pnpm exec playwright test admin-enrollment-withdraw --project=chromium-mobile`
-
-- [ ] Run typecheck and lint: `cd frontend && pnpm typecheck && pnpm lint`
-
-- [ ] Commit:
-  ```
-  git add frontend/components/admin/enrollment/departure-actions.logic.ts frontend/components/admin/enrollment/departure-actions.test.tsx "frontend/app/(admin)/admin/sessions/[id]/dialogs.tsx" "frontend/app/(admin)/admin/sessions/[id]/RosterPanel.tsx" "frontend/app/(admin)/admin/sessions/[id]/page.tsx" "frontend/app/(admin)/admin/sessions/[id]/format.ts" frontend/e2e/specs/admin-enrollment-withdraw.spec.ts
-  git commit -m "feat(enrollment): wire Hold/Return dialogs onto the class roster, retire Pause/Resume
-
-  Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
-  ```
-
-## Task 9: Wire the student page (SessionsPanel)
-
-**Files:**
-- Modify: `frontend/app/(admin)/admin/students/[studentId]/SessionsPanel.tsx`
-- Modify: `frontend/app/(admin)/admin/students/[studentId]/page.tsx` (pass `studentName`)
-- Modify: `frontend/e2e/specs/admin-enrollment-withdraw.spec.ts` (student-page Hold → Return and Drop tests)
-
-**Interfaces:**
-- Consumes: `departureActionsFor` from `@/components/admin/enrollment/departure-actions`; the five dialog components from `@/components/admin/enrollment/*`.
-- Produces: `SessionsPanel` gains a `studentName: string` prop.
-
-- [ ] Write the failing test first. Append to `frontend/e2e/specs/admin-enrollment-withdraw.spec.ts` — this needs the student-detail route's own stubs, which the existing helpers in this file don't cover (they stub `/admin/sessions/{id}`, not `/admin/students/{id}`). Add a second stub helper and two tests at the end of the `test.describe` block:
-  ```ts
-  const STUDENT_ID = "stu-withdraw-1";
-
-  async function stubStudentDetail(page: Page): Promise<WithdrawStub> {
-    const stub: WithdrawStub = {
-      withdrawBodies: [],
-      approveCalls: 0,
-      respond: (route) => route.fulfill({ status: 204, body: "" }),
-    };
-    let enrollmentStatus = "active";
-    let dropped = false;
-    const row = () => ({
-      enrollment_id: ENROLLMENT_ID,
-      session_id: SESSION_ID,
-      session_title: "Tuesday Beginner",
-      status: enrollmentStatus,
-      start_at: "2026-09-08T23:00:00Z",
-      end_at: "2026-09-08T23:45:00Z",
-      amount_cents: 10000,
-    });
-    await page.route("**/api/v2/admin/**", (route) => {
-      const request = route.request();
-      const url = new URL(request.url());
-      const path = url.pathname;
-      if (request.method() === "GET" && path === `/api/v2/admin/students/${STUDENT_ID}`) {
-        // The Drop test asserts the row lands in Past enrollments, so the stub
-        // has to actually move it — design spec §8 ("with the past-enrollments
-        // row asserted").
-        return fulfillJson(route, {
-          student_id: STUDENT_ID,
-          full_name: "Alice Example",
-          parent_id: "parent-1",
-          parent_name: "Parent Example",
-          enrolled_sessions: dropped ? [] : [row()],
-          past_enrollments: dropped
-            ? [
-                {
-                  ...row(),
-                  status: "dropped",
-                  ended_at: "2026-09-15T00:00:00Z",
-                  withdrawal_date: "2026-09-15",
-                  cancelled_by: "user-admin-withdraw-e2e",
-                  reason: "Withdrawal credit",
-                },
-              ]
-            : [],
-        });
-      }
-      if (request.method() === "GET" && path === "/api/v2/admin/users") {
-        return fulfillJson(route, { users: [] });
-      }
-      if (request.method() === "GET" && path === `/api/v2/admin/enrollment/departure-policy`) {
-        return fulfillJson(route, {
-          max_hold_days: 60,
-          hold_reclaim_policy: "longest_held",
-          drop_default_outcome: "credit_mid_month",
-          delete_enrollment_requires_owner: true,
-        });
-      }
-      if (request.method() === "POST" && path === `/api/v2/admin/enrollments/${ENROLLMENT_ID}/hold`) {
-        enrollmentStatus = "held";
-        return route.fulfill({ status: 204, body: "" });
-      }
-      if (request.method() === "POST" && path === `/api/v2/admin/enrollments/${ENROLLMENT_ID}/return`) {
-        enrollmentStatus = "active";
-        return route.fulfill({ status: 204, body: "" });
-      }
-      if (
-        request.method() === "POST" &&
-        path === `/api/v2/admin/enrollments/${ENROLLMENT_ID}/withdrawal-credit/preview`
-      ) {
-        return fulfillJson(route, {
-          credit_amount_cents: 3750,
-          display_amount: "$37.50",
-          total_classes: 8,
-          unused_classes: 3,
-          formula: "max(10000 - 0, 0) * 3 / 8",
-          message: "Credit is calculated for 3 unused classes.",
-          no_credit_reason: null,
-        });
-      }
-      if (request.method() === "POST" && path === `/api/v2/admin/enrollments/${ENROLLMENT_ID}/withdraw`) {
-        stub.withdrawBodies.push(request.postDataJSON());
-        dropped = true;
-        return stub.respond(route);
-      }
-      if (request.method() === "GET") return fulfillJson(route, {});
-      return route.fallback();
-    });
-    return stub;
-  }
-
-  /**
-   * `/admin/students/[studentId]` does NOT read a `?tab=` param — `page.tsx`
-   * holds the active tab in `useState<StudentTab>("overview")` and only
-   * `StudentTabs`' `role="tab"` buttons change it. Navigating to
-   * `?tab=sessions` lands on Overview and every locator below times out.
-   * `admin-students.spec.ts` uses the same click.
-   *
-   * Forward note: the sibling plan
-   * `2026-09-10-student-page-single-view.md` (plan 4, built after this one)
-   * removes the tabs; its Task 12 drops this click, renames the helper
-   * `openStudentPage`, and adds a `GET /api/v2/admin/users/parent-1` branch
-   * to `stubStudentDetail` for the new rail. Nothing to do here.
-   */
-  async function openSessionsTab(page: Page) {
-    await page.goto(`/admin/students/${STUDENT_ID}`);
-    await page.getByRole("tab", { name: "Sessions" }).click();
-    await expect(page.getByText("Tuesday Beginner")).toBeVisible();
-  }
-
-  test.describe("departure actions from the student page (design 2026-09-10)", () => {
-    test("Hold, then Return, from the student page", async ({ page }) => {
-      await stubAdminShell(page, ["admin", "owner"]);
-      await stubStudentDetail(page);
-      await openSessionsTab(page);
-
-      await page.getByRole("button", { name: /More actions for/ }).click();
-      await page.getByRole("menuitem", { name: "Hold" }).click();
-      const holdDialog = page.getByRole("dialog", { name: "Hold enrollment" });
-      await expect(holdDialog).toBeVisible();
-      await holdDialog.getByRole("button", { name: "Hold", exact: true }).click();
-      await expect(holdDialog).toBeHidden();
-
-      await page.getByRole("button", { name: /More actions for/ }).click();
-      await page.getByRole("menuitem", { name: "Return" }).click();
-      const returnDialog = page.getByRole("dialog", { name: "Return from hold" });
-      await expect(returnDialog).toBeVisible();
-      await returnDialog.getByRole("button", { name: "Return", exact: true }).click();
-      await expect(returnDialog).toBeHidden();
-    });
-
-    test("Drop from the student page shows in past enrollments", async ({ page }) => {
-      await stubAdminShell(page, ["admin", "owner"]);
-      const stub = await stubStudentDetail(page);
-      await openSessionsTab(page);
-
-      await page.getByRole("button", { name: /More actions for/ }).click();
-      await page.getByRole("menuitem", { name: "Drop" }).click();
-      const dialog = page.getByRole("dialog", { name: "Drop enrollment" });
-      await expect(dialog).toBeVisible();
-      await dialog.getByLabel("Drop date").fill("2026-09-15");
-      await dialog.getByRole("button", { name: "Preview credit" }).click();
-      await expect(dialog.getByText("Credit: $37.50")).toBeVisible();
-      await dialog.getByRole("button", { name: "Drop", exact: true }).click();
-      await expect(dialog).toBeHidden();
-
-      expect(stub.withdrawBodies).toEqual([
-        { effective_date: "2026-09-15", outcome: "credit", reason: "Withdrawal credit", notify_family: true },
-      ]);
-
-      // Design spec §8: assert the past-enrollments row, not just the POST.
-      await expect(
-        page.getByTestId(`admin-student-past-enrollment-${ENROLLMENT_ID}`),
-      ).toBeVisible();
-      await expect(page.getByTestId("admin-student-past-enrollments")).toContainText("1 ended");
-    });
-  });
-  ```
-  (This adds a new `test.describe` after the existing one closes at line 260, rather than nesting inside it — confirm the file's final `});` at line 260 and insert after it. `Page` and `Route` are already imported at line 1; `WithdrawStub`, `fulfillJson`, `stubAdminShell`, `SESSION_ID` and `ENROLLMENT_ID` are all module-level in this file and reusable as-is.)
-
-- [ ] Run it (expect failure — the student page still only offers Transfer): `cd frontend && pnpm exec playwright test admin-enrollment-withdraw --project=chromium-mobile -g "student page"`
-
-- [ ] Edit `frontend/app/(admin)/admin/students/[studentId]/page.tsx` (the `<SessionsPanel …/>` inside `{activeTab === "sessions" && …}`, lines 216-222) — add `studentName` and `familyLabel`:
-  ```tsx
-  <SessionsPanel
-    sessions={student.enrolled_sessions ?? []}
-    pastEnrollments={student.past_enrollments ?? []}
-    parentId={student.parent_id}
-    studentId={studentId}
-    studentName={student.full_name}
-    familyLabel={student.parent_name ?? null}
-    queryClient={queryClient}
-  />
-  ```
-
 - [ ] Edit `frontend/app/(admin)/admin/students/[studentId]/SessionsPanel.tsx`:
-  - Add imports at the top (after the existing `DepartureActions` import, line 27):
+  - Add imports:
     ```ts
     import {
       DepartureActions,
       departureActionsFor,
-      type DepartureAction,
     } from "@/components/admin/enrollment/departure-actions";
-    import { HoldEnrollmentDialog } from "@/components/admin/enrollment/hold-enrollment-dialog";
-    import { ReturnFromHoldDialog } from "@/components/admin/enrollment/return-from-hold-dialog";
+    import { HoldEnrollmentDialog } from "@/components/admin/enrollment/hold-dialog";
+    import { ReturnFromHoldDialog } from "@/components/admin/enrollment/return-dialog";
     import { WithdrawalCreditDialog } from "@/components/admin/enrollment/withdrawal-credit-dialog";
-    import { RemoveEnrollmentDialog } from "@/components/admin/enrollment/remove-enrollment-dialog";
+    import { RemoveEnrollmentDialog } from "@/components/admin/enrollment/remove-dialog";
+    import type { AdminEnrollmentView } from "@/lib/api/admin";
     ```
-    (drop the plain `DepartureActions` import at line 27 and replace with the block above.)
-  - Add `studentName: string;` and `familyLabel?: string | null;` to the component's destructured params (lines 54-60) and its prop type (lines 61-68), right after `studentId`.
-  - Add four new pieces of dialog state next to `moving` (line 70):
+    (Replace the existing `import { DepartureActions } from "@/components/admin/enrollment/departure-actions";` line at line 27 rather than adding a duplicate.)
+  - Add `studentName: string;` to `SessionsPanel`'s props type and destructure it (the component signature is at line 55; props today are `sessions`, `pastEnrollments`, `parentId`, `studentId`, `queryClient`).
+  - Add state, alongside the existing `moving`/`billingOverride` state (~line 72):
     ```ts
-    const [holding, setHolding] = useState<AdminStudentSessionSummary | null>(null);
-    const [returning, setReturning] = useState<AdminStudentSessionSummary | null>(null);
-    const [dropping, setDropping] = useState<AdminStudentSessionSummary | null>(null);
-    const [removing, setRemoving] = useState<AdminStudentSessionSummary | null>(null);
+    const [holdTarget, setHoldTarget] = useState<AdminStudentSessionSummary | null>(null);
+    const [returnTarget, setReturnTarget] = useState<AdminStudentSessionSummary | null>(null);
+    const [dropTarget, setDropTarget] = useState<AdminStudentSessionSummary | null>(null);
+    const [removeTarget, setRemoveTarget] = useState<AdminStudentSessionSummary | null>(null);
     ```
-  - Replace the `<DepartureActions>` block (lines 332-348, currently `actions={["transfer"]}` with a bare `onAction`) with the full action set:
+  - `AdminEnrollmentView` and `AdminStudentSessionSummary` are different types (the dialogs expect `AdminEnrollmentView | null`, but this panel's rows are `AdminStudentSessionSummary`). Add a small adapter right above the `return (` in `SessionsPanel`. **Verified against the real bodies**: `TransferEnrollmentDialog`, `WithdrawalCreditDialog` and `RemoveEnrollmentDialog` in `dialogs.tsx` read only `enrollment!.enrollment_id` and `enrollment.full_name`; Tasks 7-8's `HoldEnrollmentDialog`/`ReturnFromHoldDialog` do the same. The `as` cast below is therefore a deliberate narrowing, not a guess — if a dialog ever reads a third field this cast becomes a runtime `undefined`, so keep the cast in ONE place and re-check it whenever a dialog's body changes:
+    ```ts
+    const toEnrollmentView = (
+      row: AdminStudentSessionSummary,
+      fullName: string,
+    ): AdminEnrollmentView =>
+      ({ enrollment_id: row.enrollment_id, full_name: fullName } as AdminEnrollmentView);
+    ```
+    Use `toEnrollmentView(row, studentName)` at each of the four new dialog call sites below.
+  - Replace the `<DepartureActions .../>` block at lines 333-348 (currently `actions={["transfer"]}`, `layout="inline"`, `studentName={session.session_title}`, single `onAction` that always opens Move). Note `studentName` changes from the **session title** to the **student's name** — that is the point of threading the prop, and it is what makes the overflow trigger's `aria-label` read "More actions for &lt;child&gt;", matching the roster's existing convention that `e2e/specs/admin-enrollment-withdraw.spec.ts:152` already asserts on:
     ```tsx
     <DepartureActions
       enrollmentId={session.enrollment_id}
-      studentName={session.session_title}
+      studentName={studentName}
       status={session.status}
       layout="inline"
       isOwner={isOwner}
       actions={departureActionsFor(session.status)}
-      onAction={(action: DepartureAction) => {
+      onAction={(action) => {
         switch (action) {
           case "transfer":
             setMoving(session);
@@ -2158,177 +1549,219 @@ once; splitting them leaves `pnpm typecheck` red.
             setEffectiveDate(new Date().toISOString().slice(0, 10));
             break;
           case "hold":
-            setHolding(session);
+            setHoldTarget(session);
             break;
           case "return":
-            setReturning(session);
+            setReturnTarget(session);
             break;
           case "drop":
-            setDropping(session);
+            setDropTarget(session);
             break;
           case "delete":
-            setRemoving(session);
+            setRemoveTarget(session);
             break;
           default:
-            // stop_all_classes has its own launcher (#698), not this row.
+            // stop_all_classes is never in departureActionsFor's output.
             break;
         }
       }}
     />
     ```
-  - Mount the four new dialogs alongside the existing `{moving && (...)}` inline dialog, right before the closing `</>` of the component's returned JSX (after the `{billingOverride && (...)}` block, before line 718's `</>`):
+    (`delete` is wired here, not left a no-op: spec §3's table lists `delete` for `active`/`held`/`paused` on this surface too, and `resolveDepartureActions` renders `delete` *disabled with a hint* for a non-owner rather than hiding it — so an owner clicking it must open the same `RemoveEnrollmentDialog` the roster opens, which Task 7 already moved to a shared path.)
+  - Mount the four dialogs at the end of the returned JSX fragment, alongside the existing `moving`/`discounting`/`billingOverride` custom modals:
     ```tsx
     <HoldEnrollmentDialog
-      enrollment={holding ? { enrollment_id: holding.enrollment_id, full_name: studentName } : null}
-      familyLabel={familyLabel}
-      onClose={() => setHolding(null)}
+      enrollment={holdTarget ? toEnrollmentView(holdTarget, studentName) : null}
+      onClose={() => setHoldTarget(null)}
       onHeld={() => {
-        setHolding(null);
+        setHoldTarget(null);
         void queryClient.invalidateQueries({ queryKey: queryKeys.admin.studentDetail(studentId) });
       }}
     />
     <ReturnFromHoldDialog
-      enrollment={returning ? { enrollment_id: returning.enrollment_id, full_name: studentName } : null}
-      familyLabel={familyLabel}
-      onClose={() => setReturning(null)}
+      enrollment={returnTarget ? toEnrollmentView(returnTarget, studentName) : null}
+      onClose={() => setReturnTarget(null)}
       onReturned={() => {
-        setReturning(null);
+        setReturnTarget(null);
         void queryClient.invalidateQueries({ queryKey: queryKeys.admin.studentDetail(studentId) });
       }}
     />
     <WithdrawalCreditDialog
-      enrollment={
-        dropping
-          ? ({ enrollment_id: dropping.enrollment_id, full_name: studentName } as AdminEnrollmentView)
-          : null
-      }
-      familyLabel={familyLabel}
-      onClose={() => setDropping(null)}
+      enrollment={dropTarget ? toEnrollmentView(dropTarget, studentName) : null}
+      onClose={() => setDropTarget(null)}
       onApproved={() => {
-        setDropping(null);
+        setDropTarget(null);
         void queryClient.invalidateQueries({ queryKey: queryKeys.admin.studentDetail(studentId) });
       }}
     />
     <RemoveEnrollmentDialog
-      enrollment={
-        removing
-          ? ({ enrollment_id: removing.enrollment_id, full_name: studentName } as AdminEnrollmentView)
-          : null
-      }
-      onClose={() => setRemoving(null)}
+      enrollment={removeTarget ? toEnrollmentView(removeTarget, studentName) : null}
+      onClose={() => setRemoveTarget(null)}
       onRemoved={() => {
-        setRemoving(null);
+        setRemoveTarget(null);
         void queryClient.invalidateQueries({ queryKey: queryKeys.admin.studentDetail(studentId) });
       }}
     />
     ```
-    `WithdrawalCreditDialog`/`RemoveEnrollmentDialog` expect a full `AdminEnrollmentView` — the cast above mirrors how these dialogs already only read `.enrollment_id`/`.full_name` off the object (verified in Tasks 3-4's copied bodies); nothing else on `AdminEnrollmentView` is dereferenced by either dialog.
-  - Add the `AdminEnrollmentView` type import needed for the cast above: add `type AdminEnrollmentView` to the existing `@/lib/api/admin` import, or (cleaner) import it from `@/lib/api/admin` directly since `listAdminSessions` already comes from there (line 8-11) — extend that import block's type list.
+  - Wire `studentName` through: edit `frontend/app/(admin)/admin/students/[studentId]/page.tsx` and add `studentName={student.full_name}` to the `<SessionsPanel …>` mount at line 217. (`student.full_name` is confirmed present — the sibling header at line 143 already passes `studentName={student.full_name}`.)
+- [ ] Run the full frontend typecheck and confirm it is clean: `cd frontend && pnpm typecheck`.
+- [ ] Run lint: `cd frontend && pnpm lint`.
+- [ ] Run the existing unit suites that cover these files' pure logic (no new pure-logic files were touched directly in this task, but re-run the ones from Tasks 1/2/6 plus the student page's own `session-rows.test.ts` as a regression check): `cd frontend && pnpm vitest run components/admin/enrollment/departure-actions.test.tsx components/ds/menu.test.tsx lib/admin/withdrawal.test.ts "app/(admin)/admin/students/[studentId]/session-rows.test.ts"`.
+- [ ] Commit: `git add frontend/app/"(admin)"/admin/sessions/"[id]"/RosterPanel.tsx frontend/app/"(admin)"/admin/sessions/"[id]"/page.tsx frontend/app/"(admin)"/admin/students/"[studentId]"/SessionsPanel.tsx frontend/app/"(admin)"/admin/students/"[studentId]"/page.tsx` (adjust the shell-quoting for the parenthesized route-group directories to whatever this shell needs — e.g. `git add -A -- 'frontend/app/(admin)/admin/sessions/[id]/RosterPanel.tsx' 'frontend/app/(admin)/admin/sessions/[id]/page.tsx' 'frontend/app/(admin)/admin/students/[studentId]/SessionsPanel.tsx' 'frontend/app/(admin)/admin/students/[studentId]/page.tsx'`) then `git commit -m "feat(enrollment): wire Hold/Return/Drop/Delete into the roster and student Sessions panel\n\nCo-Authored-By: Claude Opus 5 <noreply@anthropic.com>"`.
 
-- [ ] Run it (expect PASS): `cd frontend && pnpm exec playwright test admin-enrollment-withdraw --project=chromium-mobile -g "student page"`
+## Task 10: e2e — Hold/Return/Drop from the student page
 
-- [ ] Run the full spec file (final regression guard for this feature): `cd frontend && pnpm exec playwright test admin-enrollment-withdraw --project=chromium-mobile`
+**Files:**
+- Modify: `frontend/e2e/specs/admin-enrollment-withdraw.spec.ts`
+- Test: the spec file itself (Playwright)
 
-- [ ] Run typecheck and lint: `cd frontend && pnpm typecheck && pnpm lint`
+**Interfaces:**
+- Consumes: the stubbing helpers already in the spec (`stubAdminShell`, `stubSessionDetail`) as a pattern to copy for a student-page stub; `DepartureActions`' `data-testid={`departure-actions-${enrollmentId}`}` (confirmed at `departure-actions.tsx:78`) and the overflow trigger `aria-label={`More actions for ${studentName}`}` (confirmed at `departure-actions.tsx:98`) as the selectors to drive the UI.
 
-- [ ] Confirm the "New Frontend Route Checklist" does not apply. No `app/` route is added anywhere in this plan (`/admin/students/[studentId]` and its Sessions tab are pre-existing; the tab is component state, not a route), so `docs/qa/2026-06-28-production-scale-local-inventory-manifest.json` and the two hardcoded route counts stay untouched. Verify rather than assume: `cd backend && .venv/bin/pytest v2/tests -k "route_manifest or route_inventory or qa_inventory" -q` must be green, and `git status --short docs/qa/` must be empty.
+- [ ] Read the rest of the existing spec file beyond what this plan's research already captured (lines 100 onward) before writing new tests, so the new stub matches this file's existing conventions for the student-detail routes (`GET /api/v2/admin/students/{id}`, its sessions array, its past-enrollments array) exactly — grep `frontend/app/(admin)/admin/students/[studentId]/page.tsx` for the exact fetch calls `SessionsPanel`'s parent makes and stub every one of them the way `stubSessionDetail` stubs the roster's session/enrollments/waitlist routes.
+- [ ] Write the failing test. Append to `frontend/e2e/specs/admin-enrollment-withdraw.spec.ts`:
+  ```ts
+  test.describe("from the student page", () => {
+    test("Hold then Return updates the row without releasing the seat", async ({ page }) => {
+      await stubAdminShell(page, ["admin"]);
+      // Stub GET /api/v2/admin/students/{studentId} to return one active
+      // session enrollment (enrollment_id: ENROLLMENT_ID, status: "active"),
+      // and POST /api/v2/admin/enrollments/{ENROLLMENT_ID}/hold and
+      // /return to both return 204 and flip the stubbed session's status
+      // for the next GET, mirroring stubSessionDetail's mutable-state
+      // pattern above.
+      await page.goto(`/admin/students/stu-withdraw-1`);
+      await page
+        .getByTestId(`departure-actions-${ENROLLMENT_ID}`)
+        .getByRole("button", { name: /more actions/i })
+        .click();
+      await page.getByRole("menuitem", { name: "Hold" }).click();
+      await expect(page.getByRole("dialog", { name: /Hold enrollment/i })).toBeVisible();
+      await page.getByLabel("Return date").fill("2026-10-15");
+      await page.getByRole("button", { name: "Hold" }).click();
+      await expect(page.getByText("ON HOLD")).toBeVisible();
 
-- [ ] Commit:
+      await page
+        .getByTestId(`departure-actions-${ENROLLMENT_ID}`)
+        .getByRole("button", { name: /more actions/i })
+        .click();
+      await page.getByRole("menuitem", { name: "Return" }).click();
+      await page.getByRole("button", { name: "Return", exact: true }).click();
+      await expect(page.getByText("ACTIVE")).toBeVisible();
+    });
+
+    test("Drop from the student page records a past-enrollment row", async ({ page }) => {
+      await stubAdminShell(page, ["owner"]);
+      // Same student stub as above, active status.
+      await page.goto(`/admin/students/stu-withdraw-1`);
+      await page
+        .getByTestId(`departure-actions-${ENROLLMENT_ID}`)
+        .getByRole("button", { name: /more actions/i })
+        .click();
+      await page.getByRole("menuitem", { name: "Drop" }).click();
+      await page.getByLabel("Drop date").fill("2026-09-15");
+      await page.getByRole("button", { name: "Drop", exact: true }).click();
+      await expect(
+        page.getByTestId(`admin-student-past-enrollment-${ENROLLMENT_ID}`),
+      ).toBeVisible();
+    });
+  });
   ```
-  git add "frontend/app/(admin)/admin/students/[studentId]/SessionsPanel.tsx" "frontend/app/(admin)/admin/students/[studentId]/page.tsx" frontend/e2e/specs/admin-enrollment-withdraw.spec.ts
-  git commit -m "feat(enrollment): offer Hold/Return/Drop/Delete from the student page, not just Transfer
-
-  Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
-  ```
-
-## Task 10: Full regression pass
-
-**Files:** none (verification only).
-
-- [ ] Backend: `cd backend && .venv/bin/pytest v2/tests -q` — full suite, catches any fixture/import fallout from Tasks 5-6.
-- [ ] Backend structural/layering: `cd backend && .venv/bin/pytest v2/tests/structural -q` (already run in Task 6; re-run here as the final gate since Task 9 touched no backend files but this confirms nothing regressed).
-- [ ] Frontend unit: `cd frontend && pnpm vitest run`
-- [ ] Frontend typecheck: `cd frontend && pnpm typecheck`
-- [ ] Frontend lint: `cd frontend && pnpm lint`
-- [ ] Frontend e2e, the touched spec plus its neighbors that reference roster/withdraw/student-sessions shell state: `cd frontend && pnpm exec playwright test admin-enrollment-withdraw admin-shell --project=chromium-mobile`
-- [ ] Fix anything red before Task 11. Do not proceed with a known-red suite.
+  (Selectors are written against `departure-actions.tsx` (`data-testid="departure-actions-{id}"` line 78, trigger `aria-label="More actions for {studentName}"` line 98 — after Task 9, `studentName` on the student page is the child's name), Tasks 7-8's dialogs, and `PastEnrollmentsPanel` at `SessionsPanel.tsx:763-819`. The implementer MUST run this against the real rendered page once Tasks 1-9 land and adjust to whatever Playwright's trace shows — in particular the accessible name `RallyModal` gives its dialog and the label association `Field` produces (`Field` wraps its child in a `<label>` with a `<span>` caption, so `getByLabel("Return date")` should resolve; if it does not, switch to `getByRole("dialog").getByRole("textbox")`-style scoping rather than weakening an assertion). Note `WithdrawalCreditDialog` is NOT a `RallyModal` — it is a raw Radix `Dialog.Root` whose `Dialog.Title` is "Drop enrollment" and whose date `Field` is labelled "Drop date"; `dialogs.tsx:576-581` warns that this spec file already asserts on its accessible name, so keep the two in sync.)
+- [ ] Run it and confirm the expected failure (before Tasks 1-9's app code exists — since this task runs last, in practice this step is really "run it against the already-implemented app and fix the DOM-selector mismatches"): `cd frontend && pnpm exec playwright test admin-enrollment-withdraw.spec.ts --project=chromium`. Iterate on selectors/stub payloads until both new tests pass without weakening any assertion.
+- [ ] Confirm the roster Pause spec really does not exist (spec §8 assumes one): `grep -rn "Pause enrollment\|PauseEnrollmentDialog\|pauseEnrollment\|admin/enrollments/.*/pause" frontend/e2e/specs/`. **Expected result: no match on the roster's departure row.** Every current `pause` hit under `frontend/e2e/specs/` is the parent pause-**request** flow (#616), which this plan does not touch: `/admin/pause-requests` (`admin-shell.spec.ts`, `local-auth-qa.spec.ts`, `saas-launch-route-matrix.spec.ts`), `/api/v2/parent/pause-requests` (`qa-defects.spec.ts`, `billing-trust-recovery.spec.ts`, `tuition-discounts.spec.ts`) and `/admin/families/{id}/autopay/pause` (`admin-family-billing.spec.ts`). Leave all of them alone. If the grep DOES surface a roster-row Pause assertion (someone added one after 2026-09-10), update its label/stub to Hold and add the file to the commit below.
+- [ ] Run the withdraw spec: `cd frontend && pnpm exec playwright test admin-enrollment-withdraw.spec.ts --project=chromium`.
+- [ ] Also run the two specs whose selectors could be disturbed by Task 9's `studentName` change on the student page: `cd frontend && pnpm exec playwright test admin-students.spec.ts tuition-discounts.spec.ts --project=chromium`. Any failure here is a real regression from `DepartureActions` now labelling itself with the child's name instead of the session title — fix the selector in the spec, not by reverting the prop.
+- [ ] Commit: `git add frontend/e2e/specs/admin-enrollment-withdraw.spec.ts` (plus any spec the grep above actually turned up) then `git commit -m "test(e2e): Hold/Return/Drop from the student page\n\nCo-Authored-By: Claude Opus 5 <noreply@anthropic.com>"`.
 
 ## Task 11: Release note
 
 **Files:**
 - Create: `docs/release-notes/2026-09-10-departure-actions-from-student-page.md`
 
-- [ ] Write the release note. CI's "Release Notes Gate" requires exactly these three `##` sections plus a `PR: #<number>` line — the PR number is filled in after the PR opens (see the last step below), so leave a placeholder now and update it once the PR exists, before merge:
+- [ ] Create the release note. `scripts/dev/release_notes_check.py` requires the three headings **verbatim** — `## What changed`, `## Deploy notes`, `## Risk / rollback` — each with a non-empty body that does not start with `<` and contains none of its placeholder markers; it locates the file by searching every `docs/release-notes/*.md` for the literal string `PR: #<the PR number>`. So the `PR:` line goes directly under the title (matching `docs/release-notes/2026-09-10-absence-notice-706.md`) and **the gate stays red until `#<number>` is replaced with the real PR number** — do that immediately after opening the PR, in the same branch.
   ```markdown
   # Departure actions from the student page
 
+  PR: #<number>
+
   ## What changed
-
-  The student page's Sessions tab now offers the full departure action set —
-  Transfer, Hold, Return, Drop and Delete — instead of Transfer alone. Hold and
-  Return are new dialogs backed by the existing `/hold` and `/return` routes
-  (issue #697); Drop reuses the existing withdraw dialog. The class roster's
-  Pause/Resume buttons are replaced by Hold/Return, calling the seat-keeping
-  hold endpoints instead of the old seat-releasing pause endpoint — the
-  `/pause` and `/resume` routes themselves are untouched, since the parent
-  self-service pause-request flow (#616) still uses them.
-
-  All three actions (Hold, Return, Drop) gained an **Email the family** toggle
-  in their dialog — off by default for Hold and Return, on by default for
-  Drop. When checked, a best-effort transactional email goes to the family,
-  claimed once per enrollment/event so a retried request never double-sends.
+  - The student page's Sessions tab now offers Hold, Return, Drop and Delete
+    for an enrollment, not just Transfer — the same `DepartureActions`
+    component and dialogs the class roster uses (Transfer inline, the rest in
+    the row's overflow menu, Delete last behind a separator).
+  - The class roster's Pause/Resume buttons are replaced by Hold/Return
+    everywhere `DepartureActions` renders; the old seat-releasing
+    `PauseEnrollmentDialog` is removed from the admin UI (the `/pause` and
+    `/resume` backend routes are untouched — they still back the
+    parent-initiated pause-request approval flow).
+  - Hold, Return and Drop dialogs each gained an "Email the family" toggle
+    (default off for Hold/Return, default on for Drop). When checked, the
+    backend sends a best-effort, claim-deduplicated transactional email —
+    `HoldNotifier.hold_started`/`hold_returned` and a new `WithdrawalNotifier`
+    adapter, both riding the same `digest_claim` primitive
+    `hold_notifications.py` already used for reclaim/reminder mail.
 
   ## Deploy notes
-
-  No migrations, no new environment variables, no new collections — the
-  family-email claim reuses the existing `enrollment_hold_notice_sends`
-  collection from issue #697. Purely additive backend fields
-  (`notify_family: bool = False` on the hold, return and withdraw request
-  bodies) — safe to deploy in any order relative to the frontend.
+  - New collection `enrollment_withdrawal_notice_sends` with a unique
+    `(academy_id, enrollment_id, notice_key)` index, added by migration
+    `0173_withdrawal_notice_sends`. Production does not run migrations on
+    boot (`V2_RUN_MIGRATIONS_ON_BOOT` is false) — apply by hand with
+    `run_pending_migrations` after this deploys, same as 0170-0172.
+  - No breaking API changes: `notify_family` is optional and defaults to
+    `false` on every request DTO it was added to (`HoldEnrollmentRequest`,
+    `ReturnFromHoldRequest`, `WithdrawEnrollmentRequest`), so every existing
+    caller (including the parent-facing surfaces that do not send it) is
+    unaffected.
 
   ## Risk / rollback
-
-  Low risk: the underlying `/hold`, `/return` and `/withdraw` routes and their
-  use cases are unchanged except for the new optional notifier call, which is
-  wrapped in try/except and cannot fail the write. Rollback is a plain revert;
-  no data migration to undo. The roster's Pause/Resume buttons are removed in
-  the same change, so a rollback also restores them — verify the deployed
-  frontend and backend revert together rather than independently, since a
-  frontend-only rollback would point old Hold/Return dialogs at routes that
-  still work identically either way.
-
-  PR: #<fill in after PR is opened>
+  - Low risk: the notify path is best-effort and never fails the underlying
+    Hold/Return/Drop write on a mail-send exception (covered by
+    `test_hold_notifier_failure_does_not_fail_the_write` and
+    `test_withdraw_notifier_failure_does_not_fail_the_write`).
+  - A legacy `paused` enrollment's Return button calls `POST .../return`,
+    which only transitions a `held` row — this is a spec-accepted rough edge
+    (see the spec's §3 comment and this plan's Self-review) that will 409 for
+    a genuinely paused row until issue #703 folds `paused` into the hold
+    vocabulary. Rollback is a straight revert of this PR; no data migration
+    needs reversing (the new collection is additive and unused by anything
+    else).
   ```
-
-- [ ] Commit:
-  ```
-  git add docs/release-notes/2026-09-10-departure-actions-from-student-page.md
-  git commit -m "docs(release-notes): add release note for departure actions from the student page
-
-  Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
-  ```
-
-- [ ] After the PR is opened, edit the `PR: #<fill in after PR is opened>` line to the real PR number and push a follow-up commit (the CI gate parses this exact line — see `project_ci_gates_release_notes_and_no_force_push` for the three-section-plus-PR-number contract).
+- [ ] Commit: `git add docs/release-notes/2026-09-10-departure-actions-from-student-page.md` then `git commit -m "docs(release-notes): add release note for departure actions from student page\n\nCo-Authored-By: Claude Opus 5 <noreply@anthropic.com>"`.
 
 ## Self-review
 
 | Spec section | Covered by |
 |---|---|
-| §2 owner decisions — Hold vs Drop as two distinct actions, notify toggle defaults, Hold/Return replace Pause/Resume everywhere, **and the dialog naming who will be emailed** (`familyLabel`) | Tasks 1, 4, 5-9 (naming: Tasks 4, 7, 9; roster surface is an OPEN QUESTION in Task 8) |
-| §3 actions per row (`departureActionsFor` table, Transfer-only-inline layout rule) | Task 1; the pause/resume removal moved to Task 8 so every intermediate task typechecks. `reclaim_pending` is an OPEN QUESTION (Global Constraints). |
-| §4.1 Hold dialog (return date bounds/default, reason, toggle default off, consequence text) | Task 7 |
-| §4.2 Return dialog (reason, toggle default off, consequence text) | Task 7 |
-| §4.3 Drop dialog toggle (default on) + existing fields unchanged | Task 4 |
-| §4 dialogs move into `components/admin/enrollment/` so both surfaces share them | Tasks 3, 4, 7 |
-| §5 backend notify flag on all three requests, notifier pattern (claim, TRANSACTIONAL, never fails the write), copy states effective/return date and billing outcome in plain words | Tasks 5, 6 |
-| §6 past enrollments — no code change, reason still flows to the lifecycle event | Verified only (Tasks 5-6 pass `reason` straight through to `_record_event`/`_persist_lifecycle_dates`, already exercised by `PastEnrollmentsPanel`); no new task needed |
-| §7 out of scope (whole-session cancel, family page action row, pause-request approval flow, hold reclaim/reminder/billing math) | Deliberately untouched by every task — `/pause`, `/resume`, `stop_all_classes`, `ExpireDueHolds`, `SendHoldReminders`, `ProcessStalledReclaims` are not modified anywhere in this plan |
-| §8 testing — unit (`departureActionsFor`, overflow placement), backend (DTO defaults, notifier called once/never, failure doesn't fail the write), e2e (Hold→Return + Drop from student page with the past-enrollments row asserted, roster Pause→Hold label) | Task 1 + Task 7 (unit), Tasks 5-6 (backend: `test_hold_notifies_the_family_only_when_asked`, `test_return_notifies_the_family_only_when_asked`, `test_drop_notifies_the_family_only_when_asked`/`_when_asked`, plus an explicit `test_a_failing_family_notifier_does_not_fail_the_{hold,drop}` in each file — the spec asks for it by name, so it is written per-action rather than assumed from the roster-notify pattern), Tasks 8-9 (e2e) |
+| §1 Purpose (Hold/Drop reachable from the student page) | Tasks 8, 9 |
+| §2 Owner decisions — Hold vs Drop as two distinct actions | Tasks 1, 3, 4, 8 |
+| §2 — #697 frontend finish (Hold/Return replace Pause/Resume everywhere) | Tasks 1, 9, 10 |
+| §2 — notify toggle defaults (off Hold/Return, on Drop) | Tasks 7, 8 |
+| §3 Actions per row (`departureActionsFor` table, layout) | Tasks 1, 2, 9 |
+| §3 — pause/resume removed from `DepartureAction`, `/pause`/`/resume` routes untouched | Task 1 (frontend type), Global Constraints (backend routes explicitly not touched) |
+| §4.1 Hold dialog (fields, consequence text, `holdEnrollment` call) | Task 8 |
+| §4.2 Return dialog | Task 8 |
+| §4.3 Drop dialog (notify toggle default on) | Task 7 |
+| §4 Dialogs move into `components/admin/enrollment/` | Task 7 |
+| §5 Backend notify flag + notifier ports/adapters/claim pattern | Tasks 3, 4, 5 |
+| §6 Past enrollments (no change; reason lands on the row) | Verified as already correct at `SessionsPanel.tsx:763-819` and `session-rows.ts` — no task needed, confirmed unmodified by this plan. |
+| §7 Out of scope (whole-session cancel, family page row, #616 flow) | Deliberately untouched — no task references or modifies `stop_all_classes` UI, the family page, or `/pause`/`/resume`. |
+| §8 Testing — unit (`departureActionsFor`, overflow placement) | Task 1 |
+| §8 Testing — backend (DTO defaults, notifier-once, notifier-failure-safe) | Tasks 3, 4 |
+| §8 Testing — e2e (Hold→Return and Drop from the student page) | Task 10 |
+| §8 Testing — e2e ("Roster spec updates Pause → Hold labels") | **No task — nothing to update.** Verified by grep: no e2e spec exercises the roster's Pause/Resume departure buttons; every `pause` reference under `frontend/e2e/specs/` belongs to the parent pause-request flow (#616), explicitly out of scope per §7. Task 10 re-runs the grep to confirm before skipping. |
 
-**Open questions for the owner (must be answered before the task that needs them):**
-- `reclaim_pending` in `departureActionsFor` — see Global Constraints. Blocks Task 1.
-- `familyLabel` on the class roster (no parent name in `AdminEnrollmentView`) — see Task 8. Blocks Task 8's roster wiring; the code as written assumes option (a), the generic fallback.
+**Deferred / accepted gaps, with reasons:**
+- A legacy `paused` enrollment's Return button calls `/return`, which only transitions `held → active` (`ReturnFromHold.execute`'s `mark_active_if_held`). The spec's own §3 table annotates this row with "legacy rows until #703's vocab settles" — this plan implements the button exactly as specified and does not attempt to widen `ReturnFromHold` to accept a `paused` pre-image, since that is issue #703's job, not this spec's.
+- `hold_started`/`hold_returned` notice keys ARE `hold_seq`-scoped (`f"hold-started:{hold_seq}"` / `f"hold-returned:{hold_seq}"`), matching the existing `hold-reclaim:{seq}` and `hold-reminder:{seq}:{n}` keys, so a second hold-and-return cycle on the same enrollment emails again. `hold_seq` is a parameter on both new `HoldNotifier` methods from Task 3 onward — there is no follow-up correction to remember.
+- Student-page Delete: the spec's §3 table lists `delete` for `active`/`held`/`paused` rows on every surface, including the student page. Task 9 wires it to the same `RemoveEnrollmentDialog` Task 7 already moved, rather than treating it as out of scope — there is no dedicated spec section calling this out explicitly, but leaving it a no-op would contradict §3's table, so this plan does not defer it.
+- No new frontend `app/` route is added by this feature (only existing routes' panels change), so `docs/qa/2026-06-28-production-scale-local-inventory-manifest.json` and the two hardcoded route counts are untouched — confirmed by inspecting the file list above: every new frontend file is a `components/` module, not an `app/` route.
+- No new backend route is added either. `POST /admin/enrollments/{id}/hold`, `/return` and `/withdraw` already exist and already guard with `require_persona("admin")` (404, not 403, for the wrong persona). The plan only adds optional fields to their existing request models, so no persona-gate test is added or changed.
+- **`DepartureActions.studentName` on the student page changes meaning** — today `SessionsPanel` passes `session.session_title` there, so every button's `aria-label` and the overflow trigger's read "… Beginner Badminton" instead of the child's name. Task 9 changes it to the student's name, which the dialogs need and which matches the roster. This is a behaviour change the spec does not mention; it is deliberate, and Task 10 re-runs `admin-students.spec.ts` / `tuition-discounts.spec.ts` to catch selectors that relied on the old label.
+- **Frontend component rendering is not unit-tested anywhere in this plan**, because it cannot be: vitest runs `environment: "node"` with no DOM library installed. `menu.tsx`'s divider and every dialog body are covered only by `pnpm typecheck`, `pnpm lint` and Task 10's Playwright run. The pure decisions (`departureActionsFor`, inline/overflow placement, `separatorBefore`, `buildWithdrawRequest`) ARE unit-tested.
+- **`ReturnFromHold` still refuses a genuinely `paused` row** (`mark_active_if_held` only moves `held`), and `HoldEnrollment` refuses one too (`EnrollmentNotHoldable`, "Resume this enrollment first"). `departureActionsFor("paused")` therefore offers Return and Transfer/Drop/Delete but NOT Hold — which matches spec §3 — and Return on such a row surfaces the backend's error in the dialog. Accepted per §3's own annotation; #703's job to fix.
 
-**Deferred, with reason:**
-- The `paused` status offering `return` even though `ReturnFromHold`'s CAS only accepts `held` (design contract §3's own footnote, "legacy rows until #703's vocab settles") — implemented literally as specified in Task 1; reconciling `mark_active_if_held` to also accept `paused`, or migrating remaining `paused` rows to `held`, is issue #703's scope, not this one's.
-- `formatLifecycleType`'s missing `held`/`returned`/`dropped` labels were a pre-existing gap the spec doesn't mention, but Task 8 fixes it in passing since Hold/Return actions now make those event types visible in `RosterTable`'s `EnrollmentHistory` for the first time — leaving them as "Updated" would be a visible regression introduced by this feature, not a pre-existing one.
+## OPEN QUESTIONS
+
+- **OPEN QUESTION (owner):** Spec §8 asks the roster e2e spec to be updated from Pause → Hold labels, but no such spec exists — the roster's Pause/Resume departure buttons have never had e2e coverage. Is a *new* roster-surface e2e test wanted (Hold/Return from `/admin/sessions/{id}`), or is the student-page coverage in Task 10 sufficient? This plan assumes sufficient and adds no roster test.
+- **OPEN QUESTION (owner):** Spec §5 says the Drop email states "the billing outcome in plain words (credit / no credit / refund) using the policy vocabulary already rendered in the dialog". The dialog's three options are `credit` → "Account credit", `refund` → "Refund", `adjustment` → "Admin adjustment" (`lib/admin/withdrawal.ts:withdrawalOutcomeOptions`) — there is no "no credit" option. Task 5's `_OUTCOME_WORDS` maps `adjustment` → "an admin adjustment — no credit or refund". Confirm that wording is what the owner meant by "no credit", or supply the exact parent-facing sentence for each of the three outcomes.

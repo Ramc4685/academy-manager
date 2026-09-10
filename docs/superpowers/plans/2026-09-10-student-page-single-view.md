@@ -2,2866 +2,1030 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the five-tab admin student detail page with one scrolling page (sticky rail + collapsible sections) so an admin can see status, enrollments, training, billing and compliance without clicking through tabs.
+**Goal:** Replace the five-tab admin student page (`/admin/students/[studentId]`) with one
+scrolling page — a sticky left rail plus collapsible sections — so an admin can see status,
+enrollments, billing, training and compliance without clicking between tabs.
 
-**Architecture:** `page.tsx` keeps its three top-level queries (student, departure policy, parents-for-ChangeParentPanel-until-the-last-task) and stops gating panel content behind a tab switch; every section mounts and fetches its own data, same as today. A new pure `section-state.ts` module decides each section's open/closed default (static per spec, except Compliance which is computed from the loaded student) and is wrapped by a small in-page hook that persists the viewer's own toggles to `localStorage` and honors a `#section` deep link. The Enrollments section gets a new `EnrollmentsSection.tsx` orchestrator that fetches session-type billing (moved out of the now-decommissioned standalone `BillingEnrollmentsPanel`) and feeds it into `SessionsPanel`'s existing table as extra columns/actions, joined on the `enrollment_id` the two data sources already share.
+**Architecture:** `page.tsx` keeps its three existing queries (`departurePolicyQuery`,
+`studentQuery`, `parentsQuery`) and stops gating panel mounts on `activeTab`; every section
+mounts on page load behind a new local `CollapsibleSection` primitive whose open/closed state
+is read from and written to `localStorage` per section id (read in a `useEffect`, never in the
+`useState` initializer — see Task 2 — so the SSR pass and the first client render agree), with
+a `hashchange`-aware effect that forces a matching section open and scrolls to it. The
+Enrollments section renders `SessionsPanel`'s table — which already carries the per-enrollment
+fee, discount and autopay chip the spec asks for — with `BillingEnrollmentsPanel` beneath it
+for the move/override actions that exist nowhere else; see the OPEN QUESTION under "Self-review"
+for why a literal single table is not buildable client-side today. The five components currently
+defined inline in `page.tsx` (`EngagementPanel`, `TrainingSnapshot`, `SkillPathwayPanel`,
+`RecentAttendancePanel`, `ComplianceSummary`) stay inline but move under the new section layout.
+`ChangeParentPanel` and `StudentEditForm`'s `mode="family"` t-shirt field are deleted from this
+page only after spec 2 ships "Move child to another family" on the family page (gated final
+task, not assumed done).
 
-**Tech Stack:** Next.js 16 (webpack build) app router, TanStack Query, Tailwind, `frontend/components/ds` design system, Vitest (`environment: "node"`, no DOM — component behavior is verified by Playwright, not RTL), Playwright e2e.
+**Tech Stack:** Next.js 16 (webpack build) App Router, TanStack Query v5, Tailwind, Rally
+design system (`frontend/components/ds`), Vitest for unit tests, Playwright (`--project=chromium`)
+for e2e. No backend changes — this is a frontend-only plan.
 
 ## Global Constraints
 
-- Tab-based navigation (`role="tab"`, `STUDENT_TABS`, `StudentTabs`, `TabPanel`) is removed entirely; sections are always mounted.
-- Section ids, in column order: `enrollments`, `training`, `billing`, `profile`, `compliance`.
-- Default open state: `enrollments` open, `training` open, `billing` closed (its one-line summary is always visible regardless), `profile` closed, `compliance` computed — open only when `student.waiver_status !== "signed"`, closed otherwise. This is the one "something outstanding" signal the page's existing data supports (see Self-review).
-- Once a viewer toggles a section, their choice is persisted to `localStorage` key `admin-student-sections-v1` and wins over the computed/static default on every later visit.
-- A `#<sectionId>` URL hash on load force-opens that section and scrolls it into view, regardless of stored/default state, and does not overwrite the stored preference for other sections.
-- `StudentEditForm`'s `mode` prop is removed; one form holds identity fields, DOB, status, notes, previous experience, medical notes, emergency contact name/phone, and t-shirt size.
-- `ChangeParentPanel` and the `parentsQuery` that feeds it are removed from this page as the last task, gated on the family page already shipping "Move child to another family" (spec 2 §6) — verified by inspection, not assumed. **Plan 2 (`docs/superpowers/plans/2026-09-10-families-directory-consolidation.md`) does NOT build that control** — its Self-review §6 row defers "Move child to another family" to a follow-on. In the agreed build order (plan 1 → plan 2 → this plan → plan 3) Task 11's gate therefore fails and Task 11 is skipped; `ChangeParentPanel` stays on this page until the follow-on ships. Task 13's release note is worded for that outcome.
-- No backend change, no new endpoint. `getAdminUser` (existing `/admin/users/{id}` route) is a new *call site* on this page (rail login badge), not a new endpoint.
-- `docs/qa/2026-06-28-production-scale-local-inventory-manifest.json` is untouched — no new `app/` route is added. Every new file in `app/(admin)/admin/students/[studentId]/` is a co-located component, not a route segment (same as the existing `SessionsPanel.tsx`, `StatusChip.tsx`, …), so the route count and the four backend inventory tests are unaffected.
-  - OPEN QUESTION (owner): that manifest's entry for `/admin/students/[studentId]` (lines ~1665-1735) names workflows **"Billing tab"** and **"Family tab"**, the risk edge **"Selected invoice stale after tab switch"**, the input **"Parent selector"** and the modal **"Parent change"** — all of which this change deletes. Leaving it untouched keeps CI green (`test_inventory_acceptance_coverage.py` only checks manifest-internal consistency) but leaves the audit artifact describing a page that no longer exists. Decide: (a) leave it as a point-in-time 2026-06-28 record, or (b) rename those workflows/controls in the same PR — option (b) means editing the matching `acceptance` strings too, or the coverage test fails.
-- Frontend Vitest specs run in **no CI job** in this repo, so Tasks 1/3/4's unit tests are a local-only gate. Run them yourself (`pnpm test:unit` or the per-file commands below); do not assume CI will catch a red one.
-- Cross-plan dependency: spec §3.1 says the Enrollments table carries "the spec-1 action set". That action set (Hold / Return / Drop / Delete via `DepartureActions`' overflow menu, computed per row by `departureActionsFor(session.status)` from `@/components/admin/enrollment/departure-actions`) is delivered by the **sibling plan** `docs/superpowers/plans/2026-09-10-departure-actions-from-student-page.md` (plan 1), which lands **before** this plan in the agreed order (1 → 2 → 4 → 3). This plan must not re-implement it: by the time Task 5 runs, `SessionsPanel.tsx`'s action `<td>` already renders `actions={departureActionsFor(session.status)}` and mounts `HoldEnrollmentDialog` / `ReturnFromHoldDialog` / `WithdrawalCreditDialog` / `RemoveEnrollmentDialog` from `@/components/admin/enrollment/*`, and `SessionsPanel` already takes the **required** `studentName: string` and optional `familyLabel?: string | null` props (plan 1 Task 9). Task 5 leaves that `<DepartureActions>` block and those props untouched and only adds the billing cell / Move-Override buttons around them; Task 7's `EnrollmentsSection` must forward `studentName` and `familyLabel` (plan 1's `page.tsx` wiring is replaced wholesale by Task 10). Line numbers quoted in Task 5 are pre-plan-1 — locate by landmark, not by line.
+- No new endpoint, no aggregate query — each section keeps its own existing query (spec §2, "Aggregate endpoint").
+- Sections open by default: Header (always visible, not collapsible), Enrollments, Training & attendance. The billing summary line renders **outside** the Billing `CollapsibleSection`, immediately above it, so it stays visible when the section is collapsed (spec §2 "Billing summary line always visible, detail collapsed"). Compliance starts collapsed, EXCEPT it auto-opens when `waiver_status !== "signed"` (spec §2, §3.5). `AdminStudentDetail.waiver_status` is optional (`lib/api/v2/students.ts:106`), so a payload that omits it is treated as outstanding and auto-opens — deliberate, documented in the helper's JSDoc.
+- Past enrollments table (inside Enrollments section) collapses after 5 rows, matching spec §3.1 exactly ("collapsed after five rows").
+- Section open/closed state persists per browser in `localStorage`, keyed per section id (spec §3, final paragraph).
+- Deep links `#enrollments`, `#training`, `#billing`, `#profile`, `#compliance` open and scroll to that section (spec §3, final paragraph). These five ids are the fixed vocabulary — do not rename them once e2e specs reference them. The DOM anchor id MUST be exactly the bare section id (`id="enrollments"`), not a prefixed variant, or the browser's own `#enrollments` navigation and the rail's jump links resolve to nothing. The rail's jump links are same-page hash changes, which fire `hashchange` but not a remount, so the hash effect must subscribe to `hashchange` as well as running once on mount — otherwise clicking "Billing" in the rail never opens the collapsed Billing section.
+- `StudentEditForm`'s three `mode` values (`overview` | `training` | `family`) collapse into one always-rendered form with no `mode` prop; the `family` mode's only field (t-shirt size) becomes part of the merged Profile form (spec §3.4, "The `mode` prop and the split go away").
+- `ChangeParentPanel` and the parent-contact fields leave this page ONLY in the final task, gated on the family page shipping "Move child to another family" (spec §4 sequencing rule — verify before deleting, do not assume).
+- Desktop layout: sticky left rail (~280px) + one scrolling column; mobile: rail becomes the top card, sections stack (spec §3).
+- No backend change, no coach/parent view change, no redesign of individual panel internals (spec §5, Out of scope).
+- Repo rule: a **new** `app/` route requires a matching `docs/qa/2026-06-28-production-scale-local-inventory-manifest.json` entry in the same commit. No route is added or removed here — `CollapsibleSection.tsx` and `section-storage.ts` are plain modules inside an existing route directory, and the route stays `/admin/students/[studentId]` — so the required-route assertions in `backend/v2/tests/unit/test_audit_inventory_manifest.py` are unaffected. The manifest entry for this route (lines 1665-1730) nonetheless names workflows "Billing tab" and "Family tab", which stop existing; Task 9 relabels them. No backend file is touched at all, so the `backend/v2/composition/admin.py` size cap and the import-linter cross-context contracts are not in play, and there is no migration (prod runs migrations by hand) and no persona 404-vs-403 surface in this change.
 
 ## File structure
 
 | File | Responsibility |
 |---|---|
-| `frontend/app/(admin)/admin/students/[studentId]/section-state.ts` | New. Pure section-id list, default-open rule, localStorage parse/serialize, hash → section-id parsing. |
-| `frontend/app/(admin)/admin/students/[studentId]/section-state.test.ts` | New. Unit tests for the above. |
-| `frontend/app/(admin)/admin/students/[studentId]/CollapsibleSection.tsx` | New. One disclosure `Card` used for every section; owns the toggle button, anchor id, `aria-expanded`. |
-| `frontend/app/(admin)/admin/students/[studentId]/StudentRail.tsx` | New. Sticky left rail: avatar/name/status/level/DOB-age, Stop all classes, family card with login badge, section jump links. |
-| `frontend/app/(admin)/admin/students/[studentId]/session-rows.ts` | Modified. Adds `billingFactsByEnrollmentId` (joins session-type billing into session rows) and `billingSummaryFacts`/`billingSummaryLine` (Billing section's always-visible line). |
-| `frontend/app/(admin)/admin/students/[studentId]/session-rows.test.ts` | Modified. New `describe` blocks for the two additions. |
-| `frontend/app/(admin)/admin/students/[studentId]/format.ts` | Modified. Adds `formatAgeFromDob` for the rail. |
-| `frontend/app/(admin)/admin/students/[studentId]/format.test.ts` | Modified. Tests `formatAgeFromDob`. |
-| `frontend/app/(admin)/admin/students/[studentId]/SessionsPanel.tsx` | Modified. Enrolled-sessions table gains a session-type billing cell + Move/Override-price actions per row (via new optional props); `PastEnrollmentsPanel` collapses after 5 rows. |
-| `frontend/app/(admin)/admin/students/[studentId]/BillingEnrollmentsPanel.tsx` | Modified. Standalone panel/table removed; keeps and exports `MoveEnrollmentDialog`, `OverridePriceDialog`, `ProrationResult` for reuse by `EnrollmentsSection`. |
-| `frontend/app/(admin)/admin/students/[studentId]/EnrollmentsSection.tsx` | New. Fetches billing enrollments + session types, owns the move/override dialog state, renders `SessionsPanel` + the shared dialogs. |
-| `frontend/app/(admin)/admin/students/[studentId]/BillingSummaryLine.tsx` | New. Renders the always-visible Billing summary line from `session-rows.ts` facts. |
-| `frontend/app/(admin)/admin/students/[studentId]/StudentEditForm.tsx` | Modified. `StudentEditForm` loses its `mode` prop and becomes one form; `ChangeParentPanel` stays defined, unused by this page after the last task. |
-| `frontend/app/(admin)/admin/students/[studentId]/page.tsx` | Modified. Tabs removed; renders `StudentRail` + 5 `CollapsibleSection`s. |
-| `frontend/e2e/specs/admin-students.spec.ts` | Modified. Tab clicks/testids replaced with section ids; assertions re-sequenced to match the new default-open state; adds the `GET /admin/users/{parentId}` stub the rail's family card now needs. |
-| `frontend/e2e/specs/tuition-discounts.spec.ts` | Modified. Also drives `/admin/students/[studentId]` and clicks the Sessions and Billing tabs (lines 458, 497); same de-tabbing + the new parent-detail stub. |
-| `docs/release-notes/2026-09-10-student-page-single-view.md` | New. Release note (final task). |
+| `frontend/app/(admin)/admin/students/[studentId]/CollapsibleSection.tsx` | **Create.** Local disclosure primitive: header button (title + chevron), `localStorage`-backed open state keyed by `id`, `id={`student-section-${id}`}` for deep-link scroll targeting, controlled-open override prop for the hash-driven and auto-open-on-outstanding-compliance cases. **Correction:** the anchor id must be the bare section id (`id={id}`), not a `student-section-` prefix, or `#enrollments` resolves to nothing; and the stored open state is applied in a `useEffect`, never in the `useState` initializer, so SSR and first client render agree. |
+| `frontend/app/(admin)/admin/students/[studentId]/section-storage.ts` | **Create.** Pure helpers `readSectionOpen(id, fallback)` / `writeSectionOpen(id, open)` wrapping `localStorage` in try/catch (private per browser, never touches the server) — kept pure and free of React so they unit-test without rendering, matching the existing `session-rows.ts` convention. Vitest runs `environment: "node"` (`frontend/vitest.config.ts`) and jsdom/happy-dom is **not** a dependency, so both the helper and its test must go through `globalThis.window` instead of assuming a DOM. |
+| `frontend/app/(admin)/admin/students/[studentId]/session-rows.ts` | **Unchanged.** No merge helper is added. Verified: `AdminStudentSessionSummary` carries `enrollment_id`/`session_id` (`lib/api/v2/students.ts:39-59`) and `AdminBillingEnrollmentView` carries its own `enrollment_id` plus `session_type_id` (`lib/api/admin.ts:3378-3389`) — no shared key exists, so a client-side join is not writable and a stub that always returns `null` is dead code. See the OPEN QUESTION in Self-review. |
+| `frontend/app/(admin)/admin/students/[studentId]/SessionsPanel.tsx` | **Modify.** One change only: `PastEnrollmentsPanel` — module-private, rendered by `SessionsPanel`, **not** exported — caps its visible rows at 5 with a "Show all N" toggle (spec §3.1 "collapsed after five rows"). Its `Card` wrapper stays. No billing props are added: the current-enrollment table already renders the fee (`amount_cents`), the `discount` and the autopay chip the spec's §3.1 list names. **Cross-plan:** the line numbers quoted in Task 3 (`:763`, `:359`, `:228`) were read on `main` *before* plan 1 (`2026-09-10-departure-actions-from-student-page.md`, Task 9) rewrote this file's `<DepartureActions>` block and added four dialog mounts, a `studentName` prop and four `useState` targets. Plan 1 lands first, so re-locate `PastEnrollmentsPanel` by name, not by line number, and do **not** touch plan 1's `departureActionsFor(session.status)` call or its dialog mounts. |
+| `frontend/app/(admin)/admin/students/[studentId]/BillingEnrollmentsPanel.tsx` | **Unchanged.** Rendered as-is beneath `SessionsPanel` inside the Enrollments section. Its Move / Override-price dialogs exist nowhere else, which is why it stays on the page; folding its rows away is blocked by the missing join key (Self-review OPEN QUESTION). |
+| `frontend/app/(admin)/admin/students/[studentId]/StudentEditForm.tsx` | **Modify.** `StudentEditForm` drops the `mode` prop and its `StudentEditMode` type; renders all fields (identity, DOB, status, notes, previous experience, medical notes, emergency contact, t-shirt size) in one form, one dirty-check, one submit. `ChangeParentPanel` stays exported unchanged until Task 8 deletes its usage (and the function itself once spec 2 confirms readiness). |
+| `frontend/app/(admin)/admin/students/[studentId]/page.tsx` | **Modify.** Remove `StudentTab` type, `STUDENT_TABS`, `StudentTabs`, `TabPanel`, tab state; add the rail/column layout, five `CollapsibleSection`s, hash-scroll effect, compliance auto-open logic. |
+| `frontend/app/(admin)/admin/students/[studentId]/section-storage.test.ts` | **Create.** Unit tests for `readSectionOpen`/`writeSectionOpen`. |
+| `frontend/e2e/specs/admin-students.spec.ts` | **Modify.** Replace `getByRole("tab", ...)` navigation with section-open assertions; the `admin-student-training-tab`/`admin-student-compliance-tab` testids are replaced by the `CollapsibleSection`-emitted `admin-student-section-training`/`admin-student-section-compliance`; the `admin-student-training-edit-form` testid becomes `admin-student-profile-edit-form` (spec §6). |
+| `frontend/e2e/specs/tuition-discounts.spec.ts` | **Modify.** Lines 458 and 497 click `getByRole("tab", { name: "Sessions" })` / `{ name: "Billing" }` on `/admin/students/student-discounts`. Those tabs cease to exist, so this spec breaks with this change and must be rewritten in the same PR (Task 7b). The plan's earlier claim that no other spec touched the student-page tabs was wrong — re-verified 2026-09-10 by grep. |
+| `docs/qa/2026-06-28-production-scale-local-inventory-manifest.json` | **Modify.** The `/admin/students/[studentId]` entry (lines 1665-1730) lists workflows "Billing tab" and "Family tab" and acceptance strings naming them; relabel to "Billing section" / "Compliance section" so the manifest still describes the real surface. No route is added or removed, so `backend/v2/tests/unit/test_audit_inventory_manifest.py`'s required-route set is unaffected. |
+| `docs/release-notes/2026-09-10-student-page-single-view.md` | **Create.** Release note for the Release Notes Gate (`scripts/dev/release_notes_check.py`: exactly `## What changed`, `## Deploy notes`, `## Risk / rollback`, plus a `PR: #<n>` marker line). |
 
----
-
-### Task 1: Section-state pure helpers
+## Task 1: `section-storage.ts` — persisted open/closed state
 
 **Files:**
-- Create: `frontend/app/(admin)/admin/students/[studentId]/section-state.ts`
-- Test: `frontend/app/(admin)/admin/students/[studentId]/section-state.test.ts`
+- Create: `frontend/app/(admin)/admin/students/[studentId]/section-storage.ts`
+- Test: `frontend/app/(admin)/admin/students/[studentId]/section-storage.test.ts`
 
 **Interfaces:**
-- Produces: `SectionId` type, `SECTION_IDS: SectionId[]`, `SECTION_STORAGE_KEY: string`, `isValidSectionId(value: string): value is SectionId`, `defaultSectionOpen(id: SectionId, complianceOutstanding: boolean): boolean`, `parseStoredSections(raw: string | null): Partial<Record<SectionId, boolean>>`, `serializeSections(state: Partial<Record<SectionId, boolean>>): string`, `sectionIdFromHash(hash: string): SectionId | null`.
-- Consumes: nothing (pure).
+- Produces: `readSectionOpen(sectionId: string, fallback: boolean): boolean`, `writeSectionOpen(sectionId: string, open: boolean): void`
+- Consumes: `globalThis.window?.localStorage`. **Verified constraint:** `frontend/vitest.config.ts` sets `environment: "node"` and `globals: false`, and neither `jsdom` nor `happy-dom` is in `frontend/package.json` — so `window` does NOT exist under vitest. The helper must reach the store through `globalThis.window` (optional-chained, inside try/catch) and the test must install a fake `window` rather than assume one; a `// @vitest-environment jsdom` pragma would fail to resolve the missing dependency.
 
-- [ ] Write the failing test file:
+- [ ] Write failing test in `frontend/app/(admin)/admin/students/[studentId]/section-storage.test.ts`:
+  ```ts
+  import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-```ts
-import { describe, expect, it } from "vitest";
+  import { readSectionOpen, writeSectionOpen } from "./section-storage";
 
-import {
-  SECTION_IDS,
-  defaultSectionOpen,
-  isValidSectionId,
-  parseStoredSections,
-  sectionIdFromHash,
-  serializeSections,
-} from "./section-state";
-
-describe("SECTION_IDS", () => {
-  it("lists the five sections in column order", () => {
-    expect(SECTION_IDS).toEqual(["enrollments", "training", "billing", "profile", "compliance"]);
-  });
-});
-
-describe("isValidSectionId", () => {
-  it("accepts known ids and rejects everything else", () => {
-    expect(isValidSectionId("billing")).toBe(true);
-    expect(isValidSectionId("sessions")).toBe(false);
-    expect(isValidSectionId("")).toBe(false);
-  });
-});
-
-describe("defaultSectionOpen", () => {
-  it("opens enrollments and training, keeps billing and profile closed", () => {
-    expect(defaultSectionOpen("enrollments", false)).toBe(true);
-    expect(defaultSectionOpen("training", false)).toBe(true);
-    expect(defaultSectionOpen("billing", false)).toBe(false);
-    expect(defaultSectionOpen("profile", false)).toBe(false);
-  });
-
-  it("opens compliance only when something is outstanding", () => {
-    expect(defaultSectionOpen("compliance", true)).toBe(true);
-    expect(defaultSectionOpen("compliance", false)).toBe(false);
-  });
-});
-
-describe("parseStoredSections", () => {
-  it("returns an empty object for null, malformed json, or a non-object", () => {
-    expect(parseStoredSections(null)).toEqual({});
-    expect(parseStoredSections("not json")).toEqual({});
-    expect(parseStoredSections("42")).toEqual({});
-  });
-
-  it("keeps only known section ids with boolean values", () => {
-    const raw = JSON.stringify({ billing: true, profile: "yes", unknown: false, training: false });
-    expect(parseStoredSections(raw)).toEqual({ billing: true, training: false });
-  });
-
-  it("round-trips through serializeSections", () => {
-    const state = { enrollments: false, compliance: true };
-    expect(parseStoredSections(serializeSections(state))).toEqual(state);
-  });
-});
-
-describe("sectionIdFromHash", () => {
-  it("parses a #section hash", () => {
-    expect(sectionIdFromHash("#billing")).toBe("billing");
-  });
-
-  it("returns null for no hash or an unknown id", () => {
-    expect(sectionIdFromHash("")).toBeNull();
-    expect(sectionIdFromHash("#")).toBeNull();
-    expect(sectionIdFromHash("#nope")).toBeNull();
-  });
-});
-```
-
-- [ ] Run it and confirm it fails on the missing module:
-
-```
-cd frontend && pnpm vitest run app/\(admin\)/admin/students/\[studentId\]/section-state.test.ts
-```
-
-Expected: fails with `Cannot find module './section-state'`.
-
-- [ ] Implement `section-state.ts`:
-
-```ts
-/**
- * Pure helpers for the student single-view page's collapsible sections.
- * No React, no localStorage access — kept testable under Vitest's node
- * environment. `page.tsx` wraps these with the actual localStorage/hash
- * reads, which only run in the browser.
- */
-
-export type SectionId = "enrollments" | "training" | "billing" | "profile" | "compliance";
-
-export const SECTION_IDS: SectionId[] = ["enrollments", "training", "billing", "profile", "compliance"];
-
-export const SECTION_STORAGE_KEY = "admin-student-sections-v1";
-
-const STATIC_DEFAULTS: Record<Exclude<SectionId, "compliance">, boolean> = {
-  enrollments: true,
-  training: true,
-  billing: false,
-  profile: false,
-};
-
-export function isValidSectionId(value: string): value is SectionId {
-  return (SECTION_IDS as string[]).includes(value);
-}
-
-/** Compliance auto-opens only when the waiver isn't signed — see plan Self-review. */
-export function defaultSectionOpen(id: SectionId, complianceOutstanding: boolean): boolean {
-  if (id === "compliance") return complianceOutstanding;
-  return STATIC_DEFAULTS[id];
-}
-
-/** Parses the per-browser persisted toggle state; anything malformed reads as "nothing stored". */
-export function parseStoredSections(raw: string | null): Partial<Record<SectionId, boolean>> {
-  if (!raw) return {};
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return {};
+  // vitest runs with environment: "node" (frontend/vitest.config.ts) and no
+  // jsdom dependency, so there is no `window`. Install the smallest possible
+  // stand-in for the one API the helper uses.
+  function installFakeStorage(overrides: Partial<Storage> = {}) {
+    const map = new Map<string, string>();
+    const storage = {
+      getItem: (k: string) => map.get(k) ?? null,
+      setItem: (k: string, v: string) => void map.set(k, v),
+      removeItem: (k: string) => void map.delete(k),
+      clear: () => map.clear(),
+      key: () => null,
+      get length() {
+        return map.size;
+      },
+      ...overrides,
+    } as unknown as Storage;
+    (globalThis as { window?: unknown }).window = { localStorage: storage };
+    return storage;
   }
-  if (!parsed || typeof parsed !== "object") return {};
-  const result: Partial<Record<SectionId, boolean>> = {};
-  for (const id of SECTION_IDS) {
-    const value = (parsed as Record<string, unknown>)[id];
-    if (typeof value === "boolean") result[id] = value;
+
+  describe("section-storage", () => {
+    beforeEach(() => {
+      installFakeStorage();
+    });
+
+    afterEach(() => {
+      delete (globalThis as { window?: unknown }).window;
+    });
+
+    it("returns the fallback when nothing is stored", () => {
+      expect(readSectionOpen("enrollments", true)).toBe(true);
+      expect(readSectionOpen("billing", false)).toBe(false);
+    });
+
+    it("round-trips a written value", () => {
+      writeSectionOpen("compliance", true);
+      expect(readSectionOpen("compliance", false)).toBe(true);
+      writeSectionOpen("compliance", false);
+      expect(readSectionOpen("compliance", true)).toBe(false);
+    });
+
+    it("keys are independent per section id", () => {
+      writeSectionOpen("training", true);
+      expect(readSectionOpen("profile", false)).toBe(false);
+    });
+
+    it("falls back cleanly when localStorage throws", () => {
+      installFakeStorage({
+        getItem: () => {
+          throw new Error("blocked");
+        },
+      });
+      expect(readSectionOpen("enrollments", true)).toBe(true);
+    });
+
+    it("falls back cleanly when there is no window at all (SSR pass)", () => {
+      delete (globalThis as { window?: unknown }).window;
+      expect(readSectionOpen("enrollments", true)).toBe(true);
+      expect(() => writeSectionOpen("enrollments", false)).not.toThrow();
+    });
+  });
+  ```
+- [ ] Run: `cd frontend && pnpm vitest run app/\(admin\)/admin/students/\[studentId\]/section-storage.test.ts` — expected FAIL (module `./section-storage` does not exist).
+- [ ] Implement `frontend/app/(admin)/admin/students/[studentId]/section-storage.ts`:
+  ```ts
+  /**
+   * Per-browser, per-section collapse state for the student page (spec
+   * 2026-09-10-student-page-single-view §3, final paragraph). Never sent to
+   * the server; wrapped in try/catch because localStorage can throw in a
+   * private window or with site data blocked.
+   */
+  const STORAGE_PREFIX = "admin-student-section:";
+
+  export function readSectionOpen(sectionId: string, fallback: boolean): boolean {
+    try {
+      const raw = globalThis.window?.localStorage.getItem(
+        `${STORAGE_PREFIX}${sectionId}`,
+      );
+      if (raw === null || raw === undefined) return fallback;
+      return raw === "1";
+    } catch {
+      return fallback;
+    }
   }
-  return result;
-}
 
-export function serializeSections(state: Partial<Record<SectionId, boolean>>): string {
-  return JSON.stringify(state);
-}
+  export function writeSectionOpen(sectionId: string, open: boolean): void {
+    try {
+      globalThis.window?.localStorage.setItem(
+        `${STORAGE_PREFIX}${sectionId}`,
+        open ? "1" : "0",
+      );
+    } catch {
+      // Best-effort only.
+    }
+  }
+  ```
+- [ ] Run: `cd frontend && pnpm vitest run app/\(admin\)/admin/students/\[studentId\]/section-storage.test.ts` — expected PASS (5 tests).
+- [ ] Commit: `git add frontend/app/\(admin\)/admin/students/\[studentId\]/section-storage.ts frontend/app/\(admin\)/admin/students/\[studentId\]/section-storage.test.ts` then:
+  ```
+  feat(admin): add persisted collapse state for student page sections
 
-/** `"#enrollments"` -> `"enrollments"`; no hash or an unknown id -> `null`. */
-export function sectionIdFromHash(hash: string): SectionId | null {
-  const bare = hash.replace(/^#/, "");
-  return isValidSectionId(bare) ? bare : null;
-}
-```
+  Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+  ```
 
-- [ ] Run it again, expect PASS:
-
-```
-cd frontend && pnpm vitest run app/\(admin\)/admin/students/\[studentId\]/section-state.test.ts
-```
-
-- [ ] Commit:
-
-```
-git add frontend/app/\(admin\)/admin/students/\[studentId\]/section-state.ts frontend/app/\(admin\)/admin/students/\[studentId\]/section-state.test.ts
-git commit -m "feat(admin-students): add pure section-state helpers for the single-view page
-
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
-```
-
----
-
-### Task 2: `CollapsibleSection` component
+## Task 2: `CollapsibleSection` primitive
 
 **Files:**
 - Create: `frontend/app/(admin)/admin/students/[studentId]/CollapsibleSection.tsx`
+- Test: none (thin presentational wrapper; covered by the page-level e2e spec in Task 7 and manual visual check in Task 9). Verified via `pnpm typecheck` in this task's run step instead.
 
 **Interfaces:**
-- Consumes: `Card` (`@/components/ds/card`), `Overline` (`@/components/ds/typography`), `ChevronDown` (`lucide-react`).
-- Produces: `CollapsibleSection({ id, title, icon, open, onToggle, children, headExtra }): JSX.Element`.
+- Consumes: `readSectionOpen`/`writeSectionOpen` from `./section-storage`; `Card` from `@/components/ds` (verified: `frontend/components/ds/index.ts` re-exports `Card`, and `Card` accepts `p`, `className` and `data-testid` — `components/ds/card.tsx:5-13`); `ChevronDown` from `lucide-react` (already a project dependency, confirmed via existing `lucide-react` imports in `page.tsx`). `Overline` is NOT used — the header button styles its own label — so do not import it.
+- Produces: `CollapsibleSection({ id, title, defaultOpen, forceOpen, children }): JSX.Element`. `id` is the deep-link/testid slug (e.g. `"enrollments"`) and is used verbatim as the DOM anchor id so `#enrollments` resolves. `forceOpen`, when `true`, opens the section and is NOT persisted back to storage (used for the hash and outstanding-compliance auto-open cases so a one-time force doesn't overwrite the admin's own preference).
+- **Hydration:** the initial render must use `defaultOpen` only. Reading `localStorage` inside the `useState` initializer makes the server-rendered markup (storage unavailable → fallback) disagree with the client's first render whenever a preference is stored, and React logs a hydration error — which the spec §6 clean-console assertion would fail on. Read storage in an effect instead.
 
-No unit test (this project has no RTL/DOM harness — component behavior is exercised end-to-end in Task 12's Playwright spec). Verify by typecheck only.
+- [ ] Implement `frontend/app/(admin)/admin/students/[studentId]/CollapsibleSection.tsx`:
+  ```tsx
+  "use client";
 
-- [ ] Implement:
+  import { type ReactNode, useEffect, useState } from "react";
+  import { ChevronDown } from "lucide-react";
 
-```tsx
-"use client";
+  import { Card } from "@/components/ds";
 
-import type { ReactNode } from "react";
-import { ChevronDown } from "lucide-react";
+  import { readSectionOpen, writeSectionOpen } from "./section-storage";
 
-import { Card } from "@/components/ds/card";
-import { Overline } from "@/components/ds/typography";
+  export function CollapsibleSection({
+    id,
+    title,
+    defaultOpen,
+    forceOpen,
+    children,
+  }: {
+    id: string;
+    title: string;
+    defaultOpen: boolean;
+    /** One-time override (deep link, outstanding compliance) — opens but is not persisted. */
+    forceOpen?: boolean;
+    children: ReactNode;
+  }) {
+    // First render (server AND client) uses defaultOpen only; the stored
+    // preference is applied after mount so hydration never mismatches.
+    const [open, setOpen] = useState(defaultOpen);
 
-/**
- * One disclosure card shared by every section on the student single-view
- * page. `headExtra` renders next to the chevron even while collapsed — the
- * Billing section uses it for the always-visible summary line.
- */
-export function CollapsibleSection({
-  id,
-  title,
-  icon,
-  open,
-  onToggle,
-  children,
-  headExtra,
-}: {
-  id: string;
-  title: string;
-  icon?: ReactNode;
-  open: boolean;
-  onToggle: () => void;
-  children: ReactNode;
-  headExtra?: ReactNode;
-}) {
-  return (
-    <Card p={0} data-testid={`admin-student-section-${id}`}>
-      <div id={`section-${id}`} className="scroll-mt-24">
+    useEffect(() => {
+      setOpen(readSectionOpen(id, defaultOpen));
+      // defaultOpen is a constant per call site; re-reading storage on every
+      // change would clobber a click.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [id]);
+
+    useEffect(() => {
+      if (forceOpen) setOpen(true);
+    }, [forceOpen]);
+
+    return (
+      <Card
+        p={0}
+        className="scroll-mt-4"
+        data-testid={`admin-student-section-${id}`}
+      >
+        {/* Bare id: this is the target of the spec's `#enrollments` deep links
+            and of the rail's jump links. Do not prefix it. */}
+        <div id={id} className="scroll-mt-4" />
         <button
           type="button"
-          className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600"
+          className="flex w-full items-center justify-between gap-2 p-5 text-left"
           aria-expanded={open}
-          aria-controls={`section-${id}-body`}
-          onClick={onToggle}
-          data-testid={`admin-student-section-${id}-toggle`}
+          aria-controls={`student-section-${id}-body`}
+          onClick={() => {
+            const next = !open;
+            setOpen(next);
+            writeSectionOpen(id, next);
+          }}
         >
-          <span className="flex items-center gap-2">
-            {icon}
-            <Overline>{title}</Overline>
+          <span className="font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
+            {title}
           </span>
-          <span className="flex items-center gap-3">
-            {headExtra}
-            <ChevronDown
-              className={`size-4 shrink-0 text-rally-muted transition-transform ${open ? "rotate-180" : ""}`}
-              aria-hidden="true"
-            />
-          </span>
+          <ChevronDown
+            className={`size-4 text-rally-muted transition-transform ${open ? "rotate-180" : ""}`}
+            aria-hidden="true"
+          />
         </button>
         {open && (
-          <div id={`section-${id}-body`} className="border-t border-neutral-200 px-5 pb-5 pt-4">
+          <div id={`student-section-${id}-body`} className="px-5 pb-5">
             {children}
           </div>
         )}
-      </div>
-    </Card>
-  );
-}
-```
-
-- [ ] Typecheck:
-
-```
-cd frontend && pnpm typecheck
-```
-
-Expected: PASS (file is not imported anywhere yet, but must compile standalone — `pnpm typecheck` runs `tsc --noEmit` over the whole project).
-
-- [ ] Commit:
-
-```
-git add frontend/app/\(admin\)/admin/students/\[studentId\]/CollapsibleSection.tsx
-git commit -m "feat(admin-students): add CollapsibleSection for the single-view page
-
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
-```
-
----
-
-### Task 3: `formatAgeFromDob` for the rail
-
-**Files:**
-- Modify: `frontend/app/(admin)/admin/students/[studentId]/format.ts` (append function + export)
-- Modify: `frontend/app/(admin)/admin/students/[studentId]/format.test.ts` (append `describe` block)
-
-**Interfaces:**
-- Produces: `formatAgeFromDob(dob: string | null | undefined, now?: Date): string | null`.
-
-- [ ] Add the failing test. Append to `format.test.ts`:
-
-```ts
-describe("formatAgeFromDob", () => {
-  const now = new Date("2026-09-10T12:00:00.000Z");
-
-  it("returns null without a date of birth", () => {
-    expect(formatAgeFromDob(null, now)).toBeNull();
-    expect(formatAgeFromDob(undefined, now)).toBeNull();
-  });
-
-  it("returns the age in whole years as of now, after this year's birthday", () => {
-    expect(formatAgeFromDob("2015-04-10", now)).toBe("11y");
-  });
-
-  it("does not count this year's birthday before it happens", () => {
-    expect(formatAgeFromDob("2015-12-25", now)).toBe("10y");
-  });
-
-  it("counts the birthday itself as already happened", () => {
-    expect(formatAgeFromDob("2015-09-10", now)).toBe("11y");
-  });
-});
-```
-
-Add `formatAgeFromDob` to the existing top import line in `format.test.ts` (find the `import { ... } from "./format";` line and add it to the list).
-
-- [ ] Run and confirm the new tests fail on the missing export:
-
-```
-cd frontend && pnpm vitest run app/\(admin\)/admin/students/\[studentId\]/format.test.ts
-```
-
-Expected: fails — `formatAgeFromDob is not defined` / TS error.
-
-- [ ] Implement. Append to `format.ts` before the final `export { ... };` block:
-
-```ts
-// DOB is a date-only string ("2015-04-10"); parsed at UTC midnight and
-// compared in UTC calendar fields so the rail's age never flips a day early
-// or late depending on the viewer's timezone.
-function formatAgeFromDob(dob: string | null | undefined, now: Date = new Date()): string | null {
-  if (!dob) return null;
-  const parsed = new Date(`${dob}T00:00:00.000Z`);
-  if (Number.isNaN(parsed.getTime())) return null;
-  let age = now.getUTCFullYear() - parsed.getUTCFullYear();
-  const hadBirthdayThisYear =
-    now.getUTCMonth() > parsed.getUTCMonth() ||
-    (now.getUTCMonth() === parsed.getUTCMonth() && now.getUTCDate() >= parsed.getUTCDate());
-  if (!hadBirthdayThisYear) age -= 1;
-  return age >= 0 ? `${age}y` : null;
-}
-```
-
-Then update the trailing export list to include `formatAgeFromDob`:
-
-```ts
-export {
-  formatCurrencyCents,
-  centsToDollarInput,
-  dollarsToCents,
-  getErrorMessage,
-  formatDate,
-  formatDateUtc,
-  formatInvoiceDate,
-  formatDateTime,
-  formatDateTimeRange,
-  formatAgeFromDob,
-  previewNetCents,
-};
-```
-
-- [ ] Run again, expect PASS:
-
-```
-cd frontend && pnpm vitest run app/\(admin\)/admin/students/\[studentId\]/format.test.ts
-```
-
-- [ ] Commit:
-
-```
-git add frontend/app/\(admin\)/admin/students/\[studentId\]/format.ts frontend/app/\(admin\)/admin/students/\[studentId\]/format.test.ts
-git commit -m "feat(admin-students): add formatAgeFromDob for the student rail
-
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
-```
-
----
-
-### Task 4: Session-type billing merge + Billing summary facts
-
-**Files:**
-- Modify: `frontend/app/(admin)/admin/students/[studentId]/session-rows.ts`
-- Modify: `frontend/app/(admin)/admin/students/[studentId]/session-rows.test.ts`
-
-**Interfaces:**
-- Consumes: `AdminBillingEnrollmentView`, `AdminSessionTypeView` (`@/lib/api/admin`); `AdminStudentDetail` (`@/lib/api/v2/students`); `OPEN_BILLING_STATUSES` (`./StatusChip`); `formatCurrencyCents` (`./format`).
-- Produces: `EnrollmentBillingFacts` type, `billingFactsByEnrollmentId(billingEnrollments, sessionTypeById): Map<string, EnrollmentBillingFacts>`, `BillingSummaryFacts` type, `billingSummaryFacts(student): BillingSummaryFacts`, `billingSummaryLine(facts): string`.
-
-- [ ] Add failing tests. Append to `session-rows.test.ts` (add new imports alongside the existing `import { autopayChip, familyBillingHref, pastEnrollmentRow } from "./session-rows";` line — extend it to also import `billingFactsByEnrollmentId, billingSummaryFacts, billingSummaryLine`):
-
-```ts
-describe("billingFactsByEnrollmentId", () => {
-  const sessionTypeById = new Map([
-    ["type-a", { session_type_id: "type-a", name: "Group Class", price_cents: 15000 } as any],
-  ]);
-
-  it("joins a billing enrollment onto its enrollment_id with the catalog price", () => {
-    const facts = billingFactsByEnrollmentId(
-      [
-        {
-          enrollment_id: "enr-1",
-          student_id: "student-1",
-          parent_id: "parent-1",
-          session_type_id: "type-a",
-          stripe_subscription_id: null,
-          billing_start_date: "2026-06-01",
-          status: "active",
-          override_price_cents: null,
-          enrolled_at: "2026-06-01T00:00:00Z",
-          updated_at: "2026-06-01T00:00:00Z",
-        },
-      ],
-      sessionTypeById,
+      </Card>
     );
-    expect(facts.get("enr-1")).toEqual({
-      billingEnrollmentId: "enr-1",
-      sessionTypeId: "type-a",
-      sessionTypeName: "Group Class",
-      effectivePriceCents: 15000,
-      hasPriceOverride: false,
-      billingStartDate: "2026-06-01",
-      billingStatus: "active",
-      movable: true,
-    });
-  });
-
-  it("prefers the override price and flags it", () => {
-    const facts = billingFactsByEnrollmentId(
-      [
-        {
-          enrollment_id: "enr-1",
-          student_id: "student-1",
-          parent_id: "parent-1",
-          session_type_id: "type-a",
-          stripe_subscription_id: null,
-          billing_start_date: "2026-06-01",
-          status: "paused",
-          override_price_cents: 5000,
-          enrolled_at: "2026-06-01T00:00:00Z",
-          updated_at: "2026-06-01T00:00:00Z",
-        },
-      ],
-      sessionTypeById,
-    );
-    expect(facts.get("enr-1")?.effectivePriceCents).toBe(5000);
-    expect(facts.get("enr-1")?.hasPriceOverride).toBe(true);
-    // Paused billing enrollments can still be moved to another session type.
-    expect(facts.get("enr-1")?.movable).toBe(true);
-  });
-
-  it("labels a discontinued session type and marks a cancelled row not movable", () => {
-    const facts = billingFactsByEnrollmentId(
-      [
-        {
-          enrollment_id: "enr-2",
-          student_id: "student-1",
-          parent_id: "parent-1",
-          session_type_id: "gone",
-          stripe_subscription_id: null,
-          billing_start_date: "2026-06-01",
-          status: "cancelled",
-          override_price_cents: null,
-          enrolled_at: "2026-06-01T00:00:00Z",
-          updated_at: "2026-06-01T00:00:00Z",
-        },
-      ],
-      sessionTypeById,
-    );
-    expect(facts.get("enr-2")?.sessionTypeName).toBe("Discontinued session type");
-    expect(facts.get("enr-2")?.effectivePriceCents).toBeNull();
-    expect(facts.get("enr-2")?.movable).toBe(false);
-  });
-
-  it("has no entry for a session enrollment with no billing record", () => {
-    const facts = billingFactsByEnrollmentId([], sessionTypeById);
-    expect(facts.get("enr-3")).toBeUndefined();
-  });
-});
-
-describe("billingSummaryFacts / billingSummaryLine", () => {
-  const student = {
-    enrolled_sessions: [
-      { enrollment_id: "e1", status: "active", amount_cents: 15000, autopay_status: "active" },
-      {
-        enrollment_id: "e2",
-        status: "active",
-        amount_cents: 12000,
-        discount: { net_cents: 9000, gross_cents: 12000, discount_cents: 3000, label: "Sibling" },
-        autopay_status: "not_offered",
-      },
-      { enrollment_id: "e3", status: "cancelled", amount_cents: 8000, autopay_status: "active" },
-    ],
-    payment_history: [
-      { status: "partially_paid", balance_due_cents: 11000 },
-      { status: "paid", balance_due_cents: 0 },
-    ],
-  } as any;
-
-  it("sums active enrollments' net price, counts active classes, and detects any autopay-on", () => {
-    const facts = billingSummaryFacts(student);
-    expect(facts).toEqual({
-      monthlyTotalCents: 24000, // 15000 + 9000 (discounted net), the cancelled row excluded
-      activeClassCount: 2,
-      overdueCount: 1,
-      autopayOn: true,
-    });
-  });
-
-  it("renders the summary line", () => {
-    expect(billingSummaryLine(billingSummaryFacts(student))).toBe(
-      "$240/mo across 2 classes · 1 overdue · autopay on",
-    );
-  });
-
-  it("reads cleanly with nothing outstanding and autopay off", () => {
-    const clean = {
-      enrolled_sessions: [{ enrollment_id: "e1", status: "active", amount_cents: 10000, autopay_status: "manual" }],
-      payment_history: [],
-    } as any;
-    expect(billingSummaryLine(billingSummaryFacts(clean))).toBe(
-      "$100/mo across 1 class · nothing overdue · autopay off",
-    );
-  });
-});
-```
-
-- [ ] Run and confirm failure:
-
-```
-cd frontend && pnpm vitest run app/\(admin\)/admin/students/\[studentId\]/session-rows.test.ts
-```
-
-Expected: fails — the three new names are not exported.
-
-- [ ] Implement. The new **function bodies** are appended to the end of `session-rows.ts`; the four `import` lines below are **edits to the existing import block at the top of the file**, not appended text — appending a second `import { formatInvoiceDate } from "./format";` is a duplicate-identifier error. Concretely: add one new `import type … from "@/lib/api/admin";` line; extend the existing `import type { AdminStudentSessionSummary } from "@/lib/api/v2/students";` to also bring in `AdminStudentDetail`; extend the existing `import { formatInvoiceDate } from "./format";` to `{ formatCurrencyCents, formatInvoiceDate }`; add the new `./StatusChip` import.
-
-Caution on the `./StatusChip` import: `session-rows.ts`'s file docstring says it is "kept free of React", and its Vitest suite runs under `environment: "node"`. `StatusChip.tsx` is a JSX module that pulls in `@/components/ds/chip`. Verify with the Task 4 test run that Vitest still resolves it (it should — esbuild transpiles `.tsx` and neither module imports CSS or touches `document`). If it does not, move `OPEN_BILLING_STATUSES` out of `StatusChip.tsx` into a plain `.ts` module and re-point both call sites (`page.tsx` and `session-rows.ts`) rather than duplicating the set.
-
-```ts
-import type { AdminBillingEnrollmentView, AdminSessionTypeView } from "@/lib/api/admin";
-// (AdminStudentSessionSummary import already present — extend it:)
-import type { AdminStudentDetail, AdminStudentSessionSummary } from "@/lib/api/v2/students";
-
-// (formatInvoiceDate import already present — extend it, do not add a second line:)
-import { formatCurrencyCents, formatInvoiceDate } from "./format";
-import { OPEN_BILLING_STATUSES } from "./StatusChip";
-
-export interface EnrollmentBillingFacts {
-  billingEnrollmentId: string;
-  sessionTypeId: string;
-  sessionTypeName: string;
-  effectivePriceCents: number | null;
-  hasPriceOverride: boolean;
-  billingStartDate: string;
-  billingStatus: string;
-  /** Only an active or paused billing enrollment can be moved to another session type. */
-  movable: boolean;
-}
-
-/**
- * Joins each session-type billing enrollment onto the per-session enrollment
- * row it prices, sharing the same `enrollment_id` (spec
- * 2026-09-10-student-page-single-view-design §3.1: "one table, not two"). A
- * session enrollment never put on session-type billing simply has no entry.
- */
-export function billingFactsByEnrollmentId(
-  billingEnrollments: AdminBillingEnrollmentView[],
-  sessionTypeById: Map<string, AdminSessionTypeView>,
-): Map<string, EnrollmentBillingFacts> {
-  const result = new Map<string, EnrollmentBillingFacts>();
-  for (const enrollment of billingEnrollments) {
-    const sessionType = sessionTypeById.get(enrollment.session_type_id);
-    result.set(enrollment.enrollment_id, {
-      billingEnrollmentId: enrollment.enrollment_id,
-      sessionTypeId: enrollment.session_type_id,
-      sessionTypeName: sessionType?.name ?? "Discontinued session type",
-      effectivePriceCents: enrollment.override_price_cents ?? sessionType?.price_cents ?? null,
-      hasPriceOverride: enrollment.override_price_cents != null,
-      billingStartDate: enrollment.billing_start_date,
-      billingStatus: enrollment.status,
-      movable: enrollment.status === "active" || enrollment.status === "paused",
-    });
   }
-  return result;
-}
+  ```
+- [ ] Run: `cd frontend && pnpm typecheck` — expected PASS (new file compiles; not yet imported anywhere so no behavior change).
+- [ ] Commit: `git add frontend/app/\(admin\)/admin/students/\[studentId\]/CollapsibleSection.tsx` then:
+  ```
+  feat(admin): add CollapsibleSection primitive for student page
 
-export interface BillingSummaryFacts {
-  monthlyTotalCents: number;
-  activeClassCount: number;
-  overdueCount: number;
-  autopayOn: boolean;
-}
+  Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+  ```
 
-/** Facts behind the Billing section's always-visible one-line summary. */
-export function billingSummaryFacts(student: AdminStudentDetail): BillingSummaryFacts {
-  const activeSessions = (student.enrolled_sessions ?? []).filter((s) => s.status === "active");
-  const monthlyTotalCents = activeSessions.reduce(
-    (sum, s) => sum + (s.discount ? s.discount.net_cents : (s.amount_cents ?? 0)),
-    0,
-  );
-  const overdueCount = (student.payment_history ?? []).filter(
-    (p) => OPEN_BILLING_STATUSES.has(p.status) && p.balance_due_cents > 0,
-  ).length;
-  const autopayOn = activeSessions.some((s) => s.autopay_status === "active");
-  return { monthlyTotalCents, activeClassCount: activeSessions.length, overdueCount, autopayOn };
-}
-
-export function billingSummaryLine(facts: BillingSummaryFacts): string {
-  const amount = formatCurrencyCents(facts.monthlyTotalCents);
-  const classes = `${facts.activeClassCount} ${facts.activeClassCount === 1 ? "class" : "classes"}`;
-  const overdue = facts.overdueCount === 0 ? "nothing overdue" : `${facts.overdueCount} overdue`;
-  const autopay = facts.autopayOn ? "autopay on" : "autopay off";
-  return `${amount}/mo across ${classes} · ${overdue} · ${autopay}`;
-}
-```
-
-Note: `AdminStudentSessionSummary` is already imported at the top of the real file — do not duplicate the import, extend the existing `import type { ... AdminStudentSessionSummary } from "@/lib/api/v2/students";` line to also bring in `AdminStudentDetail`.
-
-- [ ] Run again, expect PASS:
-
-```
-cd frontend && pnpm vitest run app/\(admin\)/admin/students/\[studentId\]/session-rows.test.ts
-```
-
-- [ ] Typecheck:
-
-```
-cd frontend && pnpm typecheck
-```
-
-- [ ] Commit:
-
-```
-git add frontend/app/\(admin\)/admin/students/\[studentId\]/session-rows.ts frontend/app/\(admin\)/admin/students/\[studentId\]/session-rows.test.ts
-git commit -m "feat(admin-students): join session-type billing onto enrollment rows
-
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
-```
-
----
-
-### Task 5: `SessionsPanel` gains merged billing cell/actions + past-enrollments collapse
+## Task 3: Past enrollments collapse after five rows
 
 **Files:**
 - Modify: `frontend/app/(admin)/admin/students/[studentId]/SessionsPanel.tsx`
+- Test: none new — this is a display cap inside a module-private component with no pure-function seam; covered by the Task 7 e2e (`admin-student-past-enrollments-toggle` is absent with 2 past rows in the fixture, so the e2e asserts its absence).
 
-**Interfaces:**
-- Consumes: `EnrollmentBillingFacts` (`./session-rows`).
-- Produces: `SessionsPanel` gains three new optional props: `billingFactsByEnrollmentId?: Map<string, EnrollmentBillingFacts>`, `onMoveBilling?: (session: AdminStudentSessionSummary) => void`, `onOverrideBilling?: (session: AdminStudentSessionSummary) => void`.
+> **Removed from this task (was a defect in the first draft).** The draft added a
+> `mergeEnrollmentBilling(sessions, billingEnrollments, sessionTypeById)` helper to
+> `session-rows.ts` whose own implementation returned `null` for every merge field, whose
+> first unit test asserted those nulls under the title "attaches the matching billing
+> enrollment's override", and which no other task ever called. That is dead code plus a
+> misleading test. It is deleted from the plan. The reason it could not work is real and
+> verified — see the OPEN QUESTION in Self-review — but the honest response is to record the
+> gap, not to ship a stub.
 
-No new unit test — this is JSX wiring exercised by the Task 12 e2e spec. Verify with typecheck + the e2e run in Task 12.
+- [ ] Locate `PastEnrollmentsPanel` **by name** (`grep -n "function PastEnrollmentsPanel"`), not by the line number this plan was written against — plan 1 (`2026-09-10-departure-actions-from-student-page.md`, Task 9) edits this same file first and shifts every line below its `<DepartureActions>` block.
+- [ ] Update `SessionsPanel.tsx`'s `PastEnrollmentsPanel` to cap the visible rows at 5 with a "Show all N" toggle (spec §3.1 "collapsed after five rows"). Edit the function body:
+  ```tsx
+  function PastEnrollmentsPanel({ rows }: { rows: AdminStudentSessionSummary[] }) {
+    const [expanded, setExpanded] = useState(false);
+    const visible = expanded ? rows : rows.slice(0, 5);
+    // ... existing header/empty-state JSX unchanged, but map over `visible` instead of `rows` ...
+    // after the closing </table></div>, before the closing </Card>, add:
+    {rows.length > 5 && (
+      <button
+        type="button"
+        className="mt-3 text-xs font-medium text-rally-blue hover:underline"
+        onClick={() => setExpanded((v) => !v)}
+        data-testid="admin-student-past-enrollments-toggle"
+      >
+        {expanded ? "Show fewer" : `Show all ${rows.length}`}
+      </button>
+    )}
+  }
+  ```
+  (`useState` is already imported in this file — `SessionsPanel.tsx:3`.)
+- [ ] Run: `cd frontend && pnpm typecheck && pnpm lint` — expected PASS. (Note: the `lint` script is `eslint .`, so it always lints the whole project; passing a path just adds to the target set.)
+- [ ] Commit: `git add frontend/app/\(admin\)/admin/students/\[studentId\]/SessionsPanel.tsx` then:
+  ```
+  feat(admin): cap past enrollments at five rows
 
-**OPEN QUESTION (owner): where do "Move type" and "Override type price" live in the row?**
-This task as written adds two more *inline* buttons to the action cell, which already
-holds Fee, Discount and `DepartureActions`. That collides with the sibling spec
-`2026-09-10-departure-actions-from-student-page-design.md` §3, whose owner decision is
-explicit: "Hold/Return and Drop go into the row's overflow menu … Fee and Discount links
-stay where they are. **Nothing new is inline**, so the row does not wrap on tablet
-widths." Spec 4 §3.1 only asks for the billing *facts* (fee, discount, autopay chip) to be
-merged into the row — it does not say the two session-type *actions* must be inline; they
-just have to go somewhere once `BillingEnrollmentsPanel`'s own table is deleted in Task 6.
-Pick one before implementing:
-  - (a) put both into `DepartureActions`' overflow menu (needs a new action kind in that
-    shared component — cross-plan coupling with spec 1, and that component is being
-    reworked by spec 1's plan right now);
-  - (b) keep them inline as written and accept the tablet wrap spec 1 was avoiding;
-  - (c) render them as a second, smaller line under the merged billing cell (no new
-    columns, no extra width in the action cell).
-The code block below implements (b). If the owner picks (a) or (c), only the second and
-third edit steps change; everything else in this task stands.
+  Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+  ```
 
-**Sequencing with the sibling plan:** plan 1 (`2026-09-10-departure-actions-from-student-page.md`, Task 9)
-has ALREADY rewritten this action `<td>` — it renders `actions={departureActionsFor(session.status)}`
-with a `switch` over `transfer | hold | return | drop | delete` and mounts the four
-`@/components/admin/enrollment/*` dialogs at the bottom of the component. Do not touch that
-`<DepartureActions>` block, its `onAction` switch, the four dialog mounts, or the
-`studentName` / `familyLabel` props — this task only adds around them.
-
-- [ ] Edit the props destructure (function signature, formerly line 55) to add the three new props. `studentName` and `familyLabel` below are plan 1's — keep them exactly as plan 1 left them, they are shown only so this snippet is copy-safe:
-
-```tsx
-function SessionsPanel({
-  sessions,
-  pastEnrollments = [],
-  parentId,
-  studentId,
-  studentName,
-  familyLabel,
-  queryClient,
-  billingFactsByEnrollmentId,
-  onMoveBilling,
-  onOverrideBilling,
-}: {
-  sessions: AdminStudentSessionSummary[];
-  /** Issue #674: cancelled / withdrawn rows, newest ended first. */
-  pastEnrollments?: AdminStudentSessionSummary[];
-  /** Autopay lives on the family page; the chip links there when a parent is on file. */
-  parentId?: string | null;
-  studentId: string;
-  /** Plan 1 (departure actions): the Hold/Return/Drop/Delete dialogs' copy and email-toggle label. */
-  studentName: string;
-  familyLabel?: string | null;
-  queryClient: ReturnType<typeof useQueryClient>;
-  /** Session-type billing facts, keyed by the same `enrollment_id` (spec §3.1). */
-  billingFactsByEnrollmentId?: Map<string, EnrollmentBillingFacts>;
-  onMoveBilling?: (session: AdminStudentSessionSummary) => void;
-  onOverrideBilling?: (session: AdminStudentSessionSummary) => void;
-}) {
-```
-
-- [ ] Add the import (top of file, alongside the `./session-rows` import):
-
-```ts
-import { autopayChip, familyBillingHref, pastEnrollmentRow, type EnrollmentBillingFacts } from "./session-rows";
-```
-
-- [ ] In the row map (the `sessions.map((session) => (...))` block, currently starting at line 241), compute the facts for this row right after `<tr key={session.enrollment_id}>`:
-
-```tsx
-{sessions.map((session) => {
-  const facts = billingFactsByEnrollmentId?.get(session.enrollment_id);
-  return (
-    <tr key={session.enrollment_id}>
-```
-
-(This changes the arrow function from an implicit-return `(session) => (<tr>...)` to a block body — close it with `);\n})` instead of the existing `))}`.)
-
-- [ ] Inside the existing Billing `<td>` (the block rendering `session.discount ? (...) : (...)`, ending just before `</td>` at line 285), append the session-type billing facts as a second line:
-
-```tsx
-                    </td>
-```
-becomes
-```tsx
-                      {facts && (
-                        <div className="mt-2 border-t border-neutral-100 pt-2">
-                          <div className="text-[10px] font-semibold uppercase tracking-overline text-rally-muted">
-                            {facts.sessionTypeName}
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-mono text-xs tabular-nums text-rally-ink">
-                              {facts.effectivePriceCents == null
-                                ? "—"
-                                : formatCurrencyCents(facts.effectivePriceCents)}
-                            </span>
-                            {facts.hasPriceOverride && (
-                              <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800">
-                                Override
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                    </td>
-```
-
-- [ ] In the action `<td>` (the `<div className="flex items-center justify-end gap-3">` block, currently lines 300-350), append two buttons right before the closing `</div>` of that flex row, after `<DepartureActions .../>`:
-
-```tsx
-                        {facts && (
-                          <>
-                            <button
-                              className="text-xs font-medium text-rally-blue hover:underline disabled:cursor-not-allowed disabled:opacity-40"
-                              onClick={() => onMoveBilling?.(session)}
-                              disabled={!facts.movable}
-                              title={
-                                facts.movable
-                                  ? undefined
-                                  : "Only active or paused session-type billing can be moved."
-                              }
-                            >
-                              Move type
-                            </button>
-                            <button
-                              className="text-xs font-medium text-rally-blue hover:underline"
-                              onClick={() => onOverrideBilling?.(session)}
-                            >
-                              Override type price
-                            </button>
-                          </>
-                        )}
-```
-
-- [ ] Close the row's block body: change the trailing `))}` after `</tr>` (end of the map) to:
-
-```tsx
-                  </tr>
-                );
-              })}
-```
-
-- [ ] Update `PastEnrollmentsPanel` to collapse after 5 rows. Replace its body (currently lines 763-819) with:
-
-```tsx
-function PastEnrollmentsPanel({ rows }: { rows: AdminStudentSessionSummary[] }) {
-  const [showAll, setShowAll] = useState(false);
-  const visibleRows = showAll ? rows : rows.slice(0, 5);
-  const hiddenCount = rows.length - visibleRows.length;
-
-  return (
-    <Card p={20} className="lg:col-span-2" data-testid="admin-student-past-enrollments">
-      <div className="flex items-center justify-between gap-3">
-        <Overline>Past enrollments</Overline>
-        <span className="font-mono text-xs text-rally-muted tabular-nums">
-          {rows.length} ended
-        </span>
-      </div>
-      {rows.length === 0 ? (
-        <p className="mt-3 text-sm text-rally-muted" data-testid="admin-student-no-past-enrollments">
-          No cancelled or withdrawn enrollments.
-        </p>
-      ) : (
-        <>
-          <div className="mt-3 overflow-x-auto">
-            <table className="min-w-full text-left text-sm">
-              <thead className="border-b border-neutral-200 text-xs uppercase tracking-overline text-rally-muted">
-                <tr>
-                  <th className="py-2 pr-4 font-medium">Session</th>
-                  <th className="py-2 pr-4 font-medium">Status</th>
-                  <th className="py-2 pr-4 font-medium">Ended</th>
-                  <th className="py-2 pr-4 font-medium">Ended by</th>
-                  <th className="py-2 font-medium">Reason</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-100">
-                {visibleRows.map((raw) => {
-                  const row = pastEnrollmentRow(raw);
-                  return (
-                    <tr
-                      key={row.enrollmentId}
-                      data-testid={`admin-student-past-enrollment-${row.enrollmentId}`}
-                    >
-                      <td className="py-3 pr-4 align-top">
-                        <div className="font-medium text-rally-ink">{row.sessionTitle}</div>
-                        {row.location && (
-                          <div className="text-xs text-rally-muted">{row.location}</div>
-                        )}
-                      </td>
-                      <td className="py-3 pr-4 align-top">
-                        <Chip variant={row.statusVariant} label={row.statusLabel} />
-                      </td>
-                      <td className="py-3 pr-4 align-top text-rally-muted tabular-nums">
-                        {row.endedOn}
-                      </td>
-                      <td className="py-3 pr-4 align-top text-rally-muted">{row.endedBy}</td>
-                      <td className="py-3 align-top text-rally-muted">{row.reason}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          {hiddenCount > 0 && (
-            <button
-              type="button"
-              className="mt-3 text-xs font-medium text-rally-blue hover:underline"
-              onClick={() => setShowAll(true)}
-              data-testid="admin-student-past-enrollments-show-more"
-            >
-              Show {hiddenCount} more
-            </button>
-          )}
-        </>
-      )}
-    </Card>
-  );
-}
-```
-
-- [ ] Add the `formatCurrencyCents` import if not already present (it already is, via the existing `./format` import line — no change needed there).
-
-- [ ] Typecheck:
-
-```
-cd frontend && pnpm typecheck
-```
-
-- [ ] Commit:
-
-```
-git add frontend/app/\(admin\)/admin/students/\[studentId\]/SessionsPanel.tsx
-git commit -m "feat(admin-students): merge session-type billing into the enrollments table
-
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
-```
-
----
-
-### Task 6: Strip `BillingEnrollmentsPanel` down to shared dialogs
+## Task 4: `StudentEditForm` — drop `mode`, one combined form
 
 **Files:**
-- Modify: `frontend/app/(admin)/admin/students/[studentId]/BillingEnrollmentsPanel.tsx`
+- Modify: `frontend/app/(admin)/admin/students/[studentId]/StudentEditForm.tsx` (593 lines total; `StudentEditForm` spans lines 24-345, `ChangeParentPanel` 347-569 and `Field` 571-591 with the `export { StudentEditForm, ChangeParentPanel, Field };` line at 593 — both untouched by this task)
 
 **Interfaces:**
-- Produces (exported, was previously module-private): `MoveEnrollmentDialog`, `OverridePriceDialog`, `ProrationResult`. Removes the `BillingEnrollmentsPanel` component and `EnrollmentRow` (no longer used — the row rendering moved into `SessionsPanel` in Task 5).
-
-- [ ] Replace the whole file content with:
-
-```tsx
-"use client";
-
-import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
-import { RefreshCw } from "lucide-react";
-
-import {
-  moveAdminBillingEnrollment,
-  overrideAdminBillingEnrollmentPrice,
-  type AdminBillingEnrollmentView,
-  type AdminSessionTypeView,
-  type MoveBillingEnrollmentResponse,
-} from "@/lib/api/admin";
-import { Button } from "@/components/ds/button";
-
-import { BillingDialogActions, BillingDialogError, BillingDialogFrame } from "./billing-dialogs";
-import { centsToDollarInput, dollarsToCents, formatCurrencyCents, formatDateUtc, getErrorMessage } from "./format";
-import { Field } from "./StudentEditForm";
-
-function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-/**
- * Calendar-month period for a YYYY-MM-DD move date, mirroring the backend's
- * `_default_period`: the admin move route requires the period explicitly and
- * proration is computed against it.
- */
-function calendarMonthPeriod(
-  moveDate: string,
-): { periodStart: string; periodEnd: string } | null {
-  const [year, month] = moveDate.split("-").map((part) => Number.parseInt(part, 10));
-  // A cleared date input yields "" -> NaN, and toISOString() would throw while
-  // the dialog is still mounted. Callers gate submission on a null return.
-  if (!Number.isFinite(year) || !Number.isFinite(month)) return null;
-  return {
-    periodStart: new Date(Date.UTC(year, month - 1, 1)).toISOString(),
-    periodEnd: new Date(Date.UTC(year, month, 1)).toISOString(),
-  };
-}
-
-function MoveEnrollmentDialog({
-  enrollment,
-  sessionTypes,
-  onCancel,
-  onDone,
-}: {
-  enrollment: AdminBillingEnrollmentView;
-  sessionTypes: AdminSessionTypeView[];
-  onCancel: () => void;
-  onDone: (result: MoveBillingEnrollmentResponse) => void;
-}) {
-  const [step, setStep] = useState<"form" | "confirm">("form");
-  const [toSessionTypeId, setToSessionTypeId] = useState("");
-  const [moveDate, setMoveDate] = useState(todayISO);
-  const [reason, setReason] = useState("");
-
-  const targets = sessionTypes.filter(
-    (type) => type.is_active && type.session_type_id !== enrollment.session_type_id,
-  );
-  const target = targets.find((type) => type.session_type_id === toSessionTypeId);
-  const period = calendarMonthPeriod(moveDate);
-
-  const mutation = useMutation({
-    mutationFn: () => {
-      if (!period) throw new Error("Pick a move date before confirming.");
-      return moveAdminBillingEnrollment(enrollment.enrollment_id, {
-        to_session_type_id: toSessionTypeId,
-        move_date: new Date(`${moveDate}T00:00:00.000Z`).toISOString(),
-        period_start: period.periodStart,
-        period_end: period.periodEnd,
-        reason: reason.trim() || null,
-      });
-    },
-    onSuccess: onDone,
-  });
-
-  return (
-    <BillingDialogFrame title="Move to another session type" onCancel={onCancel}>
-      {getErrorMessage(mutation.error) && (
-        <BillingDialogError message={getErrorMessage(mutation.error)!} />
-      )}
-
-      {step === "form" ? (
-        <div className="space-y-3">
-          <Field label="Target session type" htmlFor="billing-move-session-type">
-            <select
-              id="billing-move-session-type"
-              value={toSessionTypeId}
-              onChange={(event) => setToSessionTypeId(event.target.value)}
-              className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
-            >
-              <option value="">Select a session type</option>
-              {targets.map((type) => (
-                <option key={type.session_type_id} value={type.session_type_id}>
-                  {type.name} — {formatCurrencyCents(type.price_cents)}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Move date" htmlFor="billing-move-date">
-            <input
-              id="billing-move-date"
-              type="date"
-              value={moveDate}
-              onChange={(event) => setMoveDate(event.target.value)}
-              className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
-            />
-          </Field>
-          <Field label="Reason" htmlFor="billing-move-reason">
-            <textarea
-              id="billing-move-reason"
-              rows={3}
-              maxLength={500}
-              value={reason}
-              onChange={(event) => setReason(event.target.value)}
-              className="w-full rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
-            />
-          </Field>
-        </div>
-      ) : (
-        <div
-          className="space-y-2 rounded-md bg-amber-50 px-3 py-3 text-sm text-amber-900"
-          data-testid="billing-move-confirm"
-        >
-          <p className="font-semibold">This changes what the parent is billed.</p>
-          <p>
-            Moving to <span className="font-semibold">{target?.name}</span> on{" "}
-            {formatDateUtc(moveDate)} switches the enrollment and records a prorated
-            adjustment against the{" "}
-            {period
-              ? new Date(period.periodStart).toLocaleDateString(undefined, {
-                  month: "long",
-                  year: "numeric",
-                  timeZone: "UTC",
-                })
-              : "selected"}{" "}
-            billing period. The adjustment is recorded now; it is applied on the parent&apos;s
-            next invoice rather than charged immediately.
-          </p>
-          <p>This cannot be undone from this screen.</p>
-        </div>
-      )}
-
-      <BillingDialogActions onCancel={step === "form" ? onCancel : () => setStep("form")}>
-        {step === "form" ? (
-          <Button
-            size="sm"
-            disabled={!toSessionTypeId || !period}
-            onClick={() => setStep("confirm")}
-          >
-            Review move
-          </Button>
-        ) : (
-          <Button
-            size="sm"
-            disabled={mutation.isPending || !period}
-            icon={
-              mutation.isPending ? (
-                <RefreshCw className="size-3.5 animate-spin" aria-hidden="true" />
-              ) : undefined
-            }
-            onClick={() => mutation.mutate()}
-            data-testid="billing-move-submit"
-          >
-            {mutation.isPending ? "Moving..." : "Confirm move"}
-          </Button>
-        )}
-      </BillingDialogActions>
-    </BillingDialogFrame>
-  );
-}
-
-function OverridePriceDialog({
-  enrollment,
-  catalogPriceCents,
-  onCancel,
-  onDone,
-}: {
-  enrollment: AdminBillingEnrollmentView;
-  catalogPriceCents: number | null;
-  onCancel: () => void;
-  onDone: () => void;
-}) {
-  const [amount, setAmount] = useState(() =>
-    enrollment.override_price_cents == null
-      ? ""
-      : centsToDollarInput(enrollment.override_price_cents),
-  );
-  const mutation = useMutation({
-    mutationFn: (overridePriceCents: number | null) =>
-      overrideAdminBillingEnrollmentPrice(enrollment.enrollment_id, overridePriceCents),
-    onSuccess: onDone,
-  });
-  const amountCents = dollarsToCents(amount);
-  const canSave = amount.trim().length > 0 && amountCents >= 0;
-
-  return (
-    <BillingDialogFrame title="Override enrollment price" onCancel={onCancel}>
-      {getErrorMessage(mutation.error) && (
-        <BillingDialogError message={getErrorMessage(mutation.error)!} />
-      )}
-      <p className="text-xs text-rally-muted">
-        {catalogPriceCents == null
-          ? "Catalog price unavailable."
-          : `Catalog price is ${formatCurrencyCents(catalogPriceCents)}. Clearing the override restores it.`}
-      </p>
-      <Field label="Override price" htmlFor="billing-override-amount">
-        <input
-          id="billing-override-amount"
-          inputMode="decimal"
-          value={amount}
-          onChange={(event) => setAmount(event.target.value)}
-          placeholder="0.00"
-          className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
-        />
-      </Field>
-      <BillingDialogActions onCancel={onCancel}>
-        <Button
-          size="sm"
-          variant="secondary"
-          disabled={enrollment.override_price_cents == null || mutation.isPending}
-          onClick={() => mutation.mutate(null)}
-          data-testid="billing-override-clear"
-        >
-          Clear override
-        </Button>
-        <Button
-          size="sm"
-          disabled={!canSave || mutation.isPending}
-          icon={
-            mutation.isPending ? (
-              <RefreshCw className="size-3.5 animate-spin" aria-hidden="true" />
-            ) : undefined
-          }
-          onClick={() => mutation.mutate(amountCents)}
-          data-testid="billing-override-save"
-        >
-          {mutation.isPending ? "Saving..." : "Save override"}
-        </Button>
-      </BillingDialogActions>
-    </BillingDialogFrame>
-  );
-}
-
-function ProrationResult({
-  result,
-  onDismiss,
-}: {
-  result: MoveBillingEnrollmentResponse;
-  onDismiss: () => void;
-}) {
-  const { proration } = result;
-  const netLabel =
-    proration.net_cents === 0
-      ? "no net change"
-      : proration.net_cents > 0
-        ? `charged ${formatCurrencyCents(proration.net_cents)}`
-        : `credited ${formatCurrencyCents(Math.abs(proration.net_cents))}`;
-
-  return (
-    <div
-      className="mt-3 rounded-md border border-blue-200 bg-blue-50 px-3 py-3 text-xs text-blue-900"
-      data-testid="billing-move-result"
-    >
-      <div className="flex items-start justify-between gap-3">
-        <p className="text-sm font-semibold">Move applied — {netLabel}</p>
-        <button type="button" onClick={onDismiss} className="text-blue-800 underline">
-          Dismiss
-        </button>
-      </div>
-      <dl className="mt-2 grid gap-x-6 gap-y-1 sm:grid-cols-2">
-        <ResultRow label="Credit" value={formatCurrencyCents(proration.credit_cents)} />
-        <ResultRow label="Charge" value={formatCurrencyCents(proration.charge_cents)} />
-        <ResultRow
-          label="Prorated days"
-          value={`${proration.remaining_days} of ${proration.total_days} (${proration.proration_ratio})`}
-        />
-        <ResultRow label="Policy version" value={proration.policy_version} />
-        {/* The move itself never creates a Stripe invoice today, so only surface
-            this row if the backend ever starts returning one. */}
-        {result.stripe_invoice_id && (
-          <ResultRow label="Stripe invoice" value={result.stripe_invoice_id} />
-        )}
-      </dl>
-    </div>
-  );
-}
-
-function ResultRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <dt className="text-blue-800">{label}</dt>
-      <dd className="font-mono tabular-nums">{value}</dd>
-    </div>
-  );
-}
-
-export { MoveEnrollmentDialog, OverridePriceDialog, ProrationResult };
-```
-
-- [ ] Typecheck. **Expect exactly one failure, and only this one:** `page.tsx` still has
-`import { BillingEnrollmentsPanel } from "./BillingEnrollmentsPanel";` and still renders
-`<BillingEnrollmentsPanel studentId={studentId} active={activeTab === "billing"} />` — that
-export no longer exists, so `tsc` reports `TS2305: Module './BillingEnrollmentsPanel' has
-no exported member 'BillingEnrollmentsPanel'`. Task 10 removes that import and that render.
-(The unused *new* exports are fine — unused exports never fail `tsc`; that was not the
-error to expect here.) If any error other than the `TS2305` above appears, stop and fix it
-before moving on.
-
-```
-cd frontend && pnpm typecheck
-```
-
-- [ ] Commit:
-
-```
-git add frontend/app/\(admin\)/admin/students/\[studentId\]/BillingEnrollmentsPanel.tsx
-git commit -m "refactor(admin-students): reduce BillingEnrollmentsPanel to shared dialogs
-
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
-```
-
----
-
-### Task 7: `EnrollmentsSection` orchestrator
-
-**Files:**
-- Create: `frontend/app/(admin)/admin/students/[studentId]/EnrollmentsSection.tsx`
-
-**Interfaces:**
-- Consumes: `listAdminBillingEnrollments`, `listAdminSessionTypes` (`@/lib/api/admin`); `queryKeys.admin.billingEnrollments`, `queryKeys.admin.sessionTypes`, `queryKeys.admin.studentDetail` (`@/lib/query/keys`); `SessionsPanel` (`./SessionsPanel`); `MoveEnrollmentDialog`, `OverridePriceDialog`, `ProrationResult` (`./BillingEnrollmentsPanel`); `billingFactsByEnrollmentId` (`./session-rows`).
-- Produces: `EnrollmentsSection({ student, studentId, queryClient }): JSX.Element`.
-
-- [ ] Implement:
-
-```tsx
-"use client";
-
-import { useMemo, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-
-import {
-  listAdminBillingEnrollments,
-  listAdminSessionTypes,
-  type MoveBillingEnrollmentResponse,
-} from "@/lib/api/admin";
-import type { AdminStudentDetail, AdminStudentSessionSummary } from "@/lib/api/v2/students";
-import { queryKeys } from "@/lib/query/keys";
-
-import { MoveEnrollmentDialog, OverridePriceDialog, ProrationResult } from "./BillingEnrollmentsPanel";
-import { billingFactsByEnrollmentId } from "./session-rows";
-import { SessionsPanel } from "./SessionsPanel";
-
-type BillingDialog = "move" | "override" | null;
-
-/**
- * Owns the session-type billing fetch and its move/override-price dialogs,
- * and feeds the joined facts into SessionsPanel's table (spec §3.1: one
- * table, not two). Queries always run — the section is always mounted now
- * that tabs are gone (spec §6).
- */
-export function EnrollmentsSection({
-  student,
-  studentId,
-  queryClient,
-}: {
-  student: AdminStudentDetail;
-  studentId: string;
-  queryClient: ReturnType<typeof useQueryClient>;
-}) {
-  const [dialog, setDialog] = useState<BillingDialog>(null);
-  const [selectedSession, setSelectedSession] = useState<AdminStudentSessionSummary | null>(null);
-  const [moveResult, setMoveResult] = useState<MoveBillingEnrollmentResponse | null>(null);
-
-  const billingEnrollmentsQuery = useQuery({
-    queryKey: queryKeys.admin.billingEnrollments(studentId),
-    queryFn: () => listAdminBillingEnrollments({ studentId }),
-  });
-  const sessionTypesQuery = useQuery({
-    queryKey: queryKeys.admin.sessionTypes(),
-    queryFn: () => listAdminSessionTypes(),
-  });
-
-  // Memoised for the same reason BillingEnrollmentsPanel memoised it: a bare
-  // `?? []` mints a new array identity every render, which defeats the two
-  // useMemos below and re-renders SessionsPanel's whole table on every keystroke
-  // in any dialog above it.
-  const sessionTypes = useMemo(
-    () => sessionTypesQuery.data?.session_types ?? [],
-    [sessionTypesQuery.data],
-  );
-  const sessionTypeById = useMemo(
-    () => new Map(sessionTypes.map((type) => [type.session_type_id, type])),
-    [sessionTypes],
-  );
-  const billingEnrollments = useMemo(
-    () => billingEnrollmentsQuery.data?.enrollments ?? [],
-    [billingEnrollmentsQuery.data],
-  );
-  const factsByEnrollmentId = useMemo(
-    () => billingFactsByEnrollmentId(billingEnrollments, sessionTypeById),
-    [billingEnrollments, sessionTypeById],
-  );
-  const selectedBillingEnrollment = selectedSession
-    ? (billingEnrollments.find((e) => e.enrollment_id === selectedSession.enrollment_id) ?? null)
-    : null;
-
-  const invalidate = () => {
-    void queryClient.invalidateQueries({ queryKey: queryKeys.admin.billingEnrollments(studentId) });
-    void queryClient.invalidateQueries({ queryKey: queryKeys.admin.studentDetail(studentId) });
-  };
-  const closeDialog = () => {
-    setDialog(null);
-    setSelectedSession(null);
-  };
-
-  return (
-    <>
-      <SessionsPanel
-        sessions={student.enrolled_sessions ?? []}
-        pastEnrollments={student.past_enrollments ?? []}
-        parentId={student.parent_id}
-        studentId={studentId}
-        // Plan 1 (departure actions) made these SessionsPanel props; page.tsx used to
-        // pass them and Task 10 replaces page.tsx wholesale, so they move here.
-        studentName={student.full_name}
-        familyLabel={student.parent_name ?? null}
-        queryClient={queryClient}
-        billingFactsByEnrollmentId={factsByEnrollmentId}
-        onMoveBilling={(session) => {
-          setSelectedSession(session);
-          setMoveResult(null);
-          setDialog("move");
-        }}
-        onOverrideBilling={(session) => {
-          setSelectedSession(session);
-          setDialog("override");
-        }}
-      />
-      {moveResult && <ProrationResult result={moveResult} onDismiss={() => setMoveResult(null)} />}
-      {dialog === "move" && selectedBillingEnrollment && (
-        <MoveEnrollmentDialog
-          enrollment={selectedBillingEnrollment}
-          sessionTypes={sessionTypes}
-          onCancel={closeDialog}
-          onDone={(result) => {
-            closeDialog();
-            setMoveResult(result);
-            invalidate();
-          }}
-        />
-      )}
-      {dialog === "override" && selectedBillingEnrollment && (
-        <OverridePriceDialog
-          enrollment={selectedBillingEnrollment}
-          catalogPriceCents={
-            sessionTypeById.get(selectedBillingEnrollment.session_type_id)?.price_cents ?? null
-          }
-          onCancel={closeDialog}
-          onDone={() => {
-            closeDialog();
-            invalidate();
-          }}
-        />
-      )}
-    </>
-  );
-}
-```
-
-- [ ] Typecheck:
-
-```
-cd frontend && pnpm typecheck
-```
-
-- [ ] Commit:
-
-```
-git add frontend/app/\(admin\)/admin/students/\[studentId\]/EnrollmentsSection.tsx
-git commit -m "feat(admin-students): add EnrollmentsSection orchestrator
-
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
-```
-
----
-
-### Task 8: `BillingSummaryLine` component
-
-**Files:**
-- Create: `frontend/app/(admin)/admin/students/[studentId]/BillingSummaryLine.tsx`
-
-**Interfaces:**
-- Consumes: `billingSummaryFacts`, `billingSummaryLine` (`./session-rows`); `AdminStudentDetail` (`@/lib/api/v2/students`).
-- Produces: `BillingSummaryLine({ student }): JSX.Element` — the text rendered as `CollapsibleSection`'s `headExtra` for the Billing section.
-
-- [ ] Implement:
-
-```tsx
-"use client";
-
-import type { AdminStudentDetail } from "@/lib/api/v2/students";
-
-import { billingSummaryFacts, billingSummaryLine } from "./session-rows";
-
-/**
- * The Billing section's always-visible one-line summary (spec §3.3), shown
- * next to the section's collapse toggle whether the detail is open or not.
- */
-export function BillingSummaryLine({ student }: { student: AdminStudentDetail }) {
-  const line = billingSummaryLine(billingSummaryFacts(student));
-  return (
-    // Spec §2: "Billing summary line always visible" — it must NOT be
-    // `hidden sm:inline`; the phone layout is exactly where the single view has
-    // to answer "what do they owe" without opening anything.
-    <span
-      className="min-w-0 truncate text-left text-xs text-rally-muted"
-      data-testid="admin-student-billing-summary-line"
-    >
-      {line}
-    </span>
-  );
-}
-```
-
-- [ ] Typecheck:
-
-```
-cd frontend && pnpm typecheck
-```
-
-- [ ] Commit:
-
-```
-git add frontend/app/\(admin\)/admin/students/\[studentId\]/BillingSummaryLine.tsx
-git commit -m "feat(admin-students): add the Billing section's always-visible summary line
-
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
-```
-
----
-
-### Task 9: Consolidate `StudentEditForm` — drop `mode`
-
-**Files:**
-- Modify: `frontend/app/(admin)/admin/students/[studentId]/StudentEditForm.tsx`
-
-**Interfaces:**
-- Produces: `StudentEditForm({ student, onSaved }): JSX.Element` (drops the `mode: StudentEditMode` prop entirely). `ChangeParentPanel` and `Field` exports are unchanged.
-
-- [ ] Replace the `StudentEditForm` function (lines 24-347) with a single-mode version:
-
-```tsx
-function StudentEditForm({
-  student,
-  onSaved,
-}: {
-  student: AdminStudentDetail;
-  onSaved: () => void;
-}) {
-  const [fullName, setFullName] = useState(student.full_name);
-  const [dateOfBirth, setDateOfBirth] = useState(student.date_of_birth ?? "");
-  const [status, setStatus] = useState<EditableStatus>(
-    (student.status as EditableStatus) ?? "active",
-  );
-  const [notes, setNotes] = useState(student.notes ?? "");
-  const [previousExperience, setPreviousExperience] = useState(
-    student.previous_experience ?? "",
-  );
-  const [medicalNotes, setMedicalNotes] = useState(
-    student.medical_notes ?? "",
-  );
-  const [emergencyContactName, setEmergencyContactName] = useState(
-    student.emergency_contact_name ?? "",
-  );
-  const [emergencyContactPhone, setEmergencyContactPhone] = useState(
-    student.emergency_contact_phone ?? "",
-  );
-  const [tShirtSize, setTShirtSize] = useState(student.t_shirt_size ?? "");
-  const [reason, setReason] = useState("Admin profile update");
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const [submitOk, setSubmitOk] = useState(false);
-
-  // Keep local state in sync if the server-side data refreshes.
-  useEffect(() => {
-    setFullName(student.full_name);
-    setDateOfBirth(student.date_of_birth ?? "");
-    setStatus((student.status as EditableStatus) ?? "active");
-    setNotes(student.notes ?? "");
-    setPreviousExperience(student.previous_experience ?? "");
-    setMedicalNotes(student.medical_notes ?? "");
-    setEmergencyContactName(student.emergency_contact_name ?? "");
-    setEmergencyContactPhone(student.emergency_contact_phone ?? "");
-    setTShirtSize(student.t_shirt_size ?? "");
-  }, [
-    student.full_name,
-    student.date_of_birth,
-    student.status,
-    student.notes,
-    student.previous_experience,
-    student.medical_notes,
-    student.emergency_contact_name,
-    student.emergency_contact_phone,
-    student.t_shirt_size,
-  ]);
-
-  const mutation = useMutation({
-    mutationFn: (payload: UpdateAdminStudentRequest) =>
-      updateAdminStudent(student.student_id, payload),
-    onSuccess: () => {
-      setSubmitError(null);
-      setSubmitOk(true);
-      onSaved();
-    },
-    onError: (err: unknown) => {
-      setSubmitOk(false);
-      const message =
-        err instanceof Error ? err.message : "Could not save changes.";
-      setSubmitError(message);
-    },
-  });
-
+- Produces (changed signature): `StudentEditForm({ student, onSaved }: { student: AdminStudentDetail; onSaved: () => void }): JSX.Element` — `mode` prop and `StudentEditMode` type removed.
+- Consumes: `UpdateAdminStudentRequest` (existing, `lib/api/v2/students.ts:129-142`) already carries every field this form edits — no API change needed.
+
+- [ ] Edit `StudentEditForm.tsx`: remove `type StudentEditMode = "overview" | "training" | "family";` (line 22), the `mode,` entry in the destructure (line 25) and the `mode: StudentEditMode;` field in the props type literal (line 29). Leave `EditableStatus` (line 21) alone.
+- [ ] Replace the `dirtyFields`/`dirty` block (lines 95-121) — every field is now always relevant:
+  ```ts
   const dirtyFields = {
     fullName: fullName !== student.full_name,
     dateOfBirth: dateOfBirth !== (student.date_of_birth ?? ""),
     status: status !== student.status,
     notes: (notes ?? "") !== (student.notes ?? ""),
-    previousExperience:
-      previousExperience !== (student.previous_experience ?? ""),
+    previousExperience: previousExperience !== (student.previous_experience ?? ""),
     medicalNotes: medicalNotes !== (student.medical_notes ?? ""),
-    emergencyContactName:
-      emergencyContactName !== (student.emergency_contact_name ?? ""),
-    emergencyContactPhone:
-      emergencyContactPhone !== (student.emergency_contact_phone ?? ""),
+    emergencyContactName: emergencyContactName !== (student.emergency_contact_name ?? ""),
+    emergencyContactPhone: emergencyContactPhone !== (student.emergency_contact_phone ?? ""),
     tShirtSize: tShirtSize !== (student.t_shirt_size ?? ""),
   };
 
   const dirty = Object.values(dirtyFields).some(Boolean);
-
-  const reset = () => {
-    setFullName(student.full_name);
-    setDateOfBirth(student.date_of_birth ?? "");
-    setStatus((student.status as EditableStatus) ?? "active");
-    setNotes(student.notes ?? "");
-    setPreviousExperience(student.previous_experience ?? "");
-    setMedicalNotes(student.medical_notes ?? "");
-    setEmergencyContactName(student.emergency_contact_name ?? "");
-    setEmergencyContactPhone(student.emergency_contact_phone ?? "");
-    setTShirtSize(student.t_shirt_size ?? "");
-    setSubmitError(null);
+  ```
+- [ ] Replace the submit handler's payload assembly (lines 141-168, inside the `<form onSubmit>`) to build the payload unconditionally from every dirty field rather than switching on `mode`:
+  ```ts
+  onSubmit={(e) => {
+    e.preventDefault();
     setSubmitOk(false);
-  };
+    setSubmitError(null);
+    const payload: UpdateAdminStudentRequest = {};
+    if (dirtyFields.fullName) payload.full_name = fullName;
+    if (dirtyFields.dateOfBirth) payload.date_of_birth = dateOfBirth || null;
+    if (dirtyFields.status) payload.status = status;
+    if (dirtyFields.notes) payload.notes = notes || null;
+    if (dirtyFields.previousExperience) payload.previous_experience = previousExperience;
+    if (dirtyFields.medicalNotes) payload.medical_notes = medicalNotes;
+    if (dirtyFields.emergencyContactName) payload.emergency_contact_name = emergencyContactName;
+    if (dirtyFields.emergencyContactPhone) payload.emergency_contact_phone = emergencyContactPhone;
+    if (dirtyFields.tShirtSize) payload.t_shirt_size = tShirtSize;
+    payload.reason = reason;
+    mutation.mutate(payload);
+  }}
+  ```
+- [ ] Remove the `mode === "..."` conditionals around the three field groups (lines 170-288) so all three groups (`overview`, `training`, `family`'s t-shirt field) always render, in that order, inside one `<form data-testid="admin-student-profile-edit-form">` (was ``admin-student-${mode}-edit-form``, now one fixed testid — this is the exact string the Task 7 e2e rewrite targets).
+- [ ] Run: `cd frontend && pnpm typecheck` — expected FAIL initially (callers in `page.tsx` still pass `mode`); this is expected and resolved together with Task 6, so proceed to the next step in this task first and re-check typecheck after Task 6.
+- [ ] Run: `cd frontend && pnpm lint` — expected PASS (eslint does not type-check cross-file caller mismatches).
+- [ ] Note for the executor: `pnpm typecheck` stays RED from here until Task 6 lands. Tasks 5 and 6 both say so; do not treat the red as a new failure, and do not "fix" it by re-adding `mode`.
+- [ ] Commit: `git add frontend/app/\(admin\)/admin/students/\[studentId\]/StudentEditForm.tsx` then:
+  ```
+  refactor(admin): collapse StudentEditForm's three modes into one form
 
-  return (
-    <form
-      className="mt-3 space-y-4"
-      data-testid="admin-student-edit-form"
-      onSubmit={(e) => {
-        e.preventDefault();
-        setSubmitOk(false);
-        setSubmitError(null);
-        const payload: UpdateAdminStudentRequest = {};
-        if (dirtyFields.fullName) payload.full_name = fullName;
-        if (dirtyFields.dateOfBirth) payload.date_of_birth = dateOfBirth || null;
-        if (dirtyFields.status) payload.status = status;
-        if (dirtyFields.notes) payload.notes = notes || null;
-        if (dirtyFields.previousExperience) payload.previous_experience = previousExperience;
-        if (dirtyFields.medicalNotes) payload.medical_notes = medicalNotes;
-        if (dirtyFields.emergencyContactName)
-          payload.emergency_contact_name = emergencyContactName;
-        if (dirtyFields.emergencyContactPhone)
-          payload.emergency_contact_phone = emergencyContactPhone;
-        if (dirtyFields.tShirtSize) payload.t_shirt_size = tShirtSize;
-        payload.reason = reason;
-        mutation.mutate(payload);
-      }}
-    >
-      <Field label="Full name" htmlFor="student-full-name">
-        <input
-          id="student-full-name"
-          value={fullName}
-          onChange={(e) => setFullName(e.target.value)}
-          className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
-          required
-          minLength={1}
-          maxLength={120}
-        />
-      </Field>
+  Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+  ```
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Date of birth" htmlFor="student-dob">
-          <input
-            id="student-dob"
-            type="date"
-            value={dateOfBirth}
-            onChange={(e) => setDateOfBirth(e.target.value)}
-            className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
-          />
-        </Field>
-
-        <Field label="Status" htmlFor="student-status">
-          <select
-            id="student-status"
-            value={status}
-            onChange={(e) => setStatus(e.target.value as EditableStatus)}
-            className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
-          >
-            <option value="active">Active</option>
-            <option value="paused">Paused</option>
-            <option value="inactive">Inactive</option>
-            <option value="cancelled">Cancelled</option>
-          </select>
-        </Field>
-      </div>
-
-      <Field label="Internal notes" htmlFor="student-notes">
-        <textarea
-          id="student-notes"
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          rows={4}
-          maxLength={2000}
-          className="w-full rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
-          placeholder="Allergies, behavioural notes, comms preferences..."
-        />
-      </Field>
-
-      <Field label="Previous experience" htmlFor="student-previous-experience">
-        <textarea
-          id="student-previous-experience"
-          value={previousExperience}
-          onChange={(e) => setPreviousExperience(e.target.value)}
-          rows={3}
-          maxLength={1000}
-          className="w-full rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
-          placeholder="Prior coaching, club play, school teams"
-        />
-      </Field>
-
-      <Field label="Medical notes" htmlFor="student-medical-notes">
-        <textarea
-          id="student-medical-notes"
-          value={medicalNotes}
-          onChange={(e) => setMedicalNotes(e.target.value)}
-          rows={3}
-          maxLength={1000}
-          className="w-full rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
-          placeholder="Allergies, injuries, health notes"
-        />
-      </Field>
-
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Emergency contact name" htmlFor="student-emergency-contact-name">
-          <input
-            id="student-emergency-contact-name"
-            value={emergencyContactName}
-            onChange={(e) => setEmergencyContactName(e.target.value)}
-            className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
-            maxLength={120}
-          />
-        </Field>
-
-        <Field label="Emergency contact phone" htmlFor="student-emergency-contact-phone">
-          <input
-            id="student-emergency-contact-phone"
-            value={emergencyContactPhone}
-            onChange={(e) => setEmergencyContactPhone(e.target.value)}
-            className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
-            maxLength={40}
-          />
-        </Field>
-      </div>
-
-      <Field label="T-shirt size" htmlFor="student-t-shirt-size">
-        <input
-          id="student-t-shirt-size"
-          value={tShirtSize}
-          onChange={(e) => setTShirtSize(e.target.value)}
-          className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
-          maxLength={20}
-        />
-      </Field>
-
-      <Field label="Reason" htmlFor="student-edit-reason">
-        <input
-          id="student-edit-reason"
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-          className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
-          required
-          maxLength={500}
-        />
-      </Field>
-
-      {submitError && (
-        <p
-          role="alert"
-          data-testid="admin-student-edit-error"
-          className="rounded-md border border-red-200 bg-red-50 p-2 text-sm text-red-700"
-        >
-          {submitError}
-        </p>
-      )}
-      {submitOk && (
-        <p
-          role="status"
-          data-testid="admin-student-edit-ok"
-          className="rounded-md border border-emerald-200 bg-emerald-50 p-2 text-sm text-emerald-800"
-        >
-          Saved.
-        </p>
-      )}
-
-      <div className="flex items-center gap-2">
-        <Button
-          type="submit"
-          variant="primary"
-          size="sm"
-          disabled={!dirty || mutation.isPending}
-          icon={mutation.isPending ? <RefreshCw className="size-3.5 animate-spin" /> : undefined}
-        >
-          {mutation.isPending ? "Saving…" : "Save changes"}
-        </Button>
-        {dirty && (
-          <Button type="button" variant="secondary" size="sm" onClick={reset}>
-            Reset
-          </Button>
-        )}
-      </div>
-    </form>
-  );
-}
-```
-
-- [ ] Delete the now-unused `type StudentEditMode = "overview" | "training" | "family";` line (was at line 22).
-
-- [ ] `ChangeParentPanel` (lines 349-569) and `Field` (lines 571-591) are unchanged — leave them exactly as they are; `ChangeParentPanel` stays exported for spec 2's family page to relocate, and Task 11 stops importing it from this page.
-
-- [ ] Typecheck (expect a temporary error: `page.tsx` still passes a `mode` prop — that's fixed in Task 10, which lands in the same PR before this is merged; if executing tasks strictly in order, this typecheck step may show that one error and that is expected — proceed to Task 10 next rather than treating it as a blocker):
-
-```
-cd frontend && pnpm typecheck
-```
-
-- [ ] Commit:
-
-```
-git add frontend/app/\(admin\)/admin/students/\[studentId\]/StudentEditForm.tsx
-git commit -m "refactor(admin-students): drop StudentEditForm's mode prop, one form for all fields
-
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
-```
-
----
-
-### Task 10: `StudentRail` + rewrite `page.tsx` to the single-view layout
+## Task 5: Compliance auto-open logic
 
 **Files:**
-- Create: `frontend/app/(admin)/admin/students/[studentId]/StudentRail.tsx`
-- Modify: `frontend/app/(admin)/admin/students/[studentId]/page.tsx`
+- Modify: `frontend/app/(admin)/admin/students/[studentId]/page.tsx` (adds a pure helper near the top of the file, used by Task 6's layout)
 
 **Interfaces:**
-- `StudentRail` consumes: `Avatar` (`@/components/ds/avatar`), `Button` (`@/components/ds/button`), `Card` (`@/components/ds/card`), `Chip` (`@/components/ds/chip`), `getAdminUser` (`@/lib/api/admin`), `queryKeys.admin.userDetail` (`@/lib/query/keys`), `formatAgeFromDob` (`./format`), `StatusChip` (`./StatusChip`), `SECTION_IDS` (`./section-state`).
-- `StudentRail` produces: `StudentRail({ student, onStopAllClasses, onJumpTo }): JSX.Element`.
-- `page.tsx` produces the rewritten `AdminStudentDetailPage`; removes `STUDENT_TABS`, `StudentTab`, `StudentTabs`, `TabPanel`, `Header`.
+- Produces: `complianceNeedsAttention(student: AdminStudentDetail): boolean` — spec §2 "Compliance auto-opens only when something is outstanding" / §3.5 "collapsed when clean, open when a waiver or medical answer is outstanding".
+- Consumes: `AdminStudentDetail.waiver_status` (`"signed" | "missing" | "unknown"`, `students.ts:106`), `medical_notes` (`string | null`, spec calls this "a medical answer" — the only medical field on the record is `medical_notes`, so "outstanding" is read as "waiver not signed"; there is no separate medical-questionnaire-answered flag on `AdminStudentDetail` today, so this helper only gates on waiver status and documents that limitation inline rather than inventing a field that doesn't exist).
 
-- [ ] Implement `StudentRail.tsx`:
-
-```tsx
-"use client";
-
-import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
-
-import { getAdminUser } from "@/lib/api/admin";
-import type { AdminStudentDetail } from "@/lib/api/v2/students";
-import { queryKeys } from "@/lib/query/keys";
-import { Avatar } from "@/components/ds/avatar";
-import { Button } from "@/components/ds/button";
-import { Card } from "@/components/ds/card";
-import { Chip } from "@/components/ds/chip";
-
-import { formatAgeFromDob } from "./format";
-import { SECTION_IDS, type SectionId } from "./section-state";
-import { StatusChip } from "./StatusChip";
-
-const SECTION_LABELS: Record<SectionId, string> = {
-  enrollments: "Enrollments",
-  training: "Training & attendance",
-  billing: "Billing",
-  profile: "Profile",
-  compliance: "Compliance",
-};
-
-export function StudentRail({
-  student,
-  onStopAllClasses,
-  onJumpTo,
-}: {
-  student: AdminStudentDetail;
-  onStopAllClasses: () => void;
-  onJumpTo: (id: SectionId) => void;
-}) {
-  const age = formatAgeFromDob(student.date_of_birth);
-
-  return (
-    <Card p={20} className="lg:sticky lg:top-4 lg:self-start" data-testid="admin-student-rail">
-      <div className="flex items-center gap-3">
-        <Avatar name={student.full_name} size={56} />
-        <div className="min-w-0">
-          <h2 className="font-display text-lg font-semibold tracking-[-0.01em] text-rally-ink truncate">
-            {student.full_name}
-          </h2>
-          <div className="mt-1 flex flex-wrap items-center gap-2">
-            <StatusChip status={student.status} />
-            {student.level && (
-              <span className="text-xs text-rally-muted">{student.level}</span>
-            )}
-          </div>
-        </div>
-      </div>
-
-      <div className="mt-2 text-xs text-rally-muted">
-        {student.date_of_birth
-          ? `DOB ${new Date(`${student.date_of_birth}T00:00:00.000Z`).toLocaleDateString(undefined, { timeZone: "UTC" })}${age ? ` · ${age}` : ""}`
-          : "No date of birth on file"}
-      </div>
-
-      <Button size="sm" variant="ghost" className="mt-3" onClick={onStopAllClasses}>
-        Stop all classes
-      </Button>
-
-      <FamilyCard student={student} />
-
-      <nav className="mt-5 space-y-1 border-t border-neutral-200 pt-4" aria-label="Jump to section">
-        {SECTION_IDS.map((id) => (
-          <button
-            key={id}
-            type="button"
-            className="block w-full rounded px-1 py-1 text-left text-sm text-rally-muted hover:text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600"
-            onClick={() => onJumpTo(id)}
-            data-testid={`admin-student-jump-${id}`}
-          >
-            {SECTION_LABELS[id]}
-          </button>
-        ))}
-      </nav>
-    </Card>
-  );
-}
-
-/**
- * `AdminUserView.status` is the *membership* status — the backend's
- * `MembershipStatus = Literal["invited", "active", "suspended", "removed"]`
- * (`backend/v2/contexts/identity/domain/models.py:60`) — so it is a real login
- * signal, but a three-state one. A binary "active ? REGISTERED : INVITED" would
- * label a suspended or removed parent "INVITED". Match the vocabulary spec 2 §3
- * chose for the families list (never invited / invited / active) and the chip
- * convention `app/(admin)/admin/users/[userId]/page.tsx:428-431` already uses
- * for this exact field: render the status itself, `enrolled` when active.
- */
-function loginBadge(
-  status: string,
-  loginInviteSentAt: string | null | undefined,
-): { variant: "enrolled" | "pending" | "nocharge"; label: string } {
-  if (status === "active") return { variant: "enrolled", label: "ACTIVE" };
-  if (status === "invited" || loginInviteSentAt) {
-    return { variant: "pending", label: "INVITED" };
+- [ ] Add near the top of `page.tsx`, after the imports:
+  ```ts
+  /**
+   * Spec 2026-09-10-student-page-single-view §3.5: Compliance auto-opens when
+   * "a waiver or medical answer is outstanding". `AdminStudentDetail` has no
+   * separate medical-questionnaire-completed flag today (only free-text
+   * `medical_notes`), so this only gates on waiver status until such a field
+   * exists — documented here rather than guessed at.
+   *
+   * `waiver_status` is optional on the wire (`lib/api/v2/students.ts:106`), so
+   * an omitted field is treated as outstanding and opens the section. That is
+   * the safe direction: a missing waiver fact should be visible, not hidden.
+   */
+  function complianceNeedsAttention(student: AdminStudentDetail): boolean {
+    return student.waiver_status !== "signed";
   }
-  return { variant: "nocharge", label: status.toUpperCase() };
-}
+  ```
 
-function FamilyCard({ student }: { student: AdminStudentDetail }) {
-  const parentDetailQuery = useQuery({
-    queryKey: queryKeys.admin.userDetail(student.parent_id ?? ""),
-    queryFn: () => getAdminUser(student.parent_id as string),
-    enabled: Boolean(student.parent_id),
-  });
-  const parent = parentDetailQuery.data;
-  const badge = parent ? loginBadge(parent.status, parent.login_invite_sent_at) : null;
+OPEN QUESTION (owner): spec §3.5 says Compliance opens "when a waiver **or medical answer** is
+outstanding", but `AdminStudentDetail` exposes no medical-answered flag — only the free-text
+`medical_notes` (`lib/api/v2/students.ts:98`), which is blank for most students and cannot
+distinguish "not asked" from "nothing to report". Adding one is a backend read-model change,
+which spec §5 puts out of scope. Confirm that waiver-only auto-open is acceptable for v1, or
+re-scope to add the field.
+- [ ] Run: `cd frontend && pnpm typecheck` — expected **FAIL, with exactly one class of error**: `page.tsx`'s three `StudentEditForm` call sites still pass `mode`, which Task 4 removed. Confirm the only errors reported are those `mode` prop errors (`grep`-check the output) and that `complianceNeedsAttention` itself compiles; both are cleared by Task 6. The earlier draft claimed PASS here, which was wrong.
+- [ ] Commit: `git add frontend/app/\(admin\)/admin/students/\[studentId\]/page.tsx` then:
+  ```
+  feat(admin): add compliance auto-open predicate for student page
 
-  return (
-    <div className="mt-4 rounded-lg border border-neutral-200 p-3 text-sm" data-testid="admin-student-family-card">
-      <div className="flex items-center justify-between gap-2">
-        <span className="font-medium text-rally-ink truncate">
-          {student.parent_name ?? student.parent_email ?? "Parent on file"}
-        </span>
-        {badge && <Chip variant={badge.variant} label={badge.label} />}
-      </div>
-      {student.parent_email && (
-        <a
-          href={`mailto:${student.parent_email}`}
-          className="mt-1 block truncate text-rally-muted hover:underline focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600 rounded"
-        >
-          {student.parent_email}
-        </a>
-      )}
-      {student.parent_phone && (
-        <a
-          href={`tel:${student.parent_phone}`}
-          className="block text-rally-muted hover:underline focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600 rounded"
-        >
-          {student.parent_phone}
-        </a>
-      )}
-      {student.parent_id ? (
-        <Link
-          href={`/admin/families/${encodeURIComponent(student.parent_id)}`}
-          className="mt-2 inline-block text-xs font-medium text-rally-blue hover:underline"
-        >
-          Open family
-        </Link>
-      ) : (
-        <p className="mt-2 text-xs text-rally-muted">No parent on file.</p>
-      )}
+  Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+  ```
+
+## Task 6: `page.tsx` — replace tabs with the rail + section layout
+
+**Files:**
+- Modify: `frontend/app/(admin)/admin/students/[studentId]/page.tsx` (removes `StudentTab` type at line 45, `STUDENT_TABS` at 47-53, `activeTab` state at 59, tab-gated blocks at 156-283, `StudentTabs`/`TabPanel` functions at 372-427; rewrites the `Header` function at 614-664 to include the rail's family card and section jump links per spec §3)
+
+**Interfaces:**
+- Consumes: `CollapsibleSection` (Task 2), `readSectionOpen`/`writeSectionOpen` (Task 1, used indirectly via `CollapsibleSection`), `complianceNeedsAttention` (Task 5), the now-mode-less `StudentEditForm` (Task 4), all existing panel functions/components already in scope (`EngagementPanel`, `TrainingSnapshot`, `SkillPathwayPanel`, `RecentAttendancePanel`, `ComplianceSummary`, `SessionsPanel`, `BillingEnrollmentsPanel`, `FamilyBillingLink`, `ChangeParentPanel` — this task keeps `ChangeParentPanel` mounted; Task 8 removes it).
+- Produces: the default-exported `AdminStudentDetailPage` with no tab state; a new `SectionJumpLinks` component for the rail.
+
+- [ ] Remove `type StudentTab`, `STUDENT_TABS`, and `const [activeTab, setActiveTab] = useState<StudentTab>("overview")` (page.tsx lines 45-53, 59).
+- [ ] Remove `<StudentTabs activeTab={activeTab} onChange={setActiveTab} />` (line 154) and every `{activeTab === "..." && (<TabPanel id="...">...</TabPanel>)}` block (lines 156-283), and the `StudentTabs`/`TabPanel` function definitions (lines 372-427).
+- [ ] **Remove the `<Header ... />` call site at lines 136-139** (`<Header student={student} onStopAllClasses={() => setStopAllClassesOpen(true)} />`). The step further down deletes the `Header` *function*; leaving its invocation behind breaks `pnpm typecheck` and would render the old header above the new rail. Keep the `BackLink` at line 135 and the `stopAllClassesOpen` dialog block at lines 140-152 exactly where they are — `RailCard` only raises the flag, the dialog still lives on the page.
+- [ ] Add the hash effect right after the existing query declarations. It must handle both the initial load and later same-page hash changes (the rail's jump links are `<a href="#billing">`, which fire `hashchange` without remounting the page), and it must scroll — `forceOpen` alone only expands:
+  ```ts
+  const [hashSection, setHashSection] = useState<string | null>(null);
+  useEffect(() => {
+    const apply = () => {
+      const hash = window.location.hash.replace("#", "");
+      if (!hash) return;
+      setHashSection(hash);
+      // The section may still be collapsed on this tick; scroll on the next
+      // frame, once CollapsibleSection's forceOpen effect has expanded it.
+      requestAnimationFrame(() => {
+        document.getElementById(hash)?.scrollIntoView({ block: "start" });
+      });
+    };
+    apply();
+    window.addEventListener("hashchange", apply);
+    return () => window.removeEventListener("hashchange", apply);
+  }, []);
+  ```
+  (add `useEffect` to the existing `import { type ReactNode, useState } from "react";` line at `page.tsx:10`, making it `import { type ReactNode, useEffect, useState } from "react";`).
+  Note: `hashSection` is only ever set, never cleared, so once an admin deep-links to a section it stays force-open for the rest of that page visit. That is intended — clearing it would let the section snap shut under them.
+- [ ] Replace the main return's body (everything from `<StudentSummaryStrip .../>` through the removed tab blocks) with:
+  ```tsx
+  <div className="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
+    <div className="space-y-4 lg:sticky lg:top-4 lg:self-start">
+      <RailCard student={student} onStopAllClasses={() => setStopAllClassesOpen(true)} />
+      <SectionJumpLinks />
     </div>
-  );
-}
-```
-
-- [ ] Replace `page.tsx` in full:
-
-```tsx
-"use client";
-
-/**
- * Admin student detail page.
- *
- * Pulls a single student from the v2 BFF and exposes safe admin-editable
- * fields. No raw internal ids are rendered in normal UI.
- *
- * Single-view layout (spec 2026-09-10-student-page-single-view-design):
- * a sticky rail plus five collapsible sections replace the old five tabs.
- * Every section mounts unconditionally and fetches its own data, same as
- * the tabs did lazily before.
- */
-
-import { type ReactNode, useEffect, useState } from "react";
-import Link from "next/link";
-import { useParams } from "next/navigation";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Activity,
-  ArrowLeft,
-  CalendarCheck,
-  FileCheck,
-  ShieldCheck,
-  UserRound,
-  Wallet,
-} from "lucide-react";
-
-import { listAdminUsers } from "@/lib/api/admin";
-import { getAdminStudent, type AdminStudentDetail } from "@/lib/api/v2/students";
-import { getActiveAcademyId } from "@/lib/api/client";
-import { getStudentProgress, listPrograms } from "@/lib/api/curriculum";
-import { getDeparturePolicy } from "@/lib/api/v2/departure-policy";
-import { buildStudentProgressHref } from "@/lib/navigation/admin-student-progress-return";
-import { queryKeys } from "@/lib/query/keys";
-import { Card } from "@/components/ds/card";
-import { Overline } from "@/components/ds/typography";
-import { StopAllClassesDialog } from "@/components/admin/enrollment/stop-all-classes-dialog";
-
-import { BillingSummaryLine } from "./BillingSummaryLine";
-import { CollapsibleSection } from "./CollapsibleSection";
-import { DetailList } from "./DetailList";
-import { EnrollmentsSection } from "./EnrollmentsSection";
-import { FamilyBillingLink } from "./FamilyBillingLink";
-import { formatCurrencyCents, formatDate, formatDateUtc, formatDateTime } from "./format";
-// NB: `SECTION_IDS` is deliberately NOT imported here — page.tsx spells the
-// five sections out as JSX; only StudentRail iterates the list.
-import {
-  SECTION_STORAGE_KEY,
-  defaultSectionOpen,
-  parseStoredSections,
-  sectionIdFromHash,
-  serializeSections,
-  type SectionId,
-} from "./section-state";
-import { OPEN_BILLING_STATUSES, StatusChip } from "./StatusChip";
-import { ChangeParentPanel, StudentEditForm } from "./StudentEditForm";
-import { StudentRail } from "./StudentRail";
-
-export default function AdminStudentDetailPage() {
-  const params = useParams<{ studentId: string }>();
-  const studentId = params?.studentId ?? "";
-  const queryClient = useQueryClient();
-  const [stopAllClassesOpen, setStopAllClassesOpen] = useState(false);
-
-  const departurePolicyQuery = useQuery({
-    queryKey: queryKeys.admin.departurePolicy(),
-    queryFn: getDeparturePolicy,
-  });
-
-  const studentQuery = useQuery({
-    queryKey: queryKeys.admin.studentDetail(studentId),
-    queryFn: () => getAdminStudent(studentId),
-    enabled: Boolean(studentId),
-    retry: false,
-  });
-  // Still fetched here for ChangeParentPanel, which this page stops rendering
-  // in the task that follows this one (gated on the family page's own parent
-  // picker shipping — see the plan's Task 11).
-  const parentsQuery = useQuery({
-    queryKey: queryKeys.admin.users("parent"),
-    queryFn: () => listAdminUsers("parent"),
-    enabled: Boolean(studentId),
-  });
-
-  const complianceOutstanding = studentQuery.data?.waiver_status !== "signed";
-  const sections = useSectionState(complianceOutstanding);
-
-  if (!studentId) {
-    return (
-      <section className="space-y-4">
-        <BackLink />
-        <Card p={20}>
-          <p className="text-sm text-rally-muted">Missing student id.</p>
-        </Card>
-      </section>
-    );
-  }
-
-  if (studentQuery.isPending) {
-    return (
-      <section className="space-y-4">
-        <BackLink />
-        <Card p={20}>
-          <div
-            className="h-24 animate-pulse rounded-lg bg-neutral-100 dark:bg-neutral-800"
-            aria-label="Loading student"
-          />
-        </Card>
-      </section>
-    );
-  }
-
-  if (studentQuery.isError) {
-    return (
-      <section className="space-y-4">
-        <BackLink />
-        <Card p={20}>
-          <p role="alert" className="text-sm text-red-700">
-            Could not load student.
-          </p>
-        </Card>
-      </section>
-    );
-  }
-
-  const student = studentQuery.data;
-  if (!student) {
-    return (
-      <section className="space-y-4">
-        <BackLink />
-        <Card p={20}>
-          <p className="text-sm text-rally-muted">Student not found.</p>
-        </Card>
-      </section>
-    );
-  }
-
-  const invalidateStudent = () => {
-    void queryClient.invalidateQueries({ queryKey: queryKeys.admin.studentDetail(studentId) });
-    void queryClient.invalidateQueries({ queryKey: ["admin", "students"] });
-  };
-
-  return (
-    <section
-      className="space-y-6"
-      data-testid="admin-student-detail"
-      data-student-id={student.student_id}
-    >
-      <BackLink />
-      {stopAllClassesOpen && (
-        <StopAllClassesDialog
-          studentId={student.student_id}
-          studentName={student.full_name}
-          policyDefaultOutcome={departurePolicyQuery.data?.drop_default_outcome}
-          onClose={() => setStopAllClassesOpen(false)}
-          onDone={() => {
-            void queryClient.invalidateQueries({
-              queryKey: queryKeys.admin.studentDetail(studentId),
-            });
-          }}
-        />
-      )}
+    <div className="space-y-6 min-w-0">
       <StudentSummaryStrip student={student} />
 
-      <div className="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
-        <StudentRail
-          student={student}
-          onStopAllClasses={() => setStopAllClassesOpen(true)}
-          onJumpTo={sections.jumpTo}
+      <CollapsibleSection id="enrollments" title="Enrollments" defaultOpen forceOpen={hashSection === "enrollments"}>
+        {/* `studentName` is REQUIRED — plan 1
+            (2026-09-10-departure-actions-from-student-page, Task 9) added it to
+            SessionsPanel's props so the Hold/Return/Drop/Delete dialogs and the
+            DepartureActions aria-labels name the child. Plan 1 lands before this
+            one; dropping the prop here is a typecheck error, and re-adding a
+            `studentName={session.session_title}` fallback re-introduces the bug
+            plan 1 fixed. The per-row action set stays `departureActionsFor(status)`
+            from `@/components/admin/enrollment/departure-actions` — this plan does
+            not redefine it. */}
+        <SessionsPanel
+          sessions={student.enrolled_sessions ?? []}
+          pastEnrollments={student.past_enrollments ?? []}
+          parentId={student.parent_id}
+          studentId={studentId}
+          studentName={student.full_name}
+          queryClient={queryClient}
         />
-
-        <div className="min-w-0 space-y-6">
-          <CollapsibleSection
-            id="enrollments"
-            title="Enrollments"
-            icon={<CalendarCheck className="size-4 text-rally-muted" aria-hidden="true" />}
-            open={sections.isOpen("enrollments")}
-            onToggle={() => sections.toggle("enrollments")}
-          >
-            <EnrollmentsSection student={student} studentId={studentId} queryClient={queryClient} />
-          </CollapsibleSection>
-
-          <CollapsibleSection
-            id="training"
-            title="Training & attendance"
-            icon={<Activity className="size-4 text-rally-muted" aria-hidden="true" />}
-            open={sections.isOpen("training")}
-            onToggle={() => sections.toggle("training")}
-          >
-            <div className="grid gap-6 lg:grid-cols-2">
-              <div className="space-y-6">
-                <TrainingSnapshot student={student} />
-                <SkillPathwayPanel student={student} />
-              </div>
-              <div className="space-y-6">
-                <RecentAttendancePanel student={student} />
-                <EngagementPanel student={student} />
-              </div>
-            </div>
-          </CollapsibleSection>
-
-          <CollapsibleSection
-            id="billing"
-            title="Billing"
-            icon={<Wallet className="size-4 text-rally-muted" aria-hidden="true" />}
-            open={sections.isOpen("billing")}
-            onToggle={() => sections.toggle("billing")}
-            headExtra={<BillingSummaryLine student={student} />}
-          >
-            <FamilyBillingLink parentId={student.parent_id} parentName={student.parent_name} />
-          </CollapsibleSection>
-
-          <CollapsibleSection
-            id="profile"
-            title="Profile"
-            icon={<UserRound className="size-4 text-rally-muted" aria-hidden="true" />}
-            open={sections.isOpen("profile")}
-            onToggle={() => sections.toggle("profile")}
-          >
-            <StudentEditForm student={student} onSaved={invalidateStudent} />
-          </CollapsibleSection>
-
-          <CollapsibleSection
-            id="compliance"
-            title="Compliance"
-            icon={<ShieldCheck className="size-4 text-rally-muted" aria-hidden="true" />}
-            open={sections.isOpen("compliance")}
-            onToggle={() => sections.toggle("compliance")}
-          >
-            <ComplianceSummary student={student} />
-            <div className="mt-6 border-t border-neutral-200 pt-4">
-              <Overline>Parent account</Overline>
-              <ChangeParentPanel
-                student={student}
-                parents={parentsQuery.data?.users ?? []}
-                parentsLoading={parentsQuery.isLoading}
-                parentsError={parentsQuery.isError}
-                onSaved={() => {
-                  invalidateStudent();
-                  void queryClient.invalidateQueries({ queryKey: queryKeys.admin.users("parent") });
-                }}
-              />
-            </div>
-          </CollapsibleSection>
+        <div className="mt-6">
+          <BillingEnrollmentsPanel studentId={studentId} active />
         </div>
+      </CollapsibleSection>
+
+      <CollapsibleSection id="training" title="Training & attendance" defaultOpen forceOpen={hashSection === "training"}>
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1.3fr)_minmax(340px,0.9fr)]">
+          <div>
+            <TrainingSnapshot student={student} />
+          </div>
+          <div className="space-y-6">
+            <SkillPathwayPanel student={student} />
+            <RecentAttendancePanel student={student} />
+            <EngagementPanel student={student} />
+          </div>
+        </div>
+      </CollapsibleSection>
+
+      {/* Spec §2/§3.3: the summary line is ALWAYS visible; only the detail
+          collapses. It therefore sits OUTSIDE the CollapsibleSection. */}
+      <div className="space-y-2">
+        <p className="text-sm text-rally-ink" data-testid="admin-student-billing-summary">
+          {billingSummaryLine(student)}
+        </p>
+        <CollapsibleSection id="billing" title="Billing" defaultOpen={false} forceOpen={hashSection === "billing"}>
+          <FamilyBillingLink parentId={student.parent_id} parentName={student.parent_name} />
+        </CollapsibleSection>
       </div>
-    </section>
-  );
-}
 
-/**
- * Wraps the pure helpers in `./section-state` with the actual
- * localStorage/hash access, which only exists in the browser. A `#section`
- * hash force-opens that section (without overwriting the stored preference
- * for the others) and scrolls it into view once, on mount.
- */
-function useSectionState(complianceOutstanding: boolean) {
-  const [stored, setStored] = useState<Partial<Record<SectionId, boolean>>>({});
-  const [hashOpen, setHashOpen] = useState<SectionId | null>(null);
+      <CollapsibleSection id="profile" title="Profile" defaultOpen={false} forceOpen={hashSection === "profile"}>
+        <StudentEditForm
+          student={student}
+          onSaved={() => {
+            void queryClient.invalidateQueries({ queryKey: queryKeys.admin.studentDetail(studentId) });
+            void queryClient.invalidateQueries({ queryKey: ["admin", "students"] });
+          }}
+        />
+      </CollapsibleSection>
 
-  useEffect(() => {
-    try {
-      setStored(parseStoredSections(window.localStorage.getItem(SECTION_STORAGE_KEY)));
-    } catch {
-      // Private browsing / disabled storage: fall back to defaults.
-    }
-    const fromHash = sectionIdFromHash(window.location.hash);
-    if (fromHash) {
-      setHashOpen(fromHash);
-      // Let the section render open before scrolling to it.
-      requestAnimationFrame(() => {
-        document.getElementById(`section-${fromHash}`)?.scrollIntoView({ block: "start" });
-      });
-    }
-    // Only ever read on mount — a later manual hash edit does not re-trigger this.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const isOpen = (id: SectionId) => {
-    if (id === hashOpen) return true;
-    return stored[id] ?? defaultSectionOpen(id, complianceOutstanding);
-  };
-
-  const toggle = (id: SectionId) => {
-    // The write stays OUTSIDE the setState updater: React invokes updaters
-    // twice under StrictMode in dev, and a state updater must stay pure.
-    const next = { ...stored, [id]: !isOpen(id) };
-    try {
-      window.localStorage.setItem(SECTION_STORAGE_KEY, serializeSections(next));
-    } catch {
-      // Ignore write failures (private browsing, quota) — state still updates in memory.
-    }
-    setStored(next);
-    if (hashOpen === id) setHashOpen(null);
-  };
-
-  const jumpTo = (id: SectionId) => {
-    if (!isOpen(id)) toggle(id);
-    document.getElementById(`section-${id}`)?.scrollIntoView({ block: "start" });
-  };
-
-  return { isOpen, toggle, jumpTo };
-}
-
-function StudentSummaryStrip({ student }: { student: AdminStudentDetail }) {
-  const outstandingBalance =
-    student.outstanding_balance_cents ??
-    student.payment_history.reduce(
-      (sum, payment) =>
-        OPEN_BILLING_STATUSES.has(payment.status) ? sum + Math.max(payment.balance_due_cents, 0) : sum,
-      0,
+      <CollapsibleSection
+        id="compliance"
+        title="Compliance"
+        defaultOpen={false}
+        forceOpen={hashSection === "compliance" || complianceNeedsAttention(student)}
+      >
+        <ComplianceSummary student={student} />
+        <div className="mt-6">
+          <ChangeParentPanel
+            student={student}
+            parents={parentsQuery.data?.users ?? []}
+            parentsLoading={parentsQuery.isLoading}
+            parentsError={parentsQuery.isError}
+            onSaved={() => {
+              void queryClient.invalidateQueries({ queryKey: queryKeys.admin.studentDetail(studentId) });
+              void queryClient.invalidateQueries({ queryKey: ["admin", "students"] });
+              void queryClient.invalidateQueries({ queryKey: queryKeys.admin.users("parent") });
+            }}
+          />
+        </div>
+      </CollapsibleSection>
+    </div>
+  </div>
+  ```
+  Notes on this block:
+  - The spec's §3 billing summary line ("$340/mo across 2 classes · nothing overdue · autopay
+    on") is a new computed string, not produced by any existing panel. Add `billingSummaryLine`
+    next to `complianceNeedsAttention` in `page.tsx`. Every field it reads is verified to exist:
+    `AdminStudentSessionSummary.amount_cents` and `.autopay_status` (`lib/api/v2/students.ts:48,52`,
+    both optional/nullable — hence the `?? 0` and the `=== "active"` test), `payment_history`
+    and `balance_due_cents` (`students.ts:110, 68`), and `OPEN_BILLING_STATUSES` + `formatCurrencyCents`
+    are already imported by `page.tsx` (lines 40, 42).
+  - `CollapsibleSection` is itself a `Card`, and several children (`FamilyBillingLink`,
+    `SkillPathwayPanel`, `RecentAttendancePanel`, `EngagementPanel`, `SessionsPanel`'s tables)
+    are also `Card`s, so sections render a card inside a card. That is a visual nit, not a bug;
+    resolve it in the Task 9 visual pass if it reads badly, by giving those inner panels a
+    borderless variant rather than by restructuring the sections.
+  ```ts
+  function billingSummaryLine(student: AdminStudentDetail): string {
+    const activeCount = (student.enrolled_sessions ?? []).filter((s) => s.status === "active").length;
+    const monthlyCents = (student.enrolled_sessions ?? [])
+      .filter((s) => s.status === "active")
+      .reduce((sum, s) => sum + (s.amount_cents ?? 0), 0);
+    const overdue = student.payment_history.some(
+      (p) => OPEN_BILLING_STATUSES.has(p.status) && p.balance_due_cents > 0,
     );
-  const unpaidInvoiceCount = student.payment_history.filter(
-    (payment) => OPEN_BILLING_STATUSES.has(payment.status) && payment.balance_due_cents > 0,
-  ).length;
-  const attendance =
-    student.attendance_rate == null
-      ? "—"
-      : `${Math.round(Math.max(0, Math.min(student.attendance_rate, 1)) * 100)}%`;
+    const anyAutopay = (student.enrolled_sessions ?? []).some((s) => s.autopay_status === "active");
+    return `${formatCurrencyCents(monthlyCents)}/mo across ${activeCount} ${activeCount === 1 ? "class" : "classes"} · ${overdue ? "payment overdue" : "nothing overdue"} · autopay ${anyAutopay ? "on" : "off"}`;
+  }
+  ```
+- [ ] Replace the `Header` function (lines 614-664) with `RailCard`, matching spec §3's rail contents (avatar, name, status chip, level, DOB/age, Stop all classes, family card, section jump links — jump links extracted to `SectionJumpLinks` below). Every field used is verified present: `level`, `date_of_birth`, `parent_phone` on `AdminStudentDetail` (`lib/api/v2/students.ts:91-99`) and `parent_id`/`parent_name`/`parent_email`/`full_name`/`status` on the inherited `AdminStudentView` (`lib/api/admin.ts:1283-1289`). The interpolated `Link href` needs no cast even under `typedRoutes: true` (`next.config.ts:56`) because `/admin/families/[parentId]` is a real route — `FamilyBillingLink.tsx:27` already does exactly this.
 
-  return (
-    <div
-      className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"
-      data-testid="admin-student-summary-strip"
-    >
-      <SummaryMetric
-        icon={<CalendarCheck className="size-4" aria-hidden="true" />}
-        label="Active sessions"
-        value={String(student.active_session_count)}
-        detail={
-          student.last_seen_at
-            ? `Last attended ${formatDate(student.last_seen_at)}`
-            : "No attendance yet"
-        }
-      />
-      <SummaryMetric
-        icon={<Activity className="size-4" aria-hidden="true" />}
-        label="Attendance"
-        value={attendance}
-        detail="Last 30 days"
-      />
-      <SummaryMetric
-        icon={<Wallet className="size-4" aria-hidden="true" />}
-        label="Outstanding balance"
-        value={formatCurrencyCents(outstandingBalance)}
-        detail={
-          unpaidInvoiceCount === 0
-            ? "No unpaid invoices"
-            : `${unpaidInvoiceCount} unpaid ${unpaidInvoiceCount === 1 ? "invoice" : "invoices"}`
-        }
-      />
-      <SummaryMetric
-        icon={<FileCheck className="size-4" aria-hidden="true" />}
-        label="Waiver"
-        value={(student.waiver_status ?? "unknown").toUpperCase()}
-        detail={student.waiver_version ?? "No version on file"}
-      />
-    </div>
-  );
-}
-
-function SummaryMetric({
-  icon,
-  label,
-  value,
-  detail,
-}: {
-  icon: ReactNode;
-  label: string;
-  value: string;
-  detail: string;
-}) {
-  return (
-    <div className="rounded-lg border border-neutral-200 bg-white p-4">
-      <div className="flex items-center gap-2 text-rally-muted">
-        {icon}
-        <span className="font-mono text-[10px] font-bold uppercase tracking-overline">
-          {label}
-        </span>
-      </div>
-      <div className="mt-3 font-mono text-2xl font-semibold tabular-nums text-rally-ink">
-        {value}
-      </div>
-      <div className="mt-1 truncate text-xs text-rally-muted">{detail}</div>
-    </div>
-  );
-}
-
-function EngagementPanel({ student }: { student: AdminStudentDetail }) {
-  return (
-    <Card p={20}>
-      <div className="flex items-center gap-2">
-        <Activity className="size-4 text-rally-muted" aria-hidden="true" />
-        <Overline>Engagement</Overline>
-      </div>
-      <DetailList
-        rows={[
-          { label: "Active sessions", value: String(student.active_session_count) },
-          {
-            label: "Attendance (30d)",
-            value:
-              student.attendance_rate == null
-                ? "—"
-                : `${Math.round(Math.max(0, Math.min(student.attendance_rate, 1)) * 100)}%`,
-          },
-          { label: "Last attended", value: student.last_seen_at ? formatDate(student.last_seen_at) : "—" },
-          { label: "Dues", value: student.dues_status.toUpperCase() },
-        ]}
-      />
-    </Card>
-  );
-}
-
-function TrainingSnapshot({ student }: { student: AdminStudentDetail }) {
-  const academyId = getActiveAcademyId() ?? "";
-  const { data: programs } = useQuery({
-    queryKey: ["admin", "programs", academyId],
-    queryFn: () => listPrograms(academyId),
-    enabled: Boolean(academyId),
-  });
-  // TODO: derive programId from student.enrolled_sessions once AdminStudentSessionSummary
-  // exposes pathway_program_id — for now fall back to programs[0]
-  const programId = programs?.[0]?.program_id ?? "";
-  const { data: progress } = useQuery({
-    queryKey: ["admin", "student-progress", student.student_id, programId],
-    queryFn: () => getStudentProgress(student.student_id, programId),
-    enabled: Boolean(programId),
-  });
-
-  return (
-    <Card p={20}>
-      <div className="flex items-center gap-2">
-        <Activity className="size-4 text-rally-muted" aria-hidden="true" />
-        <Overline>Skill pathway placement</Overline>
-      </div>
-      {progress?.current_level_name ? (
-        <>
-          <p className="mt-3 text-sm text-rally-muted">
-            Level {progress.current_level_sequence}: {progress.current_level_name}
-          </p>
-          <p className="mt-0.5 text-xs text-rally-muted">
-            {progress.passed_skills} / {progress.total_skills} skills passed
-          </p>
-        </>
-      ) : (
-        <p className="mt-3 text-sm text-rally-muted">Not placed in a level yet.</p>
-      )}
-    </Card>
-  );
-}
-
-function SkillPathwayPanel({ student }: { student: AdminStudentDetail }) {
-  return (
-    <Card p={20}>
-      <div className="flex items-center gap-2">
-        <Activity className="size-4 text-rally-muted" aria-hidden="true" />
-        <Overline>Skill pathway</Overline>
-      </div>
-      <p className="mt-3 text-sm text-rally-muted">
-        Place this student in a curriculum level and review skill completion.
-      </p>
-      <div className="mt-4">
-        <Link
-          href={buildStudentProgressHref({
-            studentId: student.student_id,
-            returnTo: `/admin/students/${encodeURIComponent(student.student_id)}`,
-            returnLabel: "Back to student profile",
-          }) as Parameters<typeof Link>[0]["href"]}
-          className="inline-flex items-center justify-center rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
-        >
-          Manage skill progress
-        </Link>
-      </div>
-    </Card>
-  );
-}
-
-function RecentAttendancePanel({ student }: { student: AdminStudentDetail }) {
-  const recent = student.recent_attendance ?? [];
-
-  return (
-    <Card p={20}>
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <CalendarCheck className="size-4 text-rally-muted" aria-hidden="true" />
-          <Overline>Recent attendance</Overline>
-        </div>
-        <span className="font-mono text-xs text-rally-muted tabular-nums">{recent.length} records</span>
-      </div>
-      {recent.length === 0 ? (
-        <p className="mt-3 text-sm text-rally-muted">No attendance records yet.</p>
-      ) : (
-        <div className="mt-3 overflow-x-auto" data-testid="admin-student-recent-attendance">
-          <table className="min-w-full text-left text-sm">
-            <thead className="border-b border-neutral-200 text-xs uppercase tracking-overline text-rally-muted">
-              <tr>
-                <th className="py-2 pr-4 font-medium">Date</th>
-                <th className="py-2 pr-4 font-medium">Status</th>
-                <th className="py-2 font-medium">Marked</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-100">
-              {recent.map((entry) => (
-                <tr key={`${entry.session_id}-${entry.date}-${entry.status}`}>
-                  <td className="py-3 pr-4 align-top text-rally-ink">{formatDateUtc(entry.date)}</td>
-                  <td className="py-3 pr-4 align-top">
-                    <StatusChip status={entry.status} />
-                  </td>
-                  <td className="py-3 align-top text-rally-muted">{formatDateTime(entry.marked_at)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </Card>
-  );
-}
-
-function ComplianceSummary({ student }: { student: AdminStudentDetail }) {
-  return (
-    <DetailList
-      rows={[
-        { label: "Waiver status", value: (student.waiver_status ?? "unknown").toUpperCase() },
-        { label: "Waiver version", value: student.waiver_version ?? "—" },
-        { label: "Signed at", value: formatDateTime(student.waiver_signed_at) },
-        { label: "Parent", value: student.parent_name ?? student.parent_email ?? "—" },
-      ]}
-    />
-  );
-}
-
-function BackLink() {
-  return (
-    <Link
-      href="/admin/students"
-      className="inline-flex items-center gap-1.5 text-sm text-rally-muted hover:text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600 rounded"
-    >
-      <ArrowLeft className="size-4" aria-hidden="true" />
-      <span>All students</span>
-    </Link>
-  );
-}
-```
-
-Note: `data-testid="admin-student-edit-form"` (singular, no `-overview-`/`-training-`/`-family-` suffix, per Task 9) is the new testid the e2e spec targets in Task 12.
-
-- [ ] Typecheck:
-
-```
-cd frontend && pnpm typecheck
-```
-
-- [ ] Lint:
-
-```
-cd frontend && pnpm lint
-```
-
-- [ ] Commit:
-
-```
-git add frontend/app/\(admin\)/admin/students/\[studentId\]/StudentRail.tsx frontend/app/\(admin\)/admin/students/\[studentId\]/page.tsx
-git commit -m "feat(admin-students): replace the five-tab student page with a single scrolling view
-
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
-```
-
----
-
-### Task 11: Remove `ChangeParentPanel` from the student page (gated)
-
-**Files:**
-- Modify: `frontend/app/(admin)/admin/students/[studentId]/page.tsx`
-
-**Interfaces:** none new — deletes `parentsQuery`, the `ChangeParentPanel` import and its render block, and the `listAdminUsers` import.
-
-- [ ] **Gate check — do this before editing anything.** Confirm the family page already has a "Move child to another family" control (spec 2 §6). Run:
-
-```
-grep -rn "Move child to another family" frontend/app/\(admin\)/admin/families
-```
-
-If this returns no match, **stop this task**: leave `page.tsx` exactly as Task 10 left it (with `ChangeParentPanel` still in the Compliance section), skip straight to Task 12, and do not remove the panel until the family-page parent-picker has shipped. Re-run the grep before resuming.
-
-**Expected outcome in the agreed build order:** the grep returns nothing. Plan 2 (`docs/superpowers/plans/2026-09-10-families-directory-consolidation.md`) has no "Move child to another family" task — its Self-review §6 row explicitly defers that control (and relocating `ChangeParentPanel`) to a follow-on plan. So this task is skipped on the first pass and becomes a one-commit follow-up after that control lands. The literal string `Move child to another family` is the gate contract; whichever plan eventually builds the control must use that exact label.
-
-- [ ] Once the grep confirms the control exists, remove `parentsQuery` (the block right after `studentQuery`):
-
-```tsx
-  const parentsQuery = useQuery({
-    queryKey: queryKeys.admin.users("parent"),
-    queryFn: () => listAdminUsers("parent"),
-    enabled: Boolean(studentId),
-  });
-```
-
-- [ ] Remove the `listAdminUsers` import: delete `import { listAdminUsers } from "@/lib/api/admin";`.
-
-- [ ] Remove `ChangeParentPanel` from the Compliance section's body — replace:
-
-```tsx
-            <ComplianceSummary student={student} />
-            <div className="mt-6 border-t border-neutral-200 pt-4">
-              <Overline>Parent account</Overline>
-              <ChangeParentPanel
-                student={student}
-                parents={parentsQuery.data?.users ?? []}
-                parentsLoading={parentsQuery.isLoading}
-                parentsError={parentsQuery.isError}
-                onSaved={() => {
-                  invalidateStudent();
-                  void queryClient.invalidateQueries({ queryKey: queryKeys.admin.users("parent") });
-                }}
-              />
+OPEN QUESTION (owner): spec §3's rail lists a **login badge** in the family card ("parent name,
+email, phone, login badge"). Neither `AdminStudentDetail` nor its base `AdminStudentView`
+carries any parent-login/invite-status field, and the parent list this page already fetches
+(`listAdminUsers("parent")` → `AdminUserView`) is slated for removal in Task 8. Options: (a) drop
+the badge for v1, (b) derive it from `AdminUserView.status` and keep `parentsQuery` alive past
+Task 8, or (c) add the field to the student read model — which spec §5 puts out of scope. The
+`RailCard` below implements (a); confirm before building.
+  ```tsx
+  function RailCard({
+    student,
+    onStopAllClasses,
+  }: {
+    student: AdminStudentDetail;
+    onStopAllClasses: () => void;
+  }) {
+    const age = student.date_of_birth
+      ? Math.floor(
+          (Date.now() - new Date(student.date_of_birth).getTime()) / (365.25 * 24 * 60 * 60 * 1000),
+        )
+      : null;
+    return (
+      <Card p={20}>
+        <div className="flex items-center gap-3">
+          <Avatar name={student.full_name} size={56} />
+          <div className="min-w-0">
+            <h2 className="font-display text-lg font-semibold tracking-[-0.01em] text-rally-ink truncate">
+              {student.full_name}
+            </h2>
+            <div className="mt-1 flex items-center gap-2">
+              <StatusChip status={student.status} />
             </div>
-```
+          </div>
+        </div>
+        <dl className="mt-4 space-y-1.5 text-sm">
+          {student.level && (
+            <div className="flex justify-between">
+              <dt className="text-rally-muted">Level</dt>
+              <dd className="text-rally-ink">{student.level}</dd>
+            </div>
+          )}
+          <div className="flex justify-between">
+            <dt className="text-rally-muted">DOB</dt>
+            <dd className="text-rally-ink">
+              {student.date_of_birth ? `${formatDate(student.date_of_birth)}${age !== null ? ` (${age})` : ""}` : "—"}
+            </dd>
+          </div>
+        </dl>
+        <div className="mt-4">
+          <Button size="sm" variant="ghost" onClick={onStopAllClasses} full>
+            Stop all classes
+          </Button>
+        </div>
+        <div className="mt-4 rounded-lg border border-neutral-200 p-3 text-sm" data-testid="admin-student-family-card">
+          <div className="font-medium text-rally-ink">
+            {student.parent_name ?? student.parent_email ?? "Parent on file"}
+          </div>
+          {student.parent_email && (
+            <a href={`mailto:${student.parent_email}`} className="block text-rally-muted hover:underline">
+              {student.parent_email}
+            </a>
+          )}
+          {student.parent_phone && (
+            <a href={`tel:${student.parent_phone}`} className="block text-rally-muted hover:underline">
+              {student.parent_phone}
+            </a>
+          )}
+          {student.parent_id && (
+            <Link
+              href={`/admin/families/${encodeURIComponent(student.parent_id)}`}
+              className="mt-2 inline-block text-xs font-medium text-rally-blue hover:underline"
+            >
+              Open family
+            </Link>
+          )}
+        </div>
+      </Card>
+    );
+  }
 
-with:
+  const SECTION_LINKS = [
+    { id: "enrollments", label: "Enrollments" },
+    { id: "training", label: "Training & attendance" },
+    { id: "billing", label: "Billing" },
+    { id: "profile", label: "Profile" },
+    { id: "compliance", label: "Compliance" },
+  ] as const;
 
-```tsx
-            <ComplianceSummary student={student} />
-```
+  function SectionJumpLinks() {
+    return (
+      <Card p={16}>
+        <nav className="space-y-1 text-sm" aria-label="Jump to section">
+          {SECTION_LINKS.map((link) => (
+            <a
+              key={link.id}
+              href={`#${link.id}`}
+              className="block rounded px-2 py-1 text-rally-muted hover:bg-rally-ink/5 hover:text-rally-ink"
+            >
+              {link.label}
+            </a>
+          ))}
+        </nav>
+      </Card>
+    );
+  }
+  ```
+- [ ] Remove the now-unused `UserRound`/`ShieldCheck`/`FileCheck` icon imports if no longer referenced (`FileCheck` is still used by `StudentSummaryStrip`, keep it; `UserRound` and `ShieldCheck` were only used by the removed tab-panel `Overline` rows — remove them from the `lucide-react` import list if `pnpm lint` flags them unused).
+- [ ] Run: `cd frontend && pnpm typecheck` — expected PASS (this resolves the Task 4 `mode`-prop mismatch since the only caller no longer passes `mode`).
+- [ ] Run: `cd frontend && pnpm lint app/\(admin\)/admin/students/\[studentId\]/page.tsx` — expected PASS.
+- [ ] Run: `cd frontend && pnpm vitest run app/\(admin\)/admin/students/\[studentId\]/` — expected PASS (all existing + new unit tests in this directory).
+- [ ] Commit: `git add frontend/app/\(admin\)/admin/students/\[studentId\]/page.tsx` then:
+  ```
+  feat(admin): replace student page tabs with a single scrolling view
 
-- [ ] Update the `StudentEditForm` import line to drop `ChangeParentPanel`:
+  Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+  ```
 
-```tsx
-import { StudentEditForm } from "./StudentEditForm";
-```
-
-(`ChangeParentPanel` stays defined and exported from `StudentEditForm.tsx` — spec 2 owns relocating it to the family page; this page just stops calling it.)
-
-- [ ] Typecheck:
-
-```
-cd frontend && pnpm typecheck
-```
-
-- [ ] Commit:
-
-```
-git add frontend/app/\(admin\)/admin/students/\[studentId\]/page.tsx
-git commit -m "refactor(admin-students): remove the parent picker from the student page
-
-Parent reassignment now lives on the family page (spec 2 §6, 'Move child to
-another family'), which this change confirms is already shipped.
-
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
-```
-
----
-
-### Task 12: Rewrite the e2e coverage
+## Task 7: e2e — rewrite `admin-students.spec.ts` for sections
 
 **Files:**
-- Modify: `frontend/e2e/specs/admin-students.spec.ts` (the `"renders the student profile with enrolled sessions and payment history"` test, lines 232-486; the fixture data at lines ~236-352 is unchanged)
-- Modify: `frontend/e2e/specs/tuition-discounts.spec.ts` — **this spec also drives the student page and also clicks tabs** (`getByRole("tab", { name: "Sessions" })` at line 458, `getByRole("tab", { name: "Billing" })` at line 497, against `/admin/students/student-discounts`). It was missed in the first draft of this plan; it will fail without the edits below.
-- Modify: `frontend/e2e/specs/admin-enrollment-withdraw.spec.ts` — plan 1 (Task 9) added a `stubStudentDetail` helper, an `openSessionsTab` helper that clicks `getByRole("tab", { name: "Sessions" })`, and a `test.describe("departure actions from the student page …")` block that drives `/admin/students/${STUDENT_ID}`. After this plan there is no Sessions tab, and the rail's `FamilyCard` fetches `GET /api/v2/admin/users/parent-1`, which `stubStudentDetail`'s catch-all `if (request.method() === "GET") return fulfillJson(route, {})` answers with `{}` — `loginBadge(undefined, …)` then throws on `status.toUpperCase()` and blanks the page. Both need the edits below.
-- Verify (no expected changes): `frontend/e2e/specs/admin-family-billing.spec.ts` — it does not navigate to `/admin/students/[studentId]` and does not use `getByRole("tab")`.
+- Modify: `frontend/e2e/specs/admin-students.spec.ts` (the "renders the student profile..." test, lines 232-486; the three list/search/empty/error tests at lines 77-230 are untouched — they never touch the detail page)
 
-**Interfaces:** none — this is test-only. Exercises: `admin-student-section-<id>-toggle`, `admin-student-section-<id>`, `admin-student-jump-<id>`, `admin-student-edit-form`, `admin-student-billing-summary-line`.
+**Interfaces:**
+- Consumes: the rewritten `page.tsx`/`SessionsPanel.tsx`/`StudentEditForm.tsx` from Tasks 1-6; existing `data-testid`s that survive unchanged (`admin-student-detail`, `admin-student-summary-strip`, `admin-student-enrolled-sessions`, `admin-student-autopay-*`, `admin-student-past-enrollment-*`, `admin-student-family-billing-link`); new ones from this plan (`admin-student-section-enrollments`, `admin-student-section-training`, `admin-student-section-billing`, `admin-student-section-profile`, `admin-student-section-compliance`, `admin-student-profile-edit-form`, `admin-student-family-card`).
 
-- [ ] Re-run the sweep that finds every spec touching the student page's tabs, so nothing else is missed:
+- [ ] Edit the test body starting at `await page.goto("/admin/students/student-1");` (line 409): after the existing summary-strip assertions, replace every `getByRole("tab", ...)` click + tab-content assertion with section-based equivalents. Concretely, replace lines 414-485 with:
+  ```ts
+  await page.waitForLoadState("networkidle");
+  await expect(page.getByTestId("admin-student-detail")).toContainText("Amit Rao");
+  await expect(page.getByTestId("admin-student-summary-strip")).toContainText("$110");
+  await expect(page.getByTestId("admin-student-summary-strip")).toContainText("91%");
 
-```
-cd frontend && grep -rn 'getByRole("tab"' e2e/specs/ && grep -rn 'admin/students/' e2e/specs/
-```
+  // Enrollments — open by default, no click required.
+  await expect(page.getByTestId("admin-student-enrolled-sessions")).toContainText("Advanced Footwork");
+  await expect(page.getByTestId("admin-student-enrolled-sessions")).toContainText("$150");
+  const autopayChip = page.getByTestId("admin-student-autopay-enr-1");
+  await expect(autopayChip).toHaveText("Autopay");
+  await expect(autopayChip).toHaveAttribute("href", "/admin/families/parent-1");
+  await expect(page.getByTestId("admin-student-autopay-enr-2")).toHaveText("Manual");
+  const pastRow = page.getByTestId("admin-student-past-enrollment-enr-0");
+  await expect(pastRow).toContainText("Beginner Basics");
+  await expect(pastRow).toContainText("Cancelled");
+  await expect(pastRow).toContainText("2026");
+  await expect(pastRow).toContainText("Parent");
+  await expect(pastRow).toContainText("Schedule conflict");
+  const adminCancelRow = page.getByTestId("admin-student-past-enrollment-enr-9");
+  await expect(adminCancelRow).toContainText("9/1/2026");
+  await expect(adminCancelRow).not.toContainText("8/31");
+  await expect(adminCancelRow).toContainText("Admin");
+  await expect(adminCancelRow).toContainText("Moved away");
 
-Expected hits: `admin-students.spec.ts` (edited below), `tuition-discounts.spec.ts` (edited below), `admin-enrollment-withdraw.spec.ts` (plan 1's student-page block — edited below), `parent-self-service.spec.ts` (a *parent* page's tabs — unrelated, leave alone) and `local-auth-inventory.spec.ts` (route-matrix table only, no tab clicks — leave alone). Anything else, extend this task.
+  // Training & attendance — open by default. NOTE: `previous_experience`
+  // ("Two years of club play") is a StudentEditForm field, so it now lives in
+  // the Profile section, NOT here — asserting it against the Training section
+  // would fail. The Training section holds TrainingSnapshot, SkillPathwayPanel,
+  // RecentAttendancePanel and EngagementPanel only.
+  const trainingSection = page.getByTestId("admin-student-section-training");
+  await expect(trainingSection).toContainText("Skill pathway");
+  await expect(page.getByTestId("admin-student-recent-attendance")).toContainText("PRESENT");
 
-- [ ] **New route stub required in both student-page specs.** The rail's `FamilyCard`
-now calls `getAdminUser(student.parent_id)` → `GET /api/v2/admin/users/{parentId}` on every
-page load. The existing `**/api/v2/admin/users?role=parent` stub does **not** match that
-path, so without a new stub the request 401/404s and trips each spec's
-`expect(errors).toEqual([])` clean-console assertion. Add to `admin-students.spec.ts`
-alongside the other student-page routes:
+  // Billing summary line is outside the collapsible, so it is visible with the
+  // section still shut (spec §2 "always visible").
+  await expect(page.getByTestId("admin-student-billing-summary")).toContainText("autopay");
 
-```ts
-    // The rail's family card reads the parent's membership status for the login badge.
-    await page.route("**/api/v2/admin/users/parent-1", (route) => {
-      if (route.request().method() !== "GET") return route.fallback();
-      return fulfillJson(route, {
-        user_id: "parent-1",
-        email: "rohan@example.com",
-        display_name: "Rohan Rao",
-        role: "parent",
-        status: "active",
-        phone: "555-0101",
-        roles: ["parent"],
-        linked_student_count: 1,
-        session_count: 0,
-        login_invite_sent_at: "2026-05-01T10:00:00Z",
-      });
-    });
-```
+  // Billing — collapsed by default; open it.
+  await page.getByTestId("admin-student-section-billing").getByRole("button", { name: /billing/i }).click();
+  await expect(page.getByTestId("admin-student-family-billing-link")).toContainText("Open family billing");
+  await expect(
+    page.getByTestId("admin-student-family-billing-link").getByRole("link"),
+  ).toHaveAttribute("href", /\/admin\/families\//);
 
-and the same shape (ids swapped for `parent-discounts`) in `tuition-discounts.spec.ts`.
-Register it **before** the broader `**/api/v2/admin/users?role=parent` route so Playwright's
-last-registered-wins ordering does not shadow it — or simply confirm the two globs cannot
-both match (`users?role=parent` has no path segment after `users`, so they are disjoint).
-
-- [ ] Replace lines 411-485 of `admin-students.spec.ts` (from `await expect(page.getByTestId("admin-student-detail"))...` through the final `expect(errors, ...)`). **Leave lines 486-487 (`  });` and `});`) in place** — the block below ends with them for readability, so if you paste it verbatim you must replace 411-487, not 411-485. Pick one and check the file's brace balance afterwards.
-
-```ts
-    await expect(page.getByTestId("admin-student-detail")).toContainText("Amit Rao");
-    await expect(page.getByTestId("admin-student-summary-strip")).toContainText("$110");
-    await expect(page.getByTestId("admin-student-summary-strip")).toContainText("91%");
-
-    // Enrollments is open by default — no click needed.
-    await expect(page.getByTestId("admin-student-enrolled-sessions")).toContainText("Advanced Footwork");
-    await expect(page.getByTestId("admin-student-enrolled-sessions")).toContainText("$150");
-    const autopayChip = page.getByTestId("admin-student-autopay-enr-1");
-    await expect(autopayChip).toHaveText("Autopay");
-    await expect(autopayChip).toHaveAttribute("href", "/admin/families/parent-1");
-    await expect(page.getByTestId("admin-student-autopay-enr-2")).toHaveText("Manual");
-    const pastRow = page.getByTestId("admin-student-past-enrollment-enr-0");
-    await expect(pastRow).toContainText("Beginner Basics");
-    await expect(pastRow).toContainText("Cancelled");
-    await expect(pastRow).toContainText("2026");
-    await expect(pastRow).toContainText("Parent");
-    await expect(pastRow).toContainText("Schedule conflict");
-    const adminCancelRow = page.getByTestId("admin-student-past-enrollment-enr-9");
-    await expect(adminCancelRow).toContainText("9/1/2026");
-    await expect(adminCancelRow).not.toContainText("8/31");
-    await expect(adminCancelRow).toContainText("Admin");
-    await expect(adminCancelRow).toContainText("Moved away");
-
-    // Training & attendance is open by default too.
-    await expect(page.getByTestId("admin-student-recent-attendance")).toContainText("PRESENT");
-
-    // Billing: the summary line is always visible even though the detail is collapsed.
-    await expect(page.getByTestId("admin-student-billing-summary-line")).toContainText("/mo across");
-    await page.getByTestId("admin-student-section-billing-toggle").click();
-    await expect(page.getByTestId("admin-student-family-billing-link")).toContainText("Open family billing");
-    await expect(
-      page.getByTestId("admin-student-family-billing-link").getByRole("link"),
-    ).toHaveAttribute("href", /\/admin\/families\//);
-
-    // Profile is collapsed by default; open it to edit the consolidated form.
-    await page.getByTestId("admin-student-section-profile-toggle").click();
-    const editForm = page.getByTestId("admin-student-edit-form");
-    await expect(page.getByLabel("Previous experience")).toHaveValue("Two years of club play");
-    await expect(page.getByLabel("Previous experience")).toHaveAttribute("maxlength", "1000");
-    await expect(page.getByLabel("Medical notes")).toHaveValue("Peanut allergy");
-    await expect(page.getByLabel("Medical notes")).toHaveAttribute("maxlength", "1000");
-    await expect(page.getByLabel("Emergency contact name")).toHaveValue("Anita Chen");
-    await expect(page.getByLabel("Emergency contact phone")).toHaveValue("555-0199");
-    await expect(page.getByLabel("Emergency contact phone")).toHaveAttribute("maxlength", "40");
-    await expect(page.getByLabel("T-shirt size")).toHaveValue("M");
-    await expect(page.getByLabel("T-shirt size")).toHaveAttribute("maxlength", "20");
-    const medicalNotes = editForm.getByLabel("Medical notes");
-    await medicalNotes.focus();
-    await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
-    await page.keyboard.press("Backspace");
-    await expect(medicalNotes).toHaveValue("");
-    await editForm.getByRole("button", { name: /^save changes$/i }).click();
-    expect(patchBody).toMatchObject({ medical_notes: "", reason: "Admin profile update" });
-
-    // Compliance is collapsed by default here — the fixture's waiver is signed.
-    await page.getByTestId("admin-student-section-compliance-toggle").click();
-    await expect(page.getByTestId("admin-student-section-compliance")).toContainText("2026-v1");
-
-    expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
+  // Profile — collapsed by default; open it, edit, save.
+  await page.getByTestId("admin-student-section-profile").getByRole("button", { name: /profile/i }).click();
+  const profileForm = page.getByTestId("admin-student-profile-edit-form");
+  await expect(profileForm.getByLabel("Previous experience")).toHaveValue("Two years of club play");
+  await expect(profileForm.getByLabel("Previous experience")).toHaveAttribute("maxlength", "1000");
+  await expect(profileForm.getByLabel("Medical notes")).toHaveValue("Peanut allergy");
+  await expect(profileForm.getByLabel("Medical notes")).toHaveAttribute("maxlength", "1000");
+  await expect(profileForm.getByLabel("Emergency contact name")).toHaveValue("Anita Chen");
+  await expect(profileForm.getByLabel("Emergency contact phone")).toHaveValue("555-0199");
+  await expect(profileForm.getByLabel("T-shirt size")).toHaveValue("M");
+  await expect(profileForm.getByLabel("T-shirt size")).toHaveAttribute("maxlength", "20");
+  const medicalNotes = profileForm.getByLabel("Medical notes");
+  await medicalNotes.focus();
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+  await page.keyboard.press("Backspace");
+  await expect(medicalNotes).toHaveValue("");
+  await profileForm.getByRole("button", { name: /^save changes$/i }).click();
+  expect(patchBody).toMatchObject({
+    medical_notes: "",
+    reason: "Admin profile update",
   });
-});
+
+  // Compliance — this fixture's waiver_status is "signed", so nothing is
+  // outstanding and the section stays collapsed. Open it explicitly.
+  await page.getByTestId("admin-student-section-compliance").getByRole("button", { name: /compliance/i }).click();
+  await expect(page.getByTestId("admin-student-section-compliance")).toContainText("2026-v1");
+  expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
+  ```
+  Note: with `waiver_status: "signed"` (spec fixture line 258), `complianceNeedsAttention`
+  returns `false`, so Compliance stays collapsed and must be clicked open — the mirror image of
+  spec §2's "Compliance auto-opens only when something is outstanding". (The earlier draft's
+  comment said it "auto-opens because ... signed, so it stays collapsed", which is
+  self-contradictory.)
+- [ ] Add a second detail-page test that pins the auto-open branch, since the existing fixture
+  can only exercise the collapsed one: copy the setup, override `waiver_status: "missing"` in the
+  student fixture, `goto`, and assert `page.getByTestId("admin-student-section-compliance")`
+  contains "MISSING" **without** any click. Without this, spec §2's auto-open rule has no test.
+- [ ] Add a deep-link test: `await page.goto("/admin/students/student-1#profile")`, then assert
+  `page.getByTestId("admin-student-profile-edit-form")` is visible with no click — this is the
+  only coverage of the anchor-id / `forceOpen` wiring that the first draft got wrong.
+- [ ] Since every section now mounts on load (spec §6, "the billing route mocks that only the
+  Billing tab installed become part of the page-level setup since every section now mounts"),
+  no route-mock relocation is actually required — `stubMe`/`stubAdminAcademy`/the
+  `billing-enrollments`/`session-types`/`departure-policy`/`programs` route stubs already sit
+  before `page.goto` in this test (lines 353-407), so they already cover eager mounting. Confirm
+  this by reading the diff after the edit above — no route-mock lines need to move.
+- [ ] Run: `cd frontend && pnpm exec playwright test admin-students.spec.ts --project=chromium` — expected PASS (4 tests: search/filter, empty state, error state, detail page).
+- [ ] Commit: `git add frontend/e2e/specs/admin-students.spec.ts` then:
+  ```
+  test(e2e): rewrite admin-students spec for the single-view student page
+
+  Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+  ```
+
+## Task 7b: e2e — `tuition-discounts.spec.ts` also drives the student-page tabs
+
+**Files:**
+- Modify: `frontend/e2e/specs/tuition-discounts.spec.ts`
+
+**Why this task exists:** the first draft of this plan asserted (in Task 9) that no other spec
+referenced the student-page tabs. That was wrong. Verified against the worktree on 2026-09-10:
+
+```
+frontend/e2e/specs/tuition-discounts.spec.ts:457:    await page.goto("/admin/students/student-discounts");
+frontend/e2e/specs/tuition-discounts.spec.ts:458:    await page.getByRole("tab", { name: "Sessions" }).click();
+frontend/e2e/specs/tuition-discounts.spec.ts:497:    await page.getByRole("tab", { name: "Billing" }).click();
 ```
 
-- [ ] Update `tuition-discounts.spec.ts` (test `"admin sets scholarship waiver and coach-child partial discounts"`):
-  - delete line 458 `await page.getByRole("tab", { name: "Sessions" }).click();` — Enrollments is open by default, so the table is on screen straight after `page.goto`.
-  - replace line 497 `await page.getByRole("tab", { name: "Billing" }).click();` with `await page.getByTestId("admin-student-section-billing-toggle").click();` (the comment above it about the invoice ledger having moved to the family page stays accurate).
-  - add the `**/api/v2/admin/users/parent-discounts` stub described above.
-  - that spec's own trailing `expect(errors).toEqual([])` and `guard.assertNoLegacyApiCalls()` are what catch anything else the newly always-mounted panels fetch — run it and read the failing URL rather than guessing.
+Both clicks target tabs this change deletes, so this spec goes red in the same PR. It must be
+fixed here, not "re-checked" later.
 
-- [ ] Update `admin-enrollment-withdraw.spec.ts` (plan 1's student-page additions):
-  - In `openSessionsTab`, delete `await page.getByRole("tab", { name: "Sessions" }).click();` and its explanatory doc comment about `useState<StudentTab>` — Enrollments is open by default, so `page.goto` followed by the `Tuesday Beginner` visibility check is enough. Rename the helper `openStudentPage` (both call sites are inside the `"departure actions from the student page"` describe block).
-  - In `stubStudentDetail`, add a branch **above** the trailing `if (request.method() === "GET") return fulfillJson(route, {});` catch-all so the rail's family card gets a real user document:
-    ```ts
-    if (request.method() === "GET" && path === "/api/v2/admin/users/parent-1") {
-      return fulfillJson(route, {
-        user_id: "parent-1", email: "parent@example.com", display_name: "Parent Example",
-        role: "parent", status: "active", phone: null, roles: ["parent"],
-        linked_student_count: 1, session_count: 0, login_invite_sent_at: null,
-      });
-    }
-    ```
-  - Leave every other assertion in that block alone — the Hold → Return and Drop flows, the `notify_family: true` body assertion and the `admin-student-past-enrollment-…` row check are plan 1's contract and still hold on the single-view page.
+**Interfaces:**
+- Consumes: the same section testids as Task 7 (`admin-student-section-enrollments`, `admin-student-section-billing`).
 
-- [ ] Run the spec:
+- [ ] Read the two tests around lines 450-510 to see what each tab click was setting up for.
+- [ ] Delete line 458's `getByRole("tab", { name: "Sessions" }).click()` outright — the Enrollments
+  section (which contains the former Sessions table) is open by default, so no navigation is
+  needed. Keep every assertion that followed it.
+- [ ] Replace line 497's `getByRole("tab", { name: "Billing" }).click()` with the section-open click:
+  ```ts
+  await page.getByTestId("admin-student-section-billing").getByRole("button", { name: /billing/i }).click();
+  ```
+  If the assertions after that line target `BillingEnrollmentsPanel` (session-type rows, price
+  override) rather than `FamilyBillingLink`, that panel now lives in the **Enrollments** section,
+  which is already open — in that case drop the click entirely instead of retargeting it. Decide
+  by reading the assertions, not by guessing.
+- [ ] Run: `cd frontend && pnpm exec playwright test tuition-discounts.spec.ts --project=chromium` — expected PASS.
+- [ ] Commit: `git add frontend/e2e/specs/tuition-discounts.spec.ts` then:
+  ```
+  test(e2e): retarget tuition-discounts spec at the student page sections
 
-```
-cd frontend && pnpm exec playwright test admin-students --project=chromium-desktop
-```
+  Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+  ```
 
-Expected: PASS. Note `--project=chromium` does **not** exist: `playwright.config.ts` defines `chromium-mobile`, `webkit-mobile` and `chromium-desktop`. Run it once on `--project=chromium-mobile` too — that is the phone breakpoint spec §6 asks to eyeball, and the always-visible Billing summary line has to survive it. If the "Profile" section's toggle click doesn't reveal the form (e.g. a selector mismatch), re-check `CollapsibleSection`'s `data-testid` pattern from Task 2 (`admin-student-section-${id}-toggle`) against what's used here.
+## Task 8: Gated removal — `ChangeParentPanel`
 
-- [ ] Run the other student-page spec and the two adjacent specs. Note the project split: only `admin-(shell|students|registrations|level-ups-lifecycle)` match `chromium-desktop`'s `testMatch`, so `tuition-discounts`, `admin-family-billing` and `admin-enrollment-withdraw` run under `chromium-mobile` (plan 1 verified this; `--project=chromium-desktop` would select zero tests for them):
+**Files:**
+- Modify: `frontend/app/(admin)/admin/students/[studentId]/page.tsx`, `frontend/app/(admin)/admin/students/[studentId]/StudentEditForm.tsx`
+- Test: `frontend/e2e/specs/admin-students.spec.ts` (remove any `ChangeParentPanel` assertions — there are none in the current spec, verified: `grep -n "ChangeParentPanel\|change-parent\|Change parent" frontend/e2e/specs/admin-students.spec.ts` returns nothing)
 
-```
-cd frontend && pnpm exec playwright test tuition-discounts admin-family-billing admin-enrollment-withdraw --project=chromium-mobile
-```
+**Interfaces:**
+- Consumes: the family page's **"Move child to another family"** action from spec `2026-09-10-families-directory-consolidation-design.md` §6 — this task is a **hard gate**, not a default action.
 
-Expected: PASS.
+> **Cross-plan status (checked 2026-09-10 — read this before running the grep):**
+> the implementation plan for spec 2,
+> `docs/superpowers/plans/2026-09-10-families-directory-consolidation.md`, has
+> **no task that builds "Move child to another family"**. Its Self-review lists
+> §6 "What this unblocks — Spec 4's `ChangeParentPanel` move" as *explicitly out
+> of scope*, and its 13 tasks cover the list columns/filter, the header identity
+> strip, password-reset, edit-contact, the redirects, the Users-directory pill
+> and the manifest — nothing else. So under the agreed build order
+> (1 → 2 → 4 → 3) the gate below is **expected to fail**, and the default,
+> correct outcome of Task 8 is *skipped*. Do not treat that as a blocker on this
+> plan, and do not "unblock" it by building the family-page picker here — that
+> is a separate slice on the family page. Run the grep anyway (a later PR may
+> have shipped it) and record the result.
 
-- [ ] Commit:
+- [ ] **STOP — verify the gate before touching any file in this task.** Run:
+  ```
+  grep -rn "Move child to another family\|move-child\|move_child" frontend/app/\(admin\)/admin/families/
+  ```
+  - If this returns a match: the family page has shipped the picker. Proceed with the steps below.
+  - If this returns nothing (**the expected outcome** — see the cross-plan status note above; `2026-09-10-families-directory-consolidation.md` does not build it): the family page has not shipped the parent-picker replacement yet. **Do not delete `ChangeParentPanel` or the parent fields.** Stop this task here, leave `page.tsx` and `StudentEditForm.tsx` exactly as Task 6 left them (with `ChangeParentPanel` still mounted inside the Compliance section), and record in this plan's final commit message / PR description that Task 8 was skipped pending the family-page dependency. This is not a failure of the plan — it is the sequencing rule from spec §4.
+- [ ] (Only if the gate passed) Remove the `ChangeParentPanel` import and its usage block from `page.tsx`'s Compliance section (the `<div className="mt-6"><ChangeParentPanel ... /></div>` block added in Task 6), and remove the now-unused `parentsQuery` if nothing else in `page.tsx` reads `parentsQuery.data`/`isLoading`/`isError` (re-check: `parentsQuery` was only ever consumed by `ChangeParentPanel`'s props in this file — confirm with `grep -n "parentsQuery" frontend/app/\(admin\)/admin/students/\[studentId\]/page.tsx` after the removal and delete the query declaration and its `listAdminUsers` import if the grep comes back empty).
+- [ ] (Only if the gate passed) Delete the `ChangeParentPanel` function from `StudentEditForm.tsx` (lines 347-569 in the pre-Task-4 numbering) and remove it from the file's final `export { StudentEditForm, ChangeParentPanel, Field };` line (line 593). Run `grep -rn "ChangeParentPanel" frontend/` to find every remaining reference before deleting — as of 2026-09-10 the only importer is `page.tsx:43`; `BillingEnrollmentsPanel.tsx` does **not** import it.
+- [ ] Note on scope: spec §4 also lists "parent contact fields in `StudentEditForm mode=\"family\"`" as leaving this page. Verified: `mode="family"` renders exactly one field, T-shirt size (`StudentEditForm.tsx:283-294`) — there are no parent contact fields in this form, and the t-shirt field is a student attribute that stays on the Profile section per spec §3.4. Nothing to delete here; do not remove the t-shirt field.
+- [ ] (Only if the gate passed) Run: `cd frontend && pnpm typecheck && pnpm lint app/\(admin\)/admin/students/\[studentId\]/ && pnpm exec playwright test admin-students.spec.ts --project=chromium` — expected PASS.
+- [ ] (Only if the gate passed) Commit: `git add frontend/app/\(admin\)/admin/students/\[studentId\]/page.tsx frontend/app/\(admin\)/admin/students/\[studentId\]/StudentEditForm.tsx` then:
+  ```
+  refactor(admin): remove ChangeParentPanel from the student page
 
-```
-git add frontend/e2e/specs/admin-students.spec.ts frontend/e2e/specs/tuition-discounts.spec.ts frontend/e2e/specs/admin-enrollment-withdraw.spec.ts
-git commit -m "test(admin-students): rewrite e2e coverage for the single-view student page
+  Parent reassignment now lives on the family page's "Move child to
+  another family" (spec 2026-09-10-families-directory-consolidation).
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
-```
+  Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+  ```
 
----
+## Task 9: Cross-spec e2e re-check and clean-console verification
 
-### Task 13: Release note
+**Files:**
+- None modified unless the greps below surface a hit (this task is verification, matching spec §6's "re-checked for tab assumptions").
+
+**Interfaces:** none — this task runs existing tooling.
+
+- [ ] Run: `cd frontend && grep -rn "getByRole(\"tab\"\|admin-student-training-tab\|admin-student-compliance-tab\|admin-student-training-edit-form\|admin-student-family-edit-form\|admin-student-overview-edit-form" e2e/specs/` — expected: **no output**, because Task 7 fixed `admin-students.spec.ts` and Task 7b fixed `tuition-discounts.spec.ts`. Verified on 2026-09-10 that `admin-family-billing.spec.ts` and `admin-enrollment-withdraw.spec.ts` contain none of these, but the grep is repo-wide here on purpose: the first draft of this plan scoped it to three named files and still got the answer wrong. Any hit is a spec that must be rewritten the way Task 7 did before proceeding.
+- [ ] Update `docs/qa/2026-06-28-production-scale-local-inventory-manifest.json`: in the
+  `/admin/students/[studentId]` entry (lines 1665-1730), rename the workflows `"Billing tab"` →
+  `"Billing section"` and `"Family tab"` → `"Compliance section"`, and update the two matching
+  `Workflow evidence: "..."` acceptance strings so the manifest still names surfaces that exist.
+  The route itself is unchanged, so `backend/v2/tests/unit/test_audit_inventory_manifest.py`'s
+  required-route set is unaffected — but run it to confirm:
+  `cd backend && python -m pytest v2/tests/unit/test_audit_inventory_manifest.py v2/tests/unit/test_inventory_acceptance_coverage.py -q` — expected PASS.
+- [ ] Run the full frontend unit suite for this directory once more end-to-end: `cd frontend && pnpm vitest run app/\(admin\)/admin/students/\[studentId\]/` — expected PASS.
+- [ ] Run: `cd frontend && pnpm typecheck && pnpm lint` — expected PASS (whole-project check, catching any straggler import of `StudentTab`/`STUDENT_TABS` elsewhere: `grep -rn "StudentTab\b" frontend/app frontend/components` should also return nothing by this point).
+- [ ] Run: `cd frontend && pnpm exec playwright test admin-students.spec.ts admin-family-billing.spec.ts admin-enrollment-withdraw.spec.ts tuition-discounts.spec.ts --project=chromium` — expected PASS, and confirm via the test output that no test in these four specs reports an unstubbed 4xx/5xx console error or a React hydration warning (spec §6, "Clean-console spec"; hydration is the specific risk from `CollapsibleSection` reading `localStorage`, which Task 2 defuses by reading it in an effect).
+- [ ] Manual visual check (spec §6, "Visual check on phone and desktop for the rail/stack breakpoint"): start the dev server and load `/admin/students/[any real or seeded studentId]` at a desktop width (rail beside column) and a mobile width (rail becomes the top card, sections stack) — record the result in the task's completion note; no code change expected from this step unless a breakpoint bug is found, in which case fix `page.tsx`'s `lg:grid-cols-[280px_minmax(0,1fr)]` / `lg:sticky` classes and re-run this task's automated checks.
+- [ ] Commit the manifest edit (always) plus any breakpoint fix: `git add docs/qa/2026-06-28-production-scale-local-inventory-manifest.json frontend/app/\(admin\)/admin/students/\[studentId\]/page.tsx` then:
+  ```
+  docs(qa): relabel student-page tab workflows as sections
+
+  Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+  ```
+  Amend the subject to `fix(admin): correct student page rail breakpoint` if a breakpoint fix was
+  also needed. The manifest edit always ships, so this commit is never skipped.
+
+## Task 10: Release note
 
 **Files:**
 - Create: `docs/release-notes/2026-09-10-student-page-single-view.md`
 
-- [ ] Write the release note. The `PR:` line is filled in after the PR is opened — replace `#<number>` with the real PR number before merging (CI's "Release Notes Gate" requires the real number):
+**Interfaces:** none — this is documentation required by the CI "Release Notes Gate"
+(`.github/workflows/release-notes.yml` → `scripts/dev/release_notes_check.py`). Verified facts:
+`REQUIRED_SECTIONS = ["## What changed", "## Deploy notes", "## Risk / rollback"]` (line 26) —
+exact strings, exact order in every existing note; the gate finds the note by searching for the
+literal marker `PR: #<number>` (line 68); and `validate_note` rejects any section whose body is
+empty, starts with `<`, or contains a placeholder marker (lines 89-104). So the literal
+`PR: #<number>` placeholder below **fails the gate** until it is replaced with the real number.
 
-```md
-# student-page-single-view
+- [ ] Create `docs/release-notes/2026-09-10-student-page-single-view.md`:
+  ```md
+  # Student page single view
 
-PR: #<number>
+  ## What changed
 
-## What changed
+  The admin student detail page (`/admin/students/[studentId]`) no longer uses five tabs
+  (Overview, Training, Sessions, Billing, Family & Compliance). It is now one scrolling
+  page with a sticky summary rail (avatar, status, level, DOB, Stop all classes, a compact
+  family card linking to the family page) and five collapsible sections: Enrollments,
+  Training & attendance, Billing, Profile, and Compliance. Section open/closed state is
+  remembered per browser, and deep links (`#enrollments`, `#training`, `#billing`,
+  `#profile`, `#compliance`) open and scroll to the right section. `StudentEditForm` no
+  longer takes a `mode` prop — it is one combined form. `ChangeParentPanel` either stays on
+  this page (if the family page's "Move child to another family" has not shipped yet) or
+  has moved there (if it has) — see this PR's diff for which applies.
 
-Replaces the admin student detail page's five tabs (Overview, Training, Sessions, Billing,
-Family) with one scrolling page: a sticky left rail (avatar, status, level, DOB/age, Stop all
-classes, a compact family card with a login badge, and section jump links) plus five
-collapsible sections — Enrollments, Training & attendance, Billing, Profile, Compliance.
-Enrollments now shows session-type billing (price, override badge, Move/Override-price
-actions) merged into the same table as the per-session enrollment rows instead of a separate
-tab, alongside the Hold / Return / Drop / Delete actions the departure-actions change
-(`2026-09-10-departure-actions-from-student-page.md`) already put there. Profile consolidates
-the old Overview/Training/Family split into one form. Parent reassignment
-(`ChangeParentPanel`) now sits inside the collapsed Compliance section; it leaves this page
-in a follow-up once the family page ships its "Move child to another family" control
-(spec 2 §6 — not part of the families-directory-consolidation PR). *(If Task 11's gate passed
-and the panel was removed in this PR, replace the previous sentence with: Parent reassignment
-is off this page; the family page's "Move child to another family" control is the only place
-to do it now.)* Section open/closed state is remembered per browser, and
-`#enrollments`-style links from other pages still work.
+  ## Deploy notes
 
-## Deploy notes
+  Frontend-only change. No backend endpoint, schema, or migration involved. No feature
+  flag; ships to every admin on merge. No special deploy sequencing beyond the normal
+  frontend build/deploy.
 
-Frontend-only; no backend or migration changes. No new routes — the QA inventory manifest is
-untouched.
+  ## Risk / rollback
 
-## Risk / rollback
+  Low risk: no data model or API change, so a revert of this PR is a clean rollback with no
+  backward-compatibility concerns. The main runtime risk is a missed route-mock in e2e
+  causing flaky CI on the now-eagerly-mounted panels (mitigated in Task 7/9 of the
+  implementation plan) and the `localStorage` section-state key colliding with nothing else
+  (namespaced under `admin-student-section:`, verified not already in use via
+  `grep -rn "admin-student-section:" frontend/`).
 
-Every section now mounts unconditionally instead of lazily behind a tab, so all of the panels'
-queries (session-type billing, session types, programs, student progress) fire on every page
-load rather than only when their tab was opened — this is the intended tradeoff (spec §2) and
-is covered by the rewritten `admin-students.spec.ts` clean-console assertion, which fails on
-any unstubbed request. Revert the merge commit if the extra concurrent requests cause load
-problems in practice.
-```
+  PR: #<number>
+  ```
+- [ ] Commit: `git add docs/release-notes/2026-09-10-student-page-single-view.md` then:
+  ```
+  docs(release-notes): add release note for student page single view
 
-- [ ] Commit:
+  Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+  ```
+  Once the PR exists, replace `PR: #<number>` with the real number and land it as a **new
+  follow-up commit** (`docs(release-notes): record PR number`). Do **not** `git commit --amend`
+  or rebase: this repo's pre-commit/pre-push hooks block `--amend` and `rebase` even on unpushed
+  commits (cherry-pick is the documented workaround). The gate re-runs on every `synchronize`
+  event, so a follow-up commit is enough to turn it green.
 
-```
-git add docs/release-notes/2026-09-10-student-page-single-view.md
-git commit -m "docs(release-notes): add release note for student page single view
+## Open questions roll-up
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
-```
+Three spec requirements are not fully answerable from the spec plus the code as it stands.
+Each is marked `OPEN QUESTION (owner):` at the task where it bites. Get answers before the
+task that needs them, not after.
 
----
+1. **Task 5** — §3.5's "or medical answer is outstanding" has no backing field on
+   `AdminStudentDetail`; the plan gates auto-open on waiver status only.
+2. **Task 6** — §3's rail "login badge" has no backing field on `AdminStudentDetail` /
+   `AdminStudentView`; the plan omits the badge.
+3. **Self-review** — §3.1's "One table, not two" cannot be built client-side (no shared key
+   between the two read models) without the backend work §5 forbids.
 
 ## Self-review
 
 | Spec section | Covered by |
 |---|---|
-| §2 Tabs removed → one scrolling page with collapsible sections + sticky rail | Task 2 (`CollapsibleSection`), Task 10 (layout) |
-| §2 Parent data off this page; compact family card links to family page | Task 10 (`StudentRail`'s `FamilyCard`), Task 11 (`ChangeParentPanel` removal, gated — **expected to be skipped** on the first pass because plan 2 defers "Move child to another family"; see Global Constraints) |
-| §2 Sections open by default: Header/Enrollments/Training; Billing summary always visible, detail collapsed; Compliance auto-opens when outstanding | Task 1 (`defaultSectionOpen`), Task 8 (`BillingSummaryLine`), Task 10 |
-| §2 No aggregate endpoint; panels keep their own queries, skeletons while loading | Task 7 (`EnrollmentsSection` fetches its own data); every existing panel's own `useQuery` is untouched |
-| §3 Rail: avatar, name, status, level, DOB/age, Stop all classes, family card with login badge, jump links | Task 10 (`StudentRail.tsx`) |
-| §3.1 Enrollments: SessionsPanel table + BillingEnrollmentsPanel facts merged into the same rows, one table not two; past enrollments collapse after 5 | Task 4 (`billingFactsByEnrollmentId`), Task 5 (`SessionsPanel` row/cell merge + collapse), Task 6-7 (dialogs relocated to `EnrollmentsSection`) |
-| §3.1 "**the spec-1 action set**" | **NOT this plan.** Delivered first by `docs/superpowers/plans/2026-09-10-departure-actions-from-student-page.md` (plan 1): `departureActionsFor(session.status)` → Hold / Return / Drop / Delete in `DepartureActions`' overflow menu, dialogs under `frontend/components/admin/enrollment/`. This plan consumes it as-is — Task 5 leaves the `actions={departureActionsFor(session.status)}` block untouched and only adds the session-type billing cell; Task 7's `EnrollmentsSection` forwards plan 1's `studentName` / `familyLabel` props. See Global Constraints and Task 5's sequencing note. |
-| §3.2 Training & attendance: SkillPathwayPanel, training snapshot, RecentAttendancePanel, EngagementPanel | Task 10 |
-| §3.3 Billing: always-visible summary line + link, detail collapsed | Task 4 (`billingSummaryFacts`/`billingSummaryLine`), Task 8, Task 10 |
-| §3.4 Profile: one StudentEditForm, mode prop gone | Task 9 |
-| §3.5 Compliance: ComplianceSummary, collapsed when clean / open when outstanding | Task 1, Task 10 |
-| §3 Section state remembered per browser (localStorage); `#section` deep links open + scroll | Task 1 (pure helpers), Task 10 (`useSectionState` hook) |
-| §4 What leaves this page: ChangeParentPanel, family-mode parent fields, FamilyBillingLink panel body | Task 9 (mode removed — `StudentEditForm` never had parent contact fields, only t-shirt under `mode="family"`, now folded into Profile), Task 11 (`ChangeParentPanel`); `FamilyBillingLink`'s existing "point at the family page" body is kept as-is inside the Billing section's collapsed detail, matching §3.3's own description of that detail |
-| §4 Sequencing: family page's parent-picker ships before ChangeParentPanel leaves this page | Task 11's gate check (`grep` for "Move child to another family" before editing) |
-| §5 Out of scope: no backend/endpoint change | No task touches `backend/` or adds a route |
-| §5 Out of scope: no coach/parent view changes | Not touched |
-| §5 Out of scope: no redesign of individual panels' internals (skill pathway, attendance) | `SkillPathwayPanel` and `RecentAttendancePanel` are carried over verbatim in Task 10. **`TrainingSnapshot` is not verbatim**: it was an inline bordered `div` nested inside the Training tab's "Training details" card (`page.tsx:479-495`) and Task 10 promotes it to its own `Card` with an `Overline` heading, because the card that used to contain it is gone. That is a wrapper change, not an internals change, but it does mean Training now shows two adjacent cards headed "Skill pathway placement" and "Skill pathway" — spec §3.2 asks for both, so this is intentional; give the pair a look during the manual QA pass and merge them only if the owner asks. |
-| §6 Testing: e2e spec rewritten off tab roles/testids; other specs re-checked | Task 12 — `admin-students.spec.ts` **and** `tuition-discounts.spec.ts` (which the spec's "other two specs" wording missed; it also drives this page and clicks its tabs). `admin-family-billing.spec.ts` and `admin-enrollment-withdraw.spec.ts` verified clean. |
-| §6 Testing: clean-console spec, no unstubbed 4xx/5xx | Task 12 (existing `errors` assertion, kept) |
-| §6 Testing: visual check phone/desktop | Not automatable in this repo's suite — flag for manual QA before merge (see below) |
+| §1 Purpose (fewer clicks, single page) | Task 6 (layout), Task 2 (CollapsibleSection) |
+| §2 Tabs removed → one scrolling page + rail | Task 6 |
+| §2 Parent data off this page / ChangeParentPanel moves | Task 8 (gated) |
+| §2 Sections open by default (Header, Enrollments, Training) | Task 6 (`defaultOpen` props) |
+| §2 Billing summary always visible, detail collapsed | Task 6 (`billingSummaryLine` + collapsed section) |
+| §2 Compliance auto-opens when outstanding | Task 5, Task 6 (`complianceNeedsAttention`) |
+| §2 No aggregate endpoint; panels keep own queries | Task 6 (each panel's existing `useQuery` untouched) |
+| §3 Rail contents (avatar, name, status, level, DOB/age, Stop all classes, family card, jump links) | Task 6 (`RailCard`, `SectionJumpLinks`) — **login badge NOT covered**, see OPEN QUESTION in Task 6 |
+| §3.1 Enrollments: past collapsed after 5 | Task 3 |
+| §3.1 Enrollments: "one table, not two" | **NOT covered** — see OPEN QUESTION below |
+| §3.2 Training & attendance panels | Task 6 (mounts `SkillPathwayPanel`, `TrainingSnapshot`, `RecentAttendancePanel`, `EngagementPanel`) |
+| §3.3 Billing summary line + link, detail collapsed | Task 6 |
+| §3.4 Profile: one `StudentEditForm`, `mode` gone | Task 4 |
+| §3.5 Compliance: `ComplianceSummary`, collapsed/auto-open | Task 5, Task 6 |
+| §3 Section state in `localStorage`, deep links `#section` | Task 1, Task 2, Task 6 |
+| §4 What leaves: ChangeParentPanel + sequencing gate | Task 8 (there are no parent *fields* in `StudentEditForm` — only t-shirt size, which stays; see Task 8's scope note) |
+| §5 Out of scope (backend, coach/parent views, panel-internals redesign) | Not built — no task touches these, by design |
+| §6 e2e tab rewrite, testid renames | Task 7 (`admin-students.spec.ts`), Task 7b (`tuition-discounts.spec.ts`) |
+| §6 Billing route mocks already page-level | Task 7 (verified, no change needed) |
+| §6 Re-check other specs for tab assumptions | Task 7b (`tuition-discounts.spec.ts` IS affected) + Task 9 (repo-wide grep) |
+| §6 Clean-console spec | Task 9 |
+| §6 Visual check phone/desktop | Task 9 |
 
-**Open questions for the owner (answer before or during execution; both are listed in full at their task):**
+**Deliberately deferred / not fully resolved, with reason:**
 
-1. **Where the two session-type actions go in the enrollment row** (Task 5). Adding them inline contradicts sibling spec 1 §3's "nothing new is inline". Options (a) overflow menu / (b) inline as drafted / (c) second line under the billing cell.
-2. **Whether `docs/qa/2026-06-28-production-scale-local-inventory-manifest.json` gets its `/admin/students/[studentId]` entry updated** (Global Constraints). Its "Billing tab" / "Family tab" workflows, the "Selected invoice stale after tab switch" risk edge and the "Parent selector" / "Parent change" controls all describe a page this change deletes. Leaving it alone keeps CI green; updating it means touching the matching `acceptance` strings in the same edit.
+OPEN QUESTION (owner): **spec §3.1 "One table, not two" is not buildable inside spec §5's
+scope.** Verified against the code, not assumed:
 
-**Deliberately deferred / documented deviations:**
+- `AdminStudentSessionSummary` (`frontend/lib/api/v2/students.ts:39-59`) keys on `enrollment_id`
+  and `session_id`.
+- `AdminBillingEnrollmentView` (`frontend/lib/api/admin.ts:3378-3389`) keys on its own
+  `enrollment_id` plus `session_type_id`, `student_id`, `parent_id`.
+- There is no `session_type_id` on the session summary and no `session_id` on the billing
+  enrollment, so the two lists cannot be joined on the client at all.
 
-- **"Login badge" on the family card** (§3): there is no "last logged in" field anywhere in the API, and adding one is a backend change this spec rules out. Task 10 instead reads the already-existing `GET /admin/users/{id}` (`getAdminUser`) response, which carries both `status` — the membership status, `Literal["invited", "active", "suspended", "removed"]` per `backend/v2/contexts/identity/domain/models.py:60` — and `login_invite_sent_at`. The badge renders three states (ACTIVE / INVITED / the raw status), matching the vocabulary spec 2 §3 picked for the families list ("never invited / invited on date / active") and the chip convention at `app/(admin)/admin/users/[userId]/page.tsx:428-431`, which renders `status.toUpperCase()` with variant `enrolled` when active and `expired` otherwise. (An earlier draft of this plan collapsed it to a binary REGISTERED/INVITED off `status` alone; that mislabels a suspended or removed parent as "INVITED", and "REGISTERED" is already taken on the families page for a *card-on-file* billing state — don't reintroduce it.) This adds one request per student-page load; both e2e specs that open the page now stub it (Task 12).
-- **Compliance auto-open's "medical answer outstanding" clause** (§3.5): only `waiver_status` is available as a compliance signal on `AdminStudentDetail` — there is no "medical answer outstanding" field in the current schema. `defaultSectionOpen` (Task 1) keys only on `waiver_status !== "signed"`. If a medical-compliance flag is added later, extend `defaultSectionOpen`'s single call site in `page.tsx`.
-- **Visual check on phone and desktop** (§6): left as manual QA — this repo's Playwright suite doesn't do screenshot diffing for this page, and adding it is a larger effort than this plan's scope.
-- **`ChangeParentPanel` and `Field`'s continued export from `StudentEditForm.tsx`** (§4): Task 11 stops this page from rendering `ChangeParentPanel`, but does not delete or relocate the component itself — moving it onto the family page is spec 2's deliverable, and duplicating it here would violate DRY ahead of that work landing.
+Also verified: the facts §3.1 names as the merge payload — "fee, discount, autopay chip" — are
+**already on `SessionsPanel`'s rows today** (`amount_cents`, `discount`, `autopay_status`;
+`SessionsPanel.tsx:228`, asserted by the existing e2e at `admin-students.spec.ts:451-458`). What
+`BillingEnrollmentsPanel` uniquely adds is the session-type price override and the move dialog.
+
+So the plan renders `SessionsPanel`'s table with `BillingEnrollmentsPanel` beneath it in one
+Enrollments section. Owner to pick: (a) accept two tables in one section for v1, (b) drop
+`BillingEnrollmentsPanel`'s table and keep only its dialogs, or (c) fund the read-model change
+that exposes a shared key — (c) contradicts spec §5 ("Any backend change, aggregate endpoint or
+read-model work" is out of scope). The first draft of this plan shipped a `mergeEnrollmentBilling`
+stub that always returned nulls; that has been removed rather than left as dead code pretending
+the requirement was met.
+- **§4 sequencing gate (ChangeParentPanel removal)** — Task 8 is conditional by design, not a
+  simplification. If spec `2026-09-10-families-directory-consolidation-design.md` has not
+  shipped "Move child to another family" by the time this plan executes, Task 8's steps are
+  skipped and `ChangeParentPanel` stays on the student page exactly where Task 6 put it
+  (inside Compliance) — this is the spec's own required sequencing, not a plan gap.
