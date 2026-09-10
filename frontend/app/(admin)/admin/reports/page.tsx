@@ -63,6 +63,11 @@ const FINANCIAL_REPORTS = [
     title: "Deposit slip",
     description: "Payments received by day and method for bank reconciliation.",
   },
+  {
+    href: "/admin/reports/leaving",
+    title: "Leaving report",
+    description: "Who left, when, why, and the monthly revenue effect.",
+  },
 ] as const;
 
 export default function AdminMonthClosePage() {

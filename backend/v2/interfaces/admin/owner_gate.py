@@ -119,6 +119,9 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         # departure_policy_routes.py — governs delete_enrollment_requires_owner
         # and the drop/reclaim defaults (issue #697 design contract §1.1(2)).
         ("PUT", f"{_ADMIN}/enrollment/departure-policy"),
+        # departures_routes.py — the leaving report is a financial report,
+        # same tier as every other route under /reports/* (issue #698).
+        ("GET", f"{_ADMIN}/reports/leaving"),
     }
 )
 

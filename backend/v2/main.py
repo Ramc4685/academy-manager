@@ -573,6 +573,13 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # ordinary cancel/drop and must reclaim a hold exactly like the route
     # does, so it needs the same broker.
     app.state.parent.promote_from_waitlist.set_seat_broker(_holds.seat_broker)
+    # Stop-all-classes + leaving report (issue #698; also outside
+    # composition/admin.py's line budget).
+    from backend.v2.composition.departures import compose_departures
+
+    _departures = compose_departures(db, withdraw_enrollment=app.state.admin.withdraw_enrollment)
+    app.state.admin.stop_all_classes = _departures.stop_all_classes
+    app.state.admin.leaving_report = _departures.leaving_report
     # Payments bucket view (composition/admin.py is at its line budget).
     app.state.admin_collections = compose_admin_collections(db)
     app.state.admin_billing_rules = compose_admin_billing_rules(db, app.state.admin)
