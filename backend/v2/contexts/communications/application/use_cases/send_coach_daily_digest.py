@@ -23,7 +23,10 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import Any, Protocol
 
-from backend.v2.contexts.communications.application.digest_renderer import render_coach_digest
+from backend.v2.contexts.communications.application.digest_renderer import (
+    ExpectedAbsence,
+    render_coach_digest,
+)
 from backend.v2.contexts.communications.application.ports import (
     AcademyBrandLookup,
     AcademySlugLookup,
@@ -48,6 +51,18 @@ class PlanProvider(Protocol):
     """Produces a coach's *Today's Teaching Plan* for a date (duck-typed)."""
 
     async def execute(self, coach_id: str, on_date: date) -> Any | None: ...
+
+
+class ExpectedAbsenceProvider(Protocol):
+    """The absence notices filed for the coach's occurrences on a date (#616).
+
+    Wired in the composition root over the enrollment context's
+    ``AbsenceNoticeQuery.list_for_occurrence``; communications imports
+    nothing from enrollment (ADR-0005). Optional, and a failure never costs
+    a coach their plan.
+    """
+
+    async def for_coach(self, coach_id: str, on_date: date) -> Sequence[ExpectedAbsence]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +117,7 @@ class SendCoachDailyDigest:
     academy_slugs: AcademySlugLookup | None = None
     brands: AcademyBrandLookup | None = None
     group_links: CoachGroupLinkProvider | None = None
+    expected_absences: ExpectedAbsenceProvider | None = None
 
     async def _brand(self, academy_id: str) -> EmailBrand | None:
         if self.brands is None:
@@ -117,6 +133,16 @@ class SendCoachDailyDigest:
             return ()
         try:
             return await self.group_links.for_coach(coach_id)
+        except Exception:
+            return ()
+
+    async def _absences(self, coach_id: str, on_date: date) -> Sequence[ExpectedAbsence]:
+        """Same rule as ``_groups``: an absence lookup failure is not a reason
+        to withhold the plan."""
+        if self.expected_absences is None:
+            return ()
+        try:
+            return await self.expected_absences.for_coach(coach_id, on_date)
         except Exception:
             return ()
 
@@ -174,6 +200,7 @@ class SendCoachDailyDigest:
                 plan,
                 brand=brand,
                 whatsapp_groups=await self._groups(coach.user_id),
+                expected_absences=await self._absences(coach.user_id, command.digest_date),
                 unsubscribe_url=self.unsubscribe_links.build(
                     academy_id=command.academy_id,
                     user_id=coach.user_id,

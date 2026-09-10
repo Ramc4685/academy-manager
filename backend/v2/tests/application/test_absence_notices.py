@@ -408,6 +408,7 @@ def _admin_use_case(
     students: _FakeStudentLookup | None = None,
     enrollments: _FakeEnrollments | None = None,
     notices: _FakeNotices | None = None,
+    notifier: object | None = None,
 ) -> RecordAbsenceNoticeForStudent:
     return RecordAbsenceNoticeForStudent(
         students=students or _FakeStudentLookup(),
@@ -416,6 +417,7 @@ def _admin_use_case(
         enrollments=enrollments or _FakeEnrollments(),
         notices=notices or _FakeNotices(),
         clock=_now,
+        notifier=notifier,  # type: ignore[arg-type]
     )
 
 
@@ -512,3 +514,143 @@ async def test_parent_submission_leaves_recorded_by_admin_false() -> None:
     )
 
     assert result.recorded_by_admin is False
+
+
+# ---------------------------------------------------------------------------
+# #616: the notifier port — called once after the write, never able to fail it
+# ---------------------------------------------------------------------------
+
+
+class _RecordingNotifier:
+    def __init__(self, *, raise_on_call: bool = False) -> None:
+        self.calls: list[dict[str, object]] = []
+        self._raise = raise_on_call
+
+    async def absence_notice_submitted(self, *, notice, occurrence, student) -> None:
+        self.calls.append({"notice": notice, "occurrence": occurrence, "student": student})
+        if self._raise:
+            raise RuntimeError("resend is down")
+
+
+@pytest.mark.asyncio
+async def test_parent_submit_calls_notifier_once_with_notice_occurrence_and_student() -> None:
+    notifier = _RecordingNotifier()
+    notices = _FakeNotices()
+    occurrence = _occurrence(start_at=datetime(2026, 7, 10, 10, 0, tzinfo=UTC))
+    use_case = SubmitAbsenceNotice(
+        students=_FakeStudents(),
+        occurrences=_FakeOccurrences([occurrence]),
+        enrollments=_FakeEnrollments(),
+        notices=notices,
+        policies=_FakePolicies(),
+        clock=_now,
+        notifier=notifier,
+    )
+
+    result = await use_case.execute(
+        SubmitAbsenceNoticeCommand(
+            parent_id="parent-1", student_id="student-1", occurrence_id="occ-1"
+        )
+    )
+
+    assert len(notifier.calls) == 1
+    call = notifier.calls[0]
+    assert call["notice"] is result
+    assert call["occurrence"] == occurrence
+    assert call["student"].student_id == "student-1"  # type: ignore[attr-defined]
+    # The notifier runs after the write, never instead of it.
+    assert notices.added == [result]
+
+
+@pytest.mark.asyncio
+async def test_parent_submit_swallows_notifier_failure_and_keeps_the_notice() -> None:
+    notifier = _RecordingNotifier(raise_on_call=True)
+    notices = _FakeNotices()
+    use_case = SubmitAbsenceNotice(
+        students=_FakeStudents(),
+        occurrences=_FakeOccurrences(
+            [_occurrence(start_at=datetime(2026, 7, 10, 10, 0, tzinfo=UTC))]
+        ),
+        enrollments=_FakeEnrollments(),
+        notices=notices,
+        policies=_FakePolicies(),
+        clock=_now,
+        notifier=notifier,
+    )
+
+    result = await use_case.execute(
+        SubmitAbsenceNoticeCommand(
+            parent_id="parent-1", student_id="student-1", occurrence_id="occ-1"
+        )
+    )
+
+    assert len(notifier.calls) == 1
+    assert notices.added == [result]
+
+
+@pytest.mark.asyncio
+async def test_parent_submit_without_notifier_is_unchanged() -> None:
+    use_case = SubmitAbsenceNotice(
+        students=_FakeStudents(),
+        occurrences=_FakeOccurrences(
+            [_occurrence(start_at=datetime(2026, 7, 10, 10, 0, tzinfo=UTC))]
+        ),
+        enrollments=_FakeEnrollments(),
+        notices=_FakeNotices(),
+        policies=_FakePolicies(),
+        clock=_now,
+    )
+    result = await use_case.execute(
+        SubmitAbsenceNoticeCommand(
+            parent_id="parent-1", student_id="student-1", occurrence_id="occ-1"
+        )
+    )
+    assert result.occurrence_id == "occ-1"
+
+
+@pytest.mark.asyncio
+async def test_notifier_is_not_called_when_the_notice_is_rejected() -> None:
+    notifier = _RecordingNotifier()
+    use_case = SubmitAbsenceNotice(
+        students=_FakeStudents(),
+        occurrences=_FakeOccurrences(
+            [_occurrence(start_at=datetime(2026, 7, 10, 10, 0, tzinfo=UTC))]
+        ),
+        enrollments=_FakeEnrollments({}),
+        notices=_FakeNotices(),
+        policies=_FakePolicies(),
+        clock=_now,
+        notifier=notifier,
+    )
+    with pytest.raises(StudentNotEnrolledInSession):
+        await use_case.execute(
+            SubmitAbsenceNoticeCommand(
+                parent_id="parent-1", student_id="student-1", occurrence_id="occ-1"
+            )
+        )
+    assert notifier.calls == []
+
+
+@pytest.mark.asyncio
+async def test_admin_record_calls_notifier_once_with_admin_flagged_notice() -> None:
+    notifier = _RecordingNotifier()
+    use_case = _admin_use_case(notifier=notifier)
+
+    result = await use_case.execute(_admin_cmd())
+
+    assert len(notifier.calls) == 1
+    assert notifier.calls[0]["notice"] is result
+    assert result.recorded_by_admin is True
+    assert notifier.calls[0]["student"].student_id == "student-1"  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_admin_record_swallows_notifier_failure() -> None:
+    notifier = _RecordingNotifier(raise_on_call=True)
+    notices = _FakeNotices()
+    use_case = _admin_use_case(notices=notices, notifier=notifier)
+
+    result = await use_case.execute(_admin_cmd())
+
+    assert len(notifier.calls) == 1
+    assert notices.added == [result]

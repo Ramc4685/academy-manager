@@ -39,6 +39,7 @@ BULK_MODULE_MARKERS = ("digest", "campaign")
 COMPOSITION_SEND_MODULES = (
     "roster_notifications.py",
     "enrollment_welcome_email.py",
+    "absence_notifications.py",
 )
 
 

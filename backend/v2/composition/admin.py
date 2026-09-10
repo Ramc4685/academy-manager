@@ -14,6 +14,7 @@ from bson import ObjectId as BsonObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import DuplicateKeyError
 
+from backend.v2.composition.absence_notifications import compose_absence_notifier
 from backend.v2.composition.admin_registration_review import (
     AdminRegistrationReview,
     RegistrationDeclineRefunds,
@@ -863,6 +864,7 @@ def compose_admin(
         occurrences=occurrences_r,
         enrollments=enrollments_r,
         notices=absence_notices_repo,
+        notifier=compose_absence_notifier(db, settings),  # #616: staff alert only
     )
     expire_makeup_requests = ExpireMakeupRequests(makeups=makeup_requests_repo)
     trial_requests_repo = MongoTrialRequestRepository(db)

@@ -15,7 +15,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from backend.v2.contexts.communications.application.digest_renderer import render_coach_digest
+from backend.v2.contexts.communications.application.digest_renderer import (
+    EXPECTED_ABSENCES_HEADING,
+    ExpectedAbsence,
+    render_coach_digest,
+)
 from backend.v2.contexts.communications.application.ports import (
     AudienceResolver,
     ResolvedRecipient,
@@ -449,3 +453,70 @@ async def test_group_link_provider_failure_does_not_block_send() -> None:
     )
     assert result.sent == 1
     assert GROUP_BLOCK_HEADING not in sender.sent[0]["body"]
+
+
+# ---------------------------------------------------------------------------
+# #616: expected absences
+# ---------------------------------------------------------------------------
+
+
+def test_renderer_lists_expected_absences_after_sessions_and_marks_late_notice() -> None:
+    _, body = render_coach_digest(
+        _populated_plan(),
+        expected_absences=[
+            ExpectedAbsence(session_title="Tuesday Juniors", student_name="Alice <A>"),
+            ExpectedAbsence(
+                session_title="Tuesday Juniors", student_name="Bob", notice_window_met=False
+            ),
+        ],
+        whatsapp_groups=[WhatsAppGroupLink(label="x", url="https://chat.whatsapp.com/AAA")],
+    )
+    assert EXPECTED_ABSENCES_HEADING in body
+    assert "Alice &lt;A&gt; — Tuesday Juniors" in body
+    assert "Bob — Tuesday Juniors (late notice)" in body
+    assert "Alice &lt;A&gt; — Tuesday Juniors (late notice)" not in body
+    # After the session cards, before the WhatsApp block.
+    assert (
+        body.index("Not yet placed")
+        < body.index(EXPECTED_ABSENCES_HEADING)
+        < body.index(GROUP_BLOCK_HEADING)
+    )
+
+
+def test_renderer_omits_the_absences_block_when_there_are_none() -> None:
+    _, body = render_coach_digest(_populated_plan())
+    assert EXPECTED_ABSENCES_HEADING not in body
+
+
+@pytest.mark.asyncio
+async def test_expected_absences_reach_the_email_for_the_coach_and_date() -> None:
+    use_case, _digests, sender, _ = _build(
+        coaches=[ResolvedRecipient(user_id="coach-1", email="c1@example.test")],
+        plans={"coach-1": _populated_plan()},
+    )
+    use_case.expected_absences = SimpleNamespace(
+        for_coach=AsyncMock(
+            return_value=[ExpectedAbsence(session_title="Tuesday Juniors", student_name="Alice")]
+        )
+    )
+    await use_case.execute(
+        SendCoachDailyDigestCommand(academy_id=ACADEMY_ID, digest_date=DIGEST_DATE)
+    )
+    assert EXPECTED_ABSENCES_HEADING in sender.sent[0]["body"]
+    use_case.expected_absences.for_coach.assert_awaited_once_with("coach-1", DIGEST_DATE)
+
+
+@pytest.mark.asyncio
+async def test_expected_absence_provider_failure_does_not_block_send() -> None:
+    use_case, _digests, sender, _ = _build(
+        coaches=[ResolvedRecipient(user_id="coach-1", email="c1@example.test")],
+        plans={"coach-1": _populated_plan()},
+    )
+    use_case.expected_absences = SimpleNamespace(
+        for_coach=AsyncMock(side_effect=RuntimeError("mongo is down"))
+    )
+    result = await use_case.execute(
+        SendCoachDailyDigestCommand(academy_id=ACADEMY_ID, digest_date=DIGEST_DATE)
+    )
+    assert result.sent == 1
+    assert EXPECTED_ABSENCES_HEADING not in sender.sent[0]["body"]

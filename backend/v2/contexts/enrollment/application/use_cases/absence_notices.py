@@ -5,10 +5,16 @@ will be absent. Submission is allowed any time before the occurrence starts;
 ``notice_window_met`` only flags whether the parent gave the academy's
 configured minimum notice — it does not block submission. Task 4 (makeup
 eligibility) reads this flag.
+
+Once a notice is persisted the optional ``AbsenceNoticeNotifier`` is told
+(#616): the adapter in ``composition/absence_notifications.py`` alerts the
+staff and confirms to the parent. It is best-effort — the write wins, and a
+notifier failure is logged and swallowed, never surfaced to the caller.
 """
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
@@ -24,6 +30,8 @@ from backend.v2.contexts.enrollment.domain.self_service import (
     StudentNotEnrolledInSession,
 )
 from backend.v2.shared.ids import new_ulid
+
+log = logging.getLogger(__name__)
 
 
 class AbsenceNotice(BaseModel):
@@ -95,6 +103,45 @@ class AbsenceNoticeRepository(Protocol):
     async def list_for_student(self, student_id: str) -> list[AbsenceNotice]: ...
 
 
+class AbsenceNoticeNotifier(Protocol):
+    """Tell the people who need to know that an absence notice was filed (#616).
+
+    Same shape as ``DeclinePauseRequest``'s ``PauseRequestDeclinedNotifier``:
+    a one-method Protocol here, the adapter that resolves recipients and
+    sends in ``composition/absence_notifications.py`` (enrollment may never
+    import communications). Implementations are best-effort and MUST NOT be
+    allowed to fail the write — both use cases wrap the call in
+    catch/log/continue. The adapter decides who hears about it from the
+    notice itself: staff always, the parent only when they filed it
+    (``recorded_by_admin`` is False).
+    """
+
+    async def absence_notice_submitted(
+        self, *, notice: AbsenceNotice, occurrence: SessionOccurrence, student: Student
+    ) -> None: ...
+
+
+async def _notify_submitted(
+    notifier: AbsenceNoticeNotifier | None,
+    *,
+    notice: AbsenceNotice,
+    occurrence: SessionOccurrence,
+    student: Student,
+) -> None:
+    """The write already happened; nothing the notifier does may undo it."""
+    if notifier is None:
+        return
+    try:
+        await notifier.absence_notice_submitted(
+            notice=notice, occurrence=occurrence, student=student
+        )
+    except Exception:
+        log.exception(
+            "absence_notice_notify_failed",
+            extra={"notice_id": notice.notice_id, "occurrence_id": notice.occurrence_id},
+        )
+
+
 class SubmitAbsenceNotice:
     def __init__(
         self,
@@ -105,6 +152,7 @@ class SubmitAbsenceNotice:
         notices: AbsenceNoticeRepository,
         policies: SelfServicePolicyRepository,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        notifier: AbsenceNoticeNotifier | None = None,
     ) -> None:
         self._students = students
         self._occurrences = occurrences
@@ -112,6 +160,7 @@ class SubmitAbsenceNotice:
         self._notices = notices
         self._policies = policies
         self._now = clock
+        self._notifier = notifier
 
     async def execute(self, cmd: SubmitAbsenceNoticeCommand) -> AbsenceNotice:
         student = await self._students.get_for_parent(cmd.parent_id, cmd.student_id)
@@ -159,6 +208,9 @@ class SubmitAbsenceNotice:
             notice_window_met=notice_window_met,
         )
         await self._notices.add(notice)
+        await _notify_submitted(
+            self._notifier, notice=notice, occurrence=occurrence, student=student
+        )
         return notice
 
 
@@ -172,7 +224,9 @@ class RecordAbsenceNoticeForStudent:
     coach after the fact. ``notice_window_met`` is whatever the admin decides
     (``counts_toward_makeup``) rather than computed from the policy clock, so
     the make-up eligibility path (Task 4) treats it like an on-time parent
-    notice when the admin says it should. No email is sent by this use case.
+    notice when the admin says it should. The notifier (when wired) alerts
+    the staff but sends the parent nothing — the notice carries
+    ``recorded_by_admin=True`` and the adapter reads that.
     """
 
     def __init__(
@@ -183,16 +237,19 @@ class RecordAbsenceNoticeForStudent:
         enrollments: EnrollmentQuery,
         notices: AbsenceNoticeRepository,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        notifier: AbsenceNoticeNotifier | None = None,
     ) -> None:
         self._students = students
         self._occurrences = occurrences
         self._enrollments = enrollments
         self._notices = notices
         self._now = clock
+        self._notifier = notifier
 
     async def execute(self, cmd: RecordAbsenceNoticeForStudentCommand) -> AbsenceNotice:
         students = await self._students.by_ids([cmd.student_id])
-        if not any(s.student_id == cmd.student_id for s in students):
+        student = next((s for s in students if s.student_id == cmd.student_id), None)
+        if student is None:
             raise StudentNotFound("student not found", student_id=cmd.student_id)
 
         occurrence = await self._occurrences.get(cmd.occurrence_id)
@@ -228,6 +285,9 @@ class RecordAbsenceNoticeForStudent:
             recorded_by_admin=True,
         )
         await self._notices.add(notice)
+        await _notify_submitted(
+            self._notifier, notice=notice, occurrence=occurrence, student=student
+        )
         return notice
 
 
