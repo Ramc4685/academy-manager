@@ -9,6 +9,7 @@
 import { getIdToken } from "@/lib/auth/firebase";
 import { setBffIdentityCookie } from "@/lib/api/auth-bridge-cookie";
 import { resolveApiAuthToken } from "@/lib/api/auth-token";
+import { captureError, stripQuery } from "@/lib/observability/sentry";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "/api/v2";
 const BFF_IDENTITY_HEADER = "X-CourtMastr-Identity";
@@ -57,7 +58,75 @@ export function readRequestId(headers: Headers): string | null {
   return value ? value : null;
 }
 
-function makeError(status: number, body: unknown, requestId?: string | null): ApiError {
+/** Method + path of the call being reported, for Sentry tags. */
+interface ApiRequestRef {
+  method: string;
+  path: string;
+}
+
+type ApiFailureKind = "server" | "network" | "timeout";
+
+/**
+ * Collapse id-looking path segments (`stu_01J...`, `42`) so one Sentry issue
+ * covers one route rather than one per record. Query strings are dropped —
+ * they can carry search text and emails.
+ */
+export function apiRouteTemplate(path: string): string {
+  return stripQuery(path)
+    .split("/")
+    .map((segment) => (/^[a-z]+_[A-Za-z0-9]+$|\d/.test(segment) ? "{id}" : segment))
+    .join("/");
+}
+
+/**
+ * Report a failed API call to Sentry (#707). Only 5xx and transport failures
+ * are errors from the app's point of view; 4xx are validation/auth outcomes
+ * the UI already explains and are never captured. Tagged with the echoed
+ * `X-Request-ID` so the browser event joins its backend event.
+ */
+function reportApiFailure(
+  error: ApiError | Error,
+  request: ApiRequestRef,
+  kind: ApiFailureKind,
+  requestId?: string | null,
+  status?: number
+): void {
+  const route = apiRouteTemplate(request.path);
+  const outcome = status !== undefined ? String(status) : kind;
+  const report = new Error(`${request.method} ${route} -> ${outcome}`);
+  report.name = "ApiRequestFailed";
+  captureError(report, {
+    tags: {
+      "api.method": request.method,
+      "api.path": route,
+      "api.status": status,
+      "api.failure": kind,
+      requestId: requestId ?? undefined,
+    },
+    extra: {
+      code: "code" in error ? error.code : undefined,
+      // 5xx bodies are generic ("Internal Server Error", a gateway page);
+      // cap them so an HTML error page never becomes an event payload.
+      message: error.message.slice(0, 200),
+    },
+    fingerprint: ["api-failure", request.method, route, outcome],
+  });
+}
+
+function isTransportFailure(error: unknown): error is Error {
+  if (typeof error !== "object" || error === null) return false;
+  const name = (error as { name?: unknown }).name;
+  // `fetch` rejects with a TypeError when the network/CORS layer fails; our
+  // 20 s `AbortController` rejects with an AbortError.
+  return error instanceof TypeError || name === "AbortError";
+}
+
+function makeError(
+  status: number,
+  body: unknown,
+  requestId: string | null | undefined,
+  request: ApiRequestRef
+): ApiError {
   const err = new Error(typeof body === "string" ? body : "Request failed") as ApiError;
   err.status = status;
   if (requestId) err.requestId = requestId;
@@ -83,6 +152,7 @@ function makeError(status: number, body: unknown, requestId?: string | null): Ap
       if (typeof message === "string" && message) err.message = message;
     }
   }
+  if (status >= 500) reportApiFailure(err, request, "server", requestId, status);
   return err;
 }
 
@@ -115,9 +185,10 @@ export async function apiFetch<T>(
   const isReadable = requestInit.method === "GET" || requestInit.method === undefined;
   const shouldDedup = dedup ?? isReadable;
   const dedupKey = shouldDedup ? `${requestInit.method ?? "GET"} ${url}` : null;
+  const ref: ApiRequestRef = { method: requestInit.method ?? "GET", path };
   if (dedupKey && inflight.has(dedupKey)) {
     const r = await inflight.get(dedupKey)!;
-    return parseResponse<T>(r.clone());
+    return parseResponse<T>(r.clone(), ref);
   }
 
   // Abort hung requests after 20 s so loading states surface as errors
@@ -133,7 +204,14 @@ export async function apiFetch<T>(
     // clone() throws once the body has started being read. Reading only
     // from a clone keeps the original stream untouched so any number of
     // concurrent dedup callers can clone it safely.
-    return await parseResponse<T>(res.clone());
+    return await parseResponse<T>(res.clone(), ref);
+  } catch (error) {
+    // The first caller owns the fetch; deduped followers re-throw the same
+    // rejection without reporting it again.
+    if (isTransportFailure(error)) {
+      reportApiFailure(error, ref, error.name === "AbortError" ? "timeout" : "network");
+    }
+    throw error;
   } finally {
     clearTimeout(abortTimer);
     if (dedupKey) inflight.delete(dedupKey);
@@ -171,12 +249,15 @@ export async function apiFetchBlob(
   if (!res.ok) {
     const contentType = res.headers.get("content-type") ?? "";
     const body = contentType.includes("application/json") ? await res.json() : await res.text();
-    throw makeError(res.status, body, readRequestId(res.headers));
+    throw makeError(res.status, body, readRequestId(res.headers), {
+      method: requestInit.method ?? "GET",
+      path,
+    });
   }
   return res.blob();
 }
 
-async function parseResponse<T>(res: Response): Promise<T> {
+async function parseResponse<T>(res: Response, request: ApiRequestRef): Promise<T> {
   const contentType = res.headers.get("content-type") ?? "";
   // 204 No Content (and any empty-body response) must not be passed to
   // res.json() — that throws SyntaxError on an empty string. Treat
@@ -187,6 +268,6 @@ async function parseResponse<T>(res: Response): Promise<T> {
   if (!isEmpty) {
     body = contentType.includes("application/json") ? await res.json() : await res.text();
   }
-  if (!res.ok) throw makeError(res.status, body, readRequestId(res.headers));
+  if (!res.ok) throw makeError(res.status, body, readRequestId(res.headers), request);
   return body as T;
 }

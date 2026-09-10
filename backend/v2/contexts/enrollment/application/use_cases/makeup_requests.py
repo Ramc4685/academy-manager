@@ -354,6 +354,7 @@ class AbsenceNoticeAdminView(BaseModel):
     submitted_at: datetime
     notice_window_met: bool
     student_full_name: str | None = None
+    recorded_by_admin: bool = False
 
 
 def _student_names(students: list[Student]) -> dict[str, str]:
@@ -413,6 +414,7 @@ class ListAbsencesForAdmin:
                 submitted_at=n.submitted_at,
                 notice_window_met=n.notice_window_met,
                 student_full_name=names.get(n.student_id),
+                recorded_by_admin=bool(getattr(n, "recorded_by_admin", False)),
             )
             for n in notices
         ]

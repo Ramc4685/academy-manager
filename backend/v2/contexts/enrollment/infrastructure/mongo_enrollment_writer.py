@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
-from typing import ClassVar
+from typing import ClassVar, cast
 
 from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.enrollment.domain.models import Enrollment
 from backend.v2.shared.tenancy import TenantScopedRepository
+from backend.v2.shared.time import ensure_utc
 
 
 class MongoEnrollmentWriter(TenantScopedRepository):
@@ -394,15 +395,17 @@ class MongoEnrollmentWriter(TenantScopedRepository):
             cancelled_by=doc.get("cancelled_by"),
             cancellation_reason=doc.get("cancellation_reason"),
             cancellation_policy_snapshot=doc.get("cancellation_policy_snapshot"),
-            cancelled_at=doc.get("cancelled_at"),
-            pending_cancellation_at=doc.get("pending_cancellation_at"),
-            pending_cancellation_requested_at=doc.get("pending_cancellation_requested_at"),
-            hold_started_at=doc.get("hold_started_at"),
+            cancelled_at=_optional_utc(doc.get("cancelled_at")),
+            pending_cancellation_at=_optional_utc(doc.get("pending_cancellation_at")),
+            pending_cancellation_requested_at=_optional_utc(
+                doc.get("pending_cancellation_requested_at")
+            ),
+            hold_started_at=_optional_utc(doc.get("hold_started_at")),
             hold_return_on=hold_return_on,
-            hold_expires_at=doc.get("hold_expires_at"),
+            hold_expires_at=_optional_utc(doc.get("hold_expires_at")),
             hold_reason=doc.get("hold_reason"),
             hold_seq=doc.get("hold_seq", 0),
-            hold_reclaim_claimed_at=doc.get("hold_reclaim_claimed_at"),
+            hold_reclaim_claimed_at=_optional_utc(doc.get("hold_reclaim_claimed_at")),
             hold_reclaim_for=doc.get("hold_reclaim_for"),
             hold_reclaim_failed_at=doc.get("hold_reclaim_failed_at"),
         )
@@ -436,3 +439,12 @@ class MongoEnrollmentWriter(TenantScopedRepository):
         if doc is None:
             doc = await self._find_one(base_filter)
         return self._to_domain(doc) if doc else None
+
+
+def _utc(value: object) -> datetime:
+    """A BSON datetime read back naive, as the aware UTC instant it always was (#706)."""
+    return ensure_utc(cast(datetime, value))
+
+
+def _optional_utc(value: object | None) -> datetime | None:
+    return None if value is None else _utc(value)

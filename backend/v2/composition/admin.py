@@ -14,6 +14,7 @@ from bson import ObjectId as BsonObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import DuplicateKeyError
 
+from backend.v2.composition.absence_notifications import compose_absence_notifier
 from backend.v2.composition.admin_registration_review import (
     AdminRegistrationReview,
     RegistrationDeclineRefunds,
@@ -267,6 +268,9 @@ from backend.v2.contexts.curriculum.infrastructure.mongo_lesson_card_repo import
 )
 from backend.v2.contexts.curriculum.infrastructure.mongo_video_ref_repo import (
     MongoCurriculumVideoRefRepository,
+)
+from backend.v2.contexts.enrollment.application.use_cases.absence_notices import (
+    RecordAbsenceNoticeForStudent,
 )
 from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
     ChangeAdminStudentParent,
@@ -854,6 +858,13 @@ def compose_admin(
     list_absences_for_admin = ListAbsencesForAdmin(
         notices=absence_notices_repo,
         students=students_r,
+    )
+    record_absence_notice_for_student = RecordAbsenceNoticeForStudent(
+        students=students_r,
+        occurrences=occurrences_r,
+        enrollments=enrollments_r,
+        notices=absence_notices_repo,
+        notifier=compose_absence_notifier(db, settings),  # #616: staff alert only
     )
     expire_makeup_requests = ExpireMakeupRequests(makeups=makeup_requests_repo)
     trial_requests_repo = MongoTrialRequestRepository(db)
@@ -4081,6 +4092,7 @@ def compose_admin(
         approve_makeup_request=approve_makeup_request,
         deny_makeup_request=deny_makeup_request,
         list_absences_for_admin=list_absences_for_admin,
+        record_absence_notice_for_student=record_absence_notice_for_student,
         expire_makeup_requests=expire_makeup_requests,
         list_trial_requests_for_admin=list_trial_requests_for_admin,
         approve_trial_request=approve_trial_request,

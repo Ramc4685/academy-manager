@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import OperationFailure
 
+from backend.v2.composition.absence_notifications import compose_absence_notifier
 from backend.v2.composition.level_up_lifecycle import compose_expire_level_up_recommendations
 from backend.v2.composition.lifecycle_billing import compose_enrollment_billing_sync
 from backend.v2.composition.pathway import (
@@ -786,6 +787,8 @@ def compose_parent(
         enrollments=enrollments_query,
         notices=absence_notices_repo,
         policies=self_service_policies_repo,
+        # #616: staff alert + parent confirmation, once per notice.
+        notifier=compose_absence_notifier(db, settings),
     )
     list_parent_absences = ListParentAbsences(notices=absence_notices_repo)
 

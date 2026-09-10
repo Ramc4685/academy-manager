@@ -9,6 +9,10 @@ from datetime import UTC, datetime
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from backend.v2.contexts.enrollment.application.use_cases.absence_notices import (
+    AbsenceNotice,
+    RecordAbsenceNoticeForStudentCommand,
+)
 from backend.v2.contexts.enrollment.application.use_cases.makeup_requests import (
     AbsenceNoticeAdminView,
     ApproveMakeupRequestCommand,
@@ -19,7 +23,9 @@ from backend.v2.contexts.enrollment.application.use_cases.trial_requests import 
     ApproveTrialRequestCommand,
     DenyTrialRequestCommand,
 )
+from backend.v2.contexts.enrollment.domain.errors import StudentNotFound
 from backend.v2.contexts.enrollment.domain.self_service import (
+    DuplicateAbsenceNotice,
     MakeupRequest,
     MakeupRequestNotPending,
     MakeupWindowExpired,
@@ -103,6 +109,21 @@ def _absence_admin_view(**overrides) -> AbsenceNoticeAdminView:
         submitted_at=overrides.get("submitted_at", datetime(2026, 7, 9, 8, 0, tzinfo=UTC)),
         notice_window_met=overrides.get("notice_window_met", True),
         student_full_name=overrides.get("student_full_name", "Alice"),
+        recorded_by_admin=overrides.get("recorded_by_admin", False),
+    )
+
+
+def _admin_recorded_notice(**overrides) -> AbsenceNotice:
+    return AbsenceNotice(
+        notice_id=overrides.get("notice_id", "n-admin"),
+        academy_id="acad",
+        student_id=overrides.get("student_id", "student-1"),
+        occurrence_id=overrides.get("occurrence_id", "occ-past"),
+        session_id="session-1",
+        submitted_by="admin-1",
+        submitted_at=datetime(2026, 7, 11, 8, 0, tzinfo=UTC),
+        notice_window_met=overrides.get("notice_window_met", True),
+        recorded_by_admin=True,
     )
 
 
@@ -112,6 +133,8 @@ class _AdminUseCases:
         *,
         makeups_result: list[MakeupRequestAdminView] | None = None,
         absences_result: list[AbsenceNoticeAdminView] | None = None,
+        record_absence_result: AbsenceNotice | None = None,
+        record_absence_error: Exception | None = None,
         approve_result: MakeupRequest | None = None,
         approve_error: Exception | None = None,
         deny_result: MakeupRequest | None = None,
@@ -132,6 +155,9 @@ class _AdminUseCases:
         self._approve_error = approve_error
         self._deny_result = deny_result or _makeup_request(status="denied")
         self._deny_error = deny_error
+        self._record_absence_result = record_absence_result or _admin_recorded_notice()
+        self._record_absence_error = record_absence_error
+        self.record_absence_commands: list[RecordAbsenceNoticeForStudentCommand] = []
         self.list_makeups_calls: list[str | None] = []
         self.approve_commands: list[ApproveMakeupRequestCommand] = []
         self.deny_commands: list[DenyMakeupRequestCommand] = []
@@ -158,6 +184,16 @@ class _AdminUseCases:
 
         async def execute(self) -> list[AbsenceNoticeAdminView]:
             return self._outer._absences_result
+
+    class _RecordAbsence:
+        def __init__(self, outer: _AdminUseCases) -> None:
+            self._outer = outer
+
+        async def execute(self, cmd: RecordAbsenceNoticeForStudentCommand) -> AbsenceNotice:
+            self._outer.record_absence_commands.append(cmd)
+            if self._outer._record_absence_error is not None:
+                raise self._outer._record_absence_error
+            return self._outer._record_absence_result
 
     class _Approve:
         def __init__(self, outer: _AdminUseCases) -> None:
@@ -186,6 +222,10 @@ class _AdminUseCases:
     @property
     def list_absences_for_admin(self):
         return self._ListAbsences(self)
+
+    @property
+    def record_absence_notice_for_student(self):
+        return self._RecordAbsence(self)
 
     @property
     def approve_makeup_request(self):
@@ -292,6 +332,105 @@ def test_list_absences_returns_enriched_rows() -> None:
     assert len(body["absences"]) == 1
     assert body["absences"][0]["notice_id"] == "n1"
     assert body["absences"][0]["student_full_name"] == "Bob"
+
+
+def test_list_absences_exposes_recorded_by_admin_flag() -> None:
+    use_cases = _AdminUseCases(
+        absences_result=[_absence_admin_view(notice_id="n1", recorded_by_admin=True)]
+    )
+    with _make_client(use_cases=use_cases) as client:
+        response = client.get("/api/v2/admin/self-service/absences")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["absences"][0]["recorded_by_admin"] is True
+
+
+# --- POST /admin/self-service/absences (record on a parent's behalf, #616) ---
+
+
+def test_record_absence_for_student_returns_201_with_admin_flag() -> None:
+    use_cases = _AdminUseCases()
+    with _make_client(use_cases=use_cases) as client:
+        response = client.post(
+            "/api/v2/admin/self-service/absences",
+            json={"student_id": "student-1", "occurrence_id": "occ-past"},
+        )
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["notice_id"] == "n-admin"
+    assert body["recorded_by_admin"] is True
+    assert body["submitted_by"] == "admin-1"
+    assert body["notice_window_met"] is True
+    assert body["student_full_name"] is None
+    assert "academy_id" not in body
+    [cmd] = use_cases.record_absence_commands
+    assert cmd.actor_id == "admin-1"
+    assert cmd.student_id == "student-1"
+    assert cmd.occurrence_id == "occ-past"
+    assert cmd.counts_toward_makeup is True
+
+
+def test_record_absence_for_student_passes_counts_toward_makeup_false() -> None:
+    use_cases = _AdminUseCases(
+        record_absence_result=_admin_recorded_notice(notice_window_met=False)
+    )
+    with _make_client(use_cases=use_cases) as client:
+        response = client.post(
+            "/api/v2/admin/self-service/absences",
+            json={
+                "student_id": "student-1",
+                "occurrence_id": "occ-past",
+                "counts_toward_makeup": False,
+            },
+        )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["notice_window_met"] is False
+    [cmd] = use_cases.record_absence_commands
+    assert cmd.counts_toward_makeup is False
+
+
+def test_record_absence_for_student_duplicate_returns_409() -> None:
+    use_cases = _AdminUseCases(
+        record_absence_error=DuplicateAbsenceNotice(
+            "already recorded", occurrence_id="occ-past", student_id="student-1"
+        )
+    )
+    with _make_client(use_cases=use_cases) as client:
+        response = client.post(
+            "/api/v2/admin/self-service/absences",
+            json={"student_id": "student-1", "occurrence_id": "occ-past"},
+        )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "Enrollment.DuplicateAbsenceNotice"
+
+
+def test_record_absence_for_student_unknown_student_returns_404() -> None:
+    use_cases = _AdminUseCases(
+        record_absence_error=StudentNotFound("student not found", student_id="student-9")
+    )
+    with _make_client(use_cases=use_cases) as client:
+        response = client.post(
+            "/api/v2/admin/self-service/absences",
+            json={"student_id": "student-9", "occurrence_id": "occ-past"},
+        )
+
+    assert response.status_code == 404, response.text
+    assert response.json()["error"]["code"] == "Enrollment.StudentNotFound"
+
+
+def test_record_absence_for_student_rejects_empty_ids() -> None:
+    use_cases = _AdminUseCases()
+    with _make_client(use_cases=use_cases) as client:
+        response = client.post(
+            "/api/v2/admin/self-service/absences",
+            json={"student_id": "", "occurrence_id": "occ-past"},
+        )
+
+    assert response.status_code == 422, response.text
+    assert use_cases.record_absence_commands == []
 
 
 # --- POST .../approve ---------------------------------------------------------
@@ -528,6 +667,19 @@ def test_wrong_persona_cannot_list_absences() -> None:
         response = client.get("/api/v2/admin/self-service/absences")
 
     assert response.status_code == 404
+
+
+def test_wrong_persona_cannot_record_absence() -> None:
+    # Wrong persona is 404 on every v2 route (docs/security-matrix.md), not 403.
+    use_cases = _AdminUseCases()
+    with _make_client("coach", use_cases=use_cases) as client:
+        response = client.post(
+            "/api/v2/admin/self-service/absences",
+            json={"student_id": "student-1", "occurrence_id": "occ-past"},
+        )
+
+    assert response.status_code == 404
+    assert use_cases.record_absence_commands == []
 
 
 def test_wrong_persona_cannot_approve_makeup_request() -> None:

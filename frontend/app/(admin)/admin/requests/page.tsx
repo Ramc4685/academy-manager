@@ -12,8 +12,11 @@ import {
   listAdminAbsences,
   listAdminCancellations,
   listAdminMakeups,
+  listAdminSessions,
+  listAdminStudents,
   listAdminTrials,
   listSessionOccurrences,
+  recordAdminAbsence,
   type AbsenceNoticeAdminRow,
   type AdminSessionOccurrenceView,
   type MakeupRequestAdminRow,
@@ -518,50 +521,271 @@ function ApproveTrialDialog({
   );
 }
 
-// --- Absences (read-only) ---
+// --- Absences ---
 
 function AbsencesTab() {
+  const queryClient = useQueryClient();
+  const [recording, setRecording] = useState(false);
   const { data, isLoading, isError } = useQuery({
     queryKey: queryKeys.admin.selfServiceAbsences(),
     queryFn: listAdminAbsences,
   });
   const absences = data?.absences ?? [];
 
-  if (isError) return <ErrorState message="Could not load absence notices." />;
-  if (isLoading) return <TableSkeleton rows={3} />;
-  if (absences.length === 0) return <EmptyState title="No absence notices." data-testid="admin-absences-empty" compact />;
+  const recordMutation = useMutation({
+    mutationFn: recordAdminAbsence,
+    onSuccess: () => {
+      setRecording(false);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.selfServiceAbsences() });
+    },
+  });
+
+  const dialog = recording ? (
+    <RecordAbsenceDialog
+      pending={recordMutation.isPending}
+      error={recordMutation.isError ? recordMutation.error : null}
+      onCancel={() => {
+        recordMutation.reset();
+        setRecording(false);
+      }}
+      onConfirm={(payload) => recordMutation.mutate(payload)}
+    />
+  ) : null;
+
+  const toolbar = (
+    <div className="flex justify-end">
+      <Button
+        variant="primary"
+        size="sm"
+        onClick={() => setRecording(true)}
+        data-testid="admin-absences-record"
+      >
+        Record absence
+      </Button>
+    </div>
+  );
+
+  if (isError) {
+    return (
+      <div className="space-y-4">
+        {toolbar}
+        <ErrorState message="Could not load absence notices." />
+        {dialog}
+      </div>
+    );
+  }
+  if (isLoading) {
+    return (
+      <div className="space-y-4">
+        {toolbar}
+        <TableSkeleton rows={3} />
+      </div>
+    );
+  }
 
   return (
-    <Card p={20}>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[640px] text-sm">
-          <thead>
-            <tr className="border-b border-neutral-200 text-left dark:border-neutral-800">
-              <Th>Student</Th>
-              <Th>Submitted</Th>
-              <Th>Notice window</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {absences.map((a: AbsenceNoticeAdminRow) => (
-              <tr
-                key={a.notice_id}
-                data-testid={`admin-absences-row-${a.notice_id}`}
-                className="border-b border-neutral-100 last:border-0 dark:border-neutral-800"
-              >
-                <td className="px-2 py-3 font-medium text-rally-base">
-                  {a.student_full_name || a.student_id}
-                </td>
-                <td className="px-2 py-3 text-rally-subtle">{formatAcademyDateTime(a.submitted_at, null)}</td>
-                <td className="px-2 py-3">
-                  <Chip variant={a.notice_window_met ? "approved" : "pending"} label={a.notice_window_met ? "ON TIME" : "LATE"} />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+    <div className="space-y-4">
+      {toolbar}
+      {absences.length === 0 ? (
+        <EmptyState title="No absence notices." data-testid="admin-absences-empty" compact />
+      ) : (
+        <Card p={20}>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px] text-sm">
+              <thead>
+                <tr className="border-b border-neutral-200 text-left dark:border-neutral-800">
+                  <Th>Student</Th>
+                  <Th>Submitted</Th>
+                  <Th>Source</Th>
+                  <Th>Notice window</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {absences.map((a: AbsenceNoticeAdminRow) => (
+                  <tr
+                    key={a.notice_id}
+                    data-testid={`admin-absences-row-${a.notice_id}`}
+                    className="border-b border-neutral-100 last:border-0 dark:border-neutral-800"
+                  >
+                    <td className="px-2 py-3 font-medium text-rally-base">
+                      {a.student_full_name || a.student_id}
+                    </td>
+                    <td className="px-2 py-3 text-rally-subtle">{formatAcademyDateTime(a.submitted_at, null)}</td>
+                    <td className="px-2 py-3 text-rally-subtle">
+                      {a.recorded_by_admin ? "Recorded by admin" : "Parent"}
+                    </td>
+                    <td className="px-2 py-3">
+                      <Chip variant={a.notice_window_met ? "approved" : "pending"} label={a.notice_window_met ? "ON TIME" : "LATE"} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+      {dialog}
+    </div>
+  );
+}
+
+/**
+ * Record an absence notice on a parent's behalf (#616). Reuses the admin
+ * students list for the student picker, the upcoming-sessions list (same
+ * one the transfer dialog uses) for the class, and the session's dated
+ * occurrences for the date — past dates are allowed, which is the point.
+ */
+function RecordAbsenceDialog({
+  pending,
+  error,
+  onCancel,
+  onConfirm,
+}: {
+  pending: boolean;
+  error: Error | null;
+  onCancel: () => void;
+  onConfirm: (payload: { student_id: string; occurrence_id: string; counts_toward_makeup: boolean }) => void;
+}) {
+  const [studentId, setStudentId] = useState("");
+  const [sessionId, setSessionId] = useState("");
+  const [occurrenceId, setOccurrenceId] = useState("");
+  const [countsTowardMakeup, setCountsTowardMakeup] = useState(true);
+
+  const studentsQuery = useQuery({
+    queryKey: queryKeys.admin.students(),
+    queryFn: listAdminStudents,
+  });
+  const sessionsQuery = useQuery({
+    queryKey: queryKeys.admin.sessions("upcoming"),
+    queryFn: () => listAdminSessions(undefined, { window: "upcoming" }),
+  });
+  const occurrencesQuery = useQuery({
+    queryKey: queryKeys.admin.sessionOccurrences(sessionId),
+    queryFn: () => listSessionOccurrences(sessionId),
+    enabled: sessionId !== "",
+  });
+
+  const students = studentsQuery.data?.students ?? [];
+  const sessions = sessionsQuery.data?.sessions ?? [];
+  // Newest first: an admin recording a phone call is usually looking for a
+  // date that has just passed.
+  const occurrences = [...(occurrencesQuery.data?.occurrences ?? [])].sort((a, b) =>
+    b.start_at.localeCompare(a.start_at),
+  );
+
+  const selectClass = "mt-1 min-h-touch w-full rounded-lg border border-rally-line px-3 text-sm";
+
+  return (
+    <DialogShell title="Record absence" onCancel={onCancel}>
+      <p className="text-sm text-rally-subtle">
+        For a parent who called or messaged instead of using the portal. Past class dates are
+        allowed. No email is sent.
+      </p>
+      <label className="block text-xs font-semibold text-rally-muted">
+        Student
+        <select
+          className={selectClass}
+          value={studentId}
+          onChange={(e) => setStudentId(e.target.value)}
+          disabled={studentsQuery.isLoading}
+          data-testid="record-absence-student-select"
+        >
+          <option value="">
+            {studentsQuery.isLoading
+              ? "Loading students…"
+              : students.length === 0
+                ? "No students found"
+                : "Select a student"}
+          </option>
+          {students.map((s) => (
+            <option key={s.student_id} value={s.student_id}>
+              {s.full_name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="block text-xs font-semibold text-rally-muted">
+        Class
+        <select
+          className={selectClass}
+          value={sessionId}
+          onChange={(e) => {
+            setSessionId(e.target.value);
+            setOccurrenceId("");
+          }}
+          disabled={sessionsQuery.isLoading}
+          data-testid="record-absence-session-select"
+        >
+          <option value="">
+            {sessionsQuery.isLoading
+              ? "Loading classes…"
+              : sessions.length === 0
+                ? "No classes found"
+                : "Select a class"}
+          </option>
+          {sessions.map((s) => (
+            <option key={s.session_id} value={s.session_id}>
+              {s.title}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="block text-xs font-semibold text-rally-muted">
+        Class date
+        <select
+          className={selectClass}
+          value={occurrenceId}
+          onChange={(e) => setOccurrenceId(e.target.value)}
+          disabled={sessionId === "" || occurrencesQuery.isLoading}
+          data-testid="record-absence-occurrence-select"
+        >
+          <option value="">
+            {sessionId === ""
+              ? "Select a class first"
+              : occurrencesQuery.isLoading
+                ? "Loading dates…"
+                : occurrences.length === 0
+                  ? "No dates found"
+                  : "Select a date"}
+          </option>
+          {occurrences.map((o: AdminSessionOccurrenceView) => (
+            <option key={o.occurrence_id} value={o.occurrence_id}>
+              {formatAcademyDateTime(o.start_at, null)}
+              {o.status === "cancelled" ? " (cancelled)" : ""}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="flex items-center gap-2 text-sm text-rally-base">
+        <input
+          type="checkbox"
+          checked={countsTowardMakeup}
+          onChange={(e) => setCountsTowardMakeup(e.target.checked)}
+          data-testid="record-absence-counts-toward-makeup"
+        />
+        Counts toward a make-up
+      </label>
+      {(studentsQuery.isError || sessionsQuery.isError || occurrencesQuery.isError) && (
+        <p className="text-xs text-red-700">Could not load the pickers; try again.</p>
+      )}
+      {error && <p role="alert" className="text-sm text-red-700">{error.message}</p>}
+      <div className="flex justify-end gap-2 pt-2">
+        <Button variant="secondary" size="sm" onClick={onCancel} disabled={pending}>
+          Cancel
+        </Button>
+        <Button
+          variant="primary"
+          size="sm"
+          disabled={pending || !studentId || !occurrenceId}
+          onClick={() =>
+            onConfirm({ student_id: studentId, occurrence_id: occurrenceId, counts_toward_makeup: countsTowardMakeup })
+          }
+          data-testid="record-absence-submit"
+        >
+          {pending ? "Recording…" : "Record"}
+        </Button>
       </div>
-    </Card>
+    </DialogShell>
   );
 }
 

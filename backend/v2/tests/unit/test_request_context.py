@@ -462,3 +462,259 @@ def test_keep_log_drops_noise_and_debug_but_keeps_app_lines() -> None:
     assert _keep_log(_log("verbose", severity_number=5), {}) is None
     kept = _keep_log(_log("GET /api/v2/me -> 200", logger="backend.v2.http.request"), {})
     assert kept is not None and kept["body"] == "GET /api/v2/me -> 200"
+
+
+# ---------------------------------------------------------------------------
+# #707: 5xx access-log level, PII scrubber, Sentry user context
+# ---------------------------------------------------------------------------
+
+
+def test_request_log_5xx_is_warning_while_4xx_stays_info(caplog) -> None:
+    with (
+        caplog.at_level(logging.INFO),
+        TestClient(_logged_app(), raise_server_exceptions=False) as client,
+    ):
+        client.get("/boom")
+        client.get("/missing")
+
+    by_path = {r.path: r for r in _request_records(caplog)}
+    assert by_path["/boom"].levelno == logging.WARNING
+    assert by_path["/boom"].status_code == 500
+    assert by_path["/boom"].getMessage() == "GET /boom -> 500"
+    assert by_path["/missing"].levelno == logging.INFO
+    assert by_path["/missing"].status_code == 404
+
+
+def test_request_log_explicit_5xx_response_is_warning(caplog) -> None:
+    from fastapi.responses import JSONResponse
+
+    app = _logged_app()
+
+    @app.get("/degraded")
+    async def _degraded() -> JSONResponse:
+        return JSONResponse(status_code=503, content={"ok": False})
+
+    with caplog.at_level(logging.INFO), TestClient(app) as client:
+        client.get("/degraded")
+
+    (record,) = _request_records(caplog)
+    assert record.levelno == logging.WARNING
+    assert record.status_code == 503
+
+
+def _student_frame_event() -> dict[str, Any]:
+    """What the SDK hands the scrubber: locals already repr'd to strings."""
+    student_repr = (
+        "Student(id='stu_1', full_name='Ada Lovelace', first_name='Ada', "
+        "last_name='Lovelace', emergency_contact_name='Grace Hopper', "
+        "emergency_contact_phone='+1 555 0100', guardian_email='guardian@example.com', "
+        "phone=\"555-0199\", level='beginner')"
+    )
+    return {
+        "exception": {
+            "values": [
+                {
+                    "stacktrace": {
+                        "frames": [
+                            {
+                                "vars": {
+                                    "student": student_repr,
+                                    "payload": {
+                                        "first_name": "Ada",
+                                        "nested": {"email": "ada@example.com"},
+                                        "guardian_phone": "555",
+                                        "occurrence_id": "occ_1",
+                                    },
+                                    "notes": ["email='ada@example.com'", {"last_name": "L"}],
+                                    "occurrence_id": "occ_1",
+                                    "as_json": '{"full_name": "Ada Lovelace", "session_id": "ses_1"}',
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        },
+        "request": {"data": {"full_name": "Ada Lovelace", "note": "sick"}},
+    }
+
+
+def test_event_scrubber_redacts_student_pii_in_frame_locals() -> None:
+    from backend.v2.shared.observability.errors import build_event_scrubber
+
+    event = _student_frame_event()
+    build_event_scrubber().scrub_event(event)
+
+    frame_vars = event["exception"]["values"][0]["stacktrace"]["frames"][0]["vars"]
+    text = json.dumps(frame_vars, default=str)
+    for leaked in ("Ada", "Lovelace", "Grace", "555", "@example.com"):
+        assert leaked not in text, f"{leaked!r} leaked: {text}"
+    # Ids and non-PII fields survive so the event stays debuggable.
+    student = frame_vars["student"]
+    assert "id='stu_1'" in student and "level='beginner'" in student
+    assert "full_name='[Filtered]'" in student
+    assert "guardian_email='[Filtered]'" in student
+    assert "phone='[Filtered]'" in student
+    assert frame_vars["occurrence_id"] == "occ_1"
+    assert frame_vars["payload"]["occurrence_id"] == "occ_1"
+    assert '"session_id": "ses_1"' in frame_vars["as_json"]
+    # Request bodies go through the same denylist.
+    body = event["request"]["data"]
+    assert body["note"] == "sick"
+    assert "Ada" not in json.dumps(body, default=str)
+
+
+def test_event_scrubber_keeps_sdk_secret_denylist() -> None:
+    from backend.v2.shared.observability.errors import build_event_scrubber
+
+    event: dict[str, Any] = {"extra": {"password": "hunter2", "api_key": "k", "job_id": "j1"}}
+    build_event_scrubber().scrub_event(event)
+
+    text = json.dumps(event["extra"], default=str)
+    assert "hunter2" not in text
+    assert event["extra"]["job_id"] == "j1"
+
+
+def test_sentry_init_keeps_locals_but_installs_pii_scrubber(monkeypatch) -> None:
+    import sentry_sdk
+    from sentry_sdk.scrubber import EventScrubber
+
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(sentry_sdk, "init", lambda **kwargs: captured.update(kwargs))
+
+    configure_error_tracking(Settings(sentry_dsn="https://key@sentry.example/1", env="staging"))
+
+    assert captured["include_local_variables"] is True
+    assert captured["send_default_pii"] is False
+    scrubber = captured["event_scrubber"]
+    assert isinstance(scrubber, EventScrubber)
+    assert scrubber.recursive is True
+    assert {"full_name", "emergency_contact_phone", "password"} <= set(scrubber.denylist)
+
+
+class _ActiveClient:
+    @staticmethod
+    def is_active() -> bool:
+        return True
+
+
+def _sentry_capture(monkeypatch, *, active: bool = True) -> dict[str, Any]:
+    import sentry_sdk
+
+    calls: dict[str, Any] = {"user": None, "tags": {}}
+    monkeypatch.setattr(sentry_sdk, "get_client", lambda: _ActiveClient() if active else _Idle())
+    monkeypatch.setattr(sentry_sdk, "set_user", lambda user: calls.__setitem__("user", user))
+    monkeypatch.setattr(sentry_sdk, "set_tag", lambda k, v: calls["tags"].__setitem__(k, v))
+    return calls
+
+
+class _Idle:
+    @staticmethod
+    def is_active() -> bool:
+        return False
+
+
+def _tenancy_app(loader, monkeypatch) -> FastAPI:
+    from fastapi import Depends
+
+    from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
+    from backend.v2.shared.auth.middleware import TenancyMiddleware
+
+    monkeypatch.setenv("V2_TENANCY_MODE", "multi")
+
+    async def _resolve(request) -> str | None:
+        return "academy-1"
+
+    app = FastAPI()
+    app.add_middleware(TenancyMiddleware, load_auth_claims=loader, resolve_tenant=_resolve)
+
+    @app.get("/me")
+    async def _me(claims: AuthClaims = Depends(get_auth_claims)) -> dict[str, str]:
+        return {"user_id": claims.user_id}
+
+    return app
+
+
+def test_middleware_binds_sentry_user_id_and_persona_without_email(monkeypatch) -> None:
+    from backend.v2.shared.auth.claims import AuthClaims
+
+    async def _loader(token: str, *, resolved_academy_id: str) -> AuthClaims:
+        return AuthClaims(
+            user_id="usr_1",
+            email="parent@example.com",
+            academy_id=resolved_academy_id,
+            roles=("parent",),
+        )
+
+    calls = _sentry_capture(monkeypatch)
+    with TestClient(_tenancy_app(_loader, monkeypatch)) as client:
+        response = client.get("/me", headers={"Authorization": "Bearer t"})
+
+    assert response.status_code == 200
+    assert calls["user"] == {"id": "usr_1", "segment": "parent"}
+    assert calls["tags"] == {"academy_id": "academy-1", "persona": "parent"}
+    assert "parent@example.com" not in json.dumps(calls)
+
+
+def test_middleware_persona_picks_highest_academy_role(monkeypatch) -> None:
+    from backend.v2.shared.auth.claims import AuthClaims
+
+    async def _loader(token: str, *, resolved_academy_id: str) -> AuthClaims:
+        return AuthClaims(
+            user_id="usr_2",
+            email="x@example.com",
+            academy_id=resolved_academy_id,
+            roles=("parent", "coach", "admin"),
+        )
+
+    calls = _sentry_capture(monkeypatch)
+    with TestClient(_tenancy_app(_loader, monkeypatch)) as client:
+        client.get("/me", headers={"Authorization": "Bearer t"})
+
+    assert calls["user"]["segment"] == "admin"
+
+
+def test_middleware_skips_sentry_user_when_client_inactive(monkeypatch) -> None:
+    from backend.v2.shared.auth.claims import AuthClaims
+
+    async def _loader(token: str, *, resolved_academy_id: str) -> AuthClaims:
+        return AuthClaims(user_id="usr_3", email="x@example.com", academy_id=resolved_academy_id)
+
+    calls = _sentry_capture(monkeypatch, active=False)
+    with TestClient(_tenancy_app(_loader, monkeypatch)) as client:
+        response = client.get("/me", headers={"Authorization": "Bearer t"})
+
+    assert response.status_code == 200
+    assert calls["user"] is None and calls["tags"] == {}
+
+
+def test_middleware_sentry_failure_never_breaks_auth(monkeypatch) -> None:
+    import sentry_sdk
+
+    from backend.v2.shared.auth.claims import AuthClaims
+
+    async def _loader(token: str, *, resolved_academy_id: str) -> AuthClaims:
+        return AuthClaims(user_id="usr_4", email="x@example.com", academy_id=resolved_academy_id)
+
+    def _explode(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("sdk broke")
+
+    monkeypatch.setattr(sentry_sdk, "get_client", lambda: _ActiveClient())
+    monkeypatch.setattr(sentry_sdk, "set_user", _explode)
+    with TestClient(_tenancy_app(_loader, monkeypatch)) as client:
+        response = client.get("/me", headers={"Authorization": "Bearer t"})
+
+    assert response.status_code == 200
+    assert response.json() == {"user_id": "usr_4"}
+
+
+def test_middleware_without_claims_sets_no_sentry_user(monkeypatch) -> None:
+    async def _loader(token: str, *, resolved_academy_id: str):
+        raise AssertionError("no token, loader must not run")
+
+    calls = _sentry_capture(monkeypatch)
+    with TestClient(_tenancy_app(_loader, monkeypatch)) as client:
+        response = client.get("/me")
+
+    assert response.status_code == 401
+    assert calls["user"] is None

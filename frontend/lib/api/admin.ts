@@ -2879,10 +2879,19 @@ export interface AbsenceNoticeAdminRow {
   submitted_at: string;
   notice_window_met: boolean;
   student_full_name: string | null;
+  /** True when an admin recorded the notice on the parent's behalf (#616). */
+  recorded_by_admin?: boolean;
 }
 
 export interface AbsencesAdminResponse {
   absences: AbsenceNoticeAdminRow[];
+}
+
+export interface RecordAbsenceNoticeBody {
+  student_id: string;
+  occurrence_id: string;
+  /** Whether the notice counts as on-time for make-up eligibility (default true). */
+  counts_toward_makeup?: boolean;
 }
 
 export type SelfServiceRequestStatus = "pending" | "approved" | "denied" | "expired" | "converted";
@@ -2974,6 +2983,17 @@ export function updateSelfServicePolicy(
 
 export function listAdminAbsences(): Promise<AbsencesAdminResponse> {
   return apiFetch<AbsencesAdminResponse>("/admin/self-service/absences", { method: "GET" });
+}
+
+/**
+ * Record an absence notice on a parent's behalf (#616). Past class dates are
+ * allowed; a second notice for the same student + date is a 409. No email is sent.
+ */
+export function recordAdminAbsence(payload: RecordAbsenceNoticeBody): Promise<AbsenceNoticeAdminRow> {
+  return apiFetch<AbsenceNoticeAdminRow>("/admin/self-service/absences", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 export function listAdminMakeups(status?: string): Promise<MakeupRequestsAdminResponse> {

@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+from typing import cast
+
 from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.enrollment.application.use_cases.absence_notices import AbsenceNotice
 from backend.v2.contexts.enrollment.domain.self_service import DuplicateAbsenceNotice
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
+from backend.v2.shared.time import ensure_utc
 
 
 class MongoAbsenceNoticeRepository(TenantScopedRepository):
@@ -21,8 +25,9 @@ class MongoAbsenceNoticeRepository(TenantScopedRepository):
             occurrence_id=str(doc["occurrence_id"]),
             session_id=str(doc["session_id"]),
             submitted_by=str(doc["submitted_by"]),
-            submitted_at=doc["submitted_at"],
+            submitted_at=_utc(doc["submitted_at"]),
             notice_window_met=bool(doc["notice_window_met"]),
+            recorded_by_admin=bool(doc.get("recorded_by_admin", False)),
         )
 
     @staticmethod
@@ -36,6 +41,7 @@ class MongoAbsenceNoticeRepository(TenantScopedRepository):
             "submitted_by": notice.submitted_by,
             "submitted_at": notice.submitted_at,
             "notice_window_met": notice.notice_window_met,
+            "recorded_by_admin": notice.recorded_by_admin,
         }
 
     async def add(self, notice: AbsenceNotice) -> None:
@@ -73,3 +79,8 @@ class MongoAbsenceNoticeRepository(TenantScopedRepository):
     async def list_all(self) -> list[AbsenceNotice]:
         cursor = self._find_many({}, sort=[("submitted_at", -1)])
         return [self._to_domain(doc) async for doc in cursor]
+
+
+def _utc(value: object) -> datetime:
+    """A BSON datetime read back naive, as the aware UTC instant it always was (#706)."""
+    return ensure_utc(cast(datetime, value))

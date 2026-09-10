@@ -54,6 +54,9 @@ from backend.v2.contexts.coaching.application.use_cases.generate_daily_teaching_
 from backend.v2.contexts.communications.application.use_cases.send_campaign import (
     SendCampaign,
 )
+from backend.v2.contexts.enrollment.application.use_cases.absence_notices import (
+    RecordAbsenceNoticeForStudent,
+)
 from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
     ChangeAdminStudentParent,
     GetAdminStudent,
@@ -398,6 +401,8 @@ class AdminUseCases:
     approve_makeup_request: ApproveMakeupRequest | None = None
     deny_makeup_request: DenyMakeupRequest | None = None
     list_absences_for_admin: ListAbsencesForAdmin | None = None
+    # Admin records an absence notice on a parent's behalf (#616)
+    record_absence_notice_for_student: RecordAbsenceNoticeForStudent | None = None
     # Makeup expiry job (R2, Task 6)
     expire_makeup_requests: ExpireMakeupRequests | None = None
     # Trial requests + conversion tracking (R3, Task 7)

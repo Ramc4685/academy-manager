@@ -36,6 +36,7 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import
 from backend.v2.contexts.coaching.application.use_cases.generate_daily_teaching_plan import (
     GenerateDailyTeachingPlan,
 )
+from backend.v2.contexts.communications.application.digest_renderer import ExpectedAbsence
 from backend.v2.contexts.communications.application.parent_digest_view import (
     ChildDigestView,
     DuesView,
@@ -122,6 +123,9 @@ from backend.v2.contexts.enrollment.application.use_cases.get_session_roster imp
 )
 from backend.v2.contexts.enrollment.application.use_cases.list_coach_occurrences_for_date import (
     ListCoachOccurrencesForDate,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_absence_notice_repo import (
+    MongoAbsenceNoticeRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_repo import (
     MongoEnrollmentRepository,
@@ -353,6 +357,38 @@ class _CoachGroupLinkProvider:
         return dedupe_group_links(links)
 
 
+class _CoachExpectedAbsenceProvider:
+    """``ExpectedAbsenceProvider`` (#616) over the enrollment context: the
+    coach's occurrences for the date (the same ``ListCoachOccurrencesForDate``
+    the plan is built from, so the two can never disagree about which
+    classes are "today"), each occurrence's absence notices, and the
+    students' names. Order follows the occurrences, then the notices."""
+
+    def __init__(self, *, occurrences: Any, notices: Any, students: Any) -> None:
+        self._occurrences = occurrences
+        self._notices = notices
+        self._students = students
+
+    async def for_coach(self, coach_id: str, on_date: date) -> tuple[ExpectedAbsence, ...]:
+        rows = await self._occurrences.execute(coach_id, on_date)
+        pairs: list[tuple[str, Any]] = []
+        for row in rows:
+            for notice in await self._notices.list_for_occurrence(row.occurrence_id):
+                pairs.append((row.title, notice))
+        if not pairs:
+            return ()
+        students = await self._students.by_ids(sorted({n.student_id for _, n in pairs}))
+        names = {s.student_id: s.full_name for s in students}
+        return tuple(
+            ExpectedAbsence(
+                session_title=title,
+                student_name=names.get(notice.student_id) or "A student",
+                notice_window_met=bool(notice.notice_window_met),
+            )
+            for title, notice in pairs
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class _DigestParts:
     """Shared collaborators for the daily + test coach-digest use cases."""
@@ -363,6 +399,7 @@ class _DigestParts:
     plan_provider: _CoachDigestPlanProvider
     brands: _AcademyBrandLookup
     group_links: _CoachGroupLinkProvider
+    expected_absences: _CoachExpectedAbsenceProvider
 
 
 def _build_digest_parts(db: AsyncIOMotorDatabase[Any]) -> _DigestParts:
@@ -375,10 +412,11 @@ def _build_digest_parts(db: AsyncIOMotorDatabase[Any]) -> _DigestParts:
     curriculum = compose_curriculum(db)
     student_progress = compose_student_progress(db)
 
+    coach_occurrences = ListCoachOccurrencesForDate(
+        occurrences=occurrences_repo, sessions=sessions_repo
+    )
     generate = GenerateDailyTeachingPlan(
-        occurrences=ListCoachOccurrencesForDate(
-            occurrences=occurrences_repo, sessions=sessions_repo
-        ),
+        occurrences=coach_occurrences,
         get_roster=GetSessionRoster(enrollments=enrollments_repo, students=students_repo),
         teaching_focus=student_progress.get_teaching_focus,
         lesson_cards=MongoLessonCardRepository(db),
@@ -397,6 +435,11 @@ def _build_digest_parts(db: AsyncIOMotorDatabase[Any]) -> _DigestParts:
         plan_provider=plan_provider,
         brands=_AcademyBrandLookup(MongoAcademyRepository(db)),
         group_links=_CoachGroupLinkProvider(sessions=sessions_repo),
+        expected_absences=_CoachExpectedAbsenceProvider(
+            occurrences=coach_occurrences,
+            notices=MongoAbsenceNoticeRepository(db),
+            students=students_repo,
+        ),
     )
 
 
@@ -411,6 +454,7 @@ def compose_send_coach_daily_digest(db: AsyncIOMotorDatabase[Any]) -> SendCoachD
         academy_slugs=_AcademySlugLookup(MongoAcademyRepository(db)),
         brands=parts.brands,
         group_links=parts.group_links,
+        expected_absences=parts.expected_absences,
     )
 
 

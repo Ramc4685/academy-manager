@@ -119,7 +119,15 @@ class RequestLogMiddleware:
         }
         if academy_id is not None:
             fields["academy_id"] = academy_id
-        level = logging.DEBUG if path in _QUIET_PATHS else logging.INFO
+        # 5xx at WARNING so a Sentry Logs view filtered above INFO shows the
+        # request line next to its `unhandled_error` line (#707); 2xx/4xx are
+        # normal outcomes and stay at INFO.
+        if status_code is not None and status_code >= 500:
+            level = logging.WARNING
+        elif path in _QUIET_PATHS:
+            level = logging.DEBUG
+        else:
+            level = logging.INFO
         _request_log.log(level, "%s %s -> %s", fields["method"], path, status_code, extra=fields)
 
 

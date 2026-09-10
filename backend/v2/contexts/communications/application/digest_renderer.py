@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import html
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
@@ -61,12 +62,30 @@ _STATUS_CHIPS = {
 }
 _DEFAULT_CHIP = ("#f1f5f9", "#334155")
 
+EXPECTED_ABSENCES_HEADING = "Expected absences today"
+
+
+@dataclass(frozen=True, slots=True)
+class ExpectedAbsence:
+    """One "will not be there" line for the coach digest (#616).
+
+    Built in the composition root from the enrollment context's absence
+    notices for the coach's occurrences that day; the renderer only needs
+    the two names and whether the family gave the academy's minimum notice.
+    No time is printed — the session card above already carries it.
+    """
+
+    session_title: str
+    student_name: str
+    notice_window_met: bool = True
+
 
 def render_coach_digest(
     plan: Any,
     *,
     brand: EmailBrand | None = None,
     whatsapp_groups: Sequence[WhatsAppGroupLink] = (),
+    expected_absences: Sequence[ExpectedAbsence] = (),
     playlist_url: str | None = None,
     unsubscribe_url: str | None = None,
 ) -> tuple[str, str]:
@@ -90,6 +109,7 @@ def render_coach_digest(
         f"Good morning! Here is your teaching plan{for_program}.</p>"
     )
     sessions_html = "".join(_render_session(s) for s in (getattr(plan, "sessions", None) or []))
+    absences_html = _render_expected_absences(expected_absences)
     groups_html = render_whatsapp_groups_block(
         whatsapp_groups, persona="coach", accent=resolved_brand.accent()
     )
@@ -105,12 +125,33 @@ def render_coach_digest(
 
     body = shell(
         brand=resolved_brand,
-        inner_html=f"{greeting}{sessions_html}{groups_html}",
+        inner_html=f"{greeting}{sessions_html}{absences_html}{groups_html}",
         date_label=_pretty_date(date_str),
         footer_html=footer_html + render_unsubscribe_footer(unsubscribe_url),
     )
 
     return subject, body
+
+
+def _render_expected_absences(absences: Sequence[ExpectedAbsence]) -> str:
+    """The "who told us they will not be there" block, after the session cards.
+
+    Empty input renders nothing — most days have no notices, and an empty
+    heading would read as "nobody is absent" when it only means "nobody said".
+    """
+    if not absences:
+        return ""
+    rows = []
+    for absence in absences:
+        line = f"{html.escape(absence.student_name)} — {html.escape(absence.session_title)}"
+        if not absence.notice_window_met:
+            line = f"{line} (late notice)"
+        rows.append(f'<li style="margin:0 0 4px;">{line}</li>')
+    return (
+        f'<p style="font-size:12px;font-weight:600;color:{_TEXT_MUTED};margin:16px 0 6px;'
+        f'text-transform:uppercase;letter-spacing:0.06em;">{EXPECTED_ABSENCES_HEADING}</p>'
+        f'<ul style="font-size:13px;margin:0 0 8px;padding-left:18px;">{"".join(rows)}</ul>'
+    )
 
 
 def _pretty_date(value: str) -> str | None:
