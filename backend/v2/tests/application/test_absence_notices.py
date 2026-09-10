@@ -10,10 +10,12 @@ from backend.v2.contexts.enrollment.application.use_cases.absence_notices import
     AbsenceWindowClosed,
     DuplicateAbsenceNotice,
     ListParentAbsences,
+    RecordAbsenceNoticeForStudent,
+    RecordAbsenceNoticeForStudentCommand,
     SubmitAbsenceNotice,
     SubmitAbsenceNoticeCommand,
 )
-from backend.v2.contexts.enrollment.domain.errors import StudentNotFound
+from backend.v2.contexts.enrollment.domain.errors import OccurrenceNotFound, StudentNotFound
 from backend.v2.contexts.enrollment.domain.models import SessionOccurrence, Student
 from backend.v2.contexts.enrollment.domain.self_service import (
     ParentSelfServicePolicy,
@@ -387,3 +389,126 @@ async def test_repo_add_translates_duplicate_key_error_to_domain_409() -> None:
     with tenant_scope("acad"):
         with pytest.raises(DuplicateAbsenceNotice):
             await repo.add(notice)
+
+
+# --- RecordAbsenceNoticeForStudent (admin on a parent's behalf, #616) ---------
+
+
+class _FakeStudentLookup:
+    def __init__(self, students: list[Student] | None = None) -> None:
+        self._students = students or [_student()]
+
+    async def by_ids(self, student_ids: list[str]) -> list[Student]:
+        return [s for s in self._students if s.student_id in student_ids]
+
+
+def _admin_use_case(
+    *,
+    occurrences: _FakeOccurrences | None = None,
+    students: _FakeStudentLookup | None = None,
+    enrollments: _FakeEnrollments | None = None,
+    notices: _FakeNotices | None = None,
+) -> RecordAbsenceNoticeForStudent:
+    return RecordAbsenceNoticeForStudent(
+        students=students or _FakeStudentLookup(),
+        occurrences=occurrences
+        or _FakeOccurrences([_occurrence(start_at=datetime(2026, 7, 10, 7, 0, tzinfo=UTC))]),
+        enrollments=enrollments or _FakeEnrollments(),
+        notices=notices or _FakeNotices(),
+        clock=_now,
+    )
+
+
+def _admin_cmd(**overrides) -> RecordAbsenceNoticeForStudentCommand:
+    return RecordAbsenceNoticeForStudentCommand(
+        **{
+            "actor_id": "admin-1",
+            "student_id": "student-1",
+            "occurrence_id": "occ-1",
+            **overrides,
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_admin_records_absence_for_past_occurrence() -> None:
+    # Occurrence started 07:00, now is 08:00 — a parent would be refused
+    # (AbsenceWindowClosed) but the admin path exists precisely for this.
+    notices = _FakeNotices()
+    use_case = _admin_use_case(notices=notices)
+
+    result = await use_case.execute(_admin_cmd())
+
+    assert result.recorded_by_admin is True
+    assert result.submitted_by == "admin-1"
+    assert result.notice_window_met is True
+    assert result.session_id == "session-1"
+    assert result.academy_id == "acad"
+    assert result.submitted_at == _now()
+    assert notices.added == [result]
+
+
+@pytest.mark.asyncio
+async def test_admin_records_absence_not_counting_toward_makeup() -> None:
+    use_case = _admin_use_case()
+
+    result = await use_case.execute(_admin_cmd(counts_toward_makeup=False))
+
+    assert result.notice_window_met is False
+    assert result.recorded_by_admin is True
+
+
+@pytest.mark.asyncio
+async def test_admin_record_rejects_unknown_student() -> None:
+    use_case = _admin_use_case(students=_FakeStudentLookup([_student("student-9")]))
+
+    with pytest.raises(StudentNotFound):
+        await use_case.execute(_admin_cmd())
+
+
+@pytest.mark.asyncio
+async def test_admin_record_rejects_unknown_occurrence() -> None:
+    use_case = _admin_use_case()
+
+    with pytest.raises(OccurrenceNotFound):
+        await use_case.execute(_admin_cmd(occurrence_id="occ-missing"))
+
+
+@pytest.mark.asyncio
+async def test_admin_record_rejects_student_not_enrolled_in_session() -> None:
+    use_case = _admin_use_case(
+        enrollments=_FakeEnrollments({("session-1", "student-1"): "dropped"})
+    )
+
+    with pytest.raises(StudentNotEnrolledInSession):
+        await use_case.execute(_admin_cmd())
+
+
+@pytest.mark.asyncio
+async def test_admin_record_rejects_duplicate_notice() -> None:
+    use_case = _admin_use_case()
+    await use_case.execute(_admin_cmd())
+
+    with pytest.raises(DuplicateAbsenceNotice):
+        await use_case.execute(_admin_cmd())
+
+
+@pytest.mark.asyncio
+async def test_parent_submission_leaves_recorded_by_admin_false() -> None:
+    occurrences = _FakeOccurrences([_occurrence(start_at=datetime(2026, 7, 10, 10, 0, tzinfo=UTC))])
+    use_case = SubmitAbsenceNotice(
+        students=_FakeStudents(),
+        occurrences=occurrences,
+        enrollments=_FakeEnrollments(),
+        notices=_FakeNotices(),
+        policies=_FakePolicies(),
+        clock=_now,
+    )
+
+    result = await use_case.execute(
+        SubmitAbsenceNoticeCommand(
+            parent_id="parent-1", student_id="student-1", occurrence_id="occ-1"
+        )
+    )
+
+    assert result.recorded_by_admin is False

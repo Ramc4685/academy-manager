@@ -27,6 +27,7 @@ class MongoAbsenceNoticeRepository(TenantScopedRepository):
             submitted_by=str(doc["submitted_by"]),
             submitted_at=_utc(doc["submitted_at"]),
             notice_window_met=bool(doc["notice_window_met"]),
+            recorded_by_admin=bool(doc.get("recorded_by_admin", False)),
         )
 
     @staticmethod
@@ -40,6 +41,7 @@ class MongoAbsenceNoticeRepository(TenantScopedRepository):
             "submitted_by": notice.submitted_by,
             "submitted_at": notice.submitted_at,
             "notice_window_met": notice.notice_window_met,
+            "recorded_by_admin": notice.recorded_by_admin,
         }
 
     async def add(self, notice: AbsenceNotice) -> None:

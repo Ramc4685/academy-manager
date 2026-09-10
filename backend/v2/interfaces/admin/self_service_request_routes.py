@@ -11,9 +11,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
+from backend.v2.contexts.enrollment.application.use_cases.absence_notices import (
+    RecordAbsenceNoticeForStudentCommand,
+)
 from backend.v2.contexts.enrollment.application.use_cases.makeup_requests import (
     ApproveMakeupRequestCommand,
     DenyMakeupRequestCommand,
@@ -57,10 +60,18 @@ class AbsenceNoticeAdminRow(BaseModel):
     submitted_at: datetime
     notice_window_met: bool
     student_full_name: str | None
+    recorded_by_admin: bool = False
 
 
 class AbsencesAdminResponse(BaseModel):
     absences: list[AbsenceNoticeAdminRow]
+
+
+class RecordAbsenceNoticeBody(BaseModel):
+    student_id: str = Field(min_length=1, max_length=64)
+    occurrence_id: str = Field(min_length=1, max_length=64)
+    # Whether the notice should count as on-time for make-up eligibility.
+    counts_toward_makeup: bool = True
 
 
 class ApproveMakeupRequestBody(BaseModel):
@@ -124,6 +135,33 @@ async def list_absences_for_admin(
     rows = await use_cases.list_absences_for_admin.execute()
     return AbsencesAdminResponse(
         absences=[AbsenceNoticeAdminRow(**row.model_dump()) for row in rows]
+    )
+
+
+@router.post(
+    "/self-service/absences",
+    response_model=AbsenceNoticeAdminRow,
+    status_code=status.HTTP_201_CREATED,
+    summary="Record an absence notice on a parent's behalf (past dates allowed)",
+)
+async def record_absence_for_student(
+    body: RecordAbsenceNoticeBody,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AbsenceNoticeAdminRow:
+    if use_cases.record_absence_notice_for_student is None:
+        raise HTTPException(status_code=503, detail="Absence recording is not configured")
+    notice = await use_cases.record_absence_notice_for_student.execute(
+        RecordAbsenceNoticeForStudentCommand(
+            actor_id=claims.user_id,
+            student_id=body.student_id,
+            occurrence_id=body.occurrence_id,
+            counts_toward_makeup=body.counts_toward_makeup,
+        )
+    )
+    return AbsenceNoticeAdminRow(
+        **notice.model_dump(exclude={"academy_id"}),
+        student_full_name=None,
     )
 
 

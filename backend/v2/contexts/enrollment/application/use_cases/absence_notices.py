@@ -15,7 +15,7 @@ from typing import Protocol
 
 from pydantic import BaseModel
 
-from backend.v2.contexts.enrollment.domain.errors import StudentNotFound
+from backend.v2.contexts.enrollment.domain.errors import OccurrenceNotFound, StudentNotFound
 from backend.v2.contexts.enrollment.domain.models import SessionOccurrence, Student
 from backend.v2.contexts.enrollment.domain.self_service import (
     AbsenceWindowClosed,
@@ -34,9 +34,12 @@ class AbsenceNotice(BaseModel):
     student_id: str
     occurrence_id: str
     session_id: str
-    submitted_by: str  # parent user_id
+    submitted_by: str  # parent user_id, or the admin user_id when recorded_by_admin
     submitted_at: datetime
     notice_window_met: bool
+    # True when an admin recorded the notice on the parent's behalf (#616);
+    # parent submissions leave the default.
+    recorded_by_admin: bool = False
 
 
 class SubmitAbsenceNoticeCommand(BaseModel):
@@ -47,8 +50,23 @@ class SubmitAbsenceNoticeCommand(BaseModel):
     occurrence_id: str
 
 
+class RecordAbsenceNoticeForStudentCommand(BaseModel):
+    model_config = {"frozen": True}
+
+    actor_id: str  # admin/owner user_id
+    student_id: str
+    occurrence_id: str
+    counts_toward_makeup: bool = True
+
+
 class StudentQuery(Protocol):
     async def get_for_parent(self, parent_id: str, student_id: str) -> Student | None: ...
+
+
+class StudentLookup(Protocol):
+    """Tenant-scoped student lookup for the admin path (no parent check)."""
+
+    async def by_ids(self, student_ids: list[str]) -> list[Student]: ...
 
 
 class SessionOccurrenceRepository(Protocol):
@@ -139,6 +157,75 @@ class SubmitAbsenceNotice:
             submitted_by=cmd.parent_id,
             submitted_at=now,
             notice_window_met=notice_window_met,
+        )
+        await self._notices.add(notice)
+        return notice
+
+
+class RecordAbsenceNoticeForStudent:
+    """An admin records an absence notice on a parent's behalf (#616).
+
+    Same guards as ``SubmitAbsenceNotice`` minus the ones that only make sense
+    for a parent: there is no parent ownership check (the student only has to
+    exist in the tenant), and the occurrence may already have started or be
+    over — the whole point is capturing a phone call or a note handed to the
+    coach after the fact. ``notice_window_met`` is whatever the admin decides
+    (``counts_toward_makeup``) rather than computed from the policy clock, so
+    the make-up eligibility path (Task 4) treats it like an on-time parent
+    notice when the admin says it should. No email is sent by this use case.
+    """
+
+    def __init__(
+        self,
+        *,
+        students: StudentLookup,
+        occurrences: SessionOccurrenceRepository,
+        enrollments: EnrollmentQuery,
+        notices: AbsenceNoticeRepository,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        self._students = students
+        self._occurrences = occurrences
+        self._enrollments = enrollments
+        self._notices = notices
+        self._now = clock
+
+    async def execute(self, cmd: RecordAbsenceNoticeForStudentCommand) -> AbsenceNotice:
+        students = await self._students.by_ids([cmd.student_id])
+        if not any(s.student_id == cmd.student_id for s in students):
+            raise StudentNotFound("student not found", student_id=cmd.student_id)
+
+        occurrence = await self._occurrences.get(cmd.occurrence_id)
+        if occurrence is None:
+            raise OccurrenceNotFound("no such class date", occurrence_id=cmd.occurrence_id)
+
+        if not await self._enrollments.is_active_or_paused(occurrence.session_id, cmd.student_id):
+            raise StudentNotEnrolledInSession(
+                "student has no active or paused enrollment in this occurrence's session",
+                session_id=occurrence.session_id,
+                student_id=cmd.student_id,
+            )
+
+        existing = await self._notices.get_for_occurrence_and_student(
+            cmd.occurrence_id, cmd.student_id
+        )
+        if existing is not None:
+            raise DuplicateAbsenceNotice(
+                "absence notice already submitted for this occurrence",
+                occurrence_id=cmd.occurrence_id,
+                student_id=cmd.student_id,
+            )
+
+        notice = AbsenceNotice(
+            notice_id=str(new_ulid()),
+            academy_id=occurrence.academy_id,
+            student_id=cmd.student_id,
+            occurrence_id=cmd.occurrence_id,
+            session_id=occurrence.session_id,
+            submitted_by=cmd.actor_id,
+            submitted_at=self._now(),
+            notice_window_met=cmd.counts_toward_makeup,
+            recorded_by_admin=True,
         )
         await self._notices.add(notice)
         return notice
