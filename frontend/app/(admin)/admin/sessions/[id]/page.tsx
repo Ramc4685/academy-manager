@@ -30,6 +30,7 @@ import {
   type AdminSessionView,
 } from "@/lib/api/admin";
 import { getFullPathway, placeStudentInLevel } from "@/lib/api/curriculum";
+import { parseAcademyInstant } from "@/lib/format/academy-time";
 import { queryKeys } from "@/lib/query/keys";
 
 import { Button } from "@/components/ds/button";
@@ -64,7 +65,34 @@ const DETAIL_TABS = [
 ] as const;
 type DetailTab = (typeof DETAIL_TABS)[number]["id"];
 
+const ROSTER_VIEWS = [
+  { id: "active", label: "Active" },
+  { id: "past", label: "Past" },
+] as const;
+type RosterView = (typeof ROSTER_VIEWS)[number]["id"];
+
 const CANCEL_FAILED_FALLBACK = "Could not cancel session.";
+
+// #711: a long-running series lists 20+ dates; by default show the 3 most
+// recent past dates and the next 3 upcoming, in order.
+const CLASS_DATES_WINDOW = 3;
+
+function windowedOccurrences(
+  occurrences: AdminSessionOccurrenceView[],
+  now: Date,
+): AdminSessionOccurrenceView[] {
+  const sorted = [...occurrences].sort(
+    (a, b) => parseAcademyInstant(a.start_at).getTime() - parseAcademyInstant(b.start_at).getTime(),
+  );
+  const firstUpcoming = sorted.findIndex(
+    (occurrence) => parseAcademyInstant(occurrence.start_at).getTime() >= now.getTime(),
+  );
+  const splitAt = firstUpcoming === -1 ? sorted.length : firstUpcoming;
+  return [
+    ...sorted.slice(Math.max(splitAt - CLASS_DATES_WINDOW, 0), splitAt),
+    ...sorted.slice(splitAt, splitAt + CLASS_DATES_WINDOW),
+  ];
+}
 
 function cancelErrorMessage(err: unknown): string {
   const reason = err instanceof Error ? err.message.trim() : "";
@@ -87,6 +115,8 @@ export default function AdminSessionDetailPage() {
   const [cancelTarget, setCancelTarget] = useState<AdminSessionOccurrenceView | null>(null);
   const [assistantsOpen, setAssistantsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<DetailTab>("roster");
+  const [rosterView, setRosterView] = useState<RosterView>("active");
+  const [showAllDates, setShowAllDates] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
 
   const sessionsQuery = useQuery({
@@ -174,6 +204,12 @@ export default function AdminSessionDetailPage() {
     [enrollmentsQuery.data?.enrollments],
   );
   const occurrences = occurrencesQuery.data?.occurrences ?? [];
+  const canWindowDates = occurrences.length > CLASS_DATES_WINDOW * 2;
+  const visibleOccurrences =
+    canWindowDates && !showAllDates ? windowedOccurrences(occurrences, new Date()) : occurrences;
+  const activeEnrollments = enrollments.filter((e) => e.status === "active");
+  const pastEnrollments = enrollments.filter((e) => e.status !== "active");
+  const rosterRows = rosterView === "active" ? activeEnrollments : pastEnrollments;
   const userNameById = new Map(
     (usersQuery.data?.users ?? []).map((user) => [user.user_id, user.display_name || user.email])
   );
@@ -334,15 +370,30 @@ export default function AdminSessionDetailPage() {
         {occurrencesQuery.isLoading ? (
           <TableSkeleton />
         ) : (
-          <ReplacementCoachTable
-            occurrences={occurrences}
-            userNameById={userNameById}
-            timezone={session?.timezone ?? null}
-            onEdit={setOccurrenceTarget}
-            onCancel={setCancelTarget}
-            showStatus
-            emptyLabel="No dates scheduled yet."
-          />
+          <>
+            <ReplacementCoachTable
+              occurrences={visibleOccurrences}
+              userNameById={userNameById}
+              timezone={session?.timezone ?? null}
+              onEdit={setOccurrenceTarget}
+              onCancel={setCancelTarget}
+              showStatus
+              emptyLabel="No dates scheduled yet."
+            />
+            {canWindowDates && (
+              <div className="pt-3">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  data-testid="class-dates-show-all"
+                  aria-expanded={showAllDates}
+                  onClick={() => setShowAllDates((current) => !current)}
+                >
+                  {showAllDates ? "Show fewer" : `Show all ${occurrences.length} dates`}
+                </Button>
+              </div>
+            )}
+          </>
         )}
       </Card>
 
@@ -396,13 +447,47 @@ export default function AdminSessionDetailPage() {
           {session && (
             <RosterMetrics enrollments={enrollments} capacity={session.capacity} />
           )}
+          <div
+            role="tablist"
+            aria-label="Roster view"
+            className="mb-4 inline-flex rounded-md border border-rally-line bg-rally-paper p-0.5"
+          >
+            {ROSTER_VIEWS.map((view) => {
+              const selected = rosterView === view.id;
+              const count = view.id === "active" ? activeEnrollments.length : pastEnrollments.length;
+              return (
+                <button
+                  key={view.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={selected}
+                  data-testid={`roster-tab-${view.id}`}
+                  onClick={() => setRosterView(view.id)}
+                  className={`inline-flex min-h-9 items-center gap-2 rounded px-3 text-sm font-semibold ${
+                    selected
+                      ? "bg-white text-rally-ink shadow-sm"
+                      : "text-rally-muted hover:text-rally-ink"
+                  }`}
+                >
+                  {view.label}
+                  <span className="rounded-full bg-rally-line px-1.5 font-mono text-[11px] tabular-nums text-rally-muted">
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
           {enrollmentsQuery.isLoading ? (
             <TableSkeleton />
-          ) : enrollments.length === 0 ? (
-            <p className="text-sm text-rally-subtle" data-testid="roster-empty">No enrolled students.</p>
+          ) : rosterRows.length === 0 ? (
+            rosterView === "active" ? (
+              <p className="text-sm text-rally-subtle" data-testid="roster-empty">No active students.</p>
+            ) : (
+              <p className="text-sm text-rally-subtle" data-testid="roster-past-empty">No past students.</p>
+            )
           ) : (
             <RosterTable
-              enrollments={enrollments}
+              enrollments={rosterRows}
               sessionId={sessionId}
               academyTimezone={session?.timezone ?? null}
               pathwayLevels={pathwayLevels}
