@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import UTC, date, datetime, time, timedelta
-from typing import Any
+from typing import Any, cast
 
 from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.enrollment.domain.models import SessionOccurrence
 from backend.v2.shared.tenancy import TenantScopedRepository
+from backend.v2.shared.time import ensure_utc
 
 
 class MongoSessionOccurrenceRepository(TenantScopedRepository):
@@ -21,8 +22,8 @@ class MongoSessionOccurrenceRepository(TenantScopedRepository):
             occurrence_id=str(doc["occurrence_id"]),
             academy_id=str(doc["academy_id"]),
             session_id=str(doc["session_id"]),
-            start_at=doc["start_at"],
-            end_at=doc["end_at"],
+            start_at=_utc(doc["start_at"]),
+            end_at=_utc(doc["end_at"]),
             status=doc.get("status", "scheduled"),
             scheduled_coach_id=str(doc["scheduled_coach_id"]),
             actual_coach_id=_optional_str(doc.get("actual_coach_id")),
@@ -30,7 +31,7 @@ class MongoSessionOccurrenceRepository(TenantScopedRepository):
             is_billable=bool(doc.get("is_billable", True)),
             is_payable=bool(doc.get("is_payable", True)),
             cancellation_reason=_optional_str(doc.get("cancellation_reason")),
-            cancelled_at=doc.get("cancelled_at"),
+            cancelled_at=_optional_utc(doc.get("cancelled_at")),
             cancelled_by=_optional_str(doc.get("cancelled_by")),
             template_session_id=_optional_str(doc.get("template_session_id")),
             assistant_coach_ids=_string_tuple(doc.get("assistant_coach_ids")),
@@ -181,7 +182,7 @@ class MongoSessionOccurrenceRepository(TenantScopedRepository):
         )
         if doc is None:
             return None
-        return doc["start_at"]
+        return ensure_utc(doc["start_at"])
 
     async def list_upcoming_scheduled_between(
         self,
@@ -334,6 +335,15 @@ def _candidate_day_bounds_utc(on_date: date) -> tuple[datetime, datetime]:
 
 def _optional_str(value: object | None) -> str | None:
     return None if value is None else str(value)
+
+
+def _utc(value: object) -> datetime:
+    """A BSON datetime read back naive, as the aware UTC instant it always was (#706)."""
+    return ensure_utc(cast(datetime, value))
+
+
+def _optional_utc(value: object | None) -> datetime | None:
+    return None if value is None else _utc(value)
 
 
 def _string_tuple(value: object) -> tuple[str, ...]:

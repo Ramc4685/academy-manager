@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+from typing import cast
+
 from backend.v2.contexts.enrollment.domain.self_service import TrialRequest
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
+from backend.v2.shared.time import ensure_utc
 
 
 class MongoTrialRequestRepository(TenantScopedRepository):
@@ -27,8 +31,8 @@ class MongoTrialRequestRepository(TenantScopedRepository):
             linked_application_id=_optional_str(doc.get("linked_application_id")),
             denial_reason=_optional_str(doc.get("denial_reason")),
             decided_by=_optional_str(doc.get("decided_by")),
-            decided_at=doc.get("decided_at"),
-            created_at=doc["created_at"],
+            decided_at=_optional_utc(doc.get("decided_at")),
+            created_at=_utc(doc["created_at"]),
         )
 
     @staticmethod
@@ -150,3 +154,12 @@ class MongoTrialRequestRepository(TenantScopedRepository):
 
 def _optional_str(value: object | None) -> str | None:
     return None if value is None else str(value)
+
+
+def _utc(value: object) -> datetime:
+    """A BSON datetime read back naive, as the aware UTC instant it always was (#706)."""
+    return ensure_utc(cast(datetime, value))
+
+
+def _optional_utc(value: object | None) -> datetime | None:
+    return None if value is None else _utc(value)
