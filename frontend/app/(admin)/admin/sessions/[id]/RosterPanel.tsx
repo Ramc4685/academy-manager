@@ -280,15 +280,17 @@ export function RosterTable({
 /**
  * Which departure actions apply to a roster row today. This slice (#696) is
  * frontend-only — there is no backend-supplied action list yet, so this
- * mirrors exactly the status-based conditions the inline button row used to
- * apply. #697 replaces this with a list the backend returns.
+ * mirrors the status-based conditions the inline button row used to apply.
+ * #711 widened Drop to paused/held rows: `WithdrawEnrollment` accepts exactly
+ * {active, paused, held} (a paused row already released its seat, which the
+ * backend handles). #697 replaces this with a list the backend returns.
  */
-function rosterActionsFor(status: EnrollmentStatus): DepartureAction[] {
+export function rosterActionsFor(status: EnrollmentStatus): DepartureAction[] {
   const actions: DepartureAction[] = [];
   if (status === "active") actions.push("pause");
   if (status === "paused") actions.push("resume");
   actions.push("transfer");
-  if (status === "active") actions.push("drop");
+  if (status === "active" || status === "paused" || status === "held") actions.push("drop");
   actions.push("delete");
   return actions;
 }
