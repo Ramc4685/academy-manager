@@ -267,8 +267,9 @@ export async function getCoachSessionSkills(
 export async function bulkUpdateCoachSessionSkillStatus(
   occurrenceId: string,
   payload: BulkSkillStatusRequest,
+  date?: string,
 ): Promise<BulkSkillStatusResponse> {
-  return apiFetch<BulkSkillStatusResponse>(coachSessionBulkSkillStatusPath(occurrenceId), {
+  return apiFetch<BulkSkillStatusResponse>(coachSessionBulkSkillStatusPath(occurrenceId, date), {
     method: "POST",
     body: JSON.stringify(payload),
   });

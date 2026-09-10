@@ -1750,6 +1750,91 @@ def test_real_skill_router_supervisor_resolves_occurrence_id_via_academy_listing
     assert list_today.execute_calls == []
 
 
+def test_real_skill_router_supervisor_bulk_status_resolves_occurrence_id_when_dated() -> None:
+    """Same admin-coverage repro as the GET test above, but for the "By
+    skill" bulk-status save (POST .../skills/bulk-status). The frontend
+    (frontend/lib/api/coach.ts) now threads the page's `date` through to
+    this call precisely so this path resolves via the same
+    execute_for_academy branch as the GET route — before that frontend
+    change this endpoint never received a date at all, so it unconditionally
+    fell through to the broken raw is_coach_assigned(coach_id, occurrence_id)
+    lookup for every coach, not just supervisors (see the companion
+    undated test below, which documents that residual contract)."""
+    occurrence_id = f"{SESSION_ID}:2026-09-09:18:15"
+    covered_session = SimpleNamespace(
+        session_id=SESSION_ID,
+        occurrence_id=occurrence_id,
+        roster_session_id=SESSION_ID,
+        title="Friday Training",
+        location="Court 1",
+        timezone="America/Chicago",
+        start_at=datetime(2026, 9, 9, 18, 15, tzinfo=UTC),
+        end_at=datetime(2026, 9, 9, 19, 15, tzinfo=UTC),
+    )
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids={SESSION_ID},
+        supervisor_ids=frozenset({SUPERVISOR_ID}),
+    )
+    list_today = _ListTodayForAcademy([covered_session])
+    use_cases = app.dependency_overrides[get_coach_use_cases]()
+    use_cases.list_today = list_today  # type: ignore[assignment]
+    app.dependency_overrides[get_auth_claims] = _supervisor_claims
+    client = TestClient(app)
+
+    response = client.post(
+        f"/api/v2/coach/sessions/{occurrence_id}/skills/bulk-status",
+        params={"date": "2026-09-09"},
+        json={
+            "skill_id": SKILL_ID,
+            "program_id": PROGRAM_ID,
+            "level_id": LEVEL_ID,
+            "student_ids": [STUDENT_ID],
+            "status": "PRACTICING",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"updated": 1, "student_ids": [STUDENT_ID]}
+    assert spies.update_skill_status.calls == 1
+    assert list_today.execute_for_academy_calls == [date(2026, 9, 9)]
+    assert list_today.execute_calls == []
+
+
+def test_real_skill_router_bulk_status_404s_on_occurrence_id_without_date() -> None:
+    """Documents a known, narrower residual gap flagged in PR #710 review:
+    _session_for_request's date-scoped resolution (including the
+    supervisor/execute_for_academy branch) only runs when `on_date` is
+    supplied. A composite occurrence_id posted with no `date` query param
+    falls straight to the raw is_coach_assigned(coach_id, occurrence_id)
+    lookup, which never matches a composite id — 404, for ANY coach
+    (supervisor or not), since that lookup doesn't depend on who's asking.
+    In the current app this is unreachable: the only caller
+    (frontend/lib/api/coach.ts's bulkUpdateCoachSessionSkillStatus) always
+    passes the page's `date`. This test exists so removing that `date` argument
+    later doesn't silently reintroduce the bug this suite guards against."""
+    occurrence_id = f"{SESSION_ID}:2026-09-09:18:15"
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids={SESSION_ID},
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        f"/api/v2/coach/sessions/{occurrence_id}/skills/bulk-status",
+        json={
+            "skill_id": SKILL_ID,
+            "program_id": PROGRAM_ID,
+            "level_id": LEVEL_ID,
+            "student_ids": [STUDENT_ID],
+            "status": "PRACTICING",
+        },
+    )
+
+    assert response.status_code == 404, response.text
+    assert spies.update_skill_status.calls == 0
+
+
 def test_real_skill_router_bulk_status_updates_selected_session_students_only() -> None:
     app, spies = _build_real_router_app(
         student_session_ids=[SESSION_ID],

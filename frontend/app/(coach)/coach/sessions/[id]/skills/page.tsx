@@ -112,6 +112,7 @@ export default function CoachSessionSkillsPage({ params, searchParams }: PagePro
           {mode === "skill" ? (
             <BySkillWorkspace
               occurrenceId={occurrenceId}
+              date={date}
               groups={data.skill_groups}
               students={data.students}
               onUpdated={() => void queryClient.invalidateQueries({ queryKey })}
@@ -151,11 +152,13 @@ function ModeButton({
 
 function BySkillWorkspace({
   occurrenceId,
+  date,
   groups,
   students,
   onUpdated,
 }: {
   occurrenceId: string;
+  date: string;
   groups: CoachSkillGroup[];
   students: CoachSessionSkillsStudent[];
   onUpdated: () => void;
@@ -171,13 +174,17 @@ function BySkillWorkspace({
 
   const mutation = useMutation({
     mutationFn: () =>
-      bulkUpdateCoachSessionSkillStatus(occurrenceId, {
-        skill_id: group.skill_id,
-        program_id: sampleSkill?.program_id ?? "",
-        level_id: sampleSkill?.level_id ?? "",
-        student_ids: selected.length > 0 ? selected : group.student_ids,
-        status,
-      }),
+      bulkUpdateCoachSessionSkillStatus(
+        occurrenceId,
+        {
+          skill_id: group.skill_id,
+          program_id: sampleSkill?.program_id ?? "",
+          level_id: sampleSkill?.level_id ?? "",
+          student_ids: selected.length > 0 ? selected : group.student_ids,
+          status,
+        },
+        date,
+      ),
     onSuccess: onUpdated,
   });
 
