@@ -21,7 +21,8 @@
 - No migration in this plan. (If one were ever added: prod runs migrations by hand — `V2_RUN_MIGRATIONS_ON_BOOT` is false in production — so the release note would have to name each file.)
 - **Cross-plan contracts this plan owes / does not owe** (build order for the four 2026-09-10 admin-UX plans is 1 → 2 → 4 → 3; this is plan 2):
   - The Families **list component's final path is `frontend/app/(admin)/admin/families/page.tsx`** and its row model is `BillingSetupRow` (`backend/v2/contexts/billing/application/use_cases/billing_setup_registration.py`), wired through `composition/families.py`. This plan modifies that page in place — it does **not** move, rename or split it — so any later plan (e.g. plan 3, `2026-09-10-birthdays-and-profile-nudges.md`, Task 11) should reference those exact paths.
-  - **No "Needs attention" sort is built here.** Spec §3's list gets a registration-state filter, a `login_state` filter and a name/email/phone/child search; row order stays roster order out of `ListBillingSetup.execute`. Plan 3 §5 assumes a "Needs attention" sort it could extend — there is none, and plan 3's Task 11 is correctly parked on an OPEN QUESTION about who owns it.
+  - **Owner decision 2026-09-10 — a "Needs attention" sort IS built here** (Task 12b). Spec §3's list gets a registration-state filter, a `login_state` filter, a name/email/phone/child search, AND a sort toggle whose "Needs attention" mode orders by: outstanding balance desc → never-invited → autopay failing → profile incomplete → name. Plan 3 extends the *profile incomplete* term by reading `profile_nudges`; it does not build the sort. Default sort stays alphabetical by name so the list is predictable for lookup.
+  - **Owner decision 2026-09-10 — parents with no students still appear.** The list is a list of parent *users*, not a list of rosters. A parent invited but not yet enrolled, or whose only child's record was removed, must not vanish when the Users directory's Parents pill goes away (Task 12c). Their row shows "No students on file" and still offers invite/reset.
   - **"Move child to another family" is NOT built here.** Spec §6 lists it under "what this unblocks", and no task below implements it. Plan 4 (`2026-09-10-student-page-single-view.md`, Task 8) hard-gates its `ChangeParentPanel` removal on this action existing, so under the agreed order plan 4's Task 8 will correctly **skip** and `ChangeParentPanel` stays on the student page. If the owner wants it moved in this cycle, it needs its own slice — do not smuggle it into a task below.
 - Commits end with the session's attribution trailer, currently
   `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`. Use whatever the
@@ -2085,6 +2086,198 @@ test("user detail for a parent shows the family pointer, hides invite panel", as
 
   Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
   ```
+
+---
+
+### Task 11b: Backend — parents with no students still appear in the list
+
+> **Owner decision 2026-09-10.** `ListBillingSetup.execute` derives its roster from
+> students (`list_admin_students` → group by `parent_id`), so a parent user with
+> zero student rows is absent from `/admin/families` while being present in
+> `/admin/users?role=parent` today. Task 9's redirect would make those people
+> unreachable. Before running this task, confirm the premise with a one-line check
+> against the read model, and if `ListBillingSetup` already unions the users
+> collection, skip this task and record that in the Self-review.
+
+**Files:**
+- Modify: `backend/v2/contexts/billing/application/use_cases/billing_setup_registration.py` (`ListBillingSetup.execute`, and the roster port it calls)
+- Modify: `backend/v2/composition/families.py` (`_BillingSetupRosterAdapter` — the adapter that supplies parents)
+- Test: the same test module Task 3 created/extended for `ListBillingSetup`
+
+**Interfaces:**
+- Consumes: `BillingSetupRow` and the `login_state` facet from Task 3.
+- Produces: rows for every parent-role user in the tenant, whether or not they have students. `BillingSetupRow.student_names` is an empty list for those rows; no field is added.
+
+- [ ] **Step 1: Write the failing test.** In the `ListBillingSetup` test module:
+
+```python
+@pytest.mark.asyncio
+async def test_lists_a_parent_who_has_no_students():
+    """A parent invited but never enrolled must not vanish from the Families
+    list — after the Parents directory retires this is the only place they
+    exist (owner decision 2026-09-10)."""
+    use_case = _build(  # the module's existing builder helper — reuse it
+        parents=[_parent("usr-childless", display_name="Ravi Kumar", email="ravi@example.com")],
+        students=[],
+    )
+    result = await use_case.execute(BillingSetupQuery())
+    assert [r.parent_id for r in result.rows] == ["usr-childless"]
+    assert result.rows[0].student_names == []
+```
+
+- [ ] **Step 2: Run it and confirm it fails.**
+
+Run: `cd backend && pytest v2/tests -k "billing_setup and childless" -v`
+Expected: FAIL — `assert [] == ['usr-childless']`, because the roster is built from students only.
+
+- [ ] **Step 3: Read the current roster derivation before changing it.**
+
+Run: `cd backend && grep -n "list_parents\|parent_id\|RosterPort\|_BillingSetupRosterAdapter" v2/contexts/billing/application/use_cases/billing_setup_registration.py v2/composition/families.py`
+Record which side owns "who is a parent" — the use case or the adapter. Make the change on that side only; do not add a second source of truth.
+
+- [ ] **Step 4: Union the parent users into the roster.** In `_BillingSetupRosterAdapter` (`composition/families.py`), after the student-derived grouping is built, add every `role=parent` user in the tenant that the grouping does not already contain, with an empty student list. One query, tenant-scoped:
+
+```python
+        async for user_doc in db["users"].find(
+            {"academy_id": academy_id, "roles": "parent"},
+            {"user_id": 1, "display_name": 1, "email": 1, "phone": 1},
+        ):
+            parent_id = str(user_doc.get("user_id"))
+            if parent_id in by_parent:
+                continue
+            by_parent[parent_id] = _empty_family(user_doc)
+```
+
+  Match the field names the adapter already uses for a student-derived row — read the surrounding code and mirror it rather than inventing `_empty_family`'s shape. If the tenant's parent role is stored as `academy_memberships` rather than a `roles` array on the user, use that collection instead; the grep in Step 3 tells you which.
+
+- [ ] **Step 5: Render the empty state.** In `frontend/app/(admin)/admin/families/page.tsx`, where the row's student names are rendered, show `No students on file` in muted text when the list is empty, so the row does not look broken.
+
+- [ ] **Step 6: Run the tests.**
+
+Run: `cd backend && pytest v2/tests -k "billing_setup" -q && cd ../frontend && pnpm typecheck`
+Expected: the new test PASSES, no existing `billing_setup` test regresses, typecheck clean.
+
+- [ ] **Step 7: Commit.**
+
+```bash
+git add backend/v2/composition/families.py backend/v2/contexts/billing/application/use_cases/billing_setup_registration.py "frontend/app/(admin)/admin/families/page.tsx"
+git commit -m "feat(admin): list parents with no students on the Families page
+
+The Families list derived its rows from students, so a parent invited but not
+yet enrolled existed only in the Users directory — which this branch retires.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 11c: Frontend + backend — the "Needs attention" sort
+
+> **Owner decision 2026-09-10.** Default order is alphabetical by name (predictable
+> for lookup, which is the old Parents-directory job). A toggle switches to
+> "Needs attention", which is what plan 3 later extends with profile-completeness.
+
+**Files:**
+- Modify: `backend/v2/contexts/billing/application/use_cases/billing_setup_registration.py` (`BillingSetupQuery` gains `sort`; `ListBillingSetup.execute` orders rows)
+- Modify: `backend/v2/interfaces/admin/families_routes.py` (`sort` query param)
+- Modify: `frontend/lib/api/admin.ts` (`BillingSetupListParams.sort`)
+- Modify: `frontend/app/(admin)/admin/families/page.tsx` (the toggle)
+- Test: the `ListBillingSetup` test module
+
+**Interfaces:**
+- Consumes: `BillingSetupRow` with `login_state` (Task 3), childless rows (Task 11b).
+- Produces: `BillingSetupQuery.sort: Literal["name", "needs_attention"] = "name"`, honoured by `ListBillingSetup.execute`. Plan 3 (`2026-09-10-birthdays-and-profile-nudges.md`, Task 11) adds a profile-incomplete term to the same comparator — it must not introduce a second sort.
+
+- [ ] **Step 1: Write the failing test.**
+
+```python
+@pytest.mark.asyncio
+async def test_needs_attention_sort_puts_money_and_access_problems_first():
+    use_case = _build(  # reuse the module's builder
+        parents=[
+            _parent("usr-fine", display_name="Anita Rao"),
+            _parent("usr-owing", display_name="Zara Ahmed"),
+            _parent("usr-uninvited", display_name="Bob Stone"),
+        ],
+        outstanding={"usr-owing": 12_000},
+        never_invited={"usr-uninvited"},
+    )
+    result = await use_case.execute(BillingSetupQuery(sort="needs_attention"))
+    assert [r.parent_id for r in result.rows] == ["usr-owing", "usr-uninvited", "usr-fine"]
+
+
+@pytest.mark.asyncio
+async def test_default_sort_is_alphabetical():
+    use_case = _build(
+        parents=[
+            _parent("usr-z", display_name="Zara Ahmed"),
+            _parent("usr-a", display_name="Anita Rao"),
+        ],
+    )
+    result = await use_case.execute(BillingSetupQuery())
+    assert [r.parent_id for r in result.rows] == ["usr-a", "usr-z"]
+```
+
+  Use whatever keyword arguments the module's existing builder actually takes — read it first; `outstanding` / `never_invited` above are illustrative names for "this parent owes money" and "this parent was never invited".
+
+- [ ] **Step 2: Run it and confirm it fails.**
+
+Run: `cd backend && pytest v2/tests -k "billing_setup and sort" -v`
+Expected: FAIL — `BillingSetupQuery` has no `sort` field (`TypeError: unexpected keyword argument 'sort'`).
+
+- [ ] **Step 3: Implement.** Add to `BillingSetupQuery`:
+
+```python
+    sort: Literal["name", "needs_attention"] = "name"
+```
+
+  And at the end of `ListBillingSetup.execute`, before returning, order the rows:
+
+```python
+        def _needs_attention_key(row: BillingSetupRow) -> tuple:
+            # Lower sorts first. Money first, then people who cannot pay at all,
+            # then failing autopay. Plan 3 adds a profile-incomplete term here.
+            return (
+                0 if row.outstanding_cents > 0 else 1,
+                -row.outstanding_cents,
+                0 if row.registration_state == "no_account" else 1,
+                0 if row.autopay_failing else 1,
+                (row.parent_name or "").lower(),
+            )
+
+        if query.sort == "needs_attention":
+            rows.sort(key=_needs_attention_key)
+        else:
+            rows.sort(key=lambda row: (row.parent_name or "").lower())
+```
+
+  Use the real field names on `BillingSetupRow` — read it; `autopay_failing` and `outstanding_cents` above must be replaced with whatever it actually calls them, and if there is no autopay-failure boolean, drop that term rather than inventing a field.
+
+- [ ] **Step 4: Run the tests.**
+
+Run: `cd backend && pytest v2/tests -k "billing_setup" -q`
+Expected: PASS.
+
+- [ ] **Step 5: Thread it through the route and the client.** Add `sort: Literal["name", "needs_attention"] = Query("name")` to the families list route and pass it into `BillingSetupQuery`. Add `sort?: "name" | "needs_attention";` to `BillingSetupListParams` in `frontend/lib/api/admin.ts`.
+
+- [ ] **Step 6: Add the toggle.** In `frontend/app/(admin)/admin/families/page.tsx`, beside the existing `FILTERS` row, render two pills — "A–Z" (default) and "Needs attention" — holding the value in the same state/query-param pattern the existing filter uses, and pass it into the list query. Include it in the React Query key so switching refetches.
+
+- [ ] **Step 7: Verify.**
+
+Run: `cd frontend && pnpm typecheck && pnpm lint`
+Expected: PASS.
+
+- [ ] **Step 8: Commit.**
+
+```bash
+git add backend/v2/contexts/billing/application/use_cases/billing_setup_registration.py backend/v2/interfaces/admin/families_routes.py frontend/lib/api/admin.ts "frontend/app/(admin)/admin/families/page.tsx" backend/v2/tests
+git commit -m "feat(admin): Needs attention sort on the Families list
+
+Default stays alphabetical for lookup; the toggle surfaces outstanding balance,
+never-invited and failing-autopay families first.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+```
 
 ---
 

@@ -2568,7 +2568,24 @@ async def _birthdays_this_week(db: AsyncIOMotorDatabase[Any], now: datetime) -> 
 - Produces: `last_nudge_sent_at: datetime | None` on `BillingSetupRow` — the row model behind `/admin/families`, which is what any "Needs attention" ordering would sort on.
 - Explicitly unchanged: the `missing=` filter on `GET /admin/students` (verified `directory_routes.py` lines 322-330, backed by `CHILD_REQUIRED`/`child_gaps` in `mongo_student_repo.py`). Spec §5 says it stays as-is — do not touch it.
 
-> **OPEN QUESTION (owner): who owns "profile incomplete" + "last nudge date" on the Families list?**
+> **ANSWERED 2026-09-10 — option (b), with the sort itself owned by plan 2.**
+> The owner decided the "Needs attention" sort **is** built in plan 2, as its new
+> Task 11c: `BillingSetupQuery.sort: Literal["name", "needs_attention"]`, default
+> `"name"`, with a `_needs_attention_key` comparator in `ListBillingSetup.execute`
+> ordering by outstanding balance → never-invited → autopay failing → name.
+>
+> **This task's remaining job is narrow:** add `last_nudge_sent_at` to
+> `BillingSetupRow` (wired in `composition/families.py`, never
+> `composition/admin.py`), and add ONE profile-incomplete term to plan 2's
+> existing `_needs_attention_key` — do not create a second sort, a second query
+> param, or a second read of completeness. If plan 2 has not merged when this
+> task runs, stop and wait for it; the comparator must exist before it can be
+> extended.
+>
+> The historical analysis that produced the question is kept below because it
+> records exactly which files were checked.
+>
+> ~~**OPEN QUESTION (owner): who owns "profile incomplete" + "last nudge date" on the Families list?**~~
 > Verified 2026-09-10 against the actual files, and the earlier draft of this
 > task guessed wrong in both directions:
 > * Spec 3 §5 says the Families "Needs attention" sort *(spec 2)* "includes
@@ -2600,9 +2617,15 @@ async def _birthdays_this_week(db: AsyncIOMotorDatabase[Any], now: datetime) -> 
 > independently adding a "profile incomplete" signal to the same list is the
 > exact duplicate-read-model failure this note exists to prevent.
 
-- [ ] Get the owner's answer to the OPEN QUESTION above and record it here.
+- [ ] Confirm plan 2 has merged and `_needs_attention_key` exists: `grep -n "_needs_attention_key" backend/v2/contexts/billing/application/use_cases/billing_setup_registration.py`. If it is absent, STOP — plan 2's Task 11c has not landed and this task cannot extend a comparator that does not exist.
 
-- [ ] If (a) or (c): delete this task, tick nothing, and note in the release note that admin visibility of nudge history is deferred.
+- [ ] Add the profile-incomplete term to plan 2's existing `_needs_attention_key`, immediately before the trailing name term, so an incomplete profile breaks ties after the money and access signals:
+
+```python
+                0 if row.profile_incomplete else 1,
+```
+
+  and populate `profile_incomplete` / `last_nudge_sent_at` on `BillingSetupRow` from the `profile_nudges` document for that parent (open record → incomplete; `sends[-1]["at"]` → last nudge). Batch-load the collection once per list request in `composition/families.py`, keyed by `parent_id` — never one query per row.
 
 - [ ] If (b): write the failing contract test first. Fixtures are `db` and `acad` (there is no `mongo_db`/`academy_id` fixture). Target `ListBillingSetup` / `BillingSetupRow` (`backend/v2/contexts/billing/application/use_cases/billing_setup_registration.py`) wired through `composition/families.py` — the read model plan 2 leaves behind `/admin/families` — rather than adding a parallel one:
 
@@ -2726,7 +2749,7 @@ PR: #TBD  <!-- replace with the real number the moment the PR is opened -->
 | §4.1 Staff digest — coach Monday block, admin ops digest, withdrawn note, coach/admin scoping | Tasks 9, 10 — **partial**: Task 9 carries the full row (name, age, day, classes, parent, "left on"); Task 10's ops-digest probe as sketched returns name + `MM-DD` only. See the coverage note in Task 10 and either enrich it or record the reduction explicitly. |
 | §4.2 Family email — job, audience, one email per student, unsubscribe, `birthday_emails_enabled` | Tasks 6, 7 |
 | §5 Profile nudges — job, cadence, gap-closes-stops, deep link | Tasks 4, 8 |
-| §5 Profile nudges — **admin visibility** (Families "Needs attention" + last nudge date) | Task 11 — **BLOCKED on an OPEN QUESTION**: spec 2's design and its plan do not build a "profile incomplete" signal, so this field is currently unowned. See the note in Task 11. |
+| §5 Profile nudges — **admin visibility** (Families "Needs attention" + last nudge date) | Task 11 — **unblocked 2026-09-10 (owner: option b)**. Plan 2 Task 11c builds the sort and its `_needs_attention_key`; this task adds only the `profile_incomplete` term and `last_nudge_sent_at` to `BillingSetupRow`. Requires plan 2 merged first. |
 | §2 Consent — owner confirms registration wording before the family email is enabled | Not a code task. Task 7 ships the switch **default-off**; the release note carries the "do not enable until the owner confirms" instruction. Enabling it is a human step this plan deliberately does not automate. |
 | §6 Out of scope | Not built: parent birthdays, never-enrolled siblings, SMS/WhatsApp, DOB-driven age-group auto-placement — none appear in any task above. |
 | §7 Testing — leap-day, nudge scheduling table, idempotency, migration test | Tasks 1 (leap day), 4 (scheduling table), 5/6/8 (idempotency), 2/3 (migration tests) |
@@ -2735,7 +2758,7 @@ PR: #TBD  <!-- replace with the real number the moment the PR is opened -->
 - Parent birthdays and never-enrolled-sibling birthdays — spec explicitly excludes both; no task touches them.
 - SMS/WhatsApp nudge channels — email only, per spec §2.
 - Age-group auto-placement from DOB — spec §6 defers this to a later, separate change once DOBs are clean; this plan only makes DOBs clean (validation + backfill), it does not build placement logic.
-- Task 11 (admin "Needs attention" surfacing) is **blocked**, not deferred. Verified 2026-09-10: spec 2's design defines its sort as outstanding-balance + never-invited only, and spec 2's plan never mentions nudges or profile completeness — so neither plan owns this field. The owner must choose an owner before anyone writes code; see the OPEN QUESTION in Task 11.
+- Task 11 (admin "Needs attention" surfacing) was blocked and is now **unblocked**: the owner chose option (b) on 2026-09-10, and plan 2 gained Task 11c, which builds the sort and the `_needs_attention_key` comparator this task extends with one `profile_incomplete` term. Its only remaining prerequisite is ordering — plan 2 must merge first.
 
 **Open questions (must be answered before the affected task runs):**
 1. **Who owns "profile incomplete" + last nudge date on the Families list?** (Task 11 — blocks that task only; Tasks 1-10 and 12 are unaffected.)

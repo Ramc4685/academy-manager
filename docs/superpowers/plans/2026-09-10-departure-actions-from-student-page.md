@@ -11,7 +11,10 @@
 ## Global Constraints
 
 - Vocabulary: Transfer, Hold, Return, Drop, Delete — never "Cancel", never "Pause"/"Resume" (those are removed from `DepartureAction`).
-- `departureActionsFor(status)`: `active → [transfer, hold, drop, delete]`; `held → [return, transfer, drop, delete]`; `paused → [return, transfer, drop, delete]` (Return calls `/return` even for legacy paused rows — an accepted, spec-directed rough edge, see Self-review); every other status → `[delete]`.
+- `departureActionsFor(status)`: `active → [transfer, hold, drop, delete]`; `held → [return, transfer, drop, delete]`; `paused → [return, transfer, drop, delete]` (Return calls `/return` even for legacy paused rows — an accepted, spec-directed rough edge, see Self-review); `reclaim_pending → [transfer, drop, delete]`; every other status → `[delete]`.
+- **Owner decision 2026-09-10 — reclaim in flight:** a `reclaim_pending` row offers Transfer and Drop but never Return. `ReturnFromHold`'s CAS is `mark_active_if_held`, which rejects `reclaim_pending`, so a Return button there would always error. Do not "fix" this by widening the CAS.
+- **Owner decision 2026-09-10 — name who gets emailed:** every notify toggle's helper line names the recipient. The student page uses `student.parent_name`; the class roster uses `enrollment.parent_name`, which Task 8b adds to the roster read model. When it is `null`, fall back to the words "the family".
+- **Task 8b is a prerequisite for Tasks 9-10 and fixes a live production defect** (held enrollments are missing from the class roster). Do not reorder it after the frontend wiring.
 - Student page layout: Transfer is the only inline button; Hold/Return, Drop and Delete render in the row's overflow menu, Delete last behind a separator.
 - Hold dialog defaults: return date defaults to today + 30, capped at today + `EnrollmentDeparturePolicyView.max_hold_days` (NOT `hold_max_days` — that is the spec prose's shorthand, the real field on `EnrollmentDeparturePolicyView` and the backend policy object is `max_hold_days`). Reason optional. "Email the family" toggle defaults **off**.
 - Return dialog: reason optional, "Email the family" toggle defaults **off**.
@@ -140,8 +143,12 @@
         expect(departureActionsFor("paused")).toEqual(["return", "transfer", "drop", "delete"]);
       });
 
+      it("offers transfer and drop but never return while a reclaim is in flight", () => {
+        expect(departureActionsFor("reclaim_pending")).toEqual(["transfer", "drop", "delete"]);
+      });
+
       it("offers only delete for every other status", () => {
-        for (const status of ["reclaim_pending", "cancelled", "deleted", "withdrawn", "dropped"]) {
+        for (const status of ["cancelled", "deleted", "withdrawn", "dropped"]) {
           expect(departureActionsFor(status)).toEqual(["delete"]);
         }
       });
@@ -249,6 +256,12 @@
         case "held":
         case "paused":
           return ["return", "transfer", "drop", "delete"];
+        // Owner decision 2026-09-10: a reclaim in flight still allows moving or
+        // dropping the child, but never Return — ReturnFromHold's CAS
+        // (mark_active_if_held) rejects reclaim_pending, so offering it would
+        // render a button that always errors.
+        case "reclaim_pending":
+          return ["transfer", "drop", "delete"];
         default:
           return ["delete"];
       }
@@ -1383,6 +1396,144 @@
   ```
 - [ ] Run typecheck for these two new files in isolation (full-project typecheck still fails until Task 9 finishes wiring — that is expected): `cd frontend && pnpm tsc --noEmit -p . 2>&1 | grep -E "hold-dialog|return-dialog"` — expect no output (no errors attributable to these two files).
 - [ ] Commit: `git add frontend/components/admin/enrollment/hold-dialog.tsx frontend/components/admin/enrollment/return-dialog.tsx` then `git commit -m "feat(enrollment): add Hold and Return dialogs\n\nCo-Authored-By: Claude Opus 5 <noreply@anthropic.com>"`.
+
+## Task 8b: Backend — held rows return to the roster, and the roster learns the parent's name
+
+> **This task fixes a live production defect found while planning (2026-09-10).**
+> `mark_held_if_active` CAS-transitions `active` → `held`
+> (`backend/v2/contexts/enrollment/infrastructure/mongo_enrollment_writer.py:99-102`),
+> but the roster read filters `status: {"$in": ["active", "paused"]}`
+> (`backend/v2/composition/admin.py:2568`). **A held student therefore vanishes
+> from the class roster entirely** — the same dead end #641 fixed for `paused`,
+> reintroduced by #697 for `held`. `RosterPanel`'s `ENROLL_CHIP` already has
+> `held` and `reclaim_pending` → "ON HOLD" entries (`RosterPanel.tsx:36-37`)
+> that can never render today. Tasks 9-10 cannot offer Return from the roster
+> until this is fixed, so this task comes first.
+>
+> It also carries the **owner decision of 2026-09-10**: the departure dialogs
+> must name who gets the email, and `AdminEnrollmentView` has `parent_id` but no
+> parent name (`backend/v2/interfaces/admin/views.py:561-583`). Both changes land
+> in the same read, so they are one task.
+
+**Files:**
+- Modify: `backend/v2/composition/admin.py:2564-2568` (status filter) and the row-building loop that follows it (parent name)
+- Modify: `backend/v2/interfaces/admin/views.py:561-583` (`AdminEnrollmentView.parent_name`)
+- Modify: `frontend/lib/api/admin.ts` (`AdminEnrollmentView` TS type — add `parent_name: string | null`)
+- Test: `backend/v2/tests/integration/test_admin_roster_read.py` (create if absent — check `ls backend/v2/tests/integration/ | grep -i roster` first and extend the existing file if one is there)
+
+**Interfaces:**
+- Consumes: nothing from earlier tasks.
+- Produces: `AdminEnrollmentView.parent_name: str | None` on `GET /admin/sessions/{id}/enrollments`, and held/reclaim_pending rows in that response. Task 9 reads `enrollment.parent_name` for the dialogs' "who gets emailed" line and relies on held rows being present for Return.
+
+- [ ] **Step 1: Write the failing test.** Add to the roster read test file:
+
+```python
+@pytest.mark.asyncio
+async def test_roster_includes_held_and_reclaim_pending_rows(admin_use_cases, seeded_session):
+    """#697 introduced held/reclaim_pending; the roster filter never learned them,
+    so holding a student made them disappear from the class (regression of #641)."""
+    rows = await admin_use_cases.list_admin_enrollments_for_session(seeded_session.session_id)
+    statuses = {r["status"] for r in rows}
+    assert "held" in statuses
+    assert "reclaim_pending" in statuses
+
+
+@pytest.mark.asyncio
+async def test_roster_rows_carry_the_parent_name(admin_use_cases, seeded_session):
+    rows = await admin_use_cases.list_admin_enrollments_for_session(seeded_session.session_id)
+    assert all("parent_name" in r for r in rows)
+    assert any(r["parent_name"] for r in rows)
+```
+
+  Seed the fixture with four enrollments in one session — `active`, `paused`, `held`, `reclaim_pending` — each on a student whose `parent_id` points at a seeded parent user with a `display_name`. Follow the seeding style of the existing integration tests in that directory; do not invent a fixture helper name.
+
+- [ ] **Step 2: Run it and confirm it fails.**
+
+Run: `cd backend && pytest v2/tests/integration/test_admin_roster_read.py -v`
+Expected: both tests FAIL — the first with `assert 'held' in {'active', 'paused'}`, the second with `KeyError: 'parent_name'` or an all-missing assertion.
+
+- [ ] **Step 3: Widen the status filter.** In `backend/v2/composition/admin.py`, replace the query at line 2568:
+
+```python
+        cursor = enrollments_r._find_many(
+            # Paused rows stay on the roster (PAUSED chip + Return). Hiding them
+            # left a student who blocked "Add to roster" invisible everywhere
+            # (#641). held / reclaim_pending are the #697 successors of paused
+            # and must stay visible for the same reason — a held child still
+            # holds a seat, and Return is only reachable from a visible row.
+            {
+                "session_id": session_id,
+                "status": {"$in": ["active", "paused", "held", "reclaim_pending"]},
+            },
+            sort=[("created_at", 1), ("enrollment_id", 1)],
+        )
+```
+
+- [ ] **Step 4: Add the parent name.** The loop already builds `student_detail_by_id` from the `students` collection, and each student doc carries `parent_id`. After that dict is built and before the `for e in active:` loop, batch-load the parents (one query, never per row):
+
+```python
+        parent_ids = {
+            str(doc.get("parent_id"))
+            for doc in student_detail_by_id.values()
+            if doc.get("parent_id")
+        }
+        parent_name_by_id: dict[str, str] = {}
+        if parent_ids:
+            async for parent_doc in db["users"].find(
+                {"academy_id": academy_id, "user_id": {"$in": list(parent_ids)}},
+                {"user_id": 1, "display_name": 1},
+            ):
+                name = str(parent_doc.get("display_name") or "").strip()
+                if name:
+                    parent_name_by_id[str(parent_doc.get("user_id"))] = name
+```
+
+  Then inside `for e in active:`, alongside the existing `full_name` line, add:
+
+```python
+            parent_name = parent_name_by_id.get(str(student_doc.get("parent_id") or ""))
+```
+
+  and include `"parent_name": parent_name,` in the dict appended to `out`.
+
+- [ ] **Step 5: Add the field to the response model.** In `backend/v2/interfaces/admin/views.py`, add to `AdminEnrollmentView` immediately after `parent_id: str`:
+
+```python
+    #: Display name of the parent on file, for the departure dialogs' "who gets
+    #: emailed" line. None when the parent has no display_name set.
+    parent_name: str | None = None
+```
+
+  It defaults to `None`, so `add_to_roster`'s hand-built `AdminEnrollmentView(...)` at `sessions_routes.py:525+` keeps compiling untouched.
+
+- [ ] **Step 6: Mirror the type on the frontend.** In `frontend/lib/api/admin.ts`, add `parent_name: string | null;` to the `AdminEnrollmentView` interface, directly after `parent_id`.
+
+- [ ] **Step 7: Run the tests and the roster's existing coverage.**
+
+Run: `cd backend && pytest v2/tests/integration/test_admin_roster_read.py -v && pytest v2/tests -k "roster" -q`
+Expected: the two new tests PASS; no existing roster test regresses. Then `cd frontend && pnpm typecheck` — expected PASS.
+
+- [ ] **Step 8: Check the line cap.**
+
+Run: `wc -l backend/v2/composition/admin.py`
+Expected: under 4500 (it was 4318 before this task; this adds roughly 15 lines). If it is over, stop and extract rather than continuing.
+
+- [ ] **Step 9: Commit.**
+
+```bash
+git add backend/v2/composition/admin.py backend/v2/interfaces/admin/views.py frontend/lib/api/admin.ts backend/v2/tests/integration/test_admin_roster_read.py
+git commit -m "fix(admin): held students disappeared from the class roster, and name the parent on roster rows
+
+mark_held_if_active moves an enrollment to 'held', but the roster read still
+filtered on active/paused only — so holding a child removed them from the
+class, the #641 dead end reintroduced by #697. Adds held and reclaim_pending
+back, and carries the parent's display name on each row so the departure
+dialogs can say who will be emailed.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+```
+
+---
 
 ## Task 9: Frontend — wire the roster and student-page surfaces
 

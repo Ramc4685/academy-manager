@@ -15,7 +15,16 @@ a `hashchange`-aware effect that forces a matching section open and scrolls to i
 Enrollments section renders `SessionsPanel`'s table — which already carries the per-enrollment
 fee, discount and autopay chip the spec asks for — with `BillingEnrollmentsPanel` beneath it
 for the move/override actions that exist nowhere else; see the OPEN QUESTION under "Self-review"
-for why a literal single table is not buildable client-side today. The five components currently
+for why a literal single table is not buildable client-side today.
+
+**Owner decision 2026-09-10 — the Billing section keeps its card.** Spec §3.3 ("a link to
+the family page") and §4 ("`FamilyBillingLink`'s panel body" leaves this page) contradict
+each other; the owner resolved it in favour of §3.3. The Billing section shows an
+always-visible summary line plus, inside the collapsed body, the `FamilyBillingLink` card
+and its link to `/admin/families/[parentId]`. Nothing billing-related is deleted from this
+page by this plan.
+
+The five components currently
 defined inline in `page.tsx` (`EngagementPanel`, `TrainingSnapshot`, `SkillPathwayPanel`,
 `RecentAttendancePanel`, `ComplianceSummary`) stay inline but move under the new section layout.
 `ChangeParentPanel` and `StudentEditForm`'s `mode="family"` t-shirt field are deleted from this
