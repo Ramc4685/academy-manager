@@ -25,6 +25,8 @@
  * non-owner, hidden for nobody.
  */
 
+import type { ReactNode } from "react";
+
 import { OverflowMenu, type MenuItem } from "@/components/ds/menu";
 import { Button } from "@/components/ds/button";
 import { OwnerOnlyHint } from "@/components/admin/owner-context";
@@ -47,6 +49,13 @@ export interface DepartureActionsProps {
   layout: "menu" | "inline";
   isOwner: boolean;
   onAction: (action: DepartureAction, enrollmentId: string) => void;
+  /**
+   * Navigation entry pinned to the top of the overflow menu (#713). The roster
+   * uses it for "Pathway", which used to be a standalone button beside the
+   * kebab and cost every row ~100px of width on a phone. Ignored when the
+   * caller renders no overflow menu.
+   */
+  leadingLink?: { key: string; label: ReactNode; href: MenuItem["href"] };
   className?: string;
 }
 
@@ -57,20 +66,24 @@ export function DepartureActions({
   layout,
   isOwner,
   onAction,
+  leadingLink,
   className = "",
 }: DepartureActionsProps) {
   const resolved = resolveDepartureActions(actions, { isOwner, layout });
   const inline = resolved.filter((entry) => !entry.inOverflow);
   const overflow = resolved.filter((entry) => entry.inOverflow);
 
-  const overflowItems: MenuItem[] = overflow.map((entry) => ({
-    key: entry.action,
-    label: entry.label,
-    disabled: entry.disabled,
-    danger: entry.danger,
-    hint: entry.ownerGated ? <OwnerOnlyHint /> : undefined,
-    onSelect: () => onAction(entry.action, enrollmentId),
-  }));
+  const overflowItems: MenuItem[] = [
+    ...(leadingLink ? [{ key: leadingLink.key, label: leadingLink.label, href: leadingLink.href }] : []),
+    ...overflow.map((entry) => ({
+      key: entry.action,
+      label: entry.label,
+      disabled: entry.disabled,
+      danger: entry.danger,
+      hint: entry.ownerGated ? <OwnerOnlyHint /> : undefined,
+      onSelect: () => onAction(entry.action, enrollmentId),
+    })),
+  ];
 
   return (
     <div

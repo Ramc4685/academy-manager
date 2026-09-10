@@ -287,7 +287,7 @@ export default function AdminSessionDetailPage() {
             </h1>
           )}
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {session && (
             <Button variant="secondary" size="sm" onClick={() => setEditOpen(true)}>
               Edit session

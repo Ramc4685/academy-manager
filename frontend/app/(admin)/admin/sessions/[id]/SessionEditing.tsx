@@ -129,7 +129,7 @@ export function ReplacementCoachTable({
                   )}
                 </p>
               </td>
-              <td className="py-3 pr-4 font-mono text-rally-muted">
+              <td className="whitespace-nowrap py-3 pr-4 font-mono text-rally-muted">
                 {parseAcademyInstant(occurrence.start_at).toLocaleTimeString(
                   "en-US",
                   {
@@ -176,8 +176,11 @@ export function ReplacementCoachTable({
                   )}
                 </td>
               )}
-              <td className={actionCellClass}>
-                <div className="flex justify-end gap-2">
+              <td className={`${actionCellClass} bg-white`}>
+                {/* Both buttons side by side are ~300px wide — on a phone that
+                    sticky cell covered the whole visible table. Capped so they
+                    stack under 640px and sit in one row above it. */}
+                <div className="flex max-w-[168px] flex-wrap justify-end gap-2 sm:max-w-none">
                   <Button
                     variant="secondary"
                     size="sm"
