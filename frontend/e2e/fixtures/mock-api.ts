@@ -417,7 +417,7 @@ export const test = base.extend<{
       });
     });
 
-    await page.route("**/api/v2/coach/sessions/*/skills/bulk-status", async (route: Route) => {
+    await page.route("**/api/v2/coach/sessions/*/skills/bulk-status**", async (route: Route) => {
       if (route.request().method() !== "POST") return route.fallback();
       const body = JSON.parse(route.request().postData() ?? "{}");
       state.bulkSkillCalls.push(body);

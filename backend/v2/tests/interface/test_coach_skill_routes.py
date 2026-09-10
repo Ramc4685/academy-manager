@@ -13,7 +13,7 @@ Routes covered:
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -566,13 +566,25 @@ class _PassportByStudentUseCase:
 
 
 class _AssignedSessions:
-    def __init__(self, assigned_session_ids: set[str]) -> None:
+    def __init__(
+        self,
+        assigned_session_ids: set[str],
+        *,
+        supervisor_ids: frozenset[str] = frozenset(),
+    ) -> None:
         self._assigned_session_ids = assigned_session_ids
+        # Mirrors the real CoachAssignedSessionLookup's is_supervisor callback
+        # (backend/v2/composition/coach.py): a supervisor passes for any
+        # session in the fixture's tenant once the direct-assignment check
+        # fails, without needing to be COACH_ID.
+        self._supervisor_ids = supervisor_ids
         self.calls: list[tuple[str, str]] = []
 
     async def is_coach_assigned(self, coach_id: str, session_id: str) -> bool:
         self.calls.append((coach_id, session_id))
-        return coach_id == COACH_ID and session_id in self._assigned_session_ids
+        if session_id not in self._assigned_session_ids:
+            return False
+        return coach_id == COACH_ID or coach_id in self._supervisor_ids
 
 
 def _real_router_claims() -> AuthClaims:
@@ -588,6 +600,7 @@ def _build_real_router_app(
     *,
     student_session_ids: list[str],
     assigned_session_ids: set[str],
+    supervisor_ids: frozenset[str] = frozenset(),
 ) -> tuple[FastAPI, SimpleNamespace]:
     today_session = SimpleNamespace(
         session_id=SESSION_ID,
@@ -599,7 +612,7 @@ def _build_real_router_app(
         start_at=datetime(2026, 6, 19, 14, 0, tzinfo=UTC),
         end_at=datetime(2026, 6, 19, 15, 0, tzinfo=UTC),
     )
-    assigned_sessions = _AssignedSessions(assigned_session_ids)
+    assigned_sessions = _AssignedSessions(assigned_session_ids, supervisor_ids=supervisor_ids)
     spies = SimpleNamespace(
         assigned_sessions=assigned_sessions,
         list_today=_SpyUseCase([today_session]),
@@ -1654,6 +1667,172 @@ def test_real_skill_router_session_skills_unassigned_returns_404_before_roster()
     assert response.status_code == 404, response.text
     assert spies.assigned_sessions.calls == [(COACH_ID, SESSION_ID)]
     assert spies.get_passport.calls == 0
+
+
+SUPERVISOR_ID = "admin-001"
+
+
+def _supervisor_claims() -> AuthClaims:
+    return AuthClaims(
+        user_id=SUPERVISOR_ID,
+        email="admin@example.com",
+        academy_id=ACADEMY_ID,
+        roles=("admin",),
+    )
+
+
+class _ListTodayForAcademy:
+    """Fake ListCoachOccurrencesForDate that distinguishes the coach-scoped
+    ``execute`` from the academy-wide ``execute_for_academy`` a supervisor
+    covering another coach's session must use (mirrors today_routes.py's
+    get_today()). ``execute`` returns nothing, matching prod: a supervisor
+    is never the *assigned* coach on the session they are covering, so the
+    coach-scoped listing never contains it."""
+
+    def __init__(self, academy_sessions: list[object]) -> None:
+        self._academy_sessions = academy_sessions
+        self.execute_calls: list[tuple[str, date]] = []
+        self.execute_for_academy_calls: list[date] = []
+
+    async def execute(self, coach_id: str, on_date: date) -> list[object]:
+        self.execute_calls.append((coach_id, on_date))
+        return []
+
+    async def execute_for_academy(self, on_date: date) -> list[object]:
+        self.execute_for_academy_calls.append(on_date)
+        return self._academy_sessions
+
+
+def test_real_skill_router_supervisor_resolves_occurrence_id_via_academy_listing() -> None:
+    """Admin-coverage repro (prod 404): the frontend passes the composite
+    occurrence_id (e.g. "sess_XXX:2026-09-09:18:15") as the path id, and a
+    supervisor covering another coach's session is never returned by the
+    coach-scoped listing. Regression for the 404 on GET
+    /coach/sessions/{occurrence_id}/skills — before the fix,
+    _session_for_request always called list_today.execute(coach_id, date)
+    even for a supervisor, so the occurrence was never found and the
+    fallback is_coach_assigned(coach_id, occurrence_id) 404'd on the raw
+    Mongo lookup for a composite id."""
+    occurrence_id = f"{SESSION_ID}:2026-09-09:18:15"
+    covered_session = SimpleNamespace(
+        session_id=SESSION_ID,
+        occurrence_id=occurrence_id,
+        roster_session_id=SESSION_ID,
+        title="Friday Training",
+        location="Court 1",
+        timezone="America/Chicago",
+        start_at=datetime(2026, 9, 9, 18, 15, tzinfo=UTC),
+        end_at=datetime(2026, 9, 9, 19, 15, tzinfo=UTC),
+    )
+    app, _spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids={SESSION_ID},
+        supervisor_ids=frozenset({SUPERVISOR_ID}),
+    )
+    list_today = _ListTodayForAcademy([covered_session])
+    use_cases = app.dependency_overrides[get_coach_use_cases]()
+    use_cases.list_today = list_today  # type: ignore[assignment]
+    app.dependency_overrides[get_auth_claims] = _supervisor_claims
+    client = TestClient(app)
+
+    response = client.get(
+        f"/api/v2/coach/sessions/{occurrence_id}/skills",
+        params={"date": "2026-09-09"},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["session_id"] == SESSION_ID
+    assert body["occurrence_id"] == occurrence_id
+
+    # The academy-wide listing was used, never the coach-scoped one.
+    assert list_today.execute_for_academy_calls == [date(2026, 9, 9)]
+    assert list_today.execute_calls == []
+
+
+def test_real_skill_router_supervisor_bulk_status_resolves_occurrence_id_when_dated() -> None:
+    """Same admin-coverage repro as the GET test above, but for the "By
+    skill" bulk-status save (POST .../skills/bulk-status). The frontend
+    (frontend/lib/api/coach.ts) now threads the page's `date` through to
+    this call precisely so this path resolves via the same
+    execute_for_academy branch as the GET route — before that frontend
+    change this endpoint never received a date at all, so it unconditionally
+    fell through to the broken raw is_coach_assigned(coach_id, occurrence_id)
+    lookup for every coach, not just supervisors (see the companion
+    undated test below, which documents that residual contract)."""
+    occurrence_id = f"{SESSION_ID}:2026-09-09:18:15"
+    covered_session = SimpleNamespace(
+        session_id=SESSION_ID,
+        occurrence_id=occurrence_id,
+        roster_session_id=SESSION_ID,
+        title="Friday Training",
+        location="Court 1",
+        timezone="America/Chicago",
+        start_at=datetime(2026, 9, 9, 18, 15, tzinfo=UTC),
+        end_at=datetime(2026, 9, 9, 19, 15, tzinfo=UTC),
+    )
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids={SESSION_ID},
+        supervisor_ids=frozenset({SUPERVISOR_ID}),
+    )
+    list_today = _ListTodayForAcademy([covered_session])
+    use_cases = app.dependency_overrides[get_coach_use_cases]()
+    use_cases.list_today = list_today  # type: ignore[assignment]
+    app.dependency_overrides[get_auth_claims] = _supervisor_claims
+    client = TestClient(app)
+
+    response = client.post(
+        f"/api/v2/coach/sessions/{occurrence_id}/skills/bulk-status",
+        params={"date": "2026-09-09"},
+        json={
+            "skill_id": SKILL_ID,
+            "program_id": PROGRAM_ID,
+            "level_id": LEVEL_ID,
+            "student_ids": [STUDENT_ID],
+            "status": "PRACTICING",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"updated": 1, "student_ids": [STUDENT_ID]}
+    assert spies.update_skill_status.calls == 1
+    assert list_today.execute_for_academy_calls == [date(2026, 9, 9)]
+    assert list_today.execute_calls == []
+
+
+def test_real_skill_router_bulk_status_404s_on_occurrence_id_without_date() -> None:
+    """Documents a known, narrower residual gap flagged in PR #710 review:
+    _session_for_request's date-scoped resolution (including the
+    supervisor/execute_for_academy branch) only runs when `on_date` is
+    supplied. A composite occurrence_id posted with no `date` query param
+    falls straight to the raw is_coach_assigned(coach_id, occurrence_id)
+    lookup, which never matches a composite id — 404, for ANY coach
+    (supervisor or not), since that lookup doesn't depend on who's asking.
+    In the current app this is unreachable: the only caller
+    (frontend/lib/api/coach.ts's bulkUpdateCoachSessionSkillStatus) always
+    passes the page's `date`. This test exists so removing that `date` argument
+    later doesn't silently reintroduce the bug this suite guards against."""
+    occurrence_id = f"{SESSION_ID}:2026-09-09:18:15"
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids={SESSION_ID},
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        f"/api/v2/coach/sessions/{occurrence_id}/skills/bulk-status",
+        json={
+            "skill_id": SKILL_ID,
+            "program_id": PROGRAM_ID,
+            "level_id": LEVEL_ID,
+            "student_ids": [STUDENT_ID],
+            "status": "PRACTICING",
+        },
+    )
+
+    assert response.status_code == 404, response.text
+    assert spies.update_skill_status.calls == 0
 
 
 def test_real_skill_router_bulk_status_updates_selected_session_students_only() -> None:

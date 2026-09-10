@@ -203,9 +203,14 @@ async def _session_for_request(
     coach_id: str,
     session_or_occurrence_id: str,
     on_date: date | None,
+    supervisor: bool = False,
 ) -> object:
     if on_date is not None:
-        sessions = await use_cases.list_today.execute(coach_id, on_date)
+        sessions = (
+            await use_cases.list_today.execute_for_academy(on_date)
+            if supervisor
+            else await use_cases.list_today.execute(coach_id, on_date)
+        )
         for session in sessions:
             if session_or_occurrence_id in (
                 str(getattr(session, "session_id", "")),
@@ -371,7 +376,9 @@ async def get_session_skills(
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> object:
     target_date = _parse_date(on_date) if on_date else None
-    session = await _session_for_request(use_cases, claims.user_id, session_id, target_date)
+    session = await _session_for_request(
+        use_cases, claims.user_id, session_id, target_date, is_coach_supervisor(claims)
+    )
     resolved_program_id = await _resolve_program_id(use_cases, program_id)
     model = await _build_session_skills(
         use_cases,
@@ -394,7 +401,9 @@ async def bulk_update_skill_status(
     if use_cases.student_progress is None:
         raise HTTPException(status_code=503, detail="Student progress service not configured")
     target_date = _parse_date(on_date) if on_date else None
-    session = await _session_for_request(use_cases, claims.user_id, session_id, target_date)
+    session = await _session_for_request(
+        use_cases, claims.user_id, session_id, target_date, is_coach_supervisor(claims)
+    )
     resolved_session_id = str(session.session_id)
     roster_session_id = str(getattr(session, "roster_session_id", resolved_session_id))
     if not await use_cases.assigned_sessions.is_coach_assigned(claims.user_id, resolved_session_id):

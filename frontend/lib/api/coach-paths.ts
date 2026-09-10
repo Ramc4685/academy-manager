@@ -12,8 +12,10 @@ export function coachSessionSkillsPath(
   });
 }
 
-export function coachSessionBulkSkillStatusPath(occurrenceId: string): string {
-  return `/coach/sessions/${encodeURIComponent(occurrenceId)}/skills/bulk-status`;
+export function coachSessionBulkSkillStatusPath(occurrenceId: string, date?: string): string {
+  return withParams(`/coach/sessions/${encodeURIComponent(occurrenceId)}/skills/bulk-status`, {
+    date,
+  });
 }
 
 export function coachStudentPassportPath(studentId: string, programId?: string): string {
