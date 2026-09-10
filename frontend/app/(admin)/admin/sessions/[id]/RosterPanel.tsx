@@ -149,7 +149,7 @@ export function RosterTable({
   const isOwner = useIsOwner();
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[1040px] text-sm">
+      <table className="w-full min-w-[840px] text-sm">
         <thead>
           <tr className="border-b border-rally-line text-left">
             <Th>Name</Th>
@@ -237,36 +237,33 @@ export function RosterTable({
                   <EnrollmentHistory enrollmentId={e.enrollment_id} />
                 </td>
                 <td className={`${actionCellClass} ${rowToneClass}`}>
-                  <div className="flex min-w-[262px] flex-wrap items-center justify-end gap-1.5">
-                    <Link
-                      href={buildStudentProgressHref({
+                  <DepartureActions
+                    leadingLink={{
+                      key: "pathway",
+                      label: "Pathway",
+                      href: buildStudentProgressHref({
                         studentId: e.student_id,
                         programId: e.pathway_program_id,
                         returnTo: `/admin/sessions/${encodeURIComponent(sessionId)}`,
                         returnLabel: "Back to session",
-                      }) as Parameters<typeof Link>[0]["href"]}
-                      className="inline-flex min-h-9 items-center justify-center rounded-md border border-rally-line bg-white px-3 py-1.5 text-sm font-semibold text-rally-ink shadow-sm transition-colors hover:bg-neutral-50"
-                    >
-                      Pathway
-                    </Link>
-                    <DepartureActions
-                      enrollmentId={e.enrollment_id}
-                      studentName={e.full_name}
-                      status={e.status}
-                      layout="menu"
-                      isOwner={isOwner}
-                      actions={rosterActionsFor(e.status)}
-                      onAction={(action, enrollmentId) =>
-                        dispatchRosterAction(action, enrollmentId, e, {
-                          onDelete,
-                          onPause,
-                          onResume,
-                          onTransfer,
-                          onWithdraw,
-                        })
-                      }
-                    />
-                  </div>
+                      }) as Parameters<typeof Link>[0]["href"],
+                    }}
+                    enrollmentId={e.enrollment_id}
+                    studentName={e.full_name}
+                    status={e.status}
+                    layout="menu"
+                    isOwner={isOwner}
+                    actions={rosterActionsFor(e.status)}
+                    onAction={(action, enrollmentId) =>
+                      dispatchRosterAction(action, enrollmentId, e, {
+                        onDelete,
+                        onPause,
+                        onResume,
+                        onTransfer,
+                        onWithdraw,
+                      })
+                    }
+                  />
                 </td>
               </tr>
             );

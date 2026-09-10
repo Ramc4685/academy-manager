@@ -49,7 +49,7 @@ export function WaitlistTable({
                 <td className="px-4 py-3">
                   <Chip variant={chip.variant} label={chip.label} />
                 </td>
-                <td className={actionCellClass}>
+                <td className={`${actionCellClass} bg-white`}>
                   <div className="flex min-w-[140px] flex-wrap items-center justify-end gap-1.5">
                     {w.status === "waiting" && (
                       <Button variant="secondary" size="sm" onClick={() => onSkip(w.waitlist_id)}>
