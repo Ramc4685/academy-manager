@@ -109,6 +109,7 @@ class MongoEnrollmentWriter(TenantScopedRepository):
                     "hold_reason": reason,
                     "hold_reclaim_claimed_at": None,
                     "hold_reclaim_for": None,
+                    "hold_reclaim_failed_at": None,
                     "updated_at": datetime.now(UTC),
                 },
                 "$inc": {"hold_seq": 1},
@@ -259,15 +260,25 @@ class MongoEnrollmentWriter(TenantScopedRepository):
     ) -> Enrollment | None:
         """Issue #675: the scheduled ``cancel_at_period_end`` action fires.
         CAS on "still pending and not yet ended" (active — or paused, since an
-        admin pause keeps the pending cancellation) so an admin cancel /
-        withdraw that landed first wins and this returns ``None``. Returns
-        the PRE-image so the processor knows whether the row still held a
-        seat (an active row does, a paused row released it when it paused).
+        admin pause keeps the pending cancellation — or held, since a hold
+        also keeps the pending cancellation and, unlike pause, never released
+        the seat) so an admin cancel / withdraw that landed first wins and
+        this returns ``None``. A ``held`` row must be included here: a parent
+        self-cancels at period end, an admin holds the child before month
+        end, and the CAS must still recognize the row as "not yet ended" — a
+        real Mongo incident had this CAS filter (and the seated-status set
+        below in ``process_scheduled_cancellation_actions``) omit ``held``,
+        which made the scheduled action match nothing, log the dishonest
+        reason ``enrollment_already_ended:held`` (the row was never ended),
+        and retire the action permanently while the family kept being
+        invoiced forever. Returns the PRE-image so the processor knows
+        whether the row still held a seat (an active or held row does, a
+        paused row released it when it paused).
         """
         doc = await self._find_one_and_update(
             {
                 "enrollment_id": enrollment_id,
-                "status": {"$in": ["active", "paused"]},
+                "status": {"$in": ["active", "paused", "held"]},
                 "pending_cancellation_at": {"$ne": None},
             },
             {
@@ -396,6 +407,7 @@ class MongoEnrollmentWriter(TenantScopedRepository):
             hold_seq=doc.get("hold_seq", 0),
             hold_reclaim_claimed_at=_optional_utc(doc.get("hold_reclaim_claimed_at")),
             hold_reclaim_for=doc.get("hold_reclaim_for"),
+            hold_reclaim_failed_at=doc.get("hold_reclaim_failed_at"),
         )
 
     async def get(self, enrollment_id: str) -> Enrollment | None:

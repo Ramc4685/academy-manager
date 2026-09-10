@@ -198,6 +198,56 @@ class FakeEnrollmentWriter:
         )
         return before
 
+    async def mark_pending_cancellation_by_parent(
+        self,
+        enrollment_id: str,
+        *,
+        cancellation_reason: str,
+        cancellation_policy_snapshot: dict[str, Any],
+        pending_cancellation_at: datetime,
+        requested_at: datetime,
+    ) -> Enrollment | None:
+        before = self.rows.get(enrollment_id)
+        if (
+            before is None
+            or before.status != "active"
+            or before.pending_cancellation_at is not None
+        ):
+            return None
+        self.rows[enrollment_id] = before.model_copy(
+            update={
+                "cancellation_reason": cancellation_reason,
+                "cancellation_policy_snapshot": cancellation_policy_snapshot,
+                "pending_cancellation_at": pending_cancellation_at,
+                "pending_cancellation_requested_at": requested_at,
+            }
+        )
+        return self.rows[enrollment_id]
+
+    async def complete_pending_cancellation(
+        self, enrollment_id: str, *, cancelled_at: datetime
+    ) -> Enrollment | None:
+        """Mirrors ``MongoEnrollmentWriter.complete_pending_cancellation``:
+        CAS on "still pending, not yet ended" — active, paused, OR held (a
+        hold keeps the seat AND the pending marker; see the departures
+        follow-up on issue #675/#697)."""
+        before = self.rows.get(enrollment_id)
+        if (
+            before is None
+            or before.status not in {"active", "paused", "held"}
+            or before.pending_cancellation_at is None
+        ):
+            return None
+        self.rows[enrollment_id] = before.model_copy(
+            update={
+                "status": "cancelled",
+                "cancelled_by": "parent",
+                "cancelled_at": cancelled_at,
+                "pending_cancellation_at": None,
+            }
+        )
+        return before
+
     async def delete_if_status(
         self, enrollment_id: str, *, allowed: frozenset[str]
     ) -> Enrollment | None:
@@ -285,6 +335,14 @@ class FakeHoldRepository:
             update={"status": "dropped", "withdrawal_date": withdrawal_date}
         )
         return before
+
+    async def mark_reclaim_orphaned(self, enrollment_id: str, *, now: datetime) -> None:
+        before = self.enrollments.rows.get(enrollment_id)
+        if before is None or before.status != "reclaim_pending":
+            return
+        self.enrollments.rows[enrollment_id] = before.model_copy(
+            update={"hold_reclaim_failed_at": now}
+        )
 
     async def list_stalled(self, *, older_than: datetime) -> list[Enrollment]:
         return [

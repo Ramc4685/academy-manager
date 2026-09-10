@@ -62,10 +62,12 @@ survive. Request bodies and `extra` go through the same denylist. Add a field
 to `PII_DENYLIST` / `PII_KEY_PREFIXES` when a new personal field appears on a
 domain model; `test_request_context.py` pins the behaviour.
 
-Known gap: `tracesSampleRate` is 0 on both sides and there is no Session
-Replay, so nothing links a browser session to the backend event other than
-the shared `request_id` tag. Deliberate at this scale (free plan, single
-machine); revisit if the join-by-request-id workflow proves too slow.
+Known gap: performance tracing is sampled at 0.2 on both sides (frontend
+since PR #708), so most requests still have no distributed trace, and there
+is no Session Replay. The reliable join between a browser failure and the
+backend event is the shared `request_id` tag. Deliberate at this scale (free
+plan, single machine); revisit if the join-by-request-id workflow proves too
+slow.
 
 ## Logger levels
 

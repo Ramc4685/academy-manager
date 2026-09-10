@@ -610,6 +610,16 @@ class HoldRepository(Protocol):
         """CAS ``reclaim_pending`` -> ``withdrawn``. Returns the pre-image."""
         ...
 
+    async def mark_reclaim_orphaned(self, enrollment_id: str, *, now: datetime) -> None:
+        """Best-effort: stamp ``hold_reclaim_failed_at`` on a row still
+        ``reclaim_pending`` when the claiming caller's own ``finalize_reclaim``
+        raised before the withdrawal committed — nobody received this seat.
+        Safe to call even when the underlying write actually succeeded
+        despite raising (the row is no longer ``reclaim_pending`` by then, so
+        this is a no-op): see ``SeatBroker.acquire`` and
+        ``ProcessStalledReclaims``."""
+        ...
+
     async def list_stalled(self, *, older_than: datetime) -> list[Enrollment]:
         """Rows stuck in ``reclaim_pending`` whose claim is older than the
         cutoff (crash recovery, see ``ProcessStalledReclaims``)."""
@@ -639,7 +649,7 @@ class HoldNotifier(Protocol):
         session_id: str,
         student_id: str,
         hold_started_at: datetime,
-        reason: Literal["reclaimed", "expired"],
+        reason: Literal["reclaimed", "expired", "orphaned"],
         requested_by: str | None,
         billing_result: str | None,
     ) -> None: ...

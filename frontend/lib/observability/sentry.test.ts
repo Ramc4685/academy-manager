@@ -2,12 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const sentryMock = vi.hoisted(() => {
   const scope = { setTag: vi.fn(), setContext: vi.fn(), setFingerprint: vi.fn() };
+  const browserTracingIntegration = { name: "browserTracingIntegration" };
   return {
     scope,
     init: vi.fn(),
     captureException: vi.fn(),
     withScope: vi.fn((cb: (s: typeof scope) => void) => cb(scope)),
     metrics: { distribution: vi.fn() },
+    browserTracingIntegration: vi.fn(() => browserTracingIntegration),
   };
 });
 
@@ -72,8 +74,9 @@ describe("lib/observability/sentry", () => {
       dsn: "https://key@o1.ingest.us.sentry.io/1",
       environment: "staging",
       release: "abc123",
+      integrations: [sentryMock.browserTracingIntegration()],
       sampleRate: 1,
-      tracesSampleRate: 0,
+      tracesSampleRate: 0.2,
       sendDefaultPii: false,
       beforeSend: scrubEventUrls,
       beforeBreadcrumb: scrubBreadcrumbUrls,

@@ -101,11 +101,13 @@ export function initSentry(): Promise<Sentry | null> {
         dsn,
         environment: process.env.NEXT_PUBLIC_APP_ENV || "production",
         release: process.env.NEXT_PUBLIC_SENTRY_RELEASE || undefined,
-        // Errors only: every event, no performance tracing. The SDK default
-        // for PII is already off; keep it explicit so a future default flip
-        // cannot start shipping IPs/cookies.
+        // Every error event, plus a sampled slice of navigation/fetch spans
+        // via browserTracingIntegration (matches the backend's 0.2 sample
+        // rate). The SDK default for PII is already off; keep it explicit so
+        // a future default flip cannot start shipping IPs/cookies.
+        integrations: [mod.browserTracingIntegration()],
         sampleRate: 1,
-        tracesSampleRate: 0,
+        tracesSampleRate: 0.2,
         sendDefaultPii: false,
         // Query strings carry magic-link tokens, Firebase oobCodes and parent
         // emails; strip them before anything leaves the browser.

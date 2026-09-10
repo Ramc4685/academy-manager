@@ -69,7 +69,7 @@ class HoldNotificationAdapter:
         session_id: str,
         student_id: str,
         hold_started_at: datetime,
-        reason: Literal["reclaimed", "expired"],
+        reason: Literal["reclaimed", "expired", "orphaned"],
         requested_by: str | None,
         billing_result: str | None,
     ) -> None:
@@ -195,16 +195,20 @@ class HoldNotificationAdapter:
         session: Session,
         student_name: str,
         hold_started_at: datetime,
-        reason: Literal["reclaimed", "expired"],
+        reason: Literal["reclaimed", "expired", "orphaned"],
         billing_result: str | None,
     ) -> str:
         safe_name = html.escape(student_name)
         safe_title = html.escape(session.title)
-        why = (
-            "the class filled up and needed the seat"
-            if reason == "reclaimed"
-            else "the hold reached its maximum length"
-        )
+        why = {
+            "reclaimed": "the class filled up and needed the seat",
+            "expired": "the hold reached its maximum length",
+            # A system error interrupted the hand-over before it completed —
+            # NOT "the class filled up" (that would be false: nobody ended up
+            # with the seat) and not "the hold expired" (its clock had not
+            # run out). Honest about what actually happened.
+            "orphaned": "a system error interrupted the process of returning the seat",
+        }[reason]
         parts = [
             _para(f"<strong>{safe_name}</strong> has been taken off the roster for {safe_title}."),
             _para(
