@@ -275,17 +275,24 @@ class ReturnFromHold:
         enrollments: EnrollmentWriter,
         enrollment_events: EnrollmentEventRepository | None = None,
         billing_sync: EnrollmentBillingSync | None = None,
+        billing_deferrals: BillingDeferralRepository | None = None,
         roster_notifier: RosterChangeNotifier | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._enrollments = enrollments
         self._enrollment_events = enrollment_events
         self._billing_sync = billing_sync
+        self._billing_deferrals = billing_deferrals
         self._roster_notifier = roster_notifier
         self._now = clock
 
     async def execute(
-        self, enrollment_id: str, *, reason: str | None = None, actor_id: str | None = None
+        self,
+        enrollment_id: str,
+        *,
+        reason: str | None = None,
+        actor_id: str | None = None,
+        close_billing_deferral: bool = True,
     ) -> Enrollment:
         e = await self._enrollments.get(enrollment_id)
         if e is None:
@@ -319,6 +326,21 @@ class ReturnFromHold:
             occurred_at=now,
             billing_result=str(billing.get("billing_result")) if billing else None,
         )
+        if self._billing_deferrals is not None and close_billing_deferral:
+            # Mirrors ResumeEnrollment's close-on-return (admin_writes.py):
+            # HoldEnrollment.execute wrote a BillingDeferral per held month
+            # (contract T1). Left open, the monthly generator's
+            # active/paused-only status filter plus its open-deferral check
+            # would keep skipping this enrollment's invoices forever after a
+            # return — it never re-reads `held` rows, and nothing else ever
+            # closes the deferral. Close it here, the same way pause's
+            # resume path does.
+            await self._billing_deferrals.close_active_for_enrollment(
+                enrollment_id,
+                closed_at=now,
+                closed_by=actor_id or "system",
+                reason="return_succeeded",
+            )
         if self._roster_notifier is not None:
             try:
                 await self._roster_notifier.roster_changed(

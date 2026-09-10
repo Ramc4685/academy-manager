@@ -516,7 +516,7 @@ async def test_stalled_sweep_recovers_an_orphaned_claim_as_an_orphan_not_a_hando
     finalized = await sweep.execute()
 
     assert finalized == 1
-    assert enrollments.rows["held-1"].status == "withdrawn"
+    assert enrollments.rows["held-1"].status == "dropped"
     # The seat is RELEASED — nobody actually received it — unlike a real
     # hand-over, which performs no seat arithmetic at all.
     assert sessions.release_calls == ["sess-1"]
@@ -552,7 +552,7 @@ async def test_stalled_sweep_still_treats_a_real_handover_as_reclaimed() -> None
     finalized = await sweep.execute()
 
     assert finalized == 1
-    assert enrollments.rows["held-1"].status == "withdrawn"
+    assert enrollments.rows["held-1"].status == "dropped"
     # Handed over — no seat arithmetic, unlike the orphan case above.
     assert sessions.release_calls == []
     assert sessions.reserved_seats["sess-1"] == 1

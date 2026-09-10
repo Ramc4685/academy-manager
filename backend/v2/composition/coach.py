@@ -77,6 +77,7 @@ from backend.v2.contexts.curriculum.infrastructure.mongo_lesson_card_repo import
 from backend.v2.contexts.curriculum.infrastructure.mongo_video_ref_repo import (
     MongoCurriculumVideoRefRepository,
 )
+from backend.v2.contexts.enrollment.application.use_cases.admin_writes import EditRosterAdd
 from backend.v2.contexts.enrollment.application.use_cases.coach_roster_writes import (
     CoachAddStudentToRoster,
     CoachRemoveStudentFromRoster,
@@ -101,6 +102,9 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_absence_notice_repo imp
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_repo import (
     MongoEnrollmentRepository,
 )
+from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_writer import (
+    MongoEnrollmentWriter,
+)
 from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_repo import (
     MongoSessionOccurrenceRepository,
 )
@@ -110,8 +114,14 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_roster_repo 
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import (
     MongoSessionRepository,
 )
+from backend.v2.contexts.enrollment.infrastructure.mongo_session_writer import (
+    MongoSessionWriter,
+)
 from backend.v2.contexts.enrollment.infrastructure.mongo_student_repo import (
     MongoStudentRepository,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_student_writer import (
+    MongoStudentWriter,
 )
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     UpdateAdminUserCommand,
@@ -504,11 +514,23 @@ def compose_coach(
         ),
         assigned_sessions=assigned_sessions,
         add_student_to_roster=CoachAddStudentToRoster(
-            sessions=sessions_repo,
-            enrollments=enrollments_repo,
-            students=students_repo,
+            # Issue #704 (second-review correction): one instance built here,
+            # mirroring composition/admin.py's edit_roster_add wiring, rather
+            # than a fresh EditRosterAdd per request — that per-request
+            # construction lived outside composition/ entirely, so it was
+            # both unbrokered and invisible to the structural wiring test.
+            # `academy_id` still resolves per-request via the callable.
+            edit_roster_add=EditRosterAdd(
+                # EditRosterAdd wants the narrower Writer protocols (same
+                # ones composition/admin.py uses for its own edit_roster_add
+                # wiring), not the Repository classes this module already
+                # builds for reads elsewhere.
+                sessions=MongoSessionWriter(db),
+                enrollments=MongoEnrollmentWriter(db),
+                students=MongoStudentWriter(db),
+                academy_id=request_academy_id,
+            ),
             assigned_sessions=assigned_sessions,
-            academy_id=request_academy_id,
         ),
         remove_student_from_roster=CoachRemoveStudentFromRoster(
             enrollments=enrollments_repo,

@@ -23,10 +23,14 @@ requires the enclosing class of every such call to expose a
 ``set_seat_broker`` method — the escape hatch production wiring uses to
 inject the broker. A caller with no such method structurally CANNOT ever be
 brokered, which is precisely how the fifth site above hid. It then re-checks
-the old invariant — every construction of a brokerable class across
-``composition/`` has a matching ``set_seat_broker(...)`` call in
+the old invariant — every construction of a brokerable class anywhere under
+``backend/v2`` (non-test) has a matching ``set_seat_broker(...)`` call in
 ``main.py`` — but against the classes this scan actually discovers, not a
-fixed list a future site can fall outside of.
+fixed list a future site can fall outside of, and across the WHOLE tree, not
+just ``composition/*.py``'s top level — a second review found a sixth site,
+``CoachAddStudentToRoster``'s per-request ``EditRosterAdd`` in
+``contexts/enrollment/application/use_cases/coach_roster_writes.py``, that a
+composition/-only, non-recursive scan could never have seen (issue #704).
 """
 
 from __future__ import annotations
@@ -149,8 +153,22 @@ def test_every_try_reserve_seat_caller_can_be_routed_through_the_broker() -> Non
 def test_every_brokerable_use_case_construction_is_wired_to_the_seat_broker() -> None:
     """Every class this scan finds CAN be brokered (previous test) must
     actually BE brokered in production: the number of times it is
-    constructed across composition/ must equal the number of
-    set_seat_broker(...) calls made against it in main.py."""
+    constructed anywhere under ``backend/v2`` (non-test) must equal the
+    number of ``set_seat_broker(...)`` calls made against it in main.py.
+
+    Issue #704 (second-review correction): this used to glob only the TOP
+    LEVEL of ``composition/*.py`` — non-recursively, and blind to any other
+    package under ``backend/v2``. That is exactly how
+    ``CoachAddStudentToRoster``'s per-request construction of
+    ``EditRosterAdd`` (in
+    ``contexts/enrollment/application/use_cases/coach_roster_writes.py``,
+    wired via ``composition/coach.py`` -> ``interfaces/coach/deps.py``) hid
+    as an unbrokered, uncounted call site: a coach adding a student to a
+    roster did not reclaim a held seat the way the admin path does, and
+    this test could not have caught it. Scanning every non-test module the
+    first test already walks (``_v2_python_files()``, recursive) closes
+    that gap for this call site and any future one shaped like it.
+    """
     brokerable_classes: set[str] = set()
     for path in _v2_python_files():
         for _lineno, cls in _find_try_reserve_seat_calls(path):
@@ -160,36 +178,40 @@ def test_every_brokerable_use_case_construction_is_wired_to_the_seat_broker() ->
     class_names = frozenset(brokerable_classes)
     construction_count = 0
     constructed_in: dict[str, int] = {}
-    for path in sorted(COMPOSITION_ROOT.glob("*.py")):
+    for path in _v2_python_files():
         source = path.read_text(encoding="utf-8")
         n = _count_constructions(source, class_names=class_names)
         if n:
-            constructed_in[path.name] = n
+            constructed_in[str(path.relative_to(V2_ROOT))] = n
         construction_count += n
 
     wiring_count = _count_set_seat_broker_calls(MAIN_MODULE.read_text(encoding="utf-8"))
 
     assert construction_count == wiring_count, (
         f"Found {construction_count} construction(s) of a brokerable seat use "
-        f"case ({sorted(class_names)}) across composition/ ({constructed_in}), "
-        f"but only {wiring_count} `set_seat_broker(...)` call(s) in main.py. "
-        "A new construction of a class from that set must be followed by a "
-        "`<instance>.set_seat_broker(_holds.seat_broker)` line in main.py "
-        "(see the existing block around `compose_enrollment_holds`), or hold "
-        "reclaim silently does not apply to that instance — exactly the "
-        "#697 defect where compose_parent's event-driven PromoteFromWaitlist "
+        f"case ({sorted(class_names)}) across backend/v2 (non-test) "
+        f"({constructed_in}), but only {wiring_count} `set_seat_broker(...)` "
+        "call(s) in main.py. A new construction of a class from that set "
+        "must be followed by a `<instance>.set_seat_broker(_holds.seat_broker)` "
+        "line in main.py (see the existing block around "
+        "`compose_enrollment_holds`), or hold reclaim silently does not apply "
+        "to that instance — exactly the #697 defect where compose_parent's "
+        "event-driven PromoteFromWaitlist was never wired, and the #704 "
+        "defect where CoachAddStudentToRoster's per-request EditRosterAdd "
         "was never wired."
     )
     # Sanity: this test is only meaningful while it actually finds the known
     # brokerable classes. If discovery drops to zero the assertion above
     # would trivially pass on a wiring regression that deletes SeatBroker
-    # usage entirely, so pin a floor. At the time this test was rewritten
-    # there were six: EditRosterAdd, ResumeEnrollment, TransferEnrollment,
-    # PromoteFromWaitlist (constructed twice — composition/admin.py and
-    # composition/parent.py), AdminRegistrationReview, and ConfirmEnrollment.
-    assert construction_count >= 6, (
-        "Expected at least 6 constructions of brokerable seat use cases "
-        f"across composition/ — found {construction_count} ({constructed_in}). "
+    # usage entirely, so pin a floor. At the time this test was widened to
+    # scan all of backend/v2 there were eight: EditRosterAdd (constructed
+    # twice — composition/admin.py and composition/coach.py),
+    # ResumeEnrollment, TransferEnrollment, PromoteFromWaitlist (constructed
+    # twice — composition/admin.py and composition/parent.py),
+    # AdminRegistrationReview, and ConfirmEnrollment.
+    assert construction_count >= 8, (
+        "Expected at least 8 constructions of brokerable seat use cases "
+        f"across backend/v2 — found {construction_count} ({constructed_in}). "
         "If use cases were consolidated, update this floor deliberately; do "
         "not lower it to make a real regression pass."
     )

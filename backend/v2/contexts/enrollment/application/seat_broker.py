@@ -252,7 +252,7 @@ async def finalize_reclaim(
                 EnrollmentLifecycleEvent(
                     event_id=str(new_ulid()),
                     academy_id=victim.academy_id,
-                    event_type=event_type,  # type: ignore[arg-type]
+                    event_type=event_type,
                     enrollment_id=victim.enrollment_id,
                     session_id=victim.session_id,
                     student_id=victim.student_id,

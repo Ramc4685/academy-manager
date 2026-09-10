@@ -581,6 +581,13 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # is the same shape of seat demand as the routes above: a class full only
     # because of holds must reclaim, not force an auto-refund.
     app.state.parent.confirm_enrollment.set_seat_broker(_holds.seat_broker)
+    # Issue #704 (second-review correction): the coach roster-add path
+    # delegates to its own EditRosterAdd instance (composition/coach.py) —
+    # a sixth try_reserve_seat call site the original structural wiring test
+    # could not see because it only scanned composition/*.py, and this
+    # construction used to happen per-request outside composition/ entirely.
+    # Wire it exactly like the admin roster-add path above.
+    app.state.coach.add_student_to_roster.set_seat_broker(_holds.seat_broker)
     # Stop-all-classes + leaving report (issue #698; also outside
     # composition/admin.py's line budget).
     from backend.v2.composition.departures import compose_departures

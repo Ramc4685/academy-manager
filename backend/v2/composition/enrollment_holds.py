@@ -91,6 +91,7 @@ def compose_enrollment_holds(db: Any, settings: Any) -> EnrollmentHoldsCompositi
         enrollments=enrollments,
         enrollment_events=enrollment_events,
         billing_sync=billing_sync,
+        billing_deferrals=billing_deferrals,
         roster_notifier=roster_notifier,
     )
     seat_broker = SeatBroker(

@@ -99,9 +99,20 @@ async def test_hold_keeps_status_moves_to_held_and_billing_syncs_once() -> None:
 @dataclass
 class _FakeBillingDeferrals:
     rows: list[BillingDeferral] = field(default_factory=list)
+    closed: list[tuple[str, str]] = field(default_factory=list)
 
     async def add(self, deferral: BillingDeferral) -> None:
         self.rows.append(deferral)
+
+    async def close_active_for_enrollment(
+        self,
+        enrollment_id: str,
+        *,
+        closed_at: datetime,
+        closed_by: str,
+        reason: str,
+    ) -> None:
+        self.closed.append((enrollment_id, reason))
 
 
 @pytest.mark.asyncio
@@ -137,6 +148,51 @@ async def test_hold_writes_one_billing_deferral_per_held_month_like_pause_does()
     assert deferral.source == "admin_hold"
     assert deferral.actor_id == "admin-1"
     assert deferral.status == "active"
+
+
+@pytest.mark.asyncio
+async def test_return_closes_the_billing_deferral_hold_opened() -> None:
+    """Second-review correction: HoldEnrollment writes a BillingDeferral per
+    held month (T1, above), but nothing closed it on return — a family
+    returning early from hold got no invoice next cycle, because
+    mongo_monthly_billing's active/paused-only cursor plus its open-deferral
+    check kept skipping them forever. ReturnFromHold must close the deferral
+    the same way ResumeEnrollment.execute closes a pause's, via
+    close_active_for_enrollment."""
+    enrollments = FakeEnrollmentWriter(rows={"enr-1": make_enrollment(status="active")})
+    deferrals = _FakeBillingDeferrals()
+    hold_uc = HoldEnrollment(
+        enrollments=enrollments,
+        departure_policy=FakeDeparturePolicyRepo(),
+        billing_deferrals=deferrals,
+        clock=_clock,
+    )
+    return_uc = ReturnFromHold(
+        enrollments=enrollments,
+        billing_deferrals=deferrals,
+        clock=_clock,
+    )
+
+    await hold_uc.execute("enr-1", return_on=date(2026, 10, 15), actor_id="admin-1")
+    assert deferrals.rows and deferrals.closed == []
+
+    await return_uc.execute("enr-1", actor_id="admin-1")
+
+    assert deferrals.closed == [("enr-1", "return_succeeded")]
+
+
+@pytest.mark.asyncio
+async def test_return_skips_closing_the_deferral_when_told_not_to() -> None:
+    """Mirrors ResumeEnrollment's `close_billing_deferral=False` escape hatch
+    (used by a caller that already closed it, or will close it separately) —
+    ReturnFromHold must honor the same flag rather than always closing."""
+    enrollments = FakeEnrollmentWriter(rows={"enr-1": make_enrollment(status="held")})
+    deferrals = _FakeBillingDeferrals()
+    return_uc = ReturnFromHold(enrollments=enrollments, billing_deferrals=deferrals, clock=_clock)
+
+    await return_uc.execute("enr-1", close_billing_deferral=False)
+
+    assert deferrals.closed == []
 
 
 @pytest.mark.asyncio
