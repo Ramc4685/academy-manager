@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, model_validator
 BillingDeferralType = Literal[
     "fixed_pause",
     "admin_pause",
+    "admin_hold",
     "manual_skip",
     "capacity_blocked_resume",
     "legacy_skip_period",

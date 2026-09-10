@@ -270,6 +270,11 @@ class ParentComposition:
     # a route. It must be exposed here so main.py can reach it after
     # compose_enrollment_holds runs.
     promote_from_waitlist: PromoteFromWaitlist
+    # Issue #704: ConfirmEnrollment (Billing.PaymentSucceeded -> new checkout
+    # enrollment) is a sixth un-brokered seat-reservation site, same reason
+    # as promote_from_waitlist above — exposed so main.py can wire the
+    # broker after compose_enrollment_holds runs.
+    confirm_enrollment: ConfirmEnrollment
     list_payments_for_parent: object  # callable
     list_credits_for_parent: object
     list_children_for_parent: object
@@ -2529,6 +2534,7 @@ def compose_parent(
         handle_webhook_event=handle_webhook,
         list_available_sessions=list_available_sessions,
         promote_from_waitlist=promote,
+        confirm_enrollment=confirm_enrollment,
         list_payments_for_parent=list_payments_for_parent,
         list_credits_for_parent=list_credits_for_parent,
         list_children_for_parent=list_children_for_parent,

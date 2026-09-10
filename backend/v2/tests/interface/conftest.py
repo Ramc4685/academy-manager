@@ -864,11 +864,13 @@ def _build_use_cases(seed_data) -> CoachUseCases:
         ),
         assigned_sessions=session_lookup,
         add_student_to_roster=CoachAddStudentToRoster(
-            sessions=rw_store,
-            enrollments=enrollment_writer,
-            students=student_writer,
+            edit_roster_add=EditRosterAdd(
+                sessions=rw_store,
+                enrollments=enrollment_writer,
+                students=student_writer,
+                academy_id=lambda: "test-academy",
+            ),
             assigned_sessions=session_lookup,
-            academy_id=lambda: "test-academy",
         ),
         remove_student_from_roster=CoachRemoveStudentFromRoster(
             enrollments=enrollment_writer,
