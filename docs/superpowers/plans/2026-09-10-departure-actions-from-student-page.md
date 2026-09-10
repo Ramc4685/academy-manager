@@ -1399,6 +1399,8 @@
 
 ## Task 8b: Backend — held rows return to the roster, and the roster learns the parent's name
 
+> **Tracked as issue #714.** Can also ship on its own, ahead of this plan.
+>
 > **This task fixes a live production defect found while planning (2026-09-10).**
 > `mark_held_if_active` CAS-transitions `active` → `held`
 > (`backend/v2/contexts/enrollment/infrastructure/mongo_enrollment_writer.py:99-102`),
@@ -1417,6 +1419,7 @@
 
 **Files:**
 - Modify: `backend/v2/composition/admin.py:2564-2568` (status filter) and the row-building loop that follows it (parent name)
+- Modify: `backend/v2/tests/structural/test_admin_roster_policy.py:26` (it pins the old filter as a literal string and goes red otherwise)
 - Modify: `backend/v2/interfaces/admin/views.py:561-583` (`AdminEnrollmentView.parent_name`)
 - Modify: `frontend/lib/api/admin.ts` (`AdminEnrollmentView` TS type — add `parent_name: string | null`)
 - Test: `backend/v2/tests/integration/test_admin_roster_read.py` (create if absent — check `ls backend/v2/tests/integration/ | grep -i roster` first and extend the existing file if one is there)
@@ -1469,6 +1472,18 @@ Expected: both tests FAIL — the first with `assert 'held' in {'active', 'pause
         )
 ```
 
+- [ ] **Step 3b: Update the structural test that pins the old filter.** `backend/v2/tests/structural/test_admin_roster_policy.py:26` asserts the buggy query as a literal string, so Step 3 turns it red. It was written by #641 to lock in the paused fix and was never updated when #697 added `held`. Replace that one assertion:
+
+```python
+    assert (
+        '"status": {"$in": ["active", "paused", "held", "reclaim_pending"]}' in source
+    )
+```
+
+  and extend the docstring above it to say why held and reclaim_pending belong: they hold seats (`SEAT_HOLDING`), so hiding them repeats the #641 dead end with an invisible student blocking add-to-roster.
+
+  **Do NOT touch `test_admin_session_seat_counts_stay_active_only` in the same file.** It asserts `enrolled_count` counts `active` only and that `"paused" not in window` — still correct: this task changes visibility, never seat arithmetic.
+
 - [ ] **Step 4: Add the parent name.** The loop already builds `student_detail_by_id` from the `students` collection, and each student doc carries `parent_id`. After that dict is built and before the `for e in active:` loop, batch-load the parents (one query, never per row):
 
 ```python
@@ -1510,8 +1525,8 @@ Expected: both tests FAIL — the first with `assert 'held' in {'active', 'pause
 
 - [ ] **Step 7: Run the tests and the roster's existing coverage.**
 
-Run: `cd backend && pytest v2/tests/integration/test_admin_roster_read.py -v && pytest v2/tests -k "roster" -q`
-Expected: the two new tests PASS; no existing roster test regresses. Then `cd frontend && pnpm typecheck` — expected PASS.
+Run: `cd backend && pytest v2/tests/integration/test_admin_roster_read.py -v && pytest v2/tests/structural/test_admin_roster_policy.py -v && pytest v2/tests -k "roster" -q`
+Expected: the two new tests PASS; `test_admin_session_roster_query_lists_paused_enrollments` PASSES with its updated literal; `test_admin_session_seat_counts_stay_active_only` PASSES untouched; no other roster test regresses. Then `cd frontend && pnpm typecheck` — expected PASS.
 
 - [ ] **Step 8: Check the line cap.**
 
@@ -1521,7 +1536,7 @@ Expected: under 4500 (it was 4318 before this task; this adds roughly 15 lines).
 - [ ] **Step 9: Commit.**
 
 ```bash
-git add backend/v2/composition/admin.py backend/v2/interfaces/admin/views.py frontend/lib/api/admin.ts backend/v2/tests/integration/test_admin_roster_read.py
+git add backend/v2/composition/admin.py backend/v2/interfaces/admin/views.py frontend/lib/api/admin.ts backend/v2/tests/integration/test_admin_roster_read.py backend/v2/tests/structural/test_admin_roster_policy.py
 git commit -m "fix(admin): held students disappeared from the class roster, and name the parent on roster rows
 
 mark_held_if_active moves an enrollment to 'held', but the roster read still
