@@ -1724,7 +1724,7 @@ def test_real_skill_router_supervisor_resolves_occurrence_id_via_academy_listing
         start_at=datetime(2026, 9, 9, 18, 15, tzinfo=UTC),
         end_at=datetime(2026, 9, 9, 19, 15, tzinfo=UTC),
     )
-    app, spies = _build_real_router_app(
+    app, _spies = _build_real_router_app(
         student_session_ids=[SESSION_ID],
         assigned_session_ids={SESSION_ID},
         supervisor_ids=frozenset({SUPERVISOR_ID}),
