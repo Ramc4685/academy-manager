@@ -2157,16 +2157,24 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
             on_date = _now().date()
         return [s for s in live if s.start_at.date() == on_date]
 
+    # Parent display names, keyed the way production keys them (users.user_id).
+    # A parent absent from here has no name on file, so the row carries None.
+    _parent_display_names = {"p-1": "Parent One", "p-2": "Parent Two"}
+
     async def list_admin_enrollments_for_session(session_id):
-        # Mirrors production: active AND paused rows are listed.
+        # Mirrors production: active, paused, held and reclaim_pending rows are
+        # all listed. held/reclaim_pending hold a seat, so hiding them repeated
+        # the #641 dead end for the #697 statuses (#714).
         listed = [
             e
             for e in enrollments_q.rows.values()
-            if e.session_id == session_id and e.status in {"active", "paused"}
+            if e.session_id == session_id
+            and e.status in {"active", "paused", "held", "reclaim_pending"}
         ]
         out = []
         for e in listed:
             st = students.students.get(e.student_id)
+            parent_id = st.parent_id if st else ""
             out.append(
                 {
                     "enrollment_id": e.enrollment_id,
@@ -2174,7 +2182,8 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
                     "student_id": e.student_id,
                     "student_name": st.full_name if st else "(unknown)",
                     "full_name": st.full_name if st else "(unknown)",
-                    "parent_id": st.parent_id if st else "",
+                    "parent_id": parent_id,
+                    "parent_name": _parent_display_names.get(str(parent_id)),
                     "status": e.status,
                     "level": students.admin_levels.get(e.student_id),
                     "dues_status": students.admin_status.get(e.student_id, "current"),

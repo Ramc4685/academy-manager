@@ -1879,6 +1879,52 @@ def test_list_enrollments_includes_level_and_dues_status(admin_client):
     assert row["dues_status"] == "overdue"
 
 
+def test_roster_lists_held_and_reclaim_pending_rows(admin_client):
+    """#697 introduced held/reclaim_pending; the roster read never learned them,
+    so holding a student made them vanish from the admin class roster while the
+    coach roster still listed them (#714). Both statuses hold a seat, and Return
+    is only reachable from a visible row."""
+    rows = admin_client.seed["enrollments"].rows
+    created = []
+    for student_id, status in (("st-1", "held"), ("st-2", "reclaim_pending")):
+        r = admin_client.post(
+            "/api/v2/admin/enrollments",
+            json={
+                "session_id": "sess-1",
+                "student_id": student_id,
+                "parent_id": "p-1",
+                "full_name": student_id,
+            },
+        )
+        enrollment_id = r.json()["enrollment_id"]
+        rows[enrollment_id] = rows[enrollment_id].model_copy(update={"status": status})
+        created.append((enrollment_id, status))
+
+    listing = admin_client.get("/api/v2/admin/sessions/sess-1/enrollments").json()
+    listed = {(e["enrollment_id"], e["status"]) for e in listing["enrollments"]}
+    for entry in created:
+        assert entry in listed
+
+
+def test_roster_rows_carry_the_parent_name(admin_client):
+    """The departure dialogs name who gets emailed, so each row carries the
+    parent's display name (null when the parent has no name on file)."""
+    admin_client.post(
+        "/api/v2/admin/enrollments",
+        json={
+            "session_id": "sess-1",
+            "student_id": "st-1",
+            "parent_id": "p-1",
+            "full_name": "Alice",
+        },
+    )
+    listing = admin_client.get("/api/v2/admin/sessions/sess-1/enrollments").json()
+    enrollments = listing["enrollments"]
+    assert enrollments
+    assert all("parent_name" in e for e in enrollments)
+    assert any(e["parent_name"] for e in enrollments)
+
+
 def test_add_to_roster_wrong_persona_404(parent_on_admin_client):
     r = parent_on_admin_client.post(
         "/api/v2/admin/enrollments",
