@@ -12,9 +12,13 @@ import { type Level } from "@/lib/api/curriculum";
 import { buildStudentProgressHref } from "@/lib/navigation/admin-student-progress-return";
 
 import { Avatar } from "@/components/ds/avatar";
-import { Button } from "@/components/ds/button";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { Th } from "@/components/ds/dialog-chrome";
+import { useIsOwner } from "@/components/admin/owner-context";
+import {
+  DepartureActions,
+  type DepartureAction,
+} from "@/components/admin/enrollment/departure-actions";
 
 import { pendingCancellationLabel } from "@/lib/format/cancellation-copy";
 
@@ -142,6 +146,7 @@ export function RosterTable({
   onTransfer: (enrollment: AdminEnrollmentView) => void;
   onWithdraw: (enrollment: AdminEnrollmentView) => void;
 }) {
+  const isOwner = useIsOwner();
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[1040px] text-sm">
@@ -233,18 +238,6 @@ export function RosterTable({
                 </td>
                 <td className={`${actionCellClass} ${rowToneClass}`}>
                   <div className="flex min-w-[262px] flex-wrap items-center justify-end gap-1.5">
-                    {e.status === "active" ? (
-                      <Button variant="secondary" size="sm" onClick={() => onPause(e)}>
-                        Pause
-                      </Button>
-                    ) : e.status === "paused" ? (
-                      <Button variant="secondary" size="sm" onClick={() => onResume(e.enrollment_id)}>
-                        Resume
-                      </Button>
-                    ) : null}
-                    <Button variant="secondary" size="sm" onClick={() => onTransfer(e)}>
-                      Move
-                    </Button>
                     <Link
                       href={buildStudentProgressHref({
                         studentId: e.student_id,
@@ -256,19 +249,23 @@ export function RosterTable({
                     >
                       Pathway
                     </Link>
-                    {e.status === "active" && (
-                      <Button variant="secondary" size="sm" onClick={() => onWithdraw(e)}>
-                        Withdraw
-                      </Button>
-                    )}
-                    <Button
-                      variant="danger"
-                      size="sm"
-                      onClick={() => onDelete(e)}
-                      aria-label={`Remove ${e.full_name}`}
-                    >
-                      Remove
-                    </Button>
+                    <DepartureActions
+                      enrollmentId={e.enrollment_id}
+                      studentName={e.full_name}
+                      status={e.status}
+                      layout="menu"
+                      isOwner={isOwner}
+                      actions={rosterActionsFor(e.status)}
+                      onAction={(action, enrollmentId) =>
+                        dispatchRosterAction(action, enrollmentId, e, {
+                          onDelete,
+                          onPause,
+                          onResume,
+                          onTransfer,
+                          onWithdraw,
+                        })
+                      }
+                    />
                   </div>
                 </td>
               </tr>
@@ -278,6 +275,57 @@ export function RosterTable({
       </table>
     </div>
   );
+}
+
+/**
+ * Which departure actions apply to a roster row today. This slice (#696) is
+ * frontend-only — there is no backend-supplied action list yet, so this
+ * mirrors exactly the status-based conditions the inline button row used to
+ * apply. #697 replaces this with a list the backend returns.
+ */
+function rosterActionsFor(status: EnrollmentStatus): DepartureAction[] {
+  const actions: DepartureAction[] = [];
+  if (status === "active") actions.push("pause");
+  if (status === "paused") actions.push("resume");
+  actions.push("transfer");
+  if (status === "active") actions.push("drop");
+  actions.push("delete");
+  return actions;
+}
+
+function dispatchRosterAction(
+  action: DepartureAction,
+  _enrollmentId: string,
+  enrollment: AdminEnrollmentView,
+  handlers: {
+    onDelete: (enrollment: AdminEnrollmentView) => void;
+    onPause: (enrollment: AdminEnrollmentView) => void;
+    onResume: (id: string) => void;
+    onTransfer: (enrollment: AdminEnrollmentView) => void;
+    onWithdraw: (enrollment: AdminEnrollmentView) => void;
+  },
+): void {
+  switch (action) {
+    case "pause":
+      handlers.onPause(enrollment);
+      break;
+    case "resume":
+      handlers.onResume(enrollment.enrollment_id);
+      break;
+    case "transfer":
+      handlers.onTransfer(enrollment);
+      break;
+    case "drop":
+      handlers.onWithdraw(enrollment);
+      break;
+    case "delete":
+      handlers.onDelete(enrollment);
+      break;
+    default:
+      // hold / return / stop_all_classes are not offered on this roster row
+      // (#697 / #698); reaching here would be a bug in rosterActionsFor.
+      break;
+  }
 }
 
 export function LevelSelect({

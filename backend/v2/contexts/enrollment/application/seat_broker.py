@@ -35,8 +35,6 @@ from backend.v2.contexts.enrollment.domain.models import Enrollment
 
 log = logging.getLogger(__name__)
 
-Clock = Callable[[], datetime]
-
 
 @dataclass(frozen=True)
 class SeatAcquisition:
@@ -60,7 +58,7 @@ class SeatBroker:
         billing_sync: EnrollmentBillingSync | None = None,
         notifier: HoldNotifier | None = None,
         enrollment_events: EnrollmentEventRepository | None = None,
-        clock: Clock = lambda: datetime.now(UTC),
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._sessions = sessions
         self._holds = holds

@@ -16,25 +16,38 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, time
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from backend.v2.contexts.enrollment.application.use_cases.leaving_report import (
+    GetLeavingReport,
     LeavingReportRequest,
 )
 from backend.v2.contexts.enrollment.application.use_cases.stop_all_classes import (
+    StopAllClasses,
     StopAllClassesCommand,
 )
-from backend.v2.interfaces.admin.deps import (
-    AdminUseCases,
-    get_admin_use_cases,
-    require_use_case,
-)
+from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.owner_gate import ensure_owner_for_withdrawal_credit
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_owner, require_persona
 
 router = APIRouter(tags=["admin.departures"])
+
+
+def _stop_all_classes(use_cases: AdminUseCases) -> StopAllClasses:
+    use_case = use_cases.stop_all_classes
+    if use_case is None:
+        raise HTTPException(status_code=503, detail="Stop-all-classes is not configured")
+    return use_case
+
+
+def _leaving_report(use_cases: AdminUseCases) -> GetLeavingReport:
+    use_case = use_cases.leaving_report
+    if use_case is None:
+        raise HTTPException(status_code=503, detail="Leaving report is not configured")
+    return use_case
+
 
 #: The value the Stop-all-classes dialog pre-selects when the admin does not
 #: choose an outcome — see the design contract §1.2's mapping table.
@@ -87,13 +100,13 @@ async def stop_all_classes(
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> StopAllClassesResponse:
-    policy = await require_use_case(use_cases.departure_policy, "departure_policy").execute()
+    policy = await use_cases.departure_policy.execute()  # type: ignore[union-attr]
     outcome = body.outcome or _DROP_DEFAULT_TO_WITHDRAWAL_OUTCOME[policy.drop_default_outcome]
     # Same money-governance gate as the single-enrollment Drop route,
     # including for the academy's own configured default — a plain admin at
     # an academy whose default is ``credit_mid_month`` still gets 404 here.
     ensure_owner_for_withdrawal_credit(claims, outcome)
-    result = await require_use_case(use_cases.stop_all_classes, "stop_all_classes").execute(
+    result = await _stop_all_classes(use_cases).execute(
         StopAllClassesCommand(
             student_id=student_id,
             effective_at=_start_of_day_utc(body.effective_date),
@@ -149,7 +162,7 @@ async def get_leaving_report(
     _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> LeavingReportResponse:
-    rows = await require_use_case(use_cases.leaving_report, "leaving_report").execute(
+    rows = await _leaving_report(use_cases).execute(
         LeavingReportRequest(start=_start_of_day_utc(start), end=_start_of_day_utc(end))
     )
     total = sum(r.monthly_revenue_effect_cents or 0 for r in rows)

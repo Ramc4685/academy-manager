@@ -431,18 +431,5 @@ class AdminUseCases:
     leaving_report: GetLeavingReport | None = None
 
 
-def require_use_case[UseCaseT](use_case: UseCaseT | None, name: str) -> UseCaseT:
-    """Unwrap one of the optional, attached-after-the-fact slots above.
-
-    Those slots are ``None`` only in fixtures that predate the feature; in a
-    real app they are always wired. Failing loudly here gives the 500 a
-    readable cause instead of an ``AttributeError`` on ``None``, and lets the
-    routes call ``.execute`` on a fully typed use case.
-    """
-    if use_case is None:
-        raise RuntimeError(f"admin use case {name!r} is not wired into AdminUseCases")
-    return use_case
-
-
 def get_admin_use_cases(request: Request) -> AdminUseCases:
     return request.app.state.admin  # type: ignore[no-any-return]

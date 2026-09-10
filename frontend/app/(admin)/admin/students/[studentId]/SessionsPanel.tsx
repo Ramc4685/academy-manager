@@ -23,6 +23,8 @@ import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Overline } from "@/components/ds/typography";
+import { useIsOwner } from "@/components/admin/owner-context";
+import { DepartureActions } from "@/components/admin/enrollment/departure-actions";
 
 import {
   centsToDollarInput,
@@ -66,6 +68,7 @@ function SessionsPanel({
   queryClient: ReturnType<typeof useQueryClient>;
 }) {
   const billingHref = familyBillingHref(parentId);
+  const isOwner = useIsOwner();
   const [moving, setMoving] = useState<AdminStudentSessionSummary | null>(null);
   const [billingOverride, setBillingOverride] =
     useState<AdminStudentSessionSummary | null>(null);
@@ -282,9 +285,11 @@ function SessionsPanel({
                     </td>
                     <td className="py-3 pr-4 align-top">
                       <div className="flex flex-col items-start gap-1.5">
-                        <StatusChip
-                          status={session.subscription_status ?? session.status}
-                        />
+                        <StatusChip status={session.status} />
+                        {session.subscription_status &&
+                          session.subscription_status !== session.status && (
+                            <StatusChip status={session.subscription_status} />
+                          )}
                         <AutopayChipLink
                           status={session.autopay_status}
                           href={billingHref}
@@ -310,19 +315,6 @@ function SessionsPanel({
                         <button
                           className="text-xs font-medium text-rally-blue hover:underline"
                           onClick={() => {
-                            setMoving(session);
-                            setTargetSessionId("");
-                            setReason("");
-                            setEffectiveDate(
-                              new Date().toISOString().slice(0, 10),
-                            );
-                          }}
-                        >
-                          Move
-                        </button>
-                        <button
-                          className="text-xs font-medium text-rally-blue hover:underline"
-                          onClick={() => {
                             setDiscounting(session);
                             const d = session.discount;
                             setDiscountCategory(d?.category ?? "scholarship");
@@ -338,6 +330,22 @@ function SessionsPanel({
                         >
                           {session.discount ? "Edit discount" : "Discount"}
                         </button>
+                        <DepartureActions
+                          enrollmentId={session.enrollment_id}
+                          studentName={session.session_title}
+                          status={session.status}
+                          layout="inline"
+                          isOwner={isOwner}
+                          actions={["transfer"]}
+                          onAction={() => {
+                            setMoving(session);
+                            setTargetSessionId("");
+                            setReason("");
+                            setEffectiveDate(
+                              new Date().toISOString().slice(0, 10),
+                            );
+                          }}
+                        />
                       </div>
                     </td>
                   </tr>
