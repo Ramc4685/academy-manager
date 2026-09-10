@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const sentryMock = vi.hoisted(() => {
-  const scope = { setTag: vi.fn(), setContext: vi.fn() };
+  const scope = { setTag: vi.fn(), setContext: vi.fn(), setFingerprint: vi.fn() };
   return {
     scope,
     init: vi.fn(),
@@ -148,6 +148,23 @@ describe("lib/observability/sentry", () => {
     expect(sentryMock.scope.setTag).toHaveBeenCalledWith("next.digest", "digest-1");
     expect(sentryMock.scope.setTag).toHaveBeenCalledWith("boundary", "route");
     expect(sentryMock.scope.setContext).toHaveBeenCalledWith("extra", { a: 1 });
+  });
+
+  it("applies a custom fingerprint only when one is given (#707)", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SENTRY_DSN", "https://key@o1.ingest.us.sentry.io/1");
+
+    captureError(new Error("plain"));
+    captureError(new Error("api"), { fingerprint: ["api-failure", "POST", "/parent/x", "500"] });
+    await initSentry();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(sentryMock.scope.setFingerprint).toHaveBeenCalledTimes(1);
+    expect(sentryMock.scope.setFingerprint).toHaveBeenCalledWith([
+      "api-failure",
+      "POST",
+      "/parent/x",
+      "500",
+    ]);
   });
 
   it("records Web Vitals as distribution metrics", async () => {

@@ -33,6 +33,7 @@ from starlette.types import ASGIApp
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.http.errors import DomainError
+from backend.v2.shared.observability.errors import bind_request_user
 from backend.v2.shared.tenancy.context import _current as _tenant_var
 from backend.v2.shared.tenancy.context import _current_origins as _tenant_origins_var
 
@@ -40,6 +41,41 @@ log = logging.getLogger(__name__)
 
 BFF_AUTH_HEADER = "x-courtmastr-auth"
 BFF_IDENTITY_HEADER = "x-courtmastr-identity"
+
+# Highest-privilege academy role wins when a membership holds several; this
+# is a reporting label for Sentry (#707), never an authorization decision.
+_PERSONA_PRIORITY: tuple[str, ...] = (
+    "owner",
+    "admin",
+    "coach",
+    "assistant_coach",
+    "parent",
+    "student",
+)
+
+
+def _persona_for(claims: AuthClaims) -> str:
+    for role in _PERSONA_PRIORITY:
+        if role in claims.roles:
+            return role
+    return "platform" if claims.platform_roles else "unknown"
+
+
+def _bind_error_tracking_user(claims: AuthClaims) -> None:
+    """Purely additive Sentry user context: id + persona + academy, no email.
+
+    `bind_request_user` already swallows SDK errors; this second guard exists
+    so that nothing in this file can turn an observability fault into an
+    auth failure.
+    """
+    try:
+        bind_request_user(
+            user_id=claims.user_id,
+            persona=_persona_for(claims),
+            academy_id=claims.academy_id,
+        )
+    except Exception:  # pragma: no cover - defensive belt-and-braces
+        log.debug("error_tracking_user_context_failed", exc_info=True)
 
 
 # Type aliases for the injected callables.
@@ -204,6 +240,7 @@ class TenancyMiddleware(BaseHTTPMiddleware):
         if claims is not None:
             request.state.auth_claims = claims
             tenant_token = _tenant_var.set(claims.academy_id)
+            _bind_error_tracking_user(claims)
         origins_token = _tenant_origins_var.set(tenant_origins)
 
         try:

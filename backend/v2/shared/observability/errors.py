@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import TYPE_CHECKING
 
 from backend.v2.shared.config import Settings
@@ -24,9 +25,117 @@ from backend.v2.shared.observability.request_context import current_request_id
 from backend.v2.shared.tenancy.context import TenantContextUnset, current_academy_id
 
 if TYPE_CHECKING:
+    from sentry_sdk.scrubber import EventScrubber
     from sentry_sdk.types import Event, Hint, Log
 
 log = logging.getLogger(__name__)
+
+# Domain field names that hold personal data (#707). ``send_default_pii=False``
+# never covered frame locals: an unhandled error at a use case captures the
+# whole ``Student(...)`` repr, child name and emergency phone included. These
+# keys are redacted wherever they appear — as dict keys (request body, extra,
+# structured locals) and inside repr/JSON text (``full_name='Ada'``,
+# ``'phone': '555'``) — on top of the SDK's own secrets denylist.
+PII_DENYLIST: tuple[str, ...] = (
+    "full_name",
+    "first_name",
+    "last_name",
+    "emergency_contact_name",
+    "emergency_contact_phone",
+    "phone",
+    "email",
+)
+# Prefix matches: ``guardian_name``, ``guardian_email``, ``guardian_phone``...
+PII_KEY_PREFIXES: tuple[str, ...] = ("guardian_",)
+
+_FILTERED = "'[Filtered]'"
+
+
+def _pii_text_pattern() -> re.Pattern[str]:
+    keys = "|".join(re.escape(key) for key in PII_DENYLIST)
+    prefixed = "|".join(re.escape(prefix) + r"\w*" for prefix in PII_KEY_PREFIXES)
+    return re.compile(
+        rf"(?P<key>\b(?:{keys}|{prefixed})\b)"
+        # ``key='v'`` (dataclass/pydantic repr) or ``'key': 'v'`` (dict repr / JSON).
+        r"(?P<sep>[\"']?\s*[=:]\s*)"
+        r"(?P<value>'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\"|[^,)\]}\s]+)",
+        re.IGNORECASE,
+    )
+
+
+_PII_TEXT = _pii_text_pattern()
+
+
+def scrub_pii_text(text: str) -> str:
+    """Redact ``<pii key>=<value>`` / ``'<pii key>': <value>`` pairs inside a string."""
+    return _PII_TEXT.sub(lambda m: f"{m.group('key')}{m.group('sep')}{_FILTERED}", text)
+
+
+def build_event_scrubber() -> EventScrubber:
+    """SDK denylist + our PII keys, recursive, and text-aware for repr'd locals.
+
+    Frame locals reach the scrubber already serialised (``serialize_frame``
+    calls ``safe_repr`` on every non-collection local), so a ``student`` local
+    is the *string* ``"Student(id='stu_1', full_name='Ada', ...)"`` under a key
+    the denylist would never match. The subclass therefore also scrubs string
+    values, and strings nested in lists, which the base class skips.
+    """
+    from sentry_sdk._types import AnnotatedValue
+    from sentry_sdk.scrubber import DEFAULT_DENYLIST, EventScrubber
+
+    sensitive_keys = frozenset(key.lower() for key in [*DEFAULT_DENYLIST, *PII_DENYLIST])
+
+    class PiiEventScrubber(EventScrubber):
+        def _is_sensitive_key(self, key: str) -> bool:
+            lowered = key.lower()
+            return lowered in sensitive_keys or lowered.startswith(PII_KEY_PREFIXES)
+
+        def scrub_dict(self, d: object) -> None:
+            if not isinstance(d, dict):
+                return
+            for key, value in d.items():
+                if isinstance(key, str) and self._is_sensitive_key(key):
+                    d[key] = AnnotatedValue.substituted_because_contains_sensitive_data()
+                elif isinstance(value, str):
+                    d[key] = scrub_pii_text(value)
+                elif self.recursive:
+                    self.scrub_dict(value)
+                    self.scrub_list(value)
+
+        def scrub_list(self, lst: object) -> None:
+            if not isinstance(lst, list):
+                return
+            for index, value in enumerate(lst):
+                if isinstance(value, str):
+                    lst[index] = scrub_pii_text(value)
+                else:
+                    self.scrub_dict(value)
+                    self.scrub_list(value)
+
+    return PiiEventScrubber(denylist=[*DEFAULT_DENYLIST, *PII_DENYLIST], recursive=True)
+
+
+def bind_request_user(*, user_id: str, persona: str, academy_id: str) -> None:
+    """Attach the signed-in user to the current Sentry scope (#707).
+
+    Only the opaque ``user_id`` and the persona ever leave the box — no email,
+    no name — which is enough for Sentry's "users affected" count and for
+    filtering an issue to one persona. Best-effort by contract: every failure
+    is swallowed so an SDK fault can never influence the auth path that calls
+    this. No-op without an active client (no DSN, tests).
+    """
+    try:
+        import sentry_sdk
+    except ImportError:
+        return
+    try:
+        if not sentry_sdk.get_client().is_active():
+            return
+        sentry_sdk.set_user({"id": user_id, "segment": persona})
+        sentry_sdk.set_tag("academy_id", academy_id)
+        sentry_sdk.set_tag("persona", persona)
+    except Exception:
+        log.debug("sentry_user_context_failed", exc_info=True)
 
 
 def configure_error_tracking(settings: Settings) -> None:
@@ -49,6 +158,10 @@ def configure_error_tracking(settings: Settings) -> None:
         traces_sample_rate=settings.sentry_traces_sample_rate,
         # Events carry ids/tags, never request payloads or user PII.
         send_default_pii=False,
+        # Frame locals stay on (they are what confirmed #706's root cause);
+        # the scrubber below strips student/guardian PII out of them.
+        include_local_variables=True,
+        event_scrubber=build_event_scrubber(),
         integrations=[
             StarletteIntegration(),
             FastApiIntegration(),

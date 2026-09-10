@@ -1,6 +1,6 @@
 # Observability
 
-**Status:** Authoritative as of 2026-09-05. Describes what is implemented in
+**Status:** Authoritative as of 2026-09-10 (#707 additions). Describes what is implemented in
 `backend/v2/shared/observability/` (plus the frontend pieces it depends on)
 and what is switched on in production. Replaces the Wave 1A document, which
 described OpenTelemetry, PostHog and Honeycomb integrations that were never
@@ -23,9 +23,9 @@ Account-side facts referenced below (verified 2026-09-05):
 |---|---|---|
 | JSON logs | `observability/logging.py` | `timestamp, level, logger, message` plus `request_id`, `academy_id`, `trace_id`/`span_id` when present, and every `extra=` field the caller passes. Default level INFO, format `json` (`LOG_LEVEL` / `LOG_FORMAT`). Uvicorn's own handlers are removed and its loggers propagate to the root handler; `uvicorn.access` is silenced because the app writes its own access line. Third-party loggers are pinned at WARNING (see the logger table below). |
 | Request correlation | `observability/request_context.py` | Accepts `X-Request-ID` or `Fly-Request-Id`, else mints a UUID; echoes it on the response; stamps `request_id` and `academy_id` on every log record in the request. See "Request-id flow" for the browser -> proxy -> API path. |
-| Per-request access line | `observability/request_context.py` (`backend.v2.http.request`) | One JSON line per request with method, path, status, `duration_ms`, `request_id`, `academy_id`. `/api/v2/healthz` is logged at DEBUG so the 30s Fly probe does not flood INFO. |
+| Per-request access line | `observability/request_context.py` (`backend.v2.http.request`) | One JSON line per request with method, path, status, `duration_ms`, `request_id`, `academy_id`. 2xx/4xx at INFO; **5xx at WARNING** (#707) so a Sentry Logs view above INFO shows the request line next to its `unhandled_error` line. `/api/v2/healthz` is logged at DEBUG so the 30s Fly probe does not flood INFO. |
 | Unhandled 500s | `shared/http/errors.py` | A catch-all handler logs one JSON error line with the traceback and `request_id`, then re-raises so Starlette still returns 500 and Sentry still captures it. `DomainError` keeps its own 4xx mapping. |
-| Error tracking | `observability/errors.py`, `ops_alerts.py` | Sentry SDK with `send_default_pii=False`, tagged with `request_id` and `academy_id`, `environment` from settings and `release` from `V2_SENTRY_RELEASE` / `SENTRY_RELEASE` / Fly's `FLY_IMAGE_REF` (CI also creates the release `courtmastr-fastapi@<sha>` on deploy, see "Releases"). Captures request exceptions, APScheduler job errors/misses, outbox dispatcher loop failures (throttled 1/10/every-100), and Resend credential rejection at boot. No-op until `SENTRY_DSN` is set. |
+| Error tracking | `observability/errors.py`, `ops_alerts.py` | Sentry SDK with `send_default_pii=False`, tagged with `request_id`, `academy_id` and `persona`, with the signed-in user attached as `{id, segment: persona}` (see "User context and PII"), `environment` from settings and `release` from `V2_SENTRY_RELEASE` / `SENTRY_RELEASE` / Fly's `FLY_IMAGE_REF` (CI also creates the release `courtmastr-fastapi@<sha>` on deploy, see "Releases"). Captures request exceptions, APScheduler job errors/misses, outbox dispatcher loop failures (throttled 1/10/every-100), and Resend credential rejection at boot. No-op until `SENTRY_DSN` is set. |
 | Sentry Logs | `observability/errors.py` `_keep_log` | With a DSN set and `SENTRY_LOGS_ENABLED` (default on), INFO+ records from the JSON pipeline are also forwarded to Sentry Logs. `_keep_log` is the quota guard: DEBUG never leaves the box, `uvicorn.access` and healthz lines are dropped. |
 | Sentry Crons | `main.py` scheduler wiring, `V2_SENTRY_CRON_JOBS` | Opt-in dead-man switch for scheduler jobs. Jobs named in the comma-separated allowlist (default `generate_monthly_invoices`) send Sentry Crons check-ins (`in_progress` -> `ok`/`error`) around each run, so a job that never runs raises a "missed check-in" issue in Sentry. Jobs not in the allowlist are unchanged. See "Cron monitors". |
 | Health | `observability/health.py`, `GET /api/v2/healthz` | Mongo ping (2s), scheduler running + job count, outbox dispatcher running. Returns 503 only for restart-fixable faults. Reports per-job `last_tick_age_seconds` / `last_run_age_seconds` from `ops_job_runs` and a per-job `stale: true` flag when the age exceeds the job's expected interval; stale is informational and never fails the check (a restart cannot make a monthly job run). Nested results use `ok:` not `status:` so the smoke grep cannot be spoofed. |
@@ -33,9 +33,39 @@ Account-side facts referenced below (verified 2026-09-05):
 | Daily ops digest | `ops_digest.py`, `main.py` (07:00 scheduler TZ, job `send_ops_digest`) | Emails `OPS_ALERT_EMAIL` quarantined Stripe webhooks, dead-letter events, dunning terminals, failed digest sends, last invoice run, and a "stale jobs" section listing any scheduler job whose heartbeat is older than its interval. Skipped until `OPS_ALERT_EMAIL` is set. |
 | Email bounces / complaints | `interfaces/email_webhook_routes.py` | Resend webhook ingestion feeding the suppression list. 404s until `RESEND_WEBHOOK_SECRET` is set and the webhook is created in Resend. |
 | Forensic stores | `event_audit` (400-day TTL since migration 0166), `dead_letter_events`, `stripe_webhook_events`, platform audit log | Pull-only. Visible through the admin billing-health page. The TTL was raised from 90 to 400 days so a yearly billing dispute still has its trail. |
-| Frontend errors | `app/error.tsx`, `app/global-error.tsx`, `lib/query/mutation-errors.ts` | Error toasts carry `Reference: xxxxxxxx` (the first 8 chars of the request id echoed by the API) so a parent can read it back to us. `@sentry/browser` initialises only when `NEXT_PUBLIC_SENTRY_DSN` is set at build time; without it the frontend still only `console.error`s. `lib/pwa/vitals.ts` sends Web Vitals to Sentry as `web_vitals.<name>` distribution metrics via `lib/observability/sentry.ts` `recordVital` (same DSN gate; without it they only log to the console in dev). Cloudflare Workers Logs are enabled in `wrangler.jsonc` (free plan: 3-day retention). |
+| Frontend errors | `app/error.tsx`, `app/global-error.tsx`, `lib/api/client.ts`, `lib/query/mutation-errors.ts` | Route error boundaries capture render/runtime errors; the API client captures every **5xx** and every transport failure (`fetch` TypeError, the 20 s abort) as an `ApiRequestFailed` event tagged `api.method`, `api.path` (ids collapsed to `{id}`), `api.status`, `api.failure` and `requestId`, fingerprinted per route+status so each failing endpoint is its own issue (#707). 4xx are never captured. Error toasts carry `Reference: xxxxxxxx` (the first 8 chars of the request id echoed by the API) so a parent can read it back to us. `@sentry/browser` initialises only when `NEXT_PUBLIC_SENTRY_DSN` is set at build time; without it the frontend still only `console.error`s. `lib/pwa/vitals.ts` sends Web Vitals to Sentry as `web_vitals.<name>` distribution metrics via `lib/observability/sentry.ts` `recordVital` (same DSN gate; without it they only log to the console in dev). Cloudflare Workers Logs are enabled in `wrangler.jsonc` (free plan: 3-day retention). |
 | BFF proxy request ids | `frontend/app/api/v2/[...path]/route.ts` | The Next.js proxy mints an `X-Request-ID` per upstream call when the browser did not send one, forwards it to the API, and copies the API's echoed header back onto the browser response. |
 | Tracing | `observability/tracing.py` | Permanent no-op: the OpenTelemetry packages are not installed. Deliberate at this scale. |
+
+## User context and PII
+
+Every authenticated request attaches the signed-in user to the Sentry scope
+from `shared/auth/middleware.py` (`bind_request_user` in
+`observability/errors.py`): `user = {id: <user_id>, segment: <persona>}` plus
+the tags `academy_id` and `persona`, where persona is the highest academy role
+on the membership (`owner > admin > coach > assistant_coach > parent >
+student`). No email and no name are ever sent, so "users affected" and a
+per-persona filter work without PII. The call is best-effort and doubly
+guarded: an SDK failure is logged at DEBUG and can never turn into an auth
+failure. It is a no-op without an active client (no DSN).
+
+`include_local_variables` stays **on** (frame locals are what confirmed the
+root cause of #706) and `send_default_pii=False` does not cover them, so an
+`EventScrubber` (`build_event_scrubber`) runs on every event with the SDK's
+secrets denylist extended by `full_name`, `first_name`, `last_name`,
+`emergency_contact_name`, `emergency_contact_phone`, `phone`, `email` and any
+`guardian_*` key. It is recursive, and unlike the SDK default it also scrubs
+*inside string values*: the SDK repr's each local before the scrubber runs, so
+a `student` local arrives as the string `Student(id='stu_1', full_name='Ada',
+...)` and is redacted to `full_name='[Filtered]'` while ids and non-PII fields
+survive. Request bodies and `extra` go through the same denylist. Add a field
+to `PII_DENYLIST` / `PII_KEY_PREFIXES` when a new personal field appears on a
+domain model; `test_request_context.py` pins the behaviour.
+
+Known gap: `tracesSampleRate` is 0 on both sides and there is no Session
+Replay, so nothing links a browser session to the backend event other than
+the shared `request_id` tag. Deliberate at this scale (free plan, single
+machine); revisit if the join-by-request-id workflow proves too slow.
 
 ## Logger levels
 

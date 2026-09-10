@@ -22,6 +22,12 @@ export interface CaptureContext {
   tags?: Record<string, string | number | boolean | undefined>;
   /** Extra structured context (never PII). */
   extra?: Record<string, unknown>;
+  /**
+   * Custom grouping. Errors captured from one shared code path (the API
+   * client) all share a stack trace, so without this every failed request
+   * would collapse into a single Sentry issue.
+   */
+  fingerprint?: string[];
 }
 
 let sdk: Promise<Sentry | null> | null = null;
@@ -130,6 +136,7 @@ export function captureError(error: unknown, context: CaptureContext = {}): void
         if (value !== undefined) scope.setTag(key, String(value));
       }
       if (context.extra) scope.setContext("extra", context.extra);
+      if (context.fingerprint?.length) scope.setFingerprint(context.fingerprint);
       mod.captureException(error);
     });
   });
