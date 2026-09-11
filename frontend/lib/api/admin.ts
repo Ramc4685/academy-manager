@@ -181,6 +181,8 @@ export interface AdminEnrollmentView {
   session_id: string;
   student_id: string;
   parent_id: string;
+  /** Parent's display name, for naming who gets emailed. Null when unset. */
+  parent_name: string | null;
   full_name: string;
   status: EnrollmentStatus;
   /** Issue #675: parent end-of-period cancel pending; still on the roster until then. */

@@ -2563,9 +2563,15 @@ def compose_admin(
 
     async def list_admin_enrollments_for_session(session_id: str):
         # Paused rows stay on the roster (PAUSED chip + Resume). Hiding them
-        # left a student who blocked "Add to roster" invisible everywhere.
+        # left a student who blocked "Add to roster" invisible everywhere
+        # (#641). held / reclaim_pending are the #697 successors of paused and
+        # must stay visible for the same reason (#714) — a held child still
+        # holds a seat, and Return is only reachable from a visible row.
         cursor = enrollments_r._find_many(
-            {"session_id": session_id, "status": {"$in": ["active", "paused"]}},
+            {
+                "session_id": session_id,
+                "status": {"$in": ["active", "paused", "held", "reclaim_pending"]},
+            },
             sort=[("created_at", 1), ("enrollment_id", 1)],
         )
         enrollment_docs = [doc async for doc in cursor]
@@ -2584,6 +2590,18 @@ def compose_admin(
         dues_status_by_id: dict[str, str] = {}
         if hasattr(students_r, "_dues_statuses"):
             dues_status_by_id = await students_r._dues_statuses(academy_id, student_ids)
+        # One batched read, never per row: the departure dialogs name the parent
+        # who will be emailed, and the roster row is the only thing they have.
+        parent_ids = {str(student.parent_id) for student in by_id.values() if student.parent_id}
+        parent_name_by_id: dict[str, str] = {}
+        if parent_ids:
+            async for parent_doc in db["users"].find(
+                {"academy_id": academy_id, "user_id": {"$in": list(parent_ids)}},
+                {"user_id": 1, "display_name": 1},
+            ):
+                name = str(parent_doc.get("display_name") or "").strip()
+                if name:
+                    parent_name_by_id[str(parent_doc.get("user_id"))] = name
         default_program_id: str | None = None
         try:
             default_program = await curriculum.resolve_default_program.execute()
@@ -2598,6 +2616,7 @@ def compose_admin(
             doc = by_enrollment_id.get(e.enrollment_id, {})
             s = by_id.get(e.student_id)
             full_name = s.full_name if s else "(unknown)"
+            parent_id = s.parent_id if s else ""
             student_doc = student_detail_by_id.get(e.student_id, {})
             placement_fields: dict[str, Any] = {
                 "pathway_program_id": default_program_id,
@@ -2637,7 +2656,8 @@ def compose_admin(
                     "student_id": e.student_id,
                     "student_name": full_name,
                     "full_name": full_name,
-                    "parent_id": s.parent_id if s else "",
+                    "parent_id": parent_id,
+                    "parent_name": parent_name_by_id.get(str(parent_id)),
                     "status": e.status,
                     "pending_cancellation_at": doc.get("pending_cancellation_at"),
                     # Prefer the semantic enrolled_at field (v2/seed); fall back

@@ -13,17 +13,24 @@ _ADD = (
 )
 
 
-def test_admin_session_roster_query_lists_paused_enrollments() -> None:
-    """A paused row must stay visible on the admin roster.
+def test_admin_session_roster_query_lists_paused_and_held_enrollments() -> None:
+    """A paused, held or reclaim_pending row must stay visible on the admin roster.
 
     Until 2026-09-03 the roster read was `status: "active"` while the
     add-to-roster guard blocked on `{"active", "paused"}` — a paused student
     was invisible on every admin surface yet still refused "Add to roster"
     ("already on this roster (paused)"). The roster panel's PAUSED chip and
     Resume button had never been reachable. The read and the guard must agree.
+
+    #697 then introduced `held` and `reclaim_pending` without widening this
+    read, which reopened the same dead end for the new statuses (#714): a held
+    child vanished from the admin roster while the coach roster still listed
+    them, and Return was unreachable because there was no row to act on. Both
+    statuses are in `SEAT_HOLDING`, so a held row still occupies a seat and can
+    make a class read as full with nobody visible to explain why.
     """
     source = _ADMIN.read_text()
-    assert '{"session_id": session_id, "status": {"$in": ["active", "paused"]}}' in source
+    assert '"status": {"$in": ["active", "paused", "held", "reclaim_pending"]}' in source
 
 
 def test_admin_session_seat_counts_stay_active_only() -> None:

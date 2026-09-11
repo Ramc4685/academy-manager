@@ -565,6 +565,9 @@ class AdminEnrollmentView(BaseModel):
     student_name: str
     full_name: str
     parent_id: str
+    #: Display name of the parent on file, for the departure dialogs' "who gets
+    #: emailed" line. None when the parent has no display_name set.
+    parent_name: str | None = None
     status: str
     # Issue #675: parent end-of-period cancel pending; still on the roster.
     pending_cancellation_at: datetime | None = None
