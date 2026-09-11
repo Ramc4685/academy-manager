@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   DEPARTURE_ACTION_LABEL,
+  holdActionsFor,
   resolveDepartureActions,
   type DepartureAction,
 } from "./departure-actions.logic";
@@ -87,5 +88,39 @@ describe("resolveDepartureActions", () => {
       });
       expect(resolved.every((entry) => !entry.danger)).toBe(true);
     });
+  });
+});
+
+describe("holdActionsFor", () => {
+  it("offers hold on an active row", () => {
+    expect(holdActionsFor("active")).toEqual(["hold"]);
+  });
+
+  it("offers return on a held row — the #714 gap this slice closes", () => {
+    expect(holdActionsFor("held")).toEqual(["return"]);
+  });
+
+  it("never offers hold on a held row, nor return on an active one", () => {
+    expect(holdActionsFor("held")).not.toContain("hold");
+    expect(holdActionsFor("active")).not.toContain("return");
+  });
+
+  it("leaves paused alone — Pause/Resume is untouched by this slice", () => {
+    expect(holdActionsFor("paused")).toEqual([]);
+  });
+
+  it("adds nothing mid-reclaim", () => {
+    expect(holdActionsFor("reclaim_pending")).toEqual([]);
+  });
+
+  it("adds nothing to a row that has already left", () => {
+    for (const status of ["cancelled", "deleted", "withdrawn", "dropped"]) {
+      expect(holdActionsFor(status)).toEqual([]);
+    }
+  });
+
+  it("does not throw on an unknown status", () => {
+    expect(holdActionsFor("something_new")).toEqual([]);
+    expect(holdActionsFor("")).toEqual([]);
   });
 });

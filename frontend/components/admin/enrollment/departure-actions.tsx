@@ -36,6 +36,7 @@ import type { DepartureAction } from "./departure-actions.logic";
 
 export {
   DEPARTURE_ACTION_LABEL,
+  holdActionsFor,
   resolveDepartureActions,
   type DepartureAction,
   type ResolvedDepartureAction,

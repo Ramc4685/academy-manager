@@ -17,6 +17,7 @@ import { Th } from "@/components/ds/dialog-chrome";
 import { useIsOwner } from "@/components/admin/owner-context";
 import {
   DepartureActions,
+  holdActionsFor,
   type DepartureAction,
 } from "@/components/admin/enrollment/departure-actions";
 
@@ -125,8 +126,10 @@ export function RosterTable({
   updatingPlacementStudentId,
   onPathwayLevelChange,
   onDelete,
+  onHold,
   onPause,
   onResume,
+  onReturn,
   onTransfer,
   onWithdraw,
   academyTimezone,
@@ -141,8 +144,10 @@ export function RosterTable({
   updatingPlacementStudentId: string | null;
   onPathwayLevelChange: (enrollment: AdminEnrollmentView, levelId: string) => void;
   onDelete: (enrollment: AdminEnrollmentView) => void;
+  onHold: (enrollment: AdminEnrollmentView) => void;
   onPause: (enrollment: AdminEnrollmentView) => void;
   onResume: (id: string) => void;
+  onReturn: (enrollment: AdminEnrollmentView) => void;
   onTransfer: (enrollment: AdminEnrollmentView) => void;
   onWithdraw: (enrollment: AdminEnrollmentView) => void;
 }) {
@@ -257,8 +262,10 @@ export function RosterTable({
                     onAction={(action, enrollmentId) =>
                       dispatchRosterAction(action, enrollmentId, e, {
                         onDelete,
+                        onHold,
                         onPause,
                         onResume,
+                        onReturn,
                         onTransfer,
                         onWithdraw,
                       })
@@ -280,12 +287,16 @@ export function RosterTable({
  * mirrors the status-based conditions the inline button row used to apply.
  * #711 widened Drop to paused/held rows: `WithdrawEnrollment` accepts exactly
  * {active, paused, held} (a paused row already released its seat, which the
- * backend handles). #697 replaces this with a list the backend returns.
+ * backend handles). #697's seat-safe Hold/Return pair is not decided here:
+ * it comes from the shared `holdActionsFor`, so the roster and the student
+ * profile Sessions panel offer it on exactly the same statuses.
  */
 export function rosterActionsFor(status: EnrollmentStatus): DepartureAction[] {
   const actions: DepartureAction[] = [];
   if (status === "active") actions.push("pause");
   if (status === "paused") actions.push("resume");
+  // #697's seat-safe pair, beside the transitional pause/resume group.
+  actions.push(...holdActionsFor(status));
   actions.push("transfer");
   if (status === "active" || status === "paused" || status === "held") actions.push("drop");
   actions.push("delete");
@@ -298,8 +309,10 @@ function dispatchRosterAction(
   enrollment: AdminEnrollmentView,
   handlers: {
     onDelete: (enrollment: AdminEnrollmentView) => void;
+    onHold: (enrollment: AdminEnrollmentView) => void;
     onPause: (enrollment: AdminEnrollmentView) => void;
     onResume: (id: string) => void;
+    onReturn: (enrollment: AdminEnrollmentView) => void;
     onTransfer: (enrollment: AdminEnrollmentView) => void;
     onWithdraw: (enrollment: AdminEnrollmentView) => void;
   },
@@ -311,6 +324,12 @@ function dispatchRosterAction(
     case "resume":
       handlers.onResume(enrollment.enrollment_id);
       break;
+    case "hold":
+      handlers.onHold(enrollment);
+      break;
+    case "return":
+      handlers.onReturn(enrollment);
+      break;
     case "transfer":
       handlers.onTransfer(enrollment);
       break;
@@ -321,8 +340,8 @@ function dispatchRosterAction(
       handlers.onDelete(enrollment);
       break;
     default:
-      // hold / return / stop_all_classes are not offered on this roster row
-      // (#697 / #698); reaching here would be a bug in rosterActionsFor.
+      // stop_all_classes is not offered on this roster row (#698); reaching
+      // here would be a bug in rosterActionsFor.
       break;
   }
 }
