@@ -73,3 +73,29 @@ export function resolveDepartureActions(
     };
   });
 }
+
+/**
+ * Hold/Return availability for one enrollment row (#714 follow-up).
+ *
+ * Shared by the class roster and the student profile Sessions panel so both
+ * surfaces answer "can this row be held / returned?" the same way. Kept
+ * status-shaped and additive: it returns ONLY the hold pair, never the rest
+ * of a surface's menu, so a caller splices it into whatever list it already
+ * builds. Takes `string`, not `EnrollmentStatus`, because the student page's
+ * `AdminStudentSessionSummary.status` is an untyped `string`.
+ *
+ * `active` and `held` are the only statuses that gained anything: #714 made
+ * held rows visible on the roster but left Return unreachable, and holding is
+ * only meaningful for a row still attending. Every other status falls through
+ * to `[]`, so its menu stays exactly what it is today — `paused` keeps
+ * Pause/Resume untouched.
+ *
+ * `reclaim_pending` (#697's second hold state) is deliberately absent: the
+ * backend return route accepts `held`, and nothing in this slice establishes
+ * what Return means mid-reclaim.
+ */
+export function holdActionsFor(status: string): DepartureAction[] {
+  if (status === "active") return ["hold"];
+  if (status === "held") return ["return"];
+  return [];
+}

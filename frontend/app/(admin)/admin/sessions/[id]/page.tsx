@@ -41,6 +41,8 @@ import { TableSkeleton } from "@/components/ds/skeleton";
 import { AdminTeachingPlan } from "@/components/teaching/admin-teaching-plan";
 import { AnnouncementsPanel } from "@/components/announcements/AnnouncementsPanel";
 
+import { HoldEnrollmentDialog, ReturnFromHoldDialog } from "@/components/admin/enrollment/hold-dialogs";
+
 import { AddToRosterDialog, PauseEnrollmentDialog, RemoveEnrollmentDialog, TransferEnrollmentDialog, WithdrawalCreditDialog } from "./dialogs";
 import {
   formatArrivalMinutes,
@@ -109,6 +111,8 @@ export default function AdminSessionDetailPage() {
   const [removeTarget, setRemoveTarget] = useState<AdminEnrollmentView | null>(null);
   const [transferTarget, setTransferTarget] = useState<AdminEnrollmentView | null>(null);
   const [withdrawalTarget, setWithdrawalTarget] = useState<AdminEnrollmentView | null>(null);
+  const [holdTarget, setHoldTarget] = useState<AdminEnrollmentView | null>(null);
+  const [returnTarget, setReturnTarget] = useState<AdminEnrollmentView | null>(null);
   const [occurrenceTarget, setOccurrenceTarget] = useState<AdminSessionOccurrenceView | null>(null);
   const [replacementOpen, setReplacementOpen] = useState(false);
   // Issue #671: the date an admin is calling off, or null.
@@ -502,8 +506,10 @@ export default function AdminSessionDetailPage() {
                 })
               }
               onDelete={(enrollment) => setRemoveTarget(enrollment)}
+              onHold={(enrollment) => setHoldTarget(enrollment)}
               onPause={(enrollment) => setPauseTarget(enrollment)}
               onResume={(id) => resumeMutation.mutate(id)}
+              onReturn={(enrollment) => setReturnTarget(enrollment)}
               onTransfer={(enrollment) => setTransferTarget(enrollment)}
               onWithdraw={(enrollment) => setWithdrawalTarget(enrollment)}
             />
@@ -650,6 +656,28 @@ export default function AdminSessionDetailPage() {
         onClose={() => setPauseTarget(null)}
         onPaused={() => {
           setPauseTarget(null);
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.waitlist(sessionId) });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
+        }}
+      />
+      <HoldEnrollmentDialog
+        enrollmentId={holdTarget?.enrollment_id ?? null}
+        studentName={holdTarget?.full_name ?? ""}
+        onClose={() => setHoldTarget(null)}
+        onHeld={() => {
+          setHoldTarget(null);
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.waitlist(sessionId) });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
+        }}
+      />
+      <ReturnFromHoldDialog
+        enrollmentId={returnTarget?.enrollment_id ?? null}
+        studentName={returnTarget?.full_name ?? ""}
+        onClose={() => setReturnTarget(null)}
+        onReturned={() => {
+          setReturnTarget(null);
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) });
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.waitlist(sessionId) });
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });

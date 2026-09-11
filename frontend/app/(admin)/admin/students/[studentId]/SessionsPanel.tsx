@@ -24,7 +24,15 @@ import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Overline } from "@/components/ds/typography";
 import { useIsOwner } from "@/components/admin/owner-context";
-import { DepartureActions } from "@/components/admin/enrollment/departure-actions";
+import {
+  DepartureActions,
+  holdActionsFor,
+  type DepartureAction,
+} from "@/components/admin/enrollment/departure-actions";
+import {
+  HoldEnrollmentDialog,
+  ReturnFromHoldDialog,
+} from "@/components/admin/enrollment/hold-dialogs";
 
 import {
   centsToDollarInput,
@@ -57,6 +65,7 @@ function SessionsPanel({
   pastEnrollments = [],
   parentId,
   studentId,
+  studentName,
   queryClient,
 }: {
   sessions: AdminStudentSessionSummary[];
@@ -65,11 +74,17 @@ function SessionsPanel({
   /** Autopay lives on the family page; the chip links there when a parent is on file. */
   parentId?: string | null;
   studentId: string;
+  studentName: string;
   queryClient: ReturnType<typeof useQueryClient>;
 }) {
   const billingHref = familyBillingHref(parentId);
   const isOwner = useIsOwner();
   const [moving, setMoving] = useState<AdminStudentSessionSummary | null>(null);
+  const [holding, setHolding] = useState<AdminStudentSessionSummary | null>(
+    null,
+  );
+  const [returning, setReturning] =
+    useState<AdminStudentSessionSummary | null>(null);
   const [billingOverride, setBillingOverride] =
     useState<AdminStudentSessionSummary | null>(null);
   const [overrideAmount, setOverrideAmount] = useState("");
@@ -336,8 +351,19 @@ function SessionsPanel({
                           status={session.status}
                           layout="inline"
                           isOwner={isOwner}
-                          actions={["transfer"]}
-                          onAction={() => {
+                          actions={[
+                            ...holdActionsFor(session.status),
+                            "transfer",
+                          ]}
+                          onAction={(action: DepartureAction) => {
+                            if (action === "hold") {
+                              setHolding(session);
+                              return;
+                            }
+                            if (action === "return") {
+                              setReturning(session);
+                              return;
+                            }
                             setMoving(session);
                             setTargetSessionId("");
                             setReason("");
@@ -357,6 +383,29 @@ function SessionsPanel({
       </Card>
 
       <PastEnrollmentsPanel rows={pastEnrollments} />
+
+      <HoldEnrollmentDialog
+        enrollmentId={holding?.enrollment_id ?? null}
+        studentName={studentName}
+        onClose={() => setHolding(null)}
+        onHeld={() => {
+          setHolding(null);
+          void queryClient.invalidateQueries({
+            queryKey: queryKeys.admin.studentDetail(studentId),
+          });
+        }}
+      />
+      <ReturnFromHoldDialog
+        enrollmentId={returning?.enrollment_id ?? null}
+        studentName={studentName}
+        onClose={() => setReturning(null)}
+        onReturned={() => {
+          setReturning(null);
+          void queryClient.invalidateQueries({
+            queryKey: queryKeys.admin.studentDetail(studentId),
+          });
+        }}
+      />
 
       {moving && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">

@@ -226,6 +226,16 @@ export interface PauseEnrollmentRequest {
   reason?: string;
 }
 
+/** Issue #697: a hold keeps the seat; `return_on` is required by the backend. */
+export interface HoldEnrollmentRequest {
+  return_on: string;
+  reason?: string | null;
+}
+
+export interface ReturnFromHoldRequest {
+  reason?: string | null;
+}
+
 export interface WithdrawEnrollmentRequest {
   effective_date: string;
   outcome?: "credit" | "refund" | "adjustment";
@@ -1820,6 +1830,26 @@ export function pauseEnrollment(
 
 export function resumeEnrollment(enrollmentId: string): Promise<void> {
   return apiFetch<void>(`/admin/enrollments/${enrollmentId}/resume`, { method: "POST" });
+}
+
+export function holdEnrollment(
+  enrollmentId: string,
+  payload: HoldEnrollmentRequest
+): Promise<void> {
+  return apiFetch<void>(`/admin/enrollments/${enrollmentId}/hold`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function returnFromHold(
+  enrollmentId: string,
+  payload: ReturnFromHoldRequest
+): Promise<void> {
+  return apiFetch<void>(`/admin/enrollments/${enrollmentId}/return`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 export function listEnrollmentEvents(enrollmentId: string): Promise<EnrollmentEventsResponse> {

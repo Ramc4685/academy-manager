@@ -219,6 +219,7 @@ export default function AdminStudentDetailPage() {
             pastEnrollments={student.past_enrollments ?? []}
             parentId={student.parent_id}
             studentId={studentId}
+            studentName={student.full_name}
             queryClient={queryClient}
           />
         </TabPanel>
