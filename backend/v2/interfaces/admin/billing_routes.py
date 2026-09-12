@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Annotated
+from typing import Annotated, Any, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
@@ -29,6 +29,9 @@ from backend.v2.contexts.billing.application.use_cases.finance import (  # FINAN
 )
 from backend.v2.contexts.billing.application.use_cases.issue_refund import (
     IssueRefundCommand,
+)
+from backend.v2.contexts.billing.application.use_cases.send_invoice import (
+    EmptyInvoiceNotSendable,
 )
 from backend.v2.contexts.billing.application.use_cases.tuition_discounts import (
     RemoveTuitionDiscountCommand,
@@ -751,6 +754,11 @@ class CreateStudentInvoiceRequest(BaseModel):
     enrollment_id: str | None = None
 
 
+class BillEnrollmentPeriodRequest(BaseModel):
+    period: str = Field(pattern=r"^\d{4}-\d{2}$")
+    due_date: date
+
+
 class VoidInvoiceRequest(BaseModel):
     reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
@@ -800,6 +808,8 @@ async def send_billing_invoice(
     send_invoice = _required_callable(use_cases.send_billing_invoice, "Invoice sending")
     try:
         result = await send_invoice(invoice_id)  # type: ignore[operator]
+    except EmptyInvoiceNotSendable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return SendInvoiceResponse(
@@ -1139,6 +1149,33 @@ async def create_student_invoice(
         due_date=body.due_date,
         enrollment_id=body.enrollment_id,
     )
+
+
+@router.post(
+    "/enrollments/{enrollment_id}/invoices/bill-period",
+    response_model=dict,
+    status_code=status.HTTP_201_CREATED,
+)
+async def bill_enrollment_period(
+    enrollment_id: str,
+    body: BillEnrollmentPeriodRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> dict[str, Any]:
+    """Draft this month's tuition invoice for one enrollment (manual invoicing)."""
+    bill_period = _required_callable(use_cases.bill_enrollment_period, "Invoice creation")
+    try:
+        created = await bill_period(  # type: ignore[operator]
+            enrollment_id=enrollment_id,
+            period=body.period,
+            due_date=body.due_date,
+            actor_id=claims.user_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return cast(dict[str, Any], created)
 
 
 def _payment_view(row: object) -> AdminPaymentView:

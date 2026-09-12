@@ -2,6 +2,8 @@
 import type { ChipVariant } from "@/components/ds/chip";
 import type {
   FamilyAutopay,
+  FamilyEnrollment,
+  FamilyStudent,
   InvoiceAction,
   RegistrationState,
   TimelineKind,
@@ -85,6 +87,68 @@ export type TimelineTone = "muted" | TimelineKind;
 
 export function timelineTone(entry: { kind: TimelineKind; muted: boolean }): TimelineTone {
   return entry.muted ? "muted" : entry.kind;
+}
+
+function pad(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+/** Today's month in the viewer's own calendar, as the API's "YYYY-MM". */
+export function currentPeriod(today: Date = new Date()): string {
+  return `${today.getFullYear()}-${pad(today.getMonth() + 1)}`;
+}
+
+/** Default invoice due date: a week out, as the API's "YYYY-MM-DD". */
+export function defaultDueDate(today: Date = new Date(), days = 7): string {
+  const due = new Date(today.getFullYear(), today.getMonth(), today.getDate() + days);
+  return `${due.getFullYear()}-${pad(due.getMonth() + 1)}-${pad(due.getDate())}`;
+}
+
+/**
+ * Must match the monthly generator's wording (`_tuition_line_description` in
+ * mongo_monthly_billing.py) so a hand-made tuition line reads like a generated
+ * one on the invoice and in the parent's email.
+ */
+export function tuitionLineDescription(period: string): string {
+  return `Monthly tuition ${period}`;
+}
+
+/** What this enrollment is billed per month, override first; null when unpriced. */
+export function enrollmentPriceCents(enrollment: FamilyEnrollment): number | null {
+  return enrollment.override_price_cents ?? enrollment.monthly_price_cents ?? null;
+}
+
+/**
+ * What "Bill this month" will actually charge: the session's monthly price.
+ * The backend prices a hand-billed month off the session document exactly as the
+ * monthly generator does and ignores `override_price_cents`, so quoting the
+ * override here would show the admin a number the invoice never carries.
+ */
+export function enrollmentBillPeriodPriceCents(enrollment: FamilyEnrollment): number | null {
+  return enrollment.monthly_price_cents ?? null;
+}
+
+export interface EnrollmentOption {
+  enrollment_id: string;
+  student_id: string;
+  student_name: string;
+  label: string;
+  price_cents: number | null;
+  bill_period_price_cents: number | null;
+}
+
+/** Flattens the family's students into one pickable list of enrollments. */
+export function enrollmentOptions(students: FamilyStudent[]): EnrollmentOption[] {
+  return students.flatMap((student) =>
+    student.enrollments.map((enrollment) => ({
+      enrollment_id: enrollment.enrollment_id,
+      student_id: student.student_id,
+      student_name: student.name,
+      label: `${student.name} · ${enrollment.session_title ?? "Class"}`,
+      price_cents: enrollmentPriceCents(enrollment),
+      bill_period_price_cents: enrollmentBillPeriodPriceCents(enrollment),
+    })),
+  );
 }
 
 export function mintRequestId(): string {

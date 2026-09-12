@@ -7,8 +7,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useIsOwner } from "@/components/admin/owner-context";
 import { Button, Card, Skeleton } from "@/components/ds";
 import {
+  addAdminInvoiceLine,
   applyAdminInvoiceAdjustment,
+  billEnrollmentPeriod,
   chargeAdminInvoiceAutopay,
+  createStudentInvoice,
   enableBillingSetupAutopay,
   fetchInvoiceAudit,
   inviteBillingSetupParent,
@@ -32,9 +35,46 @@ import { InvoicesPanel } from "./InvoicesPanel";
 import { StudentsPanel } from "./StudentsPanel";
 import { TimelinePanel } from "./TimelinePanel";
 import { ReasonDialog, type ReasonDialogKind, type ReasonDialogResult } from "./family-dialogs";
-import { mintRequestId, periodLabel } from "./family-view";
+import {
+  enrollmentOptions,
+  mintRequestId,
+  periodLabel,
+  tuitionLineDescription,
+  type EnrollmentOption,
+} from "./family-view";
+import {
+  AddChargeDialog,
+  BillPeriodDialog,
+  CreateInvoiceDialog,
+  type AddChargePrefill,
+} from "./invoice-dialogs";
 
 type DialogState = { kind: ReasonDialogKind; invoiceId: string | null };
+type ChargeTarget = { invoiceId: string; subject: string; prefill: AddChargePrefill };
+
+const BLANK_PREFILL: AddChargePrefill = {
+  description: "",
+  line_type: "fee",
+  unit_amount_cents: null,
+};
+
+/**
+ * A charge on a class's invoice is almost always that class's tuition, so the
+ * dialog opens with the line the monthly generator would have written.
+ */
+function chargePrefill(
+  period: string,
+  enrollmentId: string | null,
+  options: EnrollmentOption[],
+): AddChargePrefill {
+  if (!enrollmentId) return BLANK_PREFILL;
+  const option = options.find((o) => o.enrollment_id === enrollmentId);
+  return {
+    description: tuitionLineDescription(period),
+    line_type: "tuition",
+    unit_amount_cents: option?.price_cents ?? null,
+  };
+}
 
 function invoiceSubject(inv: FamilyInvoice, amountCents: number): string {
   return `${periodLabel(inv.period)}${inv.student_name ? ` · ${inv.student_name}` : ""} · ${formatCents(amountCents)}`;
@@ -53,6 +93,9 @@ export default function FamilyBillingPage() {
     null,
   );
   const [toast, setToast] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [chargeTarget, setChargeTarget] = useState<ChargeTarget | null>(null);
+  const [billEnrollmentId, setBillEnrollmentId] = useState<string | null>(null);
 
   const query = useQuery({
     queryKey: queryKeys.admin.familyBilling(parentId),
@@ -156,6 +199,10 @@ export default function FamilyBillingPage() {
     );
   }
 
+  const options = enrollmentOptions(view.students);
+  const billOption = billEnrollmentId
+    ? (options.find((o) => o.enrollment_id === billEnrollmentId) ?? null)
+    : null;
   const owingInvoices = view.invoices
     .filter((i) => i.actions.includes("record_payment"))
     .map((i) => ({
@@ -213,11 +260,23 @@ export default function FamilyBillingPage() {
         }}
         onRecordPayment={() => openRecordPayment(null)}
       />
-      <StudentsPanel students={view.students} isOwner={isOwner} />
+      <StudentsPanel
+        students={view.students}
+        isOwner={isOwner}
+        onBillPeriod={(enrollmentId) => setBillEnrollmentId(enrollmentId)}
+      />
       <InvoicesPanel
         invoices={view.invoices}
         busy={simple.isPending}
         onAction={onInvoiceAction}
+        onAddCharge={(inv) =>
+          setChargeTarget({
+            invoiceId: inv.invoice_id,
+            subject: invoiceSubject(inv, inv.total_cents),
+            prefill: chargePrefill(inv.period, inv.enrollment_id, options),
+          })
+        }
+        onCreateInvoice={() => setCreateOpen(true)}
         onFullAudit={(inv) =>
           simple.mutate(async () => {
             const r = await fetchInvoiceAudit(inv.invoice_id);
@@ -240,6 +299,54 @@ export default function FamilyBillingPage() {
           maxAmountCents={maxAmount}
           onClose={() => setDialog(null)}
           onSubmit={submitReason}
+        />
+      )}
+      <CreateInvoiceDialog
+        students={view.students}
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onSubmit={async (r) => {
+          const created = await createStudentInvoice(r.student_id, {
+            parent_id: view.parent.parent_id,
+            period: r.period,
+            due_date: r.due_date,
+            enrollment_id: r.enrollment_id,
+          });
+          await refresh();
+          setCreateOpen(false);
+          setChargeTarget({
+            invoiceId: created.invoice_id,
+            subject: `${periodLabel(created.period)} · draft`,
+            prefill: chargePrefill(created.period, created.enrollment_id, options),
+          });
+        }}
+      />
+      {chargeTarget && (
+        <AddChargeDialog
+          open
+          subject={chargeTarget.subject}
+          prefill={chargeTarget.prefill}
+          onClose={() => setChargeTarget(null)}
+          onSubmit={async (payload) => {
+            await addAdminInvoiceLine(chargeTarget.invoiceId, payload);
+            await refresh();
+            setChargeTarget(null);
+          }}
+        />
+      )}
+      {billOption && (
+        <BillPeriodDialog
+          open
+          option={billOption}
+          onClose={() => setBillEnrollmentId(null)}
+          onSubmit={async (r) => {
+            const created = await billEnrollmentPeriod(billOption.enrollment_id, r);
+            await refresh();
+            setBillEnrollmentId(null);
+            setToast(
+              `Draft invoice created for ${billOption.label} · ${periodLabel(created.period)} · ${formatCents(created.total_cents)}.`,
+            );
+          }}
         />
       )}
       <RecordPaymentDialog

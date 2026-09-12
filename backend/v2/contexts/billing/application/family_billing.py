@@ -286,6 +286,11 @@ def autopay_state(enrollments: Iterable[EnrollmentFacts]) -> str:
 
 def invoice_actions(inv: InvoiceFacts, *, eligibility: Eligibility) -> list[str]:
     """Spec §3.4 per-invoice table. Order is the button order on the page."""
+    if inv.status == "draft":
+        # A draft is the manual-invoicing working state: it is sent (draft →
+        # open, which is what mails the parent) or abandoned. Nothing is owed
+        # on it yet, so no payment/charge action applies.
+        return ["send", "void"]
     actions: list[str] = []
     if inv.status in CHARGEABLE_INVOICE_STATUSES:
         actions.append("send")
@@ -381,6 +386,7 @@ _AUDIT_SUMMARIES: dict[str, str] = {
     "autopay_resumed": "Autopay turned on",
     "autopay_paused": "Autopay turned off",
     "invoice_voided": "Invoice voided by admin",
+    "invoice_hand_billed": "Invoice created by admin",
     "invoice_line_added": "Charge added to invoice",
     "invoice_line_removed": "Charge removed from invoice",
     "discount_set": "Discount set",

@@ -2,12 +2,19 @@ import { describe, expect, it } from "vitest";
 
 import {
   autopayToggle,
+  currentPeriod,
+  defaultDueDate,
+  enrollmentBillPeriodPriceCents,
+  enrollmentOptions,
+  enrollmentPriceCents,
   invoiceActionLabel,
   periodLabel,
   registrationChip,
   shortDate,
   timelineTone,
+  tuitionLineDescription,
 } from "./family-view";
+import type { FamilyEnrollment, FamilyStudent } from "@/lib/api/admin-families";
 
 describe("autopayToggle", () => {
   const base = {
@@ -81,5 +88,73 @@ describe("labels and chips", () => {
   it("mutes comms rows", () => {
     expect(timelineTone({ kind: "comms", muted: true })).toBe("muted");
     expect(timelineTone({ kind: "money", muted: false })).toBe("money");
+  });
+});
+
+describe("manual invoice defaults", () => {
+  it("currentPeriod uses the viewer's own calendar month", () => {
+    expect(currentPeriod(new Date(2026, 8, 12))).toBe("2026-09");
+    expect(currentPeriod(new Date(2026, 0, 1))).toBe("2026-01");
+  });
+  it("defaultDueDate lands a week out and rolls the month", () => {
+    expect(defaultDueDate(new Date(2026, 8, 12))).toBe("2026-09-19");
+    expect(defaultDueDate(new Date(2026, 8, 28))).toBe("2026-10-05");
+  });
+  it("tuitionLineDescription matches the monthly generator's wording", () => {
+    expect(tuitionLineDescription("2026-09")).toBe("Monthly tuition 2026-09");
+  });
+});
+
+describe("enrollment pricing", () => {
+  const enrollment: FamilyEnrollment = {
+    enrollment_id: "enr-1",
+    session_id: "ses-1",
+    session_title: "Tue/Thu Intermediate",
+    schedule: null,
+    status: "active",
+    monthly_price_cents: 12000,
+    override_price_cents: null,
+    autopay_status: null,
+    recurring_discount: null,
+    resume_on: null,
+    actions: [],
+  };
+  it("prefers the override price", () => {
+    expect(enrollmentPriceCents(enrollment)).toBe(12000);
+    expect(enrollmentPriceCents({ ...enrollment, override_price_cents: 9000 })).toBe(9000);
+    expect(enrollmentPriceCents({ ...enrollment, monthly_price_cents: null })).toBeNull();
+  });
+  it("flattens students into one labelled list", () => {
+    const students: FamilyStudent[] = [
+      { student_id: "stu-1", name: "Arjun", status: "active", enrollments: [enrollment] },
+      { student_id: "stu-2", name: "Meera", status: "active", enrollments: [] },
+    ];
+    expect(enrollmentOptions(students)).toEqual([
+      {
+        enrollment_id: "enr-1",
+        student_id: "stu-1",
+        student_name: "Arjun",
+        label: "Arjun · Tue/Thu Intermediate",
+        price_cents: 12000,
+        bill_period_price_cents: 12000,
+      },
+    ]);
+  });
+  it("quotes the session price for Bill this month, never the override", () => {
+    expect(enrollmentBillPeriodPriceCents({ ...enrollment, override_price_cents: 15000 })).toBe(
+      12000,
+    );
+    expect(enrollmentBillPeriodPriceCents({ ...enrollment, monthly_price_cents: null })).toBeNull();
+  });
+  it("falls back to Class when the session has no title", () => {
+    const students: FamilyStudent[] = [
+      {
+        student_id: "stu-1",
+        name: "Arjun",
+        status: "active",
+        enrollments: [{ ...enrollment, session_title: null }],
+      },
+    ];
+    expect(enrollmentOptions(students)[0].label).toBe("Arjun · Class");
   });
 });

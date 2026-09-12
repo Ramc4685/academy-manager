@@ -25,17 +25,32 @@ export function InvoicesPanel({
   invoices,
   busy,
   onAction,
+  onAddCharge,
+  onCreateInvoice,
   onFullAudit,
 }: {
   invoices: FamilyInvoice[];
   busy: boolean;
   onAction: (action: InvoiceAction, invoice: FamilyInvoice) => void;
+  onAddCharge: (invoice: FamilyInvoice) => void;
+  onCreateInvoice: () => void;
   onFullAudit: (invoice: FamilyInvoice) => void;
 }) {
   const [openId, setOpenId] = useState<string | null>(null);
   return (
     <Card p={20} data-testid="family-invoices">
-      <Overline>Invoices</Overline>
+      <div className="flex items-center justify-between">
+        <Overline>Invoices</Overline>
+        <Button
+          size="sm"
+          variant="secondary"
+          data-testid="family-create-invoice"
+          onClick={onCreateInvoice}
+          disabled={busy}
+        >
+          Create invoice
+        </Button>
+      </div>
       {invoices.length === 0 ? (
         <p className="mt-2 text-sm text-rally-muted">No invoices yet.</p>
       ) : (
@@ -86,6 +101,17 @@ export function InvoicesPanel({
                   </span>
                   <span className="flex flex-wrap items-center justify-end gap-1">
                     <span className="mr-2 text-xs text-rally-muted">{deliveryLabel(inv)}</span>
+                    {inv.status === "draft" && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        data-testid={`invoice-add-charge-${inv.invoice_id}`}
+                        onClick={() => onAddCharge(inv)}
+                        disabled={busy}
+                      >
+                        Add charge
+                      </Button>
+                    )}
                     {inv.actions.map((a) => (
                       <Button
                         key={a}

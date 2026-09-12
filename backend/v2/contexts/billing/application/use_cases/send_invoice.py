@@ -135,6 +135,10 @@ class InvoiceEmailPort(Protocol):
         ...
 
 
+class EmptyInvoiceNotSendable(Exception):
+    """A draft with no charges on it — finalizing would mail the parent a $0 bill."""
+
+
 # ---------------------------------------------------------------------------
 # Result DTO
 # ---------------------------------------------------------------------------
@@ -240,6 +244,8 @@ class SendInvoice:
 
         # 2. Finalize draft invoices before sending
         if invoice.status == "draft":
+            if invoice.total_cents == 0:
+                raise EmptyInvoiceNotSendable("Add at least one charge before sending")
             invoice = finalize(invoice, now=now)
             invoice = await self._ledger.save_invoice(invoice)
             log.info("send_invoice: finalized draft invoice=%s", invoice_id)

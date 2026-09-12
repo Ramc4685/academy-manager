@@ -18,6 +18,9 @@ BillingAuditAction = Literal[
     "invoice_line_added",
     "invoice_line_removed",
     "invoice_voided",
+    # Family billing page: an admin hand-billed one enrollment's month instead of
+    # waiting for the monthly generator, creating a real receivable.
+    "invoice_hand_billed",
     "discount_set",
     "discount_removed",
     # Charge-routing config, not money movement: flipping the temporary

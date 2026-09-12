@@ -106,7 +106,16 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
 
         doc = _mongo_doc(invoice)
         doc["idempotency_key"] = idempotency_key
-        await self._insert_one({k: v for k, v in doc.items() if k != "academy_id"})
+        try:
+            await self._insert_one({k: v for k, v in doc.items() if k != "academy_id"})
+        except DuplicateKeyError:
+            # Lost a concurrent race on the unique (academy_id, idempotency_key)
+            # index — return the winner's invoice so the caller sees a duplicate
+            # rather than a 500.
+            winner = await self._find_one({"idempotency_key": idempotency_key})
+            if winner is None:
+                raise  # Collision on invoice_id — genuine duplicate, re-raise.
+            return self._invoice_from_doc(winner)
         await self._ensure_invoice_lines(
             invoice.invoice_id,
             lines=lines,

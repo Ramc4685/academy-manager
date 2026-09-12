@@ -389,6 +389,7 @@ class AdminUseCases:
     issue_invoice_refund: object | None = None
     list_billing_audit: object | None = None
     create_student_invoice: object | None = None
+    bill_enrollment_period: object | None = None
     list_billing_products: object | None = None
     create_billing_product: object | None = None
     update_billing_product: object | None = None
