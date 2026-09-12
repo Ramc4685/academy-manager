@@ -33,15 +33,26 @@ def test_admin_session_roster_query_lists_paused_and_held_enrollments() -> None:
     assert '"status": {"$in": ["active", "paused", "held", "reclaim_pending"]}' in source
 
 
-def test_admin_session_seat_counts_stay_active_only() -> None:
-    """Listing paused rows must not make them occupy a seat: pause releases
-    the seat, so `enrolled_count` (capacity / open spots) counts active only."""
+def test_admin_session_enrolled_count_counts_seat_holding_rows() -> None:
+    """`enrolled_count` must count every row that occupies a seat: SEAT_HOLDING.
+
+    Pause releases the seat, so a paused row must stay out of the count — but
+    a *held* row keeps its seat (`SEAT_HOLDING = {"active", "held"}`), which is
+    what `MongoEnrollmentWriter.count_active_for_session` has counted since
+    #697 and what `SeatBroker.try_reserve_seat` enforces. Until #734 this
+    inline count filtered on a bare `"active"`, so a class that was full of
+    holds reported open spots on the sessions list; the admin trusted the
+    number, hit Add, and `claim_longest_held` silently dropped the longest-held
+    child. The display count and the seat contract must agree.
+    """
     source = _ADMIN.read_text()
     marker = "enrolled_count = await enrollments_r.collection.count_documents("
     assert marker in source
     window = source[source.index(marker) : source.index(marker) + 300]
-    assert '"status": "active",' in window
+    assert '"status": {"$in": sorted(SEAT_HOLDING)}' in window
+    assert '"status": "active",' not in window
     assert "paused" not in window
+    assert "from backend.v2.contexts.enrollment.domain.models import SEAT_HOLDING" in source
 
 
 def test_roster_add_resumes_a_paused_row_instead_of_refusing_it() -> None:

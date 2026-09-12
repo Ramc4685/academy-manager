@@ -340,6 +340,7 @@ from backend.v2.contexts.enrollment.domain.events import (
     StudentSessionTypeChanged,
     StudentSessionTypeChangedPayload,
 )
+from backend.v2.contexts.enrollment.domain.models import SEAT_HOLDING
 from backend.v2.contexts.enrollment.infrastructure.mongo_absence_notice_repo import (
     MongoAbsenceNoticeRepository,
 )
@@ -2096,11 +2097,16 @@ def compose_admin(
         rows: list[dict[str, Any]] = []
         for doc in docs:
             session_id = str(doc.get("session_id") or doc.get("_id"))
+            # Issue #734: a held row keeps its seat (SEAT_HOLDING), exactly as
+            # MongoEnrollmentWriter.count_active_for_session and SeatBroker
+            # count it. Filtering on a bare "active" made a class full of holds
+            # advertise open spots, and the resulting Add silently reclaimed the
+            # longest-held child's seat.
             enrolled_count = await enrollments_r.collection.count_documents(
                 {
                     "academy_id": request_academy_id,
                     "session_id": session_id,
-                    "status": "active",
+                    "status": {"$in": sorted(SEAT_HOLDING)},
                 }
             )
             waitlist_count = await waitlist.collection.count_documents(

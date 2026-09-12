@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { EnrollmentStatus } from "@/lib/api/admin";
 
-import { rosterActionsFor } from "./RosterPanel";
+import { rosterActionsFor, seatsHeldCount } from "./RosterPanel";
 
 describe("rosterActionsFor (#696, #711, #714 follow-up)", () => {
   it("offers drop only on the statuses WithdrawEnrollment accepts", () => {
@@ -38,5 +38,31 @@ describe("rosterActionsFor (#696, #711, #714 follow-up)", () => {
     // Nothing else gained the pair — a paused row keeps Pause/Resume only.
     expect(rosterActionsFor("paused")).not.toContain("hold");
     expect(rosterActionsFor("paused")).not.toContain("return");
+  });
+});
+
+describe("seatsHeldCount (#734)", () => {
+  const row = (status: EnrollmentStatus) => ({ status }) as { status: EnrollmentStatus };
+
+  it("counts held rows as occupying a seat, like SEAT_HOLDING on the backend", () => {
+    // A class at capacity 1 whose only row is held is FULL: SeatBroker's
+    // try_reserve_seat will refuse the add and claim_longest_held would drop
+    // that child. "Open spots 1 / Add 1" invited exactly that.
+    expect(seatsHeldCount([row("held")])).toBe(1);
+    expect(seatsHeldCount([row("active"), row("held")])).toBe(2);
+  });
+
+  it("leaves every seatless status out of the count", () => {
+    const seatless: EnrollmentStatus[] = [
+      "paused",
+      "reclaim_pending",
+      "cancelled",
+      "deleted",
+      "withdrawn",
+      "dropped",
+    ];
+    for (const status of seatless) {
+      expect(seatsHeldCount([row(status)]), `seat for ${status}`).toBe(0);
+    }
   });
 });
