@@ -182,9 +182,16 @@ def test_paid_invoice_with_manual_allocation_has_no_refund() -> None:
     )
 
 
-def test_void_and_draft_invoices_have_no_actions() -> None:
+def test_void_invoice_has_no_actions() -> None:
     assert invoice_actions(_invoice(status="void", balance=0), eligibility=ELIGIBLE) == []
-    assert invoice_actions(_invoice(status="draft"), eligibility=ELIGIBLE) == []
+
+
+def test_draft_invoice_can_be_sent_or_voided() -> None:
+    assert invoice_actions(_invoice(status="draft"), eligibility=ELIGIBLE) == ["send", "void"]
+    assert invoice_actions(
+        _invoice(status="draft", balance=0),
+        eligibility=Eligibility("ineligible", "no_card_on_file"),
+    ) == ["send", "void"]
 
 
 def test_family_actions() -> None:

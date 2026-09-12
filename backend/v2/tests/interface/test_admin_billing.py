@@ -11,6 +11,11 @@ from backend.v2.contexts.billing.application.use_cases.add_invoice_line import (
     AddInvoiceLine,
     AddInvoiceLineCommand,
 )
+from backend.v2.contexts.billing.application.use_cases.bill_enrollment_period import (
+    BillEnrollmentPeriod,
+    BillEnrollmentPeriodCommand,
+    EnrollmentBillingTarget,
+)
 from backend.v2.contexts.billing.application.use_cases.finance import Payout
 from backend.v2.contexts.billing.application.use_cases.remove_invoice_line import (
     RemoveInvoiceLine,
@@ -112,6 +117,9 @@ class _FakeLedger:
         self.invoices = {invoice.invoice_id: invoice for invoice in invoices or []}
         self.lines = {line.line_id: line for line in lines or []}
         self.saved_invoices: list[LedgerInvoice] = []
+        # Mirrors the real repo's unique (academy_id, idempotency_key) index: a
+        # repeated key returns the stored invoice instead of inserting a second one.
+        self.invoice_ids_by_key: dict[str, str] = {}
 
     async def get_invoice(self, invoice_id: str) -> LedgerInvoice | None:
         return self.invoices.get(invoice_id)
@@ -122,6 +130,21 @@ class _FakeLedger:
         for invoice in self.invoices.values():
             if invoice.student_id == student_id and invoice.period == period:
                 return invoice
+        return None
+
+    async def get_invoice_for_enrollment_period(
+        self,
+        enrollment_id: str,
+        period: str,
+        *,
+        statuses: set[str] | None = None,
+    ) -> LedgerInvoice | None:
+        for invoice in self.invoices.values():
+            if invoice.enrollment_id != enrollment_id or invoice.period != period:
+                continue
+            if statuses is not None and invoice.status not in statuses:
+                continue
+            return invoice
         return None
 
     async def get_lines_for_invoice(self, invoice_id: str) -> list[InvoiceLine]:
@@ -153,6 +176,10 @@ class _FakeLedger:
         lines: list[InvoiceLine],
         idempotency_key: str,
     ) -> LedgerInvoice:
+        existing_id = self.invoice_ids_by_key.get(idempotency_key)
+        if existing_id is not None:
+            return self.invoices[existing_id]
+        self.invoice_ids_by_key[idempotency_key] = invoice.invoice_id
         self.invoices[invoice.invoice_id] = invoice
         for line in lines:
             self.lines[line.line_id] = line
@@ -363,6 +390,39 @@ def _override_ledger(admin_client, ledger: _FakeLedger) -> None:
     admin_client.use_cases.remove_invoice_line = remove_invoice_line
     admin_client.use_cases.void_billing_invoice = void_billing_invoice
     admin_client.use_cases.create_student_invoice = create_student_invoice
+
+
+class _FakeEnrollmentTargets:
+    def __init__(self, target: EnrollmentBillingTarget | None) -> None:
+        self.target = target
+
+    async def load(self, enrollment_id: str, period: str) -> EnrollmentBillingTarget | None:
+        if self.target is None or self.target.enrollment_id != enrollment_id:
+            return None
+        return self.target
+
+
+def _override_bill_enrollment_period(
+    admin_client, ledger: _FakeLedger, target: EnrollmentBillingTarget | None
+) -> list[str | None]:
+    actors: list[str | None] = []
+
+    async def bill_enrollment_period(
+        *, enrollment_id: str, period: str, due_date: date, actor_id: str | None = None
+    ) -> dict:
+        actors.append(actor_id)
+        return await BillEnrollmentPeriod(
+            ledger=ledger,
+            enrollments=_FakeEnrollmentTargets(target),
+            add_line=AddInvoiceLine(ledger=ledger),
+        ).execute(
+            BillEnrollmentPeriodCommand(
+                enrollment_id=enrollment_id, period=period, due_date=due_date
+            )
+        )
+
+    admin_client.use_cases.bill_enrollment_period = bill_enrollment_period
+    return actors
 
 
 def _override_invoice_stripe(admin_client, stripe: _FakeInvoiceStripe) -> None:
@@ -1362,6 +1422,230 @@ def test_create_student_invoice_allows_matching_student_parent_and_enrollment(ad
     assert body["enrollment_id"] == "enroll-1"
     assert body["status"] == "draft"
     assert len(ledger.invoices) == 1
+
+
+def test_send_refuses_draft_invoice_with_no_charges(admin_client):
+    ledger = _FakeLedger(
+        invoices=[_invoice(status="draft", subtotal_cents=0, total_cents=0, balance_due_cents=0)]
+    )
+    _override_ledger(admin_client, ledger)
+
+    response = admin_client.post("/api/v2/admin/billing/invoices/inv-1/send")
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == "Add at least one charge before sending"
+    assert ledger.invoices["inv-1"].status == "draft"
+
+
+def test_send_finalizes_draft_invoice_that_has_a_charge(admin_client):
+    ledger = _FakeLedger(
+        invoices=[_invoice(status="draft")],
+        lines=[_invoice_line(line_id="line-1", amount_cents=7_000)],
+    )
+    _override_ledger(admin_client, ledger)
+
+    response = admin_client.post("/api/v2/admin/billing/invoices/inv-1/send")
+
+    assert response.status_code == 200, response.text
+    assert ledger.invoices["inv-1"].status == "open"
+
+
+def test_bill_enrollment_period_drafts_invoice_with_tuition_line(admin_client):
+    ledger = _FakeLedger()
+    _override_bill_enrollment_period(
+        admin_client,
+        ledger,
+        EnrollmentBillingTarget(
+            enrollment_id="enroll-1",
+            academy_id="acad",
+            student_id="student-1",
+            parent_id="parent-1",
+            monthly_price_cents=12_000,
+        ),
+    )
+
+    response = admin_client.post(
+        "/api/v2/admin/enrollments/enroll-1/invoices/bill-period",
+        json={"period": "2026-06", "due_date": "2026-06-30"},
+    )
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["student_id"] == "student-1"
+    assert body["parent_id"] == "parent-1"
+    assert body["enrollment_id"] == "enroll-1"
+    assert body["status"] == "draft"
+    assert body["total_cents"] == 12_000
+    line = next(iter(ledger.lines.values()))
+    assert line.line_type == "tuition"
+    assert line.description == "Monthly tuition 2026-06"
+    assert line.unit_amount_cents == 12_000
+
+
+def test_bill_enrollment_period_rejects_a_second_invoice_for_the_period(admin_client):
+    ledger = _FakeLedger(invoices=[_invoice(status="open")])
+    _override_bill_enrollment_period(
+        admin_client,
+        ledger,
+        EnrollmentBillingTarget(
+            enrollment_id="enroll-1",
+            academy_id="acad",
+            student_id="student-1",
+            parent_id="parent-1",
+            monthly_price_cents=12_000,
+        ),
+    )
+
+    response = admin_client.post(
+        "/api/v2/admin/enrollments/enroll-1/invoices/bill-period",
+        json={"period": "2026-06", "due_date": "2026-06-30"},
+    )
+
+    assert response.status_code == 409, response.text
+    assert len(ledger.invoices) == 1
+
+
+def test_bill_enrollment_period_applies_the_active_recurring_discount(admin_client):
+    ledger = _FakeLedger()
+    _override_bill_enrollment_period(
+        admin_client,
+        ledger,
+        EnrollmentBillingTarget(
+            enrollment_id="enroll-1",
+            academy_id="acad",
+            student_id="student-1",
+            parent_id="parent-1",
+            monthly_price_cents=12_000,
+            monthly_discount_cents=2_400,
+            discount_description="Sibling discount",
+            discount_id="disc-1",
+        ),
+    )
+
+    response = admin_client.post(
+        "/api/v2/admin/enrollments/enroll-1/invoices/bill-period",
+        json={"period": "2026-06", "due_date": "2026-06-30"},
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["total_cents"] == 9_600
+    discount = next(line for line in ledger.lines.values() if line.line_type == "discount")
+    assert discount.description == "Sibling discount"
+    assert discount.amount_cents == -2_400
+
+
+def test_bill_enrollment_period_refuses_an_unpriced_enrollment(admin_client):
+    ledger = _FakeLedger()
+    _override_bill_enrollment_period(
+        admin_client,
+        ledger,
+        EnrollmentBillingTarget(
+            enrollment_id="enroll-1",
+            academy_id="acad",
+            student_id="student-1",
+            parent_id="parent-1",
+            monthly_price_cents=0,
+        ),
+    )
+
+    response = admin_client.post(
+        "/api/v2/admin/enrollments/enroll-1/invoices/bill-period",
+        json={"period": "2026-06", "due_date": "2026-06-30"},
+    )
+
+    assert response.status_code == 409, response.text
+    assert ledger.invoices == {}
+
+
+def test_bill_enrollment_period_refuses_an_enrollment_that_left_the_class(admin_client):
+    ledger = _FakeLedger()
+    _override_bill_enrollment_period(
+        admin_client,
+        ledger,
+        EnrollmentBillingTarget(
+            enrollment_id="enroll-1",
+            academy_id="acad",
+            student_id="student-1",
+            parent_id="parent-1",
+            monthly_price_cents=12_000,
+            status="cancelled",
+        ),
+    )
+
+    response = admin_client.post(
+        "/api/v2/admin/enrollments/enroll-1/invoices/bill-period",
+        json={"period": "2026-06", "due_date": "2026-06-30"},
+    )
+
+    assert response.status_code == 409, response.text
+    assert ledger.invoices == {}
+
+
+def test_bill_enrollment_period_can_rebill_after_the_draft_was_voided(admin_client):
+    ledger = _FakeLedger()
+    _override_bill_enrollment_period(
+        admin_client,
+        ledger,
+        EnrollmentBillingTarget(
+            enrollment_id="enroll-1",
+            academy_id="acad",
+            student_id="student-1",
+            parent_id="parent-1",
+            monthly_price_cents=12_000,
+        ),
+    )
+    first = admin_client.post(
+        "/api/v2/admin/enrollments/enroll-1/invoices/bill-period",
+        json={"period": "2026-06", "due_date": "2026-06-30"},
+    )
+    assert first.status_code == 201, first.text
+    voided_id = first.json()["invoice_id"]
+    ledger.invoices[voided_id] = ledger.invoices[voided_id].model_copy(update={"status": "void"})
+
+    second = admin_client.post(
+        "/api/v2/admin/enrollments/enroll-1/invoices/bill-period",
+        json={"period": "2026-06", "due_date": "2026-07-07"},
+    )
+
+    assert second.status_code == 201, second.text
+    assert second.json()["invoice_id"] != voided_id
+    assert second.json()["total_cents"] == 12_000
+
+
+def test_bill_enrollment_period_passes_the_admin_actor_through(admin_client):
+    ledger = _FakeLedger()
+    actors = _override_bill_enrollment_period(
+        admin_client,
+        ledger,
+        EnrollmentBillingTarget(
+            enrollment_id="enroll-1",
+            academy_id="acad",
+            student_id="student-1",
+            parent_id="parent-1",
+            monthly_price_cents=12_000,
+        ),
+    )
+
+    response = admin_client.post(
+        "/api/v2/admin/enrollments/enroll-1/invoices/bill-period",
+        json={"period": "2026-06", "due_date": "2026-06-30"},
+    )
+
+    assert response.status_code == 201, response.text
+    assert actors and actors[0]
+
+
+def test_bill_enrollment_period_404s_for_an_unknown_enrollment(admin_client):
+    ledger = _FakeLedger()
+    _override_bill_enrollment_period(admin_client, ledger, None)
+
+    response = admin_client.post(
+        "/api/v2/admin/enrollments/enroll-9/invoices/bill-period",
+        json={"period": "2026-06", "due_date": "2026-06-30"},
+    )
+
+    assert response.status_code == 404, response.text
+    assert ledger.invoices == {}
 
 
 # --------------------------------------------------------------------------- #

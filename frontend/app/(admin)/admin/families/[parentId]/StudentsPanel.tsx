@@ -27,9 +27,11 @@ function studentHref(studentId: string): Route {
 export function StudentsPanel({
   students,
   isOwner,
+  onBillPeriod,
 }: {
   students: FamilyStudent[];
   isOwner: boolean;
+  onBillPeriod: (enrollmentId: string) => void;
 }) {
   const [stopAllClassesFor, setStopAllClassesFor] = useState<{
     studentId: string;
@@ -113,6 +115,16 @@ export function StudentsPanel({
                             variant="manual"
                             label={e.autopay_status === "paused" ? "Autopay off" : "Manual"}
                           />
+                        )}
+                        {e.status === "active" && (
+                          <button
+                            type="button"
+                            onClick={() => onBillPeriod(e.enrollment_id)}
+                            className="text-rally-cobalt-700 hover:underline"
+                            data-testid={`enrollment-bill-period-${e.enrollment_id}`}
+                          >
+                            Bill this month
+                          </button>
                         )}
                         {isOwner && e.actions.includes("recurring_discount") && (
                           <Link

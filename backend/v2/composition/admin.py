@@ -109,6 +109,10 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
     SendDuesReminders,
     UndoPaymentPaid,
 )
+from backend.v2.contexts.billing.application.use_cases.bill_enrollment_period import (
+    BillEnrollmentPeriod,
+    BillEnrollmentPeriodCommand,
+)
 from backend.v2.contexts.billing.application.use_cases.billing_settings_admin import (
     GetInvoiceScheduleSettings,
     GetPlatformChargeFallback,
@@ -208,6 +212,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import 
 )
 from backend.v2.contexts.billing.infrastructure.mongo_dunning_state_repo import (
     MongoDunningStateRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_enrollment_billing_target import (
+    MongoEnrollmentBillingTargetReader,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_parent_billing_customer_repo import (
     MongoParentBillingCustomerRepository,
@@ -1631,6 +1638,52 @@ def compose_admin(
             idempotency_key=f"admin-invoice-{invoice_id}",
         )
         return created.model_dump(mode="json")
+
+    async def bill_enrollment_period(
+        *,
+        enrollment_id: str,
+        period: str,
+        due_date: date,
+        actor_id: str | None = None,
+    ) -> dict[str, Any]:
+        from backend.v2.shared.tenancy import current_academy_id
+
+        created = await BillEnrollmentPeriod(
+            ledger=billing_ledger_repo,
+            enrollments=MongoEnrollmentBillingTargetReader(db),
+            add_line=AddInvoiceLine(
+                ledger=billing_ledger_repo,
+                counters=billing_counters_repo,
+                settings=billing_settings_repo,
+            ),
+        ).execute(
+            BillEnrollmentPeriodCommand(
+                enrollment_id=enrollment_id,
+                period=period,
+                due_date=due_date,
+            )
+        )
+        # Hand-billing creates a real receivable against a family, so it gets the
+        # same actor trail as the other admin money mutations in this file.
+        await billing_audit_log.append(
+            BillingAuditEntry(
+                audit_id=f"baud-{new_ulid()}",
+                academy_id=current_academy_id(),
+                action="invoice_hand_billed",
+                actor_id=actor_id or "system",
+                at=datetime.now(UTC),
+                invoice_id=str(created.get("invoice_id") or ""),
+                parent_id=str(created.get("parent_id") or "") or None,
+                reason=period,
+                after={
+                    "enrollment_id": enrollment_id,
+                    "period": period,
+                    "total_cents": created.get("total_cents"),
+                    "status": created.get("status"),
+                },
+            )
+        )
+        return created
 
     send_campaign = compose_send_campaign(db, _email_sender, settings)
     waivers_repo = MongoAdminWaiverRepository(db)
@@ -4102,6 +4155,7 @@ def compose_admin(
         issue_invoice_refund=issue_invoice_refund,
         list_billing_audit=list_billing_audit,
         create_student_invoice=create_student_invoice,
+        bill_enrollment_period=bill_enrollment_period,
         list_billing_products=list_billing_products,
         create_billing_product=create_billing_product,
         update_billing_product=update_billing_product,

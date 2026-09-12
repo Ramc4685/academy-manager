@@ -721,6 +721,11 @@ export interface CreateStudentInvoiceRequest {
   enrollment_id?: string | null;
 }
 
+export interface BillEnrollmentPeriodRequest {
+  period: string;
+  due_date: string;
+}
+
 export interface AddInvoiceLineRequest {
   product_id?: string | null;
   description: string;
@@ -2419,6 +2424,31 @@ export function deleteBillingProduct(productId: string): Promise<void> {
   return apiFetch<void>(`/admin/billing/products/${encodeURIComponent(productId)}`, {
     method: "DELETE",
   });
+}
+
+export function createStudentInvoice(
+  studentId: string,
+  payload: CreateStudentInvoiceRequest,
+): Promise<AdminLedgerInvoiceView> {
+  return apiFetch<AdminLedgerInvoiceView>(
+    `/admin/students/${encodeURIComponent(studentId)}/invoices`,
+    // The route 409s unless the body's student matches the path's.
+    { method: "POST", body: JSON.stringify({ student_id: studentId, ...payload }) },
+  );
+}
+
+/**
+ * Draft + one tuition line for an enrollment's month, in a single call. The
+ * backend resolves the session price, so the client never guesses it.
+ */
+export function billEnrollmentPeriod(
+  enrollmentId: string,
+  payload: BillEnrollmentPeriodRequest,
+): Promise<AdminLedgerInvoiceView> {
+  return apiFetch<AdminLedgerInvoiceView>(
+    `/admin/enrollments/${encodeURIComponent(enrollmentId)}/invoices/bill-period`,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
 }
 
 export function getAdminInvoiceDetail(invoiceId: string): Promise<AdminInvoiceDetail> {
