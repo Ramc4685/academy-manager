@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { EnrollmentStatus } from "@/lib/api/admin";
 
-import { rosterActionsFor, seatsHeldCount } from "./RosterPanel";
+import { partitionRoster, rosterActionsFor, seatsHeldCount } from "./RosterPanel";
 
 describe("rosterActionsFor (#696, #711, #714 follow-up)", () => {
   it("offers drop only on the statuses WithdrawEnrollment accepts", () => {
@@ -64,5 +64,44 @@ describe("seatsHeldCount (#734)", () => {
     for (const status of seatless) {
       expect(seatsHeldCount([row(status)]), `seat for ${status}`).toBe(0);
     }
+  });
+});
+
+describe("partitionRoster (#712, #735)", () => {
+  const row = (status: EnrollmentStatus) => ({ status }) as { status: EnrollmentStatus };
+
+  it("keeps held and reclaim_pending on the Active tab, not Past", () => {
+    // #712 introduced the Active/Past split; it only tested status === "active",
+    // so a held or reclaim_pending row — still live, still actionable via
+    // rosterActionsFor (return/transfer/drop) — landed in Past next to
+    // genuinely departed students.
+    const enrollments = [
+      row("active"),
+      row("held"),
+      row("reclaim_pending"),
+      row("withdrawn"),
+    ];
+    const { active, past } = partitionRoster(enrollments);
+    expect(active).toHaveLength(3);
+    expect(active.map((e) => e.status)).toEqual(["active", "held", "reclaim_pending"]);
+    expect(past).toHaveLength(1);
+    expect(past.map((e) => e.status)).toEqual(["withdrawn"]);
+  });
+
+  it("sends every terminal status to Past", () => {
+    const terminal: EnrollmentStatus[] = ["cancelled", "deleted", "withdrawn", "dropped"];
+    for (const status of terminal) {
+      const { active, past } = partitionRoster([row(status)]);
+      expect(active, `active for ${status}`).toHaveLength(0);
+      expect(past, `past for ${status}`).toHaveLength(1);
+    }
+  });
+
+  it("leaves paused on Past, unchanged from before #735", () => {
+    // Only held/reclaim_pending moved; "paused" (seat released, distinct
+    // status) keeps its existing Past placement.
+    const { active, past } = partitionRoster([row("paused")]);
+    expect(active).toHaveLength(0);
+    expect(past).toHaveLength(1);
   });
 });

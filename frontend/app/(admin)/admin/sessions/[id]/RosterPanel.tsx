@@ -54,6 +54,29 @@ export function seatsHeldCount(enrollments: Pick<AdminEnrollmentView, "status">[
   return enrollments.filter((e) => SEAT_HOLDING.has(e.status)).length;
 }
 
+// Issue #735: the Active/Past roster tabs (#712) split purely on
+// status === "active", so "held" and "reclaim_pending" — both live,
+// still-enrolled statuses that rosterActionsFor treats as actionable
+// (return/transfer/drop) — fell into Past alongside genuinely departed
+// students (cancelled/deleted/withdrawn/dropped).
+const ROSTER_ACTIVE_STATUSES: ReadonlySet<EnrollmentStatus> = new Set<EnrollmentStatus>([
+  "active",
+  "held",
+  "reclaim_pending",
+]);
+
+/** Splits a roster into the Active and Past tab contents (#712, #735). */
+export function partitionRoster<T extends Pick<AdminEnrollmentView, "status">>(
+  enrollments: T[],
+): { active: T[]; past: T[] } {
+  const active: T[] = [];
+  const past: T[] = [];
+  for (const enrollment of enrollments) {
+    (ROSTER_ACTIVE_STATUSES.has(enrollment.status) ? active : past).push(enrollment);
+  }
+  return { active, past };
+}
+
 export function RosterMetrics({
   enrollments,
   capacity,
