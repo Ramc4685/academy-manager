@@ -2910,3 +2910,63 @@ async def test_create_session_resolves_the_zone_from_the_academy_record(
     assert row is not None
     assert row["timezone"] == "America/Chicago"
     assert row["start_at"].hour == 23
+
+
+@pytest.mark.asyncio
+async def test_admin_sessions_enrolled_count_includes_held_seats(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A held row still occupies its seat, so it must count toward capacity.
+
+    Issue #734: the sessions list counted `status: "active"` only, so a class
+    that was full of holds advertised an open spot. The admin acting on that
+    number triggered `SeatBroker.claim_longest_held`, which silently dropped
+    the longest-held child. A paused row released its seat and still must not
+    count.
+    """
+    monkeypatch.setattr(admin_composition, "datetime", _FrozenAdminDateTime)
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["admin-sessions-held-seats"]
+    await db.sessions.insert_one(
+        {
+            "academy_id": "academy-b",
+            "session_id": "sess-full-of-holds",
+            "title": "Held Seats Class",
+            "location": "Court 1",
+            "coach_id": "coach-kishore",
+            "capacity": 1,
+            "status": "scheduled",
+            "start_at": datetime(2026, 6, 3, 23, 0, tzinfo=UTC),
+            "end_at": datetime(2026, 6, 3, 23, 45, tzinfo=UTC),
+        }
+    )
+    await db.enrollments.insert_many(
+        [
+            {
+                "academy_id": "academy-b",
+                "session_id": "sess-full-of-holds",
+                "enrollment_id": "enr-held",
+                "student_id": "st-held",
+                "status": "held",
+            },
+            {
+                "academy_id": "academy-b",
+                "session_id": "sess-full-of-holds",
+                "enrollment_id": "enr-paused",
+                "student_id": "st-paused",
+                "status": "paused",
+            },
+        ]
+    )
+
+    with TestClient(_mongo_admin_app(db)) as client:
+        response = client.get("/api/v2/admin/sessions?window=upcoming")
+
+    assert response.status_code == 200, response.text
+    row = next(
+        session
+        for session in response.json()["sessions"]
+        if session["session_id"] == "sess-full-of-holds"
+    )
+    # capacity 1, one held seat -> no open spots; the paused row holds nothing.
+    assert row["enrolled_count"] == 1

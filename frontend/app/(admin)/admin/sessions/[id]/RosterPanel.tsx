@@ -42,6 +42,41 @@ const ENROLL_CHIP: Record<EnrollmentStatus, { variant: ChipVariant; label: strin
   dropped: { variant: "expired", label: "WITHDRAWN" },
 };
 
+// Issue #734: mirrors the backend's SEAT_HOLDING frozenset
+// (contexts/enrollment/domain/models.py) — the statuses whose row still
+// occupies a seat and is counted by SeatBroker.try_reserve_seat. "paused"
+// releases the seat; "reclaim_pending" is the transient in-flight state that
+// is neither holding nor released, so neither belongs here.
+const SEAT_HOLDING: ReadonlySet<EnrollmentStatus> = new Set<EnrollmentStatus>(["active", "held"]);
+
+/** How many seats the roster actually occupies against `capacity`. */
+export function seatsHeldCount(enrollments: Pick<AdminEnrollmentView, "status">[]): number {
+  return enrollments.filter((e) => SEAT_HOLDING.has(e.status)).length;
+}
+
+// Issue #735: the Active/Past roster tabs (#712) split purely on
+// status === "active", so "held" and "reclaim_pending" — both live,
+// still-enrolled statuses that rosterActionsFor treats as actionable
+// (return/transfer/drop) — fell into Past alongside genuinely departed
+// students (cancelled/deleted/withdrawn/dropped).
+const ROSTER_ACTIVE_STATUSES: ReadonlySet<EnrollmentStatus> = new Set<EnrollmentStatus>([
+  "active",
+  "held",
+  "reclaim_pending",
+]);
+
+/** Splits a roster into the Active and Past tab contents (#712, #735). */
+export function partitionRoster<T extends Pick<AdminEnrollmentView, "status">>(
+  enrollments: T[],
+): { active: T[]; past: T[] } {
+  const active: T[] = [];
+  const past: T[] = [];
+  for (const enrollment of enrollments) {
+    (ROSTER_ACTIVE_STATUSES.has(enrollment.status) ? active : past).push(enrollment);
+  }
+  return { active, past };
+}
+
 export function RosterMetrics({
   enrollments,
   capacity,
@@ -49,10 +84,12 @@ export function RosterMetrics({
   enrollments: AdminEnrollmentView[];
   capacity: number;
 }) {
-  // Paused rows are listed (so they can be resumed) but hold no seat.
+  // "In session" is the attending headcount; seats are a different question —
+  // a held row is not attending but still occupies a seat (#734).
   const filled = enrollments.filter((e) => e.status === "active").length;
   const pausedCount = enrollments.filter((e) => e.status === "paused").length;
-  const openSpots = Math.max(capacity - filled, 0);
+  const heldCount = enrollments.filter((e) => e.status === "held").length;
+  const openSpots = Math.max(capacity - seatsHeldCount(enrollments), 0);
   const dueCount = enrollments.filter((e) => e.dues_status === "due").length;
   const overdueCount = enrollments.filter((e) => e.dues_status === "overdue").length;
   const numericLevels = enrollments
@@ -73,7 +110,13 @@ export function RosterMetrics({
       <RosterMetric
         label="Open spots"
         value={String(openSpots)}
-        detail={openSpots > 0 ? `Add ${openSpots}` : "Full"}
+        detail={
+          heldCount > 0
+            ? `${heldCount} held${openSpots > 0 ? ` · Add ${openSpots}` : " · Full"}`
+            : openSpots > 0
+              ? `Add ${openSpots}`
+              : "Full"
+        }
         tone={openSpots > 0 ? "open" : "full"}
       />
       <RosterMetric

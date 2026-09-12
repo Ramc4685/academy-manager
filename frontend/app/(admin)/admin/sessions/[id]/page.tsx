@@ -50,7 +50,7 @@ import {
   hasCommunicationPack,
   sessionTimeRange,
 } from "./format";
-import { RosterMetrics, RosterTable } from "./RosterPanel";
+import { RosterMetrics, RosterTable, partitionRoster, seatsHeldCount } from "./RosterPanel";
 import {
   CancelOccurrenceDialog,
   OccurrenceReplacementDialog,
@@ -211,8 +211,7 @@ export default function AdminSessionDetailPage() {
   const canWindowDates = occurrences.length > CLASS_DATES_WINDOW * 2;
   const visibleOccurrences =
     canWindowDates && !showAllDates ? windowedOccurrences(occurrences, new Date()) : occurrences;
-  const activeEnrollments = enrollments.filter((e) => e.status === "active");
-  const pastEnrollments = enrollments.filter((e) => e.status !== "active");
+  const { active: activeEnrollments, past: pastEnrollments } = partitionRoster(enrollments);
   const rosterRows = rosterView === "active" ? activeEnrollments : pastEnrollments;
   const userNameById = new Map(
     (usersQuery.data?.users ?? []).map((user) => [user.user_id, user.display_name || user.email])
@@ -443,7 +442,7 @@ export default function AdminSessionDetailPage() {
             action={
               session && (
                 <span className="font-mono text-sm font-semibold tabular-nums text-rally-muted">
-                  {enrollments.filter((e) => e.status === "active").length}/{session.capacity}
+                  {seatsHeldCount(enrollments)}/{session.capacity}
                 </span>
               )
             }
