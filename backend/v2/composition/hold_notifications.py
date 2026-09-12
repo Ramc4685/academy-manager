@@ -1,4 +1,4 @@
-"""HoldNotifier adapter — family email for hold reclaim/expiry and reminders.
+"""HoldNotifier adapter — family email for hold start, reclaim/expiry and reminders.
 
 Issue #697. Lives outside ``composition/admin.py`` — that module sits at its
 wiring line budget (``test_composition_is_wiring`` is the check). Reuses the
@@ -60,6 +60,36 @@ class HoldNotificationAdapter:
         self._audiences = audiences
         self._sender = sender
         self._notice_sends = notice_sends
+
+    async def hold_started(
+        self,
+        *,
+        enrollment_id: str,
+        hold_seq: int,
+        session_id: str,
+        student_id: str,
+        hold_started_at: datetime,
+        hold_return_on: date,
+        hold_expires_at: datetime,
+    ) -> None:
+        """Issue #740. Keyed by ``hold_seq`` so re-holding the same enrollment
+        later mails again, while a retry of THIS hold never does."""
+        notice_key = f"hold-start:{hold_seq}"
+        await self._send_claimed(
+            enrollment_id=enrollment_id,
+            notice_key=notice_key,
+            session_id=session_id,
+            student_id=student_id,
+            build=lambda session, student_name: (
+                f"{student_name}'s class is on hold",
+                self._render_started_body(
+                    session=session,
+                    student_name=student_name,
+                    hold_return_on=hold_return_on,
+                    hold_expires_at=hold_expires_at,
+                ),
+            ),
+        )
 
     async def hold_reclaimed(
         self,
@@ -188,6 +218,32 @@ class HoldNotificationAdapter:
             logger.exception("hold_notice_audience_failed", extra={"parent_id": parent_id})
             return None
         return resolved[0] if resolved else None
+
+    @staticmethod
+    def _render_started_body(
+        *,
+        session: Session,
+        student_name: str,
+        hold_return_on: date,
+        hold_expires_at: datetime,
+    ) -> str:
+        safe_name = html.escape(student_name)
+        safe_title = html.escape(session.title)
+        return "".join(
+            [
+                _para(f"<strong>{safe_name}</strong>'s place in {safe_title} is on hold."),
+                _para(
+                    f"{safe_name} is not expected in class until "
+                    f"{html.escape(hold_return_on.isoformat())}, so {safe_title} will not "
+                    "appear in the upcoming sessions on your portal until then."
+                ),
+                _para(
+                    "The seat is being kept for you. It must be used or returned by "
+                    f"{html.escape(hold_expires_at.date().isoformat())}."
+                ),
+                _para("If this is not right, please contact the academy."),
+            ]
+        )
 
     @staticmethod
     def _render_reclaim_body(

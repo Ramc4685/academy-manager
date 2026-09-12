@@ -412,8 +412,12 @@ class FakeBillingSync:
 
 @dataclass
 class FakeHoldNotifier:
+    started_calls: list[dict[str, Any]] = field(default_factory=list)
     reclaimed_calls: list[dict[str, Any]] = field(default_factory=list)
     reminder_calls: list[dict[str, Any]] = field(default_factory=list)
+
+    async def hold_started(self, **kwargs: Any) -> None:
+        self.started_calls.append(kwargs)
 
     async def hold_reclaimed(self, **kwargs: Any) -> None:
         self.reclaimed_calls.append(kwargs)

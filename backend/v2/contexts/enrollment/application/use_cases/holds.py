@@ -135,6 +135,7 @@ class HoldEnrollment:
         billing_sync: EnrollmentBillingSync | None = None,
         billing_deferrals: BillingDeferralRepository | None = None,
         roster_notifier: RosterChangeNotifier | None = None,
+        notifier: HoldNotifier | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._enrollments = enrollments
@@ -143,6 +144,7 @@ class HoldEnrollment:
         self._billing_sync = billing_sync
         self._billing_deferrals = billing_deferrals
         self._roster_notifier = roster_notifier
+        self._notifier = notifier
         self._now = clock
 
     async def execute(
@@ -254,6 +256,24 @@ class HoldEnrollment:
                 )
             except Exception:
                 log.exception("hold_roster_notify_failed")
+        if self._notifier is not None:
+            # Issue #740: the roster notice above is coach-facing. Until this
+            # existed the family's first word of a hold was the day-30
+            # reminder, while the class vanished from the parent portal on
+            # day 0. Best-effort like the roster notice — the hold is already
+            # committed and must not be undone by a mail failure.
+            try:
+                await self._notifier.hold_started(
+                    enrollment_id=enrollment_id,
+                    hold_seq=before.hold_seq + 1,
+                    session_id=e.session_id,
+                    student_id=e.student_id,
+                    hold_started_at=now,
+                    hold_return_on=return_on,
+                    hold_expires_at=expires_at,
+                )
+            except Exception:
+                log.exception("hold_start_notify_failed")
         return e.model_copy(
             update={
                 "status": "held",

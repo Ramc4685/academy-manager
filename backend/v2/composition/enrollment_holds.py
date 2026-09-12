@@ -86,6 +86,7 @@ def compose_enrollment_holds(db: Any, settings: Any) -> EnrollmentHoldsCompositi
         billing_sync=billing_sync,
         billing_deferrals=billing_deferrals,
         roster_notifier=roster_notifier,
+        notifier=hold_notifier,
     )
     return_from_hold = ReturnFromHold(
         enrollments=enrollments,

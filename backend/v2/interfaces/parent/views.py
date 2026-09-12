@@ -246,6 +246,9 @@ class ParentChildView(BaseModel):
     full_name: str
     status: str
     active_session_count: int
+    # Issue #740: held enrollments are counted apart from active ones so the
+    # card can say "on hold" instead of silently showing one class fewer.
+    held_session_count: int = 0
     attended_count: int
     absent_count: int
 
@@ -260,6 +263,9 @@ class ParentEnrollmentView(BaseModel):
     # Issue #675: a parent's end-of-period cancel is pending; the enrollment
     # stays active (roster, schedule, seat) until this instant.
     pending_cancellation_at: datetime | None = None
+    # Issue #740: ISO calendar date the hold is expected to end; None unless
+    # the row is held. A date, not an instant — it must not shift by zone.
+    hold_return_on: str | None = None
     payment_mode: str | None = None
     subscription_status: str | None = None
     autopay_enrollment_status: str | None = None

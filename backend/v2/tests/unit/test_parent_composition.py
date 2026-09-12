@@ -924,6 +924,7 @@ async def test_parent_enrollment_visibility_uses_app_owned_autopay_projection() 
             "session_title": "Morning Squad",
             "status": "active",
             "pending_cancellation_at": None,
+            "hold_return_on": None,
             "payment_mode": "monthly",
             "subscription_status": "incomplete",
             "autopay_enrollment_status": "active",

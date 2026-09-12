@@ -1136,6 +1136,12 @@ def compose_parent(
             active_session_count = await db["enrollments"].count_documents(
                 {"academy_id": academy_id, "student_id": student_id, "status": "active"}
             )
+            # Issue #740: held is neither attending nor gone. Counting it into
+            # active would promise classes that will not run; leaving it out
+            # entirely is what made a held child's card silently shrink.
+            held_session_count = await db["enrollments"].count_documents(
+                {"academy_id": academy_id, "student_id": student_id, "status": "held"}
+            )
             attended_count = await db["attendance"].count_documents(
                 {
                     "academy_id": academy_id,
@@ -1152,6 +1158,7 @@ def compose_parent(
                     "full_name": str(student.get("full_name") or "Unnamed student"),
                     "status": str(student.get("status") or "active"),
                     "active_session_count": active_session_count,
+                    "held_session_count": held_session_count,
                     "attended_count": attended_count,
                     "absent_count": absent_count,
                 }
@@ -1296,7 +1303,10 @@ def compose_parent(
                 {
                     "academy_id": academy_id,
                     "student_id": {"$in": list(by_id)},
-                    "status": {"$in": ["active", "paused"]},
+                    # Issue #740: a held row kept its seat but was filtered
+                    # out here, so the class vanished from the parent portal
+                    # with no badge and no return date.
+                    "status": {"$in": ["active", "paused", "held"]},
                 }
             )
             .sort([("created_at", -1), ("enrollment_id", 1)])
@@ -1325,6 +1335,13 @@ def compose_parent(
                     "status": str(enrollment.get("status") or "active"),
                     # Issue #675: still active; ends at this instant.
                     "pending_cancellation_at": enrollment.get("pending_cancellation_at"),
+                    # Issue #740: the calendar date the hold is expected to
+                    # end, stored as an ISO date string; None unless held.
+                    "hold_return_on": (
+                        str(enrollment["hold_return_on"])
+                        if enrollment.get("status") == "held" and enrollment.get("hold_return_on")
+                        else None
+                    ),
                     "payment_mode": enrollment.get("payment_mode"),
                     "subscription_status": enrollment.get("subscription_status"),
                     "autopay_enrollment_status": (

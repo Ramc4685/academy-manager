@@ -687,3 +687,57 @@ def test_every_enrollment_status_is_classified_for_seat_release() -> None:
         "`not in SEATLESS`, or a status like this silently releases a seat "
         "it should not (see defect #6)."
     )
+
+
+@pytest.mark.asyncio
+async def test_hold_emails_the_family_when_the_hold_starts() -> None:
+    """Issue #740: the coach learned about a hold immediately (the roster
+    notifier fires on day 0) but the family learned nothing until the day-30
+    reminder — meanwhile the class had silently vanished from every parent
+    surface. A hold must announce itself to the family the moment it starts,
+    through the same claimed-send notifier the reclaim/reminder mails use."""
+    enrollments = FakeEnrollmentWriter(rows={"enr-1": make_enrollment(status="active")})
+    notifier = FakeHoldNotifier()
+    hold_uc = HoldEnrollment(
+        enrollments=enrollments,
+        departure_policy=FakeDeparturePolicyRepo(),
+        notifier=notifier,
+        clock=_clock,
+    )
+
+    await hold_uc.execute("enr-1", return_on=date(2026, 10, 15), actor_id="admin-1")
+
+    [call] = notifier.started_calls
+    assert call["enrollment_id"] == "enr-1"
+    # The POST-CAS sequence, so the notice key cannot collide with the notice
+    # for an earlier hold on the same enrollment.
+    assert call["hold_seq"] == 1
+    assert call["session_id"] == "sess-1"
+    assert call["student_id"] == "stu-1"
+    assert call["hold_started_at"] == NOW
+    assert call["hold_return_on"] == date(2026, 10, 15)
+    assert call["hold_expires_at"] == compute_hold_expiry(NOW, 60)
+
+
+@pytest.mark.asyncio
+async def test_hold_start_email_failure_never_fails_the_hold() -> None:
+    """Same best-effort contract the roster notifier already has: the hold is
+    committed before the mail goes out, so a mail failure must not surface as
+    a failed hold to the admin who placed it."""
+
+    class _Exploding:
+        async def hold_started(self, **_: object) -> None:
+            raise RuntimeError("smtp down")
+
+    enrollments = FakeEnrollmentWriter(rows={"enr-1": make_enrollment(status="active")})
+    hold_uc = HoldEnrollment(
+        enrollments=enrollments,
+        departure_policy=FakeDeparturePolicyRepo(),
+        notifier=_Exploding(),  # type: ignore[arg-type]
+        clock=_clock,
+    )
+
+    result = await hold_uc.execute("enr-1", return_on=date(2026, 10, 15))
+
+    assert result.status == "held"
+    assert enrollments.rows["enr-1"].status == "held"
