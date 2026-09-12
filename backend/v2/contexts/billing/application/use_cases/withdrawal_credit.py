@@ -8,6 +8,7 @@ from typing import Literal, Protocol
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel
+from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.billing.application.ports import (
     CreditLedgerRepository,
@@ -190,19 +191,7 @@ class RecordWithdrawalDecision:
             type="EARLY_WITHDRAWAL_CREDIT",
         )
         if existing is not None:
-            balance = await self._credits.balance_for_parent(existing.parent_id)
-            return WithdrawalDecisionResult(
-                billing_policy="early_withdrawal_credit",
-                billing_result="credit_already_approved",
-                credit_id=existing.credit_id,
-                credit_amount_cents=existing.amount_cents,
-                credit_balance_cents=balance,
-                metadata={
-                    "outcome": "credit",
-                    "credit_amount_cents": str(existing.amount_cents),
-                    "subscription": subscription_result,
-                },
-            )
+            return await self._already_approved(existing, subscription_result)
 
         try:
             payment, snapshot = await _paid_payment_and_snapshot(self._payments, cmd.enrollment_id)
@@ -236,27 +225,45 @@ class RecordWithdrawalDecision:
         credit_id: str | None = None
         if preview.credit_amount_cents > 0:
             credit_id = str(new_ulid())
-            await self._credits.create(
-                CreditLedgerEntry(
-                    credit_id=credit_id,
-                    academy_id=cmd.academy_id,
-                    parent_id=payment.parent_id,
-                    student_id=cmd.student_id,
+            entry = CreditLedgerEntry(
+                credit_id=credit_id,
+                academy_id=cmd.academy_id,
+                parent_id=payment.parent_id,
+                student_id=cmd.student_id,
+                enrollment_id=cmd.enrollment_id,
+                type="EARLY_WITHDRAWAL_CREDIT",
+                status="APPROVED",
+                amount_cents=preview.credit_amount_cents,
+                remaining_amount_cents=preview.credit_amount_cents,
+                currency=payment.currency,
+                reason=cmd.reason or "Early withdrawal",
+                calculation_snapshot_id=payment.calculation_snapshot_id,
+                approved_by=cmd.actor_id,
+                approved_at=now,
+                expires_at=now + timedelta(days=365),
+                created_at=now,
+                updated_at=now,
+            )
+            try:
+                await self._credits.create(entry)
+            except DuplicateKeyError:
+                # Lost the race: another withdraw for this enrollment passed
+                # the same pre-read and inserted first (#690). Migration 0174's
+                # partial unique index is what turns that into an error here
+                # instead of a second spendable credit, so read it as "already
+                # approved" and hand back the winner's credit rather than 500.
+                winner = await self._credits.find_active_for_enrollment(
                     enrollment_id=cmd.enrollment_id,
                     type="EARLY_WITHDRAWAL_CREDIT",
-                    status="APPROVED",
-                    amount_cents=preview.credit_amount_cents,
-                    remaining_amount_cents=preview.credit_amount_cents,
-                    currency=payment.currency,
-                    reason=cmd.reason or "Early withdrawal",
-                    calculation_snapshot_id=payment.calculation_snapshot_id,
-                    approved_by=cmd.actor_id,
-                    approved_at=now,
-                    expires_at=now + timedelta(days=365),
-                    created_at=now,
-                    updated_at=now,
                 )
-            )
+                if winner is None:
+                    raise
+                log.info(
+                    "withdrawal_credit_duplicate_race: enrollment_id=%s credit_id=%s",
+                    cmd.enrollment_id,
+                    winner.credit_id,
+                )
+                return await self._already_approved(winner, subscription_result)
         balance = await self._credits.balance_for_parent(payment.parent_id)
         metadata = {
             "outcome": "credit",
@@ -273,6 +280,27 @@ class RecordWithdrawalDecision:
             credit_balance_cents=balance,
             no_credit_reason=preview.no_credit_reason,
             metadata=metadata,
+        )
+
+    async def _already_approved(
+        self, credit: CreditLedgerEntry, subscription_result: str
+    ) -> WithdrawalDecisionResult:
+        """The credit this enrollment already holds, as a decision result.
+
+        Reached both by the cheap pre-read and by the loser of a concurrent
+        withdraw, so the two answers cannot drift apart."""
+        balance = await self._credits.balance_for_parent(credit.parent_id)
+        return WithdrawalDecisionResult(
+            billing_policy="early_withdrawal_credit",
+            billing_result="credit_already_approved",
+            credit_id=credit.credit_id,
+            credit_amount_cents=credit.amount_cents,
+            credit_balance_cents=balance,
+            metadata={
+                "outcome": "credit",
+                "credit_amount_cents": str(credit.amount_cents),
+                "subscription": subscription_result,
+            },
         )
 
     async def _cancel_legacy_subscription(self, enrollment_id: str, now: datetime) -> str:
