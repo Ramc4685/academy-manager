@@ -68,6 +68,7 @@ from backend.v2.contexts.enrollment.domain.events import (
     EnrollmentLifecycleEvent,
 )
 from backend.v2.contexts.enrollment.domain.models import (
+    LIVE,
     SEAT_HOLDING,
     SEATLESS,
     Enrollment,
@@ -601,8 +602,10 @@ class CancelSession:
     that no longer runs.
     """
 
-    #: Rows a cancelled class must sweep up (issue #651).
-    _CANCELLABLE_STATUSES = ("active", "paused", "held")
+    #: Rows a cancelled class must sweep up (issue #651): every row that has
+    #: not already ended. Issue #642 — one definition of "not ended" (domain
+    #: ``LIVE``), named here for what this use case does with it.
+    _CANCELLABLE_STATUSES = LIVE
 
     def __init__(
         self,
@@ -644,7 +647,7 @@ class CancelSession:
         adding a second occurrence writer here.
         """
         rows = await self._enrollments_q.for_session_in_statuses(
-            cmd.session_id, list(self._CANCELLABLE_STATUSES)
+            cmd.session_id, sorted(self._CANCELLABLE_STATUSES)
         )
         await self._sessions.update_status(cmd.session_id, "cancelled")
         now = self._now()
@@ -786,8 +789,9 @@ class EditRosterAdd:
     """
 
     #: Statuses that mean "this student is already on this roster" (widened
-    #: #697 for `held`). A cancelled row must not block a re-add.
-    _BLOCKING_STATUSES = frozenset({"active", "paused", "held"})
+    #: #697 for `held`). A cancelled row must not block a re-add — which is
+    #: exactly domain ``LIVE`` (issue #642).
+    _BLOCKING_STATUSES = LIVE
 
     #: Mirrors the `$in` predicate in `MongoSessionWriter.try_reserve_seat`.
     _ENROLLABLE_STATUSES = frozenset({"scheduled", "active", "open"})
@@ -1371,7 +1375,7 @@ class TransferEnrollment:
     #: every transferable status, silently over-releasing a paused row's
     #: (already-gone) seat and letting the source session admit one student
     #: past capacity.
-    _TRANSFERABLE_STATUSES = frozenset({"active", "paused", "held"})
+    _TRANSFERABLE_STATUSES = LIVE
 
     async def execute(self, cmd: TransferEnrollmentCommand) -> Enrollment:
         enrollment = await self._enrollments.get(cmd.enrollment_id)
@@ -1917,8 +1921,8 @@ class WithdrawEnrollment:
     """
 
     #: Statuses a withdrawal may start from (widened #697 for `held`).
-    #: Anything else is a conflict.
-    _WITHDRAWABLE = frozenset({"active", "paused", "held"})
+    #: Anything else is a conflict. Issue #642: domain ``LIVE``.
+    _WITHDRAWABLE = LIVE
 
     def __init__(
         self,

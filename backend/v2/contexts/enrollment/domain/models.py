@@ -89,6 +89,117 @@ SEATLESS: Final[frozenset[str]] = frozenset(
     {"paused", "cancelled", "deleted", "withdrawn", "dropped"}
 )
 
+# --------------------------------------------------------------------------
+# Issue #642: the closed status vocabulary and its derived predicates.
+#
+# Before this, every reader spelled its own set at the point of use, so
+# "paused" meant "keeps the seat" to one, "released it" to another and "still
+# bill them" to a third — thirteen readers excluded it, six included it, and
+# no two referenced a shared definition. Each frozenset below answers exactly
+# ONE question about a row, and is the only place that answer is written
+# down. ``tests/structural/test_enrollment_status_predicates.py`` bans
+# hand-rolled status sets anywhere else under contexts/enrollment/ and
+# re-checks the partitions here against the vocabulary.
+#
+# Adding a status to ``EnrollmentStatus`` therefore forces a decision: it has
+# to be classified into the seat partition and the lifecycle partition, or
+# the structural test fails. That is the point — an unclassified status used
+# to inherit whichever meaning each ``$nin`` filter happened to give it.
+# --------------------------------------------------------------------------
+
+#: Every value ``enrollments.status`` may hold, as a runtime set. Kept in
+#: lockstep with the ``EnrollmentStatus`` Literal by the structural test,
+#: which is what the Literal alone cannot do — a Literal is invisible to the
+#: Mongo validator and to any ``$in`` filter built at runtime.
+ENROLLMENT_STATUSES: Final[frozenset[str]] = frozenset(
+    {
+        "active",
+        "paused",
+        "held",
+        "reclaim_pending",
+        "cancelled",
+        "deleted",
+        "withdrawn",
+        "dropped",
+    }
+)
+
+#: The in-flight state of a reclaim claim (issue #697): the row has neither
+#: kept nor released its seat until ``SeatBroker.finalize()`` resolves it.
+#: Named rather than spelled inline so the seat partition below reads as the
+#: three-way split it is.
+RECLAIM_PENDING: Final[str] = "reclaim_pending"
+
+#: Written by ``MongoEnrollmentWriter.delete_if_status`` as a CAS marker in
+#: the instant between "this row is mine to delete" and the delete itself.
+#: NOT a status — no reader may branch on it — but it does reach the
+#: collection, so the Mongo validator enum has to admit it (see migration
+#: 0175; a validator that omitted it would turn every hard delete into a
+#: write error, the #657 failure mode).
+TRANSIENT_DELETING_STATUS: Final[str] = "__deleting__"
+
+#: What the ``enrollments.status`` validator enum permits: the vocabulary
+#: plus the transient delete marker.
+STORED_ENROLLMENT_STATUSES: Final[frozenset[str]] = ENROLLMENT_STATUSES | {
+    TRANSIENT_DELETING_STATUS
+}
+
+#: The two spellings of "the family withdrew" across the #699 dual-read era
+#: (legacy "withdrawn", canonical "dropped"), and of "the enrollment was
+#: cancelled/removed" (legacy "cancelled", canonical "deleted"). A reader
+#: that wants the withdrawal date rather than the cancellation date keys off
+#: the first; one that wants either outcome uses TERMINAL.
+DROPPED_SPELLINGS: Final[frozenset[str]] = frozenset({"withdrawn", "dropped"})
+DELETED_SPELLINGS: Final[frozenset[str]] = frozenset({"cancelled", "deleted"})
+
+#: Attendance has stopped for good — the row is history. "paused" is
+#: deliberately NOT here (a pause is an intermission, not an ending, #651),
+#: and neither is "held". A transfer moves a row in place without a status
+#: change, so it never lands here either.
+TERMINAL: Final[frozenset[str]] = DROPPED_SPELLINGS | DELETED_SPELLINGS
+
+#: The row has not ended: an admin action (cancel, withdraw, transfer, hold,
+#: pause, resume) may still act on it. Complement of TERMINAL, minus the
+#: transient reclaim state that no admin surface should race against.
+LIVE: Final[frozenset[str]] = frozenset({"active", "paused", "held"})
+
+#: Complement of TERMINAL over the whole vocabulary — LIVE plus the
+#: in-flight reclaim. This is the set a *display* surface wants ("current
+#: enrollments"), where showing a row mid-reclaim is right and racing a
+#: write against it is not.
+NON_TERMINAL: Final[frozenset[str]] = ENROLLMENT_STATUSES - TERMINAL
+
+#: Rows monthly invoice generation charges for. "paused" is excluded
+#: (issue #651 stopped billing open-ended pauses, the original #642
+#: complaint) and so is "held".
+#:
+#: NOT yet consulted by ``contexts/billing`` — that reader still builds its
+#: own filter and is out of scope for this slice by owner decision; see the
+#: follow-up issue linked from PR #642. Declared here anyway so the contract
+#: has a single written form for that migration to move onto, rather than
+#: being re-derived from the billing pipeline a third time.
+BILLABLE: Final[frozenset[str]] = frozenset({"active"})
+
+#: Rows the class roster shows as currently enrolled. Same members as
+#: SEAT_HOLDING today and deliberately a separate name: "occupies a seat" and
+#: "appears on the roster" are different questions that happen to share an
+#: answer, and #714 (held students vanished from the admin roster) was caused
+#: by a reader assuming they were the same question.
+ROSTER_VISIBLE: Final[frozenset[str]] = SEAT_HOLDING
+
+#: Rows that appear on a coach's attendance sheet. The sheet is taken off the
+#: roster, so this tracks ROSTER_VISIBLE by construction rather than by
+#: coincidence — if the roster ever shows a status the coach must not mark,
+#: this is where the two part company.
+ATTENDANCE_VISIBLE: Final[frozenset[str]] = ROSTER_VISIBLE
+
+#: "Still a live commitment for this student" as the pre-#697 readers meant
+#: it: active, or paused (seat released but the family has not left, #641).
+#: Narrower than LIVE because it predates "held"; kept as its own name so the
+#: readers that genuinely want the old two-status answer are distinguishable
+#: from the ones that were never widened for holds and should be.
+ACTIVE_OR_PAUSED: Final[frozenset[str]] = frozenset({"active", "paused"})
+
 
 class Session(BaseModel):
     """A scheduled training session.
