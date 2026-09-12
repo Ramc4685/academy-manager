@@ -52,6 +52,9 @@ from backend.v2.contexts.billing.application.ports import CreditLedgerRepository
 from backend.v2.contexts.billing.application.use_cases.apply_enrollment_lifecycle import (
     period_of,
 )
+from backend.v2.contexts.billing.application.use_cases.apply_occurrence_cancellation import (
+    PeriodChargeBasis,
+)
 from backend.v2.contexts.billing.application.use_cases.invoice_numbering import (
     mint_invoice_number,
 )
@@ -67,7 +70,9 @@ from backend.v2.contexts.billing.domain.proration import (
     BillingPeriod,
     ClassOccurrence,
     MoveProrationQuote,
+    PaidPeriodCharge,
     quote_move_proration,
+    unused_paid_classes,
 )
 from backend.v2.contexts.billing.domain.tuition_discount import (
     TuitionDiscount,
@@ -149,6 +154,23 @@ class MoveDiscountReader(Protocol):
     """
 
     async def get_active(self, enrollment_id: str) -> TuitionDiscount | None: ...
+
+
+class MoveChargeBasisReader(Protocol):
+    """What this family was actually charged for the period, if anything.
+
+    The same port ``ApplyOccurrenceCancellation`` reads, satisfied by
+    ``MongoOccurrenceCancellationReader``. The from-side of a move gives back
+    tuition already charged, so it has to know how many of the classes that
+    charge bought are still unused — the schedule alone cannot say (#729).
+    ``student_id`` is only used for the registration-checkout fallback, which
+    this use case never reaches: a family with no ledger invoice for the
+    period is answered ``no_invoice`` before the quote is built.
+    """
+
+    async def period_charge_basis(
+        self, *, enrollment_id: str, student_id: str, session_id: str, period: str
+    ) -> PeriodChargeBasis | None: ...
 
 
 AcademyTimezoneReader = Callable[[], Awaitable[str | None]]
@@ -253,6 +275,7 @@ class ApplyEnrollmentMove:
         credits: CreditLedgerRepository,
         schedules: MoveScheduleReader,
         idempotency_store: IdempotencyStore,
+        charge_basis: MoveChargeBasisReader | None = None,
         discounts: MoveDiscountReader | None = None,
         academy_timezone: AcademyTimezoneReader | None = None,
         notice_resender: MoveNoticeResender | None = None,
@@ -263,6 +286,7 @@ class ApplyEnrollmentMove:
         self._ledger = ledger
         self._credits = credits
         self._schedules = schedules
+        self._charge_basis = charge_basis
         self._discounts = discounts
         self._idempotency_store = idempotency_store
         self._academy_timezone = academy_timezone
@@ -448,10 +472,61 @@ class ApplyEnrollmentMove:
             from_occurrences=list(from_schedule.occurrences),
             to_occurrences=list(to_schedule.occurrences),
             effective_at=effective_at,
+            from_paid=await self._from_paid_charge(
+                cmd,
+                period=period,
+                occurrences=list(from_schedule.occurrences),
+                effective_at=effective_at,
+            ),
         )
         if quote.from_total_classes == 0 or quote.to_total_classes == 0:
             return None
         return quote
+
+    async def _from_paid_charge(
+        self,
+        cmd: ApplyEnrollmentMoveCommand,
+        *,
+        period: str,
+        occurrences: list[ClassOccurrence],
+        effective_at: datetime,
+    ) -> PaidPeriodCharge | None:
+        """What the period's charge bought on the from-session, and how much of
+        it the family has not taken yet (#729).
+
+        ``None`` when nothing was priced for the period, or when the snapshot
+        predates recording which dates the charge covered: there is then no
+        paid block to credit consumed-first against, and the caller keeps the
+        forward-looking share.
+        """
+        if self._charge_basis is None:
+            return None
+        basis = await self._charge_basis.period_charge_basis(
+            enrollment_id=cmd.enrollment_id,
+            student_id="",
+            session_id=cmd.from_session_id,
+            period=period,
+        )
+        if basis is None or basis.billable_remaining_classes <= 0:
+            return None
+        if not basis.included_occurrence_ids:
+            return None
+        starts = {occurrence.occurrence_id: occurrence.start_at for occurrence in occurrences}
+        scheduled_unused = sum(
+            1
+            for occurrence_id in basis.included_occurrence_ids
+            if (start := starts.get(occurrence_id)) is not None and start >= effective_at
+        )
+        paid, unused = unused_paid_classes(
+            billable_remaining_classes=basis.billable_remaining_classes,
+            billable_classes_denominator=basis.billable_classes_denominator,
+            scheduled_unused=scheduled_unused,
+        )
+        return PaidPeriodCharge(
+            charge_cents=max(basis.final_amount_cents, 0),
+            paid_classes=paid,
+            unused_classes=unused,
+        )
 
     @staticmethod
     def _effective_boundary(cmd: ApplyEnrollmentMoveCommand, *, timezone_name: str) -> datetime:

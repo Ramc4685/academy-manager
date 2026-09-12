@@ -70,6 +70,7 @@ from backend.v2.contexts.billing.domain.models import CreditLedgerEntry
 from backend.v2.contexts.billing.domain.proration import (
     CANCELLED_AFTER_PRICING_STATUS,
     ClassOccurrence,
+    unused_paid_classes,
 )
 from backend.v2.shared.ids import new_ulid
 
@@ -494,9 +495,16 @@ def _billed_classes(
 
 
 def _paid_classes(basis: PeriodChargeBasis) -> int:
-    """The classes this period's charge actually paid for."""
-    denominator = basis.billable_classes_denominator or basis.billable_remaining_classes
-    return min(basis.billable_remaining_classes, denominator)
+    """The classes this period's charge actually paid for.
+
+    The same domain rule the withdrawal credit and the from-side of a
+    mid-period move divide by, so the three agree to the cent (#729)."""
+    paid, _ = unused_paid_classes(
+        billable_remaining_classes=basis.billable_remaining_classes,
+        billable_classes_denominator=basis.billable_classes_denominator,
+        scheduled_unused=basis.billable_remaining_classes,
+    )
+    return paid
 
 
 def _free_extra_classes(basis: PeriodChargeBasis | None) -> int:
