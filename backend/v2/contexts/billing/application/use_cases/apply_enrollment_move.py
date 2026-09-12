@@ -153,6 +153,11 @@ class MoveDiscountReader(Protocol):
 
 AcademyTimezoneReader = Callable[[], Awaitable[str | None]]
 
+#: Re-sends the autopay pre-charge notice for an invoice whose total grew
+#: after the first notice went out (issue #691). Takes the invoice id;
+#: satisfied by ``build_send_autopay_notice``'s ``send_autopay_notice``.
+MoveNoticeResender = Callable[[str], Awaitable[Any]]
+
 
 class ApplyEnrollmentMoveCommand(BaseModel):
     model_config = {"frozen": True}
@@ -188,7 +193,8 @@ class ApplyEnrollmentMoveResult(BaseModel):
     credit_id: str | None = None
     #: True when the debited invoice's autopay pre-charge notice had already
     #: gone out, so the family was quoted a smaller amount than they will be
-    #: charged. Recorded on the lifecycle event; nothing re-notices today.
+    #: charged. Recorded on the lifecycle event, and a corrected notice is
+    #: re-sent when a ``notice_resender`` is wired in (issue #691).
     notice_stale: bool = False
     idempotency_key: str
 
@@ -249,6 +255,7 @@ class ApplyEnrollmentMove:
         idempotency_store: IdempotencyStore,
         discounts: MoveDiscountReader | None = None,
         academy_timezone: AcademyTimezoneReader | None = None,
+        notice_resender: MoveNoticeResender | None = None,
         counters: Any | None = None,
         settings: Any | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -259,6 +266,7 @@ class ApplyEnrollmentMove:
         self._discounts = discounts
         self._idempotency_store = idempotency_store
         self._academy_timezone = academy_timezone
+        self._notice_resender = notice_resender
         self._counters = counters
         self._settings = settings
         self._now = clock
@@ -356,11 +364,18 @@ class ApplyEnrollmentMove:
             line = await self._debit_existing(
                 cmd, invoice=invoice, quote=quote, key=key, now=now, allocated=allocated
             )
+            notice_stale = quote.delta_cents > 0 and invoice.delivery_status == "sent"
+            if notice_stale:
+                # The family was quoted the pre-move amount and autopay will
+                # take the larger one, so a corrected notice goes out now
+                # (issue #691). Best-effort: the money has already moved, and
+                # a mail failure must not undo the move or fail the request.
+                await self._resend_notice(cmd, invoice_id=invoice.invoice_id)
             return ApplyEnrollmentMoveResult(
                 outcome="debited" if quote.delta_cents > 0 else "credited",
                 invoice_id=invoice.invoice_id,
                 line_id=line.line_id,
-                notice_stale=quote.delta_cents > 0 and invoice.delivery_status == "sent",
+                notice_stale=notice_stale,
                 **base,
             )
         if quote.delta_cents < 0:
@@ -382,6 +397,18 @@ class ApplyEnrollmentMove:
         )
 
     # -- helpers ----------------------------------------------------------
+
+    async def _resend_notice(self, cmd: ApplyEnrollmentMoveCommand, *, invoice_id: str) -> None:
+        """Re-notice the family about the corrected autopay amount (#691)."""
+        if self._notice_resender is None:
+            return
+        try:
+            await self._notice_resender(invoice_id)
+        except Exception:
+            log.exception(
+                "apply_enrollment_move_notice_resend_failed",
+                extra={"enrollment_id": cmd.enrollment_id, "invoice_id": invoice_id},
+            )
 
     @staticmethod
     def _period_invoice(invoices: list[LedgerInvoice], period: str) -> LedgerInvoice | None:

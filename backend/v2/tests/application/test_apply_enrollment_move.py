@@ -214,13 +214,20 @@ class InMemoryIdempotency:
         self.rows[key] = value
 
 
-def _build(ledger: FakeLedger, credits: FakeCredits, schedules: FakeSchedules):
+def _build(
+    ledger: FakeLedger,
+    credits: FakeCredits,
+    schedules: FakeSchedules,
+    *,
+    notice_resender: Any | None = None,
+):
     return ApplyEnrollmentMove(
         ledger=ledger,
         credits=credits,
         schedules=schedules,
         idempotency_store=InMemoryIdempotency(),
         academy_timezone=_tz,
+        notice_resender=notice_resender,
         clock=lambda: NOW,
     )
 
@@ -744,6 +751,78 @@ async def test_debit_on_an_already_noticed_invoice_records_notice_stale() -> Non
 
     assert result.notice_stale is True
     assert result.metadata["notice_stale"] == "true"
+
+
+class FakeNoticeResender:
+    """Stands in for the autopay pre-charge notice sender (issue #691)."""
+
+    def __init__(self, *, fail: bool = False) -> None:
+        self.calls: list[str] = []
+        self._fail = fail
+
+    async def __call__(self, invoice_id: str) -> None:
+        self.calls.append(invoice_id)
+        if self._fail:
+            raise RuntimeError("smtp down")
+
+
+@pytest.mark.asyncio
+async def test_notice_stale_debit_resends_the_autopay_notice() -> None:
+    ledger, credits = FakeLedger(), FakeCredits()
+    invoice = _invoice().model_copy(update={"delivery_status": "sent"})
+    ledger.seed(invoice, _line(invoice, 8000))
+    resender = FakeNoticeResender()
+
+    result = await _build(ledger, credits, _schedules(), notice_resender=resender).execute(_cmd())
+
+    assert result.notice_stale is True
+    # The corrected notice goes out, and the audit contract is unchanged.
+    assert resender.calls == [invoice.invoice_id]
+    assert result.metadata["notice_stale"] == "true"
+
+
+@pytest.mark.asyncio
+async def test_debit_without_a_sent_notice_does_not_resend() -> None:
+    ledger, credits = FakeLedger(), FakeCredits()
+    invoice = _invoice()
+    ledger.seed(invoice, _line(invoice, 8000))
+    resender = FakeNoticeResender()
+
+    result = await _build(ledger, credits, _schedules(), notice_resender=resender).execute(_cmd())
+
+    assert result.outcome == "debited" and result.notice_stale is False
+    assert resender.calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_credit_on_a_noticed_invoice_does_not_resend() -> None:
+    """A downward move lowers what is charged; the family is not over-charged."""
+    ledger, credits = FakeLedger(), FakeCredits()
+    invoice = _invoice().model_copy(update={"delivery_status": "sent"})
+    ledger.seed(invoice, _line(invoice, 12000))
+    resender = FakeNoticeResender()
+
+    result = await _build(
+        ledger, credits, _schedules(from_price=12000, to_price=8000), notice_resender=resender
+    ).execute(_cmd())
+
+    assert result.outcome == "credited"
+    assert resender.calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_failing_notice_resend_does_not_break_the_move() -> None:
+    ledger, credits = FakeLedger(), FakeCredits()
+    invoice = _invoice().model_copy(update={"delivery_status": "sent"})
+    ledger.seed(invoice, _line(invoice, 8000))
+    resender = FakeNoticeResender(fail=True)
+
+    result = await _build(ledger, credits, _schedules(), notice_resender=resender).execute(_cmd())
+
+    assert result.outcome == "debited"
+    assert result.delta_cents == 3000
+    assert result.notice_stale is True
+    assert ledger.invoices[invoice.invoice_id].total_cents == 11000
 
 
 @pytest.mark.asyncio

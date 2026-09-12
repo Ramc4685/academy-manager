@@ -742,12 +742,27 @@ def compose_admin(
         scheduled_actions=scheduled_actions,
         academy_id=academy_id,
     )
+
+    async def resend_stale_move_notice(invoice_id: str) -> None:
+        """A move grew an already-noticed autopay invoice: re-notice the family
+        with the corrected amount (issue #691).
+
+        ``_invoice_email_port`` and ``send_autopay_notice`` are bound later in
+        this same function; this body only runs at request time, long after
+        both exist. Keep all three inside ``compose_admin``.
+        """
+        if _invoice_email_port() is None:
+            return
+        await send_autopay_notice(invoice_id)
+
     transfer_enrollment = TransferEnrollment(
         enrollments=enrollments_w,
         sessions=sessions_w,
         enrollment_events=enrollment_events,
         roster_notifier=notifiers.roster,
-        billing_sync=compose_enrollment_move_billing_sync(db, idempotency=idempotency_store),
+        billing_sync=compose_enrollment_move_billing_sync(
+            db, idempotency=idempotency_store, notice_resender=resend_stale_move_notice
+        ),
     )
     override_enrollment_fee = OverrideEnrollmentFee(enrollments=enrollments_w)
     pause_enrollment = PauseEnrollment(
