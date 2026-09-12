@@ -1,6 +1,6 @@
 # Batch 2b: checkout quote consistency
 
-PR: #0
+PR: #769
 
 ## What changed
 
