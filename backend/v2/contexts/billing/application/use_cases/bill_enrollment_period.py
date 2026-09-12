@@ -3,9 +3,10 @@
 The monthly generator bills every enrollment at once; this is the manual
 single-enrollment equivalent an admin reaches for when a family needs a month
 invoiced by hand. It creates the same shape the generator creates — a draft
-invoice for the enrollment's student/parent carrying one tuition line priced at
-the session's monthly price, plus the enrollment's active recurring tuition
-discount as its own negative line — and leaves sending to the admin.
+invoice for the enrollment's student/parent carrying one tuition line priced by
+the generator's own resolver (so a first month is prorated and described as such),
+plus the enrollment's active recurring tuition discount as its own negative line —
+and leaves sending to the admin.
 """
 
 from __future__ import annotations
@@ -29,12 +30,19 @@ _LIVE_INVOICE_STATUSES = {"draft", "open", "partially_paid", "paid", "uncollecti
 
 #: Enrollment statuses the generator would bill. A paused enrollment is skipped
 #: by the monthly run (#651) and a cancelled/withdrawn one is no longer in the
-#: class at all, so neither can be hand-billed either.
-_BILLABLE_ENROLLMENT_STATUSES = {"active"}
+#: class at all, so neither can be hand-billed either. Public because pricing a
+#: month has side effects (#724): the reader must not resolve — and stamp a
+#: snapshot for — an enrollment this use case is about to refuse.
+BILLABLE_ENROLLMENT_STATUSES = {"active"}
 
 
 class EnrollmentBillingTarget(BaseModel):
-    """Who to bill for one enrollment, and at what monthly price."""
+    """Who to bill for one enrollment, and the month's resolved charge.
+
+    ``monthly_price_cents`` is gross — the flat monthly price for a continuing
+    month, the prorated amount for a first month (#724) — and zero when the month
+    has nothing left to bill.
+    """
 
     model_config = {"frozen": True}
 
@@ -50,6 +58,13 @@ class EnrollmentBillingTarget(BaseModel):
     monthly_discount_cents: int = 0
     discount_description: str | None = None
     discount_id: str | None = None
+    #: The tuition line's copy as the monthly generator would word it for this
+    #: period — a prorated first month reads differently from a flat month (#724).
+    #: ``None`` falls back to the flat-month wording.
+    tuition_description: str | None = None
+    #: The ``billing_calculation_snapshots`` row the resolved price was recorded
+    #: in; later withdrawal and cancellation credits are measured against it.
+    snapshot_id: str | None = None
 
 
 class EnrollmentBillingTargetReader(Protocol):
@@ -84,17 +99,9 @@ class BillEnrollmentPeriod:
         self._now = clock
 
     async def execute(self, cmd: BillEnrollmentPeriodCommand) -> dict[str, Any]:
-        target = await self._enrollments.load(cmd.enrollment_id, cmd.period)
-        if target is None:
-            raise LookupError("enrollment not found")
-        if target.status not in _BILLABLE_ENROLLMENT_STATUSES:
-            raise ValueError("this enrollment is not active, so it cannot be billed")
-        if target.monthly_price_cents <= 0:
-            # The generator skips an unpriced enrollment (skipped_no_charge) rather
-            # than minting a $0 invoice; a $0 draft here could never be sent and
-            # would suppress the generator's own run for the period.
-            raise ValueError("this enrollment has no monthly price to bill")
-
+        # Checked before the enrollment is priced: resolving a first month stamps a
+        # CONSUMED proration snapshot, and burning one for a period that is already
+        # invoiced would make the monthly run treat that month as charged (#724).
         existing = await self._ledger.get_invoice_for_enrollment_period(
             cmd.enrollment_id,
             cmd.period,
@@ -102,6 +109,19 @@ class BillEnrollmentPeriod:
         )
         if existing is not None:
             raise ValueError("this enrollment is already invoiced for that period")
+
+        target = await self._enrollments.load(cmd.enrollment_id, cmd.period)
+        if target is None:
+            raise LookupError("enrollment not found")
+        if target.status not in BILLABLE_ENROLLMENT_STATUSES:
+            raise ValueError("this enrollment is not active, so it cannot be billed")
+        if target.monthly_price_cents <= 0:
+            # The generator skips an unpriced enrollment (skipped_no_charge) rather
+            # than minting a $0 invoice; a $0 draft here could never be sent and
+            # would suppress the generator's own run for the period. A first month
+            # already prorated at checkout also lands here — its tuition was charged
+            # then, so there is nothing left for this month to bill.
+            raise ValueError("this enrollment has no monthly price to bill")
 
         now = self._now()
         invoice_id = f"inv-{new_ulid()}"
@@ -140,7 +160,7 @@ class BillEnrollmentPeriod:
         result = await self._add_line.execute(
             AddInvoiceLineCommand(
                 invoice_id=created.invoice_id,
-                description=tuition_line_description(cmd.period),
+                description=target.tuition_description or tuition_line_description(cmd.period),
                 line_type="tuition",
                 quantity=1,
                 unit_amount_cents=target.monthly_price_cents,

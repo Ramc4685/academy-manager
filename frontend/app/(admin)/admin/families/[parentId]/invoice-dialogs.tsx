@@ -6,7 +6,7 @@ import { useMutation } from "@tanstack/react-query";
 import { Button, DialogActions, DialogError, Field, RallyModal } from "@/components/ds";
 import type { AddInvoiceLineRequest } from "@/lib/api/admin";
 import type { FamilyStudent } from "@/lib/api/admin-families";
-import { formatCents, parseDollarsToCents } from "@/lib/money";
+import { parseDollarsToCents } from "@/lib/money";
 
 import {
   currentPeriod,
@@ -334,13 +334,11 @@ export function BillPeriodDialog({
       >
         <p className="text-sm text-rally-ink" data-testid="bill-period-subject">
           {option.label} · {periodLabel(period)}
-          {option.bill_period_price_cents != null
-            ? ` · ${formatCents(option.bill_period_price_cents)}/mo`
-            : ""}
         </p>
         <p className="text-xs text-rally-muted" data-testid="bill-period-draft-warning">
-          The monthly billing run skips this class for this month while the draft sits unsent —
-          send it or void it.
+          The backend prices the month the way the monthly run would — a class that starts
+          mid-month is prorated — so check the draft before sending it. The monthly billing run
+          skips this class for this month while the draft sits unsent — send it or void it.
         </p>
         <Field label="Month" required>
           <input

@@ -4,7 +4,6 @@ import {
   autopayToggle,
   currentPeriod,
   defaultDueDate,
-  enrollmentBillPeriodPriceCents,
   enrollmentOptions,
   enrollmentPriceCents,
   invoiceActionLabel,
@@ -136,15 +135,16 @@ describe("enrollment pricing", () => {
         student_name: "Arjun",
         label: "Arjun · Tue/Thu Intermediate",
         price_cents: 12000,
-        bill_period_price_cents: 12000,
       },
     ]);
   });
-  it("quotes the session price for Bill this month, never the override", () => {
-    expect(enrollmentBillPeriodPriceCents({ ...enrollment, override_price_cents: 15000 })).toBe(
-      12000,
-    );
-    expect(enrollmentBillPeriodPriceCents({ ...enrollment, monthly_price_cents: null })).toBeNull();
+  it("carries no Bill-this-month quote, because only the backend can price the month", () => {
+    // The month's charge depends on proration and the four-class rule (#724); a flat
+    // client-side figure was wrong for exactly the first month that matters.
+    const [option] = enrollmentOptions([
+      { student_id: "stu-1", name: "Arjun", status: "active", enrollments: [enrollment] },
+    ]);
+    expect(option).not.toHaveProperty("bill_period_price_cents");
   });
   it("falls back to Class when the session has no title", () => {
     const students: FamilyStudent[] = [

@@ -955,7 +955,7 @@ class MongoMonthlyBillingGenerator:
                 _snapshot_id,
                 discount_policy,
                 tuition_description,
-            ) = await _resolve_charge_for_enrollment(
+            ) = await resolve_monthly_charge(
                 repo=self._repo,
                 enrollment=enrollment,
                 session_doc=session_doc or {},
@@ -1374,7 +1374,7 @@ def _session_occurrences(
 # ---------------------------------------------------------------------------
 
 
-async def _resolve_charge_for_enrollment(
+async def resolve_monthly_charge(
     *,
     repo: MongoPaymentRepository,
     enrollment: dict[str, object],
@@ -1388,6 +1388,13 @@ async def _resolve_charge_for_enrollment(
     storage delegate here. A recurring tuition discount (issue #244), if active and
     effective for the period, is applied at monthly scale and threaded through the
     existing proration policy so discounted invoices stay consistent with proration.
+
+    Public because the admin "Bill this month" path has to charge a month exactly
+    what the monthly run would have charged it (#724): its own flat
+    ``session_amount_cents`` read skipped first-month proration, the four-classes-
+    per-meeting rule, and the ``billing_calculation_snapshots`` row that later
+    withdrawal and cancellation credits are measured against. Resolving a period
+    STAMPS that snapshot, so call it only for a charge you are about to write.
     """
     amount_cents = session_amount_cents(session_doc)
     billing_start = _coerce_datetime(

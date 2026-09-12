@@ -1482,6 +1482,35 @@ def test_bill_enrollment_period_drafts_invoice_with_tuition_line(admin_client):
     assert line.unit_amount_cents == 12_000
 
 
+def test_bill_enrollment_period_prices_and_describes_a_prorated_first_month(admin_client):
+    """A first month bills the resolved amount under the resolver's own copy (#724)."""
+    ledger = _FakeLedger()
+    _override_bill_enrollment_period(
+        admin_client,
+        ledger,
+        EnrollmentBillingTarget(
+            enrollment_id="enroll-1",
+            academy_id="acad",
+            student_id="student-1",
+            parent_id="parent-1",
+            monthly_price_cents=3_750,
+            tuition_description="Monthly tuition 2026-06: 3 of 8 classes",
+            snapshot_id="snap-1",
+        ),
+    )
+
+    response = admin_client.post(
+        "/api/v2/admin/enrollments/enroll-1/invoices/bill-period",
+        json={"period": "2026-06", "due_date": "2026-06-30"},
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["total_cents"] == 3_750
+    line = next(iter(ledger.lines.values()))
+    assert line.unit_amount_cents == 3_750
+    assert line.description == "Monthly tuition 2026-06: 3 of 8 classes"
+
+
 def test_bill_enrollment_period_rejects_a_second_invoice_for_the_period(admin_client):
     ledger = _FakeLedger(invoices=[_invoice(status="open")])
     _override_bill_enrollment_period(

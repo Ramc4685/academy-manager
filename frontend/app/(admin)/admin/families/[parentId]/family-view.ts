@@ -118,23 +118,12 @@ export function enrollmentPriceCents(enrollment: FamilyEnrollment): number | nul
   return enrollment.override_price_cents ?? enrollment.monthly_price_cents ?? null;
 }
 
-/**
- * What "Bill this month" will actually charge: the session's monthly price.
- * The backend prices a hand-billed month off the session document exactly as the
- * monthly generator does and ignores `override_price_cents`, so quoting the
- * override here would show the admin a number the invoice never carries.
- */
-export function enrollmentBillPeriodPriceCents(enrollment: FamilyEnrollment): number | null {
-  return enrollment.monthly_price_cents ?? null;
-}
-
 export interface EnrollmentOption {
   enrollment_id: string;
   student_id: string;
   student_name: string;
   label: string;
   price_cents: number | null;
-  bill_period_price_cents: number | null;
 }
 
 /** Flattens the family's students into one pickable list of enrollments. */
@@ -146,7 +135,6 @@ export function enrollmentOptions(students: FamilyStudent[]): EnrollmentOption[]
       student_name: student.name,
       label: `${student.name} · ${enrollment.session_title ?? "Class"}`,
       price_cents: enrollmentPriceCents(enrollment),
-      bill_period_price_cents: enrollmentBillPeriodPriceCents(enrollment),
     })),
   );
 }
