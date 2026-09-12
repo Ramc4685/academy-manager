@@ -30,6 +30,7 @@ from backend.v2.contexts.billing.domain.proration import (
     BillingPeriod,
     ClassOccurrence,
     FirstMonthProrationPolicy,
+    billable_classes_per_period,
     schedule_signature,
     snapshot_charge_denominator,
     snapshot_classes_charged,
@@ -1149,12 +1150,14 @@ def _coerce_datetime(value: object | None) -> datetime | None:
 def _tuition_line_description(period: str, snapshot: BillingCalculationSnapshot | None) -> str:
     """The tuition line's copy for one monthly invoice.
 
-    The "N classes; extras free" sentence is a statement about the FIRST-MONTH
-    proration rule, so it is only stamped on a line that rule actually priced.
-    ``snapshot is None`` — a flat full month, a prior-consumed month, a one-off
-    session — keeps the plain description: a Mon+Wed session delivers 8 classes
-    in its second month and a one-off delivers one, and neither was priced
-    against the four-classes-per-meeting denominator.
+    The "N classes; extras free" sentence states the owner's rule — the
+    monthly rate buys four classes per weekly meeting — and that rule prices
+    the first month and the flat full month alike, so both snapshots get it
+    (#730). Two families paying $70 for the same five dates must not read two
+    different explanations of what the $70 bought.
+
+    ``snapshot is None`` is only the prior-consumed month, whose tuition was
+    charged (and described) in an earlier run and is billed at zero here.
     """
     if snapshot is None:
         return f"Monthly tuition {period}"
@@ -1164,7 +1167,8 @@ def _tuition_line_description(period: str, snapshot: BillingCalculationSnapshot 
         extra = (
             "5th class free" if denominator == BILLABLE_CLASSES_PER_MONTH else "extra classes free"
         )
-        return f"Monthly tuition {period} ({denominator} classes; {extra})"
+        noun = "class" if denominator == 1 else "classes"
+        return f"Monthly tuition {period} ({denominator} {noun}; {extra})"
     return (
         f"Monthly tuition {period}: {billable} of {denominator} classes — "
         f"monthly rate covers {denominator} classes; "
@@ -1437,7 +1441,7 @@ async def _resolve_charge_for_enrollment(
             net,
             snapshot_id,
             policy if mdc > 0 else None,
-            _tuition_line_description(period, None),
+            _tuition_line_description(period, snapshot),
         )
 
     # Check if already prorated in a prior run
@@ -1561,7 +1565,20 @@ def _build_monthly_tuition_snapshot(
     discount_cents: int,
     now: datetime,
 ) -> BillingCalculationSnapshot:
-    """Build a CONSUMED monthly-tuition snapshot (no proration, full amount)."""
+    """Build a CONSUMED monthly-tuition snapshot (no proration, full amount).
+
+    ``final_amount_cents`` is the flat monthly price: a continuing family is
+    charged exactly what they were charged before. What the snapshot now
+    records is WHAT that price bought — four classes per weekly meeting, the
+    same denominator the first-month quote uses — so a cancellation credit, a
+    withdrawal refund and the invoice line all speak the owner's rule to both
+    families in a five-date month (#730).
+
+    The denominator never exceeds the month's own class list: a month that
+    lays out three dates sold three, and ``billable_classes_per_period``'s
+    floor (which keeps a degraded one-date synthesis from charging a joiner a
+    whole month) would otherwise describe a full-price month as "3 of 4".
+    """
     eligible = [
         occ
         for occ in sorted(occurrences, key=lambda o: o.occurrence_id)
@@ -1569,6 +1586,14 @@ def _build_monthly_tuition_snapshot(
     ]
     snapshot_id = str(new_ulid())
     included = [occ.occurrence_id for occ in eligible]
+    denominator = (
+        min(
+            billable_classes_per_period(eligible, timezone_name=billing_period.timezone),
+            len(eligible),
+        )
+        if eligible
+        else 0
+    )
     return BillingCalculationSnapshot(
         snapshot_id=snapshot_id,
         status="CONSUMED",
@@ -1581,10 +1606,8 @@ def _build_monthly_tuition_snapshot(
         timezone=billing_period.timezone,
         total_eligible_classes=len(eligible),
         billable_remaining_classes=len(eligible),
-        # A flat full month buys the month's whole class list, not the
-        # four-per-meeting first-month denominator.
-        billable_classes_denominator=len(eligible),
-        proration_ratio=f"{len(eligible)}/{len(eligible)}" if eligible else "0/0",
+        billable_classes_denominator=denominator,
+        proration_ratio=f"{denominator}/{denominator}" if eligible else "0/0",
         final_amount_cents=max(monthly_price_cents - discount_cents, 0),
         included_occurrence_ids=included,
         excluded_occurrences={},
