@@ -2421,3 +2421,211 @@ async def test_generate_monthly_still_bills_the_month_the_cancel_takes_effect_in
     result = await repo.generate_monthly_payments("2026-06")
 
     assert result.created == 1
+
+
+async def _hand_billed_setup(db, acad, *, enrollment_id: str) -> None:
+    """Seed the enrollment plus the unique key index the monthly run relies on."""
+    await db["billing_invoice_keys"].create_index(
+        [("academy_id", 1), ("enrollment_id", 1), ("period", 1)],
+        unique=True,
+        name="uniq_monthly_invoice_key",
+    )
+    await _seed_monthly_enrollment(
+        db,
+        acad,
+        enrollment_id=enrollment_id,
+        session_id=f"sess-{enrollment_id}",
+        student_id=f"student-{enrollment_id}",
+        parent_id=f"parent-{enrollment_id}",
+    )
+
+
+def _hand_billed_repo(db, moment: datetime) -> MongoPaymentRepository:
+    return MongoPaymentRepository(
+        db,
+        clock=lambda: moment,
+        ledger_repo=MongoBillingLedgerRepository(db),
+    )
+
+
+async def _insert_hand_billed_invoice(
+    db,
+    acad: str,
+    *,
+    enrollment_id: str,
+    invoice_id: str,
+    now: datetime,
+    subtotal_cents: int,
+    discount_cents: int,
+    total_cents: int,
+    balance_due_cents: int,
+    lines: list[tuple[str, str, int]],
+) -> None:
+    await db["invoices"].insert_one(
+        {
+            "academy_id": acad,
+            "invoice_id": invoice_id,
+            "parent_id": f"parent-{enrollment_id}",
+            "student_id": f"student-{enrollment_id}",
+            "enrollment_id": enrollment_id,
+            "period": "2026-06",
+            "status": "draft",
+            "subtotal_cents": subtotal_cents,
+            "discount_cents": discount_cents,
+            "total_cents": total_cents,
+            "balance_due_cents": balance_due_cents,
+            "currency": "usd",
+            "due_date": datetime(2026, 6, 30, tzinfo=UTC),
+            "delivery_status": "not_sent",
+            "sent_at": None,
+            "last_sent_at": None,
+            "finalized_at": None,
+            "created_at": now,
+            "updated_at": now,
+            "idempotency_key": f"admin-bill-period-{enrollment_id}-2026-06",
+        }
+    )
+    for index, (line_type, source_type, amount_cents) in enumerate(lines):
+        await db["invoice_lines"].insert_one(
+            {
+                "academy_id": acad,
+                "invoice_id": invoice_id,
+                "line_id": f"{invoice_id}-line-{index}",
+                "line_type": line_type,
+                "description": "Monthly tuition 2026-06",
+                "quantity": 1,
+                "unit_amount_cents": amount_cents,
+                "amount_cents": amount_cents,
+                "source_type": source_type,
+                "source_id": None,
+                "created_at": now,
+                "idempotency_key": f"{invoice_id}-line-{index}",
+            }
+        )
+
+
+@pytest.mark.asyncio
+async def test_generate_monthly_skips_hand_billed_invoice_with_discount_line(db, acad) -> None:
+    """A "Bill this month" draft carrying a sibling discount already covers the period (#723).
+
+    ``bill_enrollment_period`` builds its header through the ledger, which stores the
+    subtotal NET of the discount line and leaves ``discount_cents`` at 0 — a different
+    but equally valid shape from the generator's own gross/discount_cents convention.
+    The run must recognise it instead of minting a second invoice for the month.
+    """
+    now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+    await _hand_billed_setup(db, acad, enrollment_id="enroll-hand-discount")
+    await _insert_hand_billed_invoice(
+        db,
+        acad,
+        enrollment_id="enroll-hand-discount",
+        invoice_id="inv-hand-discount",
+        now=now,
+        subtotal_cents=8_000,
+        discount_cents=0,
+        total_cents=8_000,
+        balance_due_cents=8_000,
+        lines=[("tuition", "payment", 10_000), ("discount", "tuition_discount", -2_000)],
+    )
+
+    result = await _hand_billed_repo(db, now).generate_monthly_payments("2026-06")
+
+    assert result.created == 0
+    assert result.skipped_existing == 1
+    assert (
+        await db["invoices"].count_documents(
+            {"academy_id": acad, "enrollment_id": "enroll-hand-discount", "period": "2026-06"}
+        )
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_generate_monthly_skips_blank_tied_draft(db, acad) -> None:
+    """A draft tied to the enrollment/period with no lines yet still claims the month (#723).
+
+    ``create_student_invoice`` deliberately opens an empty draft the admin fills in
+    afterwards. Treating zero lines as "inconsistent" billed the family twice once the
+    admin sent it.
+    """
+    now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+    await _hand_billed_setup(db, acad, enrollment_id="enroll-blank-draft")
+    await _insert_hand_billed_invoice(
+        db,
+        acad,
+        enrollment_id="enroll-blank-draft",
+        invoice_id="inv-blank-draft",
+        now=now,
+        subtotal_cents=0,
+        discount_cents=0,
+        total_cents=0,
+        balance_due_cents=0,
+        lines=[],
+    )
+
+    result = await _hand_billed_repo(db, now).generate_monthly_payments("2026-06")
+
+    assert result.created == 0
+    assert result.skipped_existing == 1
+    assert (
+        await db["invoices"].count_documents(
+            {"academy_id": acad, "enrollment_id": "enroll-blank-draft", "period": "2026-06"}
+        )
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_generate_monthly_still_bills_when_existing_invoice_totals_disagree(db, acad) -> None:
+    """Loosening the shape check must not let a corrupt header claim the period (#723)."""
+    now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+    await _hand_billed_setup(db, acad, enrollment_id="enroll-bad-totals")
+    await _insert_hand_billed_invoice(
+        db,
+        acad,
+        enrollment_id="enroll-bad-totals",
+        invoice_id="inv-bad-totals",
+        now=now,
+        subtotal_cents=5_000,
+        discount_cents=0,
+        total_cents=5_000,
+        balance_due_cents=5_000,
+        lines=[("tuition", "payment", 10_000)],
+    )
+
+    result = await _hand_billed_repo(db, now).generate_monthly_payments("2026-06")
+
+    assert result.created == 1
+    assert result.skipped_existing == 0
+    assert (
+        await db["invoices"].count_documents(
+            {"academy_id": acad, "enrollment_id": "enroll-bad-totals", "period": "2026-06"}
+        )
+        == 2
+    )
+
+
+@pytest.mark.asyncio
+async def test_generate_monthly_still_bills_when_zero_line_invoice_has_stale_totals(
+    db, acad
+) -> None:
+    """A line-less invoice that still claims money is corrupt, not a blank draft (#723)."""
+    now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+    await _hand_billed_setup(db, acad, enrollment_id="enroll-stale-zero")
+    await _insert_hand_billed_invoice(
+        db,
+        acad,
+        enrollment_id="enroll-stale-zero",
+        invoice_id="inv-stale-zero",
+        now=now,
+        subtotal_cents=10_000,
+        discount_cents=0,
+        total_cents=10_000,
+        balance_due_cents=10_000,
+        lines=[],
+    )
+
+    result = await _hand_billed_repo(db, now).generate_monthly_payments("2026-06")
+
+    assert result.created == 1
+    assert result.skipped_existing == 0
