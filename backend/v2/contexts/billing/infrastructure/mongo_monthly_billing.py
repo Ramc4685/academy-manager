@@ -500,6 +500,21 @@ class MongoMonthlyBillingGenerator:
         invoice_id: str,
         amount_cents: int | None = None,
     ) -> bool:
+        """Does this non-canonical invoice already cover its enrollment/period?
+
+        Two header conventions are legitimate and both must be recognised, or the
+        monthly run mints a second invoice for a month an admin already billed (#723):
+
+        * the generator's own shape - ``subtotal_cents`` GROSS with the tuition
+          discount mirrored in ``discount_cents`` alongside its discount line;
+        * the ledger's shape (``recompute_totals``, used by every hand-billed
+          invoice) - ``subtotal_cents`` NET of the negative discount line, with
+          ``discount_cents`` left at 0.
+
+        A line-less invoice is consistent only when every header amount is 0: that is
+        the blank draft ``create_student_invoice`` opens for an admin to fill in.
+        Stale non-zero totals with no lines behind them stay inconsistent.
+        """
         academy_id = current_academy_id()
         invoice_doc = await self._db["invoices"].find_one(
             {
@@ -512,32 +527,29 @@ class MongoMonthlyBillingGenerator:
         if invoice_doc is None:
             return False
 
-        subtotal_line_cents = 0
+        gross_line_cents = 0
         discount_line_cents = 0
-        line_count = 0
         async for line_doc in self._db["invoice_lines"].find(
             {
                 "academy_id": academy_id,
                 "invoice_id": invoice_id,
             }
         ):
-            line_count += 1
             amount = int(line_doc.get("amount_cents", 0))
             if line_doc.get("source_type") == "tuition_discount":
                 discount_line_cents += abs(amount)
             else:
-                subtotal_line_cents += amount
-        if line_count == 0:
-            return False
+                gross_line_cents += amount
 
         subtotal_cents = int(invoice_doc.get("subtotal_cents", -1))
         discount_cents = int(invoice_doc.get("discount_cents", 0))
         total_cents = int(invoice_doc.get("total_cents", -1))
         balance_due_cents = int(invoice_doc.get("balance_due_cents", -1))
+        gross_shape = subtotal_cents == gross_line_cents and discount_cents == discount_line_cents
+        net_shape = subtotal_cents == gross_line_cents - discount_line_cents and discount_cents == 0
         return (
-            (amount_cents is None or subtotal_line_cents == amount_cents)
-            and subtotal_cents == subtotal_line_cents
-            and discount_cents == discount_line_cents
+            (amount_cents is None or gross_line_cents == amount_cents)
+            and (gross_shape or net_shape)
             and total_cents == max(subtotal_cents - discount_cents, 0)
             and 0 <= balance_due_cents <= total_cents
         )
