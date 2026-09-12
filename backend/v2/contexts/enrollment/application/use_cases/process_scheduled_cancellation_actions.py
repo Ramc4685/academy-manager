@@ -72,7 +72,7 @@ from backend.v2.contexts.enrollment.domain.events import (
     EnrollmentCancelled,
     EnrollmentCancelledPayload,
 )
-from backend.v2.contexts.enrollment.domain.models import Enrollment
+from backend.v2.contexts.enrollment.domain.models import SEAT_HOLDING, Enrollment
 from backend.v2.shared.events import Outbox
 
 log = logging.getLogger(__name__)
@@ -110,7 +110,7 @@ class ProcessScheduledCancellationActionsResult(BaseModel):
 #: ``reserved_seats`` — so it must be included here or a hold placed after an
 #: end-of-period self-cancel leaks the seat forever once this worker
 #: completes the cancellation.
-_SEATED_STATUSES = frozenset({"active", "held"})
+_SEATED_STATUSES = SEAT_HOLDING
 
 #: How many times a transient failure is retried before the row is parked as
 #: ``failed`` for a human. Hourly ticks, so three attempts spans ~2h — inside

@@ -32,7 +32,13 @@ from backend.v2.contexts.enrollment.domain.errors import (
     StudentParentInvalidRole,
     StudentParentNotFound,
 )
-from backend.v2.contexts.enrollment.domain.models import Student
+from backend.v2.contexts.enrollment.domain.models import (
+    ACTIVE_OR_PAUSED,
+    DROPPED_SPELLINGS,
+    NON_TERMINAL,
+    TERMINAL,
+    Student,
+)
 from backend.v2.shared.profile.completeness import CHILD_REQUIRED, ChildFacts, child_gaps
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 
@@ -206,7 +212,7 @@ class MongoStudentRepository(TenantScopedRepository):
     ) -> bool:
         filter_: dict[str, object] = {
             "student_id": student_id,
-            "status": {"$in": ["active", "paused"]},
+            "status": {"$in": sorted(ACTIVE_OR_PAUSED)},
         }
         if exclude_enrollment_id is not None:
             filter_["enrollment_id"] = {"$ne": exclude_enrollment_id}
@@ -817,7 +823,7 @@ class MongoStudentRepository(TenantScopedRepository):
                     # it belongs in neither PAST_ENROLLMENT_STATUSES nor a
                     # blind spot — and #720's Return is only reachable from a
                     # visible row.
-                    "status": {"$in": ["active", "paused", "held", "reclaim_pending"]},
+                    "status": {"$in": sorted(NON_TERMINAL)},
                     "is_deleted": {"$ne": True},
                 }
             )
@@ -842,7 +848,7 @@ class MongoStudentRepository(TenantScopedRepository):
     # so it never appears here. Issue #699: carries both spellings of each
     # terminal status (legacy "cancelled"/"withdrawn" and canonical
     # "deleted"/"dropped") so a row written by either era of code is found.
-    PAST_ENROLLMENT_STATUSES = ("cancelled", "deleted", "withdrawn", "dropped")
+    PAST_ENROLLMENT_STATUSES = TERMINAL
 
     async def _admin_student_past_enrollments(
         self,
@@ -862,7 +868,7 @@ class MongoStudentRepository(TenantScopedRepository):
                 {
                     "academy_id": academy_id,
                     "student_id": student_id,
-                    "status": {"$in": list(self.PAST_ENROLLMENT_STATUSES)},
+                    "status": {"$in": sorted(self.PAST_ENROLLMENT_STATUSES)},
                     "is_deleted": {"$ne": True},
                 }
             )
@@ -878,7 +884,7 @@ class MongoStudentRepository(TenantScopedRepository):
             withdrawal_date = self._coerce_datetime(enrollment.get("withdrawal_date"))
             # Issue #699: "withdrawn"/"dropped" are the two spellings of the
             # same withdrawal outcome across the dual-read era.
-            ended_at = withdrawal_date if row.status in ("withdrawn", "dropped") else cancelled_at
+            ended_at = withdrawal_date if row.status in DROPPED_SPELLINGS else cancelled_at
             ended_at = ended_at or cancelled_at or withdrawal_date
             rows.append(
                 row.model_copy(

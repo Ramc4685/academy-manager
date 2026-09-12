@@ -6,7 +6,7 @@ from backend.v2.contexts.enrollment.application.ports import (
     EnrollmentQuery,
     StudentQuery,
 )
-from backend.v2.contexts.enrollment.domain.models import RosterEntry
+from backend.v2.contexts.enrollment.domain.models import ROSTER_VISIBLE, RosterEntry
 
 
 class GetSessionRoster:
@@ -19,7 +19,7 @@ class GetSessionRoster:
         # on the roster, marked "On hold until <return_on>" — a paused row
         # invisible on the roster but still blocking re-add was the #641
         # dead end, and held rows must not repeat it.
-        active = await self._enrollments.for_session_in_statuses(session_id, ["active", "held"])
+        active = await self._enrollments.for_session_in_statuses(session_id, sorted(ROSTER_VISIBLE))
         if not active:
             return []
         students = await self._students.by_ids([e.student_id for e in active])

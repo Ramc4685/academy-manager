@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from datetime import date
 
-from backend.v2.contexts.enrollment.domain.models import Enrollment
+from backend.v2.contexts.enrollment.domain.models import (
+    ACTIVE_OR_PAUSED,
+    LIVE,
+    Enrollment,
+)
 from backend.v2.shared.tenancy import TenantScopedRepository
 
 
@@ -64,7 +68,7 @@ class MongoEnrollmentRepository(TenantScopedRepository):
             {
                 "session_id": session_id,
                 "student_id": student_id,
-                "status": {"$in": ["active", "paused"]},
+                "status": {"$in": sorted(ACTIVE_OR_PAUSED)},
             }
         )
         return doc is not None
@@ -86,7 +90,7 @@ class MongoEnrollmentRepository(TenantScopedRepository):
         and digests deliberately exclude paused enrollments.
         """
         cursor = self._find_many(
-            {"student_id": student_id, "status": {"$in": ["active", "paused"]}},
+            {"student_id": student_id, "status": {"$in": sorted(ACTIVE_OR_PAUSED)}},
             sort=[("enrollment_id", 1)],
         )
         return [self._to_domain(doc) async for doc in cursor]
@@ -96,7 +100,7 @@ class MongoEnrollmentRepository(TenantScopedRepository):
         ``active``/``held`` (still hold a seat) plus ``paused`` (released its
         seat but still a live commitment, #641)."""
         cursor = self._find_many(
-            {"student_id": student_id, "status": {"$in": ["active", "held", "paused"]}},
+            {"student_id": student_id, "status": {"$in": sorted(LIVE)}},
             sort=[("enrollment_id", 1)],
         )
         return [self._to_domain(doc) async for doc in cursor]
@@ -112,6 +116,6 @@ class MongoEnrollmentRepository(TenantScopedRepository):
         if not student_ids:
             return set()
         cursor = self._find_many(
-            {"student_id": {"$in": list(student_ids)}, "status": {"$in": ["active", "paused"]}},
+            {"student_id": {"$in": list(student_ids)}, "status": {"$in": sorted(ACTIVE_OR_PAUSED)}},
         )
         return {str(doc["student_id"]) async for doc in cursor}

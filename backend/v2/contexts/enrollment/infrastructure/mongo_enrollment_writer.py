@@ -7,7 +7,12 @@ from typing import ClassVar, cast
 
 from pymongo.errors import DuplicateKeyError
 
-from backend.v2.contexts.enrollment.domain.models import Enrollment
+from backend.v2.contexts.enrollment.domain.models import (
+    LIVE,
+    SEAT_HOLDING,
+    TERMINAL,
+    Enrollment,
+)
 from backend.v2.shared.tenancy import TenantScopedRepository
 from backend.v2.shared.time import ensure_utc
 
@@ -40,8 +45,9 @@ class MongoEnrollmentWriter(TenantScopedRepository):
     #: end-of-period cancel marker: an admin who cancels or withdraws on the
     #: 20th must not leave the roster showing "Ends Sep 30" for a student who
     #: is already off it (issue #675 follow-up). Issue #699: both spellings of
-    #: each terminal status, so this still catches legacy rows.
-    _TERMINAL_STATUSES = frozenset({"cancelled", "deleted", "withdrawn", "dropped"})
+    #: each terminal status, so this still catches legacy rows. Issue #642:
+    #: domain ``TERMINAL`` is where that list now lives.
+    _TERMINAL_STATUSES = TERMINAL
 
     async def update_status(self, enrollment_id: str, status: str) -> None:
         fields: dict[str, object] = {"status": status}
@@ -82,7 +88,7 @@ class MongoEnrollmentWriter(TenantScopedRepository):
     #: are open too.
     _WITHDRAWABLE_FILTER: ClassVar[dict[str, object]] = {
         "$or": [
-            {"status": {"$in": ["active", "paused", "held"]}},
+            {"status": {"$in": sorted(LIVE)}},
             {"status": {"$exists": False}},
         ]
     }
@@ -278,7 +284,7 @@ class MongoEnrollmentWriter(TenantScopedRepository):
         doc = await self._find_one_and_update(
             {
                 "enrollment_id": enrollment_id,
-                "status": {"$in": ["active", "paused", "held"]},
+                "status": {"$in": sorted(LIVE)},
                 "pending_cancellation_at": {"$ne": None},
             },
             {
@@ -423,8 +429,6 @@ class MongoEnrollmentWriter(TenantScopedRepository):
     async def count_active_for_session(self, session_id: str) -> int:
         # Issue #697: counts SEAT_HOLDING (active + held), not just active —
         # else a class full of holds reports "counter drift" (contract §2.5).
-        from backend.v2.contexts.enrollment.domain.models import SEAT_HOLDING
-
         return await self.collection.count_documents(
             self._scoped({"session_id": session_id, "status": {"$in": sorted(SEAT_HOLDING)}})
         )

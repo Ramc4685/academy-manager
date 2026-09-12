@@ -55,7 +55,7 @@ from backend.v2.contexts.enrollment.domain.errors import (
     OccurrenceNotFound,
 )
 from backend.v2.contexts.enrollment.domain.events import EnrollmentLifecycleEvent
-from backend.v2.contexts.enrollment.domain.models import SessionOccurrence
+from backend.v2.contexts.enrollment.domain.models import ACTIVE_OR_PAUSED, SessionOccurrence
 from backend.v2.contexts.enrollment.domain.occurrence_cancellation import (
     assert_occurrence_cancellable,
 )
@@ -69,7 +69,11 @@ Clock = Callable[[], datetime]
 #: family is included on purpose: a paused month is never invoiced, but a
 #: pause that started mid-month leaves an invoice behind that billing may
 #: still need to credit.
-_AFFECTED_STATUSES = ("active", "paused")
+#: Issue #642: domain ``ACTIVE_OR_PAUSED``, same two statuses this always
+#: meant. Deliberately NOT widened to ``LIVE`` here — whether a held family
+#: is owed a credit for a called-off class is a billing question this slice
+#: does not answer.
+_AFFECTED_STATUSES = ACTIVE_OR_PAUSED
 
 #: Fallback window for a re-opened make-up when the academy's own
 #: ``ParentSelfServicePolicy.makeup_expiry_days`` cannot be read. Mirrors that
@@ -168,7 +172,9 @@ class CancelSessionOccurrence:
             + list(trial_student_ids)
         )
 
-        rows = await self._enrollments.for_session_in_statuses(session_id, list(_AFFECTED_STATUSES))
+        rows = await self._enrollments.for_session_in_statuses(
+            session_id, sorted(_AFFECTED_STATUSES)
+        )
         billing = await self._sync_billing(cancelled, session_id=session_id, cmd=cmd)
         credits: dict[str, Any] = dict(billing.get("credits") or {})
         billing_result = _billing_result(billing)
