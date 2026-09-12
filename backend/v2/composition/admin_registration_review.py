@@ -52,6 +52,8 @@ class RegistrationWaiverSignatureWriter(Protocol):
 
 
 class StudentRegistrationQuery(Protocol):
+    async def get_by_id(self, student_id: str) -> Student | None: ...
+
     async def find_registration_student(
         self,
         *,
@@ -289,18 +291,7 @@ class AdminRegistrationReview:
                 raise IncompleteApplication("Selected session is not available")
 
             full_name = self._student_name(app)
-            await self._students.upsert(
-                Student(
-                    student_id=student_id,
-                    academy_id=self._request_academy_id(),
-                    parent_id=app.parent_user_id,
-                    full_name=full_name,
-                    date_of_birth=app.child_profile.date_of_birth or None,
-                    emergency_contact_name=app.child_profile.emergency_contact_name or None,
-                    emergency_contact_phone=app.child_profile.emergency_contact_phone or None,
-                    medical_notes=app.child_profile.medical_notes or None,
-                )
-            )
+            await self._students.upsert(await self._merged_student(app, student_id, full_name))
             await self._claim_student_registration(student_id, app)
             await self._renew_review_claim(app)
             expected_enrollment_id = app.enrollment_id or self._registration_enrollment_id(
@@ -529,16 +520,7 @@ class AdminRegistrationReview:
         try:
             student_id = await self._available_student_id(app)
             await self._students.upsert(
-                Student(
-                    student_id=student_id,
-                    academy_id=self._request_academy_id(),
-                    parent_id=app.parent_user_id,
-                    full_name=self._student_name(app),
-                    date_of_birth=app.child_profile.date_of_birth or None,
-                    emergency_contact_name=app.child_profile.emergency_contact_name or None,
-                    emergency_contact_phone=app.child_profile.emergency_contact_phone or None,
-                    medical_notes=app.child_profile.medical_notes or None,
-                )
+                await self._merged_student(app, student_id, self._student_name(app))
             )
             await self._claim_student_registration(student_id, app)
             await self._renew_review_claim(app)
@@ -846,6 +828,46 @@ class AdminRegistrationReview:
     @staticmethod
     def _registration_enrollment_id(application_id: str, student_id: str, session_id: str) -> str:
         return stable_ulid("registration-enrollment", application_id, student_id, session_id)
+
+    async def _merged_student(self, app: Application, student_id: str, full_name: str) -> Student:
+        """Build the ``Student`` to upsert on approve/waitlist.
+
+        ``MongoStudentWriter.upsert`` does a blanket ``$set`` from the full
+        model, so a blank field here would null out a value the existing
+        student record already has (e.g. one the parent set later via
+        self-service). Prefer the incoming application value when non-blank;
+        otherwise keep whatever the matched existing student already has.
+        """
+        existing = (
+            await self._student_registrations.get_by_id(student_id)
+            if self._student_registrations is not None
+            else None
+        )
+
+        def carry(new_value: str | None, existing_value: str | None) -> str | None:
+            return new_value if new_value else existing_value
+
+        return Student(
+            student_id=student_id,
+            academy_id=self._request_academy_id(),
+            parent_id=app.parent_user_id,
+            full_name=full_name,
+            date_of_birth=carry(
+                app.child_profile.date_of_birth, existing.date_of_birth if existing else None
+            ),
+            emergency_contact_name=carry(
+                app.child_profile.emergency_contact_name,
+                existing.emergency_contact_name if existing else None,
+            ),
+            emergency_contact_phone=carry(
+                app.child_profile.emergency_contact_phone,
+                existing.emergency_contact_phone if existing else None,
+            ),
+            medical_notes=carry(
+                app.child_profile.medical_notes, existing.medical_notes if existing else None
+            ),
+            student_user_id=existing.student_user_id if existing else None,
+        )
 
     async def _claim_review(
         self,

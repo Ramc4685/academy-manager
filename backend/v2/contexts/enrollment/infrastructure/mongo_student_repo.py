@@ -216,6 +216,10 @@ class MongoStudentRepository(TenantScopedRepository):
         )
         return enrollment is not None
 
+    async def get_by_id(self, student_id: str) -> Student | None:
+        doc = await self._find_one(self._id_filter(student_id))
+        return self._to_domain(doc) if doc else None
+
     async def by_ids(self, student_ids: list[str]) -> list[Student]:
         if not student_ids:
             return []
