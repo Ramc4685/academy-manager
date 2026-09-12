@@ -1,6 +1,6 @@
 # Delete/drop owner gate
 
-PR: #0
+PR: #765
 
 ## What changed
 
