@@ -985,7 +985,8 @@ def compose_parent(
         checkout_retirement=checkout_retirement,
     )
     list_available_sessions = ListParentAvailableSessions(sessions=sessions_query)
-    request_pause = RequestEnrollmentPause(pause_requests=pause_requests)
+    # Issue #616: a request nobody is told about sits PENDING for months.
+    request_pause = RequestEnrollmentPause(pause_requests=pause_requests, notifier=roster_notifier)
     list_parent_pause_requests = ListParentPauseRequests(pause_requests=pause_requests)
 
     # Cross-context handlers register themselves at import time via @handler.

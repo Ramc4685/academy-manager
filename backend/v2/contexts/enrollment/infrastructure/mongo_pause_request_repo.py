@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from bson import ObjectId as BsonObjectId
 from pydantic import ValidationError
@@ -260,12 +260,21 @@ def _display_review_date(kwargs: dict[str, object]) -> object:
     for candidate in (kwargs.get("review_on"), kwargs.get("resume_on")):
         if candidate:
             return candidate
+    created_at = kwargs.get("created_at")
+    created_date = created_at.date() if isinstance(created_at, datetime) else None
     period = str(kwargs.get("period") or "")
     if len(period) >= 7:
-        return f"{period[:7]}-01"
-    created_at = kwargs.get("created_at")
-    if isinstance(created_at, datetime):
-        return created_at.date()
+        try:
+            period_date = date.fromisoformat(f"{period[:7]}-01")
+        except ValueError:
+            period_date = None
+        if period_date is not None:
+            # Issue #616: the first of the pause's month can fall BEFORE the
+            # request itself (prod showed "Review Jun 1" on a request made
+            # Jun 2). A derived review date never precedes its own row.
+            return max(period_date, created_date) if created_date else period_date
+    if created_date is not None:
+        return created_date
     return created_at
 
 

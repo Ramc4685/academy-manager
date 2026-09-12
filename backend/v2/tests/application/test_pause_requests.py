@@ -347,3 +347,81 @@ class _FakePauseRequests:
 
     async def enrollment_belongs_to_parent(self, enrollment_id: str, parent_id: str) -> bool:
         return True
+
+
+@pytest.mark.asyncio
+async def test_request_pause_notifies_staff_that_a_request_arrived() -> None:
+    """#616: a request nobody is told about sits PENDING for months while the
+    parent believes they have paused and billing keeps running."""
+    repo = _FakePauseRequests()
+    notifier = _FakeSubmittedNotifier()
+    use_case = RequestEnrollmentPause(pause_requests=repo, notifier=notifier)
+
+    request = await use_case.execute(
+        RequestEnrollmentPauseCommand(
+            parent_id="parent-1",
+            enrollment_id="enr-1",
+            pause_kind="fixed",
+            resume_on=date(2026, 7, 15),
+            reason="summer travel",
+        )
+    )
+
+    assert notifier.calls == [
+        {
+            "pause_request_id": request.pause_request_id,
+            "enrollment_id": "enr-1",
+            "parent_id": "parent-1",
+            "session_id": None,
+            "reason": "summer travel",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_request_pause_survives_a_notifier_failure() -> None:
+    """A mail-provider blip must never cost the parent their request."""
+    repo = _FakePauseRequests()
+    use_case = RequestEnrollmentPause(
+        pause_requests=repo, notifier=_FakeSubmittedNotifier(fail=True)
+    )
+
+    request = await use_case.execute(
+        RequestEnrollmentPauseCommand(
+            parent_id="parent-1",
+            enrollment_id="enr-1",
+            pause_kind="fixed",
+            resume_on=date(2026, 7, 15),
+            reason="summer travel",
+        )
+    )
+
+    assert request.enrollment_id == "enr-1"
+    assert repo.request.pause_request_id == request.pause_request_id
+
+
+class _FakeSubmittedNotifier:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.calls: list[dict[str, object]] = []
+        self._fail = fail
+
+    async def pause_request_submitted(
+        self,
+        *,
+        pause_request_id: str,
+        enrollment_id: str,
+        parent_id: str,
+        session_id: str | None,
+        reason: str | None,
+    ) -> None:
+        if self._fail:
+            raise RuntimeError("resend rejected the message")
+        self.calls.append(
+            {
+                "pause_request_id": pause_request_id,
+                "enrollment_id": enrollment_id,
+                "parent_id": parent_id,
+                "session_id": session_id,
+                "reason": reason,
+            }
+        )

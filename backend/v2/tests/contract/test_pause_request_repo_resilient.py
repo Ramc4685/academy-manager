@@ -11,7 +11,7 @@ still see and action it.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from backend.v2.contexts.enrollment.infrastructure.mongo_pause_request_repo import (
     MongoPauseRequestRepository,
@@ -71,3 +71,26 @@ async def test_list_for_parent_tolerates_legacy_doc(db, acad):
     rows = await repo.list_for_parent("p9")
 
     assert [r.pause_request_id for r in rows] == ["pr-legacy"]
+
+
+def test_coerced_legacy_row_never_reviews_before_it_was_requested():
+    """#616: prod showed "Review Jun 1, 2026" on a request made Jun 2, 2026.
+
+    The display fallback derived the review date from the pause period (first
+    of that month) with no floor at the row's own ``created_at``.
+    """
+    coerced = MongoPauseRequestRepository._to_domain(
+        dict(
+            pause_request_id="pr-legacy",
+            enrollment_id="e1",
+            parent_id="p1",
+            period="2026-06",
+            status="pending",
+            # fixed (the default) with no resume_on: fails the window
+            # invariant, so the read coerces it for display.
+            created_at=datetime(2026, 6, 2, 14, 30, tzinfo=UTC),
+        )
+    )
+
+    assert coerced.review_on == date(2026, 6, 2)
+    assert coerced.review_on >= coerced.created_at.date()
