@@ -273,6 +273,7 @@ class ExistingStudentRegistrations:
         active: bool = False,
         ambiguous: bool = False,
         enrollment_id: str = "existing-enrollment",
+        existing_student: Student | None = None,
     ) -> None:
         self.student_id = student_id
         self.active = active
@@ -281,6 +282,12 @@ class ExistingStudentRegistrations:
         self.claimed_by: str | None = None
         self.claimed_at: datetime | None = None
         self.claim_token: str | None = None
+        self.existing_student = existing_student
+
+    async def get_by_id(self, student_id: str) -> Student | None:
+        if self.existing_student is not None and self.existing_student.student_id == student_id:
+            return self.existing_student
+        return None
 
     async def find_registration_student(
         self,
@@ -489,6 +496,133 @@ async def test_approve_carries_emergency_contact_and_medical_notes_onto_student(
     assert upserted.emergency_contact_name == "Vikram Raghavan"
     assert upserted.emergency_contact_phone == "+1 555 0111"
     assert upserted.medical_notes == "__none_declared__"
+
+
+@pytest.mark.asyncio
+async def test_approve_preserves_existing_student_fields_when_application_is_blank() -> None:
+    """A blank application (e.g. one that predates the issue #380 checkout
+    guard, or any future gap in it) must not null out values an existing
+    matched student already has — including ones a parent set later via
+    the self-service profile."""
+    app = _application(
+        student_id="student-1",
+        child_profile=ChildProfile(first_name="Sam", last_name="Student"),
+    )
+    existing_student = Student(
+        student_id="student-1",
+        academy_id=ACADEMY_ID,
+        parent_id="parent-1",
+        full_name="Sam Student",
+        date_of_birth="2015-04-02",
+        emergency_contact_name="Vikram Raghavan",
+        emergency_contact_phone="+1 555 0111",
+        medical_notes="Peanut allergy",
+        student_user_id="user-99",
+    )
+    students = InMemoryStudents()
+
+    review = AdminRegistrationReview(
+        apps=InMemoryApplications(app),
+        sessions=InMemorySessions([_session()]),
+        students=students,
+        enrollments=InMemoryEnrollments(),
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        student_registrations=ExistingStudentRegistrations(
+            student_id="student-1", existing_student=existing_student
+        ),
+        clock=lambda: NOW,
+    )
+
+    await review.approve(ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1"))
+
+    upserted = students.upserts[-1]
+    assert upserted.date_of_birth == "2015-04-02"
+    assert upserted.emergency_contact_name == "Vikram Raghavan"
+    assert upserted.emergency_contact_phone == "+1 555 0111"
+    assert upserted.medical_notes == "Peanut allergy"
+    assert upserted.student_user_id == "user-99"
+
+
+@pytest.mark.asyncio
+async def test_approve_prefers_application_value_over_existing_student_field() -> None:
+    """A non-blank application field is a real update (e.g. the parent
+    corrected the emergency contact on re-registration) and must win over
+    the stale value on the existing student record."""
+    app = _application(
+        student_id="student-1",
+        child_profile=ChildProfile(
+            first_name="Sam",
+            last_name="Student",
+            emergency_contact_name="New Contact",
+        ),
+    )
+    existing_student = Student(
+        student_id="student-1",
+        academy_id=ACADEMY_ID,
+        parent_id="parent-1",
+        full_name="Sam Student",
+        emergency_contact_name="Old Contact",
+        medical_notes="Peanut allergy",
+    )
+    students = InMemoryStudents()
+
+    review = AdminRegistrationReview(
+        apps=InMemoryApplications(app),
+        sessions=InMemorySessions([_session()]),
+        students=students,
+        enrollments=InMemoryEnrollments(),
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        student_registrations=ExistingStudentRegistrations(
+            student_id="student-1", existing_student=existing_student
+        ),
+        clock=lambda: NOW,
+    )
+
+    await review.approve(ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1"))
+
+    upserted = students.upserts[-1]
+    assert upserted.emergency_contact_name == "New Contact"
+    assert upserted.medical_notes == "Peanut allergy"
+
+
+@pytest.mark.asyncio
+async def test_waitlist_preserves_existing_student_fields_when_application_is_blank() -> None:
+    app = _application(
+        student_id="student-1",
+        child_profile=ChildProfile(first_name="Sam", last_name="Student"),
+    )
+    existing_student = Student(
+        student_id="student-1",
+        academy_id=ACADEMY_ID,
+        parent_id="parent-1",
+        full_name="Sam Student",
+        emergency_contact_name="Vikram Raghavan",
+        emergency_contact_phone="+1 555 0111",
+        medical_notes="Peanut allergy",
+    )
+    students = InMemoryStudents()
+
+    review = AdminRegistrationReview(
+        apps=InMemoryApplications(app),
+        sessions=InMemorySessions([_session()]),
+        students=students,
+        enrollments=InMemoryEnrollments(),
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        student_registrations=ExistingStudentRegistrations(
+            student_id="student-1", existing_student=existing_student
+        ),
+        clock=lambda: NOW,
+    )
+
+    await review.waitlist(WaitlistRegistrationCommand(application_id="app-1", actor_id="admin-1"))
+
+    upserted = students.upserts[-1]
+    assert upserted.emergency_contact_name == "Vikram Raghavan"
+    assert upserted.emergency_contact_phone == "+1 555 0111"
+    assert upserted.medical_notes == "Peanut allergy"
 
 
 @pytest.mark.asyncio

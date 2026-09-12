@@ -24,10 +24,11 @@ class MongoStudentWriter(TenantScopedRepository):
         """Write the WHOLE student model.
 
         Only safe for callers that legitimately own the full profile — today
-        that is registration approval (which carries date_of_birth and the
-        emergency contacts off the approved application) and the checkout
-        confirm path (which always mints a fresh id, so its upsert is always
-        an insert). Everything else must use `ensure_exists`: this `$set`
+        that is registration approval (whose `_merged_student` fetches the
+        existing student first and only overwrites a field when the incoming
+        application value is non-blank, issue #755) and the checkout confirm
+        path (which always mints a fresh id, so its upsert is always an
+        insert). Everything else must use `ensure_exists`: this `$set`
         re-sends every unsupplied optional field as `None`, and on an existing
         student that erases date_of_birth, emergency_contact_name,
         emergency_contact_phone, medical_notes and `student_user_id` — the
