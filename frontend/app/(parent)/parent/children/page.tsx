@@ -32,6 +32,12 @@ import {
   cancellationTimingCopy,
   pendingCancellationLabel,
 } from "@/lib/format/cancellation-copy";
+import {
+  holdReturnLabel,
+  holdScheduleNote,
+  isHeldEnrollment,
+  partitionByHold,
+} from "@/lib/format/hold-copy";
 
 // Avatar gradients are shared with the kid-first Home cards so the same child
 // wears the same colour on both screens (lib/avatar-gradient.ts).
@@ -125,7 +131,11 @@ function ChildCard({
   const gradient = nameGradient(child.full_name);
   const presentCount = attendance.filter((r) => r.status === "present" || r.status === "late").length;
   const absentCount = attendance.filter((r) => r.status === "absent").length;
-  const activeEnrollments = enrollments.filter((e) => e.status === "active");
+  // #740: a held enrollment keeps its seat but produces no sessions. Dropping
+  // it here is what made the class vanish from this card with no explanation.
+  const { active: activeEnrollments, held: heldEnrollments } = partitionByHold(enrollments);
+  const holdNote = holdScheduleNote(heldEnrollments);
+  const listedEnrollments = [...activeEnrollments, ...heldEnrollments];
 
   return (
     <article className="rounded-2xl overflow-hidden border border-rally-line bg-white animate-fade-in-up transition-all duration-200 hover:shadow-lg">
@@ -159,7 +169,7 @@ function ChildCard({
           Upcoming sessions
         </p>
         {sessions.length === 0 ? (
-          <p className="text-xs py-1 text-rally-subtle">No upcoming sessions.</p>
+          <p className="text-xs py-1 text-rally-subtle">{holdNote ?? "No upcoming sessions."}</p>
         ) : (
           <ul className="space-y-2">
             {sessions.map((s) => (
@@ -170,13 +180,13 @@ function ChildCard({
       </div>
 
       {/* Enrollments */}
-      {activeEnrollments.length > 0 && (
+      {listedEnrollments.length > 0 && (
         <div className="px-4 py-3 border-b border-rally-line">
           <p className="text-[10px] font-bold uppercase tracking-widest mb-2.5 text-rally-cobalt-600">
             Enrollments
           </p>
           <ul className="space-y-2">
-            {activeEnrollments.map((e) => (
+            {listedEnrollments.map((e) => (
               <EnrollmentRow key={e.enrollment_id} enrollment={e} academyTimezone={academyTimezone} />
             ))}
           </ul>
@@ -301,6 +311,9 @@ function EnrollmentRow({
 }) {
   const [confirming, setConfirming] = useState(false);
   const pendingLabel = pendingCancellationLabel(enrollment.pending_cancellation_at, academyTimezone);
+  // #740: a held enrollment cannot be self-cancelled (the API allows it only
+  // while active), so offering the button here would only produce an error.
+  const held = isHeldEnrollment(enrollment);
 
   return (
     <li className="rounded-xl p-3 bg-rally-paper">
@@ -308,15 +321,24 @@ function EnrollmentRow({
         <div className="min-w-0">
           <p className="text-sm font-semibold truncate text-rally-ink">{enrollment.session_title}</p>
           <p className="text-xs mt-0.5 text-rally-muted">
-            {pendingLabel ? "Cancellation scheduled" : "Active enrollment"}
+            {held
+              ? "Your child's place is being kept"
+              : pendingLabel
+                ? "Cancellation scheduled"
+                : "Active enrollment"}
           </p>
-          {pendingLabel && (
+          {held && (
+            <div className="mt-1">
+              <Chip variant="paused" label={holdReturnLabel(enrollment.hold_return_on)} />
+            </div>
+          )}
+          {!held && pendingLabel && (
             <div className="mt-1">
               <Chip variant="pending" label={pendingLabel} />
             </div>
           )}
         </div>
-        {!pendingLabel && (
+        {!held && !pendingLabel && (
           <Button variant="danger" size="sm" onClick={() => setConfirming(true)}>
             Cancel enrollment…
           </Button>

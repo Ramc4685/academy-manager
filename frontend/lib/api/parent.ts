@@ -103,6 +103,8 @@ export interface ParentChild {
   full_name: string;
   status: string;
   active_session_count: number;
+  /** Issue #740: enrollments on hold — counted apart from the active ones. */
+  held_session_count?: number;
   attended_count: number;
   absent_count: number;
 }
@@ -116,6 +118,8 @@ export interface ParentEnrollment {
   status: string;
   /** Issue #675: set while a parent's end-of-period cancel is pending; the enrollment stays active until then. */
   pending_cancellation_at?: string | null;
+  /** Issue #740: ISO calendar date a hold is expected to end; null unless status is "held". */
+  hold_return_on?: string | null;
   payment_mode: string | null;
   /** @deprecated Not populated by the v2 BFF; autopay state lives in autopay_enrollment_status. Do not read. */
   subscription_status: string | null;
