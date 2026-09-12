@@ -70,7 +70,6 @@ async def quote_enrollment(
         parent_id=claims.user_id,
         student_id=body.student_id,
         session_id=body.session_id,
-        start_date=body.start_date,
     )
     return _quote_response(snapshot)
 

@@ -290,10 +290,12 @@ export function startCheckout(payload: {
   });
 }
 
+// The billing start is the server's clock, not the caller's: checkout charges
+// the snapshot this quote mints (#731), so there is deliberately no start_date
+// a parent could use to price their own first month down.
 export function quoteEnrollment(payload: {
   student_id?: string | null;
   session_id: string;
-  start_date?: string | null;
 }): Promise<EnrollmentQuote> {
   return apiFetch("/parent/enrollments/quote", {
     method: "POST",

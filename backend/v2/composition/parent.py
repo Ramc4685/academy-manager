@@ -1835,8 +1835,21 @@ def compose_parent(
         parent_id: str,
         session_id: str,
         student_id: str | None = None,
-        start_date: str | None = None,
     ):
+        """Price a parent's enrollment from *now*, and only from now.
+
+        There is deliberately no caller-chosen billing start here. Since #731
+        checkout consumes and charges the snapshot this quote minted, so any
+        lever a parent could pull to move ``billing_start_at`` forward is a
+        lever on their own price: a start date late in the month excludes the
+        classes before it (``BEFORE_BILLING_START`` in
+        ``FirstMonthProrationPolicy.quote``), mints a near-zero OPEN snapshot,
+        and checkout would then charge that figure while the enrollment went
+        ahead at full value. Pricing from the server clock — the same instant
+        checkout falls back to — keeps a review-step quote from ever being
+        lower than what the server would charge on its own. Admins still get
+        a start date on their own quote path, which is trusted and audited.
+        """
         if student_id:
             students = await _parent_students(parent_id)
             owned = {str(s.get("student_id") or s["_id"]) for s in students}
@@ -1850,7 +1863,6 @@ def compose_parent(
                 # quote the review step shows and the quote checkout consumes
                 # on one clock for the tests that pin it.
                 billing_start_at=clock(),
-                billing_start_date=_parse_start_date(start_date),
                 calculated_by=parent_id,
                 parent_id=parent_id,
                 student_id=student_id,
@@ -2829,21 +2841,3 @@ def _local_period_label(instant: datetime, timezone_name: str) -> str:
     except (KeyError, ValueError):
         tz = ZoneInfo("UTC")
     return moment.astimezone(tz).strftime("%Y-%m")
-
-
-def _parse_start_date(value: str | None) -> date | None:
-    """Parse a caller-supplied start date, leaving the timezone to the caller.
-
-    This used to pin the date to ``America/Chicago`` midnight and hand the
-    resulting instant down as ``billing_start_at``. That hardcoded zone is
-    wrong for any session that is not in Chicago, and once QuoteEnrollment
-    began reading the billing start in the *session's* timezone it became
-    actively harmful: Chicago midnight on the 1st is 22:00 on the last day of
-    the previous month in Los Angeles, so the quote would be labelled, priced
-    and persisted against the wrong month (#541). The calendar date now
-    travels down as a date and QuoteEnrollment resolves it against the
-    session's own clock.
-    """
-    if not value:
-        return None
-    return datetime.fromisoformat(value).date()

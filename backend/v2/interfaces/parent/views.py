@@ -148,9 +148,14 @@ class CheckoutStatusResponse(BaseModel):
 
 
 class EnrollmentQuoteRequest(BaseModel):
+    #: No ``start_date``: the billing start is the server's clock, never the
+    #: caller's. Checkout charges the snapshot this quote mints (#731), so a
+    #: client-chosen start date would let a parent exclude most of the month's
+    #: classes from their own price. An older bundle that still posts the
+    #: field is simply ignored (pydantic drops unknown keys). Admins keep a
+    #: start date on their own, trusted quote endpoint.
     student_id: str | None = None
     session_id: str
-    start_date: str | None = None
 
 
 class EnrollmentQuoteResponse(BaseModel):

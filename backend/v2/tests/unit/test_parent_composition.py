@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 from datetime import UTC, date, datetime, timedelta
 from datetime import time as dt_time
@@ -28,6 +29,7 @@ from backend.v2.contexts.onboarding.domain.errors import (
     ApplicationNotEditable,
     IncompleteApplication,
 )
+from backend.v2.interfaces.parent.views import EnrollmentQuoteRequest
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.tenancy import tenant_scope
 
@@ -2431,6 +2433,62 @@ async def test_checkout_refuses_a_stale_displayed_snapshot_instead_of_charging_a
     # wizard re-quotes for itself, so the snapshot it renders next is the one
     # the next attempt consumes.
     assert await db["billing_calculation_snapshots"].find_one({}) is None
+
+
+async def test_a_parent_cannot_choose_the_billing_start_that_prices_their_quote(
+    allow_app_origin,
+) -> None:
+    """No client lever on ``billing_start_at`` — checkout charges this quote.
+
+    Since checkout consumes the snapshot the review step minted, anything a
+    parent can push ``billing_start_at`` forward with prices their own first
+    month: every class before the chosen start is dropped as
+    ``BEFORE_BILLING_START``, so a start date late in the month mints a
+    near-zero OPEN snapshot for their real session, and checkout would then
+    charge that figure while the enrollment went ahead at full value. The
+    parent quote path therefore takes no start date at all — it prices from
+    the server clock, the same instant checkout falls back to, so a
+    review-step quote can never come in under what the server would charge on
+    its own.
+    """
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-quote-start-date"]
+
+    quote_now = _pinned_quote_clock()
+    await db["sessions"].insert_one(_billable_session(quote_now))
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=object(),  # type: ignore[arg-type]
+        academy_id="acad",
+        clock=lambda: quote_now,
+    )
+
+    # The lever does not exist on the use case...
+    assert "start_date" not in inspect.signature(parent.quote_enrollment).parameters
+    with pytest.raises(TypeError):
+        with tenant_scope("acad"):
+            await parent.quote_enrollment(
+                parent_id="parent-1",
+                session_id="sess-1",
+                start_date="2999-01-01",  # type: ignore[call-arg]
+            )
+
+    # ...nor on the wire: the request model drops the field, so an old bundle
+    # that still posts it is quoted from the server clock like everyone else.
+    request = EnrollmentQuoteRequest.model_validate(
+        {"session_id": "sess-1", "start_date": "2999-01-01"}
+    )
+    assert not hasattr(request, "start_date")
+
+    with tenant_scope("acad"):
+        quote = await parent.quote_enrollment(parent_id="parent-1", session_id="sess-1")
+
+    # Priced for the whole month ahead of the server clock, not for a sliver
+    # of it chosen by the caller.
+    assert quote.final_amount_cents > 0
+    assert "BEFORE_BILLING_START" not in quote.excluded_occurrences.values()
 
 
 # ---------------------------------------------------------------------------
