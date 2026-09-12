@@ -6,12 +6,12 @@ unauthenticated 401.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from fastapi.testclient import TestClient
 
 from backend.v2.contexts.enrollment.application.use_cases.absence_notices import AbsenceNotice
-from backend.v2.contexts.enrollment.domain.models import Student
+from backend.v2.contexts.enrollment.domain.models import Enrollment, Student
 from backend.v2.contexts.enrollment.domain.self_service import OccurrenceRosterEntry
 from backend.v2.tests.interface.conftest import _build_use_cases, _coach_claims, _make_app
 
@@ -178,3 +178,45 @@ def test_coach_today_appends_one_time_makeup_entry_with_entry_source(seed):
     assert by_id["st-makeup"]["full_name"] == "Charlie"
     assert by_id["st-makeup"]["enrollment_status"] is None
     assert by_id["st1"]["entry_source"] == "enrollment"
+
+
+# ---------- held enrollments stay on the day's roster (#732) ----------
+
+
+def test_coach_today_includes_held_student_without_500(seed):
+    """A held row (#697 keeps it on the roster) must not fail response
+    validation. The DTO is shared by every session in the payload, so one
+    rejected row 500s the coach's whole day, not just that class."""
+    seed["enrollments"] = [
+        *seed["enrollments"],
+        Enrollment(
+            enrollment_id="e-held",
+            academy_id="test-academy",
+            session_id="s-today-1",
+            student_id="st-held",
+            status="held",
+            hold_return_on=date(2026, 6, 1),
+        ),
+    ]
+    seed["students"] = [
+        *seed["students"],
+        Student(
+            student_id="st-held",
+            academy_id="test-academy",
+            parent_id="p3",
+            full_name="Held Hannah",
+        ),
+    ]
+    use_cases = _build_use_cases(seed)
+    app = _make_app(_coach_claims(), use_cases)
+    with TestClient(app) as client:
+        r = client.get("/api/v2/coach/today?date=2026-05-16")
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # Every session of the day still renders, not just the unaffected one.
+    assert [s["session_id"] for s in body["sessions"]] == ["s-today-1", "s-today-2"]
+    by_id = {entry["student_id"]: entry for entry in body["sessions"][0]["roster"]}
+    assert set(by_id) == {"st1", "st2", "st-held"}
+    assert by_id["st-held"]["enrollment_status"] == "held"
+    assert by_id["st1"]["enrollment_status"] == "active"

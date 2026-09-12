@@ -44,7 +44,10 @@ class CoachSessionTeachingPlanResponse(BaseModel):
 class CoachRosterEntry(BaseModel):
     student_id: str
     full_name: str
-    enrollment_status: Literal["active", "paused", "cancelled"] | None = None
+    # "held" (#697) is a live roster status: GetSessionRoster deliberately
+    # keeps held rows visible, so this Literal must accept it — one rejected
+    # row fails response validation for the coach's entire day (#732).
+    enrollment_status: Literal["active", "paused", "held", "cancelled"] | None = None
     # Already-recorded mark for this occurrence, so the client can hydrate
     # attendance state after a reload instead of treating everyone as unmarked.
     attendance_status: Literal["present", "absent", "late"] | None = None
