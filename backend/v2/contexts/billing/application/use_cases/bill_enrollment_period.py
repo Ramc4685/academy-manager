@@ -22,6 +22,10 @@ from backend.v2.contexts.billing.application.use_cases.add_invoice_line import (
     AddInvoiceLine,
     AddInvoiceLineCommand,
 )
+from backend.v2.contexts.billing.application.use_cases.invoice_due_date import (
+    BillingSettingsReader,
+    resolve_invoice_due_date,
+)
 from backend.v2.contexts.billing.domain.ledger import LedgerInvoice
 from backend.v2.shared.ids import new_ulid
 
@@ -76,7 +80,9 @@ class BillEnrollmentPeriodCommand(BaseModel):
 
     enrollment_id: str
     period: str = Field(pattern=r"^\d{4}-\d{2}$")
-    due_date: date
+    #: ``None`` takes the academy's ``invoice_due_days`` Billing rule, the same
+    #: window the monthly generator dates its invoices by (#739).
+    due_date: date | None = None
 
 
 def tuition_line_description(period: str) -> str:
@@ -91,11 +97,13 @@ class BillEnrollmentPeriod:
         ledger: LedgerRepository,
         enrollments: EnrollmentBillingTargetReader,
         add_line: AddInvoiceLine,
+        settings: BillingSettingsReader | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._ledger = ledger
         self._enrollments = enrollments
         self._add_line = add_line
+        self._settings = settings
         self._now = clock
 
     async def execute(self, cmd: BillEnrollmentPeriodCommand) -> dict[str, Any]:
@@ -124,6 +132,9 @@ class BillEnrollmentPeriod:
             raise ValueError("this enrollment has no monthly price to bill")
 
         now = self._now()
+        due_date = await resolve_invoice_due_date(
+            self._settings, due_date=cmd.due_date, today=now.date()
+        )
         invoice_id = f"inv-{new_ulid()}"
         draft = LedgerInvoice(
             invoice_id=invoice_id,
@@ -138,7 +149,7 @@ class BillEnrollmentPeriod:
             total_cents=0,
             balance_due_cents=0,
             currency="usd",
-            due_date=cmd.due_date,
+            due_date=due_date,
             created_at=now,
             updated_at=now,
         )

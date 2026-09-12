@@ -55,6 +55,9 @@ from backend.v2.contexts.billing.application.use_cases.apply_enrollment_lifecycl
 from backend.v2.contexts.billing.application.use_cases.apply_occurrence_cancellation import (
     PeriodChargeBasis,
 )
+from backend.v2.contexts.billing.application.use_cases.invoice_due_date import (
+    invoice_due_days,
+)
 from backend.v2.contexts.billing.application.use_cases.invoice_numbering import (
     mint_invoice_number,
 )
@@ -680,18 +683,8 @@ class ApplyEnrollmentMove:
         return stored, stored_lines[0] if stored_lines else line
 
     async def _invoice_due_days(self) -> int:
-        if self._settings is None:
-            return 7
-        try:
-            settings = await self._settings.get()
-        except Exception:
-            log.exception("apply_enrollment_move_settings_unreadable")
-            return 7
-        # `or 0` on the attribute value would turn an explicit null (the field
-        # is optional in billing_settings) into "due today", and the dunning
-        # ladder would chase a charge the parent has not seen yet.
-        value = getattr(settings, "invoice_due_days", None)
-        return 7 if value is None else int(value)
+        """The academy's configured window, shared with the hand-billing paths (#739)."""
+        return await invoice_due_days(self._settings)
 
     async def _credit(
         self,

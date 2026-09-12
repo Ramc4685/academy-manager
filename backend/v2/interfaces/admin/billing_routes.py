@@ -750,13 +750,15 @@ class CreateStudentInvoiceRequest(BaseModel):
     student_id: str
     parent_id: str
     period: str = Field(pattern=r"^\d{4}-\d{2}$")
-    due_date: date
+    #: Omitted means "use this academy's ``invoice_due_days`` Billing rule", so a
+    #: hand-made invoice is dated like a generated one (#739).
+    due_date: date | None = None
     enrollment_id: str | None = None
 
 
 class BillEnrollmentPeriodRequest(BaseModel):
     period: str = Field(pattern=r"^\d{4}-\d{2}$")
-    due_date: date
+    due_date: date | None = None
 
 
 class VoidInvoiceRequest(BaseModel):

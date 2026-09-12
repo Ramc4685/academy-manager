@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
@@ -402,19 +403,35 @@ class _FakeEnrollmentTargets:
         return self.target
 
 
+class _FakeBillingSettings:
+    """Only the one field the due-date default reads (#739)."""
+
+    def __init__(self, invoice_due_days: int) -> None:
+        self._invoice_due_days = invoice_due_days
+
+    async def get(self):
+        return SimpleNamespace(invoice_due_days=self._invoice_due_days)
+
+
 def _override_bill_enrollment_period(
-    admin_client, ledger: _FakeLedger, target: EnrollmentBillingTarget | None
+    admin_client,
+    ledger: _FakeLedger,
+    target: EnrollmentBillingTarget | None,
+    *,
+    invoice_due_days: int | None = None,
 ) -> list[str | None]:
     actors: list[str | None] = []
+    settings = None if invoice_due_days is None else _FakeBillingSettings(invoice_due_days)
 
     async def bill_enrollment_period(
-        *, enrollment_id: str, period: str, due_date: date, actor_id: str | None = None
+        *, enrollment_id: str, period: str, due_date: date | None, actor_id: str | None = None
     ) -> dict:
         actors.append(actor_id)
         return await BillEnrollmentPeriod(
             ledger=ledger,
             enrollments=_FakeEnrollmentTargets(target),
             add_line=AddInvoiceLine(ledger=ledger),
+            settings=settings,
         ).execute(
             BillEnrollmentPeriodCommand(
                 enrollment_id=enrollment_id, period=period, due_date=due_date
@@ -1853,3 +1870,81 @@ def test_admin_invoice_list_falls_back_to_invoice_id_when_no_number_minted(admin
 
     assert response.status_code == 200, response.text
     assert response.json()["invoices"][0]["invoice_number"] == "inv-legacy-1"
+
+
+def test_bill_enrollment_period_defaults_the_due_date_to_the_billing_rule(admin_client):
+    """A body with no due_date takes the academy's window, not a hard-coded 7 (#739)."""
+    ledger = _FakeLedger()
+    _override_bill_enrollment_period(
+        admin_client,
+        ledger,
+        EnrollmentBillingTarget(
+            enrollment_id="enroll-1",
+            academy_id="acad",
+            student_id="student-1",
+            parent_id="parent-1",
+            monthly_price_cents=12_000,
+        ),
+        invoice_due_days=14,
+    )
+
+    response = admin_client.post(
+        "/api/v2/admin/enrollments/enroll-1/invoices/bill-period",
+        json={"period": "2026-06"},
+    )
+
+    assert response.status_code == 201, response.text
+    expected = (date.today() + timedelta(days=14)).isoformat()
+    assert response.json()["due_date"] == expected
+
+
+def test_bill_enrollment_period_keeps_an_explicitly_chosen_due_date(admin_client):
+    ledger = _FakeLedger()
+    _override_bill_enrollment_period(
+        admin_client,
+        ledger,
+        EnrollmentBillingTarget(
+            enrollment_id="enroll-1",
+            academy_id="acad",
+            student_id="student-1",
+            parent_id="parent-1",
+            monthly_price_cents=12_000,
+        ),
+        invoice_due_days=14,
+    )
+
+    response = admin_client.post(
+        "/api/v2/admin/enrollments/enroll-1/invoices/bill-period",
+        json={"period": "2026-06", "due_date": "2026-06-30"},
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["due_date"] == "2026-06-30"
+
+
+def test_create_student_invoice_accepts_a_body_without_a_due_date(admin_client):
+    """The route hands ``None`` down so the use case can apply Billing rules (#739)."""
+    ledger = _FakeLedger()
+    seen: list[date | None] = []
+    _override_ledger(admin_client, ledger)
+    _override_admin_student(admin_client, _student_detail(enrollment_ids=["enroll-1"]))
+    wrapped = admin_client.use_cases.create_student_invoice
+
+    async def create_student_invoice(*, due_date: date | None, **kwargs) -> dict:
+        seen.append(due_date)
+        return await wrapped(due_date=due_date or date(2026, 6, 30), **kwargs)
+
+    admin_client.use_cases.create_student_invoice = create_student_invoice
+
+    response = admin_client.post(
+        "/api/v2/admin/students/student-1/invoices",
+        json={
+            "student_id": "student-1",
+            "parent_id": "parent-1",
+            "period": "2026-06",
+            "enrollment_id": "enroll-1",
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    assert seen == [None]

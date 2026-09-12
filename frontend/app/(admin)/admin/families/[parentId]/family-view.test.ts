@@ -7,6 +7,7 @@ import {
   enrollmentOptions,
   enrollmentPriceCents,
   invoiceActionLabel,
+  invoiceDueDays,
   periodLabel,
   registrationChip,
   shortDate,
@@ -98,6 +99,17 @@ describe("manual invoice defaults", () => {
   it("defaultDueDate lands a week out and rolls the month", () => {
     expect(defaultDueDate(new Date(2026, 8, 12))).toBe("2026-09-19");
     expect(defaultDueDate(new Date(2026, 8, 28))).toBe("2026-10-05");
+  });
+  it("defaultDueDate honours the academy's window", () => {
+    expect(defaultDueDate(new Date(2026, 8, 12), 10)).toBe("2026-09-22");
+    expect(defaultDueDate(new Date(2026, 8, 12), 0)).toBe("2026-09-12");
+  });
+  it("invoiceDueDays reads Billing rules, falling back only when unset (#739)", () => {
+    expect(invoiceDueDays({ billing_day: 1, invoice_due_days: 10 })).toBe(10);
+    // A configured 0 means "due today"; it must not read as "unset".
+    expect(invoiceDueDays({ billing_day: 1, invoice_due_days: 0 })).toBe(0);
+    expect(invoiceDueDays(undefined)).toBe(7);
+    expect(invoiceDueDays(null)).toBe(7);
   });
   it("tuitionLineDescription matches the monthly generator's wording", () => {
     expect(tuitionLineDescription("2026-09")).toBe("Monthly tuition 2026-09");

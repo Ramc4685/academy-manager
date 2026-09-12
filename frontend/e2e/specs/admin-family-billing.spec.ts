@@ -195,7 +195,10 @@ async function stubShell(page: Page, owner: boolean): Promise<void> {
   await page.route("**/api/v2/admin/messages/**", (route) => fulfillJson(route, { messages: [] }));
 }
 
-async function setup(page: Page, opts: { owner: boolean; view?: unknown }) {
+async function setup(
+  page: Page,
+  opts: { owner: boolean; view?: unknown; invoiceDueDays?: number },
+) {
   const errors = collectConsoleErrors(page);
   installTenantGuard(page);
   await stubShell(page, opts.owner);
@@ -208,6 +211,10 @@ async function setup(page: Page, opts: { owner: boolean; view?: unknown }) {
     }
     return fulfillJson(route, opts.view ?? FAMILY);
   });
+  // The hand-billing dialogs date their invoice from this Billing rule (#739).
+  await page.route("**/api/v2/admin/billing/settings/invoice-schedule", (route) =>
+    fulfillJson(route, { billing_day: 1, invoice_due_days: opts.invoiceDueDays ?? 7 }),
+  );
   await page.route("**/api/v2/admin/billing/invoices/**", (route) => {
     const req = route.request();
     if (req.method() === "POST") {
@@ -356,5 +363,23 @@ test.describe("Family billing", () => {
       "href",
       "/admin/families/parent-1",
     );
+  });
+
+  test("both hand-billing dialogs default their due date to the Billing rule", async ({
+    page,
+  }) => {
+    // #739: the dialogs used to hard-code a week, so an academy on 10 days got
+    // manual and generated invoices for the same month on different due dates.
+    await setup(page, { owner: true, invoiceDueDays: 10 });
+    const expected = new Date();
+    expected.setDate(expected.getDate() + 10);
+    const iso = `${expected.getFullYear()}-${String(expected.getMonth() + 1).padStart(2, "0")}-${String(expected.getDate()).padStart(2, "0")}`;
+
+    await page.getByTestId("family-create-invoice").click();
+    await expect(page.getByTestId("create-invoice-due-date")).toHaveValue(iso);
+    await page.keyboard.press("Escape");
+
+    await page.getByTestId("enrollment-bill-period-enr-arjun").click();
+    await expect(page.getByTestId("bill-period-due-date")).toHaveValue(iso);
   });
 });

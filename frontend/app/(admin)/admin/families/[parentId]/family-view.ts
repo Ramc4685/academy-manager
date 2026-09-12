@@ -98,8 +98,27 @@ export function currentPeriod(today: Date = new Date()): string {
   return `${today.getFullYear()}-${pad(today.getMonth() + 1)}`;
 }
 
-/** Default invoice due date: a week out, as the API's "YYYY-MM-DD". */
-export function defaultDueDate(today: Date = new Date(), days = 7): string {
+/**
+ * Fallback window, matching the backend's BillingSettings default. Only used
+ * while the Billing-rules query is in flight or unavailable.
+ */
+export const DEFAULT_INVOICE_DUE_DAYS = 7;
+
+/**
+ * The academy's "Days until due" Billing rule (#739). A configured 0 means due
+ * today, so only a missing schedule falls back — never `||`.
+ */
+export function invoiceDueDays(
+  schedule: { invoice_due_days: number } | null | undefined,
+): number {
+  return schedule?.invoice_due_days ?? DEFAULT_INVOICE_DUE_DAYS;
+}
+
+/** Default invoice due date: the configured window out, as the API's "YYYY-MM-DD". */
+export function defaultDueDate(
+  today: Date = new Date(),
+  days: number = DEFAULT_INVOICE_DUE_DAYS,
+): string {
   const due = new Date(today.getFullYear(), today.getMonth(), today.getDate() + days);
   return `${due.getFullYear()}-${pad(due.getMonth() + 1)}-${pad(due.getDate())}`;
 }

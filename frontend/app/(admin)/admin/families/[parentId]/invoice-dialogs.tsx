@@ -35,11 +35,14 @@ export interface CreateInvoiceResult {
 export function CreateInvoiceDialog({
   students,
   open,
+  dueDays,
   onClose,
   onSubmit,
 }: {
   students: FamilyStudent[];
   open: boolean;
+  /** The academy's "Days until due" Billing rule (#739). */
+  dueDays: number;
   onClose: () => void;
   onSubmit: (result: CreateInvoiceResult) => Promise<unknown>;
 }) {
@@ -47,16 +50,16 @@ export function CreateInvoiceDialog({
   const [studentId, setStudentId] = useState(onlyStudentId);
   const [enrollmentId, setEnrollmentId] = useState("");
   const [period, setPeriod] = useState(() => currentPeriod());
-  const [dueDate, setDueDate] = useState(() => defaultDueDate());
+  const [dueDate, setDueDate] = useState(() => defaultDueDate(new Date(), dueDays));
 
   useEffect(() => {
     if (open) {
       setStudentId(onlyStudentId);
       setEnrollmentId("");
       setPeriod(currentPeriod());
-      setDueDate(defaultDueDate());
+      setDueDate(defaultDueDate(new Date(), dueDays));
     }
-  }, [open, onlyStudentId]);
+  }, [open, onlyStudentId, dueDays]);
 
   const options = enrollmentOptions(students).filter(
     (option) => !studentId || option.student_id === studentId,
@@ -295,23 +298,26 @@ export interface BillPeriodResult {
 export function BillPeriodDialog({
   open,
   option,
+  dueDays,
   onClose,
   onSubmit,
 }: {
   open: boolean;
   option: EnrollmentOption;
+  /** The academy's "Days until due" Billing rule (#739). */
+  dueDays: number;
   onClose: () => void;
   onSubmit: (result: BillPeriodResult) => Promise<unknown>;
 }) {
   const [period, setPeriod] = useState(() => currentPeriod());
-  const [dueDate, setDueDate] = useState(() => defaultDueDate());
+  const [dueDate, setDueDate] = useState(() => defaultDueDate(new Date(), dueDays));
 
   useEffect(() => {
     if (open) {
       setPeriod(currentPeriod());
-      setDueDate(defaultDueDate());
+      setDueDate(defaultDueDate(new Date(), dueDays));
     }
-  }, [open, option.enrollment_id]);
+  }, [open, option.enrollment_id, dueDays]);
 
   const mutation = useMutation({ mutationFn: () => onSubmit({ period, due_date: dueDate }) });
   const disabled = !period || !dueDate || mutation.isPending;

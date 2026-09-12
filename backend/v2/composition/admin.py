@@ -136,6 +136,9 @@ from backend.v2.contexts.billing.application.use_cases.finance import (  # FINAN
     MongoTuitionDiscountSummaryQuery,
     RecordExpense,
 )
+from backend.v2.contexts.billing.application.use_cases.invoice_due_date import (
+    resolve_invoice_due_date,
+)
 from backend.v2.contexts.billing.application.use_cases.issue_refund import (
     IssueRefund,
     IssueRefundCommand,
@@ -1624,12 +1627,15 @@ def compose_admin(
         student_id: str,
         parent_id: str,
         period: str,
-        due_date: date,
+        due_date: date | None,
         enrollment_id: str | None,
     ) -> dict[str, Any]:
         from backend.v2.shared.tenancy import current_academy_id
 
         now = datetime.now(UTC)
+        resolved_due_date = await resolve_invoice_due_date(
+            billing_settings_repo, due_date=due_date, today=now.date()
+        )
         invoice_id = f"inv-{new_ulid()}"
         invoice = LedgerInvoice(
             invoice_id=invoice_id,
@@ -1644,7 +1650,7 @@ def compose_admin(
             total_cents=0,
             balance_due_cents=0,
             currency="usd",
-            due_date=due_date,
+            due_date=resolved_due_date,
             created_at=now,
             updated_at=now,
         )
@@ -1659,7 +1665,7 @@ def compose_admin(
         *,
         enrollment_id: str,
         period: str,
-        due_date: date,
+        due_date: date | None,
         actor_id: str | None = None,
     ) -> dict[str, Any]:
         from backend.v2.shared.tenancy import current_academy_id
@@ -1672,6 +1678,7 @@ def compose_admin(
                 counters=billing_counters_repo,
                 settings=billing_settings_repo,
             ),
+            settings=billing_settings_repo,
         ).execute(
             BillEnrollmentPeriodCommand(
                 enrollment_id=enrollment_id,
