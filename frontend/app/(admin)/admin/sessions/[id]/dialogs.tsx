@@ -21,10 +21,11 @@ import {
   type AdminUserView,
   type CreateEnrollmentRequest,
 } from "@/lib/api/admin";
+import { getDeparturePolicy } from "@/lib/api/v2/departure-policy";
 import { queryKeys } from "@/lib/query/keys";
 import {
   buildWithdrawRequest,
-  defaultWithdrawalOutcome,
+  initialWithdrawalOutcome,
   withdrawErrorMessage,
   withdrawalOutcomeOptions,
   type WithdrawalOutcome,
@@ -539,10 +540,21 @@ export function WithdrawalCreditDialog({
   // is disabled here for plain admins instead of failing on submit.
   const isOwner = useIsOwner();
   const outcomeOptions = withdrawalOutcomeOptions(isOwner);
+  // Issue #742: this dialog used to open on credit/refund by role and ignore
+  // the academy's configured `drop_default_outcome` entirely, unlike Stop all
+  // classes. Same query key as the settings panel and the student page, so
+  // this is a cache read, not an extra request per roster row.
+  const departurePolicyQuery = useQuery({
+    queryKey: queryKeys.admin.departurePolicy(),
+    queryFn: getDeparturePolicy,
+  });
   const [withdrawalDate, setWithdrawalDate] = useState(todayDateInput);
-  const [outcome, setOutcome] = useState<WithdrawalOutcome>(() =>
-    defaultWithdrawalOutcome(isOwner),
-  );
+  // `null` = the admin has not overridden the policy default. Derived rather
+  // than seeded into state because the policy arrives after the first render.
+  const [chosenOutcome, setChosenOutcome] = useState<WithdrawalOutcome | null>(null);
+  const outcome =
+    chosenOutcome ??
+    initialWithdrawalOutcome(departurePolicyQuery.data?.drop_default_outcome, isOwner);
   const [adminNote, setAdminNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   const previewMutation = useMutation({
@@ -559,7 +571,7 @@ export function WithdrawalCreditDialog({
         buildWithdrawRequest({ withdrawalDate, outcome, adminNote }),
       ),
     onSuccess: () => {
-      setOutcome(defaultWithdrawalOutcome(isOwner));
+      setChosenOutcome(null);
       setAdminNote("");
       setError(null);
       onApproved();
@@ -568,7 +580,16 @@ export function WithdrawalCreditDialog({
   });
   const preview = previewMutation.data;
   return (
-    <Dialog.Root open={enrollment !== null} onOpenChange={(open) => !open && onClose()}>
+    <Dialog.Root
+      open={enrollment !== null}
+      onOpenChange={(open) => {
+        if (open) return;
+        // Drop the admin's override so the next Drop opens on the academy's
+        // configured default again rather than the last row's choice (#742).
+        setChosenOutcome(null);
+        onClose();
+      }}
+    >
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40" />
         <Dialog.Content
@@ -595,7 +616,7 @@ export function WithdrawalCreditDialog({
               <select
                 value={outcome}
                 onChange={(event) => {
-                  setOutcome(event.target.value as WithdrawalOutcome);
+                  setChosenOutcome(event.target.value as WithdrawalOutcome);
                   previewMutation.reset();
                 }}
                 className={inputClass}
