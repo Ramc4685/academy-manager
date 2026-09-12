@@ -306,7 +306,7 @@ class FirebaseAdminAdapter:
         in-app handler calls ``confirmPasswordReset``, which hits the same
         ``accounts:resetPassword`` endpoint the hosted page uses, and that
         endpoint verifies the email as a side effect of proving mailbox
-        possession. ``load_auth_claims._require_verified_password_provider_email``
+        possession. ``token_claims.require_verified_email``
         depends on this — see the test named for it before changing any of
         this.
         """
