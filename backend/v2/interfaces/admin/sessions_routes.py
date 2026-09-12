@@ -35,7 +35,10 @@ from backend.v2.contexts.enrollment.application.use_cases.cancel_session_occurre
     CancelSessionOccurrenceCommand,
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
-from backend.v2.interfaces.admin.owner_gate import ensure_owner_for_withdrawal_credit
+from backend.v2.interfaces.admin.owner_gate import (
+    ensure_owner_for_enrollment_delete,
+    ensure_owner_for_withdrawal_credit,
+)
 from backend.v2.interfaces.admin.views import (
     AddSessionReplacementRequest,
     AdminCoachAttendanceView,
@@ -564,6 +567,21 @@ async def get_enrollment_events(
     )
 
 
+async def _delete_requires_owner(use_cases: AdminUseCases) -> bool:
+    """The academy's ``delete_enrollment_requires_owner`` (issue #741).
+
+    Default-safe: a tenant whose departure policy was never composed keeps
+    the domain default (owner-only), rather than 503-ing a route that has
+    always worked or silently opening Delete to every admin.
+    """
+
+    policy_use_case = use_cases.departure_policy
+    if policy_use_case is None:
+        return True
+    policy = await policy_use_case.execute()
+    return policy.delete_enrollment_requires_owner
+
+
 @router.delete("/enrollments/{enrollment_id}", status_code=204, response_model=None)
 async def cancel_enrollment(
     enrollment_id: str,
@@ -571,6 +589,11 @@ async def cancel_enrollment(
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> None:
+    # Issue #741: Delete is owner-only exactly when the academy says it is.
+    # The route stays admin-persona gated (the gate is conditional, so it is
+    # not in OWNER_ONLY_ROUTE_PATHS) and checks per action, like withdraw's
+    # `credit` outcome does.
+    ensure_owner_for_enrollment_delete(claims, await _delete_requires_owner(use_cases))
     await use_cases.cancel_enrollment.execute(
         CancelEnrollmentCommand(
             enrollment_id=enrollment_id,

@@ -9,7 +9,9 @@ import {
   type EnrollmentStatus,
 } from "@/lib/api/admin";
 import { type Level } from "@/lib/api/curriculum";
+import { getDeparturePolicy } from "@/lib/api/v2/departure-policy";
 import { buildStudentProgressHref } from "@/lib/navigation/admin-student-progress-return";
+import { queryKeys } from "@/lib/query/keys";
 
 import { Avatar } from "@/components/ds/avatar";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
@@ -195,6 +197,16 @@ export function RosterTable({
   onWithdraw: (enrollment: AdminEnrollmentView) => void;
 }) {
   const isOwner = useIsOwner();
+  // Issue #741: Delete is owner-only only when the academy's departure policy
+  // says so. Shares its key with the Settings and student pages, so this is a
+  // react-query cache hit rather than a second round trip on most visits;
+  // before it resolves, `undefined` reads as owner-only — the same answer the
+  // backend gives for an unset policy, so the button never flashes available.
+  const departurePolicyQuery = useQuery({
+    queryKey: queryKeys.admin.departurePolicy(),
+    queryFn: getDeparturePolicy,
+  });
+  const deleteRequiresOwner = departurePolicyQuery.data?.delete_enrollment_requires_owner;
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[840px] text-sm">
@@ -301,6 +313,7 @@ export function RosterTable({
                     status={e.status}
                     layout="menu"
                     isOwner={isOwner}
+                    deleteRequiresOwner={deleteRequiresOwner}
                     actions={rosterActionsFor(e.status)}
                     onAction={(action, enrollmentId) =>
                       dispatchRosterAction(action, enrollmentId, e, {

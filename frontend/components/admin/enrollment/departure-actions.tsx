@@ -49,6 +49,13 @@ export interface DepartureActionsProps {
   actions: DepartureAction[];
   layout: "menu" | "inline";
   isOwner: boolean;
+  /**
+   * The academy's `delete_enrollment_requires_owner` (#741). Omitted — the
+   * policy query has not resolved, or the surface does not offer Delete —
+   * falls back to owner-only, matching the backend's answer for an unset
+   * policy. Gating here is presentation only; the DELETE route re-checks it.
+   */
+  deleteRequiresOwner?: boolean;
   onAction: (action: DepartureAction, enrollmentId: string) => void;
   /**
    * Navigation entry pinned to the top of the overflow menu (#713). The roster
@@ -66,11 +73,12 @@ export function DepartureActions({
   actions,
   layout,
   isOwner,
+  deleteRequiresOwner,
   onAction,
   leadingLink,
   className = "",
 }: DepartureActionsProps) {
-  const resolved = resolveDepartureActions(actions, { isOwner, layout });
+  const resolved = resolveDepartureActions(actions, { isOwner, layout, deleteRequiresOwner });
   const inline = resolved.filter((entry) => !entry.inOverflow);
   const overflow = resolved.filter((entry) => entry.inOverflow);
 

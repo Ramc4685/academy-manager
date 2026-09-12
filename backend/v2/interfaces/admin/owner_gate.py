@@ -17,6 +17,10 @@ split from:
   issues an account credit, which was owner-only when it had its own route
   (``.../withdrawal-credit/approve``, removed). Same 404 as ``require_owner``
   so the contract a plain admin sees is unchanged.
+* :func:`ensure_owner_for_enrollment_delete` — the action-level rule inside
+  ``DELETE /enrollments/{id}`` (issue #741): owner-only exactly when the
+  academy's ``EnrollmentDeparturePolicy.delete_enrollment_requires_owner``
+  says so, which is why the route is not in ``OWNER_ONLY_ROUTE_PATHS``.
 
 Decisions (spec ``2026-09-04-role-model-and-screens-design.md``): admins keep
 recording manual payments and seeing balances, expenses, the payments list
@@ -153,4 +157,21 @@ def ensure_owner_for_withdrawal_credit(claims: AuthClaims, outcome: str) -> None
     """
 
     if outcome == "credit" and "owner" not in claims.roles:
+        raise HTTPException(status_code=404, detail="Not found")
+
+
+def ensure_owner_for_enrollment_delete(claims: AuthClaims, requires_owner: bool) -> None:
+    """Only an owner may hard-delete an enrollment, when the academy says so (issue #741).
+
+    ``requires_owner`` is the academy's
+    ``EnrollmentDeparturePolicy.delete_enrollment_requires_owner`` — the
+    toggle the owner sets in Settings (#701). Conditional, so
+    ``DELETE /enrollments/{id}`` is deliberately NOT in
+    ``OWNER_ONLY_ROUTE_PATHS``: it stays ``require_persona("admin")`` and
+    this runs inside the handler, exactly like
+    ``ensure_owner_for_withdrawal_credit``. Same 404 as ``require_owner``, so
+    a plain admin sees the capability simply not exist.
+    """
+
+    if requires_owner and "owner" not in claims.roles:
         raise HTTPException(status_code=404, detail="Not found")
