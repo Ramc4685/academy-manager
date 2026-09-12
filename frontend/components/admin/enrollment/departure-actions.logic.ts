@@ -26,8 +26,18 @@ export const DEPARTURE_ACTION_LABEL: Record<DepartureAction, string> = {
   stop_all_classes: "Stop all classes",
 };
 
-/** Actions that require the owner scope regardless of who supplied them. */
-const OWNER_ONLY_ACTIONS = new Set<DepartureAction>(["delete"]);
+/**
+ * Actions whose owner requirement is settable by the academy owner — today
+ * only Delete, governed by `EnrollmentDeparturePolicy
+ * .delete_enrollment_requires_owner` and passed in as `deleteRequiresOwner`
+ * (#741).
+ *
+ * Delete used to be a hardcoded owner-only action here, which made the
+ * Settings toggle (`delete_enrollment_requires_owner`, #701) inert in both
+ * directions: turning it OFF still showed admins a disabled button. Every
+ * other action is unconditionally open to admins.
+ */
+const POLICY_GATED_ACTIONS = new Set<DepartureAction>(["delete"]);
 
 /**
  * Actions that always render inside the overflow menu, never as an inline
@@ -56,13 +66,22 @@ export interface ResolvedDepartureAction {
  *   exists and who to ask.
  * - `layout: "inline"` keeps everything else as inline buttons; `"menu"`
  *   pushes every action into the overflow menu.
+ * - `deleteRequiresOwner` is the academy's policy value (#741). Omitted or
+ *   `undefined` — the policy has not loaded, or the caller has none — means
+ *   the domain default, owner-only, which is also what the backend enforces
+ *   for an unset policy. The backend re-checks this on every DELETE; this
+ *   only decides whether the button reads as available.
  */
 export function resolveDepartureActions(
   actions: readonly DepartureAction[],
-  { isOwner, layout }: { isOwner: boolean; layout: "menu" | "inline" },
+  {
+    isOwner,
+    layout,
+    deleteRequiresOwner = true,
+  }: { isOwner: boolean; layout: "menu" | "inline"; deleteRequiresOwner?: boolean },
 ): ResolvedDepartureAction[] {
   return actions.map((action) => {
-    const ownerGated = OWNER_ONLY_ACTIONS.has(action) && !isOwner;
+    const ownerGated = POLICY_GATED_ACTIONS.has(action) && deleteRequiresOwner && !isOwner;
     return {
       action,
       label: DEPARTURE_ACTION_LABEL[action],

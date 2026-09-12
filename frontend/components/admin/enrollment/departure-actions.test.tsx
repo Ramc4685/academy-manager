@@ -34,6 +34,36 @@ describe("resolveDepartureActions", () => {
       expect(entry.ownerGated).toBe(true);
     });
 
+    it("keeps delete owner-gated when the policy value has not loaded yet (#741)", () => {
+      const [entry] = resolveDepartureActions(["delete"], {
+        isOwner: false,
+        layout: "menu",
+        deleteRequiresOwner: undefined,
+      });
+      expect(entry.disabled).toBe(true);
+      expect(entry.ownerGated).toBe(true);
+    });
+
+    it("lets a non-owner delete once the academy turns the toggle off (#741)", () => {
+      const [entry] = resolveDepartureActions(["delete"], {
+        isOwner: false,
+        layout: "menu",
+        deleteRequiresOwner: false,
+      });
+      expect(entry.disabled).toBe(false);
+      expect(entry.ownerGated).toBe(false);
+    });
+
+    it("still gates delete for a non-owner when the toggle is on (#741)", () => {
+      const [entry] = resolveDepartureActions(["delete"], {
+        isOwner: false,
+        layout: "menu",
+        deleteRequiresOwner: true,
+      });
+      expect(entry.disabled).toBe(true);
+      expect(entry.ownerGated).toBe(true);
+    });
+
     it("enables delete for an owner", () => {
       const [entry] = resolveDepartureActions(["delete"], { isOwner: true, layout: "menu" });
       expect(entry.disabled).toBe(false);
