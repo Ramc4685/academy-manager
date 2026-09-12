@@ -641,6 +641,22 @@ class HoldNotifier(Protocol):
     ``communications/infrastructure/digest_claim.py`` for why the claim, not
     the send, is what makes this idempotent."""
 
+    async def hold_started(
+        self,
+        *,
+        enrollment_id: str,
+        hold_seq: int,
+        session_id: str,
+        student_id: str,
+        hold_started_at: datetime,
+        hold_return_on: date,
+        hold_expires_at: datetime,
+    ) -> None:
+        """Day-0 notice (issue #740). A hold takes the class off every parent
+        surface; without this the family's first word of it was the day-30
+        reminder."""
+        ...
+
     async def hold_reclaimed(
         self,
         *,
