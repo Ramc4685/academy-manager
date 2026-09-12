@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 import pytest
+from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import (
     PreviewWithdrawalCredit,
@@ -54,17 +55,42 @@ class FakePayments:
 
 @dataclass
 class FakeCredits:
+    """Mirrors the real store's constraints, not just its happy path.
+
+    Mongo enforces two things this fake has to enforce too, or a race that
+    double-credits a family passes the suite: ``credit_id`` is the primary
+    key, and — since #690's migration — an approved EARLY_WITHDRAWAL_CREDIT
+    is unique per ``(academy_id, enrollment_id)``.
+
+    ``stale_reads`` simulates the losing side of that race: the pre-read
+    that ran before the winner's insert landed and so saw no credit.
+    """
+
     entries: list[CreditLedgerEntry] = field(default_factory=list)
+    stale_reads: int = 0
 
     async def create(self, entry):
         # Real repo: `credit_id` is the unique key; a second insert raises.
         assert all(e.credit_id != entry.credit_id for e in self.entries)
+        if entry.type == "EARLY_WITHDRAWAL_CREDIT" and entry.status == "APPROVED":
+            clash = any(
+                e.academy_id == entry.academy_id
+                and e.enrollment_id == entry.enrollment_id
+                and e.type == "EARLY_WITHDRAWAL_CREDIT"
+                and e.status == "APPROVED"
+                for e in self.entries
+            )
+            if clash:
+                raise DuplicateKeyError("early_withdrawal_credit_unique")
         self.entries.append(entry)
 
     async def balance_for_parent(self, parent_id):
         return sum(e.remaining_amount_cents for e in self.entries if e.parent_id == parent_id)
 
     async def find_active_for_enrollment(self, *, enrollment_id, type):
+        if self.stale_reads > 0:
+            self.stale_reads -= 1
+            return None
         for entry in reversed(self.entries):
             if (
                 entry.enrollment_id == enrollment_id
@@ -228,6 +254,42 @@ async def test_credit_decision_creates_credit_and_cancels_subscription_once() ->
     assert result2.credit_amount_cents == result.credit_amount_cents
     assert len(credits.entries) == 1
     assert stripe.cancelled == [("sub_stripe_1", True)]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_withdrawal_decisions_do_not_double_credit() -> None:
+    """Issue #690: the loser of the race must not 500, and must not re-credit.
+
+    Two withdraws for one enrollment can both pass ``find_active_for_enrollment``
+    before either insert lands — a double-click, a retried request, two admins.
+    The unique index from migration 0174 turns the second insert into a
+    ``DuplicateKeyError``; the use case has to read that as "someone else
+    already approved this credit" and hand back the winner's credit, not
+    raise and not add a second spendable credit to the parent's balance.
+    """
+    credits = FakeCredits()
+
+    def _use_case() -> RecordWithdrawalDecision:
+        return RecordWithdrawalDecision(
+            payments=FakePayments(payment=_paid_payment(), snapshot=_snapshot()),
+            credits=credits,
+            subscriptions=FakeSubscriptions(None),
+            stripe=FakeStripe(),
+            clock=lambda: datetime(2026, 5, 20, tzinfo=UTC),
+        )
+
+    winner = await _use_case().execute(_decision("credit"))
+    assert winner.billing_result == "credit_approved"
+
+    # The loser's pre-read ran before the winner's insert landed.
+    credits.stale_reads = 1
+    loser = await _use_case().execute(_decision("credit"))
+
+    assert loser.billing_result == "credit_already_approved"
+    assert loser.credit_id == winner.credit_id
+    assert loser.credit_amount_cents == winner.credit_amount_cents
+    assert len(credits.entries) == 1
+    assert loser.credit_balance_cents == winner.credit_amount_cents
 
 
 @pytest.mark.asyncio
