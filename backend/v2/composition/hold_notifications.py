@@ -151,6 +151,58 @@ class HoldNotificationAdapter:
             ),
         )
 
+    async def enrollment_dropped(
+        self,
+        *,
+        enrollment_id: str,
+        session_id: str,
+        student_id: str,
+        effective_at: datetime,
+        reason: str | None,
+    ) -> None:
+        """Issue #743. Keyed on ``enrollment_id`` alone — a given enrollment
+        can only be dropped once, unlike hold_started/hold_reclaimed which
+        need a ``hold_seq`` to distinguish repeat hold cycles on the same
+        enrollment."""
+        notice_key = f"drop:{enrollment_id}"
+        await self._send_claimed(
+            enrollment_id=enrollment_id,
+            notice_key=notice_key,
+            session_id=session_id,
+            student_id=student_id,
+            build=lambda session, student_name: (
+                f"{student_name} has been dropped from {session.title}",
+                self._render_dropped_body(
+                    session=session,
+                    student_name=student_name,
+                    reason=reason,
+                ),
+            ),
+        )
+
+    async def enrollment_returned(
+        self,
+        *,
+        enrollment_id: str,
+        session_id: str,
+        student_id: str,
+        effective_at: datetime,
+    ) -> None:
+        """Issue #743. Keyed on ``enrollment_id`` alone, same reasoning as
+        ``enrollment_dropped`` — a Return, unlike a hold cycle, has no
+        natural repeat within one enrollment's life that must mail again."""
+        notice_key = f"return:{enrollment_id}"
+        await self._send_claimed(
+            enrollment_id=enrollment_id,
+            notice_key=notice_key,
+            session_id=session_id,
+            student_id=student_id,
+            build=lambda session, student_name: (
+                f"{student_name} is back in {session.title}",
+                self._render_returned_body(session=session, student_name=student_name),
+            ),
+        )
+
     # -- shared plumbing ---------------------------------------------------
 
     async def _send_claimed(
@@ -302,6 +354,38 @@ class HoldNotificationAdapter:
                     f"family if the class is full — it must be used or returned by "
                     f"{html.escape(hold_expires_at.date().isoformat())}."
                 ),
+            ]
+        )
+
+    @staticmethod
+    def _render_dropped_body(
+        *,
+        session: Session,
+        student_name: str,
+        reason: str | None,
+    ) -> str:
+        safe_name = html.escape(student_name)
+        safe_title = html.escape(session.title)
+        parts = [
+            _para(f"<strong>{safe_name}</strong> has been dropped from {safe_title}."),
+        ]
+        if reason:
+            parts.append(_para(f"Reason given: {html.escape(reason)}."))
+        parts.append(_para("If this is not right, please contact the academy."))
+        return "".join(parts)
+
+    @staticmethod
+    def _render_returned_body(
+        *,
+        session: Session,
+        student_name: str,
+    ) -> str:
+        safe_name = html.escape(student_name)
+        safe_title = html.escape(session.title)
+        return "".join(
+            [
+                _para(f"<strong>{safe_name}</strong> is back in {safe_title}."),
+                _para("The hold has ended and the class is active again on your portal."),
             ]
         )
 

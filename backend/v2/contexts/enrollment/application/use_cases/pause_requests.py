@@ -162,9 +162,29 @@ class DecidePauseRequestCommand(BaseModel):
     reason: str | None = None
 
 
+class PauseRequestSubmittedNotifier(Protocol):
+    """Tell the academy's admins/owners a parent asked to pause (issue #616)."""
+
+    async def pause_request_submitted(
+        self,
+        *,
+        pause_request_id: str,
+        enrollment_id: str,
+        parent_id: str,
+        session_id: str | None,
+        reason: str | None,
+    ) -> None: ...
+
+
 class RequestEnrollmentPause:
-    def __init__(self, *, pause_requests: PauseRequestRepository) -> None:
+    def __init__(
+        self,
+        *,
+        pause_requests: PauseRequestRepository,
+        notifier: PauseRequestSubmittedNotifier | None = None,
+    ) -> None:
         self._pause_requests = pause_requests
+        self._notifier = notifier
 
     async def execute(self, cmd: RequestEnrollmentPauseCommand) -> PauseRequest:
         belongs = await self._pause_requests.enrollment_belongs_to_parent(
@@ -184,6 +204,25 @@ class RequestEnrollmentPause:
             created_at=datetime.now(UTC),
         )
         await self._pause_requests.add(request)
+        # Issue #616: without this, nothing tells staff a request exists —
+        # prod had requests sitting PENDING for three months while the parent
+        # believed they had paused and billing kept running. Best-effort, the
+        # same shape as DeclinePauseRequest: a mail outage must never cost the
+        # parent the request that is already written.
+        if self._notifier is not None:
+            try:
+                await self._notifier.pause_request_submitted(
+                    pause_request_id=request.pause_request_id,
+                    enrollment_id=request.enrollment_id,
+                    parent_id=request.parent_id,
+                    session_id=request.session_id,
+                    reason=request.reason or None,
+                )
+            except Exception:
+                log.exception(
+                    "pause_request_submitted_notify_failed",
+                    extra={"pause_request_id": request.pause_request_id},
+                )
         return request
 
 

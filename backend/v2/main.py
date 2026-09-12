@@ -556,6 +556,13 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.admin.hold_enrollment = _holds.hold_enrollment
     app.state.admin.return_from_hold = _holds.return_from_hold
     app.state.enrollment_holds = _holds
+    # Issue #743: WithdrawEnrollment is composed in composition/admin.py,
+    # which cannot see `_holds.hold_notifier` (built here, after
+    # compose_admin runs) and is at its own wiring line-budget cap. Attach
+    # the same family-facing notifier `HoldEnrollment`/`ReturnFromHold`
+    # already use, exactly the way `set_seat_broker` below attaches onto an
+    # already-built use case.
+    app.state.admin.withdraw_enrollment._notifier = _holds.hold_notifier
     # Departures design contract §3.1: every caller that needs a seat routes
     # through SeatBroker.acquire, so a full class with a held seat reclaims
     # the longest-held hold instead of just refusing. SeatBroker cannot be a

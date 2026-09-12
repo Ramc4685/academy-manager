@@ -693,6 +693,66 @@ class RosterAlertAdapter:
                 seen[parent_id] = True
         return [(parent_id, seen[parent_id]) for parent_id in order]
 
+    async def pause_request_submitted(
+        self,
+        *,
+        pause_request_id: str,
+        enrollment_id: str,
+        parent_id: str,
+        session_id: str | None,
+        reason: str | None,
+    ) -> None:
+        """Issue #616: tell admins/owners a parent asked to pause.
+
+        Admin/owner only — the coach hears about it when the pause is
+        approved, through the ordinary ``paused`` roster alert. Never raises:
+        the request is already written by the time this runs, and a mail
+        outage may not undo it.
+        """
+        academy_id = current_academy_id()
+        academy_doc = await self._academies.find_by_id(academy_id) or {}
+        academy_name = str(academy_doc.get("display_name") or academy_doc.get("name") or "") or (
+            "Your academy"
+        )
+        academy_slug = str(academy_doc.get("slug") or "") or None
+        session = await self._sessions.get(session_id) if session_id else None
+        parent = await self._resolve_users([parent_id])
+        who = (parent[0].display_name if parent else None) or "A parent"
+        title = session.title if session else "their class"
+
+        note = f"<p>Reason: {html.escape(reason)}</p>" if reason else ""
+        inner = (
+            "<h2 style='font-size: 18px; margin: 0 0 12px;'>Pause requested</h2>"
+            f"<p>{html.escape(who)} asked to pause {html.escape(title)}. "
+            "Billing continues until the request is approved, so review it in "
+            "Requests → Pauses.</p>"
+            f"{note}"
+        )
+        body = _branded_shell(academy_name=academy_name, inner_html=inner)
+        # session_id="" resolves no coach audience: only the admin/owner roles
+        # in `_STAFF_ROLES` are mailed.
+        for recipient in await self._staff_recipients(
+            session_id="", from_session_id=None, actor_id=None
+        ):
+            await self._send_one(
+                recipient=recipient,
+                subject=f"Pause requested — {title}",
+                body=append_unsubscribe_footer(
+                    body,
+                    self._unsubscribe_links.build(
+                        academy_id=academy_id,
+                        user_id=recipient.user_id,
+                        academy_slug=academy_slug,
+                    ),
+                ),
+                category=EmailCategory.NOTIFICATION,
+                context={
+                    "change": "pause_requested",
+                    "enrollment_id": enrollment_id,
+                    "pause_request_id": pause_request_id,
+                },
+            )
+
     async def pause_request_declined(
         self,
         *,

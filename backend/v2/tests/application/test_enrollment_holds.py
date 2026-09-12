@@ -741,3 +741,48 @@ async def test_hold_start_email_failure_never_fails_the_hold() -> None:
 
     assert result.status == "held"
     assert enrollments.rows["enr-1"].status == "held"
+
+
+@pytest.mark.asyncio
+async def test_return_from_hold_emails_the_family() -> None:
+    """Issue #743: an admin-initiated Return from hold only reached the
+    coach-facing roster notice — the family never learned the class was back
+    on. Mirrors #740's hold_started wiring for the opposite transition."""
+    enrollments = FakeEnrollmentWriter(rows={"enr-1": make_enrollment(status="held")})
+    notifier = FakeHoldNotifier()
+    return_uc = ReturnFromHold(
+        enrollments=enrollments,
+        notifier=notifier,
+        clock=_clock,
+    )
+
+    await return_uc.execute("enr-1", actor_id="admin-1")
+
+    [call] = notifier.returned_calls
+    assert call["enrollment_id"] == "enr-1"
+    assert call["session_id"] == "sess-1"
+    assert call["student_id"] == "stu-1"
+    assert call["effective_at"] == NOW
+
+
+@pytest.mark.asyncio
+async def test_return_from_hold_family_notify_failure_never_fails_the_return() -> None:
+    """Same best-effort contract as the hold-start notice: the return is
+    already committed, so a mail failure must not surface as a failed return
+    to the admin who performed it."""
+
+    class _Exploding:
+        async def enrollment_returned(self, **_: object) -> None:
+            raise RuntimeError("smtp down")
+
+    enrollments = FakeEnrollmentWriter(rows={"enr-1": make_enrollment(status="held")})
+    return_uc = ReturnFromHold(
+        enrollments=enrollments,
+        notifier=_Exploding(),  # type: ignore[arg-type]
+        clock=_clock,
+    )
+
+    result = await return_uc.execute("enr-1")
+
+    assert result.status == "active"
+    assert enrollments.rows["enr-1"].status == "active"

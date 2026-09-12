@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -20,6 +20,30 @@ from backend.v2.shared.http import require_persona
 
 router = APIRouter(tags=["admin.dashboard"])
 log = logging.getLogger(__name__)
+
+#: A parent pause request older than this has waited long enough that the
+#: family is very likely being billed for a class they think they stopped
+#: (issue #616): escalate the card rather than leaving it a flat count.
+_STALE_PAUSE_REQUEST_DAYS = 7
+
+
+def _oldest_pending_days(rows: list[Any]) -> int:
+    """Age in whole days of the longest-waiting request (0 when none is datable).
+
+    Measured instant-to-instant in UTC, never calendar-date-to-calendar-date:
+    mixing a local ``date.today()`` with a UTC ``created_at`` is the #541/#608
+    off-by-a-day family.
+    """
+    now = datetime.now(UTC)
+    ages: list[int] = []
+    for row in rows:
+        created_at = getattr(row, "created_at", None)
+        if not isinstance(created_at, datetime):
+            continue
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=UTC)
+        ages.append(max((now - created_at).days, 0))
+    return max(ages, default=0)
 
 
 @router.get("/dashboard/attention", response_model=AdminAttentionList)
@@ -101,13 +125,24 @@ async def dashboard_attention(
 
     pending_pauses = [row for row in pause_requests if getattr(row, "status", "") == "pending"]
     if pending_pauses:
+        # Issue #616: a flat count let requests sit PENDING for months — the
+        # parent believed they had paused while billing and dunning carried
+        # on. The card now ages, so the queue gets louder the longer it waits.
+        oldest_days = _oldest_pending_days(pending_pauses)
+        stale = oldest_days >= _STALE_PAUSE_REQUEST_DAYS
+        detail = (
+            f"{len(pending_pauses)} request{'s' if len(pending_pauses) != 1 else ''} "
+            "awaiting approval."
+        )
+        if stale:
+            detail += f" Oldest waiting {oldest_days} day{'s' if oldest_days != 1 else ''}."
         items.append(
             AdminAttentionItemView(
                 attention_id="pending-pause-requests",
                 kind="pause_requests",
                 title="Pending pause requests",
-                detail=f"{len(pending_pauses)} request{'s' if len(pending_pauses) != 1 else ''} awaiting approval.",
-                severity="medium",
+                detail=detail,
+                severity="high" if stale else "medium",
                 href="/admin/pause-requests",
                 count=len(pending_pauses),
             )

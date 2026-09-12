@@ -682,3 +682,33 @@ class HoldNotifier(Protocol):
         hold_return_on: date,
         hold_expires_at: datetime,
     ) -> None: ...
+
+    async def enrollment_dropped(
+        self,
+        *,
+        enrollment_id: str,
+        session_id: str,
+        student_id: str,
+        effective_at: datetime,
+        reason: str | None,
+    ) -> None:
+        """Issue #743: an admin-initiated Drop (or Stop all classes, which is
+        one Drop per enrollment) never told the family — only the coach-facing
+        roster notice fired. Distinct from ``hold_reclaimed`` even though both
+        end an enrollment: a Drop is not a hold event and must not share its
+        ``hold_seq``-keyed idempotency namespace."""
+        ...
+
+    async def enrollment_returned(
+        self,
+        *,
+        enrollment_id: str,
+        session_id: str,
+        student_id: str,
+        effective_at: datetime,
+    ) -> None:
+        """Issue #743: mirrors ``hold_started`` for the opposite transition —
+        an admin-initiated Return from hold only reached the coach-facing
+        roster notice, leaving the family to notice the class reappeared on
+        its own."""
+        ...

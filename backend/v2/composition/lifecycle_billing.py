@@ -33,6 +33,7 @@ from backend.v2.contexts.billing.application.use_cases.apply_enrollment_move imp
 from backend.v2.contexts.billing.application.use_cases.apply_enrollment_move import (
     ApplyEnrollmentMove,
     ApplyEnrollmentMoveCommand,
+    MoveNoticeResender,
 )
 from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import (
     RecordWithdrawalDecision,
@@ -245,6 +246,7 @@ def compose_enrollment_move_billing_sync(
     idempotency: IdempotencyStore,
     ledger: MongoBillingLedgerRepository | None = None,
     credits: MongoCreditLedgerRepository | None = None,
+    notice_resender: MoveNoticeResender | None = None,
 ) -> EnrollmentMoveBillingSyncAdapter:
     """Build the move adapter (issue #669). Repos may be shared with the caller."""
     timezone_lookup = academy_timezone_lookup(db)
@@ -262,6 +264,9 @@ def compose_enrollment_move_billing_sync(
         discounts=MongoTuitionDiscountRepository(db),
         idempotency_store=idempotency,
         academy_timezone=request_academy_timezone,
+        # A move that grows an already-noticed autopay invoice re-notices the
+        # family with the corrected amount (issue #691).
+        notice_resender=notice_resender,
         counters=MongoBillingCounterRepository(db),
         settings=MongoBillingSettingsRepository(db),
     )

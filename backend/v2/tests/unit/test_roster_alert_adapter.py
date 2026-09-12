@@ -457,3 +457,39 @@ async def test_the_student_name_falls_back_to_a_lookup_and_is_escaped() -> None:
     body = sender.sent[0]["body"]
     assert "Bobby &lt;b&gt;Tables&lt;/b&gt;" in body
     assert "A &amp; B &lt;Squad&gt;" in body
+
+
+@pytest.mark.asyncio
+async def test_a_new_pause_request_alerts_admins_and_owners() -> None:
+    """#616: the parent's request has to reach a human who can action it.
+
+    Admin/owner only — the coach hears about the pause when it is approved,
+    via the ordinary ``paused`` roster alert.
+    """
+    sender = FakeSender()
+    audiences = _staff()
+    # A coach who is not also an admin: they must not be mailed here.
+    audiences.coaches["sess-1"] = [ResolvedRecipient(user_id="coach-9", email="coach9@x.com")]
+    adapter = _adapter(
+        sessions=FakeSessions(rows={"sess-1": _session()}),
+        audiences=audiences,
+        sender=sender,
+    )
+
+    with tenant_scope(ACADEMY):
+        await adapter.pause_request_submitted(
+            pause_request_id="pause-1",
+            enrollment_id="enr-1",
+            parent_id="par-1",
+            session_id="sess-1",
+            reason="summer travel",
+        )
+
+    # coach-1 is in this fixture's admin list, so they hear about it as an
+    # admin; coach-9 (coach only) and admin-2 (no address) do not.
+    assert [row["user_id"] for row in sender.sent] == ["admin-1", "coach-1", "owner-1"]
+    for row in sender.sent:
+        assert row["category"] is EmailCategory.NOTIFICATION
+        assert "/unsubscribe?t=" in row["body"]
+        assert "Beginner Badminton" in row["body"]
+        assert "summer travel" in row["body"]

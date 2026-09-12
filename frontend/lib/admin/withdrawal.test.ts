@@ -6,6 +6,8 @@ import {
   OWNER_ONLY_CREDIT_HINT,
   buildWithdrawRequest,
   defaultWithdrawalOutcome,
+  initialWithdrawalOutcome,
+  policyWithdrawalOutcome,
   withdrawErrorMessage,
   withdrawalOutcomeOptions,
 } from "./withdrawal";
@@ -27,6 +29,37 @@ describe("withdrawalOutcomeOptions", () => {
   it("opens on credit for owners and refund for admins", () => {
     expect(defaultWithdrawalOutcome(true)).toBe("credit");
     expect(defaultWithdrawalOutcome(false)).toBe("refund");
+  });
+});
+
+describe("policyWithdrawalOutcome", () => {
+  it("maps the academy's configured default onto the money-side outcome", () => {
+    expect(policyWithdrawalOutcome("credit_mid_month")).toBe("credit");
+    expect(policyWithdrawalOutcome("no_credit_mid_month")).toBe("adjustment");
+    expect(policyWithdrawalOutcome("no_credit_end_of_period")).toBe("adjustment");
+  });
+});
+
+describe("initialWithdrawalOutcome", () => {
+  it("opens on the academy's configured default, not the owner/admin fallback (#742)", () => {
+    expect(initialWithdrawalOutcome("no_credit_mid_month", true)).toBe("adjustment");
+    expect(initialWithdrawalOutcome("no_credit_end_of_period", true)).toBe("adjustment");
+    expect(initialWithdrawalOutcome("no_credit_mid_month", false)).toBe("adjustment");
+  });
+
+  it("opens on account credit when the academy defaults to a mid-month credit and the user is owner", () => {
+    expect(initialWithdrawalOutcome("credit_mid_month", true)).toBe("credit");
+  });
+
+  it("never opens on an option the viewer cannot choose", () => {
+    // A plain admin at a credit-defaulting academy must not open on the
+    // disabled "Account credit" option — fall back to the admin default.
+    expect(initialWithdrawalOutcome("credit_mid_month", false)).toBe("refund");
+  });
+
+  it("keeps today's behaviour while the policy is still loading or absent", () => {
+    expect(initialWithdrawalOutcome(undefined, true)).toBe("credit");
+    expect(initialWithdrawalOutcome(undefined, false)).toBe("refund");
   });
 });
 
