@@ -297,12 +297,12 @@ async def test_month_end_evening_quote_labels_the_local_month() -> None:
     assert result.billing_period_start.astimezone(UTC) == datetime(2026, 8, 1, 5, 0, tzinfo=UTC)
     assert result.billing_period_end.astimezone(UTC) == datetime(2026, 9, 1, 5, 0, tzinfo=UTC)
     # All five August classes are eligible; only the 9:30pm one is still
-    # billable, so the parent is prorated 1/5 of August instead of being
+    # billable, so the parent is prorated 1/4 of August instead of being
     # quoted a phantom September.
     assert result.total_eligible_classes == 5
     assert result.billable_remaining_classes == 1
-    assert result.proration_ratio == "1/5"
-    assert result.final_amount_cents == 2_000
+    assert result.proration_ratio == "1/4"
+    assert result.final_amount_cents == 2_500
 
 
 @pytest.mark.asyncio
@@ -425,7 +425,7 @@ async def test_explicit_start_date_resolves_in_the_session_timezone() -> None:
     # month is quoted rather than the $0 that a stale August period produced.
     assert result.total_eligible_classes == 5
     assert result.billable_remaining_classes == 5
-    assert result.proration_ratio == "5/5"
+    assert result.proration_ratio == "4/4"
     assert result.final_amount_cents == 10_000
 
 

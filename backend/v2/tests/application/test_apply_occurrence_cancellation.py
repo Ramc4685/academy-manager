@@ -472,3 +472,85 @@ async def test_mid_month_checkout_family_with_no_invoice_is_credited() -> None:
 
     assert credits.rows[0].amount_cents == 3000  # 9000 / 3
     assert result.decisions[0].outcome == "credited"
+
+
+# ---------------------------------------------------------------------------
+# The month's FREE extra classes (4 paid per weekly meeting).
+# ---------------------------------------------------------------------------
+
+#: Five Wednesdays in September 2026 — a month that lays out one more class
+#: than the monthly tuition buys.
+WEDNESDAYS = [datetime(2026, 9, day, 23, 0, tzinfo=UTC) for day in (2, 9, 16, 23, 30)]
+
+
+def _wednesday(index: int, *, status: str = "scheduled") -> ClassOccurrence:
+    start = WEDNESDAYS[index]
+    return ClassOccurrence(
+        occurrence_id=f"sess-1:{start.date().isoformat()}:18:00",
+        session_id="sess-1",
+        start_at=start,
+        end_at=start + timedelta(hours=1),
+        status=status,  # type: ignore[arg-type]
+        is_billable=status != "cancelled",
+        timezone=TZ,
+    )
+
+
+def _five_class_basis() -> PeriodChargeBasis:
+    """$70 paid for a 5-class first month: 4 classes charged, the 5th free."""
+    return PeriodChargeBasis(
+        calculation_type="FIRST_MONTH_PRORATION",
+        final_amount_cents=7000,
+        total_eligible_classes=5,
+        billable_remaining_classes=5,
+        billable_classes_denominator=4,
+        included_occurrence_ids=tuple(_wednesday(i).occurrence_id for i in range(5)),
+    )
+
+
+@pytest.mark.asyncio
+async def test_no_credit_while_the_free_extra_class_absorbs_the_cancellation() -> None:
+    """The family paid for 4 classes and 4 still run, so they lost nothing.
+
+    Dividing the $70 charge by the 5 scheduled dates would refund $14 — money
+    the academy never took, at a rate that contradicts the $17.50/class the
+    invoice line states.
+    """
+    enrollment = _enrollment("enr-1", billing_start_at=WEDNESDAYS[0])
+    reader = FakeReader(
+        occurrences=[_wednesday(i) for i in range(5)],
+        enrollments=[enrollment],
+        bases={f"{enrollment.student_id}:sess-1": _five_class_basis()},
+    )
+    credits = FakeCredits()
+
+    result = await _build(reader, FakeInvoices(), credits, FakeOverrides()).execute(
+        _cmd(start_at=WEDNESDAYS[2])
+    )
+
+    assert credits.rows == []
+    assert result.decisions[0].outcome == "skipped:covered_by_free_classes"
+
+
+@pytest.mark.asyncio
+async def test_second_cancellation_credits_at_the_charged_per_class_rate() -> None:
+    """Once the free 5th class is gone, each further cancellation costs a class.
+
+    The rate is the one the family was charged at — $70 / 4 — not $70 / 5.
+    """
+    enrollment = _enrollment("enr-1", billing_start_at=WEDNESDAYS[0])
+    occurrences = [_wednesday(i) for i in range(5)]
+    occurrences[1] = _wednesday(1, status="cancelled")
+    reader = FakeReader(
+        occurrences=occurrences,
+        enrollments=[enrollment],
+        bases={f"{enrollment.student_id}:sess-1": _five_class_basis()},
+    )
+    credits = FakeCredits()
+
+    result = await _build(reader, FakeInvoices(), credits, FakeOverrides()).execute(
+        _cmd(start_at=WEDNESDAYS[2])
+    )
+
+    assert result.decisions[0].outcome == "credited"
+    assert credits.rows[0].amount_cents == 1750

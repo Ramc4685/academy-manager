@@ -192,9 +192,10 @@ async def test_first_month_proration_with_amount_off(db, acad) -> None:
     assert result.created == 1
     invoice = await _monthly_invoice(db, acad, "2026-05")
     assert invoice is not None
-    # net_prorated = (10_000 - 4_000) * 3/9 = 2_000
-    assert invoice["total_cents"] == 2_000
-    assert invoice["balance_due_cents"] == 2_000
+    # Mon+Fri May: 9 dates, the month sells 8 classes.
+    # net_prorated = (10_000 - 4_000) * 3/8 = 2_250
+    assert invoice["total_cents"] == 2_250
+    assert invoice["balance_due_cents"] == 2_250
 
 
 @pytest.mark.asyncio

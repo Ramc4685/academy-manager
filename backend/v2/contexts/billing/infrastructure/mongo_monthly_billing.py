@@ -24,12 +24,15 @@ from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
 from backend.v2.contexts.billing.domain.ledger import InvoiceLine, LedgerInvoice
 from backend.v2.contexts.billing.domain.models import AppliedCreditState
 from backend.v2.contexts.billing.domain.proration import (
+    BILLABLE_CLASSES_PER_MONTH,
     MOVE_SOURCE_TYPE,
     BillingCalculationSnapshot,
     BillingPeriod,
     ClassOccurrence,
     FirstMonthProrationPolicy,
     schedule_signature,
+    snapshot_charge_denominator,
+    snapshot_classes_charged,
 )
 from backend.v2.contexts.billing.domain.tuition_discount import (
     TuitionDiscount,
@@ -268,6 +271,7 @@ class MongoMonthlyBillingGenerator:
         discount_cents: int = 0,
         total_cents: int | None = None,
         discount_policy: TuitionDiscount | None = None,
+        tuition_description: str | None = None,
         now: datetime,
     ) -> None:
         """Write a LedgerInvoice for a monthly-generated enrollment charge.
@@ -312,7 +316,7 @@ class MongoMonthlyBillingGenerator:
             academy_id=academy_id,
             invoice_id=invoice_id,
             line_type="tuition",
-            description=f"Monthly tuition {period}",
+            description=tuition_description or f"Monthly tuition {period}",
             quantity=1,
             unit_amount_cents=gross_cents,
             amount_cents=gross_cents,
@@ -603,6 +607,7 @@ class MongoMonthlyBillingGenerator:
         net_amount_cents: int,
         discount_policy: TuitionDiscount | None,
         invoice_key: dict[str, object] | None,
+        tuition_description: str | None,
         now: datetime,
     ) -> str:
         """Rebuild the monthly invoice behind an already-claimed invoice key.
@@ -728,6 +733,7 @@ class MongoMonthlyBillingGenerator:
             discount_cents=discount_cents,
             total_cents=amount_cents,
             discount_policy=discount_policy,
+            tuition_description=tuition_description,
             now=now,
         )
         await self._reconcile_monthly_invoice_header(
@@ -935,6 +941,7 @@ class MongoMonthlyBillingGenerator:
                 net_amount_cents,
                 _snapshot_id,
                 discount_policy,
+                tuition_description,
             ) = await _resolve_charge_for_enrollment(
                 repo=self._repo,
                 enrollment=enrollment,
@@ -1017,6 +1024,7 @@ class MongoMonthlyBillingGenerator:
                     net_amount_cents=net_amount_cents,
                     discount_policy=discount_policy,
                     invoice_key=invoice_key,
+                    tuition_description=tuition_description,
                     now=now,
                 )
                 if recovered == "repaired_orphan":
@@ -1053,6 +1061,7 @@ class MongoMonthlyBillingGenerator:
                     discount_cents=discount_cents,
                     total_cents=amount_cents,
                     discount_policy=discount_policy,
+                    tuition_description=tuition_description,
                     now=now,
                 )
                 await self._mark_monthly_invoice_key(
@@ -1125,6 +1134,179 @@ def _coerce_datetime(value: object | None) -> datetime | None:
     return None
 
 
+def _tuition_line_description(period: str, snapshot: BillingCalculationSnapshot | None) -> str:
+    """The tuition line's copy for one monthly invoice.
+
+    The "N classes; extras free" sentence is a statement about the FIRST-MONTH
+    proration rule, so it is only stamped on a line that rule actually priced.
+    ``snapshot is None`` — a flat full month, a prior-consumed month, a one-off
+    session — keeps the plain description: a Mon+Wed session delivers 8 classes
+    in its second month and a one-off delivers one, and neither was priced
+    against the four-classes-per-meeting denominator.
+    """
+    if snapshot is None:
+        return f"Monthly tuition {period}"
+    billable = snapshot_classes_charged(snapshot)
+    denominator = snapshot_charge_denominator(snapshot)
+    if billable >= denominator:
+        extra = (
+            "5th class free" if denominator == BILLABLE_CLASSES_PER_MONTH else "extra classes free"
+        )
+        return f"Monthly tuition {period} ({denominator} classes; {extra})"
+    return (
+        f"Monthly tuition {period}: {billable} of {denominator} classes — "
+        f"monthly rate covers {denominator} classes; "
+        "any additional class in the month is free."
+    )
+
+
+def _coerce_schedule_date(value: object | None) -> date | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value)
+        except ValueError:
+            # `2026-06-30T00:00:00` and `2026-06-30 00:00:00` are rejected by
+            # ``date.fromisoformat`` but are real stored bounds.
+            parsed = _coerce_datetime(value)
+            return parsed.date() if parsed is not None else None
+    return None
+
+
+def _schedule_bound(doc: dict[str, object], key: str) -> tuple[bool, date | None]:
+    """Return ``(known, value)`` for a schedule bound.
+
+    ``(True, None)`` means the field is genuinely absent (no bound); ``(False,
+    None)`` means it holds something we cannot parse, which is NOT the same as
+    "unbounded" — an unparseable ``end_date`` must not silently extend a series
+    that stopped running.
+    """
+    raw = doc.get(key)
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return True, None
+    value = _coerce_schedule_date(raw)
+    return value is not None, value
+
+
+def _coerce_schedule_time(value: object | None) -> time | None:
+    if isinstance(value, time):
+        return value
+    if isinstance(value, datetime):
+        return value.time()
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return time.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+_WEEKDAY_LABELS = frozenset({"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"})
+_WEEKDAY_BY_INDEX = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def _weekday_labels(values: object) -> set[str]:
+    """Normalise a stored ``days_of_week`` list to ``%a`` labels.
+
+    ``EditSession`` stores the client's value verbatim, so integer weekday
+    indexes and odd casings both reach billing. Anything we cannot recognise is
+    dropped, and the caller falls back rather than pricing an empty schedule.
+    """
+    labels: set[str] = set()
+    for value in list(values or []) if isinstance(values, list | tuple) else []:
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            if 0 <= value <= 6:
+                labels.add(_WEEKDAY_BY_INDEX[value])
+            continue
+        label = str(value).strip()[:3].title()
+        if label in _WEEKDAY_LABELS:
+            labels.add(label)
+    return labels
+
+
+def _recurring_occurrences(
+    doc: dict[str, object],
+    period: BillingPeriod,
+    *,
+    session_id: str,
+    timezone_name: str,
+    tz: ZoneInfo,
+) -> list[ClassOccurrence] | None:
+    """Expand a weekly template over ``period``.
+
+    Returns ``None`` when the doc cannot be expanded safely (malformed times,
+    an unparseable date bound, an unrecognised weekday set, or a weekday set
+    that matches no day in the period) so the caller can fall back to the
+    one-off ``start_at`` instead of raising or pricing zero classes.
+    """
+    status = str(doc.get("status") or "scheduled")
+    if status == "cancelled":
+        # Cancel is a soft delete; a cancelled template has no live dates. This
+        # mirrors the catalog/roster synthesis and ``_series_occurrence_candidates``.
+        return []
+    start_known, start_date = _schedule_bound(doc, "start_date")
+    end_known, end_date = _schedule_bound(doc, "end_date")
+    if not start_known or not end_known:
+        return None
+    days = _weekday_labels(doc.get("days_of_week"))
+    if not days:
+        return None
+    raw_start_time = doc.get("start_time")
+    raw_end_time = doc.get("end_time")
+    start_time = _coerce_schedule_time(raw_start_time)
+    if start_time is None:
+        if raw_start_time:
+            # A non-ISO wall-clock string (e.g. "6:00 PM") used to be harmless
+            # because this doc fell through to the one-off fallback; it must not
+            # abort the whole monthly generation run.
+            return None
+        start_time = time(0, 0)
+    end_time = _coerce_schedule_time(raw_end_time)
+    if end_time is None:
+        if raw_end_time:
+            return None
+        end_time = start_time
+    occurrence_status = "scheduled" if status == "active" else status
+    is_billable = occurrence_status in {"scheduled", "completed", "makeup"}
+    current = period.start_at.date()
+    if start_date is not None:
+        current = max(start_date, current)
+    period_last_day = date.fromordinal(period.end_at.date().toordinal() - 1)
+    final = period_last_day
+    if end_date is not None:
+        final = min(end_date, final)
+    rows: list[ClassOccurrence] = []
+    while current <= final:
+        if current.strftime("%a") in days:
+            local_start = datetime.combine(current, start_time, tzinfo=tz)
+            local_end = datetime.combine(current, end_time, tzinfo=tz)
+            rows.append(
+                ClassOccurrence(
+                    occurrence_id=f"{session_id}:{current.isoformat()}:{start_time.strftime('%H:%M')}",
+                    session_id=session_id,
+                    start_at=local_start.astimezone(UTC),
+                    end_at=local_end.astimezone(UTC),
+                    status=occurrence_status,
+                    is_billable=is_billable,
+                    timezone=timezone_name,
+                )
+            )
+        current = date.fromordinal(current.toordinal() + 1)
+    if not rows and end_date is None:
+        # The weekday set matched nothing in a period the series should still be
+        # running in: treat the template as unusable rather than quoting $0.
+        return None
+    return rows
+
+
 def _session_occurrences(
     doc: dict[str, object],
     period: BillingPeriod,
@@ -1132,33 +1314,16 @@ def _session_occurrences(
     timezone_name = str(doc.get("timezone") or period.timezone or "America/Chicago")
     tz = ZoneInfo(timezone_name)
     session_id = str(doc.get("session_id") or doc.get("_id") or "")
-    if doc.get("start_date") and doc.get("end_date") and doc.get("days_of_week"):
-        start_date = date.fromisoformat(str(doc["start_date"]))
-        end_date = date.fromisoformat(str(doc["end_date"]))
-        days = {str(day)[:3].title() for day in (doc.get("days_of_week") or [])}
-        start_time = time.fromisoformat(str(doc.get("start_time") or "00:00"))
-        end_time = time.fromisoformat(str(doc.get("end_time") or doc.get("start_time") or "00:00"))
-        current = max(start_date, period.start_at.date())
-        period_last_day = date.fromordinal(period.end_at.date().toordinal() - 1)
-        final = min(end_date, period_last_day)
-        rows: list[ClassOccurrence] = []
-        while current <= final:
-            if current.strftime("%a") in days:
-                local_start = datetime.combine(current, start_time, tzinfo=tz)
-                local_end = datetime.combine(current, end_time, tzinfo=tz)
-                rows.append(
-                    ClassOccurrence(
-                        occurrence_id=f"{session_id}:{current.isoformat()}:{start_time.strftime('%H:%M')}",
-                        session_id=session_id,
-                        start_at=local_start.astimezone(UTC),
-                        end_at=local_end.astimezone(UTC),
-                        status="scheduled",
-                        is_billable=True,
-                        timezone=timezone_name,
-                    )
-                )
-            current = date.fromordinal(current.toordinal() + 1)
-        return rows
+    if doc.get("days_of_week"):
+        rows = _recurring_occurrences(
+            doc,
+            period,
+            session_id=session_id,
+            timezone_name=timezone_name,
+            tz=tz,
+        )
+        if rows is not None:
+            return rows
 
     start_at = _coerce_datetime(doc.get("start_at"))
     end_at = _coerce_datetime(doc.get("end_at"))
@@ -1200,7 +1365,7 @@ async def _resolve_charge_for_enrollment(
     session_doc: dict[str, object],
     period: str,
     now: datetime,
-) -> tuple[int, int, int, str | None, TuitionDiscount | None]:
+) -> tuple[int, int, int, str | None, TuitionDiscount | None, str]:
     """Return charge tuple for a monthly row, including the applied discount policy.
 
     This function owns all proration decisions; the repo class is a pure
@@ -1254,7 +1419,14 @@ async def _resolve_charge_for_enrollment(
             session_id=str(enrollment.get("session_id") or session_doc.get("session_id") or ""),
             student_id=str(enrollment.get("student_id") or ""),
         )
-        return amount_cents, discount, net, snapshot_id, policy if mdc > 0 else None
+        return (
+            amount_cents,
+            discount,
+            net,
+            snapshot_id,
+            policy if mdc > 0 else None,
+            _tuition_line_description(period, None),
+        )
 
     # Check if already prorated in a prior run
     academy_id = current_academy_id()
@@ -1268,7 +1440,14 @@ async def _resolve_charge_for_enrollment(
         }
     )
     if prior_consumed is not None:
-        return 0, 0, 0, str(prior_consumed.get("snapshot_id")), None
+        return (
+            0,
+            0,
+            0,
+            str(prior_consumed.get("snapshot_id")),
+            None,
+            _tuition_line_description(period, None),
+        )
 
     # First-month proration. Net is prorated AFTER the discount (the proration
     # policy already subtracts discount_cents before prorating); gross is the same
@@ -1298,7 +1477,14 @@ async def _resolve_charge_for_enrollment(
         student_id=str(enrollment.get("student_id") or ""),
         now=now,
     )
-    return gross_prorated, discount, net_prorated, snapshot_id, policy if mdc > 0 else None
+    return (
+        gross_prorated,
+        discount,
+        net_prorated,
+        snapshot_id,
+        policy if mdc > 0 else None,
+        _tuition_line_description(period, snapshot),
+    )
 
 
 def _policy_applies(policy: TuitionDiscount, billing_period: BillingPeriod) -> bool:
@@ -1383,6 +1569,9 @@ def _build_monthly_tuition_snapshot(
         timezone=billing_period.timezone,
         total_eligible_classes=len(eligible),
         billable_remaining_classes=len(eligible),
+        # A flat full month buys the month's whole class list, not the
+        # four-per-meeting first-month denominator.
+        billable_classes_denominator=len(eligible),
         proration_ratio=f"{len(eligible)}/{len(eligible)}" if eligible else "0/0",
         final_amount_cents=max(monthly_price_cents - discount_cents, 0),
         included_occurrence_ids=included,

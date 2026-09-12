@@ -59,6 +59,11 @@ function RegistrationsTable({ registrations }: { registrations: AdminRegistratio
                   <div>
                     <div className="font-semibold text-rally-base">{registration.student_name || "Unnamed student"}</div>
                     <Overline>{registration.status.replaceAll("_", " ")}</Overline>
+                    {registration.zero_quote_period && (
+                      <div className="mt-1" data-testid={`admin-registration-no-payment-${registration.application_id}`}>
+                        <Chip variant="nocharge" label="NO PAYMENT" />
+                      </div>
+                    )}
                   </div>
                 </div>
               </td>

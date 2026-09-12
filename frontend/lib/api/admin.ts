@@ -1192,6 +1192,7 @@ export interface AdminRegistrationRow {
   selected_session_id: string | null;
   waiver_required: boolean;
   waiver_satisfied: boolean;
+  zero_quote_period: string | null;
   updated_at: string;
 }
 

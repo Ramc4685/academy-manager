@@ -1515,6 +1515,7 @@ class AdminRegistrationRowView(BaseModel):
     selected_session_id: str | None = None
     waiver_required: bool = False
     waiver_satisfied: bool = False
+    zero_quote_period: str | None = None
     updated_at: datetime
 
 

@@ -20,7 +20,10 @@ from backend.v2.contexts.billing.domain.credits import (
 )
 from backend.v2.contexts.billing.domain.errors import PaymentNotFound
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry, Payment
-from backend.v2.contexts.billing.domain.proration import BillingCalculationSnapshot
+from backend.v2.contexts.billing.domain.proration import (
+    BillingCalculationSnapshot,
+    snapshot_classes_charged,
+)
 from backend.v2.shared.ids import new_ulid
 
 log = logging.getLogger(__name__)
@@ -330,8 +333,18 @@ def _preview_from_snapshot(
     calculated_at: datetime,
     calculated_by: str,
 ) -> WithdrawalCreditPreview:
-    paid_period_classes = snapshot.billable_remaining_classes
-    unused = _unused_included_occurrences(snapshot, withdrawal_date)
+    # The divisor must be the classes the payment BOUGHT, not every class left
+    # in the period: a first month is charged ``price * min(remaining, N) / N``
+    # (N = 4 per weekly meeting), so a 5-class month is paid at the 4-class
+    # rate and the 5th class is free. Dividing the payment by 5 would refund
+    # unused classes at a rate the family was never charged.
+    paid_period_classes = snapshot_classes_charged(snapshot)
+    scheduled_unused = _unused_included_occurrences(snapshot, withdrawal_date)
+    # Classes already consumed come out of the PAID ones first; whatever is
+    # left of the paid block is what gets credited (the free extras are worth
+    # nothing back).
+    consumed = max(snapshot.billable_remaining_classes - scheduled_unused, 0)
+    unused = max(paid_period_classes - consumed, 0)
     return EarlyWithdrawalCreditPolicy().preview(
         paid_tuition_cents=payment.amount_cents,
         refunded_tuition_cents=payment.refunded_cents,

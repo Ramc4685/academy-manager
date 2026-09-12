@@ -620,7 +620,7 @@ def _tenancy_app(loader, monkeypatch) -> FastAPI:
     from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
     from backend.v2.shared.auth.middleware import TenancyMiddleware
 
-    monkeypatch.setenv("V2_TENANCY_MODE", "multi")
+    monkeypatch.setenv("V2_TENANCY_MODE", "multi_academy")
 
     async def _resolve(request) -> str | None:
         return "academy-1"
