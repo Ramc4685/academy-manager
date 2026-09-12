@@ -50,6 +50,18 @@ const CONTENT_SECURITY_POLICY = [
   "report-uri /api/csp-report",
 ].join("; ");
 
+// Retired paths that still live in bookmarks (#689). These were server
+// components that called `redirect()`, which meant every hit first rendered the
+// whole `(admin)` layout — session resolution and shell BFF calls — before the
+// redirect signal was thrown. On Cloudflare Workers that authenticated render
+// blew the per-request resource ceiling and served `Error 1102` instead of ever
+// forwarding. Config redirects are matched before route resolution, so the
+// admin layout never renders for these paths.
+const RETIRED_ROUTE_REDIRECTS = [
+  { source: "/admin/dues", destination: "/admin/payments", permanent: true },
+  { source: "/admin/reports/dues", destination: "/admin/payments", permanent: true },
+];
+
 const config: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
@@ -101,12 +113,17 @@ const config: NextConfig = {
     ];
   },
   async redirects() {
-    return Object.entries(CANONICAL_HOST_REDIRECTS).map(([sourceHost, destinationHost]) => ({
-      source: "/:path*",
-      has: [{ type: "host" as const, value: sourceHost }],
-      destination: `https://${destinationHost}/:path*`,
-      permanent: true,
-    }));
+    return [
+      // Host canonicalisation first, so a retired path on a legacy host lands
+      // on the canonical host before the path rewrite runs.
+      ...Object.entries(CANONICAL_HOST_REDIRECTS).map(([sourceHost, destinationHost]) => ({
+        source: "/:path*",
+        has: [{ type: "host" as const, value: sourceHost }],
+        destination: `https://${destinationHost}/:path*`,
+        permanent: true,
+      })),
+      ...RETIRED_ROUTE_REDIRECTS,
+    ];
   },
 };
 
