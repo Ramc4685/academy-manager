@@ -806,8 +806,14 @@ class MongoStudentRepository(TenantScopedRepository):
                     "academy_id": academy_id,
                     "student_id": student_id,
                     # Paused enrollments are still the student's sessions;
-                    # the panel renders the status chip.
-                    "status": {"$in": ["active", "paused"]},
+                    # the panel renders the status chip. held / reclaim_pending
+                    # are the #697 successors of paused and must stay here for
+                    # the same reason (#733, mirroring #717 on the class
+                    # roster): a held row keeps its seat, is not terminal, so
+                    # it belongs in neither PAST_ENROLLMENT_STATUSES nor a
+                    # blind spot — and #720's Return is only reachable from a
+                    # visible row.
+                    "status": {"$in": ["active", "paused", "held", "reclaim_pending"]},
                     "is_deleted": {"$ne": True},
                 }
             )

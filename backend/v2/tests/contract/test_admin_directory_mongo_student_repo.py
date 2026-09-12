@@ -1413,6 +1413,73 @@ async def test_get_admin_student_lists_past_enrollments_newest_ended_first(db, a
     assert all(row.autopay_status is None for row in detail.past_enrollments)
 
 
+@pytest.mark.asyncio
+async def test_get_admin_student_keeps_held_enrollment_in_enrolled_sessions(db, acad) -> None:
+    """Issue #733: a held child must stay in the profile's Sessions panel.
+
+    #717 fixed the class roster (composition/admin.py) but this sibling read
+    kept filtering on ``active``/``paused`` only, so a ``held`` row matched
+    neither the current list nor PAST_ENROLLMENT_STATUSES and vanished from
+    the student profile entirely -- taking #720's Return action with it.
+    ``held`` and ``reclaim_pending`` still hold a seat and are not terminal,
+    so they belong in ``enrolled_sessions``, never in ``past_enrollments``.
+    """
+    now = datetime.now(UTC)
+    await db["students"].insert_one(
+        {"academy_id": acad, "student_id": "st-held", "full_name": "Holly", "parent_id": "p-1"}
+    )
+    await db["sessions"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "session_id": f"sess-{n}",
+                "title": f"Session {n}",
+                "location": "Court 1",
+                "start_at": now + timedelta(days=n),
+                "end_at": now + timedelta(days=n, hours=1),
+                "status": "scheduled",
+                "amount_cents": 10_000,
+            }
+            for n in range(1, 4)
+        ]
+    )
+    await db["enrollments"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "enrollment_id": "enr-active",
+                "student_id": "st-held",
+                "session_id": "sess-1",
+                "status": "active",
+            },
+            {
+                "academy_id": acad,
+                "enrollment_id": "enr-held",
+                "student_id": "st-held",
+                "session_id": "sess-2",
+                "status": "held",
+            },
+            {
+                "academy_id": acad,
+                "enrollment_id": "enr-reclaiming",
+                "student_id": "st-held",
+                "session_id": "sess-3",
+                "status": "reclaim_pending",
+            },
+        ]
+    )
+
+    detail = await MongoStudentRepository(db).get_admin_student("st-held")
+
+    assert detail is not None
+    by_id = {row.enrollment_id: row for row in detail.enrolled_sessions}
+    assert set(by_id) == {"enr-active", "enr-held", "enr-reclaiming"}
+    assert by_id["enr-held"].status == "held"
+    assert by_id["enr-held"].session_title == "Session 2"
+    assert by_id["enr-reclaiming"].status == "reclaim_pending"
+    assert detail.past_enrollments == []
+
+
 class _SeatSink:
     """Just enough SessionWriter for CancelEnrollment: it only releases a seat."""
 
