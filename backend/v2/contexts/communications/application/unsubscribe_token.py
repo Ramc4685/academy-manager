@@ -21,9 +21,9 @@ The payload is two opaque ids — no address, no name — so nothing personal
 lands in a URL, an access log, or a ``Referer`` header.
 
 Fail-closed, not fail-open: with no secret configured, ``mint`` returns
-``None`` and ``verify`` rejects everything. (Contrast ``composition/admin.py``'s
-``stripe_connect_state_secret or stripe_webhook_secret or ""``, which signs
-with an empty key when unconfigured — do not copy that tail.)
+``None`` and ``verify`` rejects everything. (``composition/admin.py`` now does
+the same for the Stripe Connect OAuth state secret — unset ⇒ the flow is left
+unwired rather than signed with an empty key. Never sign with ``""``.)
 """
 
 from __future__ import annotations

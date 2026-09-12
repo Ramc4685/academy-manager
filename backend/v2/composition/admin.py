@@ -1754,17 +1754,27 @@ def compose_admin(
         ),
     )
     _connect_callback_uri = settings.stripe_connect_callback_uri or ""
-    _state_secret = settings.stripe_connect_state_secret or settings.stripe_webhook_secret or ""
-    start_stripe_connect_use_case = StartStripeConnectUseCase(
-        gateway=stripe,
-        state_secret=_state_secret,
-        redirect_uri=_connect_callback_uri,
-    )
-    complete_stripe_connect_use_case = CompleteStripeConnectUseCase(
-        gateway=stripe,
-        repo=academy_repo,
-        state_secret=_state_secret,
-    )
+    # Fail closed (#547): the Connect OAuth callback is unauthenticated, so the
+    # HMAC over `state` is the only thing binding a returning Stripe account to
+    # an academy. An empty key would make that state forgeable for any
+    # academy_id, and the webhook secret is a different-purpose key — no
+    # fallback. Unset ⇒ leave both use cases unwired; the routes already
+    # degrade to the "Stripe Connect not configured" path instead of signing
+    # with "".
+    _state_secret = (settings.stripe_connect_state_secret or "").strip()
+    start_stripe_connect_use_case: StartStripeConnectUseCase | None = None
+    complete_stripe_connect_use_case: CompleteStripeConnectUseCase | None = None
+    if _state_secret:
+        start_stripe_connect_use_case = StartStripeConnectUseCase(
+            gateway=stripe,
+            state_secret=_state_secret,
+            redirect_uri=_connect_callback_uri,
+        )
+        complete_stripe_connect_use_case = CompleteStripeConnectUseCase(
+            gateway=stripe,
+            repo=academy_repo,
+            state_secret=_state_secret,
+        )
     disconnect_stripe_use_case = DisconnectStripeUseCase(
         repo=academy_repo,
         connected_accounts=ConnectedAccountGatewayDisabler(connected_accounts_repo),

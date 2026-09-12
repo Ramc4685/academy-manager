@@ -128,7 +128,14 @@ def _build(
             claims=(
                 token_claims
                 if token_claims is not None
-                else ({"email": token_email} if token_email is not None else {})
+                # A real Firebase ID token always carries `email_verified`;
+                # #538 made the sign-in path insist on it for every provider,
+                # so the default fixture token has to look like a real one.
+                else (
+                    {"email": token_email, "email_verified": True}
+                    if token_email is not None
+                    else {}
+                )
             ),
             raise_with=verifier_error,
         ),
@@ -287,11 +294,66 @@ async def test_password_provider_requires_verified_email() -> None:
 
 
 @pytest.mark.asyncio
-async def test_social_provider_does_not_require_email_verified_claim() -> None:
+async def test_non_password_provider_still_requires_verified_email() -> None:
+    """#538: verification is a property of the claim, not of the provider.
+
+    The old check only fired for ``password``, so a token minted by any other
+    provider with ``email_verified: false`` resolved straight to whichever
+    account owns that email — account takeover the moment such a provider is
+    enabled. Google always sets the claim, so this rejects nothing real today.
+    """
+    uc = _build(
+        token_claims={
+            "email": "coach@example.com",
+            "email_verified": False,
+            "firebase": {"sign_in_provider": "google.com"},
+        }
+    )
+    with pytest.raises(InvalidToken):
+        await uc.execute("ok", resolved_academy_id="academy-court")
+
+
+@pytest.mark.asyncio
+async def test_social_provider_with_verified_email_is_accepted() -> None:
+    uc = _build(
+        token_claims={
+            "email": "coach@example.com",
+            "email_verified": True,
+            "firebase": {"sign_in_provider": "google.com"},
+        }
+    )
+    claims = await uc.execute("ok", resolved_academy_id="academy-court")
+    assert claims.user_id == "u-coach"
+
+
+@pytest.mark.asyncio
+async def test_missing_email_verified_claim_is_rejected() -> None:
+    """Absent is not verified — a real Firebase ID token always carries it."""
     uc = _build(
         token_claims={
             "email": "coach@example.com",
             "firebase": {"sign_in_provider": "google.com"},
+        }
+    )
+    with pytest.raises(InvalidToken):
+        await uc.execute("ok", resolved_academy_id="academy-court")
+
+
+@pytest.mark.asyncio
+async def test_server_minted_custom_token_does_not_require_verified_email() -> None:
+    """Magic-link sign-in must keep working.
+
+    ``ConsumeMagicLink`` mints the custom token itself against a user_id it
+    already resolved, and Firebase provisions those accounts with
+    ``email_verified=False``. There is no attacker-supplied email claim to
+    verify, so the server-minted provider is exempt — requiring the claim here
+    would lock every magic-link parent out.
+    """
+    uc = _build(
+        token_claims={
+            "email": "coach@example.com",
+            "email_verified": False,
+            "firebase": {"sign_in_provider": "custom"},
         }
     )
     claims = await uc.execute("ok", resolved_academy_id="academy-court")

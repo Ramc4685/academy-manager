@@ -10,8 +10,16 @@ from backend.v2.contexts.identity.domain.models import AcademyMembership, User
 
 
 class FakeVerifier:
-    def __init__(self, claims: dict[str, object]) -> None:
-        self.claims = claims
+    """Fake token verifier.
+
+    A real Firebase ID token always carries `email_verified`, and #538 made
+    registration insist on it for every provider, so fixtures default to a
+    verified token. Tests that need the claim absent pass `raw=True`; tests
+    that need it false set it explicitly.
+    """
+
+    def __init__(self, claims: dict[str, object], *, raw: bool = False) -> None:
+        self.claims = claims if raw else {"email_verified": True, **claims}
 
     async def verify(self, id_token: str) -> dict[str, object]:
         assert id_token == "firebase-token"
@@ -162,6 +170,43 @@ async def test_register_public_parent_rejects_unverified_password_provider_email
                 "email_verified": False,
                 "firebase": {"sign_in_provider": "password"},
             }
+        ),
+        users=FakeUsers(),
+    )
+
+    with pytest.raises(InvalidToken):
+        await use_case.execute("firebase-token")
+
+
+@pytest.mark.asyncio
+async def test_register_public_parent_rejects_unverified_social_provider_email() -> None:
+    """#538: the verification gate must not depend on the sign-in provider."""
+    use_case = RegisterPublicParent(
+        verifier=FakeVerifier(
+            {
+                "email": "parent@example.com",
+                "uid": "firebase-parent-1",
+                "email_verified": False,
+                "firebase": {"sign_in_provider": "google.com"},
+            }
+        ),
+        users=FakeUsers(),
+    )
+
+    with pytest.raises(InvalidToken):
+        await use_case.execute("firebase-token")
+
+
+@pytest.mark.asyncio
+async def test_register_public_parent_rejects_missing_email_verified_claim() -> None:
+    use_case = RegisterPublicParent(
+        verifier=FakeVerifier(
+            {
+                "email": "parent@example.com",
+                "uid": "firebase-parent-1",
+                "firebase": {"sign_in_provider": "google.com"},
+            },
+            raw=True,
         ),
         users=FakeUsers(),
     )

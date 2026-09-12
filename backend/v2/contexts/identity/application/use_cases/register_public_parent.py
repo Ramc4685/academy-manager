@@ -45,6 +45,9 @@ from backend.v2.contexts.identity.application.ports import (
     PublicParentRegistrationRepository,
     TokenVerifier,
 )
+from backend.v2.contexts.identity.application.token_claims import (
+    require_verified_email,
+)
 from backend.v2.contexts.identity.domain.errors import InvalidToken, UserInactive
 from backend.v2.contexts.identity.domain.models import AcademyMembership, User
 from backend.v2.shared.events import DomainEvent, Outbox
@@ -96,7 +99,7 @@ class RegisterPublicParent:
         email = token_claims.get("email")
         if not isinstance(email, str) or not email:
             raise InvalidToken("token missing email")
-        _require_verified_password_provider_email(token_claims)
+        require_verified_email(token_claims)
 
         uid = token_claims.get("uid") or token_claims.get("sub")
         if not isinstance(uid, str) or not uid:
@@ -179,12 +182,3 @@ class RegisterPublicParent:
                 )
 
         return user
-
-
-def _require_verified_password_provider_email(token_claims: dict[str, object]) -> None:
-    firebase_claims = token_claims.get("firebase")
-    provider = None
-    if isinstance(firebase_claims, dict):
-        provider = firebase_claims.get("sign_in_provider")
-    if provider == "password" and token_claims.get("email_verified") is not True:
-        raise InvalidToken("email must be verified")
