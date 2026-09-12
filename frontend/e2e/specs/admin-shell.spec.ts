@@ -929,14 +929,16 @@ test.describe("Rally admin shell", () => {
     await stubAdminBff(page);
     // The destination's own rendering is covered by the ADMIN_ROUTES mount
     // loop; this asserts only that the old bookmarks still land somewhere real.
-    // The stubs redirect during load, which aborts `page.goto` itself on
-    // webkit ("interrupted by another navigation"). Landing on the target is
-    // the assertion; the aborted navigation is expected, not a failure. 30s,
-    // not the 5s default, because a cold `next dev` compile can outlast it.
+    // #689: both paths are static `next.config.ts` redirects now, not RSC
+    // pages that render the whole `(admin)` layout before throwing the
+    // redirect signal (which is what blew the Cloudflare Workers resource
+    // ceiling in production). The browser follows the 308 inside the same
+    // navigation, so `page.goto` resolves on Payments — there is no
+    // "interrupted by another navigation" abort to swallow any more. 30s, not
+    // the 5s default, because a cold `next dev` compile can outlast it.
     for (const bookmark of ["/admin/dues", "/admin/reports/dues"]) {
-      const landed = page.waitForURL(/\/admin\/payments$/, { timeout: 30_000 });
-      await page.goto(bookmark, { waitUntil: "commit" }).catch(() => undefined);
-      await landed;
+      await page.goto(bookmark);
+      await expect(page).toHaveURL(/\/admin\/payments$/, { timeout: 30_000 });
     }
     expect(
       errors,
