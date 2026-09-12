@@ -94,3 +94,59 @@ def test_coerced_legacy_row_never_reviews_before_it_was_requested():
 
     assert coerced.review_on == date(2026, 6, 2)
     assert coerced.review_on >= coerced.created_at.date()
+
+
+async def test_list_pending_enriches_rows_with_parent_student_and_session(db, acad):
+    """#616 row-enrichment: the admin queue must show names, not raw ids.
+
+    The enrichment lives behind the ``PauseRequestRepository`` port, in
+    ``list_pending`` — ``ListAdminPauseRequests`` deliberately holds only the
+    repo. This pins that the read resolves the parent through their Firebase
+    uid, the student, and the session, so the queue never renders a raw uid,
+    "Student: Unknown", or a bare enrollment id.
+    """
+    repo = MongoPauseRequestRepository(db)
+    await db["enrollments"].insert_one(
+        dict(academy_id=acad, enrollment_id="e1", student_id="s1", session_id="sess1")
+    )
+    await db["students"].insert_one(
+        dict(
+            academy_id=acad,
+            student_id="s1",
+            first_name="Asha",
+            last_name="Rao",
+            parent_id="firebase-uid-1",
+        )
+    )
+    await db["sessions"].insert_one(
+        dict(
+            academy_id=acad,
+            session_id="sess1",
+            title="Tuesday Juniors",
+            location="Court 3",
+        )
+    )
+    await db["users"].insert_one(
+        dict(firebase_uid="firebase-uid-1", first_name="Priya", last_name="Rao", email="p@x.test")
+    )
+    await db["pause_requests"].insert_one(
+        dict(
+            academy_id=acad,
+            pause_request_id="pr-1",
+            enrollment_id="e1",
+            parent_id="firebase-uid-1",
+            period="2026-08",
+            status="pending",
+            pause_kind="fixed",
+            resume_on="2026-08-01",
+            created_at=datetime.now(UTC),
+        )
+    )
+
+    (row,) = await repo.list_pending()
+
+    assert row.parent_name == "Priya Rao"
+    assert row.parent_email == "p@x.test"
+    assert row.student_name == "Asha Rao"
+    assert row.session_title == "Tuesday Juniors"
+    assert row.session_location == "Court 3"
