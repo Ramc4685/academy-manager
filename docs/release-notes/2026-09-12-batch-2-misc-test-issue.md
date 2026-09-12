@@ -13,4 +13,4 @@
 - Low risk: the predicate frozensets are structurally equivalent to the status sets they replace (same members), so behavior is unchanged; the added structural test and Mongo validator are net-new guardrails, not behavior changes.
 - Rollback: revert this PR. The Mongo validator migration would need its own down-migration or manual `collMod` to drop the validator if a rollback is required after the migration has run in an environment; no data is mutated so there is no data-recovery concern.
 
-PR: #0
+PR: #766
