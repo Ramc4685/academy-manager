@@ -39,6 +39,7 @@ from backend.v2.tests.application.test_enrollment_lifecycle_billing_sync import 
     RecordingBillingSync,
     RecordingRoster,
 )
+from backend.v2.tests.fixtures.enrollment_fakes import FakeHoldNotifier
 
 EFFECTIVE = datetime(2026, 9, 15, 12, 0, tzinfo=UTC)
 
@@ -63,9 +64,10 @@ class Harness:
     decision: FakeWithdrawalDecision
     sync: RecordingBillingSync
     roster: RecordingRoster
+    notifier: FakeHoldNotifier
 
 
-def _build(status: str = "active") -> Harness:
+def _build(status: str = "active", *, notifier: FakeHoldNotifier | None = None) -> Harness:
     enrollments = FakeEnrollments(rows={"enr-1": _enrollment(status)})
     sessions = FakeSessions()
     outbox = FakeOutbox()
@@ -73,6 +75,7 @@ def _build(status: str = "active") -> Harness:
     decision = FakeWithdrawalDecision()
     sync = RecordingBillingSync()
     roster = RecordingRoster()
+    notifier = notifier if notifier is not None else FakeHoldNotifier()
     use_case = WithdrawEnrollment(
         enrollments=enrollments,
         enrollment_events=events,
@@ -81,9 +84,12 @@ def _build(status: str = "active") -> Harness:
         billing_sync=sync,
         sessions=sessions,
         outbox=outbox,
+        notifier=notifier,
         clock=_now,
     )
-    return Harness(use_case, enrollments, sessions, outbox, events, decision, sync, roster)
+    return Harness(
+        use_case, enrollments, sessions, outbox, events, decision, sync, roster, notifier
+    )
 
 
 @pytest.mark.asyncio
@@ -246,3 +252,37 @@ async def test_missing_enrollment_is_not_found() -> None:
     h = _build()
     with pytest.raises(EnrollmentNotFound):
         await h.use_case.execute(_cmd().model_copy(update={"enrollment_id": "nope"}))
+
+
+@pytest.mark.asyncio
+async def test_withdraw_emails_the_family_when_dropped() -> None:
+    """Issue #743: an admin-initiated Drop (or Stop all classes, which
+    composes this use case) only reached the coach-facing roster notice —
+    the family never learned their child was dropped."""
+    h = _build()
+
+    await h.use_case.execute(_cmd("credit"))
+
+    [call] = h.notifier.dropped_calls
+    assert call["enrollment_id"] == "enr-1"
+    assert call["session_id"] == "sess-1"
+    assert call["student_id"] == "stu-1"
+    assert call["effective_at"] == EFFECTIVE
+    assert call["reason"] == "moving away"
+
+
+@pytest.mark.asyncio
+async def test_withdraw_family_notify_failure_never_fails_the_drop() -> None:
+    """Same best-effort contract as the roster notice and #740's hold-start
+    notice: the drop is already committed, so a mail failure must not
+    surface as a failed drop to the admin who performed it."""
+
+    class _Exploding:
+        async def enrollment_dropped(self, **_: object) -> None:
+            raise RuntimeError("smtp down")
+
+    h = _build(notifier=_Exploding())  # type: ignore[arg-type]
+
+    await h.use_case.execute(_cmd("credit"))
+
+    assert h.enrollments.rows["enr-1"].status == "dropped"

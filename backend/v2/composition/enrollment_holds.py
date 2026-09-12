@@ -11,7 +11,7 @@ extends ``app.state`` alongside ``compose_admin``'s own object).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from backend.v2.contexts.enrollment.application.seat_broker import SeatBroker
 from backend.v2.contexts.enrollment.application.use_cases.departure_policies import (
@@ -34,6 +34,9 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_writer impor
 from backend.v2.contexts.enrollment.infrastructure.mongo_hold_repo import MongoHoldRepository
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_writer import MongoSessionWriter
 
+if TYPE_CHECKING:
+    from backend.v2.composition.hold_notifications import HoldNotificationAdapter
+
 
 @dataclass
 class EnrollmentHoldsComposition:
@@ -45,6 +48,12 @@ class EnrollmentHoldsComposition:
     expire_due_holds: ExpireDueHolds
     process_stalled_reclaims: ProcessStalledReclaims
     send_hold_reminders: SendHoldReminders
+    #: Issue #743: exposed so `main.py` can attach the same family-facing
+    #: notifier onto `WithdrawEnrollment` post-hoc (that use case is
+    #: composed separately in `composition/admin.py`, which is at its own
+    #: wiring line-budget cap and has no `settings` in scope to build a
+    #: second `compose_hold_notifications` instance).
+    hold_notifier: HoldNotificationAdapter
 
 
 def compose_enrollment_holds(db: Any, settings: Any) -> EnrollmentHoldsComposition:
@@ -94,6 +103,7 @@ def compose_enrollment_holds(db: Any, settings: Any) -> EnrollmentHoldsCompositi
         billing_sync=billing_sync,
         billing_deferrals=billing_deferrals,
         roster_notifier=roster_notifier,
+        notifier=hold_notifier,
     )
     seat_broker = SeatBroker(
         sessions=sessions,
@@ -132,4 +142,5 @@ def compose_enrollment_holds(db: Any, settings: Any) -> EnrollmentHoldsCompositi
         expire_due_holds=expire_due_holds,
         process_stalled_reclaims=process_stalled_reclaims,
         send_hold_reminders=send_hold_reminders,
+        hold_notifier=hold_notifier,
     )

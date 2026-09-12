@@ -297,6 +297,7 @@ class ReturnFromHold:
         billing_sync: EnrollmentBillingSync | None = None,
         billing_deferrals: BillingDeferralRepository | None = None,
         roster_notifier: RosterChangeNotifier | None = None,
+        notifier: HoldNotifier | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._enrollments = enrollments
@@ -304,6 +305,7 @@ class ReturnFromHold:
         self._billing_sync = billing_sync
         self._billing_deferrals = billing_deferrals
         self._roster_notifier = roster_notifier
+        self._notifier = notifier
         self._now = clock
 
     async def execute(
@@ -372,6 +374,21 @@ class ReturnFromHold:
                 )
             except Exception:
                 log.exception("return_roster_notify_failed")
+        if self._notifier is not None:
+            # Issue #743: mirrors HoldEnrollment's hold_started wiring
+            # (#740) for the opposite transition. The roster notice above is
+            # coach-facing; without this the family never learned an
+            # admin-initiated Return happened. Best-effort — the return is
+            # already committed and must not be undone by a mail failure.
+            try:
+                await self._notifier.enrollment_returned(
+                    enrollment_id=enrollment_id,
+                    session_id=e.session_id,
+                    student_id=e.student_id,
+                    effective_at=now,
+                )
+            except Exception:
+                log.exception("return_family_notify_failed")
         return before.model_copy(update={"status": "active"})
 
 

@@ -27,6 +27,7 @@ from backend.v2.contexts.enrollment.application.ports import (
     EnrollmentWelcomeNotifier,
     EnrollmentWithdrawalDecisionPort,
     EnrollmentWriter,
+    HoldNotifier,
     OccurrenceRosterCleanup,
     RosterChangeKind,
     RosterChangeNotifier,
@@ -1927,6 +1928,7 @@ class WithdrawEnrollment:
         enrollment_events: EnrollmentEventRepository | None = None,
         billing: EnrollmentWithdrawalDecisionPort | None = None,
         roster_notifier: RosterChangeNotifier | None = None,
+        notifier: HoldNotifier | None = None,
         billing_sync: EnrollmentBillingSync | None = None,
         sessions: SessionWriter | None = None,
         outbox: Outbox | None = None,
@@ -1938,6 +1940,7 @@ class WithdrawEnrollment:
         self._enrollment_events = enrollment_events
         self._billing = billing
         self._roster_notifier = roster_notifier
+        self._notifier = notifier
         self._billing_sync = billing_sync
         self._sessions = sessions
         self._outbox = outbox
@@ -2061,6 +2064,23 @@ class WithdrawEnrollment:
             enrollment_id=e.enrollment_id,
             actor_id=cmd.actor_id,
         )
+        if self._notifier is not None:
+            # Issue #743: the roster notice above is coach-facing. Without
+            # this the family never learned an admin-initiated Drop (or Stop
+            # all classes, which composes this use case) happened at all —
+            # only system-initiated reclaim/expiry told them. Best-effort
+            # like the roster notice — the drop is already committed and
+            # must not be undone by a mail failure.
+            try:
+                await self._notifier.enrollment_dropped(
+                    enrollment_id=e.enrollment_id,
+                    session_id=e.session_id,
+                    student_id=e.student_id,
+                    effective_at=cmd.effective_at,
+                    reason=cmd.reason,
+                )
+            except Exception:
+                log.exception("withdraw_family_notify_failed")
 
 
 class ResumeEnrollment:

@@ -415,6 +415,8 @@ class FakeHoldNotifier:
     started_calls: list[dict[str, Any]] = field(default_factory=list)
     reclaimed_calls: list[dict[str, Any]] = field(default_factory=list)
     reminder_calls: list[dict[str, Any]] = field(default_factory=list)
+    dropped_calls: list[dict[str, Any]] = field(default_factory=list)
+    returned_calls: list[dict[str, Any]] = field(default_factory=list)
 
     async def hold_started(self, **kwargs: Any) -> None:
         self.started_calls.append(kwargs)
@@ -424,6 +426,12 @@ class FakeHoldNotifier:
 
     async def hold_reminder(self, **kwargs: Any) -> None:
         self.reminder_calls.append(kwargs)
+
+    async def enrollment_dropped(self, **kwargs: Any) -> None:
+        self.dropped_calls.append(kwargs)
+
+    async def enrollment_returned(self, **kwargs: Any) -> None:
+        self.returned_calls.append(kwargs)
 
 
 @dataclass
