@@ -1,6 +1,6 @@
 # batch-1: billing invoice dedup
 
-PR: #0
+PR: #761
 
 ## What changed
 - Fixes #723 — the monthly invoice run no longer bills a family twice for a month an admin already handled by hand. Previously `_invoice_has_consistent_lines` only recognized an existing invoice for the enrollment/period if its header matched the generator's own shape (subtotal gross, discount mirrored in `discount_cents`) and it carried at least one line. Hand-billed drafts built through the ledger store the subtotal net of the negative discount line and leave `discount_cents` at 0, and a draft created from "Create invoice" starts with no lines at all — both looked inconsistent to the old check, so a second invoice was minted for the same period.
