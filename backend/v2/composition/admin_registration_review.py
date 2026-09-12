@@ -141,6 +141,7 @@ class AdminRegistrationRow(BaseModel):
     selected_session_id: str | None = None
     waiver_required: bool = False
     waiver_satisfied: bool = False
+    zero_quote_period: str | None = None
     updated_at: datetime
 
 
@@ -718,6 +719,7 @@ class AdminRegistrationReview:
             selected_session_id=app.selected_session_id,
             waiver_required=template is not None,
             waiver_satisfied=template is None or app.waiver_acceptance is not None,
+            zero_quote_period=app.zero_quote_period,
             updated_at=app.updated_at,
         )
 

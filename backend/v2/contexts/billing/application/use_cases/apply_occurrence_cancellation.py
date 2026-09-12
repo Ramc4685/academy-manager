@@ -23,9 +23,11 @@ Policy (owner assumption, stated in the release note):
    checkout (no invoice is ever keyed to that enrollment+period); else the
    monthly price net of discount, and the credit auto-applies when the
    generator mints the invoice. The divisor comes from the same snapshot —
-   ``billable_remaining_classes`` for a prorated month, ``total_eligible_classes``
-   for a full one — because dividing a prorated charge by the month's whole
-   class list under-credits by the proration ratio. The generator's
+   the classes the charge BOUGHT (``min(billable_remaining_classes, 4 per
+   weekly meeting)``) for a prorated month, ``total_eligible_classes`` for a
+   full one — because dividing a prorated charge by the month's whole class
+   list under-credits by the proration ratio, and dividing it by more classes
+   than it paid for over-credits every cancelled date. The generator's
    full-month amount is deliberately NOT changed: its completeness check
    compares the tuition line to the recomputed gross, and a gross that moved
    after the invoice existed would flag every later run as ``repair_failed``.
@@ -33,8 +35,10 @@ Policy (owner assumption, stated in the release note):
    left), a paused family with no invoice for the period (never charged), an
    enrollment whose first month is this period and is not priced yet (rule
    1 prorates it instead — crediting too would pay the date back twice), a
-   date before the family's billing start, and a date the family's charge
-   never covered (``date_not_billed``).
+   date before the family's billing start, a date the family's charge never
+   covered (``date_not_billed``), and a date absorbed by the month's free
+   extra classes (``covered_by_free_classes``): while enough dates still run
+   to deliver every class the charge bought, the family loses nothing.
 
 Idempotent per ``(occurrence_id, enrollment_id)``: the credit carries
 ``source_type="occurrence_cancellation"`` and ``source_id=
@@ -63,7 +67,10 @@ from backend.v2.contexts.billing.domain.credits import (
 )
 from backend.v2.contexts.billing.domain.ledger import InvoiceLine, LedgerInvoice
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry
-from backend.v2.contexts.billing.domain.proration import ClassOccurrence
+from backend.v2.contexts.billing.domain.proration import (
+    CANCELLED_AFTER_PRICING_STATUS,
+    ClassOccurrence,
+)
 from backend.v2.shared.ids import new_ulid
 
 log = logging.getLogger(__name__)
@@ -109,6 +116,10 @@ class PeriodChargeBasis:
     final_amount_cents: int
     total_eligible_classes: int
     billable_remaining_classes: int
+    #: The classes the charge bought. ``None`` on snapshots written before the
+    #: four-classes-per-weekly-meeting rule, which were priced against
+    #: ``billable_remaining_classes``.
+    billable_classes_denominator: int | None = None
     included_occurrence_ids: tuple[str, ...] = ()
 
 
@@ -384,6 +395,23 @@ class ApplyOccurrenceCancellation:
         billed_classes, billed_ids = _billed_classes(
             basis=basis, priced=priced, billing_start=billing_start
         )
+        free_extras = _free_extra_classes(basis)
+        if free_extras and billed_ids is not None:
+            # The month sold fewer classes than it scheduled (the "5th class
+            # free" case). While enough dates still run to deliver everything
+            # the family paid for, a cancellation costs them nothing, so there
+            # is nothing to credit. Earlier cancellations of this family's
+            # billed dates consume that slack one at a time; ``priced`` is
+            # captured before this date's own override is written.
+            already_cancelled = sum(
+                1
+                for occurrence in priced
+                if occurrence.occurrence_id in billed_ids
+                and occurrence.occurrence_id != target.occurrence_id
+                and occurrence.status == CANCELLED_AFTER_PRICING_STATUS
+            )
+            if already_cancelled < free_extras:
+                return _skip(enrollment, "covered_by_free_classes")
         if billed_ids is not None and target.occurrence_id not in billed_ids:
             # The charge never covered this date (it fell before the family's
             # enrollment, or inside the same-day cutoff). Crediting it would
@@ -451,11 +479,28 @@ def _billed_classes(
     """
     if basis is not None:
         if basis.calculation_type == "FIRST_MONTH_PRORATION" and basis.billable_remaining_classes:
-            return basis.billable_remaining_classes, frozenset(basis.included_occurrence_ids)
+            # ``charge / classes the charge bought``. For a first month that is
+            # ``min(remaining, 4 * weekly meetings)``, NOT the whole remaining
+            # list: a 5-class month is charged at the 4-class rate, so dividing
+            # by 5 would credit each cancelled date more than it was billed at.
+            return _paid_classes(basis), frozenset(basis.included_occurrence_ids)
         if basis.calculation_type == "MONTHLY_TUITION" and basis.total_eligible_classes:
             return basis.total_eligible_classes, None
     fallback = [o for o in priced if billing_start is None or o.start_at >= billing_start]
     return len(fallback), None
+
+
+def _paid_classes(basis: PeriodChargeBasis) -> int:
+    """The classes a first-month charge actually paid for."""
+    denominator = basis.billable_classes_denominator or basis.billable_remaining_classes
+    return min(basis.billable_remaining_classes, denominator)
+
+
+def _free_extra_classes(basis: PeriodChargeBasis | None) -> int:
+    """Scheduled-but-not-charged classes in a first month (the free extras)."""
+    if basis is None or basis.calculation_type != "FIRST_MONTH_PRORATION":
+        return 0
+    return max(basis.billable_remaining_classes - _paid_classes(basis), 0)
 
 
 def _skip(enrollment: BillableEnrollment, reason: str) -> OccurrenceCreditDecision:

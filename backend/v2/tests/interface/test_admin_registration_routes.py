@@ -57,9 +57,47 @@ def test_admin_lists_pending_registrations(admin_client) -> None:
             "selected_session_id": "sess-1",
             "waiver_required": True,
             "waiver_satisfied": True,
+            "zero_quote_period": None,
             "updated_at": "2026-05-24T00:00:00Z",
         }
     ]
+
+
+def test_admin_registration_list_exposes_zero_quote_period(admin_client) -> None:
+    admin_client.use_cases.admin_registration_review.list_pending = AsyncMock(
+        return_value=[_row().model_copy(update={"zero_quote_period": "2026-09"})]
+    )
+
+    response = admin_client.get("/api/v2/admin/registrations")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["registrations"][0]["zero_quote_period"] == "2026-09"
+
+
+def test_admin_registration_detail_exposes_zero_quote_period(admin_client) -> None:
+    admin_client.use_cases.admin_registration_review.detail = AsyncMock(
+        return_value=_detail().model_copy(
+            update={"zero_quote_period": "2026-09", "payment_id": None}
+        )
+    )
+
+    response = admin_client.get("/api/v2/admin/registrations/app-1")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["zero_quote_period"] == "2026-09"
+    assert body["payment_id"] is None
+
+
+def test_admin_registration_detail_zero_quote_period_is_null_when_paid(admin_client) -> None:
+    admin_client.use_cases.admin_registration_review.detail = AsyncMock(return_value=_detail())
+
+    response = admin_client.get("/api/v2/admin/registrations/app-1")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["zero_quote_period"] is None
+    assert body["payment_id"] == "pay-1"
 
 
 def test_admin_approves_registration_with_actor(admin_client) -> None:

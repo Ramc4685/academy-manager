@@ -9,6 +9,9 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field, StringConstraints
 
+from backend.v2.contexts.billing.application.first_month_quote_presentation import (
+    first_month_quote_formula,
+)
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     ApplyPaymentDiscountCommand,
     GenerateMonthlyPaymentsCommand,
@@ -322,7 +325,7 @@ def _admin_quote_response(snapshot) -> AdminEnrollmentQuoteResponse:
         billing_period=snapshot.billing_period_label,
         total_eligible_classes_this_month=total,
         billable_remaining_classes_this_month=remaining,
-        formula=f"${monthly / 100:.2f} x {remaining} / {total}" if total else "$0.00",
+        formula=first_month_quote_formula(snapshot),
         included_occurrence_ids=snapshot.included_occurrence_ids,
         excluded_occurrences=snapshot.excluded_occurrences,
         policy_version=snapshot.policy_version,

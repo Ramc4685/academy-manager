@@ -7,6 +7,12 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from backend.v2.contexts.billing.application.first_month_quote_presentation import (
+    billable_classes_charged,
+    billable_classes_denominator,
+    first_month_charge_description,
+    first_month_quote_formula,
+)
 from backend.v2.interfaces.parent.deps import ParentUseCases, get_parent_use_cases
 from backend.v2.interfaces.parent.views import (
     BillingPortalRequest,
@@ -34,6 +40,7 @@ def _quote_response(snapshot) -> EnrollmentQuoteResponse:
     monthly = snapshot.monthly_price_cents
     total = snapshot.total_eligible_classes
     remaining = snapshot.billable_remaining_classes
+    billable = billable_classes_charged(snapshot)
     return EnrollmentQuoteResponse(
         snapshot_id=snapshot.snapshot_id or "",
         quote_expires_at=snapshot.expires_at,
@@ -42,8 +49,8 @@ def _quote_response(snapshot) -> EnrollmentQuoteResponse:
         billing_period=snapshot.billing_period_label,
         total_eligible_classes_this_month=total,
         billable_remaining_classes_this_month=remaining,
-        formula=f"${monthly / 100:.2f} x {remaining} / {total}" if total else "$0.00",
-        message=f"First month is billed for {remaining} of {total} eligible classes this month.",
+        formula=first_month_quote_formula(snapshot),
+        message=first_month_charge_description(billable, billable_classes_denominator(snapshot)),
         next_billing_amount_cents=monthly,
         next_billing_message=f"Starting next month, tuition is ${monthly / 100:.2f}/month.",
     )

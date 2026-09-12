@@ -167,6 +167,11 @@ class MongoOccurrenceCancellationReader:
             final_amount_cents=int(doc.get("final_amount_cents") or 0),
             total_eligible_classes=int(doc.get("total_eligible_classes") or 0),
             billable_remaining_classes=int(doc.get("billable_remaining_classes") or 0),
+            billable_classes_denominator=(
+                int(raw_denominator)
+                if (raw_denominator := doc.get("billable_classes_denominator")) is not None
+                else None
+            ),
             included_occurrence_ids=tuple(
                 str(value) for value in (doc.get("included_occurrence_ids") or [])
             ),

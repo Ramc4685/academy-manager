@@ -40,14 +40,18 @@ def test_remaining_share_counts_classes_from_effective_date() -> None:
     assert (share, remaining, total) == (6000, 3, 4)
 
 
-def test_remaining_share_rounds_half_up_on_final_cent() -> None:
-    # 7000 * 6 / 9 = 4666.66… → 4667
+def test_remaining_share_prices_at_the_four_per_meeting_rate() -> None:
+    """Tue+Thu, 9 dates: the month sells 8 classes, so the share is 6/8.
+
+    Pricing 6/9 would value a class at a rate no first month was charged at,
+    which is what the move delta has to reconcile against.
+    """
     occurrences = [_occ("a", d) for d in (1, 3, 8, 10, 15, 17, 22, 24, 29)]
     share, remaining, total = remaining_share_cents(
         monthly_price_cents=7000, period=PERIOD, occurrences=occurrences, effective_at=EFFECTIVE
     )
     assert (remaining, total) == (6, 9)
-    assert share == 4667
+    assert share == 5250
 
 
 def test_remaining_share_ignores_cancelled_holiday_and_non_billable_classes() -> None:
@@ -61,7 +65,9 @@ def test_remaining_share_ignores_cancelled_holiday_and_non_billable_classes() ->
     share, remaining, total = remaining_share_cents(
         monthly_price_cents=1000, period=PERIOD, occurrences=occurrences, effective_at=EFFECTIVE
     )
-    assert (share, remaining, total) == (500, 1, 2)
+    # 2 eligible dates in the month, so the one class left is worth the
+    # four-class rate (1000 / 4), not half the month.
+    assert (share, remaining, total) == (250, 1, 2)
 
 
 def test_remaining_share_is_zero_for_empty_schedule_or_elapsed_classes() -> None:

@@ -273,7 +273,9 @@ async def test_generate_monthly_prorates_first_period_and_stores_snapshot(db, ac
     assert legacy is None
     invoice = await db["invoices"].find_one({"academy_id": acad, "enrollment_id": "enroll-1"})
     assert invoice is not None
-    assert invoice["total_cents"] == 3_333
+    # Mon+Fri: 9 dates in May, so the month sells 8 classes (4 per weekly
+    # meeting) at $12.50 and the 9th is free; 3 left = 10_000 * 3/8.
+    assert invoice["total_cents"] == 3_750
     assert invoice["invoice_id"] == "inv-monthly-enroll-1-2026-05"
     # Verify the calculation snapshot was still produced and consumed.
     snapshot = await db["billing_calculation_snapshots"].find_one(

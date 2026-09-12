@@ -103,9 +103,9 @@ export function AddToRosterDialog({
       {error && <DialogError message={error} />}
       {quoteQuery.data && (
         <p className="mb-3 rounded-md bg-blue-50 p-2 text-sm text-blue-800 dark:bg-blue-950 dark:text-blue-200">
-          First month: {formatCents(quoteQuery.data.amount_due_cents)} · billed for{" "}
-          {quoteQuery.data.billable_remaining_classes_this_month} of{" "}
-          {quoteQuery.data.total_eligible_classes_this_month} classes this month.
+          First month: {formatCents(quoteQuery.data.amount_due_cents)} ·{" "}
+          {quoteQuery.data.formula} — the monthly rate covers 4 classes per weekly meeting; any
+          extra class in the month is free.
           {quoteQuery.data.quote_expires_at
             ? ` Quote expires ${formatShortDateTime(quoteQuery.data.quote_expires_at)}.`
             : ""}

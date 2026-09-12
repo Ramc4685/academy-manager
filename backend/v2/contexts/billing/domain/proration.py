@@ -35,6 +35,65 @@ CANCELLED_AFTER_PRICING_STATUS = "cancelled"
 #: ``excluded_occurrences`` reason stamped on such a date.
 CANCELLED_EXCLUSION_REASON = "CLASS_CANCELLED"
 
+#: The monthly tuition buys this many classes PER WEEKLY MEETING. A session
+#: that meets once a week sells 4 classes a month at ``monthly price / 4``,
+#: whether the month lays out 4 or 5 dates, so a 5th class is free. A session
+#: that meets twice a week sells 8 (``4 * 2``) — see
+#: ``billable_classes_per_period``: capping such a session at 4 would charge a
+#: joiner with 5 of 8 classes left the whole month.
+BILLABLE_CLASSES_PER_MONTH = 4
+
+
+def weekly_meeting_count(occurrences: list[ClassOccurrence], *, timezone_name: str) -> int:
+    """How many times a week this schedule meets: its distinct local weekdays.
+
+    ``days_of_week`` is a list and multi-day sessions are fully supported, so
+    the month's class count is ``4-5 * meetings``. Derived from the priced
+    occurrences rather than the session document because the policy is pure and
+    the occurrence list is what was actually laid out for the period.
+    """
+    tz = ZoneInfo(timezone_name)
+    weekdays = {occurrence.start_at.astimezone(tz).weekday() for occurrence in occurrences}
+    return max(len(weekdays), 1)
+
+
+def billable_classes_per_period(
+    occurrences: list[ClassOccurrence],
+    *,
+    timezone_name: str,
+    per_meeting: int = BILLABLE_CLASSES_PER_MONTH,
+) -> int:
+    """The classes one month of tuition buys for this schedule (the denominator).
+
+    ``4 * weekly meetings``, never more than the month actually lays out: a
+    session cannot sell more classes than it schedules, and the weekday count
+    of a sparse or irregular month (two dates on two different weekdays) must
+    not be read as a twice-weekly cadence.
+
+    The floor stays at ``per_meeting`` for a month with fewer dates than that,
+    so a schedule too sparse to price — most importantly a degraded one-date
+    synthesis standing in for an unreadable weekly template — charges the
+    owner's ``remaining / 4``, never a whole month for a single class.
+    """
+    per_period = per_meeting * weekly_meeting_count(occurrences, timezone_name=timezone_name)
+    if not occurrences:
+        return per_period
+    return min(per_period, max(len(occurrences), per_meeting))
+
+
+def first_month_charge_description(
+    billable_classes: int,
+    denominator: int = BILLABLE_CLASSES_PER_MONTH,
+) -> str:
+    """Parent-facing description of what a first-month charge buys."""
+    extra = "5th class free" if denominator == BILLABLE_CLASSES_PER_MONTH else "extra classes free"
+    if billable_classes >= denominator:
+        return f"Monthly tuition ({denominator} classes; {extra})"
+    return (
+        f"{billable_classes} of {denominator} classes — monthly rate covers "
+        f"{denominator} classes; any additional class in the month is free."
+    )
+
 
 class BillingPeriod(BaseModel):
     model_config = {"frozen": True}
@@ -83,6 +142,12 @@ class BillingCalculationSnapshot(BaseModel):
     timezone: str
     total_eligible_classes: int
     billable_remaining_classes: int
+    #: The classes the charge bought — the denominator of ``proration_ratio``.
+    #: ``4 * weekly meetings`` for a first-month quote, the period's whole class
+    #: list for a full month. ``None`` on snapshots written before the
+    #: four-classes-per-meeting rule; callers fall back to
+    #: ``billable_remaining_classes``, which is what those were priced against.
+    billable_classes_denominator: int | None = None
     proration_ratio: str
     final_amount_cents: int
     rounding_mode: str = "HALF_UP_FINAL_CENT"
@@ -115,6 +180,7 @@ def schedule_signature(occurrences: list[ClassOccurrence], *, timezone_name: str
 @dataclass(frozen=True)
 class FirstMonthProrationPolicy:
     cutoff_hours: int = 2
+    billable_classes_per_month: int = BILLABLE_CLASSES_PER_MONTH
 
     def quote(
         self,
@@ -154,11 +220,17 @@ class FirstMonthProrationPolicy:
 
         total = len(eligible)
         remaining = len(included)
+        denominator = billable_classes_per_period(
+            eligible,
+            timezone_name=period.timezone,
+            per_meeting=self.billable_classes_per_month,
+        )
+        billable = min(remaining, denominator)
         amount = 0
-        if total > 0 and remaining > 0:
+        if total > 0 and billable > 0:
             base_after_discount = max(monthly_price_cents - discount_cents, 0)
-            amount = _round_half_up_rational(base_after_discount * remaining, total)
-        ratio = f"{remaining}/{total}" if total else "0/0"
+            amount = _round_half_up_rational(base_after_discount * billable, denominator)
+        ratio = f"{billable}/{denominator}" if total else "0/0"
         return BillingCalculationSnapshot(
             monthly_price_cents=monthly_price_cents,
             discount_cents=discount_cents,
@@ -168,6 +240,7 @@ class FirstMonthProrationPolicy:
             timezone=period.timezone,
             total_eligible_classes=total,
             billable_remaining_classes=remaining,
+            billable_classes_denominator=denominator,
             proration_ratio=ratio,
             final_amount_cents=amount,
             included_occurrence_ids=included,
@@ -187,6 +260,24 @@ class FirstMonthProrationPolicy:
             # priced with this date in it (#671).
             return True
         return occurrence.is_billable and occurrence.status in {"scheduled", "completed", "makeup"}
+
+
+def snapshot_charge_denominator(snapshot: BillingCalculationSnapshot) -> int:
+    """The classes ``final_amount_cents`` bought — the credit/refund divisor.
+
+    Falls back to ``billable_remaining_classes`` for snapshots written before
+    the four-classes-per-meeting rule, which is exactly what those were priced
+    against, so an old snapshot keeps crediting at the rate it charged.
+    """
+    denominator = snapshot.billable_classes_denominator
+    if denominator is None or denominator <= 0:
+        return snapshot.billable_remaining_classes
+    return denominator
+
+
+def snapshot_classes_charged(snapshot: BillingCalculationSnapshot) -> int:
+    """How many of the paid classes this snapshot actually charged for."""
+    return min(snapshot.billable_remaining_classes, snapshot_charge_denominator(snapshot))
 
 
 def _round_half_up_rational(numerator: int, denominator: int) -> int:
@@ -239,7 +330,7 @@ class MoveProrationQuote(BaseModel):
     from_share_cents: int
     to_share_cents: int
     delta_cents: int
-    policy_version: str = "move-proration-v2"
+    policy_version: str = "move-proration-v3"
 
 
 def remaining_share_cents(
@@ -260,6 +351,14 @@ def remaining_share_cents(
     delta matches the discounted invoice it lands on. An empty schedule yields
     ``(0, 0, 0)`` — callers must treat a ``total`` of 0 as "schedule unknown"
     rather than "nothing left to bill" (issue #669 review).
+
+    The share is priced at the SAME per-class rate as a first-month quote —
+    ``net_price * min(remaining, 4 * weekly meetings) / (4 * weekly meetings)``
+    — not ``remaining / total``. The two agree in every month whose class count
+    is at or below the cap; where they differ (a 5-class week, a family with
+    more classes left than the month sold), dividing by ``total`` would price
+    the move against a per-class rate the family was never charged and leave
+    the enrollment under- or over-paid after the move.
     """
     eligible = [
         occurrence
@@ -271,7 +370,9 @@ def remaining_share_cents(
     net_price = max(monthly_price_cents - max(discount_cents, 0), 0)
     if total == 0 or remaining == 0 or net_price <= 0:
         return 0, remaining, total
-    return _round_half_up_rational(net_price * remaining, total), remaining, total
+    denominator = billable_classes_per_period(eligible, timezone_name=period.timezone)
+    billable = min(remaining, denominator)
+    return _round_half_up_rational(net_price * billable, denominator), remaining, total
 
 
 def quote_move_proration(

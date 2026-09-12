@@ -668,7 +668,7 @@ function ReviewStep({
         <li>
           First month:{" "}
           {quote
-            ? `${formatCents(quote.amount_due_cents)} · billed for ${quote.billable_remaining_classes_this_month} of ${quote.total_eligible_classes_this_month} classes this month`
+            ? `${formatCents(quote.amount_due_cents)} · ${quote.message}`
             : quoteLoading
               ? "Calculating..."
               : selectedSession

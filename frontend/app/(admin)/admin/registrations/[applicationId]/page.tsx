@@ -95,6 +95,19 @@ export default function AdminRegistrationDetailPage() {
             </Card>
           )}
 
+          {query.data.zero_quote_period && !query.data.payment_id && (
+            <Card
+              data-testid="admin-registration-zero-quote-warning"
+              p={20}
+              style={{ borderColor: "#facc15", background: "#fefce8" }}
+            >
+              <p role="alert" className="text-sm font-semibold text-amber-900">
+                No payment was collected. This registration was auto-priced at $0 for{" "}
+                {query.data.zero_quote_period}. Confirm the quote is correct before approving.
+              </p>
+            </Card>
+          )}
+
           <LaneHeader index="02" title="Decision" />
           <Card p={20}>
             <div className="grid gap-4 lg:grid-cols-3">

@@ -388,3 +388,71 @@ async def test_manual_outcomes_record_nothing_and_say_so(outcome: str) -> None:
     assert result.metadata == {"outcome": outcome, "automation": "none"}
     assert credits.entries == []
     assert stripe.cancelled == []
+
+
+def _five_class_snapshot() -> BillingCalculationSnapshot:
+    """A 5-class October: $70 charged for 4 classes, the 5th free."""
+    return BillingCalculationSnapshot(
+        snapshot_id="snap-5",
+        monthly_price_cents=7_000,
+        billing_period_start=datetime(2026, 10, 1, tzinfo=UTC),
+        billing_period_end=datetime(2026, 11, 1, tzinfo=UTC),
+        billing_period_label="2026-10",
+        timezone="America/Chicago",
+        total_eligible_classes=5,
+        billable_remaining_classes=5,
+        billable_classes_denominator=4,
+        proration_ratio="4/4",
+        final_amount_cents=7_000,
+        included_occurrence_ids=[f"sess-1:2026-10-{day:02d}:18:00" for day in (1, 8, 15, 22, 29)],
+        excluded_occurrences={},
+        calculated_at=datetime(2026, 9, 30, tzinfo=UTC),
+        calculated_by="parent-1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_withdrawal_credit_refunds_at_the_rate_the_family_paid() -> None:
+    """5-class month, $70 paid for 4 classes, 2 attended before withdrawing.
+
+    Three dates are still on the calendar, but only 2 of the 4 PAID classes are
+    unused: crediting 70 * 3/5 = $42 would refund a class the academy never
+    charged for. The credit is 70 * 2/4 = $35.
+    """
+    payment = Payment(
+        payment_id="pay-5",
+        academy_id="acad",
+        parent_id="parent-1",
+        session_id="sess-1",
+        calculation_snapshot_id="snap-5",
+        amount_cents=7_000,
+        refunded_cents=0,
+        status="succeeded",
+        created_at=datetime(2026, 9, 30, tzinfo=UTC),
+        updated_at=datetime(2026, 9, 30, tzinfo=UTC),
+    )
+    uc = PreviewWithdrawalCredit(
+        payments=FakePayments(payment=payment, snapshot=_five_class_snapshot()),
+        enrollments=FakeEnrollments(
+            Enrollment(
+                enrollment_id="enroll-1",
+                academy_id="acad",
+                session_id="sess-1",
+                student_id="student-1",
+                status="active",
+            )
+        ),
+        clock=lambda: datetime(2026, 10, 12, tzinfo=UTC),
+    )
+
+    result = await uc.execute(
+        PreviewWithdrawalCreditCommand(
+            enrollment_id="enroll-1",
+            withdrawal_date=datetime(2026, 10, 12, tzinfo=UTC),
+            actor_id="admin-1",
+        )
+    )
+
+    assert result.paid_period_eligible_classes == 4
+    assert result.unused_eligible_classes == 2
+    assert result.credit_amount_cents == 3_500
