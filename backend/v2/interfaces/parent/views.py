@@ -83,6 +83,11 @@ class StartCheckoutRequest(BaseModel):
     application_id: str
     success_url: str
     cancel_url: str
+    #: The snapshot the review step displayed. Checkout consumes and charges
+    #: exactly this quote when it is still consumable, instead of re-quoting
+    #: and charging an amount the parent never saw (#731). Optional so an
+    #: older cached bundle still checks out.
+    snapshot_id: str | None = None
 
 
 class StartCheckoutResponse(BaseModel):

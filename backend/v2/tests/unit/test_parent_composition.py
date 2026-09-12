@@ -2301,6 +2301,139 @@ async def test_zero_amount_checkout_raises_quote_expired_when_consume_refuses(
 
 
 # ---------------------------------------------------------------------------
+# Issue #731 — the quote the review step displayed is the quote that is charged
+# ---------------------------------------------------------------------------
+
+
+async def test_checkout_charges_the_snapshot_the_review_step_displayed(
+    allow_app_origin,
+) -> None:
+    """The parent pays the figure they read, not a re-quote of it (#731).
+
+    The review step quotes once and shows that snapshot's amount, class count
+    and expiry. Checkout used to throw that snapshot away and quote again, so
+    anything that legitimately moved the price in between — a class crossing
+    the two-hour cutoff, an admin repricing or cancelling a date — charged the
+    parent an amount they had never seen, while the displayed snapshot stayed
+    OPEN forever because nothing ever consumed it.
+    """
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["displayed-quote-checkout"]
+
+    quote_now = _pinned_quote_clock()
+    await db["onboarding_applications"].insert_one(
+        _checkout_ready_application(datetime.now(UTC), status="DRAFT")
+    )
+    await db["sessions"].insert_one(_billable_session(quote_now))
+    await db["academy_connected_accounts"].insert_one(_connected_account_doc())
+
+    class _Stripe:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+
+        async def create_checkout_session(self, **kwargs: Any) -> tuple[str, str]:
+            self.calls.append(kwargs)
+            return "cs_displayed", "https://checkout.stripe.test/displayed"
+
+    stripe = _Stripe()
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=stripe,  # type: ignore[arg-type]
+        academy_id="acad",
+        clock=lambda: quote_now,
+    )
+
+    with tenant_scope("acad"):
+        displayed = await parent.quote_enrollment(parent_id="parent-1", session_id="sess-1")
+        # The price moved while the parent was reading the review step: a
+        # fresh quote at checkout time would now be twice the displayed one.
+        await db["sessions"].update_one(
+            {"session_id": "sess-1"}, {"$set": {"amount_cents": 12_000}}
+        )
+        result = await parent.start_checkout_for_application(
+            parent_id="parent-1",
+            application_id="app-1",
+            success_url="https://app.example.com/parent/checkout/return?application_id=app-1",
+            cancel_url="https://app.example.com/parent/onboarding",
+            snapshot_id=displayed.snapshot_id,
+        )
+
+    assert displayed.final_amount_cents > 0
+    assert len(stripe.calls) == 1
+    # The DISPLAYED figure, not what a re-quote would have said.
+    assert stripe.calls[0]["amount_cents"] == displayed.final_amount_cents
+    assert stripe.calls[0]["metadata"]["calculation_snapshot_id"] == displayed.snapshot_id
+    payment = await db["ledger_payments"].find_one({"payment_id": result.payment_id})
+    assert payment["amount_cents"] == displayed.final_amount_cents
+    # Exactly one snapshot exists — the displayed one — and it is CONSUMED.
+    # No second snapshot was minted behind the parent's back, and the one they
+    # read is no longer an eternally-OPEN row.
+    snapshots = [doc async for doc in db["billing_calculation_snapshots"].find({})]
+    assert [(doc["snapshot_id"], doc["status"]) for doc in snapshots] == [
+        (displayed.snapshot_id, "CONSUMED")
+    ]
+
+
+async def test_checkout_refuses_a_stale_displayed_snapshot_instead_of_charging_a_fresh_one(
+    allow_app_origin,
+) -> None:
+    """A snapshot that cannot be consumed must stop checkout, not re-quote it.
+
+    Expired, already burnt, or simply not this parent's quote for this session:
+    every case has to surface as QuoteExpired so the wizard re-quotes and shows
+    the parent the new amount, instead of silently charging a figure the review
+    step never rendered (#731).
+    """
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["stale-displayed-quote-checkout"]
+
+    quote_now = _pinned_quote_clock()
+    await db["onboarding_applications"].insert_one(
+        _checkout_ready_application(datetime.now(UTC), status="DRAFT")
+    )
+    await db["sessions"].insert_one(_billable_session(quote_now))
+    await db["academy_connected_accounts"].insert_one(_connected_account_doc())
+
+    class _Stripe:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+
+        async def create_checkout_session(self, **kwargs: Any) -> tuple[str, str]:
+            self.calls.append(kwargs)
+            return "cs_should_not_exist", "https://checkout.stripe.test/should-not-exist"
+
+    stripe = _Stripe()
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=stripe,  # type: ignore[arg-type]
+        academy_id="acad",
+        clock=lambda: quote_now,
+    )
+
+    with tenant_scope("acad"), pytest.raises(QuoteExpired):
+        await parent.start_checkout_for_application(
+            parent_id="parent-1",
+            application_id="app-1",
+            success_url="https://app.example.com/parent/checkout/return?application_id=app-1",
+            cancel_url="https://app.example.com/parent/onboarding",
+            snapshot_id="snap-burnt-or-never-existed",
+        )
+
+    assert stripe.calls == []
+    assert await db["ledger_payments"].find_one({}) is None
+    app_doc = await db["onboarding_applications"].find_one({"application_id": "app-1"})
+    assert app_doc["status"] == "DRAFT"
+    # And the refusal did not leave a replacement quote lying around OPEN: the
+    # wizard re-quotes for itself, so the snapshot it renders next is the one
+    # the next attempt consumes.
+    assert await db["billing_calculation_snapshots"].find_one({}) is None
+
+
+# ---------------------------------------------------------------------------
 # Issue #549 — the two residual races left open by #499 / #590
 # ---------------------------------------------------------------------------
 

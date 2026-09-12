@@ -1845,7 +1845,11 @@ def compose_parent(
         return await quote_enrollment_uc.execute(
             QuoteEnrollmentCommand(
                 session_id=session_id,
-                billing_start_at=datetime.now(UTC),
+                # Same seam checkout prices against — identical in production
+                # (the default clock IS `datetime.now(UTC)`), but it keeps the
+                # quote the review step shows and the quote checkout consumes
+                # on one clock for the tests that pin it.
+                billing_start_at=clock(),
                 billing_start_date=_parse_start_date(start_date),
                 calculated_by=parent_id,
                 parent_id=parent_id,
@@ -1859,7 +1863,15 @@ def compose_parent(
         application_id: str,
         success_url: str,
         cancel_url: str,
+        snapshot_id: str | None = None,
     ):
+        """`snapshot_id` is the quote the review step actually SHOWED (#731).
+
+        When the client hands it back, that snapshot is what gets consumed and
+        charged — the parent pays the figure they read. Omitting it keeps the
+        pre-#731 behaviour (quote now, consume what we just minted) so an older
+        cached bundle still checks out.
+        """
         _validate_checkout_redirect_urls(success_url, cancel_url)
         app = await get_status.execute(application_id, caller_user_id=parent_id)
         # Refuse a checkout this application can never legally complete, and
@@ -1913,14 +1925,43 @@ def compose_parent(
                 "selected session is not available for checkout",
                 session_id=app.selected_session_id,
             )
-        quote = await quote_enrollment_uc.execute(
-            QuoteEnrollmentCommand(
-                session_id=selected.session_id,
-                billing_start_at=clock(),
-                calculated_by=parent_id,
+        # The review step already priced this enrollment and showed the parent
+        # the result — amount, class count, and the quote's own expiry. Charge
+        # THAT snapshot. Re-quoting here mints an independent one whose amount
+        # can legitimately differ (a class crossed the two-hour cutoff while
+        # the parent filled the form in, a date was cancelled, the session was
+        # repriced), so the parent was charged a figure they never saw while
+        # the displayed snapshot stayed OPEN forever, consumed by nobody (#731).
+        quote_already_consumed = False
+        if snapshot_id:
+            quote = await payments_repo.consume_quote_snapshot(
+                snapshot_id,
                 parent_id=parent_id,
+                session_id=selected.session_id,
             )
-        )
+            if quote is None:
+                # Expired, already burnt by a concurrent attempt, or not this
+                # parent's quote for this session. Refuse instead of quietly
+                # charging a fresh figure: the wizard re-quotes, re-renders the
+                # review step, and the next attempt consumes the snapshot the
+                # parent has actually read. Deliberately no replacement quote
+                # is minted here — that would leave another OPEN row nobody
+                # consumes, which is the very leak this fix closes.
+                raise QuoteExpired(
+                    "quote expired before checkout could start; please retry",
+                    snapshot_id=snapshot_id,
+                    application_id=application_id,
+                )
+            quote_already_consumed = True
+        else:
+            quote = await quote_enrollment_uc.execute(
+                QuoteEnrollmentCommand(
+                    session_id=selected.session_id,
+                    billing_start_at=clock(),
+                    calculated_by=parent_id,
+                    parent_id=parent_id,
+                )
+            )
         if quote.final_amount_cents <= 0:
             # No billable classes remain this month, so there is nothing to
             # charge — Stripe rejects zero-amount Checkout Sessions. Skip
@@ -1939,7 +1980,7 @@ def compose_parent(
             # hours before local month-end (#541).
             zero_quote_period = quote.billing_period_label
             await apps_repo.save(app.model_copy(update={"zero_quote_period": zero_quote_period}))
-            if quote.snapshot_id:
+            if quote.snapshot_id and not quote_already_consumed:
                 consumed = await payments_repo.consume_quote_snapshot(quote.snapshot_id)
                 if consumed is None:
                     # The snapshot expired (or a concurrent request burnt it)
@@ -1965,7 +2006,9 @@ def compose_parent(
         # nothing has been created yet and the parent simply re-quotes.
         # (If the Stripe call below then fails, the snapshot stays CONSUMED
         # and a retry mints a fresh quote — the pre-existing behaviour.)
-        if quote.snapshot_id:
+        # A client-supplied snapshot was already consumed above, for the same
+        # reason and with the same TTL gate.
+        if quote.snapshot_id and not quote_already_consumed:
             consumed = await payments_repo.consume_quote_snapshot(quote.snapshot_id)
             if consumed is None:
                 raise QuoteExpired(

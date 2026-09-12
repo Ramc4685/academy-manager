@@ -277,6 +277,12 @@ export function startCheckout(payload: {
   application_id: string;
   success_url: string;
   cancel_url: string;
+  /**
+   * The quote snapshot the review step displayed. Checkout consumes and
+   * charges exactly this one, so the parent pays the figure they read
+   * instead of a re-quote taken at click time (#731).
+   */
+  snapshot_id?: string;
 }): Promise<{ payment_id: string; redirect_url: string }> {
   return apiFetch("/parent/checkout/start", {
     method: "POST",
