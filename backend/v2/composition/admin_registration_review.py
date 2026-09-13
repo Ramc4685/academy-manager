@@ -23,7 +23,12 @@ from backend.v2.contexts.enrollment.domain.events import (
     EnrollmentLifecycleEvent,
     EnrollmentLifecycleEventType,
 )
-from backend.v2.contexts.enrollment.domain.models import Enrollment, Session, Student
+from backend.v2.contexts.enrollment.domain.models import (
+    NON_TERMINAL,
+    Enrollment,
+    Session,
+    Student,
+)
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 from backend.v2.contexts.onboarding.application.ports import ApplicationRepository
 from backend.v2.contexts.onboarding.application.use_cases.admin_waiver_templates import (
@@ -299,11 +304,19 @@ class AdminRegistrationReview:
             )
             await self._assert_no_other_active_enrollment(student_id, expected_enrollment_id)
             existing = await self._enrollments.find_for_session_student(session_id, student_id)
-            # issue #651: only a live (active / paused) enrollment is a
-            # conflict. A cancelled or withdrawn row from an earlier stint in
+            # Issue #651: a cancelled or withdrawn row from an earlier stint in
             # the same session is history and must not permanently block a
             # fresh registration for that child; it gets a new enrollment.
-            if existing is not None and existing.status not in {"active", "paused"}:
+            #
+            # Issue #782: the set used to be the literal {"active", "paused"},
+            # written before `held` existed (#697). A child on hold in this
+            # session therefore read as "no conflict" and approval minted a
+            # SECOND active row — whose seat SeatBroker could satisfy by
+            # reclaiming the longest-held hold in the session, i.e. the very
+            # hold being duplicated. `NON_TERMINAL` is the domain's name for
+            # LIVE plus the in-flight `reclaim_pending`: everything that has
+            # not ended, which is exactly what "already enrolled here" means.
+            if existing is not None and existing.status not in NON_TERMINAL:
                 existing = None
             if existing is not None and (
                 existing.enrollment_id != expected_enrollment_id

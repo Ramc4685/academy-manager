@@ -39,7 +39,6 @@ from backend.v2.contexts.enrollment.domain.lifecycle import (
     derive_lifecycle,
 )
 from backend.v2.contexts.enrollment.domain.models import (
-    ACTIVE_OR_PAUSED,
     DROPPED_SPELLINGS,
     NON_TERMINAL,
     SEAT_HOLDING,
@@ -230,9 +229,15 @@ class MongoStudentRepository(TenantScopedRepository):
         *,
         exclude_enrollment_id: str | None = None,
     ) -> bool:
+        # Issue #782: widened from ACTIVE_OR_PAUSED (a name that predates
+        # `held`, #697) to the domain's NON_TERMINAL — LIVE plus the in-flight
+        # `reclaim_pending`. "Already enrolled somewhere, manage that instead"
+        # is true of a child on hold: the hold IS an existing class, and
+        # reading it as "no enrollment" is what let registration approval mint
+        # a duplicate row for a held child.
         filter_: dict[str, object] = {
             "student_id": student_id,
-            "status": {"$in": sorted(ACTIVE_OR_PAUSED)},
+            "status": {"$in": sorted(NON_TERMINAL)},
         }
         if exclude_enrollment_id is not None:
             filter_["enrollment_id"] = {"$ne": exclude_enrollment_id}

@@ -1531,7 +1531,8 @@ async def test_approval_survives_a_failing_welcome_email() -> None:
 class EnrollmentsKeyedById(InMemoryEnrollments):
     """Mirror Mongo: ``create_if_absent`` is keyed by enrollment_id, and a
     session/student pair may hold historical (cancelled) rows next to a live
-    one. ``find_for_session_student`` prefers the live row, like the writer."""
+    one. ``find_for_session_student`` prefers the live row, like the writer —
+    including ``held`` / ``reclaim_pending`` since #782."""
 
     def __init__(self, existing: list[Enrollment] | None = None) -> None:
         super().__init__()
@@ -1554,7 +1555,7 @@ class EnrollmentsKeyedById(InMemoryEnrollments):
         matches = [
             row for row in self.rows if (row.session_id, row.student_id) == (session_id, student_id)
         ]
-        for status in ("active", "paused"):
+        for status in ("active", "paused", "held", "reclaim_pending"):
             for row in matches:
                 if row.status == status:
                     return row
@@ -1633,6 +1634,91 @@ async def test_approve_still_rejects_when_a_paused_enrollment_exists_in_the_sess
 
     assert sessions.reserve_calls == 0
     assert enrollments.created == []
+
+
+@pytest.mark.parametrize("status", ["held", "reclaim_pending"])
+@pytest.mark.asyncio
+async def test_approve_rejects_when_a_held_enrollment_exists_in_the_session(
+    status: str,
+) -> None:
+    """Issue #782: a child on hold in this session is already enrolled in it.
+
+    The conflict set was the literal ``{"active", "paused"}``, which predates
+    ``held`` (#697) entirely — so a held row read as "no conflict" and approval
+    minted a SECOND active row for the same child in the same class. Worse, the
+    seat it reserved came through ``SeatBroker``, whose reclaim-on-demand takes
+    the longest-held hold in the session: the very hold being duplicated. The
+    child was dropped from their own seat to be seated in it again.
+
+    ``reclaim_pending`` is the same answer for a different reason — the row is
+    mid-reclaim and no admin surface may race a write against it (#697).
+    """
+    app = _application(student_id="student-1", application_id="app-2")
+    sessions = InMemorySessions([_session()])
+    held = Enrollment(
+        enrollment_id="enr-held",
+        academy_id=ACADEMY_ID,
+        session_id="sess-1",
+        student_id="student-1",
+        status=status,
+        registration_application_id="app-1",
+    )
+    enrollments = EnrollmentsKeyedById([held])
+    review = AdminRegistrationReview(
+        apps=InMemoryApplications(app),
+        sessions=sessions,
+        students=InMemoryStudents(),
+        enrollments=enrollments,
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(ApplicationNotEditable, match="already enrolled"):
+        await review.approve(ApproveRegistrationCommand(application_id="app-2", actor_id="admin-1"))
+
+    # No second row, and above all no seat acquisition — an acquire here is
+    # what reclaims the child's own hold.
+    assert enrollments.created == []
+    assert sessions.reserve_calls == 0
+    assert [row.status for row in enrollments.rows] == [status]
+
+
+@pytest.mark.asyncio
+async def test_approve_returns_the_applications_own_held_row_from_hold() -> None:
+    """The same application's row went on hold, then approval was retried.
+
+    That is a return from hold, not a conflict: the row is reused in place and
+    no new seat is taken (it still holds one).
+    """
+    app = _application(student_id="student-1", application_id="app-1")
+    sessions = InMemorySessions([_session()])
+    held = Enrollment(
+        enrollment_id=stable_ulid("registration-enrollment", "app-1", "student-1", "sess-1"),
+        academy_id=ACADEMY_ID,
+        session_id="sess-1",
+        student_id="student-1",
+        status="held",
+        registration_application_id="app-1",
+    )
+    enrollments = EnrollmentsKeyedById([held])
+    review = AdminRegistrationReview(
+        apps=InMemoryApplications(app),
+        sessions=sessions,
+        students=InMemoryStudents(),
+        enrollments=enrollments,
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        clock=lambda: NOW,
+    )
+
+    detail = await review.approve(
+        ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1")
+    )
+
+    assert detail.enrollment_id == held.enrollment_id
+    assert enrollments.created == []
+    assert sessions.reserve_calls == 0
 
 
 class _FullSessions(InMemorySessions):

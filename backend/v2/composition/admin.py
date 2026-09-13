@@ -976,6 +976,8 @@ def compose_admin(
         occurrence_roster=occurrence_roster_repo,
         # #682: a withdraw clears any pending end-of-period cancellation.
         scheduled_actions=scheduled_actions,
+        # #782: and closes the pause/hold deferral it ended inside.
+        billing_deferrals=billing_deferrals,
     )
 
     # Finance (# FINANCE)

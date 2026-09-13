@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from backend.v2.contexts.enrollment.application.seat_broker import SeatBroker
+from backend.v2.contexts.enrollment.application.terminal_dependents import TerminalDependents
 from backend.v2.contexts.enrollment.application.use_cases.departure_policies import (
     GetEnrollmentDeparturePolicy,
     UpdateEnrollmentDeparturePolicy,
@@ -88,6 +89,31 @@ def compose_enrollment_holds(db: Any, settings: Any) -> EnrollmentHoldsCompositi
     sessions = MongoSessionWriter(db)
     holds = MongoHoldRepository(db)
 
+    # Issue #782: reclaiming, expiring or orphaning a hold ENDS an enrollment,
+    # so it owes the same dependent cleanup an admin withdrawal does. Wired
+    # once as a bundle and handed to all three reclaim entry points below —
+    # five separate optional ports on three constructors is five chances to
+    # wire four, which is how the half-drop happened.
+    from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_roster_repo import (
+        MongoOccurrenceRosterRepository,
+    )
+    from backend.v2.contexts.enrollment.infrastructure.mongo_scheduled_action_repo import (
+        MongoScheduledEnrollmentActionRepository,
+    )
+    from backend.v2.shared.events import MongoOutbox
+
+    scheduled_actions = MongoScheduledEnrollmentActionRepository(db)
+    terminal_dependents = TerminalDependents(
+        scheduled_actions=scheduled_actions,
+        occurrence_roster=MongoOccurrenceRosterRepository(db),
+        billing_deferrals=billing_deferrals,
+        # The freed seat has to reach the waitlist-promotion handler, and a
+        # pending level-up recommendation has to expire — both ride
+        # EnrollmentCancelled off the outbox.
+        outbox=MongoOutbox(db),
+        roster_notifier=roster_notifier,
+    )
+
     hold_enrollment = HoldEnrollment(
         enrollments=enrollments,
         departure_policy=policy_repo,
@@ -112,6 +138,7 @@ def compose_enrollment_holds(db: Any, settings: Any) -> EnrollmentHoldsCompositi
         billing_sync=billing_sync,
         notifier=hold_notifier,
         enrollment_events=enrollment_events,
+        dependents=terminal_dependents,
     )
     expire_due_holds = ExpireDueHolds(
         holds=holds,
@@ -120,6 +147,8 @@ def compose_enrollment_holds(db: Any, settings: Any) -> EnrollmentHoldsCompositi
         billing_sync=billing_sync,
         notifier=hold_notifier,
         enrollment_events=enrollment_events,
+        scheduled_actions=scheduled_actions,
+        dependents=terminal_dependents,
     )
     process_stalled_reclaims = ProcessStalledReclaims(
         holds=holds,
@@ -130,6 +159,7 @@ def compose_enrollment_holds(db: Any, settings: Any) -> EnrollmentHoldsCompositi
         billing_sync=billing_sync,
         notifier=hold_notifier,
         enrollment_events=enrollment_events,
+        dependents=terminal_dependents,
     )
     send_hold_reminders = SendHoldReminders(holds=holds, notifier=hold_notifier)
 

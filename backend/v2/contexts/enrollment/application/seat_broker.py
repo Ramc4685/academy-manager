@@ -31,6 +31,10 @@ from backend.v2.contexts.enrollment.application.ports import (
     HoldRepository,
     SessionWriter,
 )
+from backend.v2.contexts.enrollment.application.terminal_dependents import (
+    TerminalDependents,
+    close_terminal_enrollment_dependents,
+)
 from backend.v2.contexts.enrollment.domain.models import Enrollment
 
 log = logging.getLogger(__name__)
@@ -58,6 +62,10 @@ class SeatBroker:
         billing_sync: EnrollmentBillingSync | None = None,
         notifier: HoldNotifier | None = None,
         enrollment_events: EnrollmentEventRepository | None = None,
+        # Issue #782: a reclaim ends an enrollment, so it owes the same
+        # dependent cleanup a withdrawal does. Optional, like every port
+        # above, so existing callers and tests keep working unwired.
+        dependents: TerminalDependents | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._sessions = sessions
@@ -66,6 +74,7 @@ class SeatBroker:
         self._billing_sync = billing_sync
         self._notifier = notifier
         self._enrollment_events = enrollment_events
+        self._dependents = dependents
         self._now = clock
 
     async def acquire(self, session_id: str, *, requested_by: str) -> SeatAcquisition:
@@ -109,6 +118,7 @@ class SeatBroker:
                 seat_disposition="handed_over",
                 sessions=self._sessions,
                 now=now,
+                dependents=self._dependents,
             )
         except Exception:
             # `claim_longest_held` above already flipped the victim to
@@ -201,8 +211,10 @@ async def finalize_reclaim(
     reason: Literal["reclaimed", "expired", "orphaned"],
     seat_disposition: Literal["handed_over", "release"],
     now: datetime,
+    dependents: TerminalDependents | None = None,
 ) -> None:
-    """Finish a claimed reclaim: withdraw the row, sync billing, notify.
+    """Finish a claimed reclaim: withdraw the row, sync billing, notify, and
+    close every dependent of a terminal enrollment.
 
     Non-defaulted ``seat_disposition`` so this can never be got wrong by
     omission: ``SeatBroker.acquire`` passes ``"handed_over"`` (no seat
@@ -211,6 +223,15 @@ async def finalize_reclaim(
     the sweep's recovery of an ORPHANED claim (``reason="orphaned"``): the
     original acquiring caller's transaction failed before it ever held the
     seat, so nobody is waiting for this one either.
+
+    Issue #782: this used to stop after billing/event/email, so a reclaimed
+    hold read "dropped" while its scheduled actions, occurrence-roster rows,
+    billing deferral, waitlist offer and staff alert all behaved as if the
+    child were still enrolled — a half-drop. The tail now runs the SAME
+    bundle ``WithdrawEnrollment`` runs
+    (:func:`close_terminal_enrollment_dependents`). ``dependents`` defaults to
+    ``None`` so every existing caller and test keeps working unwired;
+    production supplies it from ``composition/enrollment_holds.py``.
     """
     finalized = await holds.finalize_reclaim(victim.enrollment_id, withdrawal_date=now)
     if finalized is None:
@@ -283,3 +304,15 @@ async def finalize_reclaim(
             log.exception(
                 "hold_reclaim_notify_failed", extra={"enrollment_id": victim.enrollment_id}
             )
+
+    # Issue #782: everything a terminal enrollment leaves behind. Runs only
+    # for the caller that won the CAS above, so the EnrollmentCancelled that
+    # offers the freed seat to the waitlist is emitted exactly once.
+    await close_terminal_enrollment_dependents(
+        victim,
+        effective_at=now,
+        reason=f"hold_{reason}",
+        roster_change="withdrawn",
+        deferral_closed_by="seat_broker",
+        dependents=dependents,
+    )

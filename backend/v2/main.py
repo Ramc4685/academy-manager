@@ -584,6 +584,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # ordinary cancel/drop and must reclaim a hold exactly like the route
     # does, so it needs the same broker.
     app.state.parent.promote_from_waitlist.set_seat_broker(_holds.seat_broker)
+    # Issue #782: and the ResumeEnrollment that promotion routes a paused
+    # head-of-queue student through — it reserves a seat of its own, so
+    # without this a class full only of holds refuses the resume instead of
+    # reclaiming one.
+    app.state.parent.promote_resume_enrollment.set_seat_broker(_holds.seat_broker)
     # ConfirmEnrollment (Billing.PaymentSucceeded -> new checkout enrollment)
     # is the same shape of seat demand as the routes above: a class full only
     # because of holds must reclaim, not force an auto-refund.
