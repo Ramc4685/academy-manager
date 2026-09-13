@@ -1379,6 +1379,11 @@ class AdminTuitionDiscountSummaryResponse(BaseModel):
 class AdminAuditLogView(BaseModel):
     audit_id: str
     actor_id: str | None = None
+    # Resolved at read time by joining `users` + this academy's memberships
+    # (#468). Optional so a row whose actor no longer exists still renders.
+    actor_type: str | None = None
+    actor_role: str | None = None
+    actor_name: str | None = None
     action: str
     entity_type: str | None = None
     entity_id: str | None = None

@@ -1394,9 +1394,14 @@ export interface AdminPauseRequestList {
   requests: AdminPauseRequestView[];
 }
 
+export type AdminAuditActorType = "admin" | "owner" | "coach" | "parent" | "system";
+
 export interface AdminAuditLogView {
   audit_id: string;
   actor_id: string | null;
+  actor_type: AdminAuditActorType | null;
+  actor_role: string | null;
+  actor_name: string | null;
   action: string;
   entity_type: string | null;
   entity_id: string | null;
@@ -3140,8 +3145,9 @@ export function listAdminCancellations(): Promise<SelfCancellationsAdminResponse
   });
 }
 
-export function listAuditLogs(): Promise<AdminAuditLogList> {
-  return apiFetch<AdminAuditLogList>("/admin/audit-logs", { method: "GET" });
+export function listAuditLogs(actorType?: AdminAuditActorType | null): Promise<AdminAuditLogList> {
+  const query = actorType ? `?actor_type=${encodeURIComponent(actorType)}` : "";
+  return apiFetch<AdminAuditLogList>(`/admin/audit-logs${query}`, { method: "GET" });
 }
 
 export function sendDuesReminders(payload: { parent_ids?: string[] } = {}): Promise<SendDuesRemindersResponse> {

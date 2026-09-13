@@ -2302,7 +2302,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
             calculated_by="admin",
         )
 
-    async def list_audit_logs():
+    async def list_audit_logs(actor_type=None):
         return []
 
     async def list_dues_followup():

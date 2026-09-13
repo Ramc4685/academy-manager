@@ -491,6 +491,7 @@ from backend.v2.contexts.identity.domain.errors import (
     StudentNotFound,
     UserAlreadyLinkedToStudent,
 )
+from backend.v2.contexts.identity.domain.identity_aliases import aliases_from_doc
 from backend.v2.contexts.identity.infrastructure.firebase_admin_adapter import (
     get_firebase_admin_adapter,
 )
@@ -3669,7 +3670,7 @@ def compose_admin(
             )
         )
 
-    async def list_audit_logs():
+    async def list_audit_logs(actor_type: str | None = None):
         from backend.v2.shared.tenancy import current_academy_id
 
         request_academy_id = current_academy_id()
@@ -3691,7 +3692,69 @@ def compose_admin(
                     "created_at": doc.get("created_at") or datetime.now(UTC),
                 }
             )
+
+        actors = await _resolve_audit_actors(
+            {str(row["actor_id"]) for row in rows if row["actor_id"]},
+            academy_id=request_academy_id,
+        )
+        for row in rows:
+            row.update(_audit_actor_fields(row["actor_id"], actors))
+
+        wanted = (actor_type or "").strip().lower()
+        if wanted:
+            rows = [row for row in rows if row["actor_type"] == wanted]
         return rows
+
+    async def _resolve_audit_actors(
+        actor_ids: set[str], *, academy_id: str
+    ) -> dict[str, dict[str, Any]]:
+        """One batch lookup of every actor on this page of audit rows.
+
+        `users` and `academy_memberships` are global collections (an identity
+        spans academies), so the *membership* query carries the explicit
+        `academy_id` term: an actor's role in another tenant must never be
+        rendered in this tenant's audit trail.
+        """
+        if not actor_ids:
+            return {}
+
+        ids = sorted(actor_ids)
+        aliases: dict[str, str] = {}
+        names: dict[str, str] = {}
+        async for doc in db["users"].find(
+            {
+                "$or": [
+                    {"user_id": {"$in": ids}},
+                    {"auth_uid": {"$in": ids}},
+                    {"firebase_uid": {"$in": ids}},
+                ]
+            }
+        ):
+            doc_aliases = aliases_from_doc(doc)
+            matched = next((alias for alias in doc_aliases if alias in actor_ids), None)
+            if matched is None:
+                continue
+            display_name = str(doc.get("display_name") or doc.get("email") or "").strip()
+            if display_name:
+                names[matched] = display_name
+            for alias in doc_aliases:
+                aliases[alias] = matched
+
+        roles: dict[str, list[str]] = {}
+        async for doc in db["academy_memberships"].find(
+            {"academy_id": academy_id, "user_id": {"$in": sorted(set(ids) | set(aliases))}}
+        ):
+            actor_id = aliases.get(str(doc.get("user_id")), str(doc.get("user_id")))
+            if actor_id not in actor_ids:
+                continue
+            raw_roles = doc.get("roles") or []
+            row_roles = [raw_roles] if isinstance(raw_roles, str) else list(raw_roles)
+            roles.setdefault(actor_id, []).extend(str(role) for role in row_roles)
+
+        return {
+            actor_id: {"name": names.get(actor_id), "roles": roles.get(actor_id, [])}
+            for actor_id in actor_ids
+        }
 
     async def _parent_payments_link(request_academy_id: str) -> tuple[str | None, str]:
         """Resolve one academy's parent-payments URL and display name.
@@ -4485,3 +4548,43 @@ def _parse_start_date(value: str | None) -> date | None:
     if not value:
         return None
     return datetime.fromisoformat(value).date()
+
+
+# Priority order for collapsing a multi-role membership into one audit actor
+# type: the most privileged role the actor holds is the one the audit trail
+# names, so "who could have done this" is never understated (#468).
+_AUDIT_ACTOR_TYPE_BY_ROLE: tuple[tuple[str, str], ...] = (
+    ("owner", "owner"),
+    ("admin", "admin"),
+    ("coach", "coach"),
+    ("assistant_coach", "coach"),
+    ("parent", "parent"),
+    ("student", "parent"),
+)
+
+
+def _audit_actor_fields(
+    actor_id: object, actors: dict[str, dict[str, Any]]
+) -> dict[str, str | None]:
+    """Resolved identity for one audit row (#468).
+
+    No actor id at all means the platform itself acted. An actor we cannot
+    resolve to a membership in *this* academy still gets `admin`, because that
+    is what the page said before this change — degrading a legacy row to
+    "system" would misattribute a human action to the platform.
+    """
+    if not actor_id:
+        return {"actor_type": "system", "actor_role": None, "actor_name": "System"}
+
+    resolved = actors.get(str(actor_id)) or {}
+    roles = [str(role) for role in resolved.get("roles") or []]
+    actor_type = next(
+        (mapped for role, mapped in _AUDIT_ACTOR_TYPE_BY_ROLE if role in roles),
+        "admin",
+    )
+    ordered = [role for role, _ in _AUDIT_ACTOR_TYPE_BY_ROLE if role in roles]
+    return {
+        "actor_type": actor_type,
+        "actor_role": ", ".join(ordered) or None,
+        "actor_name": resolved.get("name") or None,
+    }
