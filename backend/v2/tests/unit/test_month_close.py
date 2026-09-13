@@ -309,6 +309,26 @@ def test_a_manual_invoice_tied_to_no_class_is_not_odd() -> None:
     assert odd(rows, "invoice_without_enrollment")["count"] == 0
 
 
+def test_untied_hand_created_invoices_never_crowd_out_a_real_dangling_one() -> None:
+    """#725: the Create invoice dialog offers "Not tied to a class" as a
+    first-class choice (equipment, fees), so untied invoices must stay off the
+    owner's close report at every delivery status — drafts included, since
+    ``_live`` drops only voids — while a genuine dangling reference still shows.
+    """
+    rows = build_odd_section(
+        [
+            inv("equipment", enrollment_id=None),
+            inv("fee-draft", status="draft", enrollment_id=None),
+            inv("dangling", enrollment_id="enr-gone", enrollment_found=False),
+            inv("tuition"),
+        ]
+    )
+    row = odd(rows, "invoice_without_enrollment")
+
+    assert row["count"] == 1
+    assert {item["id"] for item in row["items"]} == {"dangling"}
+
+
 def test_a_voided_invoice_is_never_odd() -> None:
     rows = build_odd_section(
         [inv("a", status="void", enrollment_id="enr-gone", enrollment_found=False)]
