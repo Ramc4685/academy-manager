@@ -60,6 +60,7 @@ from backend.v2.composition.pathway import (
     compose_curriculum,
     compose_student_progress,
 )
+from backend.v2.composition.payment_student_resolver import resolve_student_names
 from backend.v2.composition.roster_notifications import compose_enrollment_notifiers
 from backend.v2.composition.scheduled_cancellations import (
     compose_list_stuck_scheduled_actions,
@@ -3090,29 +3091,6 @@ def compose_admin(
         def _settle_invoice_rows(keys: set[str], payment_doc: dict[str, Any]) -> bool:
             return settle_matching_rows(invoice_row_by_key, keys, payment_doc) > 0
 
-        invoice_student_ids = [
-            str(row["student_id"])
-            for row in invoice_rows
-            if isinstance(row.get("student_id"), str) and row.get("student_id")
-        ]
-        if invoice_student_ids:
-            student_names: dict[str, str] = {}
-            async for student in db["students"].find(
-                {
-                    "academy_id": request_academy_id,
-                    "student_id": {"$in": list(dict.fromkeys(invoice_student_ids))},
-                },
-                {"student_id": 1, "full_name": 1},
-            ):
-                student_id = str(student.get("student_id") or "")
-                full_name = str(student.get("full_name") or "").strip()
-                if student_id and full_name:
-                    student_names[student_id] = full_name
-            for row in invoice_rows:
-                student_id = row.get("student_id")
-                if isinstance(student_id, str) and student_id in student_names:
-                    row["student_name"] = student_names[student_id]
-
         legacy = await payments_repo.list_recent_admin(limit=fetch_cap)
         legacy_payment_ids = {
             str(row.get("payment_id") or "") for row in legacy if row.get("payment_id")
@@ -3294,6 +3272,8 @@ def compose_admin(
                 continue
             deduped_legacy.append(row)
         combined = attempt_rows + invoice_rows + ledger_rows + deduped_legacy
+        # #618: every row, not just the invoice ones, gets a student to show.
+        await resolve_student_names(db, request_academy_id, combined)
         combined.sort(
             key=lambda r: (
                 (r.get("created_at") if isinstance(r, dict) else None)
