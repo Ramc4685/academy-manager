@@ -2,9 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  BILLING_PORTAL_OPEN_FAILED,
   BILLING_PORTAL_PREREQUISITE,
-  isStripeUnconfiguredPortalMessage,
   toPaymentErrorMessage,
   toPortalErrorMessage,
 } from "./payment-error.ts";
@@ -75,23 +73,30 @@ test("falls back for non-Error values", () => {
   assert.equal(toPaymentErrorMessage({ message: "plain object" }, FALLBACK), FALLBACK);
 });
 
-// Issue #595: the local real-auth E2E spec must tell "Stripe is not configured
-// on this stack" apart from the real assertion ("start autopay first"), so it
-// can skip instead of failing on a default seeded stack.
-test("recognises the banners a Stripe-unconfigured stack renders for the portal", () => {
-  assert.equal(isStripeUnconfiguredPortalMessage(BILLING_PORTAL_OPEN_FAILED), true);
-  assert.equal(
-    isStripeUnconfiguredPortalMessage(
-      "Online payments aren't fully set up for your academy yet. Please try again later or contact the academy.",
-    ),
-    true,
-  );
-  // Banner text arrives from the DOM, so tolerate surrounding whitespace.
-  assert.equal(isStripeUnconfiguredPortalMessage(`\n  ${BILLING_PORTAL_OPEN_FAILED}  \n`), true);
+// Issue #595: "no Stripe customer yet" is now its own backend code, so the
+// parent sees the one actionable next step instead of the generic
+// "payments aren't set up" copy — on a configured stack and on a local stack
+// wired to the fake Stripe gateway alike.
+test("maps Billing.BillingPortalNotReady by code to the autopay prerequisite", () => {
+  const err = apiError("Billing portal will be available after the first successful autopay setup.", {
+    code: "Billing.BillingPortalNotReady",
+    status: 409,
+  });
+  assert.equal(toPortalErrorMessage(err, FALLBACK), BILLING_PORTAL_PREREQUISITE);
+  assert.doesNotMatch(toPortalErrorMessage(err, FALLBACK), /Stripe/);
 });
 
-test("does not treat the real prerequisite banner as an unconfigured stack", () => {
-  assert.equal(isStripeUnconfiguredPortalMessage(BILLING_PORTAL_PREREQUISITE), false);
-  assert.equal(isStripeUnconfiguredPortalMessage("Request failed"), false);
-  assert.equal(isStripeUnconfiguredPortalMessage(""), false);
+test("portal-not-ready is distinct from the academy-setup failure copy", () => {
+  const notReady = apiError("no customer", {
+    code: "Billing.BillingPortalNotReady",
+    status: 409,
+  });
+  const setupBroken = apiError("Stripe connected account is not ready for autopay setup.", {
+    code: "Billing.CheckoutCreationFailed",
+    status: 502,
+  });
+  assert.notEqual(
+    toPortalErrorMessage(notReady, FALLBACK),
+    toPortalErrorMessage(setupBroken, FALLBACK),
+  );
 });

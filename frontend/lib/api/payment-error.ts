@@ -14,9 +14,8 @@ export const BILLING_PORTAL_PREREQUISITE =
 
 /**
  * Generic fallback the parent payments page shows when a portal open fails for
- * a reason we cannot explain — including a stack where Stripe is not
- * configured at all. Exported so the page and the local real-auth E2E spec
- * share one copy of the string (issue #595).
+ * a reason we cannot explain. Exported so the page and its tests share one
+ * copy of the string (issue #595).
  */
 export const BILLING_PORTAL_OPEN_FAILED =
   "Billing portal could not open. Please try again or contact the academy.";
@@ -35,6 +34,11 @@ const CODE_MESSAGES: Record<string, string> = {
   // checkout of any kind can start. Seen on staging as a 502 with message
   // "Stripe connected account is not ready for autopay setup."
   "Billing.CheckoutCreationFailed": ACADEMY_PAYMENTS_NOT_READY,
+  // The parent has no Stripe customer yet — a prerequisite with one concrete
+  // next step, not a failure. Raised by the backend before it ever calls a
+  // Stripe gateway, so it is the same on a configured stack and on a local
+  // stack running the fake gateway (issue #595).
+  "Billing.BillingPortalNotReady": BILLING_PORTAL_PREREQUISITE,
   // A pay link for this specific invoice could not be created — the gateway
   // errored, or the academy's Stripe account cannot receive charges. Distinct
   // from the generic 409 because retrying immediately will not help.
@@ -83,22 +87,4 @@ export function toPortalErrorMessage(err: unknown, fallback: string): string {
     return BILLING_PORTAL_PREREQUISITE;
   }
   return fallback;
-}
-
-/**
- * True when a rendered billing-portal banner reports a Stripe *setup* gap
- * rather than the "no Stripe customer yet" prerequisite.
- *
- * Only the local real-auth E2E spec uses this: a default seeded local-staging
- * stack has no `STRIPE_API_KEY` and no connected account, so the portal button
- * can never reach the prerequisite copy the spec asserts. Matching these two
- * exact strings (and nothing broader) lets the spec skip with a runbook
- * pointer on an unconfigured stack while still failing on a real regression.
- */
-export function isStripeUnconfiguredPortalMessage(banner: string): boolean {
-  const text = banner.trim();
-  if (!text) return false;
-  return [BILLING_PORTAL_OPEN_FAILED, ACADEMY_PAYMENTS_NOT_READY].some((message) =>
-    text.includes(message),
-  );
 }

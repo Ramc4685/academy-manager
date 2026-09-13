@@ -387,8 +387,11 @@ Until a connected account is ready, parent payment attempts fail with the
 parent-safe message "Online payments aren't fully set up for your academy
 yet…" — that is expected, not a bug.
 
-The local real-auth spec `frontend/e2e/specs/local-auth-qa.spec.ts` has one
-test ("seeded parent billing portal reports the autopay prerequisite") that
-needs the Stripe test-mode setup above; without it the test detects the
-unconfigured-Stripe banner and skips itself with a pointer back to this
-section, so a default seeded stack reports it as skipped rather than failed.
+The billing portal is the one exception: `POST /parent/billing/portal` returns
+`Billing.BillingPortalNotReady` (409) whenever the parent has no Stripe
+customer yet, *before* any Stripe call, so the parent-safe banner "Billing
+portal is not set up yet. Start autopay for an enrollment first…" is what a
+seeded stack shows with or without the keys above. The local real-auth spec
+`frontend/e2e/specs/local-auth-qa.spec.ts` ("seeded parent billing portal
+reports the autopay prerequisite") asserts exactly that, so it passes on a
+default seeded stack (issue #595).

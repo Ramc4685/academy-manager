@@ -1,7 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { isStripeUnconfiguredPortalMessage } from "../../lib/api/payment-error";
-
 const LOCAL_AUTH_ENABLED = process.env.LOCAL_AUTH_E2E === "1";
 
 const PARENT_EMAIL = process.env.LOCAL_AUTH_PARENT_EMAIL ?? "";
@@ -55,21 +53,17 @@ test.describe("local authenticated QA defect coverage", () => {
     await page.goto("/parent/payments");
     await page.getByRole("button", { name: "Billing portal" }).click();
     const portalError = page.getByTestId("billing-portal-error");
-    await expect(portalError).toBeVisible();
-    // Raw backend detail must never reach the banner, configured or not.
-    await expect(portalError).not.toContainText("Request failed");
-
-    // A default seeded stack has no Stripe test-mode config and no connected
-    // account (issue #595), so the portal call fails on configuration long
-    // before it can reach the "no Stripe customer yet" prerequisite asserted
-    // below. Skip with a runbook pointer rather than failing every local run.
-    const banner = (await portalError.textContent()) ?? "";
-    test.skip(
-      isStripeUnconfiguredPortalMessage(banner),
-      "Stripe test mode is not configured on this local stack. See docs/runbooks/saas-local-staging.md, section \"Stripe test mode (payments + Connect on staging)\".",
-    );
-
+    // A seeded parent has never completed autopay, so there is no Stripe
+    // customer and therefore no portal. The backend decides that before it
+    // touches any Stripe gateway (Billing.BillingPortalNotReady), so this is
+    // the same on a stack with Stripe test keys and on a default seeded stack
+    // running the fake gateway — issue #595, which used to redirect to a dead
+    // fake.stripe.com URL here instead of rendering a banner.
     await expect(portalError).toContainText("Start autopay for an enrollment first");
+    // Raw backend detail must never reach the banner.
+    await expect(portalError).not.toContainText("Request failed");
+    await expect(portalError).not.toContainText("Stripe");
+    await expect(page).toHaveURL(/\/parent\/payments/);
   });
 
   test("seeded admin can load the protected admin workspace", async ({ page }) => {

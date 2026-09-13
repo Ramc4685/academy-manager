@@ -50,6 +50,23 @@ class InvoicePayLinkUnavailable(DomainError):
     status_code = 409
 
 
+class BillingPortalNotReady(DomainError):
+    """The parent has no Stripe customer yet, so no customer portal exists.
+
+    This is a *prerequisite*, not a failure: the parent must complete autopay
+    setup once before Stripe has a customer to open a portal for. It was
+    previously folded into ``CheckoutCreationFailed`` (502), which made it
+    indistinguishable from "the academy's Stripe is broken" and left the
+    frontend unable to render the one actionable next step (issue #595).
+
+    409 mirrors ``InvoicePayLinkUnavailable``: the request is well-formed but
+    the account is not in a state where it can be served.
+    """
+
+    code = "Billing.BillingPortalNotReady"
+    status_code = 409
+
+
 class ConnectOnboardingFailed(DomainError):
     code = "Billing.ConnectOnboardingFailed"
     status_code = 502

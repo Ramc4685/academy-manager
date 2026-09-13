@@ -22,6 +22,7 @@ from backend.v2.contexts.billing.application.ports import (
 )
 from backend.v2.contexts.billing.domain.errors import (
     AutopayActivationFailed,
+    BillingPortalNotReady,
     CheckoutCreationFailed,
     PaymentNotFound,
 )
@@ -675,6 +676,17 @@ class CreateCustomerPortalSession:
     async def execute(
         self, cmd: CreateCustomerPortalSessionCommand
     ) -> CreateCustomerPortalSessionResult:
+        # Gateway-independent prerequisite (issue #595). Stripe cannot open a
+        # portal without a customer, and neither can any test/dev double, so
+        # this check belongs here rather than in each gateway: it is the one
+        # portal failure with an actionable next step for the parent, and it
+        # must be distinguishable from "the academy's Stripe is misconfigured"
+        # (CheckoutCreationFailed) on every stack — including a local one wired
+        # to FakeStripeGateway because no STRIPE_API_KEY is set.
+        if not cmd.stripe_customer_id:
+            raise BillingPortalNotReady(
+                "Billing portal will be available after the first successful autopay setup."
+            )
         try:
             url = await self._stripe.create_customer_portal_session(
                 parent_id=cmd.parent_id,

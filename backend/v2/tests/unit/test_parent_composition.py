@@ -17,7 +17,7 @@ from backend.v2.contexts.billing.application.ports import (
 )
 from backend.v2.contexts.billing.domain.connected_account import ConnectedAccount
 from backend.v2.contexts.billing.domain.errors import (
-    CheckoutCreationFailed,
+    BillingPortalNotReady,
     InvoicePayLinkUnavailable,
     QuoteExpired,
 )
@@ -983,7 +983,7 @@ async def test_billing_portal_does_not_fall_back_to_global_email_customer_lookup
 
         with (
             tenant_scope("acad"),
-            pytest.raises(CheckoutCreationFailed, match="missing stored stripe customer"),
+            pytest.raises(BillingPortalNotReady, match="autopay setup"),
         ):
             await parent.open_billing_portal(
                 parent_id="parent-1",
@@ -991,13 +991,9 @@ async def test_billing_portal_does_not_fall_back_to_global_email_customer_lookup
             )
 
         assert not hasattr(stripe, "find_customer_id_by_email")
-        assert stripe.portal_calls == [
-            {
-                "parent_id": "parent-1",
-                "return_url": "https://app.example.com/parent/payments",
-                "stripe_customer_id": None,
-            }
-        ]
+        # No stored customer for this parent: the use case stops there (issue
+        # #595) instead of asking any gateway — real or fake — to invent one.
+        assert stripe.portal_calls == []
     finally:
         get_settings.cache_clear()
 
