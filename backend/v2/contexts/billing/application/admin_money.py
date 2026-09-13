@@ -121,7 +121,9 @@ def invoice_paid_cents(invoice: dict[str, Any]) -> int:
 
 
 def invoice_outstanding_cents(invoice: dict[str, Any]) -> int:
-    if str(invoice.get("status") or "") in {"paid", "void", "waived", "cancelled"}:
+    # ``draft`` joins the terminal statuses: an unsent draft owes nothing until
+    # Send turns it into an open invoice (#736).
+    if str(invoice.get("status") or "") in {"paid", "void", "waived", "cancelled", "draft"}:
         return 0
     return max(int(invoice.get("balance_due_cents") or 0), 0)
 

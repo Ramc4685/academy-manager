@@ -151,8 +151,15 @@ def _iso(value: date | datetime | None) -> str | None:
 
 
 def _live(invoices: Iterable[InvoiceFacts]) -> list[InvoiceFacts]:
-    """Non-void invoices — what "billed" and every odd check are about."""
-    return [inv for inv in invoices if not inv.is_void]
+    """Real, still-owed money — what "billed" and every odd check are about.
+
+    Voids are gone and drafts have not happened yet: a draft is the manual
+    invoicing working state, never sent, and the family page says it owes
+    nothing (#722). Counting one here billed the owner for money nobody was
+    asked for, fired odd checks on it, and let its placeholder due date pull
+    the autopay run's charge date forward (#736).
+    """
+    return [inv for inv in invoices if not inv.is_void and not inv.is_draft]
 
 
 def _family_href(parent_id: str | None) -> str:

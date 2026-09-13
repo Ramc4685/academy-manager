@@ -342,7 +342,8 @@ def test_paused_beats_paid_when_family_has_paid_invoice_and_pause() -> None:
     assert row.bucket == "paused"
 
 
-def test_draft_with_balance_counts_for_awaiting_but_never_failed_autopay() -> None:
+def test_draft_with_balance_owes_nothing_and_chases_nobody() -> None:
+    """An unsent draft is the manual-invoicing working state, not a debt (#736)."""
     family = _family(
         invoices=(
             _autopay_invoice(
@@ -355,7 +356,8 @@ def test_draft_with_balance_counts_for_awaiting_but_never_failed_autopay() -> No
     )
     row = classify_family(family, today=TODAY)
     assert row is not None
-    assert row.bucket == "awaiting"
+    assert row.bucket == "paid"
+    assert row.payload["balance_cents"] == 0
 
 
 def test_autopay_active_but_no_card_is_awaiting_with_flag() -> None:
@@ -603,14 +605,15 @@ def test_next_retry_on_is_read_on_the_academy_clock() -> None:
 
 
 def test_action_invoice_id_names_the_invoice_the_rule_fired_on() -> None:
-    # A draft due Sep 1 is owing but never autopay-eligible, so rule 2 fires on
-    # it even though the family also has an eligible autopay invoice.
-    draft = _invoice(invoice_id="inv-draft", status="draft", due_date=date(2026, 9, 1))
+    # An open invoice due Sep 1 on an enrollment with no autopay is owing but
+    # never eligible, so rule 2 fires on it even though the family also has an
+    # eligible autopay invoice.
+    manual = _invoice(invoice_id="inv-manual", due_date=date(2026, 9, 1))
     eligible = _autopay_invoice(invoice_id="inv-auto", due_date=date(2026, 9, 20))
-    row = classify_family(_family(invoices=(draft, eligible)), today=TODAY)
+    row = classify_family(_family(invoices=(manual, eligible)), today=TODAY)
     assert row is not None
     assert row.bucket == "past_due"
-    assert row.payload["action_invoice_id"] == "inv-draft"
+    assert row.payload["action_invoice_id"] == "inv-manual"
 
     scheduled = classify_family(_family(invoices=(eligible,)), today=TODAY)
     assert scheduled is not None

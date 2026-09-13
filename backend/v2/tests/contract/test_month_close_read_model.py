@@ -168,12 +168,12 @@ async def test_a_seeded_month_fills_every_tile(db: Any, acad: str) -> None:
     assert view.invoices.generated == 2
     assert view.invoices.autopay_notices == 2
     assert view.invoices.emailed == 0
-    # The draft counts toward billed, exactly as the dashboard counts it:
-    # ``billed`` excludes voids only (spec §4.3).
-    assert view.money.billed_cents == 30_000
+    # The draft is counted as generated but never as money: it was never sent,
+    # so it owes nothing, exactly as the family page says (#736).
+    assert view.money.billed_cents == 20_000
     assert view.money.collected_cents == 10_000
-    assert view.money.outstanding_cents == 20_000
-    assert view.money.collection_rate == 0.3333
+    assert view.money.outstanding_cents == 10_000
+    assert view.money.collection_rate == 0.5
     assert view.warnings == []
 
 
