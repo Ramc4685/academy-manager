@@ -13,4 +13,4 @@ None. No migrations, no new indexes, no env vars, no feature flags. Pure backend
 
 Low risk: the change narrows an existing read to be tenant-scoped and only removes staff names for ids that don't hold an academy membership in the current academy (previously those ids could render a person from a different academy). Covered by `backend/v2/tests/composition/test_admin_session_staff_names.py`. Rollback is a straight revert of this PR — no data changes to unwind.
 
-PR: #0
+PR: #809
