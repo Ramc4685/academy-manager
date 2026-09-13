@@ -7,4 +7,4 @@ No migrations. No backend or runtime behavior change — this only affects the P
 ## Risk / rollback
 Low risk: purely additive to the test fixture (a fallback route plus a new assertion helper); no production code path is touched. Verified by running the full chromium-mobile e2e project (339 tests) with zero regressions. Rollback is reverting this PR.
 
-PR: #0
+PR: #811
