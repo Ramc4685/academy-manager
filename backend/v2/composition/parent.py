@@ -149,6 +149,11 @@ from backend.v2.contexts.enrollment.application.use_cases.trial_requests import 
     SubmitTrialRequest,
 )
 from backend.v2.contexts.enrollment.domain.errors import SessionNotFound
+from backend.v2.contexts.enrollment.domain.lifecycle import (
+    LifecycleEnrollment,
+    PersonLifecycleState,
+    derive_lifecycle,
+)
 from backend.v2.contexts.enrollment.infrastructure.mongo_absence_notice_repo import (
     MongoAbsenceNoticeRepository,
 )
@@ -248,6 +253,25 @@ from .event_handlers import HandlerDeps, install_handlers
 
 T = TypeVar("T")
 log = logging.getLogger(__name__)
+
+
+def _as_datetime(value: object) -> datetime | None:
+    """Mongo hands back naive legacy datetimes and aware new ones alike."""
+    return value if isinstance(value, datetime) else None
+
+
+def _as_date(value: object) -> date | None:
+    """``hold_return_on`` / ``resume_on`` are stored as ISO calendar strings."""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            return date.fromisoformat(value.strip()[:10])
+        except ValueError:
+            return None
+    return None
 
 
 @dataclass
@@ -1128,12 +1152,51 @@ def compose_parent(
         )
         return [doc async for doc in cursor]
 
+    async def _child_lifecycle(academy_id: str, student_id: str) -> PersonLifecycleState:
+        """Issue #773: the SAME derivation the admin directory and the coach
+        roster use — the parent portal used to print ``students.status``, a
+        field nothing but the admin edit form ever wrote, so a paused or held
+        child still read "active" to their own family."""
+        cursor = db["enrollments"].find(
+            {"academy_id": academy_id, "student_id": student_id},
+            projection={
+                "status": 1,
+                "pending_cancellation_at": 1,
+                "hold_return_on": 1,
+                "resume_on": 1,
+                "withdrawal_date": 1,
+                "cancelled_at": 1,
+                "ended_at": 1,
+                "created_at": 1,
+                "updated_at": 1,
+            },
+        )
+        rows = [
+            LifecycleEnrollment(
+                status=str(doc.get("status") or "active"),
+                pending_cancellation_at=_as_datetime(doc.get("pending_cancellation_at")),
+                hold_return_on=_as_date(doc.get("hold_return_on")),
+                resume_on=_as_date(doc.get("resume_on")),
+                ended_at=(
+                    _as_datetime(doc.get("withdrawal_date"))
+                    or _as_datetime(doc.get("cancelled_at"))
+                    or _as_datetime(doc.get("ended_at"))
+                ),
+                ordinal=_as_datetime(doc.get("updated_at")) or _as_datetime(doc.get("created_at")),
+            )
+            async for doc in cursor
+        ]
+        # at_risk is an operator's word, not a parent's: the portal never tells
+        # a family their child is "at risk", so no attendance window is passed.
+        return derive_lifecycle(rows)
+
     async def list_children_for_parent(parent_id: str) -> list[dict[str, Any]]:
         academy_id = current_academy_id()  # request-time tenant (C4)
         students = await _parent_students(parent_id)
         rows: list[dict[str, Any]] = []
         for student in students:
             student_id = str(student.get("student_id") or student["_id"])
+            lifecycle = await _child_lifecycle(academy_id, student_id)
             active_session_count = await db["enrollments"].count_documents(
                 {"academy_id": academy_id, "student_id": student_id, "status": "active"}
             )
@@ -1157,7 +1220,8 @@ def compose_parent(
                 {
                     "student_id": student_id,
                     "full_name": str(student.get("full_name") or "Unnamed student"),
-                    "status": str(student.get("status") or "active"),
+                    "lifecycle": lifecycle.state,
+                    "lifecycle_as_of": lifecycle.as_of,
                     "active_session_count": active_session_count,
                     "held_session_count": held_session_count,
                     "attended_count": attended_count,
@@ -1633,15 +1697,12 @@ def compose_parent(
                 )
                 enroll_autopay = False
         invoice_stripe = stripe if hasattr(stripe, "create_invoice_checkout_session") else None
-        # Opted-in payments must return with a checkout_session_id so the
-        # parent app's checkout-status poll can pick up autopay activation
-        # instead of relying solely on the webhook. Unmodified when not
-        # opted in, so the plain one-time-payment redirect is unchanged.
-        redirect_success_url = (
-            _success_url_with_checkout_session_placeholder(success_url)
-            if enroll_autopay
-            else success_url
-        )
+        # EVERY checkout return carries a checkout_session_id (issue #635):
+        # webhooks are processed on a 60s tick, so without it the parent lands
+        # back on a still-PENDING invoice with no way to tell that settlement
+        # is in flight. Opted-in payments additionally use it to pick up
+        # autopay activation. Stripe substitutes the id at redirect time.
+        redirect_success_url = _success_url_with_checkout_session_placeholder(success_url)
         result = await SendInvoice(
             ledger=billing_ledger_repo,
             stripe=invoice_stripe,  # type: ignore[arg-type]
@@ -1779,14 +1840,10 @@ def compose_parent(
                 "save_payment_method_for_autopay": True,
                 "autopay_enrollment_ids": active_ids,
             }
-        # Same reasoning as the single-invoice path: opted-in payments need a
-        # checkout_session_id on return so the checkout-status poll can pick
-        # up activation instead of relying solely on the webhook.
-        redirect_success_url = (
-            _success_url_with_checkout_session_placeholder(success_url)
-            if enroll_autopay
-            else success_url
-        )
+        # Same reasoning as the single-invoice path (issue #635): every return
+        # needs a checkout_session_id so the settlement poll can run, and the
+        # opted-in case also picks up autopay activation from it.
+        redirect_success_url = _success_url_with_checkout_session_placeholder(success_url)
         try:
             _, url = await invoice_stripe.create_invoice_checkout_session(
                 invoice_id=f"balance-{parent_id[:8]}",

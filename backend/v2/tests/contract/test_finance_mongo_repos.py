@@ -271,6 +271,43 @@ async def test_tuition_discount_summary_groups_discount_lines_by_category(db, ac
 
 
 @pytest.mark.asyncio
+async def test_derived_payout_period_buckets_on_the_academy_clock(db, acad) -> None:
+    """#608: a class that is still May in Chicago must not bill as June."""
+    await db["academies"].insert_one({"academy_id": acad, "timezone": "America/Chicago"})
+    await db["session_occurrences"].insert_one(
+        {
+            "academy_id": acad,
+            "occurrence_id": "occ-late",
+            "session_id": "sess-1",
+            # 2026-05-31 20:00 America/Chicago = 2026-06-01 01:00 UTC.
+            "start_at": _dt("2026-06-01T01:00:00"),
+            "end_at": _dt("2026-06-01T02:00:00"),
+            "status": "completed",
+            "scheduled_coach_id": "coach-blno",
+            "is_payable": True,
+        }
+    )
+    await db["coach_rates"].insert_one(
+        {
+            "academy_id": acad,
+            "coach_id": "coach-blno",
+            "rate_id": "rate-1",
+            "billing_unit": "per_session",
+            "amount_minor": 2500,
+            "currency": "USD",
+            "effective_from": _dt("2026-01-01T00:00:00"),
+            "status": "active",
+        }
+    )
+
+    rows = await MongoPayoutRepository(db).list_all()
+
+    assert [row.payout_id for row in rows] == ["occurrence:2026-05:coach-blno"]
+    # The window is May as Chicago sees it: 2026-05-01 05:00 UTC onwards.
+    assert rows[0].period_start == _dt("2026-05-01T05:00:00")
+
+
+@pytest.mark.asyncio
 async def test_payout_repo_derives_occurrence_attributed_payouts_when_no_periods_exist(
     db, acad
 ) -> None:

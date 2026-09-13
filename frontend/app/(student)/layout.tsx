@@ -1,5 +1,9 @@
 "use client";
 
+// TODO(#779): Student self-login is a FUTURE enhancement (owner decision 2026-09-12).
+// Kept behind ENABLE_STUDENT_LOGIN=false in production; not maintained as a live
+// feature. Revisit once the derived person lifecycle (batch-3b, #773) exists.
+
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 

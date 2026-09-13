@@ -53,6 +53,7 @@ import {
   PaymentActions,
   RefundDialog,
   SyncStripeDialog,
+  VoidPaymentDialog,
 } from "./dialogs";
 
 /** Server cap on one list request; used when the status filter runs client-side. */
@@ -65,6 +66,7 @@ export function AllInvoicesTab() {
   const [discountTarget, setDiscountTarget] = useState<AdminPaymentView | null>(null);
   const [invoiceTarget, setInvoiceTarget] = useState<AdminPaymentView | null>(null);
   const [syncTarget, setSyncTarget] = useState<AdminPaymentView | null>(null);
+  const [voidTarget, setVoidTarget] = useState<AdminPaymentView | null>(null);
   const [syncOpen, setSyncOpen] = useState(false);
   const [generateOpen, setGenerateOpen] = useState(false);
   const [sessionFilter, setSessionFilter] = useState("all");
@@ -73,6 +75,9 @@ export function AllInvoicesTab() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [searchInput, setSearchInput] = useState("");
+  // Voided payments (#619) are test/erroneous rows kept only for audit; off by
+  // default so the list shows the money that is actually on the books.
+  const [showVoided, setShowVoided] = useState(false);
   const [search, setSearch] = useState("");
   const [offset, setOffset] = useState(0);
   const queryClient = useQueryClient();
@@ -98,8 +103,9 @@ export function AllInvoicesTab() {
       // server's maximum window instead of one page (pagination is hidden).
       limit: statusFilter !== "all" ? STATUS_FILTER_WINDOW : PAGE_SIZE,
       offset: statusFilter !== "all" ? 0 : offset,
+      include_voided: showVoided || undefined,
     }),
-    [dateFrom, dateTo, methodFilter, search, offset, statusFilter],
+    [dateFrom, dateTo, methodFilter, search, offset, statusFilter, showVoided],
   );
 
   const { data, isLoading, isError, refetch } = useQuery({
@@ -314,6 +320,19 @@ export function AllInvoicesTab() {
               ))}
             </select>
           </Field>
+          <label className="flex items-end gap-2 pb-2 text-sm text-rally-muted md:col-span-1">
+            <input
+              type="checkbox"
+              checked={showVoided}
+              onChange={(event) => {
+                setShowVoided(event.target.checked);
+                setOffset(0);
+              }}
+              className="h-4 w-4 rounded border-rally-line text-rally-cobalt-600"
+              data-testid="payments-show-voided"
+            />
+            Show voided
+          </label>
           <div className="flex items-end justify-between gap-2">
             <div className="text-sm text-rally-subtle md:pb-2" data-testid="payments-showing">
               {statusFilter !== "all"
@@ -336,6 +355,7 @@ export function AllInvoicesTab() {
                 setDateFrom("");
                 setDateTo("");
                 setSearchInput("");
+                setShowVoided(false);
                 setOffset(0);
               }}
               disabled={
@@ -344,7 +364,8 @@ export function AllInvoicesTab() {
                 methodFilter === "all" &&
                 !dateFrom &&
                 !dateTo &&
-                !searchInput
+                !searchInput &&
+                !showVoided
               }
             >
               Reset
@@ -445,6 +466,17 @@ export function AllInvoicesTab() {
                       </td>
                       <td className="px-4 py-3">
                         <Chip variant={chip.variant} label={chip.label} />
+                        {p.status === "voided" && (
+                          <div
+                            className="mt-1 max-w-[200px] text-xs text-rally-subtle"
+                            data-testid={`payment-void-note-${p.payment_id}`}
+                          >
+                            {p.void_reason || "Voided"}
+                            {p.voided_at
+                              ? ` · ${new Date(p.voided_at).toLocaleDateString()}`
+                              : ""}
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         {method ? <Chip variant={method.variant} label={method.label} /> : <span className="text-rally-subtle">—</span>}
@@ -465,6 +497,7 @@ export function AllInvoicesTab() {
                             setSyncOpen(true);
                           }}
                           onUndo={() => undoMutation.mutate(p.payment_id)}
+                          onVoid={() => setVoidTarget(p)}
                           undoPending={undoMutation.isPending}
                         />
                       </td>
@@ -526,6 +559,14 @@ export function AllInvoicesTab() {
         onClose={() => setRefundTarget(null)}
         onRefunded={() => {
           setRefundTarget(null);
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.payments() });
+        }}
+      />
+      <VoidPaymentDialog
+        payment={voidTarget}
+        onClose={() => setVoidTarget(null)}
+        onVoided={() => {
+          setVoidTarget(null);
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.payments() });
         }}
       />

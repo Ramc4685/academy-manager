@@ -365,7 +365,7 @@ async def _list_active_admin_students(use_cases: AdminUseCases) -> list[object]:
     while True:
         page = await use_cases.list_admin_students.execute(
             search=None,
-            status="active",
+            lifecycle=("active",),
             limit=_PATHWAY_PROGRESS_PAGE_SIZE,
             cursor=cursor,
         )

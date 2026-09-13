@@ -15,7 +15,18 @@ import {
   coachSkillNotesPath,
 } from "./coach-paths";
 
-export type EnrollmentStatus = "active" | "paused" | "cancelled";
+/**
+ * Issue #773: the coach roster receives every NON_TERMINAL enrollment status,
+ * and "held" (#697) plus its transient reclaim state are roster-visible. This
+ * type used to list three of the five, which is why no coach screen could
+ * branch on a hold.
+ */
+export type EnrollmentStatus =
+  | "active"
+  | "paused"
+  | "held"
+  | "reclaim_pending"
+  | "cancelled";
 export type AttendanceStatus = "present" | "absent" | "late";
 
 export interface CoachRosterEntry {
@@ -24,6 +35,8 @@ export interface CoachRosterEntry {
   enrollment_status: EnrollmentStatus;
   /** Issue #675: parent end-of-period cancel pending; the student still attends until then. */
   pending_cancellation_at?: string | null;
+  /** Issue #773: ISO calendar date a hold ends; null unless the row is held. */
+  hold_return_on?: string | null;
   /** Mark already recorded for this occurrence (hydrates state on reload). */
   attendance_status?: AttendanceStatus | null;
   /** True when a parent submitted an absence notice for this occurrence. */

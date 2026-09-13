@@ -81,6 +81,10 @@ from backend.v2.contexts.student_progress.application.use_cases.review_level_up 
 from backend.v2.contexts.student_progress.application.use_cases.update_skill_status import (
     UpdateSkillStatus,
 )
+from backend.v2.contexts.student_progress.domain.models import (
+    ACTIVE_LEVEL_UP_STATUSES,
+    CLAIMABLE_LEVEL_UP_STATUSES,
+)
 from backend.v2.contexts.student_progress.infrastructure.curriculum_lookup_adapter import (
     CurriculumSkillLookupAdapter,
 )
@@ -260,6 +264,29 @@ class _FakeRecommendationRepo:
     async def save(self, rec) -> None:
         self.rows[rec.rec_id] = rec
 
+    async def claim(self, rec_id, claim_status, claimed_at, *, lease) -> bool:
+        """Mirrors the Mongo CAS: RECOMMENDED, or a claim past its lease."""
+        rec = self.rows.get(rec_id)
+        if rec is None:
+            return False
+        stale = rec.claimed_at is not None and rec.claimed_at < claimed_at - lease
+        claimable = rec.status == "RECOMMENDED" or (
+            rec.status in ("APPROVING", "REJECTING") and stale
+        )
+        if not claimable:
+            return False
+        self.rows[rec_id] = rec.model_copy(
+            update={"status": claim_status, "claimed_at": claimed_at}
+        )
+        return True
+
+    async def release(self, rec_id, *, claim_status) -> bool:
+        rec = self.rows.get(rec_id)
+        if rec is None or rec.status != claim_status:
+            return False
+        self.rows[rec_id] = rec.model_copy(update={"status": "RECOMMENDED", "claimed_at": None})
+        return True
+
     async def update_status(
         self,
         rec_id,
@@ -293,16 +320,20 @@ class _FakeRecommendationRepo:
                 for r in self.rows.values()
                 if r.student_id == student_id
                 and r.program_id == program_id
-                and r.status == "RECOMMENDED"
+                and r.status in ACTIVE_LEVEL_UP_STATUSES
             ),
             None,
         )
 
     async def list_pending(self) -> list:
-        return [r for r in self.rows.values() if r.status == "RECOMMENDED"]
+        return [r for r in self.rows.values() if r.status in CLAIMABLE_LEVEL_UP_STATUSES]
 
-    async def list_pending_for_student(self, student_id: str) -> list:
-        return [r for r in await self.list_pending() if r.student_id == student_id]
+    async def list_recommended_for_student(self, student_id: str) -> list:
+        return [
+            r
+            for r in self.rows.values()
+            if r.student_id == student_id and r.status == "RECOMMENDED"
+        ]
 
 
 class _FakeEnrollmentLookup:
@@ -345,11 +376,20 @@ class _FakeListAdminStudents:
         self,
         *,
         search: str | None = None,
-        status: str | None = None,
+        lifecycle: tuple[str, ...] = (),
         limit: int = 50,
         cursor: str | None = None,
+        missing: tuple[str, ...] = (),
     ) -> AdminStudentPage:
-        self.calls.append({"search": search, "status": status, "limit": limit, "cursor": cursor})
+        self.calls.append(
+            {
+                "search": search,
+                "lifecycle": lifecycle,
+                "limit": limit,
+                "cursor": cursor,
+                "missing": missing,
+            }
+        )
         if self.pages is not None:
             students, next_cursor = self.pages[cursor]
             return AdminStudentPage(students=students, next_cursor=next_cursor)
@@ -1016,7 +1056,13 @@ def test_pathway_progress_summary_returns_rows_for_active_students(env):
     assert body["rows"][1]["student_name"] == "Bob New"
     assert body["rows"][1]["next_action"] == "place_in_level"
     assert env.list_admin_students.calls == [
-        {"search": None, "status": "active", "limit": 200, "cursor": None}
+        {
+            "search": None,
+            "lifecycle": ("active",),
+            "limit": 200,
+            "cursor": None,
+            "missing": (),
+        }
     ]
 
 
@@ -1039,8 +1085,20 @@ def test_pathway_progress_summary_reads_all_admin_student_pages(env):
         "st-overview-unplaced",
     ]
     assert env.list_admin_students.calls == [
-        {"search": None, "status": "active", "limit": 200, "cursor": None},
-        {"search": None, "status": "active", "limit": 200, "cursor": "page-2"},
+        {
+            "search": None,
+            "lifecycle": ("active",),
+            "limit": 200,
+            "cursor": None,
+            "missing": (),
+        },
+        {
+            "search": None,
+            "lifecycle": ("active",),
+            "limit": 200,
+            "cursor": "page-2",
+            "missing": (),
+        },
     ]
 
 

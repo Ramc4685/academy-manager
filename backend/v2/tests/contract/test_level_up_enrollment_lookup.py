@@ -109,7 +109,7 @@ async def test_pending_for_student_is_scoped_and_ordered(db, acad) -> None:
         }
     )
 
-    rows = await repo.list_pending_for_student("st-1")
+    rows = await repo.list_recommended_for_student("st-1")
 
     assert [row.rec_id for row in rows] == ["rec-earlier", "rec-latest"]
 

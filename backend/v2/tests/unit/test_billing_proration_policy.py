@@ -11,8 +11,11 @@ from backend.v2.contexts.billing.domain.proration import (
     billable_classes_per_period,
     first_month_charge_description,
     quote_move_proration,
+    snapshot_charge_denominator,
+    snapshot_classes_charged,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_monthly_billing import (
+    _build_monthly_tuition_snapshot,
     _session_occurrences,
     _tuition_line_description,
 )
@@ -453,13 +456,11 @@ def test_full_price_copy_names_the_free_fifth_class() -> None:
     )
 
 
-def test_full_month_line_does_not_claim_the_four_class_rule() -> None:
-    """A flat full month was not priced by the first-month rule.
+def test_prior_consumed_month_line_makes_no_claim_about_classes() -> None:
+    """``snapshot is None`` is the month already charged in an earlier run.
 
-    ``billable_classes=None`` is the full-month, prior-consumed and one-off
-    path; stamping "4 classes; 5th class free" there tells a Mon+Wed family
-    they bought 4 of the 8 classes that will run, and a one-off family that
-    their single date buys 4.
+    Its tuition line is billed at zero here and was described when it was
+    priced, so this line must not restate a rule it is not charging for.
     """
     assert _tuition_line_description("2026-10", None) == "Monthly tuition 2026-10"
 
@@ -546,3 +547,70 @@ def test_move_reprices_at_the_rate_the_first_month_was_charged_at() -> None:
     assert quote.from_share_cents == 7_500
     assert quote.to_share_cents == 15_000
     assert quote.delta_cents == 7_500
+
+
+# ---------------------------------------------------------------------------
+# A flat full month buys the same 4 classes per meeting (#730).
+# ---------------------------------------------------------------------------
+
+
+def _october_full_month(total: int, price_cents: int = 7_000):
+    return _build_monthly_tuition_snapshot(
+        occurrences=_october_weekly(total),
+        billing_period=BillingPeriod.from_label("2026-10", timezone_name="America/Chicago"),
+        monthly_price_cents=price_cents,
+        discount_cents=0,
+        now=datetime(2026, 9, 30, 12, 0, tzinfo=UTC),
+    )
+
+
+def test_full_month_is_credited_against_the_four_class_denominator() -> None:
+    """The continuing family pays the same $70 and now buys the same 4 classes.
+
+    Only the divisor moves: the flat monthly price is untouched, so nothing a
+    continuing family is charged changes (#730).
+    """
+    snapshot = _october_full_month(5)
+
+    assert snapshot.final_amount_cents == 7_000
+    assert snapshot.total_eligible_classes == 5
+    assert snapshot.billable_remaining_classes == 5
+    assert snapshot.billable_classes_denominator == 4
+    assert snapshot.proration_ratio == "4/4"
+    assert snapshot_classes_charged(snapshot) == 4
+    assert snapshot_charge_denominator(snapshot) == 4
+
+
+def test_full_month_line_reads_like_the_first_month_line_for_the_same_dates() -> None:
+    """Two $70 payers for the same five dates get the same invoice copy (#730)."""
+    assert _tuition_line_description("2026-10", _october_full_month(5)) == (
+        _tuition_line_description("2026-10", _october_quote(5, 5))
+    )
+    assert _tuition_line_description("2026-10", _october_full_month(5)) == (
+        "Monthly tuition 2026-10 (4 classes; 5th class free)"
+    )
+
+
+def test_a_month_shorter_than_the_rule_still_credits_against_its_own_dates() -> None:
+    """A 3-date month charges the flat price, so its per-class value is price/3.
+
+    Capping at the month's own class list keeps the copy honest: a continuing
+    family who paid full price for 3 classes was not charged "3 of 4".
+    """
+    snapshot = _october_full_month(3)
+
+    assert snapshot.final_amount_cents == 7_000
+    assert snapshot.billable_classes_denominator == 3
+    assert snapshot_classes_charged(snapshot) == 3
+    assert _tuition_line_description("2026-10", snapshot) == (
+        "Monthly tuition 2026-10 (3 classes; extra classes free)"
+    )
+
+
+def test_single_date_month_is_not_described_as_a_quarter_of_a_month() -> None:
+    snapshot = _october_full_month(1)
+
+    assert snapshot.billable_classes_denominator == 1
+    assert _tuition_line_description("2026-10", snapshot) == (
+        "Monthly tuition 2026-10 (1 class; extra classes free)"
+    )

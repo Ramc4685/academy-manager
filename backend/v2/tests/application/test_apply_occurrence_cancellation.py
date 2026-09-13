@@ -554,3 +554,79 @@ async def test_second_cancellation_credits_at_the_charged_per_class_rate() -> No
 
     assert result.decisions[0].outcome == "credited"
     assert credits.rows[0].amount_cents == 1750
+
+
+def _five_class_monthly_basis() -> PeriodChargeBasis:
+    """$70 paid as a flat full month for the same 5 dates (#730).
+
+    A continuing family buys exactly what the first-month family buys — 4
+    classes per weekly meeting, the 5th free — so the credit divisor and the
+    free-extra slack have to match ``_five_class_basis`` date for date.
+    """
+    return PeriodChargeBasis(
+        calculation_type="MONTHLY_TUITION",
+        final_amount_cents=7000,
+        total_eligible_classes=5,
+        billable_remaining_classes=5,
+        billable_classes_denominator=4,
+        included_occurrence_ids=tuple(_wednesday(i).occurrence_id for i in range(5)),
+    )
+
+
+@pytest.mark.asyncio
+async def test_continuing_family_gets_the_same_free_class_slack_as_a_first_month_family() -> None:
+    """Two $70 payers, same five dates, same answer (#730).
+
+    The continuing family used to be credited $70/5 = $14 for the first
+    cancellation while the family next to them was skipped — the owner's "5th
+    class free" rule visibly applying to only one of them.
+    """
+    continuing = _enrollment("enr-1", billing_start_at=None)
+    first_month = _enrollment("enr-2", billing_start_at=WEDNESDAYS[0])
+    reader = FakeReader(
+        occurrences=[_wednesday(i) for i in range(5)],
+        enrollments=[continuing, first_month],
+        bases={
+            "enr-1": _five_class_monthly_basis(),
+            f"{first_month.student_id}:sess-1": _five_class_basis(),
+        },
+    )
+    invoices = FakeInvoices({"enr-1": _invoice("enr-1", subtotal=7000)})
+    credits = FakeCredits()
+
+    result = await _build(reader, invoices, credits, FakeOverrides()).execute(
+        _cmd(start_at=WEDNESDAYS[2])
+    )
+
+    outcomes = {d.enrollment_id: d.outcome for d in result.decisions}
+    assert outcomes == {
+        "enr-1": "skipped:covered_by_free_classes",
+        "enr-2": "skipped:covered_by_free_classes",
+    }
+    assert credits.rows == []
+
+
+@pytest.mark.asyncio
+async def test_continuing_family_second_cancellation_credits_the_four_class_rate() -> None:
+    """Once the free class is consumed both families are credited $70/4 (#730)."""
+    continuing = _enrollment("enr-1", billing_start_at=None)
+    first_month = _enrollment("enr-2", billing_start_at=WEDNESDAYS[0])
+    occurrences = [_wednesday(i) for i in range(5)]
+    occurrences[1] = _wednesday(1, status="cancelled")
+    reader = FakeReader(
+        occurrences=occurrences,
+        enrollments=[continuing, first_month],
+        bases={
+            "enr-1": _five_class_monthly_basis(),
+            f"{first_month.student_id}:sess-1": _five_class_basis(),
+        },
+    )
+    invoices = FakeInvoices({"enr-1": _invoice("enr-1", subtotal=7000)})
+    credits = FakeCredits()
+
+    result = await _build(reader, invoices, credits, FakeOverrides()).execute(
+        _cmd(start_at=WEDNESDAYS[2])
+    )
+
+    assert {d.outcome for d in result.decisions} == {"credited"}
+    assert {row.amount_cents for row in credits.rows} == {1750}

@@ -55,7 +55,14 @@ def build_send_autopay_notice(
             portal_url=f"{base}/parent/payments" if base else None,
         )
         delivered = record_delivery(
-            invoice, outcome="sent", now=datetime.now(UTC), provider_message_id=provider_message_id
+            invoice,
+            outcome="sent",
+            now=datetime.now(UTC),
+            provider_message_id=provider_message_id,
+            # Stamped at send time so Month close and the family timeline read
+            # what was sent instead of re-deriving it from today's autopay
+            # status, which drifts (issue #692).
+            delivery_kind="autopay_notice",
         )
         await ledger.save_invoice(delivered)
         return {"invoice_id": invoice_id, "delivery_status": delivered.delivery_status}

@@ -4,10 +4,10 @@ import {
   autopayToggle,
   currentPeriod,
   defaultDueDate,
-  enrollmentBillPeriodPriceCents,
   enrollmentOptions,
   enrollmentPriceCents,
   invoiceActionLabel,
+  invoiceDueDays,
   periodLabel,
   registrationChip,
   shortDate,
@@ -100,6 +100,17 @@ describe("manual invoice defaults", () => {
     expect(defaultDueDate(new Date(2026, 8, 12))).toBe("2026-09-19");
     expect(defaultDueDate(new Date(2026, 8, 28))).toBe("2026-10-05");
   });
+  it("defaultDueDate honours the academy's window", () => {
+    expect(defaultDueDate(new Date(2026, 8, 12), 10)).toBe("2026-09-22");
+    expect(defaultDueDate(new Date(2026, 8, 12), 0)).toBe("2026-09-12");
+  });
+  it("invoiceDueDays reads Billing rules, falling back only when unset (#739)", () => {
+    expect(invoiceDueDays({ billing_day: 1, invoice_due_days: 10 })).toBe(10);
+    // A configured 0 means "due today"; it must not read as "unset".
+    expect(invoiceDueDays({ billing_day: 1, invoice_due_days: 0 })).toBe(0);
+    expect(invoiceDueDays(undefined)).toBe(7);
+    expect(invoiceDueDays(null)).toBe(7);
+  });
   it("tuitionLineDescription matches the monthly generator's wording", () => {
     expect(tuitionLineDescription("2026-09")).toBe("Monthly tuition 2026-09");
   });
@@ -136,15 +147,16 @@ describe("enrollment pricing", () => {
         student_name: "Arjun",
         label: "Arjun · Tue/Thu Intermediate",
         price_cents: 12000,
-        bill_period_price_cents: 12000,
       },
     ]);
   });
-  it("quotes the session price for Bill this month, never the override", () => {
-    expect(enrollmentBillPeriodPriceCents({ ...enrollment, override_price_cents: 15000 })).toBe(
-      12000,
-    );
-    expect(enrollmentBillPeriodPriceCents({ ...enrollment, monthly_price_cents: null })).toBeNull();
+  it("carries no Bill-this-month quote, because only the backend can price the month", () => {
+    // The month's charge depends on proration and the four-class rule (#724); a flat
+    // client-side figure was wrong for exactly the first month that matters.
+    const [option] = enrollmentOptions([
+      { student_id: "stu-1", name: "Arjun", status: "active", enrollments: [enrollment] },
+    ]);
+    expect(option).not.toHaveProperty("bill_period_price_cents");
   });
   it("falls back to Class when the session has no title", () => {
     const students: FamilyStudent[] = [

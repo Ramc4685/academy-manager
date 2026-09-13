@@ -9,8 +9,14 @@ a 6:00 PM class render as 1:00 PM to paying parents.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
+from zoneinfo import ZoneInfo
+
+log = logging.getLogger(__name__)
+
+UTC_NAME = "UTC"
 
 AcademyTimezoneReader = Callable[[str], Awaitable[str | None]]
 
@@ -48,3 +54,26 @@ def request_scoped_academy_timezone(
         return await lookup(resolve_academy_id())
 
     return get_academy_timezone
+
+
+async def resolve_reporting_timezone(reader: AcademyTimezoneReader, academy_id: str) -> str:
+    """The zone a read model should bucket in, never raising.
+
+    Reads must render something, so an unset, unreadable or nonsense
+    ``academies.timezone`` degrades to UTC (the behaviour every report had
+    before #608) instead of 500-ing the page. Writes keep failing closed by
+    using the raw reader.
+    """
+    try:
+        name = await reader(academy_id)
+    except Exception:
+        log.warning("academy timezone lookup failed for %r, using UTC", academy_id, exc_info=True)
+        return UTC_NAME
+    if not name:
+        return UTC_NAME
+    try:
+        ZoneInfo(name)
+    except Exception:
+        log.warning("unknown academy timezone %r, using UTC", name)
+        return UTC_NAME
+    return name

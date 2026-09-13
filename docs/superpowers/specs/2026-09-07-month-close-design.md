@@ -250,7 +250,7 @@ count, and the list says "showing 20 of N" when truncated.
 
 | Code | Rule | Item link |
 |---|---|---|
-| `invoice_without_enrollment` | Period invoice, status not void, `enrollment_id` missing or not found | invoice |
+| `invoice_without_enrollment` | Period invoice, status not void, `enrollment_id` set but not found (a null `enrollment_id` is the legitimate "Not tied to a class" manual invoice, never odd) | invoice |
 | `paused_family_invoiced` | Period invoice, status not void, balance > 0, enrollment status `paused` | family |
 | `autopay_no_card` | Enrollment `autopay_enrollment_status == active` with a period invoice, parent has no card on file | family |
 | `autopay_on_dead_enrollment` | `autopay_enrollment_status == active`, enrollment status `cancelled` or `withdrawn` | family |

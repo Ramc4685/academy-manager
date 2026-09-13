@@ -29,7 +29,7 @@ class FakeStudentEditor:
             parent_name="Parent One",
             parent_email="parent@example.com",
             parent_phone="555-0101",
-            status="active",
+            lifecycle="active",
             active_session_count=1,
             attendance_rate=None,
             dues_status="current",
@@ -62,7 +62,6 @@ class FakeStudentEditor:
             update={
                 "full_name": command.full_name or self.student.full_name,
                 "date_of_birth": command.date_of_birth,
-                "status": command.status or self.student.status,
                 "notes": command.notes,
                 "previous_experience": command.previous_experience,
                 "medical_notes": command.medical_notes,
@@ -180,7 +179,6 @@ async def test_update_admin_student_forwards_safe_fields_with_audit_context() ->
     command = UpdateAdminStudentCommand(
         full_name="Alice Rao",
         date_of_birth=date(2016, 4, 5),
-        status="paused",
         notes="Prefers evening classes",
         previous_experience="Tournament prep",
         medical_notes="No restrictions",
@@ -195,7 +193,6 @@ async def test_update_admin_student_forwards_safe_fields_with_audit_context() ->
 
     assert result.full_name == "Alice Rao"
     assert result.date_of_birth == date(2016, 4, 5)
-    assert result.status == "paused"
     assert result.previous_experience == "Tournament prep"
     assert result.medical_notes == "No restrictions"
     assert result.emergency_contact_name == "Rina Rao"

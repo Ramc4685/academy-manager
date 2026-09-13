@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Protocol
 
 from backend.v2.contexts.student_progress.domain.models import (
@@ -55,6 +55,45 @@ class TestAttemptRepository(Protocol):
 
 class LevelUpRecommendationRepository(Protocol):
     async def save(self, rec: LevelUpRecommendation) -> None: ...
+    async def claim(
+        self,
+        rec_id: str,
+        claim_status: str,
+        claimed_at: datetime,
+        *,
+        lease: timedelta,
+    ) -> bool:
+        """Reserve an undecided recommendation for one reviewer (issue #548).
+
+        Compare-and-set into ``claim_status`` ("APPROVING" / "REJECTING"),
+        stamping ``claimed_at``, when the stored status is either
+        ``RECOMMENDED`` or an existing claim whose ``claimed_at`` is older
+        than ``claimed_at - lease``. Returns whether the claim was taken.
+
+        This is the point of no return for a review, and it exists because
+        the approval's side effects (certificate, level advance, skill
+        seeding) cannot be undone: without it, a reject that committed while
+        an approval was mid-flight left the row REJECTED with a certificate
+        already issued. The claim serialises the two, so the loser is refused
+        before anything is written.
+
+        The lease is what keeps a dead reviewer from parking the row
+        forever — there is no recovery job. A reviewer that fails cleanly
+        releases its own claim; only a process that dies mid-review leaves
+        one to time out.
+        """
+        ...
+
+    async def release(self, rec_id: str, *, claim_status: str) -> bool:
+        """Hand a claim back unused: ``claim_status`` -> ``RECOMMENDED``.
+
+        Called when a review fails after claiming but before recording a
+        decision, so the admin can simply try again instead of waiting out
+        the lease. Compare-and-set, so a claim already superseded (reclaimed
+        after its lease expired, say) is left alone.
+        """
+        ...
+
     async def update_status(
         self,
         rec_id: str,
@@ -84,7 +123,9 @@ class LevelUpRecommendationRepository(Protocol):
         self, student_ids: list[str], program_id: str
     ) -> list[LevelUpRecommendation]: ...
     async def list_pending(self) -> list[LevelUpRecommendation]: ...
-    async def list_pending_for_student(self, student_id: str) -> list[LevelUpRecommendation]: ...
+    async def list_recommended_for_student(
+        self, student_id: str
+    ) -> list[LevelUpRecommendation]: ...
 
 
 class CertificateRepository(Protocol):

@@ -25,6 +25,7 @@ from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
 from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
     MongoMembershipRepository,
 )
+from backend.v2.shared.time.academy_timezone import academy_timezone_lookup
 
 OWNER_ROLE: Literal["owner"] = "owner"
 
@@ -75,6 +76,8 @@ def compose_owner(db: AsyncIOMotorDatabase[Any]) -> OwnerComposition:
                 MongoMembershipRepository(db),
                 MongoAcademyRepository(db),
             ),
-            snapshots=MongoAcademyFinancialSnapshotReader(db),
+            snapshots=MongoAcademyFinancialSnapshotReader(
+                db, academy_timezone=academy_timezone_lookup(db)
+            ),
         )
     )

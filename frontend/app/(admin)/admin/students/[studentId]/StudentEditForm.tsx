@@ -18,7 +18,10 @@ import { Button } from "@/components/ds/button";
 
 import { DetailList } from "./DetailList";
 
-type EditableStatus = "active" | "paused" | "inactive" | "cancelled";
+// Issue #773: there is no editable status. A person's state is derived from
+// their enrollments, holds and pending cancels; this select was the ONLY
+// writer of students.status, and an admin typing "active" over a student who
+// had dropped every class is precisely the lie the derivation removes.
 type StudentEditMode = "overview" | "training" | "family";
 
 function StudentEditForm({
@@ -32,9 +35,6 @@ function StudentEditForm({
 }) {
   const [fullName, setFullName] = useState(student.full_name);
   const [dateOfBirth, setDateOfBirth] = useState(student.date_of_birth ?? "");
-  const [status, setStatus] = useState<EditableStatus>(
-    (student.status as EditableStatus) ?? "active",
-  );
   const [notes, setNotes] = useState(student.notes ?? "");
   const [previousExperience, setPreviousExperience] = useState(
     student.previous_experience ?? "",
@@ -57,7 +57,6 @@ function StudentEditForm({
   useEffect(() => {
     setFullName(student.full_name);
     setDateOfBirth(student.date_of_birth ?? "");
-    setStatus((student.status as EditableStatus) ?? "active");
     setNotes(student.notes ?? "");
     setPreviousExperience(student.previous_experience ?? "");
     setMedicalNotes(student.medical_notes ?? "");
@@ -67,7 +66,6 @@ function StudentEditForm({
   }, [
     student.full_name,
     student.date_of_birth,
-    student.status,
     student.notes,
     student.previous_experience,
     student.medical_notes,
@@ -95,7 +93,6 @@ function StudentEditForm({
   const dirtyFields = {
     fullName: fullName !== student.full_name,
     dateOfBirth: dateOfBirth !== (student.date_of_birth ?? ""),
-    status: status !== student.status,
     notes: (notes ?? "") !== (student.notes ?? ""),
     previousExperience:
       previousExperience !== (student.previous_experience ?? ""),
@@ -111,7 +108,6 @@ function StudentEditForm({
     mode === "overview"
       ? dirtyFields.fullName ||
         dirtyFields.dateOfBirth ||
-        dirtyFields.status ||
         dirtyFields.notes
       : mode === "training"
         ? dirtyFields.previousExperience ||
@@ -123,7 +119,6 @@ function StudentEditForm({
   const reset = () => {
     setFullName(student.full_name);
     setDateOfBirth(student.date_of_birth ?? "");
-    setStatus((student.status as EditableStatus) ?? "active");
     setNotes(student.notes ?? "");
     setPreviousExperience(student.previous_experience ?? "");
     setMedicalNotes(student.medical_notes ?? "");
@@ -147,7 +142,6 @@ function StudentEditForm({
           if (dirtyFields.fullName) payload.full_name = fullName;
           if (dirtyFields.dateOfBirth)
             payload.date_of_birth = dateOfBirth || null;
-          if (dirtyFields.status) payload.status = status;
           if (dirtyFields.notes) payload.notes = notes || null;
         }
         if (mode === "training") {
@@ -189,20 +183,6 @@ function StudentEditForm({
               onChange={(e) => setDateOfBirth(e.target.value)}
               className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
             />
-          </Field>
-
-          <Field label="Status" htmlFor="student-status">
-            <select
-              id="student-status"
-              value={status}
-              onChange={(e) => setStatus(e.target.value as EditableStatus)}
-              className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
-            >
-              <option value="active">Active</option>
-              <option value="paused">Paused</option>
-              <option value="inactive">Inactive</option>
-              <option value="cancelled">Cancelled</option>
-            </select>
           </Field>
 
           <Field label="Internal notes" htmlFor="student-notes">

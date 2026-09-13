@@ -122,9 +122,15 @@ class MongoMonthCloseReadModel:
 
         # --- primary sources: a failure here is a 500, never a wrong number.
         invoices = await self._period_invoices(academy_id, period)
-        start, end = month_bounds(period)
+        start, end = month_bounds(period, tz_name)
         collected_cents = (
-            await cash_received_in_period(self._db, academy_id=academy_id, start=start, end=end)
+            await cash_received_in_period(
+                self._db,
+                academy_id=academy_id,
+                start=start,
+                end=end,
+                timezone_name=tz_name,
+            )
         ).net_cents
 
         invoice_ids = [inv["invoice_id"] for inv in invoices]
@@ -243,6 +249,7 @@ class MongoMonthCloseReadModel:
             outstanding_cents=invoice_outstanding_cents(inv),
             due_date=_to_date(inv.get("due_date")),
             delivery_status=str(inv.get("delivery_status") or "not_sent"),
+            delivery_kind=_opt_str(inv.get("delivery_kind")),
             void_reason=_opt_str(inv.get("void_reason")),
             parent_id=parent_id,
             parent_name=_opt_str((user or {}).get("display_name"))
@@ -292,6 +299,7 @@ class MongoMonthCloseReadModel:
                 "due_date": 1,
                 "created_at": 1,
                 "delivery_status": 1,
+                "delivery_kind": 1,
                 "last_sent_at": 1,
                 "voided_at": 1,
                 "void_reason": 1,

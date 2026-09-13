@@ -385,6 +385,8 @@ class AdminUseCases:
     add_invoice_line: object | None = None
     remove_invoice_line: object | None = None
     void_billing_invoice: object | None = None
+    # Soft-void a test/erroneous payment, reversing its allocations (#619).
+    void_payment: object | None = None  # async (payment_id, reason, actor_id) -> None
     record_manual_payment: object | None = None
     issue_invoice_refund: object | None = None
     list_billing_audit: object | None = None

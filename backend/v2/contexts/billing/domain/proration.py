@@ -280,6 +280,36 @@ def snapshot_classes_charged(snapshot: BillingCalculationSnapshot) -> int:
     return min(snapshot.billable_remaining_classes, snapshot_charge_denominator(snapshot))
 
 
+def unused_paid_classes(
+    *,
+    billable_remaining_classes: int,
+    billable_classes_denominator: int | None,
+    scheduled_unused: int,
+) -> tuple[int, int]:
+    """``(paid_classes, unused)`` — the one consumed-first rule (#729).
+
+    ``scheduled_unused`` is how many of the classes the charge covered are
+    still to come at the cutoff. Classes already consumed come out of the PAID
+    ones FIRST, so what is left to give back is ``paid - consumed``: a 5-date
+    month sells 4 classes, and a family who attended two has two paid classes
+    left, not three. Every credit path — early withdrawal, class cancellation
+    and the from-side of a mid-period move — must divide by the same
+    ``paid_classes`` and credit the same ``unused``, or the same family gets a
+    different number back depending on which button the admin pressed.
+
+    ``billable_classes_denominator`` is ``None`` on snapshots written before
+    the four-classes-per-weekly-meeting rule; those were priced against
+    ``billable_remaining_classes``, so they keep crediting at the rate they
+    charged.
+    """
+    denominator = billable_classes_denominator
+    if denominator is None or denominator <= 0:
+        denominator = billable_remaining_classes
+    paid = max(min(billable_remaining_classes, denominator), 0)
+    consumed = max(billable_remaining_classes - max(scheduled_unused, 0), 0)
+    return paid, max(paid - consumed, 0)
+
+
 def _round_half_up_rational(numerator: int, denominator: int) -> int:
     if denominator <= 0:
         return 0
@@ -312,6 +342,12 @@ class MoveProrationQuote(BaseModel):
     ``delta_cents`` is ``to_share_cents - from_share_cents``; the family
     already paid (or owes) the from-session's full month, so only the
     difference moves.
+
+    The from-side is a CREDIT of tuition already charged, so when the period's
+    charge is known (``from_paid``) it is valued consumed-first against what
+    that charge bought — the same rule early withdrawal and class cancellation
+    use — rather than from the schedule alone, which cannot see how many of
+    the paid classes the family already took (#729).
     """
 
     model_config = {"frozen": True}
@@ -330,7 +366,32 @@ class MoveProrationQuote(BaseModel):
     from_share_cents: int
     to_share_cents: int
     delta_cents: int
-    policy_version: str = "move-proration-v3"
+    policy_version: str = "move-proration-v4"
+
+
+@dataclass(frozen=True)
+class PaidPeriodCharge:
+    """What the family was charged for the from-session's period, and how much
+    of it is still unused at the move's cutoff (#729).
+
+    Supplied by the application layer from the period's billing snapshot. The
+    from-side of a move is a CREDIT of tuition already charged, so it has to be
+    valued the way the other two credit paths value one — consumed-first
+    against the classes the charge bought (see ``unused_paid_classes``) — and
+    not from the forward-looking schedule, which cannot see what was consumed.
+    """
+
+    charge_cents: int
+    paid_classes: int
+    unused_classes: int
+
+    @property
+    def credit_cents(self) -> int:
+        """``charge * unused / paid``, half-up on the final cent."""
+        if self.charge_cents <= 0 or self.paid_classes <= 0 or self.unused_classes <= 0:
+            return 0
+        unused = min(self.unused_classes, self.paid_classes)
+        return _round_half_up_rational(self.charge_cents * unused, self.paid_classes)
 
 
 def remaining_share_cents(
@@ -387,7 +448,12 @@ def quote_move_proration(
     effective_at: datetime,
     from_discount_cents: int = 0,
     to_discount_cents: int = 0,
+    from_paid: PaidPeriodCharge | None = None,
 ) -> MoveProrationQuote:
+    """``from_paid`` is what the period's charge actually bought on the
+    from-session. When it is known the from-side is credited consumed-first
+    against it (#729); without it — no snapshot for the period, so no paid
+    amount to reconcile against — the forward-looking share stands."""
     from_share, from_remaining, from_total = remaining_share_cents(
         monthly_price_cents=from_price_cents,
         period=period,
@@ -402,6 +468,8 @@ def quote_move_proration(
         effective_at=effective_at,
         discount_cents=to_discount_cents,
     )
+    if from_paid is not None and from_total > 0:
+        from_share = from_paid.credit_cents
     return MoveProrationQuote(
         billing_period_label=period.label,
         from_session_id=from_session_id,

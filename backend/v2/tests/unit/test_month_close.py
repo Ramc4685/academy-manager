@@ -55,8 +55,35 @@ def test_generated_excludes_drafts_but_counts_voids() -> None:
     assert section["generated"] == 2
 
 
-def test_the_emailed_notice_split_comes_from_current_autopay_status() -> None:
-    """The message kind is not persisted, so it is re-derived (§4.3 note)."""
+def test_the_split_reads_the_persisted_kind_not_the_current_autopay_status() -> None:
+    """Issue #692: reopening a past month shows the split it showed at the time.
+
+    Both families flipped their autopay state after the send, so a re-derived
+    split would swap these two columns.
+    """
+    section = build_invoices_section(
+        [
+            inv(
+                "a",
+                delivery_status="sent",
+                delivery_kind="autopay_notice",
+                autopay_enrollment_status="paused",
+            ),
+            inv(
+                "b",
+                delivery_status="sent",
+                delivery_kind="invoice_email",
+                autopay_enrollment_status="active",
+            ),
+        ]
+    )
+
+    assert section["autopay_notices"] == 1
+    assert section["emailed"] == 1
+
+
+def test_the_emailed_notice_split_falls_back_to_autopay_status_when_unkinded() -> None:
+    """Invoices sent before #692 carry no kind; the old approximation stands."""
     section = build_invoices_section(
         [
             inv("a", delivery_status="sent", autopay_enrollment_status="active"),
@@ -286,24 +313,53 @@ def test_all_four_checks_render_even_when_everything_is_fine() -> None:
     assert all(row["count"] == 0 for row in rows)
 
 
-def test_invoice_without_enrollment_catches_missing_and_dangling_ids() -> None:
+def test_invoice_without_enrollment_catches_dangling_ids_only() -> None:
     rows = build_odd_section(
         [
-            inv("none", enrollment_id=None),
             inv("dangling", enrollment_id="enr-gone", enrollment_found=False),
             inv("fine"),
         ]
     )
     row = odd(rows, "invoice_without_enrollment")
 
-    assert row["count"] == 2
-    assert {item["id"] for item in row["items"]} == {"none", "dangling"}
+    assert row["count"] == 1
+    assert {item["id"] for item in row["items"]} == {"dangling"}
     assert row["items"][0]["kind"] == "invoice"
     assert row["items"][0]["href"] == "/admin/families/par-1"
 
 
+def test_a_manual_invoice_tied_to_no_class_is_not_odd() -> None:
+    """#737/#725: "Not tied to a class" is a legitimate manual-invoice state,
+    not a broken enrollment reference, so it must never be flagged."""
+    rows = build_odd_section([inv("manual", enrollment_id=None)])
+
+    assert odd(rows, "invoice_without_enrollment")["count"] == 0
+
+
+def test_untied_hand_created_invoices_never_crowd_out_a_real_dangling_one() -> None:
+    """#725: the Create invoice dialog offers "Not tied to a class" as a
+    first-class choice (equipment, fees), so untied invoices must stay off the
+    owner's close report at every delivery status — drafts included, since
+    ``_live`` drops only voids — while a genuine dangling reference still shows.
+    """
+    rows = build_odd_section(
+        [
+            inv("equipment", enrollment_id=None),
+            inv("fee-draft", status="draft", enrollment_id=None),
+            inv("dangling", enrollment_id="enr-gone", enrollment_found=False),
+            inv("tuition"),
+        ]
+    )
+    row = odd(rows, "invoice_without_enrollment")
+
+    assert row["count"] == 1
+    assert {item["id"] for item in row["items"]} == {"dangling"}
+
+
 def test_a_voided_invoice_is_never_odd() -> None:
-    rows = build_odd_section([inv("a", status="void", enrollment_id=None)])
+    rows = build_odd_section(
+        [inv("a", status="void", enrollment_id="enr-gone", enrollment_found=False)]
+    )
 
     assert odd(rows, "invoice_without_enrollment")["count"] == 0
 
@@ -387,7 +443,10 @@ def test_a_family_with_two_bad_invoices_is_listed_once() -> None:
 
 def test_items_truncate_at_twenty_but_the_count_stays_true() -> None:
     rows = build_odd_section(
-        [inv(f"inv-{n}", enrollment_id=None) for n in range(MAX_ODD_ITEMS + 5)]
+        [
+            inv(f"inv-{n}", enrollment_id="enr-gone", enrollment_found=False)
+            for n in range(MAX_ODD_ITEMS + 5)
+        ]
     )
     row = odd(rows, "invoice_without_enrollment")
 

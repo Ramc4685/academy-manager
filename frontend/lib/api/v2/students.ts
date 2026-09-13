@@ -130,7 +130,6 @@ export interface UpdateAdminStudentRequest {
   full_name?: string;
   date_of_birth?: string | null;
   level?: string | null;
-  status?: "active" | "paused" | "inactive" | "cancelled";
   parent_id?: string;
   notes?: string | null;
   previous_experience?: string | null;

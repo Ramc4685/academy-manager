@@ -47,6 +47,7 @@ _VOID_STATUS = "void"
 _DRAFT_STATUS = "draft"
 _SENT_DELIVERY = "sent"
 _UNSENT_DELIVERY: frozenset[str] = frozenset({"not_sent", "delivery_failed"})
+_AUTOPAY_NOTICE_KIND = "autopay_notice"
 _PAUSED_ENROLLMENT = "paused"
 #: Terminal ("dead") enrollment statuses, in BOTH the legacy and #699
 #: canonical spellings ("withdrawn"->"dropped", "cancelled"->"deleted").
@@ -83,9 +84,10 @@ class InvoiceFacts:
     """One invoice of the period, plus everything joined onto it.
 
     ``enrollment_found`` is False when ``enrollment_id`` points at a row the
-    ``enrollments`` query did not return — a dangling reference, which is a
-    different defect from having no ``enrollment_id`` at all but produces the
-    same odd row.
+    ``enrollments`` query did not return — a dangling reference, and the only
+    shape ``invoice_without_enrollment`` flags. Having no ``enrollment_id`` at
+    all is not a defect: a hand-created invoice can legitimately be tied to no
+    class (#737).
     """
 
     invoice_id: str
@@ -96,6 +98,10 @@ class InvoiceFacts:
     outstanding_cents: int = 0
     due_date: date | None = None
     delivery_status: str = "not_sent"
+    #: "invoice_email" | "autopay_notice", stamped at send time (#692). None on
+    #: sends that pre-date the field and on anything the backfill could not
+    #: infer — those fall back to the old autopay-status approximation.
+    delivery_kind: str | None = None
     void_reason: str | None = None
     parent_id: str | None = None
     parent_name: str | None = None
@@ -151,8 +157,15 @@ def _iso(value: date | datetime | None) -> str | None:
 
 
 def _live(invoices: Iterable[InvoiceFacts]) -> list[InvoiceFacts]:
-    """Non-void invoices — what "billed" and every odd check are about."""
-    return [inv for inv in invoices if not inv.is_void]
+    """Real, still-owed money — what "billed" and every odd check are about.
+
+    Voids are gone and drafts have not happened yet: a draft is the manual
+    invoicing working state, never sent, and the family page says it owes
+    nothing (#722). Counting one here billed the owner for money nobody was
+    asked for, fired odd checks on it, and let its placeholder due date pull
+    the autopay run's charge date forward (#736).
+    """
+    return [inv for inv in invoices if not inv.is_void and not inv.is_draft]
 
 
 def _family_href(parent_id: str | None) -> str:
@@ -195,6 +208,18 @@ def _is_autopay_eligible(inv: InvoiceFacts) -> bool:
 # --------------------------------------------------------------------------- sections
 
 
+def _sent_as_notice(inv: InvoiceFacts) -> bool:
+    """Was this send an autopay notice rather than a pay-link email?
+
+    The persisted kind wins. Only an invoice delivered before #692 (or one the
+    backfill could not infer) falls back to the enrollment's current autopay
+    status, which is the approximation #692 exists to retire.
+    """
+    if inv.delivery_kind is not None:
+        return inv.delivery_kind == _AUTOPAY_NOTICE_KIND
+    return inv.autopay_active
+
+
 def build_invoices_section(invoices: Iterable[InvoiceFacts]) -> dict[str, Any]:
     """Counts of what the generation and send runs produced.
 
@@ -202,11 +227,12 @@ def build_invoices_section(invoices: Iterable[InvoiceFacts]) -> dict[str, Any]:
     never meant to be sent, so counting it as ``not_sent`` would report a
     failure that never happened.
 
-    The kind of email is not persisted — ``record_delivery`` writes the same
-    ``delivery_status`` for an invoice email and an autopay notice — so the
-    split is re-derived from the enrollment's *current* autopay status, exactly
-    as the family timeline does. ``emailed + autopay_notices`` is always the
-    true sent count, which is the number that matters for close (§4.3).
+    The delivery split reads ``delivery_kind``, stamped on the invoice at send
+    time (#692), so reopening a past month shows the split it showed then. An
+    invoice sent before that field existed carries no kind; it falls back to
+    the old approximation — the enrollment's *current* autopay status — which
+    drifts as families change autopay. Either way ``emailed + autopay_notices``
+    is the true sent count, which is the number that matters for close (§4.3).
     """
     generated = [inv for inv in invoices if not inv.is_draft]
     sent = [inv for inv in generated if inv.delivery_status == _SENT_DELIVERY]
@@ -214,8 +240,8 @@ def build_invoices_section(invoices: Iterable[InvoiceFacts]) -> dict[str, Any]:
     reasons = Counter(inv.void_reason or "unspecified" for inv in voided)
     return {
         "generated": len(generated),
-        "emailed": sum(1 for inv in sent if not inv.autopay_active),
-        "autopay_notices": sum(1 for inv in sent if inv.autopay_active),
+        "emailed": sum(1 for inv in sent if not _sent_as_notice(inv)),
+        "autopay_notices": sum(1 for inv in sent if _sent_as_notice(inv)),
         "not_sent": sum(1 for inv in generated if inv.delivery_status in _UNSENT_DELIVERY),
         "voided": len(voided),
         "voided_cents": sum(inv.total_cents for inv in voided),
@@ -337,7 +363,12 @@ def build_odd_section(
         hits[code].append(_family_item(inv))
 
     for inv in live:
-        if not inv.enrollment_id or not inv.enrollment_found:
+        # Only a *dangling* reference is odd. A null ``enrollment_id`` is the
+        # legitimate "Not tied to a class" state a hand-created invoice
+        # (#722) or a consumed checkout-period snapshot carries, so flagging
+        # it kept the box permanently non-zero and taught the owner to ignore
+        # it (#737, #725).
+        if inv.enrollment_id and not inv.enrollment_found:
             hits["invoice_without_enrollment"].append(_invoice_item(inv))
         if inv.outstanding_cents > 0 and inv.enrollment_status == _PAUSED_ENROLLMENT:
             add_family("paused_family_invoiced", inv)

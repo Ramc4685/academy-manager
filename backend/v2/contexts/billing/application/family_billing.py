@@ -37,6 +37,7 @@ FAILURE_ATTEMPT_STATUSES: frozenset[str] = frozenset(
 )
 
 _PAUSED = "paused"
+AUTOPAY_NOTICE_KIND = "autopay_notice"
 #: Terminal ("dead") enrollment statuses, in BOTH the legacy and #699
 #: canonical spellings ("withdrawn"->"dropped", "cancelled"->"deleted").
 #: Billing cannot import contexts.enrollment.domain.models.canonical_status
@@ -138,6 +139,10 @@ class InvoiceFacts:
     autopay_status: str | None  # the enrollment's autopay status (labels the send)
     allocations: tuple[AllocationFacts, ...]
     credits: tuple[CreditFacts, ...]
+    #: What the send actually was, stamped at send time (#692):
+    #: "invoice_email" | "autopay_notice". None for sends that pre-date the
+    #: field, which fall back to ``autopay_status`` — the drifting guess.
+    delivery_kind: str | None = None
 
 
 @dataclass(frozen=True)
@@ -213,6 +218,18 @@ class FamilyFacts:
 
 def _iso(value: date | datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
+
+
+def _sent_as_notice(inv: InvoiceFacts) -> bool:
+    """Was the parent sent an autopay notice rather than a pay-link email?
+
+    The kind persisted at send time wins (#692). Only a send that pre-dates
+    that field falls back to the enrollment's *current* autopay status, which
+    relabels old sends every time a family turns autopay on or off.
+    """
+    if inv.delivery_kind is not None:
+        return inv.delivery_kind == AUTOPAY_NOTICE_KIND
+    return inv.autopay_status == AUTOPAY_ACTIVE_STATUS
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -325,12 +342,31 @@ def family_actions(
     return actions
 
 
+def _is_unsent_draft(inv: dict[str, Any]) -> bool:
+    """A draft nobody has been sent yet — the manual-invoicing working state.
+
+    ``send`` finalizes a draft into ``open``, so in practice a draft never
+    carries a ``last_sent_at``; the check is belt and braces so a row that
+    somehow did would not be treated as fresh.
+    """
+    delivery = inv.get("delivery") or {}
+    return inv.get("status") == "draft" and delivery.get("last_sent_at") is None
+
+
+def _visible_invoice_actions(inv: dict[str, Any]) -> list[str]:
+    # #726: a plain admin can create a draft (Create invoice / Bill this
+    # month are both admin routes), so a plain admin must be able to discard
+    # one — otherwise the draft blocks that month's generator until the owner
+    # logs in. Matches `ensure_owner_for_invoice_void` on the write side.
+    hidden = OWNER_ONLY_ACTIONS - {"void"} if _is_unsent_draft(inv) else OWNER_ONLY_ACTIONS
+    return [a for a in inv["actions"] if a not in hidden]
+
+
 def strip_owner_actions(view: dict[str, Any]) -> dict[str, Any]:
     """Remove owner-only actions for a non-owner caller (interface layer)."""
     out = dict(view)
     out["invoices"] = [
-        {**inv, "actions": [a for a in inv["actions"] if a not in OWNER_ONLY_ACTIONS]}
-        for inv in view["invoices"]
+        {**inv, "actions": _visible_invoice_actions(inv)} for inv in view["invoices"]
     ]
     out["students"] = [
         {
@@ -387,6 +423,7 @@ _AUDIT_SUMMARIES: dict[str, str] = {
     "autopay_paused": "Autopay turned off",
     "invoice_voided": "Invoice voided by admin",
     "invoice_hand_billed": "Invoice created by admin",
+    "invoice_hand_created": "Invoice created by admin",
     "invoice_line_added": "Charge added to invoice",
     "invoice_line_removed": "Charge removed from invoice",
     "discount_set": "Discount set",
@@ -455,7 +492,7 @@ def _invoice_entries(facts: FamilyFacts) -> list[dict[str, Any]]:
                 )
             )
         if inv.last_sent_at is not None:
-            notice = inv.autopay_status == AUTOPAY_ACTIVE_STATUS
+            notice = _sent_as_notice(inv)
             entries.append(
                 _entry(
                     at=inv.last_sent_at,
@@ -653,7 +690,7 @@ def _invoice_payload(inv: InvoiceFacts, *, eligibility: Eligibility) -> dict[str
     # total - balance and flag the row (spec §3.2).
     unlinked = inv.status == "paid" and not inv.allocations
     paid_cents = inv.total_cents - inv.balance_due_cents if unlinked else allocated
-    notice = inv.autopay_status == AUTOPAY_ACTIVE_STATUS
+    notice = _sent_as_notice(inv)
     return {
         "invoice_id": inv.invoice_id,
         "invoice_number": inv.invoice_number,

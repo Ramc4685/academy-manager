@@ -24,6 +24,9 @@ from backend.v2.contexts.billing.application.use_cases.apply_enrollment_move imp
     ApplyEnrollmentMoveCommand,
     MoveSessionSchedule,
 )
+from backend.v2.contexts.billing.application.use_cases.apply_occurrence_cancellation import (
+    PeriodChargeBasis,
+)
 from backend.v2.contexts.billing.domain.ledger import InvoiceLine, LedgerInvoice
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry
 from backend.v2.contexts.billing.domain.proration import ClassOccurrence
@@ -220,11 +223,13 @@ def _build(
     schedules: FakeSchedules,
     *,
     notice_resender: Any | None = None,
+    charge_basis: Any | None = None,
 ):
     return ApplyEnrollmentMove(
         ledger=ledger,
         credits=credits,
         schedules=schedules,
+        charge_basis=charge_basis,
         idempotency_store=InMemoryIdempotency(),
         academy_timezone=_tz,
         notice_resender=notice_resender,
@@ -849,3 +854,88 @@ async def test_invoice_due_days_of_none_falls_back_to_seven_days() -> None:
     result = await use_case.execute(_cmd())
 
     assert ledger.invoices[result.invoice_id].due_date == date(2026, 9, 16)
+
+
+# ---------------------------------------------------------------------------
+# Issue #729: the from-side credit is consumed-first against what the period's
+# charge actually bought, the same rule withdrawal and cancellation apply.
+# ---------------------------------------------------------------------------
+
+FIVE_TUESDAYS = (1, 8, 15, 22, 29)
+FIVE_WEDNESDAYS = (2, 9, 16, 23, 30)
+#: The 1st and the 8th are behind us; three dates are still to come.
+MOVE_DATE = date(2026, 9, 15)
+
+
+@dataclass
+class FakeChargeBasis:
+    rows: dict[tuple[str, str], PeriodChargeBasis] = field(default_factory=dict)
+    calls: list[tuple[str, str, str]] = field(default_factory=list)
+
+    async def period_charge_basis(
+        self, *, enrollment_id: str, student_id: str, session_id: str, period: str
+    ) -> PeriodChargeBasis | None:
+        self.calls.append((enrollment_id, session_id, period))
+        return self.rows.get((enrollment_id, period))
+
+
+def _five_class_schedules() -> FakeSchedules:
+    return FakeSchedules(
+        rows={
+            "sess-a": _schedule("sess-a", 7000, FIVE_TUESDAYS),
+            "sess-b": _schedule("sess-b", 7000, FIVE_WEDNESDAYS),
+        }
+    )
+
+
+def _full_month_basis() -> FakeChargeBasis:
+    return FakeChargeBasis(
+        rows={
+            ("enr-1", "2026-09"): PeriodChargeBasis(
+                calculation_type="MONTHLY_TUITION",
+                final_amount_cents=7000,
+                total_eligible_classes=5,
+                billable_remaining_classes=5,
+                billable_classes_denominator=4,
+                included_occurrence_ids=tuple(
+                    f"sess-a:2026-09-{day:02d}:18:00" for day in FIVE_TUESDAYS
+                ),
+            )
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_from_side_credits_only_the_unused_paid_classes() -> None:
+    """$70 bought 4 of 5 dates; two are consumed, so only two come back (#729)."""
+    ledger, credits = FakeLedger(), FakeCredits()
+    invoice = _invoice(total=7000)
+    ledger.seed(invoice, _line(invoice, 7000))
+    basis = _full_month_basis()
+
+    result = await _build(ledger, credits, _five_class_schedules(), charge_basis=basis).execute(
+        _cmd(effective_at=EFFECTIVE, effective_date=MOVE_DATE)
+    )
+
+    # from 7000 * 2/4 = 3500 (not 7000 * 3/4), to 7000 * 3/4 = 5250.
+    assert result.from_share_cents == 3500
+    assert result.to_share_cents == 5250
+    assert result.delta_cents == 1750
+    assert result.outcome == "debited"
+    assert basis.calls == [("enr-1", "sess-a", "2026-09")]
+
+
+@pytest.mark.asyncio
+async def test_move_without_a_period_charge_keeps_the_forward_looking_share() -> None:
+    """Nothing priced for the period yet: the schedule-only share stands."""
+    ledger, credits = FakeLedger(), FakeCredits()
+    invoice = _invoice(total=7000)
+    ledger.seed(invoice, _line(invoice, 7000))
+
+    result = await _build(
+        ledger, credits, _five_class_schedules(), charge_basis=FakeChargeBasis()
+    ).execute(_cmd(effective_at=EFFECTIVE, effective_date=MOVE_DATE))
+
+    assert result.from_share_cents == 5250
+    assert result.to_share_cents == 5250
+    assert result.outcome == "no_change"

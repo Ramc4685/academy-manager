@@ -7,7 +7,7 @@ from typing import Annotated, Any, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 
 from backend.v2.contexts.billing.application.first_month_quote_presentation import (
     first_month_quote_formula,
@@ -41,6 +41,7 @@ from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import 
     PreviewWithdrawalCreditCommand,
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
+from backend.v2.interfaces.admin.owner_gate import ensure_owner_for_invoice_void
 from backend.v2.interfaces.admin.views import (
     AdminEnrollmentQuoteRequest,
     AdminEnrollmentQuoteResponse,
@@ -396,6 +397,10 @@ async def list_payments(
     q: str | None = Query(default=None, max_length=100),
     limit: int = Query(default=200, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    # Voided payments are excluded by default (#619): they are test/erroneous
+    # rows kept only for audit, and showing them by default would put back the
+    # noise the void was for.
+    include_voided: bool = Query(default=False),
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminPaymentList:
@@ -409,6 +414,7 @@ async def list_payments(
             q=q,
             limit=limit,
             offset=offset,
+            include_voided=include_voided,
         )
         return AdminPaymentList(
             payments=[_payment_view(p) for p in result["payments"]],
@@ -555,6 +561,47 @@ async def undo_payment_paid(
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> dict[str, bool]:
     await use_cases.undo_payment_paid.execute(UndoPaymentPaidCommand(payment_id=payment_id))
+    return {"ok": True}
+
+
+class VoidPaymentRequest(BaseModel):
+    reason: str = Field(min_length=1, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def _reason_not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("void reason is required")
+        return value
+
+
+@router.post("/payments/{payment_id}/void")
+async def void_payment_route(
+    payment_id: str,
+    body: VoidPaymentRequest,
+    claims: AuthClaims = Depends(require_owner()),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> dict[str, bool]:
+    """Soft-void a test/erroneous payment (#619).
+
+    Owner-only, the same tier as refund/discount/undo-paid: it changes what
+    every money report says. Nothing is deleted — the row keeps its amount and
+    gains ``voided_at``/``voided_by``/``void_reason``, its allocations are
+    reversed so the invoice balance reopens, and it drops out of the payments
+    list unless "show voided" is on. Real Stripe money is refused here on
+    purpose: refunding it is the flow that actually gives it back.
+    """
+    void_payment_ = _required_callable(use_cases.void_payment, "Payment voiding")
+    try:
+        await void_payment_(  # type: ignore[operator]
+            payment_id=payment_id, reason=body.reason, actor_id=claims.user_id
+        )
+    except ValueError as exc:
+        msg = str(exc)
+        if "not found" in msg:
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=409, detail=msg) from exc
     return {"ok": True}
 
 
@@ -750,13 +797,20 @@ class CreateStudentInvoiceRequest(BaseModel):
     student_id: str
     parent_id: str
     period: str = Field(pattern=r"^\d{4}-\d{2}$")
-    due_date: date
+    #: Omitted means "use this academy's ``invoice_due_days`` Billing rule", so a
+    #: hand-made invoice is dated like a generated one (#739).
+    due_date: date | None = None
     enrollment_id: str | None = None
+    #: One id per dialog submit, minted by the client. It is what makes a
+    #: double-click or a retried request land on the first draft instead of
+    #: opening a second blank one (#727). Optional so older clients, which
+    #: send none, keep working (they just get no de-duplication).
+    request_id: str | None = None
 
 
 class BillEnrollmentPeriodRequest(BaseModel):
     period: str = Field(pattern=r"^\d{4}-\d{2}$")
-    due_date: date
+    due_date: date | None = None
 
 
 class VoidInvoiceRequest(BaseModel):
@@ -974,13 +1028,34 @@ async def remove_invoice_line(
         raise HTTPException(status_code=409, detail=msg) from exc
 
 
+async def _void_is_an_unsent_draft(use_cases: AdminUseCases, invoice_id: str) -> bool:
+    """Is this invoice still the never-sent draft any admin may discard (#726)?
+
+    Read only on the non-owner path, so an owner's void costs exactly what it
+    did before. A detail read that fails is treated as "not a fresh draft",
+    which keeps the gate closed rather than open.
+    """
+
+    try:
+        detail = await use_cases.get_billing_invoice_detail(invoice_id)  # type: ignore[operator]
+    except Exception:
+        return False
+    if not isinstance(detail, dict):
+        return False
+    return detail.get("status") == "draft" and detail.get("last_sent_at") is None
+
+
 @router.post("/billing/invoices/{invoice_id}/void", status_code=status.HTTP_200_OK)
 async def void_invoice_route(
     invoice_id: str,
     body: VoidInvoiceRequest,
-    _claims: AuthClaims = Depends(require_owner()),
+    claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> dict[str, bool]:
+    if "owner" not in claims.roles:
+        ensure_owner_for_invoice_void(
+            claims, is_unsent_draft=await _void_is_an_unsent_draft(use_cases, invoice_id)
+        )
     void_invoice_ = _required_callable(use_cases.void_billing_invoice, "Invoice voiding")
     try:
         await void_invoice_(invoice_id=invoice_id, reason=body.reason)  # type: ignore[operator]
@@ -1130,7 +1205,7 @@ async def list_invoice_audit(
 async def create_student_invoice(
     student_id: str,
     body: CreateStudentInvoiceRequest,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> dict:
     if body.student_id != student_id:
@@ -1142,12 +1217,16 @@ async def create_student_invoice(
         enrollment_id=body.enrollment_id,
     )
     create_invoice = _required_callable(use_cases.create_student_invoice, "Invoice creation")
+    # Same actor trail as "Bill this month" next to it, and the client's
+    # request id so a retry returns the first draft (#727).
     return await create_invoice(  # type: ignore[operator]
         student_id=student_id,
         parent_id=body.parent_id,
         period=body.period,
         due_date=body.due_date,
         enrollment_id=body.enrollment_id,
+        actor_id=claims.user_id,
+        request_id=body.request_id,
     )
 
 

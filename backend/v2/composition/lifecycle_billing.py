@@ -58,6 +58,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_dunning_state_repo import 
 from backend.v2.contexts.billing.infrastructure.mongo_move_schedule_reader import (
     MongoMoveScheduleReader,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_occurrence_cancellation import (
+    MongoOccurrenceCancellationReader,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_student_billing_enrollment_repo import (
     MongoStudentBillingEnrollmentRepository,
 )
@@ -259,6 +262,10 @@ def compose_enrollment_move_billing_sync(
         ledger=ledger or MongoBillingLedgerRepository(db),
         credits=credits or MongoCreditLedgerRepository(db),
         schedules=MongoMoveScheduleReader(db),
+        # Credit the from-session against what the period's charge actually
+        # bought, consumed-first, the way withdrawal and cancellation credits
+        # do (issue #729). Same reader the cancellation use case uses.
+        charge_basis=MongoOccurrenceCancellationReader(db),
         # Price the delta net of the same recurring tuition discount the
         # monthly generator priced the invoice with (issue #669 review).
         discounts=MongoTuitionDiscountRepository(db),

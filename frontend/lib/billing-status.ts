@@ -23,6 +23,9 @@ const STATUS_ALIASES: Record<string, InvoiceStatus> = {
   waived: "void",
   cancelled: "void",
   expired: "void",
+  // A soft-voided payment (#619) reads as VOID like a voided invoice; the row
+  // itself carries the reason and who voided it.
+  voided: "void",
 };
 
 /** Collapse a raw ledger/payment status onto the UI vocabulary; unknown → "open". */

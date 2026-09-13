@@ -61,7 +61,7 @@ async function stubAcademyAndChildren(page: import("@playwright/test").Page): Pr
           {
             student_id: STUDENT_ID,
             full_name: STUDENT_NAME,
-            status: "active",
+            lifecycle: "active",
             active_session_count: 1,
             attended_count: 5,
             absent_count: 1,

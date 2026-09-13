@@ -1,38 +1,44 @@
 """``EnrollmentBillingTargetReader`` over ``enrollments`` + ``sessions``.
 
-Prices the enrollment through ``session_amount_cents`` and its active recurring
-tuition discount — the same resolution the monthly generator uses — so a
-hand-billed month charges what the automatic run would have charged.
+Prices the enrollment through ``resolve_monthly_charge`` — the monthly
+generator's own resolver — so a hand-billed month charges what the automatic run
+would have charged: first-month proration, the four-classes-per-meeting rule
+(#721/#730), the active recurring tuition discount, and the
+``billing_calculation_snapshots`` row later credits are measured against (#724).
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
 
 from bson import ObjectId
 
 from backend.v2.contexts.billing.application.use_cases.bill_enrollment_period import (
+    BILLABLE_ENROLLMENT_STATUSES,
     EnrollmentBillingTarget,
 )
-from backend.v2.contexts.billing.domain.proration import BillingPeriod
-from backend.v2.contexts.billing.domain.tuition_discount import (
-    display_label,
-    monthly_discount_cents,
-    policy_applies_to_period,
-)
+from backend.v2.contexts.billing.domain.tuition_discount import display_label
 from backend.v2.contexts.billing.infrastructure.mongo_monthly_billing import (
-    session_amount_cents,
+    resolve_monthly_charge,
 )
-from backend.v2.contexts.billing.infrastructure.mongo_tuition_discount_repo import (
-    MongoTuitionDiscountRepository,
+from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
+    MongoPaymentRepository,
 )
 from backend.v2.shared.tenancy import current_academy_id
 
 
 class MongoEnrollmentBillingTargetReader:
-    def __init__(self, db: Any) -> None:
+    def __init__(
+        self, db: Any, *, clock: Callable[[], datetime] = lambda: datetime.now(UTC)
+    ) -> None:
         self._db = db
-        self._discounts = MongoTuitionDiscountRepository(db)
+        self._now = clock
+        # The generator's resolver reads occurrences/discounts and writes the
+        # calculation snapshot through this repo's storage-only methods; sharing it
+        # is what keeps the manual and automatic prices identical.
+        self._charges = MongoPaymentRepository(db, clock=clock)
 
     async def load(self, enrollment_id: str, period: str) -> EnrollmentBillingTarget | None:
         academy_id = current_academy_id()
@@ -63,57 +69,54 @@ class MongoEnrollmentBillingTargetReader:
         if not parent_id:
             return None
 
-        session = await self._db["sessions"].find_one(
-            {"academy_id": academy_id, "session_id": str(enrollment.get("session_id") or "")}
-        )
-        monthly_price_cents = max(session_amount_cents(session or {}), 0)
-        discount_cents, discount_description, discount_id = await self._resolve_discount(
-            enrollment_id=enrollment_id,
-            monthly_price_cents=monthly_price_cents,
-            period=period,
-            timezone_name=str((session or {}).get("timezone") or "America/Chicago"),
-        )
-        return EnrollmentBillingTarget(
+        status = str(enrollment.get("status") or "")
+        base = EnrollmentBillingTarget(
             enrollment_id=enrollment_id,
             academy_id=academy_id,
             student_id=student_id,
             parent_id=parent_id,
-            monthly_price_cents=monthly_price_cents,
-            status=str(enrollment.get("status") or ""),
-            monthly_discount_cents=discount_cents,
-            discount_description=discount_description,
-            discount_id=discount_id,
+            monthly_price_cents=0,
+            status=status,
+        )
+        if status not in BILLABLE_ENROLLMENT_STATUSES:
+            # Resolving the charge stamps a CONSUMED first-month snapshot, which the
+            # monthly run reads as "this month was already charged". Burning it for a
+            # request the use case is about to refuse would zero out the family's real
+            # invoice for the month, so an unbillable enrollment is never priced.
+            return base
+
+        session = await self._db["sessions"].find_one(
+            {"academy_id": academy_id, "session_id": str(enrollment.get("session_id") or "")}
+        )
+        (
+            gross_cents,
+            discount_cents,
+            _net_cents,
+            snapshot_id,
+            discount_policy,
+            tuition_description,
+        ) = await resolve_monthly_charge(
+            repo=self._charges,
+            enrollment=enrollment,
+            session_doc=session or {},
+            period=period,
+            now=self._now(),
+        )
+        return base.model_copy(
+            update={
+                "monthly_price_cents": max(gross_cents, 0),
+                "monthly_discount_cents": max(discount_cents, 0),
+                "discount_description": _discount_description(discount_policy),
+                "discount_id": discount_policy.discount_id if discount_policy else None,
+                "tuition_description": tuition_description,
+                "snapshot_id": snapshot_id,
+            }
         )
 
-    async def _resolve_discount(
-        self,
-        *,
-        enrollment_id: str,
-        monthly_price_cents: int,
-        period: str,
-        timezone_name: str,
-    ) -> tuple[int, str | None, str | None]:
-        """The generator's recurring tuition discount for this enrollment/period.
 
-        Mirrors ``_resolve_charge_for_enrollment``: the active policy is applied at
-        monthly scale when its effective window overlaps the period, so the manual
-        path and the cron agree on what the family owes for the month.
-        """
-        if monthly_price_cents <= 0:
-            return 0, None, None
-        policy = await self._discounts.get_active(enrollment_id)
-        if policy is None:
-            return 0, None, None
-        billing_period = BillingPeriod.from_label(period, timezone_name=timezone_name)
-        if not policy_applies_to_period(
-            policy,
-            period_start=billing_period.start_at.date(),
-            period_end=billing_period.end_at.date(),
-        ):
-            return 0, None, None
-        cents = monthly_discount_cents(policy, monthly_price_cents=monthly_price_cents)
-        if cents <= 0:
-            return 0, None, None
-        label = display_label(policy)
-        description = label if label.lower().endswith("discount") else f"{label} discount"
-        return cents, description, policy.discount_id
+def _discount_description(policy: Any | None) -> str | None:
+    """The discount line's copy, worded as the monthly generator words it."""
+    if policy is None:
+        return None
+    label = display_label(policy)
+    return label if label.lower().endswith("discount") else f"{label} discount"

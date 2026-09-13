@@ -326,6 +326,28 @@ def test_timeline_merges_sources_newest_first_and_mutes_comms() -> None:
     assert by_code["enrollment:paused"]["summary"] == "Hannah paused · resumes Oct 1"
 
 
+def test_timeline_labels_the_send_from_the_persisted_kind() -> None:
+    """Issue #692: what the parent received does not change when autopay does."""
+    facts = _facts(
+        invoices=(
+            _invoice("inv-notice", delivery_kind="autopay_notice", autopay_status="paused"),
+            _invoice("inv-email", delivery_kind="invoice_email", autopay_status="active"),
+        )
+    )
+
+    codes = [e["code"] for e in build_timeline(facts, zone=ZONE) if e["kind"] == "comms"]
+
+    assert sorted(codes) == ["autopay_notice_emailed", "invoice_emailed"]
+
+
+def test_timeline_falls_back_to_autopay_status_for_unkinded_sends() -> None:
+    facts = _facts(invoices=(_invoice("inv-old", delivery_kind=None, autopay_status="active"),))
+
+    codes = [e["code"] for e in build_timeline(facts, zone=ZONE) if e["kind"] == "comms"]
+
+    assert codes == ["autopay_notice_emailed"]
+
+
 def test_timeline_one_entry_per_payment_even_when_it_settles_two_invoices() -> None:
     a = _invoice("inv-a", status="paid", balance=0, allocations=[_alloc(amount=3000)])
     b = _invoice("inv-b", status="paid", balance=0, allocations=[_alloc(amount=3000)])
@@ -442,3 +464,48 @@ def test_view_no_card_means_no_next_charge_and_invite_offered() -> None:
     assert view["header"]["registration"]["state"] == "not_invited"
     assert "send_invite" in view["actions"]
     assert "charge_card" not in view["invoices"][0]["actions"]
+
+
+def test_invoice_payload_delivery_kind_comes_from_the_record_not_the_enrollment() -> None:
+    """Issue #692: the row says what was sent, even after autopay changed."""
+    facts = _facts(
+        invoices=(_invoice("inv-1", delivery_kind="invoice_email", autopay_status="active"),)
+    )
+
+    view = build_family_billing_view(
+        facts, timezone="America/Chicago", generated_at=NOW, today=TODAY
+    )
+
+    assert view["invoices"][0]["delivery"]["kind"] == "invoice"
+
+
+def test_strip_owner_actions_keeps_void_on_an_unsent_draft() -> None:
+    """#726: a plain admin can create a draft, so a plain admin must be able to discard it.
+
+    Every other ``void`` stays owner-only; only the never-sent draft — the
+    manual-invoicing working state, with no money and no parent notified —
+    survives the strip.
+    """
+    draft = _invoice(
+        "inv-draft", status="draft", balance=0, delivery_status="not_sent", last_sent_at=None
+    )
+    view = build_family_billing_view(
+        _facts(invoices=(draft,)), timezone="America/Chicago", generated_at=NOW, today=TODAY
+    )
+    assert view["invoices"][0]["actions"] == ["send", "void"]
+
+    stripped = strip_owner_actions(view)
+
+    assert stripped["invoices"][0]["actions"] == ["send", "void"]
+
+
+def test_strip_owner_actions_drops_void_on_a_draft_that_was_already_sent() -> None:
+    """Belt and braces: a draft carrying a ``last_sent_at`` is not a fresh draft."""
+    draft = _invoice("inv-draft", status="draft", balance=0)  # default last_sent_at is set
+    view = build_family_billing_view(
+        _facts(invoices=(draft,)), timezone="America/Chicago", generated_at=NOW, today=TODAY
+    )
+
+    stripped = strip_owner_actions(view)
+
+    assert stripped["invoices"][0]["actions"] == ["send"]

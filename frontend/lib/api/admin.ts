@@ -9,6 +9,7 @@ import type {
   BillingRulesView,
   UpdateBillingRulesRequest,
 } from "@/lib/billing-rules-form";
+import type { PersonLifecycle } from "@/lib/format/lifecycle-copy";
 
 import { apiFetch } from "./client";
 
@@ -309,7 +310,8 @@ export type PaymentStatus =
   | "partially_refunded"
   | "failed"
   | "expired"
-  | "waived";
+  | "waived"
+  | "voided";
 
 export type AdminPaymentStatus = PaymentStatus | "partially_paid";
 
@@ -342,6 +344,10 @@ export interface AdminPaymentView {
   stripe_invoice_id?: string | null;
   stripe_payment_intent_id?: string | null;
   reconciliation_status?: string | null;
+  /** Soft-void trail (#619); present only on rows the "show voided" filter reveals. */
+  void_reason?: string | null;
+  voided_at?: string | null;
+  voided_by?: string | null;
   created_at: string;
   paid_at?: string | null;
 }
@@ -361,6 +367,8 @@ export interface AdminPaymentListFilters {
   q?: string;
   limit?: number;
   offset?: number;
+  /** Voided payments are hidden unless this is true (#619). */
+  include_voided?: boolean;
 }
 
 export interface AdminPaymentFeedItem {
@@ -719,6 +727,8 @@ export interface CreateStudentInvoiceRequest {
   period: string;
   due_date: string;
   enrollment_id?: string | null;
+  /** One id per dialog submit: a retry lands on the first draft (#727). */
+  request_id?: string;
 }
 
 export interface BillEnrollmentPeriodRequest {
@@ -1304,7 +1314,10 @@ export interface AdminStudentView {
   parent_id: string;
   parent_name: string | null;
   parent_email: string | null;
-  status: string;
+  /** Issue #773: the derived person lifecycle; replaces the dead `status`. */
+  lifecycle: PersonLifecycle;
+  /** Resume / return / end / last-seen date for that state, as an ISO date. */
+  lifecycle_as_of?: string | null;
   /** Active enrollment documents; can exceed active_session_total. */
   active_session_count: number;
   /**
@@ -1323,6 +1336,12 @@ export interface AdminStudentView {
 export interface AdminStudentList {
   students: AdminStudentView[];
   next_cursor: string | null;
+  /**
+   * Issue #773: one count per lifecycle across the WHOLE directory. The
+   * summary tiles used to count the loaded page, so "Paused" read 0 for an
+   * academy with paused students.
+   */
+  lifecycle_counts?: Record<string, number>;
 }
 
 export interface ChangeAdminStudentParentRequest {
@@ -1347,7 +1366,8 @@ export interface AdminStudentParentChangeView {
 
 export interface ListAdminStudentsParams {
   search?: string;
-  status?: string;
+  /** Issue #773: derived lifecycles to keep; empty means every state. */
+  lifecycle?: PersonLifecycle[];
   limit?: number;
   cursor?: string;
 }
@@ -1540,7 +1560,7 @@ export function listAdminStudents(
   const options = isQueryFunctionContext(params) ? {} : params;
   const q = new URLSearchParams();
   if (options.search) q.set("search", options.search);
-  if (options.status) q.set("status", options.status);
+  if (options.lifecycle?.length) q.set("lifecycle", options.lifecycle.join(","));
   if (options.limit) q.set("limit", String(options.limit));
   if (options.cursor) q.set("cursor", options.cursor);
   const suffix = q.toString() ? `?${q.toString()}` : "";
@@ -1967,6 +1987,18 @@ export function applyPaymentDiscount(
 
 export function undoPaymentPaid(paymentId: string): Promise<void> {
   return apiFetch<void>(`/admin/payments/${paymentId}/undo-paid`, { method: "POST" });
+}
+
+/**
+ * Soft-void a test/erroneous payment (#619). Owner-only. Nothing is deleted:
+ * the row keeps its amount and drops out of the list and every money report,
+ * and the invoice it had settled reopens.
+ */
+export function voidPayment(paymentId: string, reason: string): Promise<void> {
+  return apiFetch<void>(`/admin/payments/${paymentId}/void`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
 }
 
 export function reconcileStripeBilling(

@@ -15,6 +15,7 @@ import {
   recordAdminInvoicePayment,
   refundAdminInvoice,
   refundPayment,
+  voidPayment,
   type AdminPaymentView,
   type MonthlyGenerationSkippedDetail,
   type ReconcileStripeBillingRequest,
@@ -47,13 +48,14 @@ export function PaymentActions({
   onRefund,
   onSync,
   onUndo,
+  onVoid,
   undoPending,
 }: {
   payment: AdminPaymentView;
   /**
-   * Owner scope. Discount / Refund / Undo-paid are money governance and 404
-   * for anyone else, so they are not rendered; Mark paid (recording a manual
-   * payment) stays an admin action.
+   * Owner scope. Discount / Refund / Undo-paid / Void are money governance and
+   * 404 for anyone else, so they are not rendered; Mark paid (recording a
+   * manual payment) stays an admin action.
    */
   canGovernMoney: boolean;
   onDiscount: () => void;
@@ -62,6 +64,7 @@ export function PaymentActions({
   onRefund: () => void;
   onSync: () => void;
   onUndo: () => void;
+  onVoid: () => void;
   undoPending: boolean;
 }) {
   const status = adminPaymentStatus(payment);
@@ -71,14 +74,41 @@ export function PaymentActions({
     payment.status === "succeeded" ||
     payment.status === "paid" ||
     payment.status === "partially_refunded";
+  const isVoided = payment.status === "voided";
   // Refund eligibility: must be paid/partial AND have remaining balance
   const refundable = isPaid && payment.refunded_cents < finalCents(payment);
   // Undo eligibility: only manual paid, not Stripe-linked
   const undoable = isPaid && !payment.stripe_linked;
+  // Void eligibility (#619): any ledger payment row that is not already void.
+  // Stripe money that actually settled has to go back through Refund, so the
+  // button is disabled there and says why — the backend refuses it too.
+  const voidBlockedByStripe = isPaid && payment.stripe_linked;
+  if (isVoided) {
+    return (
+      <div className="flex justify-end gap-2">
+        <Button variant="secondary" size="sm" onClick={onInvoice}>Invoice</Button>
+      </div>
+    );
+  }
   return (
     <div className="flex justify-end gap-2">
       <Button variant="secondary" size="sm" onClick={onInvoice}>Invoice</Button>
       <Button variant="secondary" size="sm" onClick={onSync}>Sync</Button>
+      {canGovernMoney && !invoiceRow && (
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={onVoid}
+          disabled={voidBlockedByStripe}
+          title={
+            voidBlockedByStripe
+              ? "Stripe payments that collected money must be refunded"
+              : "Void this payment (kept for audit, hidden from reports)"
+          }
+        >
+          Void
+        </Button>
+      )}
       {isPending && !invoiceRow && (
         <>
           {canGovernMoney ? (
@@ -294,6 +324,68 @@ export function DiscountDialog({
           />
         </Field>
         <DialogActions onCancel={onClose} submitLabel={mutation.isPending ? "Saving…" : "Save"} />
+      </form>
+    </RallyDialog>
+  );
+}
+
+export function VoidPaymentDialog({
+  payment,
+  onClose,
+  onVoided,
+}: {
+  payment: AdminPaymentView | null;
+  onClose: () => void;
+  onVoided: () => void;
+}) {
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const mutation = useMutation({
+    mutationFn: () => voidPayment(payment!.payment_id, reason),
+    onSuccess: () => {
+      setReason("");
+      setError(null);
+      onVoided();
+    },
+    onError: (err: Error) => setError(err.message ?? "Void failed."),
+  });
+
+  return (
+    <RallyDialog
+      open={payment !== null}
+      onOpenChange={(open) => !open && onClose()}
+      overline="Void"
+      title="Void this payment"
+      description={payment ? `${paymentDisplayLabel(payment)} · ${formatCents(finalCents(payment))}` : ""}
+    >
+      <form
+        className="space-y-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          mutation.mutate();
+        }}
+      >
+        {error && <Alert tone="red">{error}</Alert>}
+        <p className="text-sm text-rally-subtle">
+          Nothing is deleted. The payment is kept for the audit trail, stops counting in
+          revenue and deposit reports, and any invoice it settled reopens for its full
+          balance. Use Refund instead if money actually reached Stripe.
+        </p>
+        <Field label="Reason" required>
+          <input
+            type="text"
+            required
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            placeholder="Test payment recorded in error"
+            className={inputClass}
+            data-testid="void-payment-reason"
+          />
+        </Field>
+        <DialogActions
+          onCancel={onClose}
+          submitLabel={mutation.isPending ? "Voiding…" : "Void payment"}
+        />
       </form>
     </RallyDialog>
   );

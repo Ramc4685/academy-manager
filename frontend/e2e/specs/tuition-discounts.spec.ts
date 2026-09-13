@@ -500,6 +500,11 @@ test.describe("tuition discounts", () => {
     await page.route("**/api/v2/admin/families/parent-discounts/billing", (route) =>
       fulfillJson(route, familyBillingWithDiscountedInvoice()),
     );
+    // The family billing page also dates its hand-billing dialogs from this
+    // Billing rule (#739); unmocked it falls through to the real backend.
+    await page.route("**/api/v2/admin/billing/settings/invoice-schedule", (route) =>
+      fulfillJson(route, { billing_day: 1, invoice_due_days: 7 }),
+    );
     await page.goto("/admin/families/parent-discounts");
     await expect(page.getByTestId("family-invoices")).toBeVisible();
     await expect(page.getByTestId("invoice-row-inv-discounts")).toContainText("$96");

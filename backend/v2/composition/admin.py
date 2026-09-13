@@ -46,6 +46,7 @@ from backend.v2.composition.email_adapters import (
     LoginInviteEmailAdapter,
 )
 from backend.v2.composition.event_handlers import install_dunning_notifier
+from backend.v2.composition.invoice_naming import build_invoice_naming_resolver
 from backend.v2.composition.lifecycle_billing import (
     build_autopay_status_gateway,
     build_void_billing_invoice,
@@ -53,6 +54,7 @@ from backend.v2.composition.lifecycle_billing import (
     compose_enrollment_move_billing_sync,
     compose_withdrawal_decision,
 )
+from backend.v2.composition.manual_invoice import create_manual_invoice
 from backend.v2.composition.occurrence_cancellation import compose_cancel_session_occurrence
 from backend.v2.composition.pathway import (
     compose_curriculum,
@@ -177,9 +179,6 @@ from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import 
     PreviewWithdrawalCredit,
 )
 from backend.v2.contexts.billing.domain.billing_audit import BillingAuditEntry
-from backend.v2.contexts.billing.domain.ledger import (
-    LedgerInvoice,
-)
 from backend.v2.contexts.billing.domain.product import Product
 from backend.v2.contexts.billing.infrastructure.admin_reports_read_model import (
     AdminEffectiveRevenueQuery,
@@ -936,7 +935,22 @@ def compose_admin(
         outbox=outbox,
         idempotency_store=idempotency_store,
     )
-    generate_monthly_payments = GenerateMonthlyPayments(payments=payments_repo)
+
+    async def _notify_minted_invoices(period: str) -> None:
+        """Deliver what the run just minted, in the same run (issue #659).
+
+        ``send_generated_invoices`` is bound later in this same function; this
+        body only runs at request time, long after it exists. It owns the
+        autopay split — non-autopay families get the invoice and a pay link,
+        autopay families get the pre-charge notice — so nothing here needs to
+        know the difference.
+        """
+        await send_generated_invoices(period)
+
+    generate_monthly_payments = GenerateMonthlyPayments(
+        payments=payments_repo,
+        notify_minted=_notify_minted_invoices,
+    )
     mark_payment_paid = MarkPaymentPaid(payments=payments_repo)
     apply_payment_discount = ApplyPaymentDiscount(payments=payments_repo)
     undo_payment_paid = UndoPaymentPaid(payments=payments_repo)
@@ -966,7 +980,7 @@ def compose_admin(
 
     # Finance (# FINANCE)
     expenses_repo = MongoExpenseRepository(db)
-    payouts_repo = MongoPayoutRepository(db)
+    payouts_repo = MongoPayoutRepository(db, academy_timezone=academy_timezone_lookup(db))
     payout_periods_repo = MongoPayoutPeriodRepository(db)
     coach_payout_calculator = FinancePayoutCalculator(
         ComputeCoachPayout(
@@ -1115,6 +1129,15 @@ def compose_admin(
             users=MongoUserRepository(db, default_academy_id=academy_id),
             academies=academy_repo,
             sender=_email_sender,
+            # Issue #659: name the student, the class and the tuition month so
+            # two back-to-back months (or two children) never read as one
+            # duplicate charge.
+            naming=build_invoice_naming_resolver(
+                ledger=billing_ledger_repo,
+                db=db,
+                billing_counters=billing_counters_repo,
+                billing_settings=billing_settings_repo,
+            ),
         )
 
     async def send_billing_invoice(invoice_id: str) -> dict[str, Any]:
@@ -1131,6 +1154,12 @@ def compose_admin(
             email=_invoice_email_port(),
             connected_accounts=connected_accounts_repo,
             settings=billing_settings_repo,
+            # Issue #738: an autopay family gets the pre-charge notice, not a
+            # pay link the dunning worker would then double-collect.
+            # ``send_autopay_notice`` is bound later in this same function;
+            # this body only runs at request time, long after it exists.
+            autopay=student_billing_enrollment_repo,
+            notify_autopay=send_autopay_notice if _invoice_email_port() else None,
             success_url=f"{frontend_url}/parent/payments?invoice=paid",
             cancel_url=f"{frontend_url}/parent/payments?invoice=cancelled",
         ).execute(invoice_id, bundle_student_balance=True)
@@ -1141,6 +1170,8 @@ def compose_admin(
             "last_sent_at": result.invoice.last_sent_at,
             "checkout_url": result.checkout_url,
             "checkout_failure_code": result.checkout_failure_code,
+            "autopay_notified": result.autopay_notified,
+            "skipped_autopay": result.skipped_autopay,
         }
 
     async def send_generated_invoices(
@@ -1435,6 +1466,39 @@ def compose_admin(
         ledger=billing_ledger_repo, dunning=dunning_state_repo
     )
 
+    async def void_payment(*, payment_id: str, reason: str, actor_id: str | None) -> None:
+        """Owner void of a test/erroneous payment (#619).
+
+        The repository does the money work — reverse the allocations, give the
+        invoice balance back, stamp the row ``voided`` — and this wrapper adds
+        the accountability half. The audit append happens AFTER the money move,
+        the same order the refund and manual-payment paths use: an audit write
+        that fails must not leave a payment the operator believes was voided.
+        """
+        from backend.v2.shared.tenancy import current_academy_id
+
+        academy_id = current_academy_id()
+        now = datetime.now(UTC)
+        voided = await billing_ledger_repo.void_payment(
+            payment_id, reason=reason, voided_by=actor_id, now=now
+        )
+        await billing_audit_log.append(
+            BillingAuditEntry(
+                audit_id=f"baud-{new_ulid()}",
+                academy_id=academy_id,
+                action="payment_voided",
+                actor_id=actor_id or "system",
+                at=now,
+                payment_id=payment_id,
+                parent_id=voided.parent_id,
+                reason=reason,
+                after={
+                    "status": voided.status,
+                    "amount_cents": voided.amount_cents,
+                },
+            )
+        )
+
     async def record_manual_payment(
         *,
         invoice_id: str,
@@ -1624,42 +1688,34 @@ def compose_admin(
         student_id: str,
         parent_id: str,
         period: str,
-        due_date: date,
+        due_date: date | None,
         enrollment_id: str | None,
+        actor_id: str | None = None,
+        request_id: str | None = None,
     ) -> dict[str, Any]:
         from backend.v2.shared.tenancy import current_academy_id
 
-        now = datetime.now(UTC)
-        invoice_id = f"inv-{new_ulid()}"
-        invoice = LedgerInvoice(
-            invoice_id=invoice_id,
+        # Idempotency + the audit append live in composition/manual_invoice.py:
+        # admin.py is at its wiring line budget (#727).
+        return await create_manual_invoice(
+            ledger=billing_ledger_repo,
+            settings_repo=billing_settings_repo,
+            audit_log=billing_audit_log,
             academy_id=current_academy_id(),
-            parent_id=parent_id,
             student_id=student_id,
-            enrollment_id=enrollment_id,
+            parent_id=parent_id,
             period=period,
-            status="draft",
-            subtotal_cents=0,
-            discount_cents=0,
-            total_cents=0,
-            balance_due_cents=0,
-            currency="usd",
             due_date=due_date,
-            created_at=now,
-            updated_at=now,
+            enrollment_id=enrollment_id,
+            actor_id=actor_id,
+            request_id=request_id,
         )
-        created = await billing_ledger_repo.create_invoice(
-            invoice,
-            lines=[],
-            idempotency_key=f"admin-invoice-{invoice_id}",
-        )
-        return created.model_dump(mode="json")
 
     async def bill_enrollment_period(
         *,
         enrollment_id: str,
         period: str,
-        due_date: date,
+        due_date: date | None,
         actor_id: str | None = None,
     ) -> dict[str, Any]:
         from backend.v2.shared.tenancy import current_academy_id
@@ -1672,6 +1728,7 @@ def compose_admin(
                 counters=billing_counters_repo,
                 settings=billing_settings_repo,
             ),
+            settings=billing_settings_repo,
         ).execute(
             BillEnrollmentPeriodCommand(
                 enrollment_id=enrollment_id,
@@ -2982,7 +3039,7 @@ def compose_admin(
             )
         return rows
 
-    async def list_payments_recent(fetch_cap: int = 200):
+    async def list_payments_recent(fetch_cap: int = 200, *, include_voided: bool = False):
         from backend.v2.shared.tenancy import current_academy_id
 
         fetch_cap = max(1, min(int(fetch_cap), 1000))
@@ -3152,6 +3209,11 @@ def compose_admin(
                 # Settled an invoice: keep the invoice row, carry the facts over.
                 _settle_invoice_rows(payment_keys, doc)
                 continue
+            if str(doc.get("status") or "") == "voided" and not include_voided:
+                # Hidden, but its keys were registered above on purpose: a legacy
+                # `payments` row shadowing this ledger payment must still be
+                # deduplicated away, or voiding one would resurrect the other.
+                continue
             ledger_rows.append(
                 {
                     "payment_id": str(doc.get("payment_id") or ""),
@@ -3170,6 +3232,9 @@ def compose_admin(
                         stripe_payment_intent_id or stripe_invoice_id or stripe_checkout_session_id
                     ),
                     "payment_method": settlement_method(doc),
+                    "void_reason": doc.get("void_reason"),
+                    "voided_at": doc.get("voided_at"),
+                    "voided_by": doc.get("voided_by"),
                     "created_at": doc["created_at"],
                     "paid_at": doc.get("paid_at"),
                 }
@@ -3268,10 +3333,11 @@ def compose_admin(
         q: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        include_voided: bool = False,
     ) -> dict[str, Any]:
         date_from = _ensure_utc(date_from)
         date_to = _ensure_utc(date_to)
-        rows = await list_payments_recent(fetch_cap=1000)
+        rows = await list_payments_recent(fetch_cap=1000, include_voided=include_voided)
         rows = await _enrich_parent_names(rows)
         for row in rows:
             row["paid_at"] = _effective_paid_at(row)
@@ -4182,6 +4248,7 @@ def compose_admin(
         add_invoice_line=add_invoice_line,
         remove_invoice_line=remove_invoice_line,
         void_billing_invoice=void_billing_invoice,
+        void_payment=void_payment,
         record_manual_payment=record_manual_payment,
         issue_invoice_refund=issue_invoice_refund,
         list_billing_audit=list_billing_audit,

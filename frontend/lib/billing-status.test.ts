@@ -21,6 +21,8 @@ describe("normalizeInvoiceStatus", () => {
     ["waived", "void"],
     ["cancelled", "void"],
     ["expired", "void"],
+    // #619: a soft-voided payment reads as VOID, like a voided invoice.
+    ["voided", "void"],
   ] as const)("maps %s to %s", (raw, expected) => {
     expect(normalizeInvoiceStatus(raw)).toBe(expected);
   });
@@ -53,6 +55,7 @@ describe("invoiceStatusChip", () => {
     ["waived", { variant: "waived", label: "VOID" }],
     ["cancelled", { variant: "waived", label: "VOID" }],
     ["expired", { variant: "waived", label: "VOID" }],
+    ["voided", { variant: "waived", label: "VOID" }],
   ] as const)("chips %s", (raw, expected) => {
     expect(invoiceStatusChip(raw)).toEqual(expected);
   });
@@ -96,6 +99,7 @@ describe("status filter vocabulary", () => {
     ["void", "waived", true],
     ["void", "cancelled", true],
     ["void", "expired", true],
+    ["void", "voided", true],
     ["void", "succeeded", false],
     ["partially_paid", "partially_paid", true],
     ["partially_paid", "paid", false],

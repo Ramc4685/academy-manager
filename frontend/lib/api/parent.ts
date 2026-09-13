@@ -1,3 +1,5 @@
+import type { PersonLifecycle } from "@/lib/format/lifecycle-copy";
+
 import { apiFetch } from "./client";
 import type { SkillStatus } from "./curriculum";
 
@@ -101,7 +103,10 @@ export interface EnrollmentQuote {
 export interface ParentChild {
   student_id: string;
   full_name: string;
-  status: string;
+  /** Issue #773: the derived lifecycle; replaces the dead `status` field. */
+  lifecycle: PersonLifecycle;
+  /** ISO calendar date the state points at (resume, return, end); may be null. */
+  lifecycle_as_of?: string | null;
   active_session_count: number;
   /** Issue #740: enrollments on hold — counted apart from the active ones. */
   held_session_count?: number;
@@ -326,8 +331,11 @@ export function openBillingPortal(payload: {
 export function getCheckoutStatus(checkoutSessionId: string): Promise<{
   checkout_session_id: string;
   payment_id: string | null;
+  /** "processing" == Stripe took the money, our webhook has not landed yet. */
   status: string;
   parent_id: string;
+  /** Invoices this checkout is settling (issue #635). */
+  invoice_ids?: string[];
 }> {
   return apiFetch(`/parent/checkout/status/${checkoutSessionId}`, {
     method: "GET",

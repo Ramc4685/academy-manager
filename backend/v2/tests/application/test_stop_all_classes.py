@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from backend.v2.contexts.communications.application.ports import ResolvedRecipient
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import WithdrawEnrollment
 from backend.v2.contexts.enrollment.application.use_cases.leaving_report import (
     GetLeavingReport,
@@ -19,13 +20,31 @@ from backend.v2.contexts.enrollment.application.use_cases.stop_all_classes impor
     StopAllClassesCommand,
 )
 from backend.v2.contexts.enrollment.domain.models import Student
+from backend.v2.shared.tenancy import tenant_scope
 from backend.v2.tests.fixtures.enrollment_fakes import (
     FakeBillingSync,
     FakeEnrollmentEvents,
     FakeEnrollmentWriter,
+    FakeHoldNotifier,
     FakeSessionWriter,
+    FakeStudentsWithParent,
     make_enrollment,
     make_session,
+)
+from backend.v2.tests.unit.test_roster_alert_adapter import (
+    FakeAudiences as _AdapterAudiences,
+)
+from backend.v2.tests.unit.test_roster_alert_adapter import (
+    FakeSender as _AdapterSender,
+)
+from backend.v2.tests.unit.test_roster_alert_adapter import (
+    FakeSessions as _AdapterSessions,
+)
+from backend.v2.tests.unit.test_roster_alert_adapter import (
+    _adapter as _build_adapter,
+)
+from backend.v2.tests.unit.test_roster_alert_adapter import (
+    _session as _adapter_session,
 )
 
 
@@ -66,17 +85,26 @@ class _FakeStudentQuery:
         return [self.students[sid] for sid in student_ids if sid in self.students]
 
 
-def _withdraw(writer: FakeEnrollmentWriter, sessions: FakeSessionWriter, billing_sync, events):
+def _withdraw(
+    writer: FakeEnrollmentWriter,
+    sessions: FakeSessionWriter,
+    billing_sync,
+    events,
+    *,
+    roster_notifier=None,
+    notifier=None,
+):
     return WithdrawEnrollment(
         enrollments=writer,
         enrollment_events=events,
         billing=None,
-        roster_notifier=None,
+        roster_notifier=roster_notifier,
         billing_sync=billing_sync,
         sessions=sessions,
         outbox=None,
         occurrence_roster=None,
         scheduled_actions=None,
+        notifier=notifier,
         clock=lambda: datetime(2026, 9, 9, tzinfo=UTC),
     )
 
@@ -273,3 +301,60 @@ def _make_lifecycle_event(**kwargs):
     }
     defaults.update(kwargs)
     return EnrollmentLifecycleEvent(**defaults)
+
+
+@pytest.mark.asyncio
+async def test_stop_all_classes_sends_one_family_email_per_dropped_row():
+    """Issue #772: Stop all classes composes WithdrawEnrollment per row, so it
+    inherits the Drop's notification contract — one family email per dropped
+    enrollment, plus the untouched coach/staff roster alert."""
+    writer = FakeEnrollmentWriter(
+        rows={
+            "e1": make_enrollment("e1", student_id="stu-1", session_id="s1", status="active"),
+            "e2": make_enrollment("e2", student_id="stu-1", session_id="s2", status="active"),
+        }
+    )
+    sessions = FakeSessionWriter(sessions={"s1": make_session("s1"), "s2": make_session("s2")})
+    sender = _AdapterSender()
+    adapter = _build_adapter(
+        sessions=_AdapterSessions(
+            rows={"s1": _adapter_session("s1"), "s2": _adapter_session("s2")}
+        ),
+        audiences=_AdapterAudiences(
+            coaches={
+                "s1": [ResolvedRecipient(user_id="coach-1", email="coach@x.com")],
+                "s2": [ResolvedRecipient(user_id="coach-2", email="coach2@x.com")],
+            },
+            users={"par-1": ResolvedRecipient(user_id="par-1", email="parent@x.com")},
+        ),
+        sender=sender,
+        students=FakeStudentsWithParent(),
+    )
+    notifier = FakeHoldNotifier()
+    withdraw = _withdraw(
+        writer,
+        sessions,
+        FakeBillingSync(),
+        FakeEnrollmentEvents(),
+        roster_notifier=adapter,
+        notifier=notifier,
+    )
+    use_case = StopAllClasses(enrollments=_FakeDepartableQuery(writer=writer), withdraw=withdraw)
+
+    with tenant_scope("acad"):
+        result = await use_case.execute(
+            StopAllClassesCommand(
+                student_id="stu-1",
+                effective_at=datetime(2026, 9, 9, tzinfo=UTC),
+                outcome="adjustment",
+                reason="Family moved away",
+                actor_id="admin-1",
+            )
+        )
+
+    assert result.dropped_count == 2
+    # One family notice per dropped row — and none of them from the roster path.
+    assert {c["enrollment_id"] for c in notifier.dropped_calls} == {"e1", "e2"}
+    assert [row["user_id"] for row in sender.sent if row["user_id"] == "par-1"] == []
+    # Each session's coach still hears about their own roster change.
+    assert [row["user_id"] for row in sender.sent] == ["coach-1", "coach-2"]

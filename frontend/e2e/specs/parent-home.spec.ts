@@ -340,7 +340,7 @@ test.describe("parent home — Progress deep link", () => {
       children: [AVA, BO].map((child) => ({
         student_id: child.student_id,
         full_name: child.full_name,
-        status: "active",
+        lifecycle: "active",
         active_session_count: 1,
         attended_count: 0,
         absent_count: 0,

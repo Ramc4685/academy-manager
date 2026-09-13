@@ -22,14 +22,18 @@ from backend.v2.contexts.enrollment.domain.models import Session, Student
 #: Every event type that represents a departure (a class stopped happening
 #: for a student), for the purposes of this report. ``withdrawn`` is what
 #: ``WithdrawEnrollment`` (the single- and stop-all-classes Drop path)
-#: actually records today; ``dropped``/``deleted`` are reserved by #697 for a
-#: future Delete use case and are included so this report needs no change
-#: when that lands. ``hold_reclaimed``/``hold_expired``/``hold_reclaim_orphaned``
-#: are the system-initiated departures from the hold/reclaim machinery.
+#: actually records today; ``removed`` is what the admin Delete-enrollment
+#: route (``DELETE /enrollments/{id}``, ``CancelEnrollmentCommand``) records
+#: (#744); ``dropped`` is the Drop/withdraw-all path's rename (#697);
+#: ``deleted`` covers session-cancellation cascades and the legacy default
+#: cancel event_type. ``hold_reclaimed``/``hold_expired``/
+#: ``hold_reclaim_orphaned`` are the system-initiated departures from the
+#: hold/reclaim machinery.
 DEPARTURE_EVENT_TYPES: frozenset[str] = frozenset(
     {
         "withdrawn",
         "dropped",
+        "removed",
         "hold_reclaimed",
         "hold_expired",
         "hold_reclaim_orphaned",

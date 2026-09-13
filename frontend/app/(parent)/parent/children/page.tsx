@@ -38,6 +38,7 @@ import {
   isHeldEnrollment,
   partitionByHold,
 } from "@/lib/format/hold-copy";
+import { lifecycleLabel } from "@/lib/format/lifecycle-copy";
 
 // Avatar gradients are shared with the kid-first Home cards so the same child
 // wears the same colour on both screens (lib/avatar-gradient.ts).
@@ -133,9 +134,15 @@ function ChildCard({
   const absentCount = attendance.filter((r) => r.status === "absent").length;
   // #740: a held enrollment keeps its seat but produces no sessions. Dropping
   // it here is what made the class vanish from this card with no explanation.
-  const { active: activeEnrollments, held: heldEnrollments } = partitionByHold(enrollments);
+  const {
+    active: activeEnrollments,
+    held: heldEnrollments,
+    other: otherEnrollments,
+  } = partitionByHold(enrollments);
   const holdNote = holdScheduleNote(heldEnrollments);
-  const listedEnrollments = [...activeEnrollments, ...heldEnrollments];
+  // #773: `other` is the paused row this card used to drop on the floor. A
+  // paused class is still the family's class; it just is not running yet.
+  const listedEnrollments = [...activeEnrollments, ...heldEnrollments, ...otherEnrollments];
 
   return (
     <article className="rounded-2xl overflow-hidden border border-rally-line bg-white animate-fade-in-up transition-all duration-200 hover:shadow-lg">
@@ -146,9 +153,16 @@ function ChildCard({
         </div>
         <div className="flex-1 min-w-0">
           <h2 className="font-bold text-white text-[15px] tracking-tight truncate">{child.full_name}</h2>
-          <span className="inline-block mt-1 text-xs font-semibold px-2 py-0.5 rounded-full bg-white/20 text-white">
-            {child.status}
-          </span>
+          {/* Issue #773: the derived lifecycle and its date, not the dead
+              students.status field this card used to print. */}
+          {lifecycleLabel(child.lifecycle, child.lifecycle_as_of) && (
+            <span
+              data-testid={`child-lifecycle-${child.student_id}`}
+              className="inline-block mt-1 text-xs font-semibold px-2 py-0.5 rounded-full bg-white/20 text-white"
+            >
+              {lifecycleLabel(child.lifecycle, child.lifecycle_as_of)}
+            </span>
+          )}
         </div>
         <div className="flex gap-3 shrink-0 text-center">
           <div>
