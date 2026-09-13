@@ -81,7 +81,7 @@ async def test_concurrent_invoice_creation_across_many_parents_has_no_collisions
 
     seqs = sorted(int(n.rsplit("-", 1)[1]) for n in numbers)
     assert seqs == list(range(1, 251)), "sequence must be monotonic with no gaps or dupes"
-    assert all(n.startswith("BLNO-202606-") for n in numbers)
+    assert all(n.startswith("BLNO-2026-06-") for n in numbers)
 
 
 async def test_invoice_numbering_resets_across_months(db, acad) -> None:
@@ -115,9 +115,9 @@ async def test_invoice_numbering_resets_across_months(db, acad) -> None:
         )
     )
 
-    assert june.invoice.invoice_number == "BLNO-202606-001"
-    assert july.invoice.invoice_number == "BLNO-202607-001"
-    assert june_2.invoice.invoice_number == "BLNO-202606-002"
+    assert june.invoice.invoice_number == "BLNO-2026-06-0001"
+    assert july.invoice.invoice_number == "BLNO-2026-07-0001"
+    assert june_2.invoice.invoice_number == "BLNO-2026-06-0002"
 
 
 async def test_invoice_numbering_isolated_across_academies(db, acad, other_acad) -> None:
@@ -163,10 +163,10 @@ async def test_invoice_numbering_isolated_across_academies(db, acad, other_acad)
     finally:
         _tv.reset(token)
 
-    assert first_a.invoice.invoice_number == "BLNO-202606-001"
-    assert second_a.invoice.invoice_number == "BLNO-202606-002"
+    assert first_a.invoice.invoice_number == "BLNO-2026-06-0001"
+    assert second_a.invoice.invoice_number == "BLNO-2026-06-0002"
     # Other academy's sequence starts fresh at 1 — no leakage from academy A.
-    assert first_b.invoice.invoice_number == "BLNO-202606-001"
+    assert first_b.invoice.invoice_number == "BLNO-2026-06-0001"
 
 
 async def test_invoice_numbering_uses_academys_configured_prefix(db, acad) -> None:
@@ -184,4 +184,4 @@ async def test_invoice_numbering_uses_academys_configured_prefix(db, acad) -> No
         )
     )
 
-    assert result.invoice.invoice_number == "ACAD-202606-001"
+    assert result.invoice.invoice_number == "ACAD-2026-06-0001"

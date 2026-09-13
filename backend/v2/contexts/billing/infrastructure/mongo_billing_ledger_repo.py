@@ -801,6 +801,14 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         expected_version = int(getattr(invoice, "version", 0) or 0)
         doc = _mongo_doc(invoice)
         set_fields = {k: v for k, v in doc.items() if k not in ("academy_id", "version")}
+        # ``invoice_number`` is write-once: once a parent has been shown a
+        # number it must never be taken away or changed. A caller holding an
+        # invoice read *before* it was numbered (the send path reads, emails —
+        # which lazily numbers legacy invoices — then records delivery) would
+        # otherwise $set it back to null without tripping the version guard,
+        # because clearing it does not change ``version``. Issue #659.
+        if set_fields.get("invoice_number") is None:
+            set_fields.pop("invoice_number", None)
 
         existing = await self.collection.find_one(
             {"academy_id": academy_id, "invoice_id": invoice.invoice_id},

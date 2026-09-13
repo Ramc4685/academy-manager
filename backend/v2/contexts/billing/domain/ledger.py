@@ -141,13 +141,17 @@ class LedgerAllocationResult(BaseModel):
 
 
 def format_invoice_number(*, prefix: str, yyyymm: str, seq: int) -> str:
-    """Format a human-facing invoice number: ``{prefix}-{yyyymm}-{seq:03d}``.
+    """Format a human-facing invoice number: ``{prefix}-{YYYY}-{MM}-{seq:04d}``.
+
+    Owner decision 2026-09-12 (issue #659): the tuition month must be readable
+    at a glance, so the period is split (``BLNO-2026-09-0042``) rather than run
+    together as ``BLNO-202609-042`` — parents read the dashed form as a date.
 
     Pure formatting only — the caller supplies the already-minted, race-safe
     sequence value (from ``MongoBillingCounterRepository.next_value``) and the
     tenant's configured prefix (from ``BillingSettings.invoice_number_prefix``).
-    ``seq`` is zero-padded to 3 digits but never truncated: sequences beyond
-    999 simply widen the field (e.g. ``BLNO-202606-1234``) rather than
+    ``seq`` is zero-padded to 4 digits but never truncated: sequences beyond
+    9999 simply widen the field (e.g. ``BLNO-2026-06-12345``) rather than
     wrapping or colliding with an earlier number.
     """
     if not prefix:
@@ -156,7 +160,62 @@ def format_invoice_number(*, prefix: str, yyyymm: str, seq: int) -> str:
         raise ValueError("yyyymm must be 6 digits (YYYYMM)")
     if seq <= 0:
         raise ValueError("seq must be positive")
-    return f"{prefix}-{yyyymm}-{seq:03d}"
+    return f"{prefix}-{yyyymm[:4]}-{yyyymm[4:]}-{seq:04d}"
+
+
+#: Month names, indexed 1-12. Spelled out rather than taken from ``strftime``
+#: so the rendering never depends on the process locale — a parent-facing
+#: email must say "September 2026" on every host.
+_MONTH_NAMES = (
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+)
+
+
+def format_tuition_month(period: str) -> str:
+    """Render a ``YYYY-MM`` billing period as ``"September 2026"`` (issue #659).
+
+    Every parent-facing surface says which month's tuition it is, in words: the
+    2026-09-05 incident was nine families reading "$70.00 ... for 2026-09" as a
+    duplicate of the August charge they had just paid. An unparseable period
+    degrades to the raw string rather than raising — a malformed period must
+    never be the reason a parent's invoice is not delivered.
+    """
+    text = (period or "").strip()
+    year, _, month = text.partition("-")
+    if len(year) == 4 and year.isdigit() and len(month) == 2 and month.isdigit():
+        index = int(month)
+        if 1 <= index <= 12:
+            return f"{_MONTH_NAMES[index - 1]} {year}"
+    return text
+
+
+def format_session_label(
+    *,
+    name: str | None,
+    days_of_week: list[str] | tuple[str, ...] | None = None,
+    start_time: str | None = None,
+) -> str | None:
+    """A compact class label for emails, e.g. ``"Mon/Wed 18:00 Junior Badminton"``.
+
+    Two children in one family are billed separately (issue #659: a parent paid
+    $120 for one child and was auto-charged $70 for the other on the same
+    weekend); naming the class is what lets them tell the two invoices apart.
+    Returns ``None`` when there is nothing worth showing.
+    """
+    days = "/".join(str(d).strip() for d in (days_of_week or []) if str(d).strip())
+    parts = [part for part in (days, (start_time or "").strip(), (name or "").strip()) if part]
+    return " ".join(parts) or None
 
 
 def allocate_payment_to_invoice(

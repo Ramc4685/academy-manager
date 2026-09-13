@@ -20,6 +20,9 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
     GenerateMonthlyPaymentsResult,
     MonthlyGenerationSkippedDetail,
 )
+from backend.v2.contexts.billing.application.use_cases.invoice_numbering import (
+    mint_invoice_number,
+)
 from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
 from backend.v2.contexts.billing.domain.ledger import InvoiceLine, LedgerInvoice
 from backend.v2.contexts.billing.domain.models import AppliedCreditState
@@ -40,6 +43,9 @@ from backend.v2.contexts.billing.domain.tuition_discount import (
     display_label,
     monthly_discount_cents,
     policy_applies_to_period,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_billing_counter_repo import (
+    MongoBillingCounterRepository,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo import (
     MongoBillingSettingsRepository,
@@ -259,6 +265,50 @@ class MongoMonthlyBillingGenerator:
             metadata={"compatibility": "missing deferral metadata"},
         )
 
+    async def _mint_invoice_number(
+        self,
+        *,
+        ledger_repo: Any,
+        invoice_id: str,
+        academy_id: str,
+        period: str,
+    ) -> str | None:
+        """Allocate this invoice's parent-facing number (issue #659).
+
+        The monthly batch mints the great majority of invoices, so until it
+        called this the number parents saw was the internal slug. Two rules
+        keep it safe inside an idempotent generation run:
+
+        * **Never renumber.** A re-run (catch-up tick, orphan repair) reuses
+          the deterministic ``invoice_id``; if that invoice already carries a
+          number we return it instead of burning a second counter value.
+        * **Never block the money.** Numbering is presentation. A missing
+          ``billing_settings`` doc or an unreachable counter degrades to
+          ``None`` — the same state every pre-#659 invoice is already in, and
+          one the display path back-fills lazily — rather than failing the
+          run and leaving a family unbilled.
+        """
+        try:
+            existing = await ledger_repo.get_invoice(invoice_id)
+        except Exception:
+            existing = None
+        if existing is not None and existing.invoice_number:
+            return str(existing.invoice_number)
+        try:
+            return await mint_invoice_number(
+                billing_counters=MongoBillingCounterRepository(self._db),
+                billing_settings=MongoBillingSettingsRepository(self._db),
+                academy_id=academy_id,
+                period=period,
+            )
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "monthly_generation_invoice_number_unmintable; invoice left unnumbered",
+                extra={"invoice_id": invoice_id, "period": period},
+                exc_info=True,
+            )
+            return None
+
     async def _dual_write_ledger_invoice(
         self,
         *,
@@ -290,9 +340,13 @@ class MongoMonthlyBillingGenerator:
         # dunning ladder's first autopay attempt fires on the due date, even
         # when a period is generated late or backfilled by an admin.
         due_date = now.date() + timedelta(days=self._invoice_due_days)
+        invoice_number = await self._mint_invoice_number(
+            ledger_repo=ledger_repo, invoice_id=invoice_id, academy_id=academy_id, period=period
+        )
 
         invoice = LedgerInvoice(
             invoice_id=invoice_id,
+            invoice_number=invoice_number,
             academy_id=academy_id,
             parent_id=parent_id,
             student_id=student_id or None,

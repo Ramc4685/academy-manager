@@ -46,6 +46,7 @@ from backend.v2.composition.email_adapters import (
     LoginInviteEmailAdapter,
 )
 from backend.v2.composition.event_handlers import install_dunning_notifier
+from backend.v2.composition.invoice_naming import build_invoice_naming_resolver
 from backend.v2.composition.lifecycle_billing import (
     build_autopay_status_gateway,
     build_void_billing_invoice,
@@ -934,7 +935,22 @@ def compose_admin(
         outbox=outbox,
         idempotency_store=idempotency_store,
     )
-    generate_monthly_payments = GenerateMonthlyPayments(payments=payments_repo)
+
+    async def _notify_minted_invoices(period: str) -> None:
+        """Deliver what the run just minted, in the same run (issue #659).
+
+        ``send_generated_invoices`` is bound later in this same function; this
+        body only runs at request time, long after it exists. It owns the
+        autopay split — non-autopay families get the invoice and a pay link,
+        autopay families get the pre-charge notice — so nothing here needs to
+        know the difference.
+        """
+        await send_generated_invoices(period)
+
+    generate_monthly_payments = GenerateMonthlyPayments(
+        payments=payments_repo,
+        notify_minted=_notify_minted_invoices,
+    )
     mark_payment_paid = MarkPaymentPaid(payments=payments_repo)
     apply_payment_discount = ApplyPaymentDiscount(payments=payments_repo)
     undo_payment_paid = UndoPaymentPaid(payments=payments_repo)
@@ -1113,6 +1129,15 @@ def compose_admin(
             users=MongoUserRepository(db, default_academy_id=academy_id),
             academies=academy_repo,
             sender=_email_sender,
+            # Issue #659: name the student, the class and the tuition month so
+            # two back-to-back months (or two children) never read as one
+            # duplicate charge.
+            naming=build_invoice_naming_resolver(
+                ledger=billing_ledger_repo,
+                db=db,
+                billing_counters=billing_counters_repo,
+                billing_settings=billing_settings_repo,
+            ),
         )
 
     async def send_billing_invoice(invoice_id: str) -> dict[str, Any]:

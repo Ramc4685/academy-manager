@@ -265,7 +265,7 @@ async def test_invoice_paid_for_session_type_subscription_mints_invoice_number()
         "test_signature",
     )
 
-    assert ledger.invoices["ledger-in_555"].invoice_number == "ACAD-202605-001"
+    assert ledger.invoices["ledger-in_555"].invoice_number == "ACAD-2026-05-0001"
 
 
 @pytest.mark.asyncio
