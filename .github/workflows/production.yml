@@ -57,6 +57,7 @@ jobs:
       frontend: ${{ steps.filter.outputs.frontend }}
       ci: ${{ steps.filter.outputs.ci }}
       e2e: ${{ steps.filter.outputs.e2e }}
+      scripts: ${{ steps.filter.outputs.scripts }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -76,6 +77,8 @@ jobs:
               - '.github/**'
             e2e:
               - 'frontend/e2e/**'
+            scripts:
+              - 'scripts/**'
 
   backend:
     name: Backend
@@ -417,6 +420,7 @@ jobs:
       needs.changes.outputs.backend == 'true' ||
       needs.changes.outputs.frontend == 'true' ||
       needs.changes.outputs.ci == 'true' ||
+      needs.changes.outputs.scripts == 'true' ||
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'push'
     # No `services: mongo:` container here (unlike the `backend` job): GH
@@ -545,6 +549,51 @@ jobs:
         if: always()
         run: scripts/local_test_stack.sh stop
 
+  # Guards scripts/** (#535): local_test_stack.sh, production_smoke.sh, and
+  # publish_release.py previously merged unvalidated and only failed at
+  # deploy/release time because no path filter or job covered scripts/**.
+  scripts-validate:
+    name: Scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [changes]
+    if: >
+      needs.changes.outputs.scripts == 'true' ||
+      needs.changes.outputs.ci == 'true' ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push'
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Shellcheck scripts/**/*.sh
+        run: find scripts -name '*.sh' -print0 | xargs -0 shellcheck -S error
+
+      - name: Byte-compile scripts/**/*.py
+        run: |
+          find scripts -name '*.py' -print0 | xargs -0 -n1 python3 -m py_compile
+
+      - name: Install actionlint
+        run: |
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+
+      - name: Validate workflow YAML
+        run: ./actionlint .github/workflows/*.yml
+
+      # scripts/dev/tests/test_release_automation.py is not wired in here: it
+      # currently has a pre-existing failing assertion unrelated to #535
+      # (reproduced identically on main), so gating on it would newly block
+      # every scripts/** PR on an out-of-scope bug. Fix it separately, then
+      # add `python3 -m pytest scripts/dev/tests -q` to this job.
+
   # Guards the pre-push hook's tier classifier (#481). Always runs (no path
   # filter): scripts/** is not covered by any changes filter, and the test
   # takes seconds.
@@ -576,6 +625,7 @@ jobs:
         frontend-e2e-chromium,
         frontend-e2e-chromium-desktop,
         frontend-e2e-real-auth,
+        scripts-validate,
         hook-tests,
       ]
     if: always()
