@@ -87,10 +87,10 @@ test.describe("admin students", () => {
       const url = new URL(route.request().url());
       requests.push(url.search);
       const search = url.searchParams.get("search") ?? "";
-      const status = url.searchParams.get("status") ?? "";
+      const lifecycle = url.searchParams.get("lifecycle") ?? "";
       const cursor = url.searchParams.get("cursor") ?? "";
 
-      if (status === "paused") {
+      if (lifecycle === "paused") {
         return fulfillJson(route, {
           students: [
             {
@@ -99,7 +99,8 @@ test.describe("admin students", () => {
               parent_id: "parent-paused",
               parent_name: "Rina Paused",
               parent_email: "rina@example.com",
-              status: "paused",
+              lifecycle: "paused",
+              lifecycle_as_of: "2026-11-01",
               active_session_count: 0,
               last_seen_at: null,
               attendance_rate: null,
@@ -119,7 +120,7 @@ test.describe("admin students", () => {
               parent_id: "parent-zara",
               parent_name: "Aakash Khan",
               parent_email: "aakash@example.com",
-              status: "active",
+              lifecycle: "active",
               active_session_count: 1,
               last_seen_at: "2026-05-12T15:00:00Z",
               attendance_rate: 0.72,
@@ -139,7 +140,7 @@ test.describe("admin students", () => {
               parent_id: "parent-3",
               parent_name: "Nisha Shah",
               parent_email: "nisha@example.com",
-              status: "inactive",
+              lifecycle: "left",
               active_session_count: 0,
               last_seen_at: null,
               attendance_rate: null,
@@ -158,7 +159,7 @@ test.describe("admin students", () => {
             parent_id: "parent-1",
             parent_name: "Rohan Rao",
             parent_email: "rohan@example.com",
-            status: "active",
+            lifecycle: "active",
             active_session_count: 2,
             last_seen_at: "2026-05-18T15:00:00Z",
             attendance_rate: 0.91,
@@ -170,7 +171,7 @@ test.describe("admin students", () => {
             parent_id: "parent-2",
             parent_name: "Min Chen",
             parent_email: "min@example.com",
-            status: "active",
+            lifecycle: "active",
             active_session_count: 1,
             last_seen_at: "2026-05-17T15:00:00Z",
             attendance_rate: 0.5,
@@ -198,9 +199,13 @@ test.describe("admin students", () => {
     expect(requests.at(-1)).toContain("search=zara");
     expect(requests.at(-1)).not.toContain("cursor=");
 
-    await page.getByRole("button", { name: /^paused/i }).click();
+    await page.getByTestId("admin-students-filter-paused").click();
     await expect(page.getByTestId("admin-students-row-student-paused")).toContainText("Maya Paused");
-    expect(requests.at(-1)).toContain("status=paused");
+    // Issue #773: the derived lifecycle and its resume date, on one chip.
+    await expect(page.getByTestId("admin-students-row-student-paused")).toContainText(
+      "PAUSED until Nov 1, 2026",
+    );
+    expect(requests.at(-1)).toContain("lifecycle=paused");
     expect(requests.at(-1)).not.toContain("cursor=");
     expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
   });
@@ -214,6 +219,14 @@ test.describe("admin students", () => {
     });
 
     await page.goto("/admin/students");
+    // Issue #773: the directory opens on the "operational" lifecycle filter,
+    // not "Everyone" — a zero-result page under that default filter is
+    // truthfully "no matches", not "no students registered".
+    await expect(page.getByTestId("admin-students-empty")).toContainText(
+      "No students match those filters.",
+    );
+
+    await page.getByTestId("admin-students-filter-all").click();
     await expect(page.getByTestId("admin-students-empty")).toContainText("No students registered yet.");
   });
 
@@ -241,7 +254,7 @@ test.describe("admin students", () => {
       parent_name: "Rohan Rao",
       parent_email: "rohan@example.com",
       parent_phone: "555-0101",
-      status: "active",
+      lifecycle: "active",
       active_session_count: 1,
       last_seen_at: "2026-05-18T15:00:00Z",
       attendance_rate: 0.91,

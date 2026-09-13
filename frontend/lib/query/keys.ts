@@ -41,12 +41,12 @@ export const queryKeys = {
       ["admin", "sessions", "coach", coachId] as const,
     users: (role?: string) => ["admin", "users", role ?? "all"] as const,
     userDetail: (userId: string) => ["admin", "user", userId] as const,
-    students: (params?: { search?: string; status?: string; limit?: number }) =>
+    students: (params?: { search?: string; lifecycle?: string; limit?: number }) =>
       [
         "admin",
         "students",
         params?.search ?? "",
-        params?.status ?? "all",
+        params?.lifecycle ?? "all",
         params?.limit ?? "default",
       ] as const,
     studentDetail: (studentId: string) =>

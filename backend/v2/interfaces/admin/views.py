@@ -10,6 +10,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
+from backend.v2.contexts.enrollment.application.use_cases.person_lifecycle import (
+    PersonLifecycle,
+)
 from backend.v2.shared.comms import MAX_ANNOUNCEMENT_BODY
 from backend.v2.shared.security.external_url import InvalidExternalUrl, validate_external_url
 
@@ -65,7 +68,10 @@ class AdminStudentView(BaseModel):
     parent_id: str
     parent_name: str | None = None
     parent_email: str | None = None
-    status: str
+    # Issue #773: the derived person lifecycle, replacing the free-text
+    # ``students.status`` that only the edit form ever wrote.
+    lifecycle: PersonLifecycle = "never_enrolled"
+    lifecycle_as_of: date | None = None
     active_session_count: int
     # Distinct active sessions and their names, capped server-side (issue #104).
     # The remainder beyond the cap is active_session_total - len(names).
@@ -171,12 +177,16 @@ class AdminStudentDetailView(AdminStudentView):
 class AdminStudentList(BaseModel):
     students: list[AdminStudentView]
     next_cursor: str | None = None
+    # Issue #773: counts over the whole directory, not the loaded page, so the
+    # summary tiles stop reporting "Paused: 0" for an academy with paused kids.
+    lifecycle_counts: dict[str, int] = Field(default_factory=dict)
 
 
 class UpdateAdminStudentRequest(BaseModel):
     full_name: str | None = Field(default=None, min_length=1, max_length=120)
     date_of_birth: date | None = None
-    status: str | None = Field(default=None, max_length=32)
+    # Issue #773: no ``status``. A person's state is derived from their
+    # enrollments; hand-editing it is what made the field a lie.
     parent_id: str | None = Field(default=None, min_length=1, max_length=120)
     notes: str | None = Field(default=None, max_length=2000)
     previous_experience: str | None = Field(default=None, max_length=1000)

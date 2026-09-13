@@ -19,7 +19,7 @@ class FakeStudentDirectory:
         self,
         *,
         search: str | None,
-        status: str | None,
+        lifecycle: tuple[str, ...] = (),
         limit: int,
         cursor: str | None,
         missing: tuple[str, ...] = (),
@@ -27,7 +27,7 @@ class FakeStudentDirectory:
         self.calls.append(
             {
                 "search": search,
-                "status": status,
+                "lifecycle": lifecycle,
                 "limit": limit,
                 "cursor": cursor,
                 "missing": missing,
@@ -39,7 +39,7 @@ class FakeStudentDirectory:
                     student_id="st-1",
                     full_name="Alice Chen",
                     parent_id="p-1",
-                    status="active",
+                    lifecycle="active",
                     active_session_count=1,
                     attendance_rate=0.75,
                     dues_status="due",
@@ -56,7 +56,7 @@ async def test_list_admin_students_forwards_filters_to_query():
 
     page = await use_case.execute(
         search="alice",
-        status="active",
+        lifecycle=("active", "paused"),
         limit=25,
         cursor="opaque",
     )
@@ -64,7 +64,7 @@ async def test_list_admin_students_forwards_filters_to_query():
     assert query.calls == [
         {
             "search": "alice",
-            "status": "active",
+            "lifecycle": ("active", "paused"),
             "limit": 25,
             "cursor": "opaque",
             "missing": (),

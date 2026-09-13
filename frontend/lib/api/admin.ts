@@ -9,6 +9,7 @@ import type {
   BillingRulesView,
   UpdateBillingRulesRequest,
 } from "@/lib/billing-rules-form";
+import type { PersonLifecycle } from "@/lib/format/lifecycle-copy";
 
 import { apiFetch } from "./client";
 
@@ -1306,7 +1307,10 @@ export interface AdminStudentView {
   parent_id: string;
   parent_name: string | null;
   parent_email: string | null;
-  status: string;
+  /** Issue #773: the derived person lifecycle; replaces the dead `status`. */
+  lifecycle: PersonLifecycle;
+  /** Resume / return / end / last-seen date for that state, as an ISO date. */
+  lifecycle_as_of?: string | null;
   /** Active enrollment documents; can exceed active_session_total. */
   active_session_count: number;
   /**
@@ -1325,6 +1329,12 @@ export interface AdminStudentView {
 export interface AdminStudentList {
   students: AdminStudentView[];
   next_cursor: string | null;
+  /**
+   * Issue #773: one count per lifecycle across the WHOLE directory. The
+   * summary tiles used to count the loaded page, so "Paused" read 0 for an
+   * academy with paused students.
+   */
+  lifecycle_counts?: Record<string, number>;
 }
 
 export interface ChangeAdminStudentParentRequest {
@@ -1349,7 +1359,8 @@ export interface AdminStudentParentChangeView {
 
 export interface ListAdminStudentsParams {
   search?: string;
-  status?: string;
+  /** Issue #773: derived lifecycles to keep; empty means every state. */
+  lifecycle?: PersonLifecycle[];
   limit?: number;
   cursor?: string;
 }
@@ -1542,7 +1553,7 @@ export function listAdminStudents(
   const options = isQueryFunctionContext(params) ? {} : params;
   const q = new URLSearchParams();
   if (options.search) q.set("search", options.search);
-  if (options.status) q.set("status", options.status);
+  if (options.lifecycle?.length) q.set("lifecycle", options.lifecycle.join(","));
   if (options.limit) q.set("limit", String(options.limit));
   if (options.cursor) q.set("cursor", options.cursor);
   const suffix = q.toString() ? `?${q.toString()}` : "";

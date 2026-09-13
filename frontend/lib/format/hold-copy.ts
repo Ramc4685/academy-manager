@@ -24,13 +24,22 @@ export function isHeldEnrollment(enrollment: { status: string }): boolean {
   return enrollment.status === "held";
 }
 
-/** Split a child's enrollments into the ones still running and the held ones. */
+/**
+ * Split a child's enrollments into the ones still running and the held ones.
+ *
+ * Issue #773: this used to return `active` and `held` and NOTHING else, so a
+ * paused row — which the backend happily sends — was silently dropped by
+ * every caller that rendered `[...active, ...held]`. A paused class is still
+ * the family's class; it just is not running this month. `other` carries
+ * every remaining live row so a caller can list it rather than lose it.
+ */
 export function partitionByHold<T extends { status: string }>(
   enrollments: T[],
-): { active: T[]; held: T[] } {
+): { active: T[]; held: T[]; other: T[] } {
   return {
     active: enrollments.filter((e) => e.status === "active"),
     held: enrollments.filter(isHeldEnrollment),
+    other: enrollments.filter((e) => e.status !== "active" && !isHeldEnrollment(e)),
   };
 }
 

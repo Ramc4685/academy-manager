@@ -15,6 +15,9 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_directory import
     UpdateAdminStudentCommand,
     decode_student_cursor,
 )
+from backend.v2.contexts.enrollment.application.use_cases.person_lifecycle import (
+    PERSON_LIFECYCLES,
+)
 from backend.v2.contexts.identity.application.change_user_role_use_case import (
     ChangeUserRoleCommand,
 )
@@ -323,7 +326,12 @@ async def send_login_invite(
 @router.get("/students", response_model=AdminStudentList)
 async def list_students(
     search: str | None = Query(default=None, min_length=1, max_length=80),
-    status: str | None = Query(default=None, max_length=32),
+    lifecycle: str | None = Query(
+        default=None,
+        max_length=200,
+        description="Comma-separated derived lifecycles (issue #773), e.g. "
+        "active,on_hold,paused,at_risk. Omit for every state.",
+    ),
     limit: int = Query(default=50, ge=1, le=100),
     cursor: str | None = Query(default=None, max_length=512),
     missing: str | None = Query(
@@ -336,12 +344,18 @@ async def list_students(
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminStudentList:
     missing_keys = tuple(k.strip() for k in missing.split(",") if k.strip()) if missing else ()
+    lifecycles = tuple(v.strip() for v in lifecycle.split(",") if v.strip()) if lifecycle else ()
+    unknown = set(lifecycles) - PERSON_LIFECYCLES
+    if unknown:
+        raise HTTPException(
+            status_code=400, detail=f"Unknown lifecycle(s): {', '.join(sorted(unknown))}"
+        )
     try:
         if cursor is not None:
             decode_student_cursor(cursor)
         page = await use_cases.list_admin_students.execute(
             search=search,
-            status=status,
+            lifecycle=lifecycles,
             limit=limit,
             cursor=cursor,
             missing=missing_keys,
@@ -351,6 +365,7 @@ async def list_students(
     return AdminStudentList(
         students=[AdminStudentView(**s.model_dump()) for s in page.students],
         next_cursor=page.next_cursor,
+        lifecycle_counts=page.lifecycle_counts,
     )
 
 
@@ -444,7 +459,6 @@ async def update_student(
         UpdateAdminStudentCommand(
             full_name=payload.full_name,
             date_of_birth=payload.date_of_birth,
-            status=payload.status,
             parent_id=payload.parent_id,
             notes=payload.notes,
             previous_experience=payload.previous_experience,

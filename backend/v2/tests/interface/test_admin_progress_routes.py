@@ -345,11 +345,20 @@ class _FakeListAdminStudents:
         self,
         *,
         search: str | None = None,
-        status: str | None = None,
+        lifecycle: tuple[str, ...] = (),
         limit: int = 50,
         cursor: str | None = None,
+        missing: tuple[str, ...] = (),
     ) -> AdminStudentPage:
-        self.calls.append({"search": search, "status": status, "limit": limit, "cursor": cursor})
+        self.calls.append(
+            {
+                "search": search,
+                "lifecycle": lifecycle,
+                "limit": limit,
+                "cursor": cursor,
+                "missing": missing,
+            }
+        )
         if self.pages is not None:
             students, next_cursor = self.pages[cursor]
             return AdminStudentPage(students=students, next_cursor=next_cursor)
@@ -1016,7 +1025,13 @@ def test_pathway_progress_summary_returns_rows_for_active_students(env):
     assert body["rows"][1]["student_name"] == "Bob New"
     assert body["rows"][1]["next_action"] == "place_in_level"
     assert env.list_admin_students.calls == [
-        {"search": None, "status": "active", "limit": 200, "cursor": None}
+        {
+            "search": None,
+            "lifecycle": ("active",),
+            "limit": 200,
+            "cursor": None,
+            "missing": (),
+        }
     ]
 
 
@@ -1039,8 +1054,20 @@ def test_pathway_progress_summary_reads_all_admin_student_pages(env):
         "st-overview-unplaced",
     ]
     assert env.list_admin_students.calls == [
-        {"search": None, "status": "active", "limit": 200, "cursor": None},
-        {"search": None, "status": "active", "limit": 200, "cursor": "page-2"},
+        {
+            "search": None,
+            "lifecycle": ("active",),
+            "limit": 200,
+            "cursor": None,
+            "missing": (),
+        },
+        {
+            "search": None,
+            "lifecycle": ("active",),
+            "limit": 200,
+            "cursor": "page-2",
+            "missing": (),
+        },
     ]
 
 

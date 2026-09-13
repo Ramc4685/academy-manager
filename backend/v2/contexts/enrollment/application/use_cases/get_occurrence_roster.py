@@ -13,7 +13,7 @@ rather than forking or reshaping it.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal, Protocol
 
 from pydantic import BaseModel
@@ -45,6 +45,10 @@ class OccurrenceRosterItem(BaseModel):
     # Issue #675: a parent's end-of-period cancel is pending; the student
     # keeps attending until this instant. Rosters stay status-only.
     pending_cancellation_at: datetime | None = None
+    # Issue #773: GetSessionRoster already reads this off the enrollment; it
+    # was simply dropped here, so the coach saw a held student with no hint
+    # that the seat is on hold or when they come back.
+    hold_return_on: date | None = None
 
 
 class AbsenceNoticeQuery(Protocol):
@@ -85,6 +89,7 @@ class GetOccurrenceRoster:
                 entry_source="enrollment",
                 expected_absence=entry.student_id in absent_student_ids,
                 pending_cancellation_at=entry.pending_cancellation_at,
+                hold_return_on=entry.hold_return_on,
             )
             for entry in roster
         ]
