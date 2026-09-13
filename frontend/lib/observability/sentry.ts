@@ -28,6 +28,12 @@ export interface CaptureContext {
    * would collapse into a single Sentry issue.
    */
   fingerprint?: string[];
+  /**
+   * Sentry severity level. Omit for the SDK default (`error`) — used to
+   * downgrade route-agnostic buckets (e.g. network flakiness, #754) so they
+   * don't read as page-level errors.
+   */
+  level?: SentryModule.SeverityLevel;
 }
 
 let sdk: Promise<Sentry | null> | null = null;
@@ -91,7 +97,16 @@ export function initSentry(): Promise<Sentry | null> {
   // e2e runs must not post envelopes to the real project, and the e2e
   // tenant-isolation fixture treats any stray network call as a failure.
   const automated = typeof navigator !== "undefined" && navigator.webdriver === true;
-  if (!dsn || typeof window === "undefined" || automated) {
+  // Local dev often carries the same DSN as staging/prod (copied .env.local);
+  // without this guard every local run would post real events tagged
+  // environment=production into the prod frontend Sentry project (#753).
+  // NEXT_PUBLIC_SENTRY_FORCE_LOCAL=1 opts a machine back in when someone
+  // deliberately wants to test the real SDK against localhost.
+  const host = typeof window !== "undefined" ? window.location?.hostname : undefined;
+  const isLocalHost =
+    !!host && (host === "localhost" || host === "127.0.0.1" || host.endsWith(".localhost"));
+  const forceLocal = process.env.NEXT_PUBLIC_SENTRY_FORCE_LOCAL === "1";
+  if (!dsn || typeof window === "undefined" || automated || (isLocalHost && !forceLocal)) {
     sdk = Promise.resolve(null);
     return sdk;
   }
@@ -99,7 +114,7 @@ export function initSentry(): Promise<Sentry | null> {
     .then((mod) => {
       mod.init({
         dsn,
-        environment: process.env.NEXT_PUBLIC_APP_ENV || "production",
+        environment: process.env.NEXT_PUBLIC_APP_ENV || "development",
         release: process.env.NEXT_PUBLIC_SENTRY_RELEASE || undefined,
         // Every error event, plus a sampled slice of navigation/fetch spans
         // via browserTracingIntegration (matches the backend's 0.2 sample
@@ -139,8 +154,23 @@ export function captureError(error: unknown, context: CaptureContext = {}): void
       }
       if (context.extra) scope.setContext("extra", context.extra);
       if (context.fingerprint?.length) scope.setFingerprint(context.fingerprint);
+      if (context.level) scope.setLevel(context.level);
       mod.captureException(error);
     });
+  });
+}
+
+/**
+ * Record a breadcrumb without opening an issue. No-op unless the DSN is set.
+ * Used for signals worth keeping in the trail of a later captured event but
+ * not actionable on their own (e.g. an API call that never left the browser
+ * because it's offline, #754).
+ */
+export function addBreadcrumb(message: string, data?: Record<string, unknown>): void {
+  if (!isSentryEnabled()) return;
+  void initSentry().then((mod) => {
+    if (!mod) return;
+    mod.addBreadcrumb({ category: "api", level: "info", message, data });
   });
 }
 
