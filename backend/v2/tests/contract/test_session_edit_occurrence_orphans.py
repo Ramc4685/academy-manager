@@ -111,6 +111,45 @@ async def test_schedule_edit_never_deletes_an_occurrence_with_a_live_dependent(
     # ...and the new Tuesday schedule was still materialised.
     assert surviving - monday_ids
 
+    # Kept, but NOT left live: a row that survives deletion only because
+    # something depends on it must stop advertising itself as a class, or the
+    # session runs on both the old and the new weekday forever.
+    kept = await db["session_occurrences"].find_one(
+        {"academy_id": "test-academy", "occurrence_id": pinned}
+    )
+    assert kept is not None
+    assert kept["status"] == "cancelled"
+    assert kept["cancellation_reason"] == "schedule_changed"
+
+
+@pytest.mark.asyncio
+async def test_schedule_edit_leaves_past_occurrences_alone(db, acad) -> None:
+    """History is never rewritten: a past class stays exactly as it was."""
+    maintain = _cascade(db)
+
+    await maintain(_session(["Mon"]))
+    past_id = "occ-783-past"
+    await db["session_occurrences"].insert_one(
+        {
+            "academy_id": "test-academy",
+            "occurrence_id": past_id,
+            "session_id": "sess-783",
+            "template_session_id": "sess-783",
+            "start_at": NOW - timedelta(days=7),
+            "end_at": NOW - timedelta(days=7) + timedelta(hours=1),
+            "status": "scheduled",
+        }
+    )
+
+    await maintain(_session(["Tue"]))
+
+    past = await db["session_occurrences"].find_one(
+        {"academy_id": "test-academy", "occurrence_id": past_id}
+    )
+    assert past is not None
+    assert past["status"] == "scheduled"
+    assert "cancellation_reason" not in past
+
 
 @pytest.mark.asyncio
 async def test_schedule_edit_still_clears_occurrences_nobody_depends_on(db, acad) -> None:

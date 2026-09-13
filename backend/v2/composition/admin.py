@@ -2532,6 +2532,35 @@ def compose_admin(
                 return False
         return True
 
+    def _is_live_future_occurrence(doc: dict[str, Any], *, now: datetime) -> bool:
+        """Would this row still show up as an upcoming class?
+
+        Narrower than :func:`_is_clean_future_occurrence`: it asks only about
+        the schedule and the status, never about dependents. A row that is
+        still ``scheduled`` in the future keeps appearing on coach/parent
+        calendars and keeps accruing attendance and payout, so it cannot be
+        left alone once the session stops claiming that slot (#783).
+        """
+
+        starts_at = doc.get("start_at")
+        if starts_at is None or ensure_utc(starts_at) < now:
+            return False
+        return str(doc.get("status") or "scheduled") == "scheduled"
+
+    async def _soft_cancel_occurrence(
+        academy_id: str, occurrence_id: str, *, reason: str, now: datetime
+    ) -> None:
+        await db["session_occurrences"].update_one(
+            {"academy_id": academy_id, "occurrence_id": occurrence_id},
+            {
+                "$set": {
+                    "status": "cancelled",
+                    "cancellation_reason": reason,
+                    "updated_at": now,
+                }
+            },
+        )
+
     async def maintain_session_occurrences(session) -> None:
         from backend.v2.shared.tenancy import current_academy_id
 
@@ -2563,26 +2592,38 @@ def compose_admin(
         for occurrence_id, doc in existing.items():
             if occurrence_id in candidate_ids:
                 continue
-            if not await _is_clean_future_occurrence(doc, now=now):
-                # Past / attended / already-paid occurrences are history: the
-                # class really happened and the coach must still be paid.
-                continue
+            is_clean = await _is_clean_future_occurrence(doc, now=now)
             if session_is_cancelled:
+                if not is_clean:
+                    # Past / attended / already-paid occurrences are history:
+                    # the class really happened and the coach must still be
+                    # paid (#589/#593). A cancel never rewrites them.
+                    continue
                 # Soft-cancel, matching the parent session. Never delete: the
                 # occurrence is the audit trail for a class that was scheduled.
-                await db["session_occurrences"].update_one(
-                    {"academy_id": academy_id, "occurrence_id": occurrence_id},
-                    {
-                        "$set": {
-                            "status": "cancelled",
-                            "cancellation_reason": "session_cancelled",
-                            "updated_at": now,
-                        }
-                    },
+                await _soft_cancel_occurrence(
+                    academy_id, occurrence_id, reason="session_cancelled", now=now
                 )
                 continue
-            await db["session_occurrences"].delete_one(
-                {"academy_id": academy_id, "occurrence_id": occurrence_id}
+            if is_clean:
+                await db["session_occurrences"].delete_one(
+                    {"academy_id": academy_id, "occurrence_id": occurrence_id}
+                )
+                continue
+            if not _is_live_future_occurrence(doc, now=now):
+                # Already cancelled, or in the past: nothing to take off the
+                # calendar.
+                continue
+            # #783: a dirty row (roster entry, absence notice, make-up, trial,
+            # feedback...) must not be deleted — but skipping it left a live
+            # "scheduled" class under the OLD occurrence_id while the new
+            # weekday was materialised alongside it. The class then ran twice a
+            # week forever: coaches could be marked present and paid for a slot
+            # the admin moved away from, and nobody was told. Soft-cancelling
+            # keeps every dependent's foreign key resolvable AND takes the
+            # stale class off the calendar.
+            await _soft_cancel_occurrence(
+                academy_id, occurrence_id, reason="schedule_changed", now=now
             )
 
         for row in candidates:
