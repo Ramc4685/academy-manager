@@ -299,6 +299,16 @@ SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
         "checkin_margin": 10,
         "max_runtime": 10,
     },
+    # Issue #778: win-back outreach at 30/60/90 days after departure. Daily,
+    # like the hold reminders above — a monthly cron would miss a family
+    # whose milestone fell on a day it didn't run, and idempotency is per
+    # (student, milestone) rather than per calendar tick, so an extra run
+    # never double-sends.
+    "send_win_back_notices": {
+        "schedule": {"type": "crontab", "value": "30 4 * * *"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
+    },
 }
 assert SCHEDULED_JOB_MONITORS.keys() == JOB_STALE_AFTER.keys()
 
@@ -556,6 +566,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.admin.hold_enrollment = _holds.hold_enrollment
     app.state.admin.return_from_hold = _holds.return_from_hold
     app.state.enrollment_holds = _holds
+    # Issue #778: win-back outreach. Composed the same way — attached onto
+    # app.state rather than folded into compose_admin/compose_enrollment_holds,
+    # both of which are at their own wiring line budget.
+    from backend.v2.composition.win_back import compose_win_back
+
+    app.state.win_back = compose_win_back(db, settings)
     # Issue #743: WithdrawEnrollment is composed in composition/admin.py,
     # which cannot see `_holds.hold_notifier` (built here, after
     # compose_admin runs) and is at its own wiring line-budget cap. Attach
@@ -794,6 +810,28 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             totals["sent"] += sent
         if totals["sent"]:
             log.info("hold_reminders_sent", extra=totals)
+
+    async def _send_win_back_notices() -> None:
+        await _run_leased_job(
+            "send_win_back_notices", timedelta(minutes=5), _send_win_back_notices_body
+        )
+
+    async def _send_win_back_notices_body() -> None:
+        # Issue #778: daily, 30/60/90-day milestones — a monthly cron would
+        # send every family's outreach on the same calendar day and skip a
+        # whole month for any departure whose milestone anniversary fell on
+        # a day the job did not run (same reasoning as `send_hold_reminders`).
+        totals = {"academy_count": 0, "sent": 0}
+        for academy_id in await _scheduler_academy_ids(
+            MongoAcademyRepository(db),
+            runtime_academy_id,
+        ):
+            with tenant_scope(academy_id):
+                sent = await app.state.win_back.send_win_back_notices.execute(academy_id=academy_id)
+            totals["academy_count"] += 1
+            totals["sent"] += sent
+        if totals["sent"]:
+            log.info("win_back_notices_sent", extra=totals)
 
     async def _process_stripe_webhook_events() -> None:
         # 60s interval: keep TTL just under the interval so a clean run's early
@@ -1261,6 +1299,15 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         "interval",
         minutes=15,
         id="process_stalled_hold_reclaims",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _send_win_back_notices,
+        "cron",
+        hour=4,
+        minute=30,
+        id="send_win_back_notices",
         replace_existing=True,
         max_instances=1,
     )

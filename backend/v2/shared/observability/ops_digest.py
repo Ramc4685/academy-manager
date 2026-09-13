@@ -109,6 +109,8 @@ JOB_STALE_AFTER: dict[str, timedelta] = {
     # window comfortably above a few missed ticks catches a genuinely
     # stopped scheduler without paging on routine jitter.
     "process_stalled_hold_reclaims": timedelta(hours=1),
+    # Issue #778: daily win-back sweep (30/60/90-day milestones).
+    "send_win_back_notices": timedelta(hours=26),
 }
 
 
