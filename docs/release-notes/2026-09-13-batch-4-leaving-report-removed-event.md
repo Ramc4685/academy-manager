@@ -11,4 +11,4 @@ No migrations. No manual steps. This only widens a filter set used when building
 ## Risk / rollback
 Low risk — the change adds one value to a filter frozenset used for read-only reporting. No other code paths depend on `DEPARTURE_EVENT_TYPES`. Rollback: revert this PR.
 
-PR: #0
+PR: #793
