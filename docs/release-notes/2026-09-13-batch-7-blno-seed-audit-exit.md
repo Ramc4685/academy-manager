@@ -17,4 +17,4 @@
 - Low risk: the change narrows the seed script's exit-code semantics (audit findings no longer fail the seed) and is covered by new hermetic bash tests plus a backend contract test. The strict audit path remains available via `saas_staging.sh launch-audit blno` / `audit` for anyone who wants the old fail-on-findings behavior.
 - Rollback: revert this PR. No data or migration cleanup required.
 
-PR: #0
+PR: #807
