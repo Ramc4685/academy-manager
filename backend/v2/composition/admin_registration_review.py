@@ -102,9 +102,13 @@ class RegistrationRefundIssuer(Protocol):
     """Port for refunding a registration payment when the application is
     declined (issue #514). Implementations must be safe to call for payments
     that are not refundable (missing, never captured, already refunded) —
-    those calls are a no-op, so declining an unpaid application still works."""
+    those calls are a no-op, so declining an unpaid application still works.
 
-    async def refund_registration_payment(self, *, payment_id: str, reason: str) -> None: ...
+    Returns ``True`` only when money was actually sent back, so the decline
+    email (#776) can tell the family the truth instead of inferring a refund
+    from the fact that a refund port happened to be wired."""
+
+    async def refund_registration_payment(self, *, payment_id: str, reason: str) -> bool: ...
 
 
 class RegistrationDecisionNotifier(Protocol):
@@ -673,8 +677,9 @@ class AdminRegistrationReview:
             # payment being silently retained. The refund itself is idempotent
             # (and a no-op for unpaid / already-refunded payments), so retrying
             # the decline after a transient failure is safe.
+            refund_issued = False
             if self._refunds is not None and app.payment_id:
-                await self._refunds.refund_registration_payment(
+                refund_issued = await self._refunds.refund_registration_payment(
                     payment_id=app.payment_id,
                     reason="registration_declined",
                 )
@@ -700,7 +705,7 @@ class AdminRegistrationReview:
                 parent_name=self._parent_name(target) or None,
                 student_name=self._student_name(target),
                 reason=command.reason,
-                refund_issued=bool(self._refunds is not None and app.payment_id),
+                refund_issued=refund_issued,
             ),
         )
         return await self._detail(decided)
@@ -1156,19 +1161,20 @@ class RegistrationDeclineRefunds:
         self._payments = payments
         self._refunds = refunds
 
-    async def refund_registration_payment(self, *, payment_id: str, reason: str) -> None:
+    async def refund_registration_payment(self, *, payment_id: str, reason: str) -> bool:
         payment = await self._payments.get(payment_id)
         if payment is None:
             logger.info(
                 "Declining registration with payment_id=%s but no payment record; skipping refund",
                 payment_id,
             )
-            return
+            return False
         if payment.status not in _REFUNDABLE_PAYMENT_STATUSES:
-            return
+            return False
         if payment.amount_cents <= 0 or payment.refunded_cents >= payment.amount_cents:
-            return
+            return False
         await self._refunds.refund_remaining(payment_id=payment_id, reason=reason)
+        return True
 
 
 def compose_registration_decline_refunds(

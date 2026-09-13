@@ -1242,14 +1242,21 @@ async def test_approve_idempotent_replay_does_not_call_trial_conversion_again() 
 
 
 class RecordingRefunds:
-    def __init__(self, *, fail: bool = False) -> None:
+    """Mirrors the real adapter: it records the attempt either way, but only
+    reports ``True`` when money actually went back. ``issued=False`` models the
+    documented no-op branches (payment still pending/failed, already fully
+    refunded, zero-amount), which must not produce a "you were refunded" email."""
+
+    def __init__(self, *, fail: bool = False, issued: bool = True) -> None:
         self.calls: list[tuple[str, str]] = []
         self.fail = fail
+        self.issued = issued
 
-    async def refund_registration_payment(self, *, payment_id: str, reason: str) -> None:
+    async def refund_registration_payment(self, *, payment_id: str, reason: str) -> bool:
         if self.fail:
             raise RuntimeError("stripe unavailable")
         self.calls.append((payment_id, reason))
+        return self.issued
 
 
 def _review_with_refunds(
@@ -1372,9 +1379,14 @@ async def test_registration_decline_refunds_only_refundable_payments(
     executor = _RecordingExecutor()
     adapter = RegistrationDeclineRefunds(payments=_StubPayments(payment), refunds=executor)
 
-    await adapter.refund_registration_payment(payment_id="pay-1", reason="registration_declined")
+    issued = await adapter.refund_registration_payment(
+        payment_id="pay-1", reason="registration_declined"
+    )
 
     assert executor.calls == ([("pay-1", "registration_declined")] if expect_refund else [])
+    # The return value is what the decline email believes, so it must track the
+    # real outcome rather than merely "a refund port was wired".
+    assert issued is expect_refund
 
 
 class _FakePaidPeriodResolver:
@@ -1921,6 +1933,24 @@ async def test_reject_without_payment_says_no_refund_is_coming() -> None:
         RejectRegistrationCommand(application_id="app-1", actor_id="admin-1", reason="duplicate")
     )
 
+    assert notifier.declined[0]["refund_issued"] is False
+
+
+@pytest.mark.asyncio
+async def test_reject_does_not_promise_a_refund_that_was_a_no_op() -> None:
+    """A payment that never captured (or was already fully refunded) makes the
+    refund port a documented no-op. The family must not be told their money is
+    on its way back — that would be a false statement about money."""
+    app = _application().model_copy(update={"payment_id": "pay-1"})
+    apps = InMemoryApplications(app)
+    notifier = RecordingDecisionNotifier()
+    review = _review_with_notifier(apps, notifier, refunds=RecordingRefunds(issued=False))
+
+    detail = await review.reject(
+        RejectRegistrationCommand(application_id="app-1", actor_id="admin-1", reason="too young")
+    )
+
+    assert detail.status == "DECLINED"
     assert notifier.declined[0]["refund_issued"] is False
 
 
