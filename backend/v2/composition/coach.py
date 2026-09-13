@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -198,6 +198,12 @@ class CoachComposition:
     # calendar date instead of UTC (#510). Optional for hand-built test
     # compositions; real composition always sets it.
     get_academy_timezone: object = None
+    # Issue #774: Callable[[Sequence[str], date], Awaitable[dict[str, int]]] —
+    # overdue balance in cents per student, so the roster row can carry ONE
+    # "PAYMENT DUE $X" chip. The owner's decision was that this is the only
+    # thing about money a coach ever sees; the billing drawer and the coach
+    # billing routes were deleted in the same change.
+    overdue_cents_by_student: object = None
     # Attendance correction (#517)
     correct_attendance: CorrectAttendance | None = None
     # Session announcements (#614) — SessionAnnouncementService
@@ -279,6 +285,42 @@ class _SessionTypeChangedEventSink:
                 ),
             )
         )
+
+
+def _overdue_cents_by_student(db: Any) -> Any:
+    """Overdue balance per student, in integer cents (issue #774).
+
+    "Overdue" is the same bar the parent's own reminder uses: an unpaid
+    invoice whose due date has passed. Invoices carry ``student_id``, so a
+    family with two children shows the chip only on the child whose tuition is
+    behind. Money stays in cents the whole way — the frontend formats it.
+    """
+
+    async def resolve(student_ids: Sequence[str], on_date: date) -> dict[str, int]:
+        ids = [sid for sid in dict.fromkeys(student_ids) if sid]
+        if not ids:
+            return {}
+        cutoff = datetime.combine(on_date, time.min, tzinfo=UTC)
+        cursor = db["invoices"].find(
+            {
+                "academy_id": current_academy_id(),
+                "student_id": {"$in": ids},
+                "status": {"$in": ["open", "partially_paid"]},
+                "balance_due_cents": {"$gt": 0},
+                "due_date": {"$lt": cutoff},
+                "is_deleted": {"$ne": True},
+            },
+            {"student_id": 1, "balance_due_cents": 1},
+        )
+        totals: dict[str, int] = {}
+        async for doc in cursor:
+            student_id = str(doc.get("student_id") or "")
+            if not student_id:
+                continue
+            totals[student_id] = totals.get(student_id, 0) + int(doc.get("balance_due_cents") or 0)
+        return totals
+
+    return resolve
 
 
 def compose_coach(
@@ -593,4 +635,5 @@ def compose_coach(
             sessions=sessions_repo,
         ),
         get_academy_timezone=academy_timezone_lookup(db),
+        overdue_cents_by_student=_overdue_cents_by_student(db),
     )

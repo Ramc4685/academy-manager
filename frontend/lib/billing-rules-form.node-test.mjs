@@ -190,3 +190,58 @@ test("the retired panels are gone from the settings page", () => {
   assert.equal(settingsPage.includes("FeesPanel"), false);
   assert.equal(settingsPage.includes("InvoiceSchedulePanel"), false);
 });
+
+// --- reminder_days: the one list-valued rule (issue #774) -------------------
+
+function reminderRow(values) {
+  return {
+    key: "reminder_days",
+    label: "Past-due reminder days",
+    editable: true,
+    value: null,
+    values,
+    unit: "days",
+    min_value: 1,
+    max_value: 60,
+    display: null,
+    detail: null,
+  };
+}
+
+function reminderView(values) {
+  return { groups: [{ key: "parent_messages", title: "Parent messages", note: null, rows: [reminderRow(values)] }] };
+}
+
+test("reminder_days round-trips as a comma-separated list", () => {
+  assert.equal(rowToInput(reminderRow([15, 20])), "15, 20");
+  assert.deepEqual(toForm(reminderView([15, 20])), { reminder_days: "15, 20" });
+});
+
+test("editing reminder_days sends the parsed, sorted day offsets", () => {
+  const diff = diffForm(reminderView([15, 20]), { reminder_days: "20, 10" }, MONEY);
+  assert.deepEqual(diff.payload, { reminder_days: [10, 20] });
+  assert.deepEqual(diff.changed, ["reminder_days"]);
+  assert.equal(canSave(diff), true);
+});
+
+test("a blank reminder_days box turns reminders OFF rather than meaning 'leave alone'", () => {
+  const diff = diffForm(reminderView([15, 20]), { reminder_days: "" }, MONEY);
+  assert.deepEqual(diff.payload, { reminder_days: [] });
+  assert.equal(canSave(diff), true);
+});
+
+test("reminder_days already off stays a no-op", () => {
+  const diff = diffForm(reminderView([]), { reminder_days: "" }, MONEY);
+  assert.deepEqual(diff.changed, []);
+  assert.equal(canSave(diff), false);
+});
+
+test("out-of-range and non-numeric reminder days are refused inline", () => {
+  const tooBig = diffForm(reminderView([15]), { reminder_days: "15, 90" }, MONEY);
+  assert.ok(tooBig.errors.reminder_days);
+  assert.deepEqual(tooBig.payload, {});
+
+  const junk = diffForm(reminderView([15]), { reminder_days: "15, soon" }, MONEY);
+  assert.ok(junk.errors.reminder_days);
+  assert.deepEqual(junk.payload, {});
+});

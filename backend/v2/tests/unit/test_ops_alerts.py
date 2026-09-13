@@ -941,7 +941,12 @@ def test_sentry_cron_jobs_setting_parses_a_comma_separated_list(
 
     monkeypatch.delenv("V2_SENTRY_CRON_JOBS", raising=False)
     monkeypatch.delenv("SENTRY_CRON_JOBS", raising=False)
-    assert Settings().sentry_cron_jobs == ("generate_monthly_invoices",)
+    # Issue #774: the past-due reminder sweep checks in too — a silent stop
+    # means nobody chases an overdue family at all.
+    assert Settings().sentry_cron_jobs == (
+        "generate_monthly_invoices",
+        "send_past_due_reminders",
+    )
 
     monkeypatch.setenv("SENTRY_CRON_JOBS", "generate_monthly_invoices, send_ops_digest,")
     assert Settings().sentry_cron_jobs == ("generate_monthly_invoices", "send_ops_digest")

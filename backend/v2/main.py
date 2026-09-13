@@ -18,6 +18,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_MISSED
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -219,6 +220,10 @@ from backend.v2.shared.tenancy.resolver import (
     TenantResolutionError,
     TenantResolver,
 )
+from backend.v2.shared.time.academy_timezone import (
+    academy_timezone_lookup,
+    resolve_reporting_timezone,
+)
 
 log = logging.getLogger(__name__)
 
@@ -228,6 +233,10 @@ log = logging.getLogger(__name__)
 #: ``max_runtime`` are minutes. Only the ids in ``settings.sentry_cron_jobs``
 #: actually check in — the rest are covered by the ops digest's stale-job
 #: section, whose thresholds live in ``ops_digest.JOB_STALE_AFTER``.
+#: Academy-local hour the past-due reminder sweep runs (issue #774). Morning,
+#: not midnight: a reminder that lands at 9am local is read the same day.
+_PAST_DUE_REMINDER_LOCAL_HOUR = 9
+
 SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
     "process_scheduled_resume_actions": {
         "schedule": {"type": "crontab", "value": "0 2 * * *"},
@@ -253,6 +262,11 @@ SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
         "schedule": {"type": "interval", "value": 10, "unit": "minute"},
         "checkin_margin": 10,
         "max_runtime": 10,
+    },
+    "send_past_due_reminders": {
+        "schedule": {"type": "crontab", "value": "20 * * * *"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
     },
     "process_dunning_retries": {
         "schedule": {"type": "interval", "value": 60, "unit": "minute"},
@@ -975,6 +989,44 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         if totals["processed"] or totals["dunned"] or totals["autopay_disabled"]:
             log.info("dunning_retries_processed", extra=totals)
 
+    async def _send_past_due_reminders() -> None:
+        await _run_leased_job(
+            "send_past_due_reminders", timedelta(minutes=10), _send_past_due_reminders_body
+        )
+
+    async def _send_past_due_reminders_body() -> None:
+        """Issue #774: the due+N reminder sweep, one academy-local day at a time.
+
+        Hourly tick rather than a single fixed-hour cron, and the calendar date
+        comes from EACH ACADEMY's timezone: the acceptance criteria say
+        "academy timezone", and a scheduler-timezone cron would mail an academy
+        on the other side of the date line on the wrong local day. Only the
+        tick whose academy-local hour is ``_PAST_DUE_REMINDER_LOCAL_HOUR`` does
+        any work; the offsets themselves come from Settings -> Billing rules,
+        and an empty list sends nothing.
+        """
+        academy_repo = MongoAcademyRepository(db)
+        academy_zone_reader = academy_timezone_lookup(db)
+        totals = {"academy_count": 0, "considered": 0, "sent": 0, "already_sent": 0, "failed": 0}
+        for academy_id in await _scheduler_academy_ids(academy_repo, runtime_academy_id):
+            with tenant_scope(academy_id):
+                zone_name = await resolve_reporting_timezone(academy_zone_reader, academy_id)
+                local_now = datetime.now(ZoneInfo(zone_name))
+                if local_now.hour != _PAST_DUE_REMINDER_LOCAL_HOUR:
+                    continue
+                billing_settings = await MongoBillingSettingsRepository(db).get()
+                result = await app.state.admin.send_past_due_reminders.execute(
+                    today=local_now.date(),
+                    reminder_days=billing_settings.reminder_days,
+                )
+            totals["academy_count"] += 1
+            totals["considered"] += result.considered
+            totals["sent"] += result.sent
+            totals["already_sent"] += result.already_sent
+            totals["failed"] += result.failed
+        if totals["sent"] or totals["failed"]:
+            log.info("past_due_reminders_processed", extra=totals)
+
     async def _generate_monthly_invoices() -> None:
         # 30-minute TTL: a full generation run walks every active enrollment in
         # every academy, so the lease must outlive a slow run rather than let a
@@ -1367,6 +1419,16 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         hour=4,
         minute=30,
         id="send_win_back_notices",
+        replace_existing=True,
+        max_instances=1,
+    )
+    # Issue #774: hourly tick; the body no-ops for every academy whose local
+    # hour is not the reminder hour, so one cron serves every timezone.
+    scheduler.add_job(
+        _send_past_due_reminders,
+        "cron",
+        minute=20,
+        id="send_past_due_reminders",
         replace_existing=True,
         max_instances=1,
     )

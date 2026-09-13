@@ -75,6 +75,7 @@ test.describe("Assistant coach shell", () => {
     await expect(page.getByTestId("session-detail")).toBeVisible();
     await expect(page.getByTestId("mark-st1-present")).toBeVisible();
     await expect(page.getByTestId("mark-all-present")).toBeVisible();
+    // Issue #774: no coach sees a billing surface any more, assistant or lead.
     await expect(page.getByTestId("billing-toggle-st1")).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "Announcements" })).toHaveCount(0);
 
@@ -191,7 +192,7 @@ test.describe("Real coach keeps the lead surfaces", () => {
     await expect(page.getByTestId("session-detail")).toBeVisible();
     await expect(page.getByTestId("coach-assistant-banner")).toHaveCount(0);
     await expect(page.getByTestId("nav-messages")).toBeVisible();
-    await expect(page.getByTestId("billing-toggle-st1")).toBeVisible();
+    await expect(page.getByTestId("billing-toggle-st1")).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "Announcements" })).toBeVisible();
 
     await page.goto("/coach/profile");

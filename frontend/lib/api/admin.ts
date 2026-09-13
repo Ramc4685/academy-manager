@@ -1240,6 +1240,8 @@ export type AdminAttentionSeverity = "high" | "medium" | "low";
 export type AdminAttentionKind =
   | "pending_registrations"
   | "overdue_dues"
+  | "autopay_failure"
+  | "dunning_exhaustion"
   | "pause_requests"
   | "scheduled_resume_blocked"
   | "scheduled_action_failed"
@@ -1473,8 +1475,6 @@ export interface AdminFeesView {
 export type UpdateAdminFeesRequest = Partial<AdminFeesView>;
 
 export interface AdminNotificationsView {
-  dues_reminders: boolean;
-  attendance_alerts: boolean;
   daily_digest_to_admin: boolean;
   coach_digest_enabled: boolean;
   coach_digest_hour: number;

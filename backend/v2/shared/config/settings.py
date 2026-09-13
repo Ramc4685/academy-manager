@@ -117,11 +117,12 @@ class Settings(BaseSettings):
     )
 
     sentry_cron_jobs: Annotated[tuple[str, ...], NoDecode] = Field(
-        default=("generate_monthly_invoices",),
+        default=("generate_monthly_invoices", "send_past_due_reminders"),
         description=(
             "APScheduler job ids that send Sentry Crons check-ins (comma-separated). "
-            "Opt-in per job: the free plan includes one monitor, and the monthly "
-            "invoice run is the one job whose silent failure costs money."
+            "Opt-in per job: the monthly invoice run is the job whose silent failure "
+            "costs money, and the past-due reminder sweep (#774) is the one whose "
+            "silent failure means nobody chases it."
         ),
     )
 

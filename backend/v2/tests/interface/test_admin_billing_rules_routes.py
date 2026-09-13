@@ -158,6 +158,8 @@ def test_get_returns_the_four_boxes_for_an_admin() -> None:
         "label": "Invoice day of month",
         "editable": True,
         "value": 1,
+        # Issue #774: only the list-valued reminder_days row fills `values`.
+        "values": None,
         "unit": "day_of_month",
         "min_value": 1,
         "max_value": 28,

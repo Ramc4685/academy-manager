@@ -34,6 +34,9 @@ class BillingRuleRowView(BaseModel):
     label: str
     editable: bool
     value: int | None = None
+    #: Issue #774: ``reminder_days`` only. An empty list is a real value
+    #: ("send none"); ``None`` marks every other, numeric row.
+    values: list[int] | None = None
     unit: str | None = None
     min_value: int | None = None
     max_value: int | None = None
@@ -66,6 +69,9 @@ class UpdateBillingRulesRequest(BaseModel):
     late_fee_cents: int | None = None
     cancellation_minimum_notice_days: int | None = None
     cancellation_fee_cents: int | None = None
+    #: Issue #774. ``None`` leaves the stored offsets alone; ``[]`` turns
+    #: past-due reminders off.
+    reminder_days: list[int] | None = None
     reason: str | None = None
 
 

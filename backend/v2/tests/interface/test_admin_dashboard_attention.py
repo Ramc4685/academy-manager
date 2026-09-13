@@ -167,3 +167,29 @@ def test_pending_registrations_reach_the_home_attention_lane(admin_client):
     assert item["kind"] == "pending_registrations"
     assert item["href"] == "/admin/inbox?tab=registrations"
     assert item["count"] == 2
+
+
+def test_autopay_failure_and_dunning_exhaustion_reach_the_owner(admin_client):
+    """Issue #774: both dunning signals only ever reached the parent before."""
+    admin_client.seed["dunning_alerts"] = {
+        "failed_autopay": 2,
+        "dunning_exhausted": 1,
+    }
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    assert r.status_code == 200, r.text
+    items = {item["attention_id"]: item for item in r.json()["items"]}
+    assert items["autopay-failure"]["count"] == 2
+    assert items["autopay-failure"]["href"] == "/admin/payments"
+    assert items["dunning-exhaustion"]["count"] == 1
+    assert items["dunning-exhaustion"]["severity"] == "high"
+
+
+def test_no_dunning_alerts_means_no_autopay_cards(admin_client):
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    assert r.status_code == 200, r.text
+    ids = {item["attention_id"] for item in r.json()["items"]}
+    assert "autopay-failure" not in ids
+    assert "dunning-exhaustion" not in ids

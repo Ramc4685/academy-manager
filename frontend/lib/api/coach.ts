@@ -43,6 +43,12 @@ export interface CoachRosterEntry {
   expected_absence?: boolean;
   /** "enrollment" for regular roster rows; "makeup"/"trial" for one-time entries. */
   entry_source?: "enrollment" | "makeup" | "trial";
+  /**
+   * Issue #774: the family's overdue balance for this student, in integer
+   * cents, or null when nothing is overdue. The ONLY money fact a coach
+   * sees — the per-row billing drawer was removed in the same change.
+   */
+  payment_due_cents?: number | null;
 }
 
 export interface CoachSession {

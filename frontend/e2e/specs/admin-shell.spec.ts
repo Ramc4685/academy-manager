@@ -495,8 +495,6 @@ async function stubAdminBff(
     /\/api\/v2\/admin\/academy\/notifications(?:\?.*)?$/,
     (route) =>
       fulfillJson(route, {
-        dues_reminders: false,
-        attendance_alerts: false,
         daily_digest_to_admin: false,
       }),
   );

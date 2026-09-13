@@ -93,6 +93,8 @@ JOB_STALE_AFTER: dict[str, timedelta] = {
     "process_stripe_webhook_events": timedelta(minutes=5),
     "reconcile_stripe_payment_intents": timedelta(minutes=30),
     "process_dunning_retries": timedelta(hours=3),
+    # Issue #774: hourly tick, so three missed ticks is a real stall.
+    "send_past_due_reminders": timedelta(hours=3),
     "generate_monthly_invoices": timedelta(hours=26),
     "send_coach_daily_digests": timedelta(hours=3),
     "send_parent_daily_digests": timedelta(hours=3),

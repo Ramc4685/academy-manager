@@ -1602,6 +1602,10 @@ AdminAttentionKind = Literal[
     # the family has usually already paid by the time it lands here.
     "pending_registrations",
     "overdue_dues",
+    # Issue #774: the two autopay signals that previously only ever
+    # reached the parent — a decline mid-ladder, and a ladder that gave up.
+    "autopay_failure",
+    "dunning_exhaustion",
     "pause_requests",
     "scheduled_resume_blocked",
     "scheduled_action_failed",
@@ -1736,8 +1740,6 @@ class UpdateAdminFeesRequest(BaseModel):
 
 
 class AdminNotificationsView(BaseModel):
-    dues_reminders: bool = False
-    attendance_alerts: bool = False
     daily_digest_to_admin: bool = False
     coach_digest_enabled: bool = False
     coach_digest_hour: int = 6
@@ -1746,8 +1748,6 @@ class AdminNotificationsView(BaseModel):
 
 
 class UpdateAdminNotificationsRequest(BaseModel):
-    dues_reminders: bool | None = None
-    attendance_alerts: bool | None = None
     daily_digest_to_admin: bool | None = None
     coach_digest_enabled: bool | None = None
     coach_digest_hour: int | None = Field(default=None, ge=0, le=23)

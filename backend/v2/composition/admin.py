@@ -40,9 +40,9 @@ from backend.v2.composition.digests import (
     compose_send_coach_digest_test,
     is_real_email_sender,
 )
+from backend.v2.composition.dues_reminders import compose_dues_reminders
 from backend.v2.composition.email_adapters import (
     AddCardReminderEmailAdapter,
-    DuesReminderEmailAdapter,
     InvoiceEmailAdapter,
     LoginInviteEmailAdapter,
 )
@@ -114,7 +114,6 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
     ApplyPaymentDiscount,
     GenerateMonthlyPayments,
     MarkPaymentPaid,
-    SendDuesReminders,
     UndoPaymentPaid,
 )
 from backend.v2.contexts.billing.application.use_cases.bill_enrollment_period import (
@@ -4070,108 +4069,25 @@ def compose_admin(
         )
         return {"artifact_id": artifact_id, "artifact_type": artifact_type, "status": "generated"}
 
-    _dues_reminder_email = DuesReminderEmailAdapter(academies=academy_repo, sender=_email_sender)
-
-    class _DuesReminderSender:
-        async def send_dues_reminders(
-            self,
-            *,
-            parent_ids: list[str] | None,
-            generate_invoice_artifacts: bool,
-        ) -> dict[str, object]:
-            from backend.v2.shared.tenancy import current_academy_id
-
-            request_academy_id = current_academy_id()
-            rows = await list_dues_followup()
-            if parent_ids is not None:
-                selected = set(parent_ids)
-                rows = [row for row in rows if str(row["parent_id"]) in selected]
-            generated = 0
-            if generate_invoice_artifacts:
-                for row in rows:
-                    invoice_cursor = (
-                        db["invoices"]
-                        .find(
-                            {
-                                "academy_id": request_academy_id,
-                                "status": {"$in": ["open", "partially_paid", "draft"]},
-                                "balance_due_cents": {"$gt": 0},
-                                "$or": [
-                                    {"parent_id": row["parent_id"]},
-                                    {"parent_user_id": row["parent_id"]},
-                                ],
-                                "is_deleted": {"$ne": True},
-                            }
-                        )
-                        .sort([("created_at", -1)])
-                    )
-                    async for invoice in invoice_cursor:
-                        await generate_billing_invoice_artifact(
-                            str(invoice.get("invoice_id") or invoice.get("invoice_number")),
-                            "invoice_pdf",
-                        )
-                        generated += 1
-
-            if not _email_sender_is_real:
-                return {
-                    "sent": 0,
-                    "blocked": True,
-                    "reason": (
-                        f"Local/test safety block: {len(rows)} reminder(s) were not sent "
-                        "(email delivery is not enabled for this environment)."
-                    ),
-                    "selected_parent_ids": parent_ids or [str(row["parent_id"]) for row in rows],
-                    "generated_invoice_artifacts": generated,
-                }
-
-            pay_url, _academy_name = await _parent_payments_link(request_academy_id)
-            membership_repo = MongoMembershipRepository(db)
-            sent = 0
-            skipped = 0
-            for row in rows:
-                parent_id = str(row["parent_id"])
-                membership = await membership_repo.get_membership(request_academy_id, parent_id)
-                if (
-                    membership is None
-                    or not membership.is_active()
-                    or "parent" not in membership.roles
-                ):
-                    skipped += 1
-                    continue
-                user = await users_r.get_by_id(parent_id)
-                email = str(user.email if user else "").strip()
-                if not email:
-                    skipped += 1
-                    continue
-                ok = await _dues_reminder_email.send_reminder(
-                    parent_id=parent_id,
-                    email=email,
-                    display_name=str(user.display_name if user else "") or None,
-                    total_due_cents=int(row["total_due_cents"]),
-                    pending_count=int(row["pending_count"]),
-                    currency="usd",
-                    pay_url=pay_url,
-                )
-                if ok:
-                    sent += 1
-                else:
-                    skipped += 1
-
-            reason = (
-                f"{skipped} parent(s) skipped (no active membership, no email on file, "
-                "or delivery failed)."
-                if skipped
-                else None
-            )
-            return {
-                "sent": sent,
-                "blocked": False,
-                "reason": reason,
-                "selected_parent_ids": parent_ids or [str(row["parent_id"]) for row in rows],
-                "generated_invoice_artifacts": generated,
-            }
-
-    send_dues_reminders = SendDuesReminders(sender=_DuesReminderSender())
+    # Every reminder pathway — the admin's manual send, the automated due+N
+    # sweep (#774) and the owner's autopay attention counts — is wired in
+    # composition/dues_reminders.py. admin.py is at its wiring line budget.
+    dues = compose_dues_reminders(
+        db,
+        academies=academy_repo,
+        users=users_r,
+        email_sender=_email_sender,
+        email_sender_is_real=_email_sender_is_real,
+        ledger=billing_ledger_repo,
+        billing_counters=billing_counters_repo,
+        billing_settings=billing_settings_repo,
+        parent_payments_link=_parent_payments_link,
+        list_dues_followup=list_dues_followup,
+        generate_invoice_artifact=generate_billing_invoice_artifact,
+    )
+    send_dues_reminders = dues.send_dues_reminders
+    send_past_due_reminders = dues.send_past_due_reminders
+    count_dunning_alerts = dues.count_dunning_alerts
 
     get_refunds_report = make_refunds_report(db)
     get_revenue_by_category_report = make_revenue_by_category_report(db)
@@ -4377,6 +4293,8 @@ def compose_admin(
         list_dues_followup=list_dues_followup,
         list_billing_deferral_warnings=billing_deferrals.list_admin_warnings,
         send_dues_reminders=send_dues_reminders,
+        send_past_due_reminders=send_past_due_reminders,
+        count_dunning_alerts=count_dunning_alerts,
         export_report_csv=export_report_csv,
         get_refunds_report=get_refunds_report,
         get_revenue_by_category_report=get_revenue_by_category_report,

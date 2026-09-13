@@ -242,7 +242,6 @@ def test_assistant_cannot_note_unassisted_session(assistant_client):
             {"student_id": "st9", "parent_id": "p9", "full_name": "New Kid"},
         ),
         ("delete", f"/api/v2/coach/sessions/{ASSISTED_SESSION}/roster/st1", None),
-        ("get", "/api/v2/coach/billing-enrollments", None),
         ("get", "/api/v2/coach/messages", None),
         ("get", f"/api/v2/coach/sessions/{ASSISTED_SESSION}/announcements", None),
         (

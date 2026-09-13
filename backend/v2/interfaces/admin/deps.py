@@ -36,6 +36,9 @@ from backend.v2.contexts.billing.application.use_cases.issue_refund import Issue
 from backend.v2.contexts.billing.application.use_cases.send_add_card_reminder import (
     SendAddCardReminder,
 )
+from backend.v2.contexts.billing.application.use_cases.send_past_due_reminders import (
+    SendPastDueReminders,
+)
 from backend.v2.contexts.billing.application.use_cases.session_type_ops import (
     CreateSessionType,
     ListSessionTypes,
@@ -331,7 +334,13 @@ class AdminUseCases:
     process_scheduled_cancellation_actions: object | None = None
     #: Scheduled enrollment actions that stopped moving on their own:
     #: ``blocked_capacity`` resumes and ``failed`` month-end cancels (#675).
+    #: Issue #774: the automated due+N sweep the scheduler drives. Optional
+    #: so hand-built test bundles need not wire a job they never run.
+    send_past_due_reminders: SendPastDueReminders | None = None
     list_stuck_scheduled_actions: object | None = None
+    #: Issue #774: owner-facing counts of autopay failure and dunning
+    #: exhaustion for the admin home attention list.
+    count_dunning_alerts: object | None = None
     get_enrollment_funnel: object | None = (
         None  # async (period: str | None) -> EnrollmentFunnelResult
     )

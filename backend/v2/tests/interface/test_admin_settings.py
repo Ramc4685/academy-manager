@@ -98,28 +98,22 @@ def test_get_and_patch_fees_contract(admin_client):
 def test_get_and_patch_notifications_contract(admin_client):
     admin_client.use_cases.get_academy_notifications_use_case.execute.return_value = (
         GetAcademyNotificationsOutput(
-            dues_reminders=True,
-            attendance_alerts=False,
             daily_digest_to_admin=True,
         )
     )
     admin_client.use_cases.update_academy_notifications_use_case.execute.return_value = (
         GetAcademyNotificationsOutput(
-            dues_reminders=True,
-            attendance_alerts=True,
             daily_digest_to_admin=True,
         )
     )
 
     get_response = admin_client.get("/api/v2/admin/academy/notifications")
     patch_response = admin_client.patch(
-        "/api/v2/admin/academy/notifications", json={"attendance_alerts": True}
+        "/api/v2/admin/academy/notifications", json={"daily_digest_to_admin": True}
     )
 
     assert get_response.status_code == 200, get_response.text
     assert get_response.json() == {
-        "dues_reminders": True,
-        "attendance_alerts": False,
         "daily_digest_to_admin": True,
         # New per-academy coach-digest fields default off / hour 6.
         "coach_digest_enabled": False,
@@ -130,15 +124,13 @@ def test_get_and_patch_notifications_contract(admin_client):
     }
     assert patch_response.status_code == 200, patch_response.text
     admin_client.use_cases.update_academy_notifications_use_case.execute.assert_awaited_once_with(
-        "acad", {"attendance_alerts": True}
+        "acad", {"daily_digest_to_admin": True}
     )
 
 
 def test_get_notifications_includes_coach_digest_override(admin_client):
     admin_client.use_cases.get_academy_notifications_use_case.execute.return_value = (
         GetAcademyNotificationsOutput(
-            dues_reminders=False,
-            attendance_alerts=False,
             daily_digest_to_admin=False,
             coach_digest_enabled=True,
             coach_digest_hour=18,

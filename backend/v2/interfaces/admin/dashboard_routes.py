@@ -79,6 +79,47 @@ async def dashboard_attention(
             )
         )
 
+    # Issue #774: the owner was never told when a card failed or when the
+    # dunning ladder gave up — both only ever reached the parent. Optional on
+    # the bundle so an older composition simply shows neither card.
+    dunning_alerts = await _read_attention_source(
+        "dunning_alerts",
+        getattr(use_cases, "count_dunning_alerts", None) or _no_dunning_alerts,
+        {},
+    )
+    failed_autopay = int(dunning_alerts.get("failed_autopay") or 0)
+    if failed_autopay:
+        items.append(
+            AdminAttentionItemView(
+                attention_id="autopay-failure",
+                kind="autopay_failure",
+                title="Autopay failures",
+                detail=(
+                    f"{failed_autopay} famil{'ies' if failed_autopay != 1 else 'y'} "
+                    "had a card decline and are still on the retry ladder."
+                ),
+                severity="high",
+                href="/admin/payments",
+                count=failed_autopay,
+            )
+        )
+    exhausted = int(dunning_alerts.get("dunning_exhausted") or 0)
+    if exhausted:
+        items.append(
+            AdminAttentionItemView(
+                attention_id="dunning-exhaustion",
+                kind="dunning_exhaustion",
+                title="Autopay switched off",
+                detail=(
+                    f"{exhausted} famil{'ies' if exhausted != 1 else 'y'} exhausted "
+                    "every retry; autopay is off until the card is replaced."
+                ),
+                severity="high",
+                href="/admin/payments",
+                count=exhausted,
+            )
+        )
+
     stuck_actions_reader = getattr(use_cases, "list_stuck_scheduled_actions", None)
 
     # Fan out all independent data fetches concurrently.
@@ -282,6 +323,11 @@ async def _pending_registration_count(use_cases: AdminUseCases) -> int:
     if review is None:
         return 0
     return len(list(await review.list_pending()))
+
+
+async def _no_dunning_alerts() -> dict[str, int]:
+    """Fallback when the bundle predates the autopay attention sources (#774)."""
+    return {}
 
 
 async def _read_attention_source(
