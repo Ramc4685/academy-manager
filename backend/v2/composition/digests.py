@@ -542,6 +542,14 @@ class _ParentDigestProvider:
         self._autopay_consents = autopay_consents
         self._academies = academies
         self._issue_magic_link = issue_magic_link
+        # Per-run memoization (#531): academy_id is fixed for the whole send
+        # run, so academy/program resolution and "today's" occurrences are
+        # fetched once per (academy_id[, on_date]) and reused across every
+        # parent's build_view call on this provider instance, instead of
+        # being re-fetched/re-queried per parent (or per enrollment, for
+        # occurrences).
+        self._academy_and_program_cache: dict[str, tuple[dict[str, Any] | None, str, str]] = {}
+        self._occurrences_by_session_cache: dict[date, dict[str, list[Any]]] = {}
 
     async def build_view(self, parent_id: str, on_date: date) -> ParentDigestView | None:
         children_students = await self._list_children(parent_id)
@@ -549,11 +557,8 @@ class _ParentDigestProvider:
             return None
 
         settings = get_settings()
-        try:
-            academy_doc = await self._academies.find_by_id(current_academy_id())
-            academy_slug = str(academy_doc.get("slug") or "") if academy_doc else ""
-        except Exception:
-            academy_slug = ""
+        academy_doc, program_id, program_name = await self._academy_and_program_for_run()
+        academy_slug = str(academy_doc.get("slug") or "") if academy_doc else ""
         frontend = academy_frontend_url(
             frontend_url=settings.frontend_url, academy_slug=academy_slug
         )
@@ -562,8 +567,6 @@ class _ParentDigestProvider:
         # only populated when there is a portal to land on.
         user_doc = await self._parent_user_doc(parent_id)
         on_portal = self._is_on_portal(user_doc)
-
-        program_id, program_name = await self._resolve_program()
 
         children: list[ChildDigestView] = []
         for student in children_students:
@@ -602,7 +605,7 @@ class _ParentDigestProvider:
         dues = await self._dues(parent_id, frontend)
         whatsapp_groups = await self._whatsapp_groups(children_students)
         autopay_enabled = await self._autopay_enabled(parent_id)
-        reply_to = await self._reply_to(settings.sender_email)
+        reply_to = self._reply_to(settings.sender_email, academy_doc)
         activate_url = await self._activate_url(
             frontend=frontend,
             user_doc=user_doc,
@@ -681,21 +684,63 @@ class _ParentDigestProvider:
             name = ""
         return program_id, name
 
+    async def _academy_and_program_for_run(self) -> tuple[dict[str, Any] | None, str, str]:
+        """Academy doc + default program, resolved once per (academy_id) and
+        reused for every parent processed on this provider instance (#531).
+
+        ``compose_send_parent_daily_digest`` builds a fresh provider per
+        db-scoped call and ``current_academy_id()`` is fixed by tenant scope
+        for the whole run, so caching on the instance is safe.
+        """
+        academy_id = current_academy_id()
+        cached = self._academy_and_program_cache.get(academy_id)
+        if cached is not None:
+            return cached
+        try:
+            academy_doc = await self._academies.find_by_id(academy_id)
+        except Exception:
+            academy_doc = None
+        program_id, program_name = await self._resolve_program()
+        result = (academy_doc, program_id, program_name)
+        self._academy_and_program_cache[academy_id] = result
+        return result
+
+    async def _occurrences_for_run(self, on_date: date) -> dict[str, list[Any]]:
+        """Every non-cancelled occurrence on ``on_date``, grouped by both
+        ``session_id`` and ``template_session_id`` (mirroring the ``$or`` in
+        ``list_for_session_between``), fetched once per ``on_date`` and reused
+        for every enrollment across the run instead of one query per
+        enrollment (#531).
+        """
+        cached = self._occurrences_by_session_cache.get(on_date)
+        if cached is not None:
+            return cached
+        scheduler_tz = getattr(get_settings(), "scheduler_tz", None) or "UTC"
+        start, end = _day_bounds_utc(on_date, scheduler_tz)
+        try:
+            occurrences = await self._occurrences.list_between(start_at=start, end_at=end)
+        except Exception:
+            occurrences = []
+        by_session: dict[str, list[Any]] = {}
+        for occurrence in occurrences:
+            session_id = str(getattr(occurrence, "session_id", "") or "")
+            if session_id:
+                by_session.setdefault(session_id, []).append(occurrence)
+            template_id = getattr(occurrence, "template_session_id", None)
+            if template_id:
+                by_session.setdefault(str(template_id), []).append(occurrence)
+        self._occurrences_by_session_cache[on_date] = by_session
+        return by_session
+
     async def _session_today(self, student_id: str, on_date: date) -> tuple[str, str, str] | None:
         try:
             enrollments = await self._enrollments.active_for_student(student_id)
         except Exception:
             return None
-        scheduler_tz = getattr(get_settings(), "scheduler_tz", None) or "UTC"
-        start, end = _day_bounds_utc(on_date, scheduler_tz)
+        occurrences_by_session = await self._occurrences_for_run(on_date)
         best: tuple[datetime, str, Any] | None = None
         for enrollment in enrollments:
-            try:
-                occurrences = await self._occurrences.list_for_session_between(
-                    session_id=enrollment.session_id, start_at=start, end_at=end
-                )
-            except Exception:
-                occurrences = []
+            occurrences = occurrences_by_session.get(enrollment.session_id, [])
             for occurrence in occurrences:
                 if str(getattr(occurrence, "status", "")) == "cancelled":
                     continue
@@ -843,13 +888,14 @@ class _ParentDigestProvider:
             return True
         return len(consents) > 0
 
-    async def _reply_to(self, fallback: str | None) -> str | None:
+    @staticmethod
+    def _reply_to(fallback: str | None, academy_doc: dict[str, Any] | None) -> str | None:
+        # Uses the academy doc already resolved (and cached) once per run by
+        # ``_academy_and_program_for_run`` — no separate lookup here (#531).
         try:
-            academy_id = current_academy_id()
-            doc = await self._academies.find_by_id(academy_id)
-            if doc:
+            if academy_doc:
                 for key in ("contact_email", "owner_email", "email"):
-                    value = doc.get(key)
+                    value = academy_doc.get(key)
                     if value:
                         return str(value)
         except Exception:

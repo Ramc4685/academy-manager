@@ -121,6 +121,33 @@ class MongoSessionOccurrenceRepository(TenantScopedRepository):
         )
         return [self._to_domain(doc) async for doc in cursor]
 
+    async def list_between(
+        self,
+        *,
+        start_at: datetime,
+        end_at: datetime,
+    ) -> list[SessionOccurrence]:
+        """Every non-cancelled occurrence in the academy within an EXACT
+        ``[start_at, end_at]`` UTC window (no widening).
+
+        Batching counterpart of ``list_for_session_between`` without the
+        ``session_id``/``template_session_id`` filter: used by the parent
+        daily digest (#531) to fetch "today's" occurrences for the whole
+        academy in one query instead of one query per enrollment. Unlike
+        ``list_on_date``, this takes the caller's own exact bounds (e.g. the
+        digest's timezone-aware ``_day_bounds_utc``) rather than widening
+        ±1 day, so callers that already computed a precise window don't need
+        an extra in-memory narrowing pass.
+        """
+        cursor = self._find_many(
+            {
+                "start_at": {"$gte": start_at, "$lte": end_at},
+                "status": {"$ne": "cancelled"},
+            },
+            sort=[("start_at", 1)],
+        )
+        return [self._to_domain(doc) async for doc in cursor]
+
     async def list_upcoming(
         self,
         *,

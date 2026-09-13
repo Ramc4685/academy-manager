@@ -54,7 +54,10 @@ def _build_provider(
         get_parent_user_doc=AsyncMock(return_value=user_doc),
     )
     enrollments_repo = SimpleNamespace(active_for_student=AsyncMock(return_value=enrollments))
-    occurrences_repo = SimpleNamespace(list_for_session_between=AsyncMock(return_value=occurrences))
+    occurrences_repo = SimpleNamespace(
+        list_for_session_between=AsyncMock(return_value=occurrences),
+        list_between=AsyncMock(return_value=occurrences),
+    )
     sessions_repo = SimpleNamespace(get=AsyncMock(return_value=session))
     levels_repo = SimpleNamespace(list_for_program=AsyncMock(return_value=levels))
     curriculum = SimpleNamespace(
@@ -102,6 +105,8 @@ def _full_family_provider(**overrides) -> _ParentDigestProvider:
         enrollments=[SimpleNamespace(session_id="sess-1")],
         occurrences=[
             SimpleNamespace(
+                session_id="sess-1",
+                template_session_id=None,
                 start_at=datetime(2026, 7, 16, 23, 0, tzinfo=UTC),
                 end_at=datetime(2026, 7, 16, 23, 45, tzinfo=UTC),
                 status="scheduled",
@@ -385,3 +390,114 @@ async def test_dues_overdue_flag_follows_the_earliest_due_date() -> None:
     assert view is not None and view.dues is not None
     assert view.dues.is_overdue is False
     assert view.dues.amount == "$60.00"
+
+
+@pytest.mark.asyncio
+async def test_build_view_hoists_academy_and_program_resolution_across_parents_in_one_run() -> None:
+    """#531: academy + default-program resolution is loop-invariant across the
+    whole digest run, so a second ``build_view`` call on the SAME provider
+    instance must not re-fetch either (regression test for the N+1 fan-out)."""
+    provider = _full_family_provider()
+
+    with tenant_scope(ACADEMY_ID):
+        first = await provider.build_view("p1", ON_DATE)
+        second = await provider.build_view("p2", ON_DATE)
+
+    assert first is not None
+    assert second is not None
+    assert provider._academies.find_by_id.call_count == 1
+    assert provider._curriculum.resolve_default_program.execute.call_count == 1
+    assert provider._curriculum.get_program.execute.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_build_view_batches_occurrence_queries_across_enrollments() -> None:
+    """#531: a family's per-child "session today" lookups must come from one
+    batched academy-wide occurrences query, not one Mongo round trip per
+    enrollment."""
+    student1 = SimpleNamespace(student_id="s1", full_name="Maithri")
+    student2 = SimpleNamespace(student_id="s2", full_name="Rohan")
+
+    def _enrollments_for(student_id: str) -> list[SimpleNamespace]:
+        return {
+            "s1": [SimpleNamespace(session_id="sess-1")],
+            "s2": [SimpleNamespace(session_id="sess-2")],
+        }[student_id]
+
+    occ1 = SimpleNamespace(
+        session_id="sess-1",
+        template_session_id=None,
+        start_at=datetime(2026, 7, 16, 23, 0, tzinfo=UTC),
+        end_at=datetime(2026, 7, 16, 23, 45, tzinfo=UTC),
+        status="scheduled",
+    )
+    occ2 = SimpleNamespace(
+        session_id="sess-2",
+        template_session_id=None,
+        start_at=datetime(2026, 7, 16, 22, 0, tzinfo=UTC),
+        end_at=datetime(2026, 7, 16, 22, 45, tzinfo=UTC),
+        status="scheduled",
+    )
+
+    students = SimpleNamespace(
+        list_for_parent=AsyncMock(return_value=[student1, student2]),
+        get_parent_user_doc=AsyncMock(
+            return_value={"display_name": "Parent One", "email_verified": True}
+        ),
+    )
+    enrollments_repo = SimpleNamespace(active_for_student=AsyncMock(side_effect=_enrollments_for))
+    occurrences_repo = SimpleNamespace(
+        list_for_session_between=AsyncMock(return_value=[]),
+        list_between=AsyncMock(return_value=[occ1, occ2]),
+    )
+    sessions_repo = SimpleNamespace(
+        get=AsyncMock(
+            return_value=SimpleNamespace(title="Beginner", location="YWCA", timezone="UTC")
+        )
+    )
+    levels_repo = SimpleNamespace(list_for_program=AsyncMock(return_value=[]))
+    curriculum = SimpleNamespace(
+        resolve_default_program=SimpleNamespace(
+            execute=AsyncMock(return_value=SimpleNamespace(program_id="prog-1"))
+        ),
+        get_program=SimpleNamespace(
+            execute=AsyncMock(return_value=SimpleNamespace(name="Badminton"))
+        ),
+    )
+    teaching_focus = SimpleNamespace(
+        for_students=AsyncMock(return_value=SimpleNamespace(groups=[]))
+    )
+    pathway_placement = SimpleNamespace(
+        execute=AsyncMock(
+            return_value=SimpleNamespace(
+                skills_total=0, skills_completed=0, level_sequence=None, level_name=""
+            )
+        )
+    )
+    ledger = SimpleNamespace(list_invoices_for_parent=AsyncMock(return_value=[]))
+    autopay = SimpleNamespace(list_for_parent=AsyncMock(return_value=[]))
+    academies = SimpleNamespace(
+        find_by_id=AsyncMock(return_value={"contact_email": "ops@acad.test"})
+    )
+
+    provider = _ParentDigestProvider(
+        students=students,
+        enrollments=enrollments_repo,
+        occurrences=occurrences_repo,
+        sessions=sessions_repo,
+        levels=levels_repo,
+        curriculum=curriculum,
+        teaching_focus=teaching_focus,
+        pathway_placement=pathway_placement,
+        ledger=ledger,
+        autopay_consents=autopay,
+        academies=academies,
+    )
+
+    with tenant_scope(ACADEMY_ID):
+        view = await provider.build_view("p1", ON_DATE)
+
+    assert view is not None
+    assert {child.child_name for child in view.children} == {"Maithri", "Rohan"}
+    assert occurrences_repo.list_between.call_count == 1
+    assert occurrences_repo.list_for_session_between.call_count == 0
