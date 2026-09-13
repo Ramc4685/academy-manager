@@ -68,7 +68,8 @@ async def _read_overdue_cents(
     if not student_ids:
         return {}
     try:
-        return await reader(student_ids, on_date)
+        result: dict[str, int] = await reader(student_ids, on_date)
+        return result
     except Exception:
         log.warning("coach roster overdue lookup failed; hiding payment chips", exc_info=True)
         return {}

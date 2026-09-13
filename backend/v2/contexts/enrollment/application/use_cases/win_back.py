@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from collections.abc import Callable
 from typing import Any, Protocol
 
 from backend.v2.contexts.enrollment.application.ports import (
@@ -106,7 +107,7 @@ class SendWinBackNotices:
         send_repo: WinBackSendRepository,
         balance_lookup: FamilyBalanceLookup,
         notifier: WinBackNotifier | None = None,
-        clock=lambda: datetime.now(UTC),
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._enrollment_events = enrollment_events
         self._enrollments = enrollments
@@ -169,6 +170,7 @@ class SendWinBackNotices:
         if claim is None:
             return 0
 
+        assert self._notifier is not None
         try:
             await self._notifier.win_back(
                 student_id=event.student_id,

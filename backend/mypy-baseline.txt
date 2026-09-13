@@ -315,6 +315,7 @@ backend/v2/contexts/coaching/infrastructure/mongo_attendance_repo.py:0: note: de
 backend/v2/contexts/coaching/infrastructure/mongo_attendance_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
 backend/v2/contexts/coaching/application/use_cases/session_feedback.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
 backend/v2/contexts/coaching/application/use_cases/session_feedback.py:0: error: Missing named argument "aggregate_id" for "SessionFeedbackPosted"  [call-arg]
+backend/v2/contexts/coaching/application/use_cases/session_feedback.py:0: note: "SessionFeedbackPosted" defined in "backend.v2.contexts.coaching.domain.events"
 backend/v2/contexts/coaching/application/use_cases/session_feedback.py:0: error: Missing named argument "payload" for "SessionFeedbackPosted"  [call-arg]
 backend/v2/contexts/coaching/application/use_cases/mark_attendance.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
 backend/v2/contexts/coaching/application/use_cases/mark_attendance.py:0: error: Item "None" of "OccurrenceDetails | None" has no attribute "status"  [union-attr]
