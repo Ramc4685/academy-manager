@@ -372,6 +372,18 @@ class MakeupPolicyLookup(Protocol):
     async def get_or_default(self) -> Any: ...
 
 
+class PayoutPeriodLock(Protocol):
+    """Is the coach's payroll for this instant already frozen? (#787)
+
+    Finance owns ``PayoutPeriod``; Enrollment must not import it, so the
+    composition layer reshapes it into this one question. Returns the
+    blocking period's status (``"approved"`` / ``"paid"``), or ``None``
+    when the window is still editable.
+    """
+
+    async def locked_status_for(self, *, coach_id: str, at: datetime) -> str | None: ...
+
+
 class OccurrenceBillingSync(Protocol):
     """Tell billing one dated class was called off (issue #671).
 

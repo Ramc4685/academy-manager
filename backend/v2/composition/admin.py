@@ -61,6 +61,11 @@ from backend.v2.composition.pathway import (
     compose_curriculum,
     compose_student_progress,
 )
+from backend.v2.composition.payout_input_lock import PayoutInputLock
+from backend.v2.composition.replacement_payout_snapshots import (
+    draft_payout_periods_for_occurrence,
+    recompute_draft_payout_periods,
+)
 from backend.v2.composition.roster_notifications import compose_enrollment_notifiers
 from backend.v2.composition.scheduled_cancellations import (
     compose_list_stuck_scheduled_actions,
@@ -1002,13 +1007,22 @@ def compose_admin(
             rates=MongoCoachRateLookup(db),
         )
     )
+    payout_audit_log = MongoPayoutAuditLogRepository(db)
+    # #787: generation, approval and payment are money-moving transitions and
+    # each writes its own audit entry, like the corrections below.
     generate_payout_period = GeneratePayoutPeriod(
         calculator=coach_payout_calculator,
         repository=payout_periods_repo,
+        audit=payout_audit_log,
     )
-    approve_payout_period = ApprovePayoutPeriod(repository=payout_periods_repo)
-    mark_payout_paid = MarkPayoutPaid(repository=payout_periods_repo)
-    payout_audit_log = MongoPayoutAuditLogRepository(db)
+    approve_payout_period = ApprovePayoutPeriod(
+        repository=payout_periods_repo,
+        audit=payout_audit_log,
+    )
+    mark_payout_paid = MarkPayoutPaid(
+        repository=payout_periods_repo,
+        audit=payout_audit_log,
+    )
     billing_audit_log = MongoBillingAuditLogRepository(db)
     recompute_payout_period = RecomputePayoutPeriod(
         calculator=coach_payout_calculator,
@@ -2937,43 +2951,6 @@ def compose_admin(
         )
         return None if occurrence is None else await _occurrence_row(occurrence)
 
-    async def _clear_or_reject_replacement_payout_snapshots(
-        *,
-        academy_id: str,
-        occurrence_id: str,
-    ) -> None:
-        payout_line_cursor = db["payout_period_lines"].find(
-            {"academy_id": academy_id, "occurrence_id": occurrence_id},
-            {"period_id": 1},
-        )
-        payout_period_ids = sorted(
-            {str(row["period_id"]) async for row in payout_line_cursor if row.get("period_id")}
-        )
-        if not payout_period_ids:
-            return
-        period_cursor = db["payout_periods"].find(
-            {
-                "academy_id": academy_id,
-                "period_id": {"$in": payout_period_ids},
-            },
-            {"period_id": 1, "status": 1},
-        )
-        draft_period_ids: list[str] = []
-        async for period in period_cursor:
-            status = str(period.get("status") or "draft")
-            if status in {"approved", "paid"}:
-                raise ValueError(
-                    "Replacement coach cannot be changed after payout is approved or paid"
-                )
-            draft_period_ids.append(str(period["period_id"]))
-        if draft_period_ids:
-            await db["payout_period_lines"].delete_many(
-                {"academy_id": academy_id, "period_id": {"$in": draft_period_ids}}
-            )
-            await db["payout_periods"].delete_many(
-                {"academy_id": academy_id, "period_id": {"$in": draft_period_ids}}
-            )
-
     async def update_session_occurrence_replacement(
         *,
         occurrence_id: str,
@@ -2984,9 +2961,8 @@ def compose_admin(
         from backend.v2.shared.tenancy import current_academy_id
 
         academy_id = current_academy_id()
-        await _clear_or_reject_replacement_payout_snapshots(
-            academy_id=academy_id,
-            occurrence_id=occurrence_id,
+        draft_period_ids = await draft_payout_periods_for_occurrence(
+            db, academy_id=academy_id, occurrence_id=occurrence_id
         )
 
         update_fields: dict[str, Any] = {
@@ -3002,6 +2978,10 @@ def compose_admin(
         )
         if result.matched_count == 0:
             return None
+        # Recompute AFTER the coach change so the refreshed snapshot reflects it.
+        await recompute_draft_payout_periods(
+            recompute_payout_period, period_ids=draft_period_ids, actor_id=actor_id
+        )
         occurrence = await occurrences_r.get(occurrence_id)
         return None if occurrence is None else await _occurrence_row(occurrence)
 
@@ -3059,6 +3039,9 @@ def compose_admin(
         coach_attendance=coach_attendance_repo,
         occurrence_lookup=_AdminOccurrenceLookup(),
         academy_id=academy_id,
+        # #787: attendance status and rate overrides are payroll inputs; a
+        # frozen payout period will never re-read them.
+        payout_lock=PayoutInputLock(payout_periods_repo),
     )
 
     correct_attendance = CorrectAttendance(

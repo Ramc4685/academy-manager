@@ -1,4 +1,14 @@
-"""Mark coach payroll attendance for one occurrence."""
+"""Mark coach payroll attendance for one occurrence.
+
+This row *is* a payroll input: ``status`` decides whether the date is paid
+at all and ``rate_override_minor`` decides how much. Once Finance has
+approved or paid the payout period covering the date, the snapshot no
+longer re-reads these rows, so a late edit is silent drift rather than a
+correction — issue #787. The ``PayoutPeriodLock`` port answers "is that
+window frozen?" without Coaching importing Finance, and a frozen window
+refuses the write (``PayoutPeriodFrozen``, 409) instead of accepting an
+edit nobody will ever see.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +20,9 @@ from pydantic import BaseModel, Field
 from backend.v2.contexts.coaching.application.ports import (
     CoachAttendanceRepository,
     OccurrenceLookup,
+    PayoutPeriodLock,
 )
+from backend.v2.contexts.coaching.domain.errors import PayoutPeriodFrozen
 from backend.v2.contexts.coaching.domain.models import (
     CoachAttendance,
     CoachAttendanceRole,
@@ -37,11 +49,13 @@ class MarkCoachAttendance:
         coach_attendance: CoachAttendanceRepository,
         occurrence_lookup: OccurrenceLookup,
         academy_id: str,
+        payout_lock: PayoutPeriodLock | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._coach_attendance = coach_attendance
         self._occurrence_lookup = occurrence_lookup
         self._academy_id = academy_id
+        self._payout_lock = payout_lock
         self._clock = clock or (lambda: datetime.now(UTC))
 
     async def execute(
@@ -63,6 +77,11 @@ class MarkCoachAttendance:
             if command.coach_id != actor_id or command.coach_id not in assigned:
                 raise PermissionError("Coach is not assigned to this occurrence")
 
+        await self._assert_payout_window_open(
+            coach_id=command.coach_id,
+            at=occurrence.starts_at,
+        )
+
         existing = await self._coach_attendance.find_for_occurrence_coach(
             command.occurrence_id,
             command.coach_id,
@@ -81,3 +100,16 @@ class MarkCoachAttendance:
             note=command.note,
         )
         return await self._coach_attendance.upsert(row)
+
+    async def _assert_payout_window_open(self, *, coach_id: str, at: datetime) -> None:
+        if self._payout_lock is None:
+            return
+        status = await self._payout_lock.locked_status_for(coach_id=coach_id, at=at)
+        if status is None:
+            return
+        raise PayoutPeriodFrozen(
+            "cannot change coach attendance after payout is approved or paid",
+            coach_id=coach_id,
+            occurrence_at=at.isoformat(),
+            payout_status=status,
+        )

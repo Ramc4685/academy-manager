@@ -1244,6 +1244,10 @@ class BulkPayrollResultView(BaseModel):
 
 class ReopenPayoutPeriodRequest(BaseModel):
     reason: str = Field(min_length=1)
+    acknowledge_paid_clawback: bool = False
+    """Required to reopen a period already marked paid (#787): the money is
+    out, so reopening it means clawing the payment back or netting it off a
+    later period. Ignored for an approved (unpaid) period."""
 
 
 class OverridePayoutLineRequest(BaseModel):

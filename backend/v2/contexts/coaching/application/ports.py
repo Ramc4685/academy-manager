@@ -62,6 +62,18 @@ class OccurrenceLookup(Protocol):
     async def get(self, occurrence_id: str) -> OccurrenceDetails | None: ...
 
 
+class PayoutPeriodLock(Protocol):
+    """Is this coach's payroll for this instant already frozen? (#787)
+
+    Finance owns ``PayoutPeriod``; Coaching must not import it (ADR-0005
+    rule 5), so the composition layer reshapes it into this one question.
+    Returns the blocking period's status (``"approved"`` / ``"paid"``), or
+    ``None`` when the window is still editable.
+    """
+
+    async def locked_status_for(self, *, coach_id: str, at: datetime) -> str | None: ...
+
+
 class SessionLookup(Protocol):
     """Coaching reads sessions through this port — the implementation wraps
     the Enrollment SessionQuery, but Coaching never imports Enrollment
