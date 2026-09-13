@@ -11,6 +11,7 @@ Run standalone::
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import uuid
@@ -336,6 +337,45 @@ async def _verify_email_credentials(sender: Any) -> bool | None:
     else:
         log.warning("email_credential_unverified", extra=extra)
     return ok
+
+
+# Issue #752: how long shutdown lets an in-flight scheduled job finish before
+# the scheduler cancels it. Must stay comfortably under backend/fly.toml's
+# kill_timeout (30s), which also has to cover request draining.
+SCHEDULER_DRAIN_TIMEOUT_SECONDS = 10.0
+
+
+async def _drain_scheduler(scheduler: Any, *, drain_seconds: float) -> None:
+    """Let in-flight scheduled jobs finish before the scheduler tears them down.
+
+    Fly replaces the machine on every deploy, and a deploy that overlaps the
+    10-minute Stripe reconcile used to cut the job off mid-flight. APScheduler's
+    ``AsyncIOExecutor.shutdown`` ignores its ``wait`` argument (it cancels every
+    pending future unconditionally), so ``shutdown(wait=True)`` would change
+    nothing — the wait has to happen here, before shutdown.
+
+    Bounded by ``drain_seconds`` so a stuck job cannot hold the machine past Fly's
+    kill timeout, and never raises: this runs in the lifespan's ``finally``,
+    where an exception would strand the Mongo client and the outbox dispatcher.
+    """
+    try:
+        scheduler.pause()
+        pending = {
+            future
+            for executor in getattr(scheduler, "_executors", {}).values()
+            for future in set(getattr(executor, "_pending_futures", ()))
+            if not future.done()
+        }
+        if not pending:
+            return
+        log.info("scheduler_drain_started", extra={"in_flight": len(pending)})
+        _, still_running = await asyncio.wait(pending, timeout=drain_seconds)
+        if still_running:
+            # Left to shutdown's cancellation below; the resulting
+            # CancelledError is no longer reported as a job failure.
+            log.warning("scheduler_drain_timed_out", extra={"in_flight": len(still_running)})
+    except Exception:
+        log.warning("scheduler_drain_failed", exc_info=True)
 
 
 @asynccontextmanager
@@ -1424,6 +1464,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         if scheduler is not None:
+            await _drain_scheduler(scheduler, drain_seconds=SCHEDULER_DRAIN_TIMEOUT_SECONDS)
             scheduler.shutdown(wait=False)
         await dispatcher.stop()
         client.close()

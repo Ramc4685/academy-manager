@@ -25,6 +25,7 @@ happens regardless of Sentry.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator, Mapping
@@ -105,7 +106,16 @@ def handle_scheduler_job_event(event: Any) -> None:
                 scheduled_run_time.isoformat() if scheduled_run_time is not None else None
             ),
         }
-        if exc is not None:
+        if isinstance(exc, asyncio.CancelledError):
+            # Issue #752: a deploy replaces the machine mid-tick, APScheduler
+            # cancels the in-flight job's task, and the CancelledError arrives
+            # here as a job *error*. It is shutdown noise, not a failure — and
+            # paging on it on every overlapping deploy buried the real failures
+            # of the same job. Logged at info so the cut-off run is still
+            # traceable. Scoped to cancellation only: any other exception
+            # raised during shutdown is still a genuine error below.
+            log.info("scheduler_job_cancelled job_id=%s", job_id, extra=extra)
+        elif exc is not None:
             log.error(
                 "scheduler_job_error job_id=%s",
                 job_id,
