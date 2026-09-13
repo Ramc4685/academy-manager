@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 import pytest
 
 import backend.v2.contexts.billing.infrastructure.admin_reports_read_model as reports_read_model
+from backend.v2.contexts.billing.infrastructure.cash_received import cash_received_in_period
 from backend.v2.shared.tenancy.context import tenant_scope
 
 
@@ -520,3 +521,83 @@ async def test_csv_export_neutralises_formula_injection_in_free_text() -> None:
 
     refund_rows = list(csv.reader(io.StringIO(refunds_csv)))
     assert refund_rows[1][8].startswith("'=")
+
+
+@pytest.mark.asyncio
+async def test_deposit_slip_uses_the_shared_cash_received_definition() -> None:
+    """#693: the slip is the document reconciled against the bank, so it has to
+    count the same money month close counts — what was *received* per row, and
+    legacy ``payments`` cash that never became a ledger row."""
+    await _seed_divergent_cash(db := _db())
+
+    with tenant_scope("acad"):
+        cash = await cash_received_in_period(
+            db,
+            academy_id="acad",
+            start=datetime(2026, 5, 1, tzinfo=UTC),
+            end=datetime(2026, 6, 1, tzinfo=UTC),
+        )
+        report = await reports_read_model.make_deposit_slip_report(db)("2026-05")
+
+    # 9_500 received (not the 10_000 charged) + 3_000 of legacy cash.
+    assert cash.gross_cents == 12_500
+    assert report["total_cents"] == cash.gross_cents
+    assert report["count"] == len(cash.rows)
+    by_day = {day["date"]: day for day in report["days"]}
+    assert by_day["2026-05-04"]["total_cents"] == 9_500
+    assert by_day["2026-05-06"]["methods"] == [
+        {"method": "check", "amount_cents": 3_000, "count": 1}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_quickbooks_collected_line_tracks_the_shared_cash_definition() -> None:
+    """The journal's Undeposited Funds debit is the deposit slip's total, so
+    it inherits the same definition (#693)."""
+    await _seed_divergent_cash(db := _db())
+
+    with tenant_scope("acad"):
+        cash = await cash_received_in_period(
+            db,
+            academy_id="acad",
+            start=datetime(2026, 5, 1, tzinfo=UTC),
+            end=datetime(2026, 6, 1, tzinfo=UTC),
+        )
+        csv_text = await reports_read_model.make_financial_report_csv(db)("quickbooks", "2026-05")
+
+    rows = list(csv.reader(io.StringIO(csv_text)))
+    debit = next(
+        row for row in rows[1:] if row[0] == "2026-05-REV" and row[3] == "Undeposited Funds"
+    )
+    assert debit[4] == f"{cash.gross_cents / 100:.2f}"
+
+
+async def _seed_divergent_cash(db) -> None:
+    """One ledger row whose received amount differs from the amount charged,
+    plus one legacy ``payments`` row that never became a ledger row — the two
+    ways the old ledger-only/raw-``amount_cents`` slip diverged from the
+    shared reader."""
+    await db["ledger_payments"].insert_one(
+        {
+            "payment_id": "lpay-partial",
+            "academy_id": "acad",
+            "status": "succeeded",
+            "amount_cents": 10_000,
+            "paid_amount_cents": 9_500,
+            "payment_method": "card",
+            "paid_at": datetime(2026, 5, 4, 10, 0, tzinfo=UTC),
+            "created_at": datetime(2026, 5, 4, 10, 0, tzinfo=UTC),
+        }
+    )
+    await db["payments"].insert_one(
+        {
+            "payment_id": "legacy-1",
+            "academy_id": "acad",
+            "status": "paid",
+            "period": "2026-05",
+            "amount_cents": 3_000,
+            "paid_amount_cents": 3_000,
+            "payment_method": "check",
+            "paid_at": datetime(2026, 5, 6, 12, 0, tzinfo=UTC),
+        }
+    )

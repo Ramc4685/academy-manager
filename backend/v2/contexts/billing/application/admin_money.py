@@ -10,22 +10,43 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, time
 from typing import Any
+from zoneinfo import ZoneInfo
 
 # Re-exported: the rounding rule is shared with the coaching payout read
 # models, and contexts may not import one another, so it lives in `shared`.
 from backend.v2.shared.money import round_money_minor as round_money_minor
 
 
-def month_bounds(period: str) -> tuple[datetime, datetime]:
+def report_zone(timezone_name: str | None) -> ZoneInfo:
+    """The academy's reporting zone, falling back to UTC on an unknown name.
+
+    Reads must render something: a nonsense ``academies.timezone`` degrades to
+    the pre-#608 UTC behaviour rather than 500-ing a report.
+    """
+    if not timezone_name:
+        return ZoneInfo("UTC")
+    try:
+        return ZoneInfo(timezone_name)
+    except (KeyError, ValueError):
+        return ZoneInfo("UTC")
+
+
+def month_bounds(period: str, timezone_name: str | None = None) -> tuple[datetime, datetime]:
+    """UTC instants spanning ``period`` as the academy's own clock sees it (#608).
+
+    The bounds stay UTC-aware because they are Mongo query bounds and Mongo
+    stores UTC; only where the month starts and ends moves.
+    """
     year_str, month_str = period.split("-", 1)
     year = int(year_str)
     month = int(month_str)
-    start = datetime(year, month, 1, tzinfo=UTC)
+    zone = report_zone(timezone_name)
+    start = datetime(year, month, 1, tzinfo=zone)
     if month == 12:
-        end = datetime(year + 1, 1, 1, tzinfo=UTC)
+        end = datetime(year + 1, 1, 1, tzinfo=zone)
     else:
-        end = datetime(year, month + 1, 1, tzinfo=UTC)
-    return start, end
+        end = datetime(year, month + 1, 1, tzinfo=zone)
+    return start.astimezone(UTC), end.astimezone(UTC)
 
 
 def money_to_cents(value: Any) -> int:
@@ -250,27 +271,35 @@ def coerce_report_datetime(value: object) -> datetime | None:
     return None
 
 
-def period_start_datetime(period: object) -> datetime | None:
+def period_start_datetime(period: object, timezone_name: str | None = None) -> datetime | None:
     if not isinstance(period, str) or not period:
         return None
     try:
-        start, _ = month_bounds(period)
+        start, _ = month_bounds(period, timezone_name)
     except (TypeError, ValueError):
         return None
     return start
 
 
-def payment_effective_at(payment: dict[str, Any]) -> datetime | None:
+def payment_effective_at(
+    payment: dict[str, Any], timezone_name: str | None = None
+) -> datetime | None:
     for key in ("paid_at", "payment_date", "created_at"):
         parsed = coerce_report_datetime(payment.get(key))
         if parsed is not None:
             return parsed
-    return period_start_datetime(payment.get("period"))
+    return period_start_datetime(payment.get("period"), timezone_name)
 
 
-def payment_effective_month(payment: dict[str, Any]) -> str:
-    effective_at = payment_effective_at(payment)
-    return effective_at.strftime("%Y-%m") if effective_at is not None else ""
+def month_label(effective_at: datetime | None, timezone_name: str | None = None) -> str:
+    """``%Y-%m`` for an instant, read off the academy's clock (#608)."""
+    if effective_at is None:
+        return ""
+    return effective_at.astimezone(report_zone(timezone_name)).strftime("%Y-%m")
+
+
+def payment_effective_month(payment: dict[str, Any], timezone_name: str | None = None) -> str:
+    return month_label(payment_effective_at(payment, timezone_name), timezone_name)
 
 
 def ledger_payment_effective_at(payment: dict[str, Any]) -> datetime | None:
@@ -281,9 +310,10 @@ def ledger_payment_effective_at(payment: dict[str, Any]) -> datetime | None:
     return None
 
 
-def ledger_payment_effective_month(payment: dict[str, Any]) -> str:
-    effective_at = ledger_payment_effective_at(payment)
-    return effective_at.strftime("%Y-%m") if effective_at is not None else ""
+def ledger_payment_effective_month(
+    payment: dict[str, Any], timezone_name: str | None = None
+) -> str:
+    return month_label(ledger_payment_effective_at(payment), timezone_name)
 
 
 def missing_or_empty_field(field: str) -> dict[str, Any]:

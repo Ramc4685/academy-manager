@@ -17,11 +17,19 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from backend.v2.contexts.billing.application.admin_money import month_label, report_zone
 from backend.v2.contexts.billing.application.ports import PaymentRepository
 from backend.v2.shared.http.errors import DomainError
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import TenantScopedRepository
-from backend.v2.shared.tenancy.context import current_academy_id
+from backend.v2.shared.tenancy.context import TenantContextUnset, current_academy_id
+from backend.v2.shared.time import (
+    AcademyTimezoneReader,
+    academy_timezone_lookup,
+    ensure_utc,
+    resolve_reporting_timezone,
+)
+from backend.v2.shared.time.academy_timezone import UTC_NAME
 
 
 # FINANCE
@@ -179,6 +187,15 @@ class MongoExpenseRepository(TenantScopedRepository):
 class MongoPayoutRepository(TenantScopedRepository):
     collection_name = "payouts"
 
+    def __init__(
+        self, db: object, *, academy_timezone: AcademyTimezoneReader | None = None
+    ) -> None:
+        super().__init__(db)
+        # #608: payroll periods bucket on the academy's clock, like every
+        # other financial report, so a late class on the last of the month
+        # cannot land in a different month here than in the reports.
+        self._academy_timezone = academy_timezone or academy_timezone_lookup(db)
+
     @staticmethod
     def _to_domain(doc: dict[str, object]) -> Payout:
         return Payout(
@@ -211,6 +228,7 @@ class MongoPayoutRepository(TenantScopedRepository):
         # An occurrence counts as completed once its end time has passed,
         # unless it was cancelled — nothing in the app flips the status
         # field to "completed", so deriving completion keeps payouts real.
+        timezone_name = await resolve_reporting_timezone(self._academy_timezone, academy_id)
         now = datetime.now(UTC)
         occurrence_rows = [
             doc
@@ -285,7 +303,7 @@ class MongoPayoutRepository(TenantScopedRepository):
                 )
             if amount is None:
                 continue
-            period = start_at.strftime("%Y-%m")
+            period = month_label(ensure_utc(start_at), timezone_name)
             bucket = grouped.setdefault(
                 (period, coach_id),
                 {"amount": 0, "students": set(), "occurrences": set(), "expected": 0},
@@ -300,7 +318,7 @@ class MongoPayoutRepository(TenantScopedRepository):
             amount_cents = int(bucket["amount"])
             if amount_cents <= 0:
                 continue
-            period_start, period_end = _period_window(period)
+            period_start, period_end = _period_window(period, timezone_name)
             expected_cents = int(bucket["expected"])
             payouts.append(
                 Payout(
@@ -412,15 +430,17 @@ def _occurrence_session_id(row: dict[str, object]) -> str:
     return str(row.get("template_session_id") or row.get("session_id") or "")
 
 
-def _period_window(period: str) -> tuple[datetime, datetime]:
+def _period_window(period: str, timezone_name: str | None = None) -> tuple[datetime, datetime]:
+    """UTC instants spanning ``period`` on the academy's clock (#608)."""
     year, month = (int(part) for part in period.split("-", 1))
-    period_start = datetime(year, month, 1, tzinfo=UTC)
+    zone = report_zone(timezone_name)
+    period_start = datetime(year, month, 1, tzinfo=zone)
     if month == 12:
-        period_end = datetime(year + 1, 1, 1, tzinfo=UTC)
+        period_end = datetime(year + 1, 1, 1, tzinfo=zone)
     else:
         last_day = monthrange(year, month)[1]
-        period_end = datetime(year, month, last_day, 23, 59, 59, 999000, tzinfo=UTC)
-    return period_start, period_end
+        period_end = datetime(year, month, last_day, 23, 59, 59, 999000, tzinfo=zone)
+    return period_start.astimezone(UTC), period_end.astimezone(UTC)
 
 
 # FINANCE
@@ -505,12 +525,29 @@ class AcademyRevenueQuery:
     grouped by month for the last N months.
     """
 
-    def __init__(self, *, payments: PaymentRepository) -> None:
+    def __init__(
+        self,
+        *,
+        payments: PaymentRepository,
+        academy_timezone: AcademyTimezoneReader | None = None,
+    ) -> None:
         self._payments = payments
+        self._academy_timezone = academy_timezone
+
+    async def _reporting_timezone(self) -> str:
+        """The academy's clock, or UTC when no reader/tenant is wired (#608)."""
+        if self._academy_timezone is None:
+            return UTC_NAME
+        try:
+            academy_id = current_academy_id()
+        except TenantContextUnset:
+            return UTC_NAME
+        return await resolve_reporting_timezone(self._academy_timezone, academy_id)
 
     async def execute(self, parent_id_filter: str | None = None) -> dict[str, int]:
         # Wave 3 keeps this simple: walk every payment for the parent (or all)
         # and bucket by YYYY-MM. Production scale would use a Mongo aggregation.
+        timezone_name = await self._reporting_timezone()
         result: dict[str, int] = {}
         payments = (
             await self._payments.list_for_parent(parent_id_filter)
@@ -521,6 +558,6 @@ class AcademyRevenueQuery:
             if p.status not in ("succeeded", "partially_refunded", "refunded"):
                 continue
             net = p.amount_cents - p.refunded_cents
-            key = p.created_at.strftime("%Y-%m")
+            key = month_label(ensure_utc(p.created_at), timezone_name)
             result[key] = result.get(key, 0) + net
         return result

@@ -55,8 +55,35 @@ def test_generated_excludes_drafts_but_counts_voids() -> None:
     assert section["generated"] == 2
 
 
-def test_the_emailed_notice_split_comes_from_current_autopay_status() -> None:
-    """The message kind is not persisted, so it is re-derived (§4.3 note)."""
+def test_the_split_reads_the_persisted_kind_not_the_current_autopay_status() -> None:
+    """Issue #692: reopening a past month shows the split it showed at the time.
+
+    Both families flipped their autopay state after the send, so a re-derived
+    split would swap these two columns.
+    """
+    section = build_invoices_section(
+        [
+            inv(
+                "a",
+                delivery_status="sent",
+                delivery_kind="autopay_notice",
+                autopay_enrollment_status="paused",
+            ),
+            inv(
+                "b",
+                delivery_status="sent",
+                delivery_kind="invoice_email",
+                autopay_enrollment_status="active",
+            ),
+        ]
+    )
+
+    assert section["autopay_notices"] == 1
+    assert section["emailed"] == 1
+
+
+def test_the_emailed_notice_split_falls_back_to_autopay_status_when_unkinded() -> None:
+    """Invoices sent before #692 carry no kind; the old approximation stands."""
     section = build_invoices_section(
         [
             inv("a", delivery_status="sent", autopay_enrollment_status="active"),

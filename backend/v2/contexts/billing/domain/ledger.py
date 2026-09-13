@@ -15,7 +15,20 @@ from pydantic import BaseModel, Field
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry
 
 InvoiceStatus = Literal["draft", "open", "partially_paid", "paid", "void"]
-LedgerPaymentStatus = Literal["pending", "succeeded", "failed", "refunded", "partially_refunded"]
+LedgerPaymentStatus = Literal[
+    "pending", "succeeded", "failed", "refunded", "partially_refunded", "voided"
+]
+#: Statuses that mean real money settled against this payment. Voiding one of
+#: these is only a correction when no provider ever moved funds — see
+#: :func:`void_payment`.
+SETTLED_PAYMENT_STATUSES: frozenset[str] = frozenset(
+    {"succeeded", "refunded", "partially_refunded"}
+)
+# Which parent-facing message a successful delivery actually was. Stamped at
+# send time (issue #692) because the enrollment's autopay status drifts: a
+# family emailed a pay link in March and switched autopay on in April would
+# otherwise re-read as an April-style autopay notice in March's Month close.
+DeliveryKind = Literal["invoice_email", "autopay_notice"]
 
 
 class LedgerInvoice(BaseModel):
@@ -59,6 +72,11 @@ class LedgerInvoice(BaseModel):
     # in the Resend dashboard). Only overwritten on a successful send; a later
     # delivery_failed leaves the last good id in place so the link still works.
     email_provider_message_id: str | None = None
+    # What the most recent successful send actually was (issue #692). None on
+    # invoices delivered before the field existed, and on any invoice whose
+    # kind the 0176 backfill could not infer: readers treat that as unknown
+    # and fall back to the old approximation rather than guessing.
+    delivery_kind: DeliveryKind | None = None
     # In-flight Stripe Checkout Session for this invoice. Set while a parent is paying
     # manually, cleared by the session's terminal webhook. Autopay refuses to charge a
     # held invoice so a manual payment and a dunning tick cannot both collect the same
@@ -116,6 +134,13 @@ class LedgerPayment(BaseModel):
     recorded_by: str | None = None
     notes: str | None = None
     metadata: dict[str, str] | None = None
+    # Why/when/by whom the payment was voided (issue #619) — the mirror of
+    # LedgerInvoice.void_reason/voided_at. A void is a soft, terminal state: the
+    # row is kept for audit, its allocations are reversed, and every reader that
+    # sums money uses a status allow-list that "voided" is not on.
+    void_reason: str | None = None
+    voided_at: datetime | None = None
+    voided_by: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -141,13 +166,17 @@ class LedgerAllocationResult(BaseModel):
 
 
 def format_invoice_number(*, prefix: str, yyyymm: str, seq: int) -> str:
-    """Format a human-facing invoice number: ``{prefix}-{yyyymm}-{seq:03d}``.
+    """Format a human-facing invoice number: ``{prefix}-{YYYY}-{MM}-{seq:04d}``.
+
+    Owner decision 2026-09-12 (issue #659): the tuition month must be readable
+    at a glance, so the period is split (``BLNO-2026-09-0042``) rather than run
+    together as ``BLNO-202609-042`` — parents read the dashed form as a date.
 
     Pure formatting only — the caller supplies the already-minted, race-safe
     sequence value (from ``MongoBillingCounterRepository.next_value``) and the
     tenant's configured prefix (from ``BillingSettings.invoice_number_prefix``).
-    ``seq`` is zero-padded to 3 digits but never truncated: sequences beyond
-    999 simply widen the field (e.g. ``BLNO-202606-1234``) rather than
+    ``seq`` is zero-padded to 4 digits but never truncated: sequences beyond
+    9999 simply widen the field (e.g. ``BLNO-2026-06-12345``) rather than
     wrapping or colliding with an earlier number.
     """
     if not prefix:
@@ -156,7 +185,73 @@ def format_invoice_number(*, prefix: str, yyyymm: str, seq: int) -> str:
         raise ValueError("yyyymm must be 6 digits (YYYYMM)")
     if seq <= 0:
         raise ValueError("seq must be positive")
-    return f"{prefix}-{yyyymm}-{seq:03d}"
+    return f"{prefix}-{yyyymm[:4]}-{yyyymm[4:]}-{seq:04d}"
+
+
+#: Month names, indexed 1-12. Spelled out rather than taken from ``strftime``
+#: so the rendering never depends on the process locale — a parent-facing
+#: email must say "September 2026" on every host.
+_MONTH_NAMES = (
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+)
+
+
+def format_tuition_month(period: str) -> str:
+    """Render a ``YYYY-MM`` billing period as ``"September 2026"`` (issue #659).
+
+    Every parent-facing surface says which month's tuition it is, in words: the
+    2026-09-05 incident was nine families reading "$70.00 ... for 2026-09" as a
+    duplicate of the August charge they had just paid. An unparseable period
+    degrades to the raw string rather than raising — a malformed period must
+    never be the reason a parent's invoice is not delivered.
+    """
+    text = (period or "").strip()
+    year, _, month = text.partition("-")
+    if len(year) == 4 and year.isdigit() and len(month) == 2 and month.isdigit():
+        index = int(month)
+        if 1 <= index <= 12:
+            return f"{_MONTH_NAMES[index - 1]} {year}"
+    return text
+
+
+def format_charge_date(value: date) -> str:
+    """Render a charge date as ``"September 3"`` (issue #659).
+
+    Spelled from ``_MONTH_NAMES`` rather than ``strftime`` for the same reason
+    ``format_tuition_month`` is: a parent-facing email must read the same on
+    every host regardless of the process locale. The year is omitted on
+    purpose — this only ever renders a charge inside the last 45 days.
+    """
+    return f"{_MONTH_NAMES[value.month - 1]} {value.day}"
+
+
+def format_session_label(
+    *,
+    name: str | None,
+    days_of_week: list[str] | tuple[str, ...] | None = None,
+    start_time: str | None = None,
+) -> str | None:
+    """A compact class label for emails, e.g. ``"Mon/Wed 18:00 Junior Badminton"``.
+
+    Two children in one family are billed separately (issue #659: a parent paid
+    $120 for one child and was auto-charged $70 for the other on the same
+    weekend); naming the class is what lets them tell the two invoices apart.
+    Returns ``None`` when there is nothing worth showing.
+    """
+    days = "/".join(str(d).strip() for d in (days_of_week or []) if str(d).strip())
+    parts = [part for part in (days, (start_time or "").strip(), (name or "").strip()) if part]
+    return " ".join(parts) or None
 
 
 def allocate_payment_to_invoice(
@@ -341,12 +436,50 @@ def void_invoice(invoice: LedgerInvoice, *, reason: str, now: datetime) -> Ledge
     )
 
 
+def void_payment(
+    payment: LedgerPayment,
+    *,
+    reason: str,
+    voided_by: str | None,
+    now: datetime,
+) -> LedgerPayment:
+    """Mark a payment void — the payment mirror of :func:`void_invoice` (#619).
+
+    Voiding is for rows that should never have been on the books: a manual
+    payment recorded by mistake, a test row, an EXPIRED checkout that collected
+    nothing. It is deliberately NOT a way out of real money: a payment whose
+    status says a provider settled funds AND that is linked to Stripe has to go
+    through the refund flow, which actually returns the money, instead of being
+    quietly erased from the reports.
+
+    ``unapplied_amount_cents`` is zeroed: a voided payment must not leave
+    spendable funds behind for an allocator to pick up. The caller is
+    responsible for reversing any allocations the payment already made.
+    """
+    if payment.status == "voided":
+        raise ValueError("payment is already voided")
+    stripe_linked = bool(payment.stripe_payment_intent_id or payment.stripe_invoice_id)
+    if stripe_linked and payment.status in SETTLED_PAYMENT_STATUSES:
+        raise ValueError("Stripe-linked payments with settled funds must be refunded, not voided")
+    return payment.model_copy(
+        update={
+            "status": "voided",
+            "void_reason": reason,
+            "voided_at": now,
+            "voided_by": voided_by,
+            "unapplied_amount_cents": 0,
+            "updated_at": now,
+        }
+    )
+
+
 def record_delivery(
     invoice: LedgerInvoice,
     *,
     outcome: Literal["sent", "delivery_failed"],
     now: datetime,
     provider_message_id: str | None = None,
+    delivery_kind: DeliveryKind | None = None,
 ) -> LedgerInvoice:
     """Update delivery tracking only. Financial status is never changed by this op.
 
@@ -354,6 +487,10 @@ def record_delivery(
     successful send. It is only stored on a ``sent`` outcome and only when a
     non-empty id is supplied — a failed send, or a send by a provider that does
     not return an id, leaves any previously stored id untouched.
+
+    ``delivery_kind`` follows the same rule: which message the parent received
+    is only knowable from a send that succeeded, so a later ``delivery_failed``
+    retry leaves the last known kind in place (issue #692).
     """
     if invoice.status == "draft":
         raise ValueError("cannot record delivery on a draft invoice")
@@ -366,6 +503,8 @@ def record_delivery(
         updates["sent_at"] = now
     if outcome == "sent" and provider_message_id:
         updates["email_provider_message_id"] = provider_message_id
+    if outcome == "sent" and delivery_kind is not None:
+        updates["delivery_kind"] = delivery_kind
     return invoice.model_copy(update=updates)
 
 

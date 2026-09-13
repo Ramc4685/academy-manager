@@ -47,6 +47,7 @@ _VOID_STATUS = "void"
 _DRAFT_STATUS = "draft"
 _SENT_DELIVERY = "sent"
 _UNSENT_DELIVERY: frozenset[str] = frozenset({"not_sent", "delivery_failed"})
+_AUTOPAY_NOTICE_KIND = "autopay_notice"
 _PAUSED_ENROLLMENT = "paused"
 #: Terminal ("dead") enrollment statuses, in BOTH the legacy and #699
 #: canonical spellings ("withdrawn"->"dropped", "cancelled"->"deleted").
@@ -97,6 +98,10 @@ class InvoiceFacts:
     outstanding_cents: int = 0
     due_date: date | None = None
     delivery_status: str = "not_sent"
+    #: "invoice_email" | "autopay_notice", stamped at send time (#692). None on
+    #: sends that pre-date the field and on anything the backfill could not
+    #: infer — those fall back to the old autopay-status approximation.
+    delivery_kind: str | None = None
     void_reason: str | None = None
     parent_id: str | None = None
     parent_name: str | None = None
@@ -203,6 +208,18 @@ def _is_autopay_eligible(inv: InvoiceFacts) -> bool:
 # --------------------------------------------------------------------------- sections
 
 
+def _sent_as_notice(inv: InvoiceFacts) -> bool:
+    """Was this send an autopay notice rather than a pay-link email?
+
+    The persisted kind wins. Only an invoice delivered before #692 (or one the
+    backfill could not infer) falls back to the enrollment's current autopay
+    status, which is the approximation #692 exists to retire.
+    """
+    if inv.delivery_kind is not None:
+        return inv.delivery_kind == _AUTOPAY_NOTICE_KIND
+    return inv.autopay_active
+
+
 def build_invoices_section(invoices: Iterable[InvoiceFacts]) -> dict[str, Any]:
     """Counts of what the generation and send runs produced.
 
@@ -210,11 +227,12 @@ def build_invoices_section(invoices: Iterable[InvoiceFacts]) -> dict[str, Any]:
     never meant to be sent, so counting it as ``not_sent`` would report a
     failure that never happened.
 
-    The kind of email is not persisted — ``record_delivery`` writes the same
-    ``delivery_status`` for an invoice email and an autopay notice — so the
-    split is re-derived from the enrollment's *current* autopay status, exactly
-    as the family timeline does. ``emailed + autopay_notices`` is always the
-    true sent count, which is the number that matters for close (§4.3).
+    The delivery split reads ``delivery_kind``, stamped on the invoice at send
+    time (#692), so reopening a past month shows the split it showed then. An
+    invoice sent before that field existed carries no kind; it falls back to
+    the old approximation — the enrollment's *current* autopay status — which
+    drifts as families change autopay. Either way ``emailed + autopay_notices``
+    is the true sent count, which is the number that matters for close (§4.3).
     """
     generated = [inv for inv in invoices if not inv.is_draft]
     sent = [inv for inv in generated if inv.delivery_status == _SENT_DELIVERY]
@@ -222,8 +240,8 @@ def build_invoices_section(invoices: Iterable[InvoiceFacts]) -> dict[str, Any]:
     reasons = Counter(inv.void_reason or "unspecified" for inv in voided)
     return {
         "generated": len(generated),
-        "emailed": sum(1 for inv in sent if not inv.autopay_active),
-        "autopay_notices": sum(1 for inv in sent if inv.autopay_active),
+        "emailed": sum(1 for inv in sent if not _sent_as_notice(inv)),
+        "autopay_notices": sum(1 for inv in sent if _sent_as_notice(inv)),
         "not_sent": sum(1 for inv in generated if inv.delivery_status in _UNSENT_DELIVERY),
         "voided": len(voided),
         "voided_cents": sum(inv.total_cents for inv in voided),

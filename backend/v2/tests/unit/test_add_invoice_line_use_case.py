@@ -245,7 +245,7 @@ async def test_mode_b_mints_invoice_number_using_prefix_and_period() -> None:
         )
     )
 
-    assert result.invoice.invoice_number == "ACAD-202606-001"
+    assert result.invoice.invoice_number == "ACAD-2026-06-0001"
 
 
 async def test_mode_b_invoice_number_increments_within_same_academy_month() -> None:
@@ -272,20 +272,20 @@ async def test_mode_b_invoice_number_increments_within_same_academy_month() -> N
         )
     )
 
-    assert first.invoice.invoice_number == "BLNO-202606-001"
-    assert second.invoice.invoice_number == "BLNO-202606-002"
+    assert first.invoice.invoice_number == "BLNO-2026-06-0001"
+    assert second.invoice.invoice_number == "BLNO-2026-06-0002"
 
 
 async def test_mode_a_does_not_mint_a_new_invoice_number_for_existing_invoice() -> None:
     """Mode A adds a line to an existing invoice; it must not re-mint invoice_number."""
     existing = _open_invoice()
-    existing = existing.model_copy(update={"invoice_number": "BLNO-202606-999"})
+    existing = existing.model_copy(update={"invoice_number": "BLNO-2026-06-0999"})
     repo = FakeLedgerRepository(invoices=[existing])
     uc = _use_case(repo)
 
     result = await uc.execute(AddInvoiceLineCommand(invoice_id="inv-1", **_line_cmd()))
 
-    assert result.invoice.invoice_number == "BLNO-202606-999"
+    assert result.invoice.invoice_number == "BLNO-2026-06-0999"
 
 
 async def test_mode_b_reuses_existing_open_invoice() -> None:

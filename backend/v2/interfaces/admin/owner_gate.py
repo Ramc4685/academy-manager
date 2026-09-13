@@ -67,6 +67,9 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("PUT", f"{_ADMIN}/enrollments/{{enrollment_id}}/tuition-discount"),
         ("DELETE", f"{_ADMIN}/enrollments/{{enrollment_id}}/tuition-discount"),
         ("POST", f"{_ADMIN}/payments/{{payment_id}}/undo-paid"),
+        # Voiding a payment changes every money report it was counted in
+        # (issue #619), so it sits at the same tier as refund/discount/undo.
+        ("POST", f"{_ADMIN}/payments/{{payment_id}}/void"),
         ("GET", f"{_ADMIN}/finance/payouts"),
         ("GET", f"{_ADMIN}/finance/revenue"),
         ("GET", f"{_ADMIN}/finance/tuition-discounts"),

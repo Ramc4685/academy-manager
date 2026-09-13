@@ -362,6 +362,7 @@ class MongoFamilyBillingReadModel:
             voided_at=_to_datetime(inv.get("voided_at")),
             void_reason=_opt_str(inv.get("void_reason")),
             delivery_status=str(inv.get("delivery_status") or "not_sent"),
+            delivery_kind=_opt_str(inv.get("delivery_kind")),
             last_sent_at=_to_datetime(inv.get("last_sent_at")),
             autopay_status=autopay_status,
             allocations=tuple(allocations),
@@ -612,6 +613,7 @@ class MongoFamilyBillingReadModel:
                 "voided_at": 1,
                 "void_reason": 1,
                 "delivery_status": 1,
+                "delivery_kind": 1,
                 "last_sent_at": 1,
             },
         )

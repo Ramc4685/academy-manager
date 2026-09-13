@@ -309,7 +309,8 @@ export type PaymentStatus =
   | "partially_refunded"
   | "failed"
   | "expired"
-  | "waived";
+  | "waived"
+  | "voided";
 
 export type AdminPaymentStatus = PaymentStatus | "partially_paid";
 
@@ -342,6 +343,10 @@ export interface AdminPaymentView {
   stripe_invoice_id?: string | null;
   stripe_payment_intent_id?: string | null;
   reconciliation_status?: string | null;
+  /** Soft-void trail (#619); present only on rows the "show voided" filter reveals. */
+  void_reason?: string | null;
+  voided_at?: string | null;
+  voided_by?: string | null;
   created_at: string;
   paid_at?: string | null;
 }
@@ -361,6 +366,8 @@ export interface AdminPaymentListFilters {
   q?: string;
   limit?: number;
   offset?: number;
+  /** Voided payments are hidden unless this is true (#619). */
+  include_voided?: boolean;
 }
 
 export interface AdminPaymentFeedItem {
@@ -1969,6 +1976,18 @@ export function applyPaymentDiscount(
 
 export function undoPaymentPaid(paymentId: string): Promise<void> {
   return apiFetch<void>(`/admin/payments/${paymentId}/undo-paid`, { method: "POST" });
+}
+
+/**
+ * Soft-void a test/erroneous payment (#619). Owner-only. Nothing is deleted:
+ * the row keeps its amount and drops out of the list and every money report,
+ * and the invoice it had settled reopens.
+ */
+export function voidPayment(paymentId: string, reason: string): Promise<void> {
+  return apiFetch<void>(`/admin/payments/${paymentId}/void`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
 }
 
 export function reconcileStripeBilling(

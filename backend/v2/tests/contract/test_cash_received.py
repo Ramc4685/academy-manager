@@ -9,6 +9,8 @@ reader's ``net_cents``.
 
 from __future__ import annotations
 
+import csv
+import io
 from datetime import UTC, datetime
 from typing import Any
 
@@ -18,12 +20,31 @@ from backend.v2.contexts.billing.application.admin_money import (
     month_bounds,
     payment_collected_cents,
 )
+from backend.v2.contexts.billing.application.use_cases.finance import (
+    MongoTuitionDiscountSummaryQuery,
+)
 from backend.v2.contexts.billing.infrastructure.admin_reports_read_model import (
+    make_deposit_slip_report,
+    make_financial_report_csv,
     make_reports_dashboard,
 )
 from backend.v2.contexts.billing.infrastructure.cash_received import (
+    _WIDENED_KEY_SHAPES,
     cash_received_in_period,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo import (
+    MongoBillingSettingsRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_connected_account_repo import (
+    MongoConnectedAccountRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_parent_billing_customer_repo import (
+    MongoParentBillingCustomerRepository,
+)
+from backend.v2.contexts.billing.infrastructure.month_close_read_model import (
+    MongoMonthCloseReadModel,
+)
+from backend.v2.shared.time.academy_timezone import academy_timezone_lookup
 
 PERIOD = "2026-09"
 ACADEMY = "test-academy"
@@ -271,3 +292,271 @@ async def test_the_dashboard_reports_exactly_what_the_reader_returns(db: Any, ac
     assert reader.net_cents == 15_500
     assert dashboard["cash_collected_cents"] == reader.net_cents
     assert dashboard["profit_and_loss"]["revenue_cents"] == reader.net_cents
+
+
+class _SpyCollection:
+    """Records the filters a collection is queried with."""
+
+    def __init__(self, collection: Any, calls: list[dict[str, Any]]) -> None:
+        self._collection = collection
+        self._calls = calls
+
+    def find(self, filter: dict[str, Any] | None = None, *args: Any, **kwargs: Any) -> Any:
+        self._calls.append(dict(filter or {}))
+        return self._collection.find(filter, *args, **kwargs)
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(self._collection, item)
+
+
+class _SpyDb:
+    def __init__(self, db: Any, collection_name: str, calls: list[dict[str, Any]]) -> None:
+        self._db = db
+        self._collection_name = collection_name
+        self._calls = calls
+
+    def __getitem__(self, name: str) -> Any:
+        collection = self._db[name]
+        if name != self._collection_name:
+            return collection
+        return _SpyCollection(collection, self._calls)
+
+
+@pytest.mark.asyncio
+async def test_the_dedup_never_scans_the_whole_ledger_payment_history(db: Any) -> None:
+    """#526: every ``ledger_payments`` read is bounded.
+
+    The dedup used to stream *every* successful ledger payment the academy
+    had ever recorded on each dashboard load. A filter of nothing but
+    ``academy_id``/``status`` is that unbounded scan; the bounded passes all
+    carry either the effective-date window or the keys being looked up.
+    """
+    await _ledger(db, payment_id="pay-1", stripe_payment_intent_id="pi_1", paid_amount_cents=8_000)
+    await _legacy(db, payment_id="leg-1", stripe_payment_intent_id="pi_1", paid_amount_cents=8_000)
+    calls: list[dict[str, Any]] = []
+
+    await cash_received_in_period(
+        _SpyDb(db, "ledger_payments", calls),  # type: ignore[arg-type]
+        academy_id=ACADEMY,
+        start=START,
+        end=END,
+    )
+
+    assert calls, "expected the reader to query ledger_payments"
+    assert [call for call in calls if set(call) <= {"academy_id", "status"}] == []
+
+
+@pytest.mark.asyncio
+async def test_dedup_still_spans_a_ledger_payment_recorded_years_earlier(db: Any) -> None:
+    """The bounded lookup must not become a lookback window: a legacy row can
+    mirror a ledger payment of any age, and windowing would double-count it."""
+    await _ledger(
+        db,
+        payment_id="pay-ancient",
+        stripe_checkout_session_id="cs_ancient",
+        paid_at=datetime(2021, 3, 4, tzinfo=UTC),
+        paid_amount_cents=6_000,
+    )
+    await _legacy(
+        db, payment_id="leg-1", stripe_checkout_session_id="cs_ancient", paid_amount_cents=6_000
+    )
+
+    result = await _read(db)
+
+    assert result.net_cents == 0
+    assert result.rows == ()
+
+
+@pytest.mark.asyncio
+async def test_dedup_spans_an_invoice_allocated_to_an_older_ledger_payment(db: Any) -> None:
+    """The allocation pass is equally age-blind: an invoice settled by last
+    year's ledger payment still supersedes a legacy row keyed by it."""
+    await _ledger(
+        db,
+        payment_id="pay-old",
+        paid_at=datetime(2025, 1, 9, tzinfo=UTC),
+        paid_amount_cents=5_000,
+    )
+    await db["payment_allocations"].insert_one(
+        {"academy_id": ACADEMY, "payment_id": "pay-old", "invoice_id": "inv-old"}
+    )
+    await _legacy(db, payment_id="leg-1", invoice_id="inv-old", paid_amount_cents=5_000)
+
+    result = await _read(db)
+
+    assert result.net_cents == 0
+
+
+@pytest.mark.asyncio
+async def test_an_allocation_of_a_failed_ledger_payment_does_not_dedup(db: Any) -> None:
+    """Only *successful* ledger payments supersede legacy cash."""
+    await _ledger(
+        db,
+        payment_id="pay-failed",
+        status="failed",
+        paid_at=datetime(2025, 1, 9, tzinfo=UTC),
+        paid_amount_cents=0,
+    )
+    await db["payment_allocations"].insert_one(
+        {"academy_id": ACADEMY, "payment_id": "pay-failed", "invoice_id": "inv-failed"}
+    )
+    await _legacy(db, payment_id="leg-1", invoice_id="inv-failed", paid_amount_cents=5_000)
+
+    result = await _read(db)
+
+    assert result.net_cents == 5_000
+
+
+@pytest.mark.asyncio
+async def test_dedup_survives_a_provider_key_stored_as_a_number(db: Any) -> None:
+    """Keys are compared as strings, so a numeric ``invoice_number`` on the
+    ledger row must still supersede the legacy row that spells it as text."""
+    await _ledger(
+        db,
+        payment_id="pay-1",
+        invoice_number=1042,
+        paid_at=datetime(2026, 7, 2, tzinfo=UTC),
+        paid_amount_cents=4_500,
+    )
+    await _legacy(db, payment_id="leg-1", invoice_number="1042", paid_amount_cents=4_500)
+
+    result = await _read(db)
+
+    assert result.net_cents == 0
+
+
+class _SpyAllDb:
+    """Records ``(collection, filter)`` for every read the reader issues."""
+
+    def __init__(self, db: Any, calls: list[tuple[str, dict[str, Any]]]) -> None:
+        self._db = db
+        self._calls = calls
+
+    def __getitem__(self, name: str) -> Any:
+        return _SpyNamedCollection(self._db[name], name, self._calls)
+
+
+class _SpyNamedCollection:
+    def __init__(self, collection: Any, name: str, calls: list[tuple[str, dict[str, Any]]]) -> None:
+        self._collection = collection
+        self._name = name
+        self._calls = calls
+
+    def find(self, filter: dict[str, Any] | None = None, *args: Any, **kwargs: Any) -> Any:
+        self._calls.append((self._name, dict(filter or {})))
+        return self._collection.find(filter, *args, **kwargs)
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(self._collection, item)
+
+
+def _in_clauses(filter: dict[str, Any]) -> list[tuple[str, list[Any], bool]]:
+    """``(field, values, is_or_branch)`` for every ``$in`` in ``filter``."""
+    clauses: list[tuple[str, list[Any], bool]] = []
+    for field, condition in filter.items():
+        if field == "$or":
+            for branch in condition:
+                clauses += [(name, values, True) for name, values, _ in _in_clauses(branch)]
+        elif isinstance(condition, dict) and "$in" in condition:
+            clauses.append((field, list(condition["$in"]), False))
+    return clauses
+
+
+@pytest.mark.asyncio
+async def test_the_dedup_lookups_stay_eligible_for_the_partial_indexes(db: Any) -> None:
+    """#526 review: a mixed-type ``$in`` is a collection scan in disguise.
+
+    Every index on these fields is partial, and Mongo only uses a partial
+    index when the predicate implies its filter. One non-string literal in a
+    shared ``$in`` therefore takes *all six* ``$or`` branches off their
+    indexes — the exact scan #526 removed. So the widened shapes must live in
+    their own single-field query, on a field indexed to accept them.
+    """
+    await _ledger(db, payment_id="pay-1", invoice_number=1042, paid_amount_cents=4_500)
+    await _legacy(
+        db,
+        payment_id="leg-1",
+        invoice_number="1042",
+        invoice_id="64b7f2c1a9e4d3b2c1a9e4d3",
+        stripe_payment_intent_id="pi_1",
+        paid_amount_cents=4_500,
+    )
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    await cash_received_in_period(
+        _SpyAllDb(db, calls),  # type: ignore[arg-type]
+        academy_id=ACADEMY,
+        start=START,
+        end=END,
+    )
+
+    widened_seen = 0
+    for collection, filter in calls:
+        for field, values, in_or in _in_clauses(filter):
+            if field == "status":
+                continue
+            shapes = {type(value) for value in values}
+            assert len(shapes) == 1, f"{collection}.{field} mixes {shapes} in one $in"
+            if shapes != {str}:
+                widened_seen += 1
+                assert field in _WIDENED_KEY_SHAPES, f"{collection}.{field} widened unexpectedly"
+                assert not in_or, f"{collection}.{field} widened inside an $or"
+    assert widened_seen, "expected the numeric invoice number to be looked up as an int"
+
+
+@pytest.mark.asyncio
+async def test_the_lookup_count_scales_with_the_candidate_keys_not_the_collection(
+    db: Any,
+) -> None:
+    """The bound is the candidate-key batch count, so a ledger full of
+    unrelated history cannot add a single extra read."""
+    await _legacy(db, payment_id="leg-1", stripe_payment_intent_id="pi_1", paid_amount_cents=1_000)
+    calls: list[tuple[str, dict[str, Any]]] = []
+    await cash_received_in_period(_SpyAllDb(db, calls), academy_id=ACADEMY, start=START, end=END)
+    baseline = len(calls)
+
+    for index in range(25):
+        await _ledger(
+            db,
+            payment_id=f"pay-old-{index}",
+            paid_at=datetime(2024, 5, 6, tzinfo=UTC),
+            paid_amount_cents=100,
+        )
+    calls.clear()
+    await cash_received_in_period(_SpyAllDb(db, calls), academy_id=ACADEMY, start=START, end=END)
+
+    assert len(calls) == baseline
+
+
+@pytest.mark.asyncio
+async def test_month_close_deposit_slip_and_journal_agree_on_one_period(db: Any, acad: str) -> None:
+    """#693: the three documents an owner reconciles a month with must report
+    the same cash. The seeded month contains both ways they used to diverge —
+    a ledger row that received less than it charged, and legacy cash with no
+    ledger row — and no refunds, the one deliberate difference (the slip is
+    gross because the journal books refunds as their own entry)."""
+    await db["academies"].insert_one({"academy_id": ACADEMY, "timezone": "UTC"})
+    await _ledger(db, payment_id="pay-partial", amount_cents=10_000, paid_amount_cents=9_500)
+    await _legacy(db, payment_id="leg-1", paid_amount_cents=3_000, period=PERIOD)
+
+    cash = await _read(db)
+    month_close = await MongoMonthCloseReadModel(
+        db,
+        academy_timezone=academy_timezone_lookup(db),
+        connected_accounts=MongoConnectedAccountRepository(db),
+        billing_settings=MongoBillingSettingsRepository(db),
+        customers=MongoParentBillingCustomerRepository(db),
+        tuition_discounts=MongoTuitionDiscountSummaryQuery(db),
+    ).build(PERIOD)
+    slip = await make_deposit_slip_report(db)(PERIOD)
+    journal = list(
+        csv.reader(io.StringIO(await make_financial_report_csv(db)("quickbooks", PERIOD)))  # type: ignore[operator]
+    )
+    undeposited = next(
+        row for row in journal[1:] if row[0] == f"{PERIOD}-REV" and row[3] == "Undeposited Funds"
+    )
+
+    assert cash.gross_cents == cash.net_cents == 12_500
+    assert month_close["money"]["collected_cents"] == cash.net_cents
+    assert slip["total_cents"] == cash.gross_cents
+    assert undeposited[4] == "125.00"

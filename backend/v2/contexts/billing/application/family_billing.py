@@ -37,6 +37,7 @@ FAILURE_ATTEMPT_STATUSES: frozenset[str] = frozenset(
 )
 
 _PAUSED = "paused"
+AUTOPAY_NOTICE_KIND = "autopay_notice"
 #: Terminal ("dead") enrollment statuses, in BOTH the legacy and #699
 #: canonical spellings ("withdrawn"->"dropped", "cancelled"->"deleted").
 #: Billing cannot import contexts.enrollment.domain.models.canonical_status
@@ -138,6 +139,10 @@ class InvoiceFacts:
     autopay_status: str | None  # the enrollment's autopay status (labels the send)
     allocations: tuple[AllocationFacts, ...]
     credits: tuple[CreditFacts, ...]
+    #: What the send actually was, stamped at send time (#692):
+    #: "invoice_email" | "autopay_notice". None for sends that pre-date the
+    #: field, which fall back to ``autopay_status`` — the drifting guess.
+    delivery_kind: str | None = None
 
 
 @dataclass(frozen=True)
@@ -213,6 +218,18 @@ class FamilyFacts:
 
 def _iso(value: date | datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
+
+
+def _sent_as_notice(inv: InvoiceFacts) -> bool:
+    """Was the parent sent an autopay notice rather than a pay-link email?
+
+    The kind persisted at send time wins (#692). Only a send that pre-dates
+    that field falls back to the enrollment's *current* autopay status, which
+    relabels old sends every time a family turns autopay on or off.
+    """
+    if inv.delivery_kind is not None:
+        return inv.delivery_kind == AUTOPAY_NOTICE_KIND
+    return inv.autopay_status == AUTOPAY_ACTIVE_STATUS
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -475,7 +492,7 @@ def _invoice_entries(facts: FamilyFacts) -> list[dict[str, Any]]:
                 )
             )
         if inv.last_sent_at is not None:
-            notice = inv.autopay_status == AUTOPAY_ACTIVE_STATUS
+            notice = _sent_as_notice(inv)
             entries.append(
                 _entry(
                     at=inv.last_sent_at,
@@ -673,7 +690,7 @@ def _invoice_payload(inv: InvoiceFacts, *, eligibility: Eligibility) -> dict[str
     # total - balance and flag the row (spec §3.2).
     unlinked = inv.status == "paid" and not inv.allocations
     paid_cents = inv.total_cents - inv.balance_due_cents if unlinked else allocated
-    notice = inv.autopay_status == AUTOPAY_ACTIVE_STATUS
+    notice = _sent_as_notice(inv)
     return {
         "invoice_id": inv.invoice_id,
         "invoice_number": inv.invoice_number,

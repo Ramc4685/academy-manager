@@ -7,10 +7,14 @@ non-Stripe payments.
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Awaitable, Callable
 from datetime import date
 from typing import Literal, Protocol
 
 from pydantic import BaseModel, Field, field_validator
+
+log = logging.getLogger(__name__)
 
 ManualPaymentMethod = Literal["cash", "check", "zelle", "venmo", "bank_transfer", "other"]
 
@@ -109,11 +113,44 @@ class DuesReminderSenderPort(Protocol):
 
 
 class GenerateMonthlyPayments:
-    def __init__(self, *, payments: AdminPaymentOperationsPort) -> None:
+    """Mint the period's invoices, then tell the families (issue #659).
+
+    Generation and delivery used to be fully decoupled: the batch minted
+    invoices and a separate ``SendGeneratedInvoices`` sweep mailed them on its
+    own cadence, so a family could be auto-charged before ever being billed —
+    the shape of the 2026-09-05 "already charged?" incident. ``notify_minted``
+    closes that gap by running the sweep for this period as soon as the run
+    creates something. The sweep, not this use case, owns who gets what: a
+    non-autopay family gets the invoice with a pay link, an autopay family
+    gets the pre-charge notice instead. Reusing it is deliberate — a second
+    autopay predicate here would drift and double-bill.
+    """
+
+    def __init__(
+        self,
+        *,
+        payments: AdminPaymentOperationsPort,
+        notify_minted: Callable[[str], Awaitable[object]] | None = None,
+    ) -> None:
         self._payments = payments
+        self._notify_minted = notify_minted
 
     async def execute(self, cmd: GenerateMonthlyPaymentsCommand) -> GenerateMonthlyPaymentsResult:
-        return await self._payments.generate_monthly_payments(cmd.period)
+        result = await self._payments.generate_monthly_payments(cmd.period)
+        if self._notify_minted is not None and result.created > 0:
+            try:
+                await self._notify_minted(cmd.period)
+            except Exception:
+                # Generation is the money-critical half and has already
+                # committed. A failed send leaves every invoice
+                # delivery_status="not_sent", which the daily sweep re-selects
+                # tomorrow, so swallowing here loses nothing but noise.
+                log.exception(
+                    "generated_invoice_mint_notification_failed",
+                    # NB: not "created" — that is a reserved LogRecord field.
+                    extra={"period": cmd.period, "invoices_created": result.created},
+                )
+        return result
 
 
 class MarkPaymentPaid:
