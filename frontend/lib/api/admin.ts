@@ -2764,6 +2764,7 @@ export interface AdminCoachUtilizationEntry {
   hours: number;
   payout_minor: number;
   utilization_rate: number;
+  compliance_within_24h_rate: number | null;
 }
 
 export interface AdminCoachUtilizationResponse {

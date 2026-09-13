@@ -2021,6 +2021,7 @@ class CoachUtilizationPointView(BaseModel):
     hours: float
     payout_minor: int
     utilization_rate: float
+    compliance_within_24h_rate: float | None = None
 
 
 class CoachUtilizationResponse(BaseModel):

@@ -19,7 +19,10 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from pydantic import BaseModel
 
-from backend.v2.contexts.finance.application.ports import CoachPayoutSnapshotReader
+from backend.v2.contexts.finance.application.ports import (
+    CoachPayoutSnapshotReader,
+    MarkedWithin24hReader,
+)
 
 # ---------------------------------------------------------------------------
 # Result DTOs
@@ -39,6 +42,12 @@ class CoachUtilizationPoint(BaseModel):
     hours: Decimal  # total hours from CoachPayoutSnapshot
     payout_minor: int  # total payout in minor currency units
     utilization_rate: Decimal  # hours / max_hours, 4dp, capped at 1.0
+    # Share of this coach's past occurrences (across the requested periods)
+    # whose attendance was marked within 24h of the occurrence's end_at.
+    # None when no compliance_reader was supplied, or the coach has no
+    # marked occurrences yet to compute a rate from (avoids reporting 0/0
+    # as 0%, which would misleadingly read as non-compliance).
+    compliance_within_24h_rate: Decimal | None = None
 
 
 class CoachUtilizationResult(BaseModel):
@@ -74,10 +83,12 @@ class GetCoachUtilization:
         snapshot_repo: CoachPayoutSnapshotReader,
         academy_id: str,
         max_hours: int = 40,
+        compliance_reader: MarkedWithin24hReader | None = None,
     ) -> None:
         self._repo = snapshot_repo
         self._academy_id = academy_id
         self._max_hours = Decimal(max_hours)
+        self._compliance_reader = compliance_reader
 
     async def execute(self, periods: list[str]) -> CoachUtilizationResult:
         """Return utilization data for the requested periods.
@@ -103,6 +114,20 @@ class GetCoachUtilization:
             periods=periods,
         )
 
+        compliance_by_coach: dict[str, Decimal | None] = {}
+        if self._compliance_reader is not None:
+            rows = await self._compliance_reader.compliance_for_periods(
+                academy_id=self._academy_id,
+                periods=periods,
+            )
+            for row in rows:
+                if row.total_marked_count <= 0:
+                    compliance_by_coach[row.coach_id] = None
+                else:
+                    compliance_by_coach[row.coach_id] = (
+                        Decimal(row.marked_within_24h_count) / Decimal(row.total_marked_count)
+                    ).quantize(_FOUR_DP, rounding=ROUND_HALF_UP)
+
         points: list[CoachUtilizationPoint] = []
         total_payout = 0
 
@@ -121,6 +146,7 @@ class GetCoachUtilization:
                     hours=snap.hours,
                     payout_minor=snap.payout_minor,
                     utilization_rate=rate,
+                    compliance_within_24h_rate=compliance_by_coach.get(snap.coach_id),
                 )
             )
             total_payout += snap.payout_minor

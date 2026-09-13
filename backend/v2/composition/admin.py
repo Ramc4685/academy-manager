@@ -440,6 +440,7 @@ from backend.v2.contexts.finance.infrastructure.mongo_attendance_snapshot_reader
 from backend.v2.contexts.finance.infrastructure.mongo_coach_payout_snapshot_reader import (
     MongoCoachPayoutSnapshotReader,
 )
+from backend.v2.contexts.finance.infrastructure.mongo_compliance_reader import MongoComplianceReader
 from backend.v2.contexts.finance.infrastructure.mongo_payout_audit_log import (
     MongoPayoutAuditLogRepository,
 )
@@ -4421,6 +4422,7 @@ def compose_admin(
 
         return await GetCoachUtilization(
             snapshot_repo=MongoCoachPayoutSnapshotReader(db),
+            compliance_reader=MongoComplianceReader(db),
             academy_id=current_academy_id(),
         ).execute(periods)
 
