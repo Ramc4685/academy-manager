@@ -493,3 +493,58 @@ async def test_a_new_pause_request_alerts_admins_and_owners() -> None:
         assert "/unsubscribe?t=" in row["body"]
         assert "Beginner Badminton" in row["body"]
         assert "summer travel" in row["body"]
+
+
+@pytest.mark.asyncio
+async def test_a_withdraw_leaves_the_family_email_to_the_drop_notice() -> None:
+    """#772: a Drop must reach the family exactly once.
+
+    ``WithdrawEnrollment`` sends the family's copy itself via
+    ``enrollment_dropped`` (#743). The roster alert for ``withdrawn`` is the
+    coach/staff copy only — if it also mailed the parent, one Drop would send
+    two different emails ("Enrollment withdrawn" and "... has been dropped").
+    """
+    sender = FakeSender()
+    adapter = _adapter(
+        sessions=FakeSessions(rows={"sess-1": _session()}),
+        audiences=_staff(),
+        sender=sender,
+    )
+
+    with tenant_scope(ACADEMY):
+        await adapter.roster_changed(
+            change="withdrawn",
+            session_id="sess-1",
+            student_id="st-1",
+            parent_user_id="par-1",
+        )
+
+    assert [row["user_id"] for row in sender.sent] == ["coach-1", "admin-1", "owner-1"]
+    assert all(row["category"] is EmailCategory.NOTIFICATION for row in sender.sent)
+
+
+@pytest.mark.asyncio
+async def test_a_cancellation_still_emails_the_family_its_status_copy() -> None:
+    """The control for the test above: only ``withdrawn`` is suppressed.
+
+    Cancel, pause, resume and class-cancelled have no second family notice
+    anywhere, so the roster path stays their one way of telling the family.
+    """
+    sender = FakeSender()
+    adapter = _adapter(
+        sessions=FakeSessions(rows={"sess-1": _session()}),
+        audiences=_staff(),
+        sender=sender,
+    )
+
+    with tenant_scope(ACADEMY):
+        await adapter.roster_changed(
+            change="cancelled",
+            session_id="sess-1",
+            student_id="st-1",
+            parent_user_id="par-1",
+        )
+
+    parent = [row for row in sender.sent if row["user_id"] == "par-1"]
+    assert len(parent) == 1
+    assert parent[0]["category"] is EmailCategory.TRANSACTIONAL
