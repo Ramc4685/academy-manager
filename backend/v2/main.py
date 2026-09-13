@@ -550,7 +550,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # being wired inside compose_admin).
     from backend.v2.composition.enrollment_holds import compose_enrollment_holds
 
-    _holds = compose_enrollment_holds(db, settings)
+    _holds = compose_enrollment_holds(db, settings, stripe=stripe_gw)
     app.state.admin.departure_policy = _holds.departure_policy
     app.state.admin.update_departure_policy = _holds.update_departure_policy
     app.state.admin.hold_enrollment = _holds.hold_enrollment

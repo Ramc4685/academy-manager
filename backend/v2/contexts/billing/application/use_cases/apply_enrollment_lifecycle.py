@@ -23,6 +23,8 @@ Side effects, all idempotent:
    raised — there is nothing to charge in that case.
 3. Suppress the dunning ladder of every voided invoice so the hourly worker
    stops re-claiming it.
+4. Unwind what each voided invoice was still holding (issue #784): hand back
+   the account credit it consumed and void its Stripe twin.
 """
 
 from __future__ import annotations
@@ -35,6 +37,11 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
 
+from backend.v2.contexts.billing.application.use_cases.void_invoice_side_effects import (
+    VoidCreditsPort,
+    VoidStripeInvoicePort,
+    unwind_voided_invoice,
+)
 from backend.v2.contexts.billing.domain.ledger import LedgerInvoice, void_invoice
 
 log = logging.getLogger(__name__)
@@ -130,12 +137,19 @@ class ApplyEnrollmentLifecycle:
         ledger: LifecycleInvoiceLedger,
         autopay: LifecycleAutopayGateway | None = None,
         dunning: LifecycleDunningSuppressor | None = None,
+        credits: VoidCreditsPort | None = None,
+        stripe: VoidStripeInvoicePort | None = None,
         academy_timezone: AcademyTimezoneReader | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._ledger = ledger
         self._autopay = autopay
         self._dunning = dunning
+        # Issue #784: a voided invoice hands back the credit it consumed and
+        # closes its Stripe twin. Optional so every existing caller keeps
+        # working, but composition MUST pass them (see lifecycle_billing.py).
+        self._credits = credits
+        self._stripe = stripe
         self._academy_timezone = academy_timezone
         self._now = clock
 
@@ -161,6 +175,14 @@ class ApplyEnrollmentLifecycle:
                     continue
                 await self._ledger.save_invoice(void_invoice(invoice, reason=reason, now=now))
                 voided.append(invoice.invoice_id)
+                await unwind_voided_invoice(
+                    invoice_id=invoice.invoice_id,
+                    stripe_invoice_id=invoice.stripe_invoice_id,
+                    credits=self._credits,
+                    stripe=self._stripe,
+                    reason=reason,
+                    now=now,
+                )
                 if self._dunning is not None and await self._dunning.suppress_for_invoice(
                     invoice_id=invoice.invoice_id, reason="invoice_voided", now=now
                 ):

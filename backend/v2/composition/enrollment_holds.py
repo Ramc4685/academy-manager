@@ -57,7 +57,9 @@ class EnrollmentHoldsComposition:
     hold_notifier: HoldNotificationAdapter
 
 
-def compose_enrollment_holds(db: Any, settings: Any) -> EnrollmentHoldsComposition:
+def compose_enrollment_holds(
+    db: Any, settings: Any, *, stripe: Any = None
+) -> EnrollmentHoldsComposition:
     """Build every hold/departure-policy use case, including its own email
     and billing-sync adapters — a caller need only pass ``db``/``settings``,
     mirroring ``compose_enrollment_notifiers``. Kept out of
@@ -74,7 +76,8 @@ def compose_enrollment_holds(db: Any, settings: Any) -> EnrollmentHoldsCompositi
         MongoEnrollmentEventRepository,
     )
 
-    billing_sync = compose_enrollment_billing_sync(db)
+    # Issue #784: `stripe` lets a voided hold invoice close its Stripe twin.
+    billing_sync = compose_enrollment_billing_sync(db, stripe=stripe)
     roster_notifier = compose_roster_notifier(db, settings)
     hold_notifier = compose_hold_notifications(db, settings)
     enrollment_events = MongoEnrollmentEventRepository(db)

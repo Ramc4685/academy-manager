@@ -695,7 +695,7 @@ def compose_admin(
     )
     # Issue #651: every attendance-stopping transition must reach billing.
     enrollment_billing_sync = compose_enrollment_billing_sync(
-        db, autopay=student_billing_enrollment_repo
+        db, autopay=student_billing_enrollment_repo, stripe=stripe
     )
     curriculum = compose_curriculum(db)
     student_progress = compose_student_progress(db, outbox, idempotency_store=idempotency_store)
@@ -1476,8 +1476,13 @@ def compose_admin(
             RemoveInvoiceLineCommand(invoice_id=invoice_id, line_id=line_id)
         )
 
+    # #784: a void hands applied credit back, closes the Stripe twin, audits.
     void_billing_invoice = build_void_billing_invoice(
-        ledger=billing_ledger_repo, dunning=dunning_state_repo
+        ledger=billing_ledger_repo,
+        dunning=dunning_state_repo,
+        credits=credits_repo,
+        stripe=stripe,
+        audit=billing_audit_log,
     )
 
     async def void_payment(*, payment_id: str, reason: str, actor_id: str | None) -> None:

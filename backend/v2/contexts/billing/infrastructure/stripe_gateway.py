@@ -405,6 +405,14 @@ class RealStripeGateway(StripeGateway):
         result = await self._run_stripe_retrieve(_retrieve, label="Stripe Invoice")
         return _stripe_object_to_dict(result)
 
+    async def void_stripe_invoice(self, stripe_invoice_id: str) -> None:
+        """Void the Stripe-side invoice when the ledger voids ours (#784)."""
+
+        def _void() -> None:
+            self._stripe.Invoice.void_invoice(stripe_invoice_id)
+
+        await asyncio.to_thread(_void)
+
     async def retrieve_subscription(self, stripe_subscription_id: str) -> dict[str, Any]:
         def _retrieve() -> Any:
             return self._stripe.Subscription.retrieve(stripe_subscription_id)

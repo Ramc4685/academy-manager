@@ -35,10 +35,14 @@ from backend.v2.contexts.billing.application.use_cases.apply_enrollment_move imp
     ApplyEnrollmentMoveCommand,
     MoveNoticeResender,
 )
+from backend.v2.contexts.billing.application.use_cases.void_invoice_side_effects import (
+    unwind_voided_invoice,
+)
 from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import (
     RecordWithdrawalDecision,
     RecordWithdrawalDecisionCommand,
 )
+from backend.v2.contexts.billing.domain.billing_audit import BillingAuditEntry
 from backend.v2.contexts.billing.domain.ledger import void_invoice
 from backend.v2.contexts.billing.infrastructure.mongo_billing_counter_repo import (
     MongoBillingCounterRepository,
@@ -70,6 +74,7 @@ from backend.v2.contexts.billing.infrastructure.mongo_tuition_discount_repo impo
 from backend.v2.contexts.enrollment.application.ports import WithdrawalOutcome
 from backend.v2.contexts.enrollment.domain.models import Enrollment
 from backend.v2.shared.idempotency import IdempotencyStore
+from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import current_academy_id
 from backend.v2.shared.time.academy_timezone import academy_timezone_lookup
 
@@ -128,8 +133,15 @@ def compose_enrollment_billing_sync(
     ledger: MongoBillingLedgerRepository | None = None,
     autopay: MongoStudentBillingEnrollmentRepository | None = None,
     dunning: MongoDunningStateRepository | None = None,
+    credits: MongoCreditLedgerRepository | None = None,
+    stripe: Any | None = None,
 ) -> EnrollmentBillingSyncAdapter:
-    """Build the adapter. Repos may be shared with the caller's own instances."""
+    """Build the adapter. Repos may be shared with the caller's own instances.
+
+    ``stripe`` is optional only because not every composition root holds a
+    gateway; leaving it out means a Stripe-linked invoice voided by this path
+    stays open in Stripe (issue #784), so pass it wherever one exists.
+    """
     timezone_lookup = academy_timezone_lookup(db)
 
     async def request_academy_timezone() -> str | None:
@@ -152,6 +164,11 @@ def compose_enrollment_billing_sync(
         ledger=ledger or MongoBillingLedgerRepository(db),
         autopay=_AutopayGateway(),
         dunning=dunning or MongoDunningStateRepository(db),
+        # Issue #784: a voided invoice gives its applied credit back and closes
+        # its Stripe twin. Wired here so every stopping transition — admin,
+        # parent self-cancel, hold reclaim — gets the unwind.
+        credits=credits or MongoCreditLedgerRepository(db),
+        stripe=stripe,
         academy_timezone=request_academy_timezone,
     )
     return EnrollmentBillingSyncAdapter(use_case)
@@ -280,11 +297,27 @@ def compose_enrollment_move_billing_sync(
     return EnrollmentMoveBillingSyncAdapter(use_case)
 
 
-def build_void_billing_invoice(*, ledger: Any, dunning: Any) -> Callable[..., Awaitable[None]]:
+def build_void_billing_invoice(
+    *,
+    ledger: Any,
+    dunning: Any,
+    credits: Any = None,
+    stripe: Any = None,
+    audit: Any = None,
+) -> Callable[..., Awaitable[None]]:
     """Admin void: refuse invoices with money on them, persist the reason and
-    stop the dunning ladder (issue #651)."""
+    stop the dunning ladder (issue #651).
 
-    async def void_billing_invoice(*, invoice_id: str, reason: str) -> None:
+    Issue #784: the void also hands back any account credit the invoice
+    consumed and voids its Stripe twin — a void invoice owes nothing, so
+    nothing may keep behaving as though it does — and leaves a
+    ``invoice_voided`` audit row so who wrote the money off is recoverable,
+    the same trail ``void_payment`` / refunds / manual payments already leave.
+    """
+
+    async def void_billing_invoice(
+        *, invoice_id: str, reason: str, actor_id: str | None = None
+    ) -> None:
         invoice = await ledger.get_invoice(invoice_id)
         if invoice is None:
             raise ValueError("invoice not found")
@@ -296,9 +329,36 @@ def build_void_billing_invoice(*, ledger: Any, dunning: Any) -> Callable[..., Aw
                 "cannot void invoice with recorded payments; issue refund or credit first"
             )
         now = datetime.now(UTC)
-        await ledger.save_invoice(void_invoice(invoice, reason=reason or "admin_void", now=now))
+        void_reason = reason or "admin_void"
+        await ledger.save_invoice(void_invoice(invoice, reason=void_reason, now=now))
         # A void invoice must not keep an active dunning ladder.
         await dunning.suppress_for_invoice(invoice_id=invoice_id, reason="invoice_voided", now=now)
+        await unwind_voided_invoice(
+            invoice_id=invoice_id,
+            stripe_invoice_id=getattr(invoice, "stripe_invoice_id", None),
+            credits=credits,
+            stripe=stripe,
+            reason=void_reason,
+            now=now,
+        )
+        if audit is not None:
+            # AFTER the money work, the order refunds / manual payments /
+            # payment voids use: an audit write that fails must not leave an
+            # invoice the operator was told is void still collectible.
+            await audit.append(
+                BillingAuditEntry(
+                    audit_id=f"baud-{new_ulid()}",
+                    academy_id=current_academy_id(),
+                    action="invoice_voided",
+                    actor_id=actor_id or "system",
+                    at=now,
+                    invoice_id=invoice_id,
+                    parent_id=getattr(invoice, "parent_id", None),
+                    reason=void_reason,
+                    before={"status": invoice.status},
+                    after={"status": "void", "total_cents": invoice.total_cents},
+                )
+            )
 
     return void_billing_invoice
 

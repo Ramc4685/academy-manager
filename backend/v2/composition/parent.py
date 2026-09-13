@@ -964,7 +964,7 @@ def compose_parent(
         outbox=outbox,
         billing=_SelfCancelFeeBillingPort(),
         # Issue #651: void later-month invoices + disable autopay on self-cancel.
-        billing_sync=compose_enrollment_billing_sync(db),
+        billing_sync=compose_enrollment_billing_sync(db, stripe=stripe),
         enrollment_events=enrollment_events,
         roster_notifier=roster_notifier,
         # Issue #675: end_of_period enqueues a month-end cancel instead of
@@ -997,7 +997,7 @@ def compose_parent(
         enrollment_events=enrollment_events,
         billing_deferrals=MongoBillingDeferralRepository(db),
         autopay_status=build_autopay_status_gateway(MongoStudentBillingEnrollmentRepository(db)),
-        billing_sync=compose_enrollment_billing_sync(db),
+        billing_sync=compose_enrollment_billing_sync(db, stripe=stripe),
         roster_notifier=roster_notifier,
     )
     promote = PromoteFromWaitlist(

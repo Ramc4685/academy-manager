@@ -458,6 +458,16 @@ class StripeGateway(Protocol):
     async def retrieve_invoice(self, stripe_invoice_id: str) -> dict[str, Any]:
         """Fetch current Stripe invoice state for reconciliation."""
 
+    async def void_stripe_invoice(self, stripe_invoice_id: str) -> None:
+        """Void an open/draft Stripe Invoicing invoice (issue #784).
+
+        Called when the app voids a ledger invoice that Stripe also knows
+        about. Without it the family keeps getting Stripe's own reminders and
+        can still pay an invoice the academy has written off. Stripe refuses to
+        void an invoice that was already paid; the caller logs that rather than
+        rolling back the ledger-side void.
+        """
+
     async def retrieve_subscription(self, stripe_subscription_id: str) -> dict[str, Any]:
         """Fetch current Stripe subscription state for reconciliation."""
 
