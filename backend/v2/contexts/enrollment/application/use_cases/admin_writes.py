@@ -431,9 +431,14 @@ class EditSession:
         *,
         sessions: SessionWriter,
         get_academy_timezone: AcademyTimezoneReader,
+        enrollments: EnrollmentWriter | None = None,
     ) -> None:
         self._sessions = sessions
         self._get_academy_timezone = get_academy_timezone
+        # Issue #783: only read for the capacity guard below. Optional so the
+        # dozens of edit paths that never touch capacity keep constructing
+        # this use case with two arguments.
+        self._enrollments = enrollments
 
     async def execute(self, cmd: EditSessionCommand) -> Session:
         current = await self._sessions.get(cmd.session_id)
@@ -533,9 +538,40 @@ class EditSession:
             # a legacy row keep lying to every downstream reader.
             update["timezone"] = timezone_name
 
+        await self._guard_capacity(current, update)
+
         updated = current.model_copy(update=update)
         await self._sessions.update(updated)
         return updated
+
+    async def _guard_capacity(self, current: Session, update: dict[str, object | None]) -> None:
+        """Refuse an edit that would put the class over its own new limit.
+
+        Issue #783: ``capacity`` went straight from the command into the
+        update with only a ``ge=1`` bound, so an admin could save a class of
+        seven at capacity 5. Nothing downstream reports that — every later
+        ``try_reserve_seat`` simply refuses, and the class reads as full
+        while the roster says otherwise (the SeatCounterDrift message).
+
+        The comparison is against the ROSTER (``SEAT_HOLDING`` rows), not
+        ``sessions.reserved_seats``: the counter is the thing that drifts,
+        the roster is the thing families actually show up for. Equality is
+        allowed — closing a class to new joiners without evicting anyone is
+        a legitimate admin action.
+        """
+        new_capacity = update.get("capacity")
+        if new_capacity is None or self._enrollments is None:
+            return
+        taken = await self._enrollments.count_active_for_session(current.session_id)
+        if int(new_capacity) >= taken:  # type: ignore[call-overload]
+            return
+        raise CapacityExceeded(
+            f"This class already has {taken} enrolled students, so its capacity "
+            f"cannot be lowered to {new_capacity}. Remove students first.",
+            session_id=current.session_id,
+            capacity=int(new_capacity),  # type: ignore[call-overload]
+            active_enrollments=taken,
+        )
 
 
 class CancelSessionCommand(BaseModel):
@@ -1629,6 +1665,20 @@ class PauseEnrollment:
             # promises will NOT happen. Return it first, then Pause.
             raise EnrollmentNotPausable(
                 "This enrollment is on hold. Return it first, then pause it.",
+                enrollment_id=e.enrollment_id,
+                status=e.status,
+            )
+        if e.status not in SEAT_HOLDING:
+            # Issue #783: only "paused" and "held" were special-cased above,
+            # so every terminal spelling (and the in-flight
+            # ``reclaim_pending``) fell through to ``release_seat``, which
+            # decrements ``reserved_seats`` whenever it is above zero. A row
+            # that had already given its seat back therefore stole a slot
+            # from a family that really was holding one, under-counting the
+            # session permanently. Nothing about pausing an ended enrollment
+            # is meaningful anyway: refuse it at the door.
+            raise EnrollmentNotPausable(
+                "This enrollment is no longer active and cannot be paused.",
                 enrollment_id=e.enrollment_id,
                 status=e.status,
             )

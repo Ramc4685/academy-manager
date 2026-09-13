@@ -397,6 +397,9 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_trial_request_repo impo
 from backend.v2.contexts.enrollment.infrastructure.mongo_waitlist_repo import (
     MongoWaitlistRepository,
 )
+from backend.v2.contexts.enrollment.infrastructure.occurrence_dependents import (
+    occurrence_dependency_filters,
+)
 from backend.v2.contexts.finance.application.payout_calculator import (
     FinancePayoutCalculator,
 )
@@ -714,7 +717,12 @@ def compose_admin(
     create_session = CreateSession(
         sessions=sessions_w, academy_id=academy_id, get_academy_timezone=session_tz
     )
-    edit_session = EditSession(sessions=sessions_w, get_academy_timezone=session_tz)
+    edit_session = EditSession(
+        sessions=sessions_w,
+        get_academy_timezone=session_tz,
+        # #783: the capacity guard counts the roster, not the seat counter.
+        enrollments=enrollments_w,
+    )
     # #613 welcome email + #612 roster alerts (composition/roster_notifications.py).
     notifiers = compose_enrollment_notifiers(db, settings, users=users_r)
     cancel_session = CancelSession(
@@ -2515,18 +2523,13 @@ def compose_admin(
             return False
         academy_id = str(doc.get("academy_id") or "")
         occurrence_id = str(doc.get("occurrence_id") or "")
-        if await db["attendance"].count_documents(
-            {"academy_id": academy_id, "occurrence_id": occurrence_id}, limit=1
+        # #783: attendance/payout are not the only things pinned to an
+        # occurrence_id. Anything still referencing this row makes it dirty.
+        for collection, match in occurrence_dependency_filters(
+            academy_id=academy_id, occurrence_id=occurrence_id
         ):
-            return False
-        if await db["coach_attendance"].count_documents(
-            {"academy_id": academy_id, "occurrence_id": occurrence_id}, limit=1
-        ):
-            return False
-        if await db["payout_period_lines"].count_documents(
-            {"academy_id": academy_id, "occurrence_id": occurrence_id}, limit=1
-        ):
-            return False
+            if await db[collection].count_documents(match, limit=1):
+                return False
         return True
 
     async def maintain_session_occurrences(session) -> None:
