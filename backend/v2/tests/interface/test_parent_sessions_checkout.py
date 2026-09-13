@@ -592,3 +592,111 @@ async def test_parent_available_catalog_filters_full_sessions_before_capping(
         rows = await MongoSessionRepository(db).available_for_parent_catalog()
 
     assert [row.session_id for row in rows] == ["available-after-full"]
+
+
+@pytest.mark.asyncio
+async def test_parent_available_catalog_batches_enrolled_counts_in_one_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """N+1 regression guard: `enrolled_count` must come from a single
+    aggregate over all sessions in the page, not one `count_documents`
+    call per session."""
+    monkeypatch.setattr(session_repo_module, "datetime", _FrozenCatalogDateTime)
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-available-batched-counts"]
+    sessions = [
+        {
+            "academy_id": "academy-a",
+            "session_id": f"sess-{index}",
+            "title": f"Session {index}",
+            "capacity": 10,
+            "status": "scheduled",
+            "start_at": datetime(2026, 6, 2, 10, index % 60, tzinfo=UTC),
+            "end_at": datetime(2026, 6, 2, 11, index % 60, tzinfo=UTC),
+        }
+        for index in range(5)
+    ]
+    await db.sessions.insert_many(sessions)
+    # Give sessions a mix of active/inactive/cancelled enrollment counts,
+    # plus one session (sess-4) with zero enrollments to exercise the
+    # $group-omits-missing-keys fallback to 0.
+    await db.enrollments.insert_many(
+        [
+            {
+                "academy_id": "academy-a",
+                "enrollment_id": "enr-0-a",
+                "session_id": "sess-0",
+                "student_id": "st-0a",
+                "status": "active",
+            },
+            {
+                "academy_id": "academy-a",
+                "enrollment_id": "enr-0-b",
+                "session_id": "sess-0",
+                "student_id": "st-0b",
+                "status": "active",
+            },
+            {
+                "academy_id": "academy-a",
+                "enrollment_id": "enr-1-a",
+                "session_id": "sess-1",
+                "student_id": "st-1a",
+                "status": "active",
+            },
+            {
+                "academy_id": "academy-a",
+                "enrollment_id": "enr-1-b",
+                "session_id": "sess-1",
+                "student_id": "st-1b",
+                "status": "cancelled",
+            },
+            {
+                "academy_id": "academy-a",
+                "enrollment_id": "enr-2-a",
+                "session_id": "sess-2",
+                "student_id": "st-2a",
+                "status": "active",
+            },
+            {
+                "academy_id": "other-academy",
+                "enrollment_id": "enr-3-other",
+                "session_id": "sess-3",
+                "student_id": "st-3-other",
+                "status": "active",
+            },
+        ]
+    )
+
+    # `db["enrollments"]` returns a fresh wrapper object per access (mongomock
+    # does not cache collection handles), so spy on the shared class instead.
+    collection_cls = type(db["enrollments"])
+    original_count_documents = collection_cls.count_documents
+    count_documents_calls: list[dict] = []
+
+    async def _spy_count_documents(self, *args, **kwargs):
+        count_documents_calls.append({"args": args, "kwargs": kwargs})
+        return await original_count_documents(self, *args, **kwargs)
+
+    monkeypatch.setattr(collection_cls, "count_documents", _spy_count_documents)
+
+    original_aggregate = collection_cls.aggregate
+    aggregate_calls: list[list] = []
+
+    def _spy_aggregate(self, pipeline, *args, **kwargs):
+        aggregate_calls.append(pipeline)
+        return original_aggregate(self, pipeline, *args, **kwargs)
+
+    monkeypatch.setattr(collection_cls, "aggregate", _spy_aggregate)
+
+    with tenant_scope("academy-a"):
+        rows = await MongoSessionRepository(db).available_for_parent_catalog()
+
+    assert count_documents_calls == []
+    assert len(aggregate_calls) == 1
+
+    by_id = {row.session_id: row for row in rows}
+    assert by_id["sess-0"].enrolled_count == 2
+    assert by_id["sess-1"].enrolled_count == 1
+    assert by_id["sess-2"].enrolled_count == 1
+    assert by_id["sess-3"].enrolled_count == 0
+    assert by_id["sess-4"].enrolled_count == 0
