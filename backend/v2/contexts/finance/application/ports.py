@@ -20,6 +20,7 @@ in Mongo or other contexts.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Protocol
 
@@ -342,7 +343,7 @@ class MarkedWithin24hReader(Protocol):
 
     async def compliance_for_periods(
         self, *, academy_id: str, periods: list[str]
-    ) -> list[CoachComplianceCounts]: ...
+    ) -> Sequence[CoachComplianceCounts]: ...
 
 
 __all__ = [

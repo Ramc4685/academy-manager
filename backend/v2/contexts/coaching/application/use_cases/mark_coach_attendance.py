@@ -89,7 +89,7 @@ class MarkCoachAttendance:
         changed = existing is not None and (
             existing.status != row.status or existing.rate_override_minor != row.rate_override_minor
         )
-        if changed and self._coach_attendance_audit is not None:
+        if changed and existing is not None and self._coach_attendance_audit is not None:
             await self._coach_attendance_audit.append(
                 CoachAttendanceAuditEntry(
                     audit_id=new_ulid(),

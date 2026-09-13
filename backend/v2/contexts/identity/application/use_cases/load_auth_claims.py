@@ -19,6 +19,7 @@ SaaS contract:
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from backend.v2.contexts.identity.application.ports import (
     LoginAuditRecorder,
@@ -141,7 +142,7 @@ class LoadAuthClaims:
         academy_id: str,
         membership_id: str,
         roles: list[str],
-        token_claims: dict,
+        token_claims: dict[str, Any],
     ) -> None:
         """Leave a sign-in on the audit trail. Never fails the login.
 
@@ -166,7 +167,7 @@ class LoadAuthClaims:
             logger.warning("login audit failed for user %s", user.user_id, exc_info=True)
 
 
-def _sign_in_provider(token_claims: dict) -> str | None:
+def _sign_in_provider(token_claims: dict[str, Any]) -> str | None:
     """The Firebase sign-in method behind this token (password, google.com...)."""
     firebase = token_claims.get("firebase")
     if isinstance(firebase, dict):

@@ -16,12 +16,14 @@ Queries:
 
 from __future__ import annotations
 
+from typing import Any
+
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 version = "0179_coach_attendance_audit_log"
 
 
-async def up(db: AsyncIOMotorDatabase) -> None:
+async def up(db: AsyncIOMotorDatabase[Any]) -> None:
     await db.coach_attendance_audit_log.create_index(
         [
             ("academy_id", 1),

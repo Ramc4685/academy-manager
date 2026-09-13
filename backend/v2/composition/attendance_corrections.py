@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -27,7 +28,6 @@ from backend.v2.contexts.coaching.application.use_cases.correct_attendance impor
 from backend.v2.contexts.coaching.application.use_cases.void_attendance import (
     VoidAttendance,
 )
-from backend.v2.contexts.coaching.domain.models import Attendance
 from backend.v2.contexts.coaching.infrastructure.mongo_attendance_repo import (
     MongoAttendanceRepository,
 )
@@ -42,7 +42,7 @@ class AttendanceCorrectionUseCases:
 
 
 def compose_attendance_corrections(
-    db: AsyncIOMotorDatabase[Attendance],
+    db: AsyncIOMotorDatabase[Any],
     *,
     occurrence_lookup: OccurrenceLookup,
     outbox: Outbox,
