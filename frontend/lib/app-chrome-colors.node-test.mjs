@@ -54,27 +54,47 @@ test("root viewport themeColor matches the manifest theme_color", () => {
   );
 });
 
-test("shared layout holds a neutral skeleton instead of flashing status text", () => {
-  const sharedLayout = readFrontendFile("app/(shared)/layout.tsx");
+test("the shared shell surface uses Rally palette tokens", () => {
+  const shell = readFrontendFile("components/shared/shell-skeleton.tsx");
 
-  assert.doesNotMatch(
-    sharedLayout,
-    />\s*Loading\.\.\.\s*</,
-    "shared layout should not render literal 'Loading...' copy"
-  );
-  assert.doesNotMatch(
-    sharedLayout,
-    />\s*Redirecting\.\.\.\s*</,
-    "shared layout should not render literal 'Redirecting...' copy"
-  );
   assert.match(
-    sharedLayout,
+    shell,
     /bg-rally-(paper|ink|night)/,
-    "shared layout surfaces should use Rally palette tokens"
+    "shared shell surfaces should use Rally palette tokens"
   );
-  assert.doesNotMatch(
-    sharedLayout,
-    /text-neutral-500/,
-    "text-neutral-500 is not a Rally token"
-  );
+  assert.doesNotMatch(shell, /text-neutral-500/, "text-neutral-500 is not a Rally token");
 });
+
+// The outer layout is only half the story: once it renders `<main>` for a
+// signed-in user, each (shared) page still resolves its own role redirect, and
+// that second pending state used to flash bare "Redirecting..." text.
+for (const relativePath of [
+  "app/(shared)/layout.tsx",
+  "app/(shared)/messages/page.tsx",
+  "app/(shared)/calendar/page.tsx",
+]) {
+  test(`${relativePath} holds the shared skeleton instead of flashing status text`, () => {
+    const source = readFrontendFile(relativePath);
+
+    assert.doesNotMatch(
+      source,
+      />\s*Loading\.\.\.\s*</,
+      `${relativePath} should not render literal 'Loading...' copy`
+    );
+    assert.doesNotMatch(
+      source,
+      />\s*Redirecting\.\.\.\s*</,
+      `${relativePath} should not render literal 'Redirecting...' copy`
+    );
+    assert.doesNotMatch(
+      source,
+      /text-neutral-500/,
+      `text-neutral-500 is not a Rally token (${relativePath})`
+    );
+    assert.match(
+      source,
+      /SharedShellSkeleton/,
+      `${relativePath} should hold the shared skeleton while its state is pending`
+    );
+  });
+}

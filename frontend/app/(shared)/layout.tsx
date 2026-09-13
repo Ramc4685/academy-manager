@@ -3,12 +3,11 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import {
+  SharedShellSkeleton,
+  sharedShellClassName,
+} from "@/components/shared/shell-skeleton";
 import { onAuthChange } from "@/lib/auth/firebase";
-
-// One surface for both the auth-pending skeleton and the resolved page, so the
-// background never changes while `onAuthChange` settles (#451).
-const shellClassName =
-  "min-h-screen bg-rally-paper px-4 py-6 text-slate-950 dark:bg-rally-night dark:text-white";
 
 export default function SharedLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -29,21 +28,12 @@ export default function SharedLayout({ children }: { children: React.ReactNode }
   // with a neutral skeleton rather than flashing bare status text.
   if (!checked || !signedIn) {
     return (
-      <div
-        className={shellClassName}
-        role="status"
-        aria-busy="true"
-        aria-label="Loading"
-        data-testid="shared-auth-skeleton"
-      >
-        <div className="mx-auto w-full max-w-3xl space-y-4">
-          <div className="h-8 w-48 animate-pulse rounded-xl shimmer" />
-          <div className="h-28 animate-pulse rounded-2xl shimmer" />
-          <div className="h-28 animate-pulse rounded-2xl shimmer" />
-        </div>
-      </div>
+      <SharedShellSkeleton
+        className={sharedShellClassName}
+        testId="shared-auth-skeleton"
+      />
     );
   }
 
-  return <main className={shellClassName}>{children}</main>;
+  return <main className={sharedShellClassName}>{children}</main>;
 }
