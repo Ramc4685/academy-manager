@@ -2000,15 +2000,21 @@ def make_list_enrollment_events(db: Any) -> object:
         page_size = max(1, min(limit, ENROLLMENT_EVENTS_MAX_LIMIT))
         query: dict[str, Any] = {"enrollment_id": enrollment_id, "academy_id": academy_id}
         if cursor is not None:
-            cursor_at, cursor_id = cursor
+            cursor_at, cursor_event_id = cursor
             query["$or"] = [
                 {"occurred_at": {"$lt": cursor_at}},
-                {"occurred_at": cursor_at, "_id": {"$lt": cursor_id}},
+                {"occurred_at": cursor_at, "event_id": {"$lt": cursor_event_id}},
             ]
 
+        # Tie-break on `event_id` (unique, string, already the id upserts key
+        # on — see mongo_enrollment_event_repo.py) rather than Mongo's
+        # auto-generated `_id`: the opaque pagination cursor round-trips this
+        # value through a string, and BSON type ordering means an ObjectId
+        # is never `$lt` a string, so an `_id` tie-break silently drops
+        # same-`occurred_at` events on every page boundary after the first.
         mongo_cursor = db.enrollment_events.find(
             query,
-            sort=[("occurred_at", -1), ("_id", -1)],
+            sort=[("occurred_at", -1), ("event_id", -1)],
         ).limit(page_size + 1)
 
         docs = [doc async for doc in mongo_cursor]
@@ -2031,7 +2037,7 @@ def make_list_enrollment_events(db: Any) -> object:
         next_cursor: tuple[datetime, str] | None = None
         if has_more and docs:
             last = docs[-1]
-            next_cursor = (last["occurred_at"], last["_id"])
+            next_cursor = (last["occurred_at"], str(last.get("event_id") or last.get("_id", "")))
 
         return results, next_cursor
 

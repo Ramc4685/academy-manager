@@ -99,6 +99,53 @@ async def test_list_enrollment_events_no_more_pages_returns_none_cursor() -> Non
         assert next_cursor is None
 
 
+async def _seed_same_instant(db, *, enrollment_id: str, academy_id: str, count: int) -> None:
+    """Events written in the same batch/request (e.g. admin_writes.py reusing
+    one `now`) can share an identical `occurred_at` down to the millisecond —
+    the tie-break must page across these without dropping any."""
+    occurred_at = datetime(2026, 1, 1, tzinfo=UTC)
+    docs = []
+    for i in range(count):
+        docs.append(
+            {
+                "event_id": f"tie-{i:04d}",
+                "enrollment_id": enrollment_id,
+                "academy_id": academy_id,
+                "event_type": "note_added",
+                "occurred_at": occurred_at,
+                "effective_at": occurred_at.isoformat(),
+                "actor_id": "admin-1",
+            }
+        )
+    await db["enrollment_events"].insert_many(docs)
+
+
+@pytest.mark.asyncio
+async def test_list_enrollment_events_tie_breaks_identical_occurred_at() -> None:
+    db = _db()
+    await _seed_same_instant(db, enrollment_id="enr-tie", academy_id="acad", count=250)
+    list_enrollment_events = make_list_enrollment_events(db)
+
+    with tenant_scope("acad"):
+        seen_ids: set[str] = set()
+        total = 0
+        cursor = None
+        pages = 0
+        while True:
+            page, cursor = await list_enrollment_events("enr-tie", limit=100, cursor=cursor)
+            for e in page:
+                assert e["event_id"] not in seen_ids
+                seen_ids.add(e["event_id"])
+            total += len(page)
+            pages += 1
+            assert pages <= 10  # sanity bound so a bug can't loop forever
+            if cursor is None:
+                break
+
+        assert total == 250
+        assert len(seen_ids) == 250
+
+
 @pytest.mark.asyncio
 async def test_list_enrollment_events_is_tenant_scoped() -> None:
     db = _db()
