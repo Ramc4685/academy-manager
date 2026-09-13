@@ -18,6 +18,7 @@ primary_region = "ord"
   APP_TENANCY_MODE = "single_academy"
   PRIMARY_ACADEMY_ID = "acad_blno_badminton"
   ENABLE_PLATFORM_ROUTES = "false"
+  # TODO(#779): both flags stay false; owner rollup and student login are parked future enhancements.
   ENABLE_OWNER_ROLE = "false"
   ENABLE_STUDENT_LOGIN = "false"
   V2_RUN_MIGRATIONS_ON_BOOT = "true"
