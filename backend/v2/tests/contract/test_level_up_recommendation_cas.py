@@ -90,8 +90,30 @@ async def test_review_from_another_academy_is_refused(db, acad, other_acad) -> N
 
 
 @pytest.mark.asyncio
-async def test_an_approved_recommendation_still_blocks_a_new_one(db, acad) -> None:
-    """Why the CAS matters: APPROVED counts as an active recommendation."""
+async def test_a_completed_recommendation_no_longer_blocks_a_new_one(db, acad) -> None:
+    """Issue #786: approval must reach a terminal status.
+
+    The review use case writes ``COMPLETED`` on approve, and ``COMPLETED``
+    does not count as an active recommendation, so the student's next
+    level-up is never blocked by an already-processed approval.
+    """
+    repo = MongoLevelUpRecommendationRepository(db)
+    await repo.save(_pending())
+    await repo.update_status(
+        "rec-1", "COMPLETED", "admin-1", _NOW, None, expected_status="RECOMMENDED"
+    )
+
+    active = await repo.get_active_for_student("student-1", "prog-1")
+
+    assert active is None
+
+
+@pytest.mark.asyncio
+async def test_a_legacy_approved_recommendation_no_longer_blocks_a_new_one(db, acad) -> None:
+    """Issue #786: ``APPROVED`` stays a legal historical value (no code path
+    writes it going forward), but a row stuck in it from before the fix must
+    not block the student's pathway forever either.
+    """
     repo = MongoLevelUpRecommendationRepository(db)
     await repo.save(_pending())
     await repo.update_status(
@@ -100,8 +122,7 @@ async def test_an_approved_recommendation_still_blocks_a_new_one(db, acad) -> No
 
     active = await repo.get_active_for_student("student-1", "prog-1")
 
-    assert active is not None
-    assert active.rec_id == "rec-1"
+    assert active is None
 
 
 # ---------------------------------------------------------------------------
