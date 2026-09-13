@@ -1037,9 +1037,10 @@ test.describe("Rally admin shell", () => {
       }),
     );
 
-    // Old URL now redirects into Requests → Pauses tab (UIC2); bookmarks keep working.
+    // Old URL now redirects into Inbox → Pauses tab (#776 merged Admissions +
+    // Requests into one Inbox); bookmarks keep working.
     await page.goto("/admin/pause-requests");
-    await expect(page).toHaveURL(/\/admin\/requests\?tab=pauses/);
+    await expect(page).toHaveURL(/\/admin\/inbox\?tab=pauses/);
     const row = page.getByTestId("admin-pause-requests-row-pause-1");
     await expect(row).toContainText("Abhishek Ajithkumar");
     await expect(row).toContainText("Student: Aadhya Abhishek");
