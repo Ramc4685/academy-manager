@@ -11,7 +11,7 @@ from backend.v2.contexts.coaching.application.use_cases.mark_coach_attendance im
     MarkCoachAttendance,
     MarkCoachAttendanceCommand,
 )
-from backend.v2.contexts.coaching.domain.models import CoachAttendance
+from backend.v2.contexts.coaching.domain.models import CoachAttendance, CoachAttendanceAuditEntry
 
 
 def _dt(value: str) -> datetime:
@@ -33,6 +33,14 @@ class _FakeCoachAttendanceRepo:
 
     async def list_for_occurrences(self, occurrence_ids: list[str]) -> list[CoachAttendance]:
         return [row for key, row in self.rows.items() if key[0] in occurrence_ids]
+
+
+class _FakeCoachAttendanceAuditRepo:
+    def __init__(self) -> None:
+        self.entries: list[CoachAttendanceAuditEntry] = []
+
+    async def append(self, entry: CoachAttendanceAuditEntry) -> None:
+        self.entries.append(entry)
 
 
 class _FakeOccurrenceLookup:
@@ -107,3 +115,101 @@ async def test_admin_can_mark_assistant_with_rate_override_and_note() -> None:
     assert row.rate_override_minor == 1500
     assert row.note == "Helped with beginner court"
     assert row.marked_by == "admin-1"
+
+
+@pytest.mark.asyncio
+async def test_changing_status_or_rate_override_appends_audit_entry() -> None:
+    repo = _FakeCoachAttendanceRepo()
+    audit_repo = _FakeCoachAttendanceAuditRepo()
+    use_case = MarkCoachAttendance(
+        coach_attendance=repo,
+        coach_attendance_audit=audit_repo,
+        occurrence_lookup=_FakeOccurrenceLookup(),
+        academy_id="acad",
+        clock=lambda: _dt("2026-05-27T18:05:00"),
+    )
+    await use_case.execute(
+        MarkCoachAttendanceCommand(
+            occurrence_id="occ-1",
+            coach_id="coach-1",
+            status="present",
+            role="lead",
+            source="admin",
+        ),
+        actor_id="admin-1",
+    )
+
+    await use_case.execute(
+        MarkCoachAttendanceCommand(
+            occurrence_id="occ-1",
+            coach_id="coach-1",
+            status="absent",
+            role="lead",
+            source="admin",
+            rate_override_minor=500,
+        ),
+        actor_id="admin-2",
+    )
+
+    assert len(audit_repo.entries) == 1
+    entry = audit_repo.entries[0]
+    assert entry.academy_id == "acad"
+    assert entry.occurrence_id == "occ-1"
+    assert entry.coach_id == "coach-1"
+    assert entry.actor_id == "admin-2"
+    assert entry.before_status == "present"
+    assert entry.after_status == "absent"
+    assert entry.before_rate_override_minor is None
+    assert entry.after_rate_override_minor == 500
+
+
+@pytest.mark.asyncio
+async def test_first_mark_writes_no_audit_entry() -> None:
+    repo = _FakeCoachAttendanceRepo()
+    audit_repo = _FakeCoachAttendanceAuditRepo()
+    use_case = MarkCoachAttendance(
+        coach_attendance=repo,
+        coach_attendance_audit=audit_repo,
+        occurrence_lookup=_FakeOccurrenceLookup(),
+        academy_id="acad",
+        clock=lambda: _dt("2026-05-27T18:05:00"),
+    )
+
+    await use_case.execute(
+        MarkCoachAttendanceCommand(
+            occurrence_id="occ-1",
+            coach_id="coach-1",
+            status="present",
+            role="lead",
+            source="admin",
+        ),
+        actor_id="admin-1",
+    )
+
+    assert audit_repo.entries == []
+
+
+@pytest.mark.asyncio
+async def test_unchanged_resubmit_writes_no_audit_entry() -> None:
+    repo = _FakeCoachAttendanceRepo()
+    audit_repo = _FakeCoachAttendanceAuditRepo()
+    use_case = MarkCoachAttendance(
+        coach_attendance=repo,
+        coach_attendance_audit=audit_repo,
+        occurrence_lookup=_FakeOccurrenceLookup(),
+        academy_id="acad",
+        clock=lambda: _dt("2026-05-27T18:05:00"),
+    )
+    command = MarkCoachAttendanceCommand(
+        occurrence_id="occ-1",
+        coach_id="coach-1",
+        status="present",
+        role="lead",
+        source="admin",
+        rate_override_minor=200,
+    )
+
+    await use_case.execute(command, actor_id="admin-1")
+    await use_case.execute(command, actor_id="admin-1")
+
+    assert audit_repo.entries == []

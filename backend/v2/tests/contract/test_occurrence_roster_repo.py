@@ -106,3 +106,55 @@ async def test_remove_future_for_student_returns_zero_when_nothing_matches(db) -
         )
     assert deleted == 0
     assert await db["occurrence_roster_entries"].count_documents({}) == 1
+
+
+@pytest.mark.asyncio
+async def test_remove_future_for_session_deletes_all_students_future_rows(db) -> None:
+    """Issue #694: a whole-session cancel must sweep make-up/trial students'
+    rows too — they hold no enrollment on the session, so
+    ``remove_future_for_student`` (called per enrolled student) never
+    reaches them. Past rows, other sessions, and other tenants survive."""
+    await db["session_occurrences"].insert_many(
+        [
+            _occurrence("academy-a", "occ-past", "sess-1", NOW - timedelta(days=1)),
+            _occurrence("academy-a", "occ-future", "sess-1", NOW + timedelta(days=1)),
+            _occurrence(
+                "academy-a",
+                "occ-derived",
+                "occ-derived",
+                NOW + timedelta(days=8),
+                template_session_id="sess-1",
+            ),
+            _occurrence("academy-a", "occ-other-session", "sess-2", NOW + timedelta(days=1)),
+            _occurrence("academy-b", "occ-future", "sess-1", NOW + timedelta(days=1)),
+        ]
+    )
+    repo = MongoOccurrenceRosterRepository(db)
+    with tenant_scope("academy-a"):
+        for entry_id, occurrence_id, student_id in (
+            ("a-past", "occ-past", "st-1"),
+            ("a-future-enrolled", "occ-future", "st-1"),
+            ("a-future-makeup", "occ-future", "st-makeup"),
+            ("a-derived", "occ-derived", "st-makeup"),
+            ("a-other-session", "occ-other-session", "st-1"),
+        ):
+            await repo.add(_entry("academy-a", entry_id, occurrence_id, student_id))
+    with tenant_scope("academy-b"):
+        await repo.add(_entry("academy-b", "b-future", "occ-future", "st-1"))
+
+    with tenant_scope("academy-a"):
+        deleted = await repo.remove_future_for_session(session_id="sess-1", after=NOW)
+
+    assert deleted == 3
+    remaining = sorted([doc["entry_id"] async for doc in db["occurrence_roster_entries"].find({})])
+    assert remaining == ["a-other-session", "a-past", "b-future"]
+
+
+@pytest.mark.asyncio
+async def test_remove_future_for_session_returns_zero_when_nothing_matches(db) -> None:
+    repo = MongoOccurrenceRosterRepository(db)
+    with tenant_scope("academy-a"):
+        await repo.add(_entry("academy-a", "a-1", "occ-unknown", "st-1"))
+        deleted = await repo.remove_future_for_session(session_id="sess-1", after=NOW)
+    assert deleted == 0
+    assert await db["occurrence_roster_entries"].count_documents({}) == 1

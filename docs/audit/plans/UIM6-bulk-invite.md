@@ -1,5 +1,5 @@
 # UIM6 — Bulk user invite UI
-Status: TODO
+Status: DONE
 Size: S · Depends on: UIC1 (same surface — the users directory may have become the merged role-tab screen; build the modal against whichever page hosts the directory at merge time) · Tracker: ../TRACKER.md
 
 ## User value

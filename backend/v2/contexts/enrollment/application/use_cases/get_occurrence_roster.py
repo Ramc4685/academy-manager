@@ -18,7 +18,10 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel
 
-from backend.v2.contexts.enrollment.application.ports import StudentQuery
+from backend.v2.contexts.enrollment.application.ports import (
+    SessionOccurrenceRepository,
+    StudentQuery,
+)
 from backend.v2.contexts.enrollment.application.use_cases.absence_notices import AbsenceNotice
 from backend.v2.contexts.enrollment.application.use_cases.get_session_roster import (
     GetSessionRoster,
@@ -67,6 +70,7 @@ class GetOccurrenceRoster:
         absence_notices: AbsenceNoticeQuery,
         occurrence_roster: OccurrenceRosterQuery,
         students: StudentQuery,
+        occurrences: SessionOccurrenceRepository,
     ) -> None:
         self._get_roster = get_roster
         self._absence_notices = absence_notices
@@ -74,6 +78,11 @@ class GetOccurrenceRoster:
         # Same student query GetSessionRoster uses internally, so one-time
         # entries resolve full_name the same way regular roster entries do.
         self._students = students
+        # Issue #694: one-time (makeup/trial) rows outlive their occurrence
+        # when a session is deleted/regenerated or the date is cancelled —
+        # the write-side cleanup can miss a path, so this read defensively
+        # drops rows whose occurrence no longer exists or is cancelled.
+        self._occurrences = occurrences
 
     async def execute(self, *, session_id: str, occurrence_id: str) -> list[OccurrenceRosterItem]:
         roster = await self._get_roster.execute(session_id)
@@ -95,6 +104,14 @@ class GetOccurrenceRoster:
         ]
 
         one_time_entries = await self._occurrence_roster.list_for_occurrence(occurrence_id)
+        if one_time_entries:
+            # Issue #694: the occurrence may have been cancelled or dropped
+            # entirely (session deleted/regenerated) after these rows were
+            # written. A coach can never mark such a row (#676's
+            # occurrence-status guard rejects the write), so don't render it.
+            occurrence = await self._occurrences.get(occurrence_id)
+            if occurrence is None or occurrence.status == "cancelled":
+                one_time_entries = []
         if one_time_entries:
             students = await self._students.by_ids([e.student_id for e in one_time_entries])
             students_by_id = {s.student_id: s for s in students}

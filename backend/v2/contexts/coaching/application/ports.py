@@ -11,6 +11,7 @@ from backend.v2.contexts.coaching.domain.models import (
     Attendance,
     AttendanceEntrySource,
     CoachAttendance,
+    CoachAttendanceAuditEntry,
     CoachSkillNote,
     NoteVisibility,
     SessionFeedback,
@@ -40,6 +41,10 @@ class CoachAttendanceRepository(Protocol):
         self, occurrence_id: str, coach_id: str
     ) -> CoachAttendance | None: ...
     async def list_for_occurrences(self, occurrence_ids: list[str]) -> list[CoachAttendance]: ...
+
+
+class CoachAttendanceAuditRepository(Protocol):
+    async def append(self, entry: CoachAttendanceAuditEntry) -> None: ...
 
 
 class OccurrenceDetails(BaseModel):

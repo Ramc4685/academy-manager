@@ -18,7 +18,11 @@ SaaS contract:
 
 from __future__ import annotations
 
+import logging
+from typing import Any
+
 from backend.v2.contexts.identity.application.ports import (
+    LoginAuditRecorder,
     MembershipLookup,
     PlatformRoleRepository,
     TokenVerifier,
@@ -37,6 +41,12 @@ from backend.v2.contexts.identity.domain.identity_aliases import identity_aliase
 from backend.v2.contexts.identity.domain.models import User
 from backend.v2.shared.auth.claims import AuthClaims, PlatformRoleName
 
+logger = logging.getLogger(__name__)
+
+# Most privileged role first: the persona stamped on a login event is the one
+# the session can actually act as.
+_PERSONA_PRIORITY = ("owner", "admin", "coach", "assistant_coach", "parent", "student")
+
 
 class LoadAuthClaims:
     def __init__(
@@ -45,11 +55,15 @@ class LoadAuthClaims:
         users: UserRepository,
         memberships: MembershipLookup,
         platform_roles: PlatformRoleRepository,
+        login_audit: LoginAuditRecorder | None = None,
     ) -> None:
         self._verifier = verifier
         self._users = users
         self._memberships = memberships
         self._platform_roles = platform_roles
+        # Optional: composition wires the real recorder, tests and any caller
+        # that only needs claims stay unchanged.
+        self._login_audit = login_audit
 
     async def execute(self, id_token: str, *, resolved_academy_id: str) -> AuthClaims:
         """Verify token, resolve identity, validate membership, build claims.
@@ -104,6 +118,14 @@ class LoadAuthClaims:
             grant.role for grant in platform_grants if grant.is_active()
         )
 
+        await self._record_login(
+            user=user,
+            academy_id=resolved_academy_id,
+            membership_id=membership.membership_id,
+            roles=[str(role) for role in membership.roles],
+            token_claims=token_claims,
+        )
+
         return AuthClaims(
             user_id=user.user_id,
             email=str(user.email),
@@ -112,6 +134,52 @@ class LoadAuthClaims:
             roles=membership.roles,
             platform_roles=platform_role_names,
         )
+
+    async def _record_login(
+        self,
+        *,
+        user: User,
+        academy_id: str,
+        membership_id: str,
+        roles: list[str],
+        token_claims: dict[str, Any],
+    ) -> None:
+        """Leave a sign-in on the audit trail. Never fails the login.
+
+        The token's ``iat`` makes the key stable for one session, so the
+        recorder collapses the many requests a token makes into one row.
+        Auditing is observability, not authorisation: a store that is down
+        must not lock everyone out, so failures are logged and swallowed.
+        """
+        if self._login_audit is None:
+            return
+        try:
+            await self._login_audit.record_login(
+                user_id=user.user_id,
+                academy_id=academy_id,
+                membership_id=membership_id,
+                roles=roles,
+                provider=_sign_in_provider(token_claims),
+                persona=_persona_for(roles),
+                dedupe_key=f"{user.user_id}:{academy_id}:{token_claims.get('iat') or 'unknown'}",
+            )
+        except Exception:  # pragma: no cover - defensive
+            logger.warning("login audit failed for user %s", user.user_id, exc_info=True)
+
+
+def _sign_in_provider(token_claims: dict[str, Any]) -> str | None:
+    """The Firebase sign-in method behind this token (password, google.com...)."""
+    firebase = token_claims.get("firebase")
+    if isinstance(firebase, dict):
+        provider = firebase.get("sign_in_provider")
+        if isinstance(provider, str) and provider:
+            return provider
+    provider = token_claims.get("sign_in_provider")
+    return provider if isinstance(provider, str) and provider else None
+
+
+def _persona_for(roles: list[str]) -> str | None:
+    return next((role for role in _PERSONA_PRIORITY if role in roles), None)
 
 
 def _aliases_for(user: User) -> tuple[str, ...]:

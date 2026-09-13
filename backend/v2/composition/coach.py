@@ -476,6 +476,7 @@ def compose_coach(
             absence_notices=absence_notice_repo,
             occurrence_roster=occurrence_roster_repo,
             students=students_repo,
+            occurrences=occurrences_repo,
         ),
         mark_attendance=MarkAttendance(
             attendance_repo=attendance_repo,

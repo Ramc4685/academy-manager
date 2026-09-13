@@ -71,6 +71,7 @@ export function CoachUtilizationPanel({ periods }: { periods: string[] }) {
                 <th className="px-2 py-2">Hours</th>
                 <th className="px-2 py-2">Payout</th>
                 <th className="px-2 py-2">Utilization</th>
+                <th className="px-2 py-2">Marked within 24h</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-rally-line">
@@ -83,6 +84,11 @@ export function CoachUtilizationPanel({ periods }: { periods: string[] }) {
                   <td className="px-2 py-2 text-rally-muted">{formatHours(row.hours)}</td>
                   <td className="px-2 py-2 text-rally-muted">{formatCurrency(row.payout_minor)}</td>
                   <td className="px-2 py-2 text-rally-muted">{formatPercent(row.utilization_rate)}</td>
+                  <td className="px-2 py-2 text-rally-muted">
+                    {row.compliance_within_24h_rate === null
+                      ? "—"
+                      : formatPercent(row.compliance_within_24h_rate)}
+                  </td>
                 </tr>
               ))}
             </tbody>

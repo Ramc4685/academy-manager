@@ -23,6 +23,7 @@ from backend.v2.composition.admin_session_staff import (
     attach_session_staff_names,
     compose_set_session_assistants,
 )
+from backend.v2.composition.attendance_corrections import compose_attendance_corrections
 from backend.v2.composition.autopay_comms import (
     autopay_active_enrollment_ids,
     build_dunning_worker,
@@ -60,6 +61,7 @@ from backend.v2.composition.pathway import (
     compose_curriculum,
     compose_student_progress,
 )
+from backend.v2.composition.payment_student_resolver import resolve_student_names
 from backend.v2.composition.roster_notifications import compose_enrollment_notifiers
 from backend.v2.composition.scheduled_cancellations import (
     compose_list_stuck_scheduled_actions,
@@ -239,9 +241,6 @@ from backend.v2.contexts.billing.infrastructure.mongo_tuition_discount_repo impo
 from backend.v2.contexts.coaching.application.use_cases.compute_payout import (
     ComputeCoachPayout,
 )
-from backend.v2.contexts.coaching.application.use_cases.correct_attendance import (
-    CorrectAttendance,
-)
 from backend.v2.contexts.coaching.application.use_cases.generate_daily_teaching_plan import (
     GenerateDailyTeachingPlan,
 )
@@ -254,7 +253,7 @@ from backend.v2.contexts.coaching.application.use_cases.mark_coach_attendance im
     MarkCoachAttendance,
 )
 from backend.v2.contexts.coaching.infrastructure.mongo_attendance_repo import (
-    MongoAttendanceRepository,
+    MongoCoachAttendanceAuditLogRepository,
     MongoCoachAttendanceRepository,
 )
 from backend.v2.contexts.coaching.infrastructure.mongo_coach_rate_repo import (
@@ -438,6 +437,7 @@ from backend.v2.contexts.finance.infrastructure.mongo_attendance_snapshot_reader
 from backend.v2.contexts.finance.infrastructure.mongo_coach_payout_snapshot_reader import (
     MongoCoachPayoutSnapshotReader,
 )
+from backend.v2.contexts.finance.infrastructure.mongo_compliance_reader import MongoComplianceReader
 from backend.v2.contexts.finance.infrastructure.mongo_payout_audit_log import (
     MongoPayoutAuditLogRepository,
 )
@@ -484,6 +484,7 @@ from backend.v2.contexts.identity.application.use_cases.stripe_connect import (
     DisconnectStripeUseCase,
     StartStripeConnectUseCase,
 )
+from backend.v2.contexts.identity.domain.audit_actors import audit_actor_fields
 from backend.v2.contexts.identity.domain.errors import (
     StudentAlreadyLinked,
     StudentNotFound,
@@ -493,6 +494,7 @@ from backend.v2.contexts.identity.infrastructure.firebase_admin_adapter import (
     get_firebase_admin_adapter,
 )
 from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import MongoAcademyRepository
+from backend.v2.contexts.identity.infrastructure.mongo_audit_actors import MongoAuditActorDirectory
 from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
     MongoMembershipRepository,
 )
@@ -670,6 +672,7 @@ def compose_admin(
     sessions_r = MongoSessionRepository(db)
     occurrences_r = MongoSessionOccurrenceRepository(db)
     coach_attendance_repo = MongoCoachAttendanceRepository(db)
+    coach_attendance_audit_repo = MongoCoachAttendanceAuditLogRepository(db)
     enrollments_w = MongoEnrollmentWriter(db)
     enrollments_r = MongoEnrollmentRepository(db)
     enrollment_events = MongoEnrollmentEventRepository(db)
@@ -2574,8 +2577,22 @@ def compose_admin(
                         }
                     },
                 )
+                # Issue #694: a make-up/trial row keyed to this occurrence
+                # has no other pruning path once the occurrence is cancelled
+                # here — it would otherwise render on the coach roster
+                # forever unmarkable.
+                await db["occurrence_roster_entries"].delete_many(
+                    {"academy_id": academy_id, "occurrence_id": occurrence_id}
+                )
                 continue
             await db["session_occurrences"].delete_one(
+                {"academy_id": academy_id, "occurrence_id": occurrence_id}
+            )
+            # Issue #694: same rationale as the soft-cancel branch above —
+            # the occurrence itself is gone (schedule/time edit regenerated
+            # it under a new occurrence_id), so any one-time row still
+            # keyed to the old id is orphaned.
+            await db["occurrence_roster_entries"].delete_many(
                 {"academy_id": academy_id, "occurrence_id": occurrence_id}
             )
 
@@ -3002,12 +3019,13 @@ def compose_admin(
 
     mark_coach_attendance = MarkCoachAttendance(
         coach_attendance=coach_attendance_repo,
+        coach_attendance_audit=coach_attendance_audit_repo,
         occurrence_lookup=_AdminOccurrenceLookup(),
         academy_id=academy_id,
     )
 
-    correct_attendance = CorrectAttendance(
-        attendance_repo=MongoAttendanceRepository(db),
+    attendance_corrections = compose_attendance_corrections(
+        db,
         occurrence_lookup=_AdminOccurrenceLookup(),
         outbox=outbox,
         academy_id=request_academy_id,
@@ -3089,29 +3107,6 @@ def compose_admin(
         # Stripe ids). settle_matching_rows does that and ignores non-money statuses.
         def _settle_invoice_rows(keys: set[str], payment_doc: dict[str, Any]) -> bool:
             return settle_matching_rows(invoice_row_by_key, keys, payment_doc) > 0
-
-        invoice_student_ids = [
-            str(row["student_id"])
-            for row in invoice_rows
-            if isinstance(row.get("student_id"), str) and row.get("student_id")
-        ]
-        if invoice_student_ids:
-            student_names: dict[str, str] = {}
-            async for student in db["students"].find(
-                {
-                    "academy_id": request_academy_id,
-                    "student_id": {"$in": list(dict.fromkeys(invoice_student_ids))},
-                },
-                {"student_id": 1, "full_name": 1},
-            ):
-                student_id = str(student.get("student_id") or "")
-                full_name = str(student.get("full_name") or "").strip()
-                if student_id and full_name:
-                    student_names[student_id] = full_name
-            for row in invoice_rows:
-                student_id = row.get("student_id")
-                if isinstance(student_id, str) and student_id in student_names:
-                    row["student_name"] = student_names[student_id]
 
         legacy = await payments_repo.list_recent_admin(limit=fetch_cap)
         legacy_payment_ids = {
@@ -3294,6 +3289,8 @@ def compose_admin(
                 continue
             deduped_legacy.append(row)
         combined = attempt_rows + invoice_rows + ledger_rows + deduped_legacy
+        # #618: every row, not just the invoice ones, gets a student to show.
+        await resolve_student_names(db, request_academy_id, combined)
         combined.sort(
             key=lambda r: (
                 (r.get("created_at") if isinstance(r, dict) else None)
@@ -3672,7 +3669,7 @@ def compose_admin(
             )
         )
 
-    async def list_audit_logs():
+    async def list_audit_logs(actor_type: str | None = None):
         from backend.v2.shared.tenancy import current_academy_id
 
         request_academy_id = current_academy_id()
@@ -3694,7 +3691,15 @@ def compose_admin(
                     "created_at": doc.get("created_at") or datetime.now(UTC),
                 }
             )
-        return rows
+
+        actors = await MongoAuditActorDirectory(db).resolve(
+            {str(row["actor_id"]) for row in rows if row["actor_id"]},
+            academy_id=request_academy_id,
+        )
+        wanted = (actor_type or "").strip().lower()
+        for row in rows:
+            row.update(audit_actor_fields(row["actor_id"], actors))
+        return [row for row in rows if not wanted or row["actor_type"] == wanted]
 
     async def _parent_payments_link(request_academy_id: str) -> tuple[str | None, str]:
         """Resolve one academy's parent-payments URL and display name.
@@ -4334,7 +4339,9 @@ def compose_admin(
         add_session_replacement=add_session_replacement,
         update_session_occurrence_replacement=update_session_occurrence_replacement,
         mark_coach_attendance=mark_coach_attendance,
-        correct_attendance=correct_attendance,
+        correct_attendance=attendance_corrections.correct,
+        void_attendance=attendance_corrections.void,
+        list_occurrence_attendance=attendance_corrections.list_for_occurrence,
         list_admin_enrollments_for_session=list_admin_enrollments_for_session,
         list_waitlist_for_session=list_waitlist_for_session,
         list_audit_logs=list_audit_logs,
@@ -4414,6 +4421,7 @@ def compose_admin(
 
         return await GetCoachUtilization(
             snapshot_repo=MongoCoachPayoutSnapshotReader(db),
+            compliance_reader=MongoComplianceReader(db),
             academy_id=current_academy_id(),
         ).execute(periods)
 

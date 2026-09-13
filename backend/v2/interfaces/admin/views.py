@@ -449,15 +449,40 @@ class CorrectStudentAttendanceRequest(BaseModel):
     reason: str | None = None
 
 
+class VoidStudentAttendanceRequest(BaseModel):
+    """Void a recorded mark (#554). A reason is mandatory — the void hides the
+    class from every report, so the explanation is the only trace a human
+    reading the audit trail later has."""
+
+    reason: str
+
+    @field_validator("reason")
+    @classmethod
+    def _reason_not_blank(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("a reason is required to void an attendance mark")
+        return cleaned
+
+
 class AdminStudentAttendanceView(BaseModel):
     attendance_id: str
     occurrence_id: str
     session_id: str
     student_id: str
-    status: Literal["present", "absent", "late"]
-    previous_status: Literal["present", "absent", "late"] | None = None
+    # "voided" (#554) is a read-only outcome of the void route; the correct
+    # route still only accepts the three real marks.
+    status: Literal["present", "absent", "late", "voided"]
+    previous_status: Literal["present", "absent", "late", "voided"] | None = None
     corrected_by: str | None = None
     corrected_at: datetime | None = None
+    correction_reason: str | None = None
+    marked_by: str | None = None
+    marked_at: datetime | None = None
+
+
+class AdminStudentAttendanceList(BaseModel):
+    attendance: list[AdminStudentAttendanceView]
 
 
 def _validated_group_link(value: str | None) -> str | None:
@@ -1386,6 +1411,11 @@ class AdminTuitionDiscountSummaryResponse(BaseModel):
 class AdminAuditLogView(BaseModel):
     audit_id: str
     actor_id: str | None = None
+    # Resolved at read time by joining `users` + this academy's memberships
+    # (#468). Optional so a row whose actor no longer exists still renders.
+    actor_type: str | None = None
+    actor_role: str | None = None
+    actor_name: str | None = None
     action: str
     entity_type: str | None = None
     entity_id: str | None = None
@@ -2023,6 +2053,7 @@ class CoachUtilizationPointView(BaseModel):
     hours: float
     payout_minor: int
     utilization_rate: float
+    compliance_within_24h_rate: float | None = None
 
 
 class CoachUtilizationResponse(BaseModel):
@@ -2049,6 +2080,7 @@ class EnrollmentEventDto(BaseModel):
 class EnrollmentEventsResponse(BaseModel):
     enrollment_id: str
     events: list[EnrollmentEventDto]
+    next_cursor: str | None = None
 
 
 # --- Email Campaigns ---

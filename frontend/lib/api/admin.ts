@@ -90,6 +90,26 @@ export interface AdminCoachAttendanceView {
   note: string;
 }
 
+/** One student's recorded mark for one dated occurrence (#517, #554). */
+export interface AdminStudentAttendanceView {
+  attendance_id: string;
+  occurrence_id: string;
+  session_id: string;
+  student_id: string;
+  /** "voided" is an admin annulment: the row stays, but counts as unmarked. */
+  status: "present" | "absent" | "late" | "voided";
+  previous_status: "present" | "absent" | "late" | "voided" | null;
+  corrected_by: string | null;
+  corrected_at: string | null;
+  correction_reason: string | null;
+  marked_by: string | null;
+  marked_at: string | null;
+}
+
+export interface AdminStudentAttendanceList {
+  attendance: AdminStudentAttendanceView[];
+}
+
 export interface UpdateSessionOccurrenceCoachRequest {
   actual_coach_id?: string | null;
   substitute_coach_id?: string | null;
@@ -263,6 +283,7 @@ export interface EnrollmentEventView {
 export interface EnrollmentEventsResponse {
   enrollment_id: string;
   events: EnrollmentEventView[];
+  next_cursor: string | null;
 }
 
 export type WaitlistStatus = "waiting" | "skipped" | "promoted" | "removed";
@@ -1405,9 +1426,14 @@ export interface AdminPauseRequestList {
   requests: AdminPauseRequestView[];
 }
 
+export type AdminAuditActorType = "admin" | "owner" | "coach" | "parent" | "system";
+
 export interface AdminAuditLogView {
   audit_id: string;
   actor_id: string | null;
+  actor_type: AdminAuditActorType | null;
+  actor_role: string | null;
+  actor_name: string | null;
   action: string;
   entity_type: string | null;
   entity_id: string | null;
@@ -1772,6 +1798,35 @@ export function updateOccurrenceCoachAttendance(
   );
 }
 
+export function listOccurrenceStudentAttendance(
+  occurrenceId: string
+): Promise<AdminStudentAttendanceList> {
+  return apiFetch<AdminStudentAttendanceList>(
+    `/admin/session-occurrences/${encodeURIComponent(occurrenceId)}/attendance`,
+    { method: "GET" }
+  );
+}
+
+/**
+ * Void one student's mark (#554). Admin-only, allowed at any time, and the
+ * reason is mandatory — it is the only explanation the audit trail keeps.
+ */
+export function voidOccurrenceStudentAttendance(
+  occurrenceId: string,
+  studentId: string,
+  reason: string
+): Promise<AdminStudentAttendanceView> {
+  return apiFetch<AdminStudentAttendanceView>(
+    `/admin/session-occurrences/${encodeURIComponent(occurrenceId)}/attendance/${encodeURIComponent(
+      studentId
+    )}/void`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ reason }),
+    }
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Enrollments
 // ---------------------------------------------------------------------------
@@ -1878,10 +1933,18 @@ export function returnFromHold(
   });
 }
 
-export function listEnrollmentEvents(enrollmentId: string): Promise<EnrollmentEventsResponse> {
-  return apiFetch<EnrollmentEventsResponse>(`/admin/enrollments/${enrollmentId}/events`, {
-    method: "GET",
-  });
+export function listEnrollmentEvents(
+  enrollmentId: string,
+  params?: { limit?: number; cursor?: string }
+): Promise<EnrollmentEventsResponse> {
+  const query = new URLSearchParams();
+  if (params?.limit != null) query.set("limit", String(params.limit));
+  if (params?.cursor) query.set("cursor", params.cursor);
+  const qs = query.toString();
+  return apiFetch<EnrollmentEventsResponse>(
+    `/admin/enrollments/${enrollmentId}/events${qs ? `?${qs}` : ""}`,
+    { method: "GET" }
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -2770,6 +2833,7 @@ export interface AdminCoachUtilizationEntry {
   hours: number;
   payout_minor: number;
   utilization_rate: number;
+  compliance_within_24h_rate: number | null;
 }
 
 export interface AdminCoachUtilizationResponse {
@@ -3151,8 +3215,9 @@ export function listAdminCancellations(): Promise<SelfCancellationsAdminResponse
   });
 }
 
-export function listAuditLogs(): Promise<AdminAuditLogList> {
-  return apiFetch<AdminAuditLogList>("/admin/audit-logs", { method: "GET" });
+export function listAuditLogs(actorType?: AdminAuditActorType | null): Promise<AdminAuditLogList> {
+  const query = actorType ? `?actor_type=${encodeURIComponent(actorType)}` : "";
+  return apiFetch<AdminAuditLogList>(`/admin/audit-logs${query}`, { method: "GET" });
 }
 
 export function sendDuesReminders(payload: { parent_ids?: string[] } = {}): Promise<SendDuesRemindersResponse> {
@@ -3443,6 +3508,45 @@ export interface CreateAdminUserRequest {
 
 export function createAdminUser(payload: CreateAdminUserRequest): Promise<AdminUserDetail> {
   return apiFetch<AdminUserDetail>("/admin/users", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+/**
+ * UIM6 (#449) — bulk parent invites.
+ *
+ * Mirrors `BulkInviteRequest`/`BulkInviteResponse` in
+ * `backend/v2/interfaces/admin/views.py`. The role is hardcoded to `parent`
+ * server-side, so the payload carries no role. Partial success is normal: the
+ * call returns 200 with per-row `created` / `skipped` / `failed` statuses.
+ */
+export interface BulkInviteUserRequest {
+  email: string;
+  display_name: string;
+}
+
+export interface BulkInviteRequest {
+  users: BulkInviteUserRequest[];
+  reason?: string;
+}
+
+export interface BulkInviteResultItem {
+  email: string;
+  status: "created" | "skipped" | "failed";
+  user_id: string | null;
+  detail: string | null;
+}
+
+export interface BulkInviteResponse {
+  created: number;
+  skipped: number;
+  failed: number;
+  results: BulkInviteResultItem[];
+}
+
+export function bulkInviteParents(payload: BulkInviteRequest): Promise<BulkInviteResponse> {
+  return apiFetch<BulkInviteResponse>("/admin/users/bulk-invite", {
     method: "POST",
     body: JSON.stringify(payload),
   });

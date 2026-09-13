@@ -343,6 +343,10 @@ class ParentAttendanceRecordView(BaseModel):
     session_id: str
     session_title: str
     status: str
+    # "voided" (#554) means the academy annulled the mark; ``previous_status``
+    # is what it used to say, so the parent sees that a record changed rather
+    # than a row silently vanishing from their history.
+    previous_status: str | None = None
     marked_at: datetime
     coach_name: str | None = None
 
