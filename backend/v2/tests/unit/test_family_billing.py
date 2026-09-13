@@ -442,3 +442,35 @@ def test_view_no_card_means_no_next_charge_and_invite_offered() -> None:
     assert view["header"]["registration"]["state"] == "not_invited"
     assert "send_invite" in view["actions"]
     assert "charge_card" not in view["invoices"][0]["actions"]
+
+
+def test_strip_owner_actions_keeps_void_on_an_unsent_draft() -> None:
+    """#726: a plain admin can create a draft, so a plain admin must be able to discard it.
+
+    Every other ``void`` stays owner-only; only the never-sent draft — the
+    manual-invoicing working state, with no money and no parent notified —
+    survives the strip.
+    """
+    draft = _invoice(
+        "inv-draft", status="draft", balance=0, delivery_status="not_sent", last_sent_at=None
+    )
+    view = build_family_billing_view(
+        _facts(invoices=(draft,)), timezone="America/Chicago", generated_at=NOW, today=TODAY
+    )
+    assert view["invoices"][0]["actions"] == ["send", "void"]
+
+    stripped = strip_owner_actions(view)
+
+    assert stripped["invoices"][0]["actions"] == ["send", "void"]
+
+
+def test_strip_owner_actions_drops_void_on_a_draft_that_was_already_sent() -> None:
+    """Belt and braces: a draft carrying a ``last_sent_at`` is not a fresh draft."""
+    draft = _invoice("inv-draft", status="draft", balance=0)  # default last_sent_at is set
+    view = build_family_billing_view(
+        _facts(invoices=(draft,)), timezone="America/Chicago", generated_at=NOW, today=TODAY
+    )
+
+    stripped = strip_owner_actions(view)
+
+    assert stripped["invoices"][0]["actions"] == ["send"]

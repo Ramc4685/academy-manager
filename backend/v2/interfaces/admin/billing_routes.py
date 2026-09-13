@@ -41,6 +41,7 @@ from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import 
     PreviewWithdrawalCreditCommand,
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
+from backend.v2.interfaces.admin.owner_gate import ensure_owner_for_invoice_void
 from backend.v2.interfaces.admin.views import (
     AdminEnrollmentQuoteRequest,
     AdminEnrollmentQuoteResponse,
@@ -981,13 +982,34 @@ async def remove_invoice_line(
         raise HTTPException(status_code=409, detail=msg) from exc
 
 
+async def _void_is_an_unsent_draft(use_cases: AdminUseCases, invoice_id: str) -> bool:
+    """Is this invoice still the never-sent draft any admin may discard (#726)?
+
+    Read only on the non-owner path, so an owner's void costs exactly what it
+    did before. A detail read that fails is treated as "not a fresh draft",
+    which keeps the gate closed rather than open.
+    """
+
+    try:
+        detail = await use_cases.get_billing_invoice_detail(invoice_id)  # type: ignore[operator]
+    except Exception:
+        return False
+    if not isinstance(detail, dict):
+        return False
+    return detail.get("status") == "draft" and detail.get("last_sent_at") is None
+
+
 @router.post("/billing/invoices/{invoice_id}/void", status_code=status.HTTP_200_OK)
 async def void_invoice_route(
     invoice_id: str,
     body: VoidInvoiceRequest,
-    _claims: AuthClaims = Depends(require_owner()),
+    claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> dict[str, bool]:
+    if "owner" not in claims.roles:
+        ensure_owner_for_invoice_void(
+            claims, is_unsent_draft=await _void_is_an_unsent_draft(use_cases, invoice_id)
+        )
     void_invoice_ = _required_callable(use_cases.void_billing_invoice, "Invoice voiding")
     try:
         await void_invoice_(invoice_id=invoice_id, reason=body.reason)  # type: ignore[operator]

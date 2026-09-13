@@ -21,6 +21,13 @@ split from:
   ``DELETE /enrollments/{id}`` (issue #741): owner-only exactly when the
   academy's ``EnrollmentDeparturePolicy.delete_enrollment_requires_owner``
   says so, which is why the route is not in ``OWNER_ONLY_ROUTE_PATHS``.
+* :func:`ensure_owner_for_invoice_void` — the action-level rule inside
+  ``POST /billing/invoices/{id}/void`` (issue #726): drafting an invoice is
+  admin-reachable (``POST /students/{id}/invoices`` and
+  ``.../invoices/bill-period``), so discarding a never-sent draft must be
+  too — otherwise a plain admin creates a draft only the owner can clean up.
+  Every other void stays owner-only, which is why this route is conditional
+  and therefore not in ``OWNER_ONLY_ROUTE_PATHS``.
 
 Decisions (spec ``2026-09-04-role-model-and-screens-design.md``): admins keep
 recording manual payments and seeing balances, expenses, the payments list
@@ -64,7 +71,9 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("GET", f"{_ADMIN}/finance/revenue"),
         ("GET", f"{_ADMIN}/finance/tuition-discounts"),
         ("POST", f"{_ADMIN}/billing/invoices/{{invoice_id}}/adjustments"),
-        ("POST", f"{_ADMIN}/billing/invoices/{{invoice_id}}/void"),
+        # (POST /billing/invoices/{id}/void stays admin; anything past an
+        # unsent draft is owner-gated per action by
+        # `ensure_owner_for_invoice_void` — issue #726.)
         ("POST", f"{_ADMIN}/billing/invoices/{{invoice_id}}/refund"),
         # billing_health_routes.py — Stripe plumbing is governance, the same
         # tier as Reports and Payouts (spec 2026-09-07 §2). Admins who could
@@ -174,4 +183,23 @@ def ensure_owner_for_enrollment_delete(claims: AuthClaims, requires_owner: bool)
     """
 
     if requires_owner and "owner" not in claims.roles:
+        raise HTTPException(status_code=404, detail="Not found")
+
+
+def ensure_owner_for_invoice_void(claims: AuthClaims, *, is_unsent_draft: bool) -> None:
+    """Only an owner may void an invoice that is past the draft stage (issue #726).
+
+    A never-sent draft is the manual-invoicing working state: no money has
+    moved and no parent has been told about it, and any admin can create one,
+    so any admin may discard one. Once a draft is finalized (``send`` turns it
+    into ``open``) the void is a money-governance act and stays owner-only.
+
+    Conditional, so ``POST /billing/invoices/{id}/void`` is deliberately NOT in
+    ``OWNER_ONLY_ROUTE_PATHS``: it stays ``require_persona("admin")`` and this
+    runs inside the handler, exactly like ``ensure_owner_for_enrollment_delete``.
+    Same 404 as ``require_owner``, so a plain admin sees no change in the
+    contract for the invoices they never could void.
+    """
+
+    if not is_unsent_draft and "owner" not in claims.roles:
         raise HTTPException(status_code=404, detail="Not found")

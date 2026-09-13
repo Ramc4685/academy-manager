@@ -395,6 +395,20 @@ def _override_ledger(admin_client, ledger: _FakeLedger) -> None:
         )
         return created.model_dump(mode="json")
 
+    async def get_billing_invoice_detail(invoice_id: str) -> dict:
+        # Mirrors the real closure's shape for the two fields the #726 void
+        # gate reads; a permissive fake here would hide the gate entirely.
+        invoice = await ledger.get_invoice(invoice_id)
+        if invoice is None:
+            raise LookupError("invoice not found")
+        return {
+            "invoice_id": invoice.invoice_id,
+            "status": invoice.status,
+            "delivery_status": getattr(invoice, "delivery_status", "not_sent"),
+            "last_sent_at": getattr(invoice, "last_sent_at", None),
+        }
+
+    admin_client.use_cases.get_billing_invoice_detail = get_billing_invoice_detail
     admin_client.use_cases.send_billing_invoice = send_billing_invoice
     admin_client.use_cases.add_invoice_line = add_invoice_line
     admin_client.use_cases.remove_invoice_line = remove_invoice_line
@@ -2009,3 +2023,45 @@ def test_create_student_invoice_double_submit_returns_the_same_draft(admin_clien
     assert second.status_code == 201, second.text
     assert second.json()["invoice_id"] == first.json()["invoice_id"]
     assert len(ledger.invoices) == 1
+
+
+def test_plain_admin_can_void_the_unsent_draft_they_created(admin_only_client):
+    """#726: draft creation is admin-reachable, so discarding one must be too."""
+    ledger = _FakeLedger(invoices=[_invoice(status="draft")])
+    _override_ledger(admin_only_client, ledger)
+
+    response = admin_only_client.post(
+        "/api/v2/admin/billing/invoices/inv-1/void",
+        json={"reason": "Created by mistake"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"ok": True}
+    assert ledger.invoices["inv-1"].status == "void"
+
+
+def test_plain_admin_still_cannot_void_an_open_invoice(admin_only_client):
+    """Everything past draft stays owner-only, and 404s exactly like before."""
+    ledger = _FakeLedger(invoices=[_invoice(status="open")])
+    _override_ledger(admin_only_client, ledger)
+
+    response = admin_only_client.post(
+        "/api/v2/admin/billing/invoices/inv-1/void",
+        json={"reason": "Cannot collect"},
+    )
+
+    assert response.status_code == 404, response.text
+    assert ledger.invoices["inv-1"].status == "open"
+
+
+def test_owner_can_still_void_an_open_invoice(admin_client):
+    ledger = _FakeLedger(invoices=[_invoice(status="open")])
+    _override_ledger(admin_client, ledger)
+
+    response = admin_client.post(
+        "/api/v2/admin/billing/invoices/inv-1/void",
+        json={"reason": "Cannot collect"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert ledger.invoices["inv-1"].status == "void"
