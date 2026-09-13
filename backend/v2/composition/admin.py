@@ -980,7 +980,7 @@ def compose_admin(
 
     # Finance (# FINANCE)
     expenses_repo = MongoExpenseRepository(db)
-    payouts_repo = MongoPayoutRepository(db)
+    payouts_repo = MongoPayoutRepository(db, academy_timezone=academy_timezone_lookup(db))
     payout_periods_repo = MongoPayoutPeriodRepository(db)
     coach_payout_calculator = FinancePayoutCalculator(
         ComputeCoachPayout(
