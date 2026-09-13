@@ -9,7 +9,7 @@
 import { getIdToken } from "@/lib/auth/firebase";
 import { setBffIdentityCookie } from "@/lib/api/auth-bridge-cookie";
 import { resolveApiAuthToken } from "@/lib/api/auth-token";
-import { captureError, stripQuery } from "@/lib/observability/sentry";
+import { addBreadcrumb, captureError, stripQuery } from "@/lib/observability/sentry";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "/api/v2";
 const BFF_IDENTITY_HEADER = "X-CourtMastr-Identity";
@@ -95,6 +95,12 @@ function reportApiFailure(
   const outcome = status !== undefined ? String(status) : kind;
   const report = new Error(`${request.method} ${route} -> ${outcome}`);
   report.name = "ApiRequestFailed";
+  // Network failures are transient and route-agnostic (offline, DNS blip,
+  // CORS, connection reset) — a per-route fingerprint would open one Sentry
+  // issue per API path for what is really "the network is flaky" (#754).
+  // Collapse them into a single low-severity bucket instead; `api.path` stays
+  // a tag so on-call can still see which routes were affected.
+  const isNetwork = kind === "network";
   captureError(report, {
     tags: {
       "api.method": request.method,
@@ -109,7 +115,8 @@ function reportApiFailure(
       // cap them so an HTML error page never becomes an event payload.
       message: error.message.slice(0, 200),
     },
-    fingerprint: ["api-failure", request.method, route, outcome],
+    fingerprint: isNetwork ? ["api-network-failure"] : ["api-failure", request.method, route, outcome],
+    level: isNetwork ? "warning" : undefined,
   });
 }
 
@@ -209,7 +216,18 @@ export async function apiFetch<T>(
     // The first caller owns the fetch; deduped followers re-throw the same
     // rejection without reporting it again.
     if (isTransportFailure(error)) {
-      reportApiFailure(error, ref, error.name === "AbortError" ? "timeout" : "network");
+      const kind = error.name === "AbortError" ? "timeout" : "network";
+      // A network failure while the browser itself is offline never reached
+      // the network — it's noise Sentry can't act on. Leave a breadcrumb
+      // instead of opening/adding to an issue (#754).
+      if (kind === "network" && typeof navigator !== "undefined" && navigator.onLine === false) {
+        addBreadcrumb(`${ref.method} ${apiRouteTemplate(ref.path)} -> offline`, {
+          "api.method": ref.method,
+          "api.path": apiRouteTemplate(ref.path),
+        });
+      } else {
+        reportApiFailure(error, ref, kind);
+      }
     }
     throw error;
   } finally {

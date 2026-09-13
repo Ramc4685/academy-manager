@@ -28,6 +28,12 @@ export interface CaptureContext {
    * would collapse into a single Sentry issue.
    */
   fingerprint?: string[];
+  /**
+   * Sentry severity level. Omit for the SDK default (`error`) — used to
+   * downgrade route-agnostic buckets (e.g. network flakiness, #754) so they
+   * don't read as page-level errors.
+   */
+  level?: SentryModule.SeverityLevel;
 }
 
 let sdk: Promise<Sentry | null> | null = null;
@@ -148,8 +154,23 @@ export function captureError(error: unknown, context: CaptureContext = {}): void
       }
       if (context.extra) scope.setContext("extra", context.extra);
       if (context.fingerprint?.length) scope.setFingerprint(context.fingerprint);
+      if (context.level) scope.setLevel(context.level);
       mod.captureException(error);
     });
+  });
+}
+
+/**
+ * Record a breadcrumb without opening an issue. No-op unless the DSN is set.
+ * Used for signals worth keeping in the trail of a later captured event but
+ * not actionable on their own (e.g. an API call that never left the browser
+ * because it's offline, #754).
+ */
+export function addBreadcrumb(message: string, data?: Record<string, unknown>): void {
+  if (!isSentryEnabled()) return;
+  void initSentry().then((mod) => {
+    if (!mod) return;
+    mod.addBreadcrumb({ category: "api", level: "info", message, data });
   });
 }
 
