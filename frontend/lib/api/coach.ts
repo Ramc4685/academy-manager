@@ -63,6 +63,12 @@ export interface CoachSession {
   /** Primary coach of the session. Name is resolved only for admin/owner supervisors (#632). */
   coach_id?: string | null;
   coach_name?: string | null;
+  /**
+   * Issue #777: cancelled classes stay on the coach's day instead of silently
+   * disappearing, so nobody drives to a called-off class.
+   */
+  status?: "scheduled" | "cancelled" | "completed";
+  cancellation_reason?: string | null;
 }
 
 export interface CoachTodayResponse {

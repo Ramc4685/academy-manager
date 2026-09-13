@@ -24,6 +24,7 @@ import { SessionDetailTabs } from "@/components/coach/SessionDetailTabs";
 import { Chip } from "@/components/ds/chip";
 import { formatCents } from "@/lib/money";
 import { queueMark, queuedMarksFor, type QueuedMark } from "@/lib/offline/attendance-queue";
+import { markProgress } from "@/lib/coach/marking";
 import { onSync, syncNow } from "@/lib/offline/sync";
 import { lifecycleLabel } from "@/lib/format/lifecycle-copy";
 import { queryKeys } from "@/lib/query/keys";
@@ -484,6 +485,16 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
     .map((student) => student.student_id);
   const queuedCount = Object.keys(queuedMarks).length;
   const anySavedMark = roster.some(hasServerMark);
+  // Issue #777: "am I done marking" needs a fraction, not a student count.
+  // Marks made on this phone (optimistic or queued offline) count too, so the
+  // header keeps up with the coach's own thumb.
+  const progress = markProgress(
+    roster,
+    new Set([
+      ...roster.filter(hasServerMark).map((student) => student.student_id),
+      ...Object.keys(queuedMarks),
+    ]),
+  );
 
   // Save a first mark on this phone (offline, or while an earlier queued mark
   // for the same student is still waiting — one queued mark per student).
@@ -648,8 +659,16 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
               className="text-sm font-semibold uppercase tracking-wide"
               style={{ color: "var(--rally-muted)" }}
             >
-              Attendance · {roster.length} students
+              Attendance · <span data-testid="marked-count">{progress.label}</span>
             </h2>
+            {!progress.complete && (
+              <span
+                data-testid="needs-marks-badge"
+                className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800"
+              >
+                Needs marks
+              </span>
+            )}
             {queuedCount > 0 && (
               <span
                 data-testid="queued-count"

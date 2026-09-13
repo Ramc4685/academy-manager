@@ -91,9 +91,6 @@ test.describe("local authenticated QA defect coverage", () => {
   }) => {
     test.slow();
     await signIn(page, COACH_EMAIL, COACH_PASSWORD, /\/coach\/today/);
-    await page.goto("/coach/dashboard");
-    await expect(page.getByTestId("coach-day-hub")).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Coach Day Hub" })).toBeVisible();
     await page.goto("/coach/today");
     await expect(page.getByTestId("coach-today")).toBeVisible();
     await expect(page.getByRole("heading", { name: "Today" })).toBeVisible();

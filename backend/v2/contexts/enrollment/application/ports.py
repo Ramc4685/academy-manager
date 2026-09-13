@@ -34,6 +34,7 @@ class SessionOccurrenceRepository(Protocol):
         *,
         coach_id: str,
         on_date: date,
+        include_cancelled: bool = False,
     ) -> list[SessionOccurrence]: ...
 
     async def list_for_coach_upcoming(
@@ -47,7 +48,9 @@ class SessionOccurrenceRepository(Protocol):
     # Academy-wide variants of the two coach queries above, for coach
     # supervisors (admin/owner covering any session). Same tenant scope,
     # same cancelled filter, no coach filter.
-    async def list_on_date(self, *, on_date: date) -> list[SessionOccurrence]: ...
+    async def list_on_date(
+        self, *, on_date: date, include_cancelled: bool = False
+    ) -> list[SessionOccurrence]: ...
 
     async def list_upcoming(
         self,

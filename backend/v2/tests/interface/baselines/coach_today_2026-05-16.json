@@ -34,7 +34,9 @@
         }
       ],
       "coach_id": "coach-1",
-      "coach_name": null
+      "coach_name": null,
+      "status": "scheduled",
+      "cancellation_reason": null
     },
     {
       "session_id": "s-today-2",
@@ -46,7 +48,9 @@
       "end_at": "2026-05-16T19:30:00Z",
       "roster": [],
       "coach_id": "coach-1",
-      "coach_name": null
+      "coach_name": null,
+      "status": "scheduled",
+      "cancellation_reason": null
     }
   ]
 }

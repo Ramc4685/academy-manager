@@ -22,7 +22,6 @@ import { listCoachMessages } from "@/lib/api/v2/messages";
 import { queryKeys } from "@/lib/query/keys";
 
 const COACH_TOP_LEVEL_ROUTES = [
-  "/coach/dashboard",
   "/coach/today",
   "/coach/sessions",
   "/coach/profile",
@@ -30,7 +29,10 @@ const COACH_TOP_LEVEL_ROUTES = [
   "/coach/messages",
   "/coach/needs-review",
 ] as const;
-const COACH_HOME = "/coach/dashboard";
+// Issue #777: the coach's home is the day they teach. /coach/dashboard was a
+// second, emptier copy of Today (hardcoded-zero tiles, nothing for a covering
+// owner) and was deleted rather than repaired.
+const COACH_HOME = "/coach/today";
 
 export default function CoachLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -88,7 +90,7 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
       >
         <div className="flex items-center gap-2">
           <ShellBackButton known={COACH_TOP_LEVEL_ROUTES} home={COACH_HOME} variant="dark" />
-          <Link href="/coach/dashboard" className="flex items-center gap-2">
+          <Link href={COACH_HOME} className="flex items-center gap-2">
             <div
               className="h-7 w-7 rounded-md flex items-center justify-center font-bold text-xs"
               style={{ background: "#facc15", color: "#0a0f1c" }}
@@ -181,7 +183,6 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
         style={{ background: "#0a0f1c", borderTop: "1px solid #1e293b" }}
       >
         <div className="mx-auto flex max-w-md">
-          <BottomTab href="/coach/dashboard" label="Home" active={pathname === "/coach/dashboard"} />
           <BottomTab href="/coach/today" label="Today" active={pathname?.startsWith("/coach/today") ?? false} />
           <BottomTab href="/coach/sessions" label="Sessions" active={pathname?.startsWith("/coach/sessions") ?? false} />
           <BottomTab href="/coach/profile" label="Profile" active={pathname?.startsWith("/coach/profile") ?? false} />

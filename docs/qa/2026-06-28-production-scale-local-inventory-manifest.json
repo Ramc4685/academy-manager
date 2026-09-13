@@ -2257,48 +2257,6 @@
       ]
     },
     {
-      "route": "/coach/dashboard",
-      "role": "coach",
-      "source": "frontend/app/(coach)/coach/dashboard/page.tsx",
-      "workflows": [
-        "Day hub",
-        "Open session",
-        "Open passport"
-      ],
-      "controls": {
-        "buttons": [
-          "Previous day",
-          "Today",
-          "Next day",
-          "Prepare",
-          "Skills",
-          "Passport"
-        ],
-        "inputs": [
-          "Date selector"
-        ],
-        "modals": []
-      },
-      "states": [
-        "loading",
-        "empty day",
-        "API error",
-        "placeholder notice"
-      ],
-      "risk_edges": [
-        "Date change keeps stale data",
-        "Placeholder actions look real"
-      ],
-      "acceptance": [
-        "Coach sees correct day data and placeholder actions are clear",
-        "Workflow evidence: \"Day hub\" completes for the coach route /coach/dashboard with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Open session\" completes for the coach route /coach/dashboard with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Open passport\" completes for the coach route /coach/dashboard with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Date change keeps stale data\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Placeholder actions look real\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
       "route": "/coach/needs-review",
       "role": "coach",
       "source": "frontend/app/(coach)/coach/needs-review/page.tsx",

@@ -90,10 +90,16 @@ async def get_today(
 ) -> CoachTodayResponse:
     target_date = await _resolve_date(on_date, academy_id=claims.academy_id, use_cases=use_cases)
     supervisor = is_coach_supervisor(claims)
+    # Cancelled classes stay on the coach's day (#777) — struck through with
+    # the reason by the client — so nobody drives to a called-off class.
     if supervisor:
-        sessions = await use_cases.list_today.execute_for_academy(target_date)
+        sessions = await use_cases.list_today.execute_for_academy(
+            target_date, include_cancelled=True
+        )
     else:
-        sessions = await use_cases.list_today.execute(claims.user_id, target_date)
+        sessions = await use_cases.list_today.execute(
+            claims.user_id, target_date, include_cancelled=True
+        )
     coach_names = await coach_names_for(sessions, use_cases=use_cases, supervisor=supervisor)
 
     # Fan-out roster fetches concurrently. Prefer the occurrence-scoped
@@ -146,6 +152,8 @@ async def get_today(
             end_at=s.end_at,
             coach_id=getattr(s, "coach_id", None),
             coach_name=coach_names.get(getattr(s, "coach_id", None) or ""),
+            status=getattr(s, "status", "scheduled"),
+            cancellation_reason=getattr(s, "cancellation_reason", None),
             roster=[
                 CoachRosterEntry(
                     student_id=r.student_id,

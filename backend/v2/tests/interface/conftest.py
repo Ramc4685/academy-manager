@@ -160,13 +160,15 @@ class FakeOccurrenceQuery:
         return None
 
     async def list_for_coach_on_date(
-        self, *, coach_id: str, on_date: date
+        self, *, coach_id: str, on_date: date, include_cancelled: bool = False
     ) -> list[SessionOccurrence]:
+        # Mirrors MongoSessionOccurrenceRepository: cancelled rows are hidden
+        # unless the caller opts in (#777).
         return [
             occurrence
             for occurrence in self._occurrences
             if occurrence.start_at.date() == on_date
-            and occurrence.status != "cancelled"
+            and (include_cancelled or occurrence.status != "cancelled")
             and coach_id
             in {
                 occurrence.scheduled_coach_id,
@@ -199,11 +201,14 @@ class FakeOccurrenceQuery:
         ]
         return sorted(rows, key=lambda occurrence: occurrence.start_at)[:limit]
 
-    async def list_on_date(self, *, on_date: date) -> list[SessionOccurrence]:
+    async def list_on_date(
+        self, *, on_date: date, include_cancelled: bool = False
+    ) -> list[SessionOccurrence]:
         rows = [
             occurrence
             for occurrence in self._occurrences
-            if occurrence.start_at.date() == on_date and occurrence.status != "cancelled"
+            if occurrence.start_at.date() == on_date
+            and (include_cancelled or occurrence.status != "cancelled")
         ]
         return sorted(rows, key=lambda occurrence: occurrence.start_at)
 
