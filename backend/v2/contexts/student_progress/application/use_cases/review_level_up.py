@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from pydantic import BaseModel
+from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.student_progress.application.ports import (
     CertificateRepository,
@@ -123,7 +124,22 @@ class ReviewLevelUpRecommendation:
             #   * the loser of a genuine double-click race re-applies the same
             #     writes (no duplicate certificate, no second active level row,
             #     no re-seeded skills) and is then refused by the CAS.
-            approval = await self._apply_approval(rec, cmd, now)
+            try:
+                approval = await self._apply_approval(rec, cmd, now)
+            except DuplicateKeyError:
+                # A true concurrent double-approve: both reviewers read the
+                # recommendation while it was still RECOMMENDED and both
+                # attempted to insert the new active level row, but the
+                # partial unique index only lets one insert land. This is
+                # the same "already reviewed" outcome the CAS below reports
+                # for the ordinary interleaving — report it the same way
+                # instead of letting the 500 escape.
+                current = await self._recs.get(cmd.rec_id)
+                raise RecommendationAlreadyReviewed(
+                    "recommendation has already been reviewed",
+                    rec_id=cmd.rec_id,
+                    status=current.status if current is not None else "UNKNOWN",
+                ) from None
 
         # Compare-and-set: only the caller that finds the recommendation still
         # pending records the decision.
