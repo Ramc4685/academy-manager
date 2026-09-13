@@ -1,3 +1,5 @@
+# Batch 2: one enrollment status vocabulary with derived predicates
+
 ## What changed
 
 - Fixes #642 — the enrollment domain (`backend/v2/contexts/enrollment/domain/models.py`) now owns a single closed status vocabulary (`ENROLLMENT_STATUSES`) plus derived predicate frozensets: `SEAT_HOLDING`/`SEATLESS` (pre-existing, kept), `LIVE`, `NON_TERMINAL`, `TERMINAL`, `BILLABLE`, `ROSTER_VISIBLE`, `ATTENDANCE_VISIBLE`, `ACTIVE_OR_PAUSED`, and `DROPPED_SPELLINGS`/`DELETED_SPELLINGS`. Each predicate answers exactly one question about a row (does it hold a seat, is it billable, does it show on the roster, etc.), replacing 18 hand-rolled status-set literals previously scattered across `admin_writes`, `cancel_session_occurrence`, `get_session_roster`, `process_scheduled_cancellation_actions`, and the Mongo enrollment repo/writer/student repo. No behavior change — the migrated call sites use the same status members as before, now sourced from one place.
