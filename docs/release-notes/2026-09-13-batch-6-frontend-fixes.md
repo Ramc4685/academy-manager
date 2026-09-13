@@ -8,4 +8,4 @@ No migrations. No manual steps. Pure frontend query-scoping and Sentry client co
 ## Risk / rollback
 Low risk: #521 narrows an existing query's filter parameter (already supported server-side) rather than changing behavior; #750 only adds user identification to error reports, no user-facing behavior change. Rollback is reverting this PR.
 
-PR: #0
+PR: #800
