@@ -2282,8 +2282,8 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
     async def list_payments_recent():
         return list(payments.rows.values())
 
-    async def quote_enrollment(*, session_id, student_id=None, start_date=None):
-        _ = (session_id, student_id, start_date)
+    async def quote_enrollment(*, session_id, student_id=None):
+        _ = (session_id, student_id)
         return BillingCalculationSnapshot(
             snapshot_id="snap-1",
             monthly_price_cents=10_000,

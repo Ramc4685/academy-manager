@@ -277,6 +277,12 @@ export function startCheckout(payload: {
   application_id: string;
   success_url: string;
   cancel_url: string;
+  /**
+   * The quote snapshot the review step displayed. Checkout consumes and
+   * charges exactly this one, so the parent pays the figure they read
+   * instead of a re-quote taken at click time (#731).
+   */
+  snapshot_id?: string;
 }): Promise<{ payment_id: string; redirect_url: string }> {
   return apiFetch("/parent/checkout/start", {
     method: "POST",
@@ -284,10 +290,12 @@ export function startCheckout(payload: {
   });
 }
 
+// The billing start is the server's clock, not the caller's: checkout charges
+// the snapshot this quote mints (#731), so there is deliberately no start_date
+// a parent could use to price their own first month down.
 export function quoteEnrollment(payload: {
   student_id?: string | null;
   session_id: string;
-  start_date?: string | null;
 }): Promise<EnrollmentQuote> {
   return apiFetch("/parent/enrollments/quote", {
     method: "POST",

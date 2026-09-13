@@ -147,6 +147,10 @@ export default function OnboardingStepperPage() {
         application_id: app.application_id,
         success_url: `${origin}/parent/checkout/return?application_id=${app.application_id}`,
         cancel_url: `${origin}/parent/onboarding`,
+        // Charge the quote this screen actually showed, not a re-quote taken
+        // at click time — the two legitimately disagree once a class crosses
+        // the two-hour cutoff or a date is cancelled (#731).
+        snapshot_id: quoteQuery.data?.snapshot_id,
       });
       window.location.assign(redirect_url);
     } catch (e) {
@@ -160,6 +164,14 @@ export default function OnboardingStepperPage() {
         const target = ORDER.find((s) => help.some((h) => h.step === s));
         setError(`Before paying, we still need ${listPhrase(help.map((h) => h.label))}.`);
         if (target) setStep(target);
+      } else if (err.code === "Billing.QuoteExpired") {
+        // The quote on screen can no longer be charged. Re-price and stay put
+        // so the parent reads the new amount before committing to it —
+        // checkout must never substitute a figure they never saw (#731).
+        void quoteQuery.refetch();
+        setError(
+          "This quote expired while you were filling things in. Please check the updated amount below and continue.",
+        );
       } else {
         setError(err.message);
       }
@@ -685,9 +697,15 @@ function ReviewStep({
         <button onClick={onBack} className="secondary">
           Edit
         </button>
+        {/*
+          Paying while the price still reads "Calculating…" is the one way back
+          into #731: with no displayed snapshot to send, checkout falls back to
+          quoting at click time, so the parent commits to a figure this screen
+          never showed them.
+        */}
         <button
           onClick={onCheckout}
-          disabled={saving || !app.waiver_accepted || !app.selected_session_id}
+          disabled={saving || quoteLoading || !app.waiver_accepted || !app.selected_session_id}
           className="primary"
           data-testid="checkout-button"
         >

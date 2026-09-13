@@ -560,13 +560,36 @@ class MongoPaymentRepository(TenantScopedRepository):
         instead and ``None`` is returned so the caller re-quotes. Legacy
         snapshots without ``expires_at`` (or with it null) stay consumable.
         """
+        return await self._consume(snapshot_id)
+
+    async def _consume(
+        self,
+        snapshot_id: str,
+        *,
+        parent_id: str | None = None,
+        session_id: str | None = None,
+    ) -> BillingCalculationSnapshot | None:
+        """``consume`` plus the optional owner filter the checkout path needs.
+
+        When a *client* supplies the snapshot id (the quote its review step
+        displayed, #731) the id alone is not enough: it has to be that
+        parent's quote for that session, or one family could consume — and be
+        charged — another's amount. Callers that minted the snapshot
+        themselves a few lines earlier pass neither filter.
+        """
         academy_id = current_academy_id()
         now = self._clock()
+        owner: dict[str, Any] = {}
+        if parent_id is not None:
+            owner["parent_id"] = parent_id
+        if session_id is not None:
+            owner["session_id"] = session_id
         doc = await self._db["billing_calculation_snapshots"].find_one_and_update(
             {
                 "academy_id": academy_id,
                 "snapshot_id": snapshot_id,
                 "status": "OPEN",
+                **owner,
                 # Matches docs where expires_at is null OR missing, plus
                 # unexpired ones — a stale quote must never be consumed.
                 "$or": [{"expires_at": None}, {"expires_at": {"$gt": now}}],
@@ -584,6 +607,7 @@ class MongoPaymentRepository(TenantScopedRepository):
                 "academy_id": academy_id,
                 "snapshot_id": snapshot_id,
                 "status": "OPEN",
+                **owner,
                 "expires_at": {"$lte": now},
             },
             {"$set": {"status": "EXPIRED", "expired_at": now}},
@@ -591,8 +615,14 @@ class MongoPaymentRepository(TenantScopedRepository):
         return None
 
     # Keep the legacy name so callers that already use it don't break.
-    async def consume_quote_snapshot(self, snapshot_id: str) -> BillingCalculationSnapshot | None:
-        return await self.consume(snapshot_id)
+    async def consume_quote_snapshot(
+        self,
+        snapshot_id: str,
+        *,
+        parent_id: str | None = None,
+        session_id: str | None = None,
+    ) -> BillingCalculationSnapshot | None:
+        return await self._consume(snapshot_id, parent_id=parent_id, session_id=session_id)
 
     async def persist_consumed_first_month(
         self,
