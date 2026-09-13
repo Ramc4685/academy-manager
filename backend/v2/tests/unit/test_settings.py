@@ -287,3 +287,51 @@ def test_v2_sender_email_wins_over_existing_env_name(monkeypatch) -> None:
     settings = Settings(_env_file=None)
 
     assert settings.sender_email == "noreply@courtmastr.com"
+
+
+def _prod_env(monkeypatch) -> None:
+    """Minimal env for a valid prod Settings construction (#749)."""
+    _clear_production_env(monkeypatch)
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("MONGO_URL", "mongodb+srv://prod")
+    monkeypatch.setenv("DB_NAME", "academy_prod")
+    monkeypatch.setenv("FIREBASE_PROJECT_ID", "academy-courtmastr")
+    monkeypatch.setenv("V2_STRIPE_USE_FAKE_GATEWAY", "false")
+    monkeypatch.setenv("STRIPE_API_KEY", "sk_live_existing")
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_existing")
+    monkeypatch.setenv("APP_TENANCY_MODE", "single_academy")
+    monkeypatch.setenv("PRIMARY_ACADEMY_ID", "acad_blno_badminton")
+    monkeypatch.setenv("ENABLE_PLATFORM_ROUTES", "false")
+
+
+def test_sentry_traces_sample_rate_defaults_nonzero_in_production(monkeypatch) -> None:
+    _prod_env(monkeypatch)
+    monkeypatch.delenv("V2_SENTRY_TRACES_SAMPLE_RATE", raising=False)
+    monkeypatch.delenv("SENTRY_TRACES_SAMPLE_RATE", raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.env == "prod"
+    assert settings.sentry_traces_sample_rate == 0.1
+
+
+def test_sentry_traces_sample_rate_stays_zero_outside_production(monkeypatch) -> None:
+    monkeypatch.delenv("V2_ENV", raising=False)
+    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.delenv("V2_SENTRY_TRACES_SAMPLE_RATE", raising=False)
+    monkeypatch.delenv("SENTRY_TRACES_SAMPLE_RATE", raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.env != "prod"
+    assert settings.sentry_traces_sample_rate == 0.0
+
+
+def test_sentry_traces_sample_rate_explicit_env_wins_in_production(monkeypatch) -> None:
+    _prod_env(monkeypatch)
+    monkeypatch.setenv("V2_SENTRY_TRACES_SAMPLE_RATE", "0.5")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.env == "prod"
+    assert settings.sentry_traces_sample_rate == 0.5

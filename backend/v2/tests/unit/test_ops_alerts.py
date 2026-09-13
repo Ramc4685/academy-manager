@@ -838,9 +838,35 @@ class _CronsSpy:
         return kwargs.get("check_in_id") or "chk-1"
 
 
+class _TransactionSpy:
+    def __init__(self) -> None:
+        self.entered = False
+        self.exited = False
+
+    def __enter__(self) -> _TransactionSpy:
+        self.entered = True
+        return self
+
+    def __exit__(self, *exc_info: Any) -> None:
+        self.exited = True
+
+
+class _StartTransactionSpy:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+        self.transactions: list[_TransactionSpy] = []
+
+    def __call__(self, **kwargs: Any) -> _TransactionSpy:
+        self.calls.append(kwargs)
+        transaction = _TransactionSpy()
+        self.transactions.append(transaction)
+        return transaction
+
+
 class _CronSentry:
     def __init__(self, *, fail: bool = False) -> None:
         self.crons = _CronsSpy(fail=fail)
+        self.start_transaction = _StartTransactionSpy()
 
 
 class _CronSettings:
@@ -899,6 +925,25 @@ async def test_cron_checkin_records_in_progress_then_ok(monkeypatch: pytest.Monk
     assert done["monitor_slug"] == "generate_monthly_invoices"
     assert done["duration"] >= 0
     assert done["monitor_config"] == start["monitor_config"]
+
+
+@pytest.mark.asyncio
+async def test_cron_checkin_opens_a_scheduler_job_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentry = _CronSentry()
+    monkeypatch.setattr(ops_alerts, "_active_sentry", lambda: sentry)
+
+    async with ops_alerts.cron_checkin(
+        "generate_monthly_invoices", schedule=SCHEDULE, settings=_CronSettings()
+    ):
+        transaction = sentry.start_transaction.transactions[0]
+        assert transaction.entered is True
+
+    assert sentry.start_transaction.calls == [
+        {"op": "scheduler.job", "name": "generate_monthly_invoices"}
+    ]
+    assert sentry.start_transaction.transactions[0].exited is True
 
 
 @pytest.mark.asyncio
