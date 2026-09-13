@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
+from typing import Any, Final
 
 from bson import ObjectId as BsonObjectId
 from pymongo import ReturnDocument
@@ -32,10 +32,17 @@ from backend.v2.contexts.enrollment.domain.errors import (
     StudentParentInvalidRole,
     StudentParentNotFound,
 )
+from backend.v2.contexts.enrollment.domain.lifecycle import (
+    PERSON_LIFECYCLES,
+    LifecycleEnrollment,
+    PersonLifecycleState,
+    derive_lifecycle,
+)
 from backend.v2.contexts.enrollment.domain.models import (
     ACTIVE_OR_PAUSED,
     DROPPED_SPELLINGS,
     NON_TERMINAL,
+    SEAT_HOLDING,
     TERMINAL,
     Student,
 )
@@ -56,6 +63,19 @@ class _ActiveSessions:
     count: int = 0  # active enrollment documents
     total: int = 0  # distinct active sessions
     names: tuple[str, ...] = ()  # distinct session names, capped at the max
+
+
+#: Issue #773: a student with no enrollment rows at all. Named once so the
+#: two summary mappers cannot drift on what "no rows" means.
+_NEVER_ENROLLED: Final[PersonLifecycleState] = PersonLifecycleState(state="never_enrolled")
+
+#: How far back the at_risk window looks for scheduled occurrences. A class
+#: that has not run in four months tells us nothing about this month's
+#: attendance, and an unbounded scan would grow with the academy's history.
+_AT_RISK_LOOKBACK_DAYS: Final[int] = 120
+
+#: "No attendance in the last three scheduled dates" (#773 / audit §3).
+_AT_RISK_OCCURRENCES: Final[int] = 3
 
 
 class MongoStudentRepository(TenantScopedRepository):
@@ -351,6 +371,7 @@ class MongoStudentRepository(TenantScopedRepository):
         parent_email: str | None = None,
         active_session_total: int | None = None,
         active_session_names: list[str] | None = None,
+        lifecycle: PersonLifecycleState | None = None,
     ) -> AdminStudentSummary:
         first = str(doc.get("first_name") or "").strip()
         last = str(doc.get("last_name") or "").strip()
@@ -361,7 +382,8 @@ class MongoStudentRepository(TenantScopedRepository):
             parent_id=str(doc.get("parent_id") or doc.get("parent_user_id") or ""),
             parent_name=parent_name,
             parent_email=parent_email,
-            status=str(doc.get("status") or "active"),
+            lifecycle=(lifecycle or _NEVER_ENROLLED).state,
+            lifecycle_as_of=(lifecycle or _NEVER_ENROLLED).as_of,
             active_session_count=active_session_count,
             active_session_total=(
                 active_session_count if active_session_total is None else active_session_total
@@ -393,6 +415,7 @@ class MongoStudentRepository(TenantScopedRepository):
         waiver_signed_at: datetime | None = None,
         waiver_version: str | None = None,
         recent_attendance: list[AdminStudentRecentAttendance] | None = None,
+        lifecycle: PersonLifecycleState | None = None,
     ) -> AdminStudentDetail:
         sessions = enrolled_sessions or []
         # The detail response already carries enrolled_sessions in full; this
@@ -413,6 +436,7 @@ class MongoStudentRepository(TenantScopedRepository):
             dues_status=dues_status,
             parent_name=parent_name,
             parent_email=parent_email,
+            lifecycle=lifecycle,
         )
         raw_dob = doc.get("date_of_birth") or doc.get("dob")
         dob: date | None = None
@@ -488,8 +512,14 @@ class MongoStudentRepository(TenantScopedRepository):
             student_id=resolved_id,
         )
         att = attendance.get(resolved_id, {})
+        lifecycles = await self._lifecycle_states(
+            academy_id,
+            [resolved_id],
+            last_seen_by_student={resolved_id: att.get("last_seen_at")},  # type: ignore[dict-item]
+        )
         return self._to_admin_detail(
             doc,
+            lifecycle=lifecycles.get(resolved_id),
             active_session_count=active_counts.get(resolved_id, 0),
             last_seen_at=att.get("last_seen_at"),
             attendance_rate=att.get("attendance_rate"),  # type: ignore[arg-type]
@@ -533,8 +563,10 @@ class MongoStudentRepository(TenantScopedRepository):
             set_doc["full_name"] = " ".join(command.full_name.split())
         if command.date_of_birth is not None:
             set_doc["date_of_birth"] = command.date_of_birth.isoformat()
-        if command.status is not None:
-            set_doc["status"] = command.status
+        # Issue #773: ``students.status`` is no longer written. This was its
+        # only writer, which is why the field said "active" for students who
+        # had dropped every class years ago. The state is derived instead —
+        # see domain/lifecycle.py.
         if command.parent_id is not None:
             set_doc["parent_id"] = command.parent_id
         if command.notes is not None:
@@ -646,11 +678,21 @@ class MongoStudentRepository(TenantScopedRepository):
         self,
         *,
         search: str | None,
-        status: str | None,
+        lifecycle: tuple[str, ...] = (),
         limit: int,
         cursor: str | None,
         missing: tuple[str, ...] = (),
     ) -> AdminStudentPage:
+        """Issue #773: the lifecycle is derived for EVERY candidate row before
+        the page is cut.
+
+        The old code filtered on ``doc["status"]`` — a field nothing but the
+        admin edit form ever wrote — and the frontend counted the 25 rows it
+        had loaded, so the "Paused" tile reported 0 no matter how many students
+        were paused. Deriving after the ``rows[: limit + 1]`` slice would
+        reproduce that bug in a new spelling: a ``lifecycle=paused`` filter
+        would only ever search the first page.
+        """
         academy_id = current_academy_id()
         unknown_missing_keys = set(missing) - set(CHILD_REQUIRED)
         if unknown_missing_keys:
@@ -709,7 +751,6 @@ class MongoStudentRepository(TenantScopedRepository):
             parent_raw = str(doc.get("parent_id") or doc.get("parent_user_id") or "")
             user_info = users_by_id.get(parent_raw) or {}
             student_name = self._full_name(doc)
-            row_status = str(doc.get("status") or "active")
             row_key = full_name_key(student_name)
             haystack = " ".join(
                 full_name_key(str(value))
@@ -719,8 +760,6 @@ class MongoStudentRepository(TenantScopedRepository):
                     user_info.get("email") or "",
                 )
             )
-            if status and row_status != status:
-                continue
             if search_key and search_key not in haystack:
                 continue
             if missing:
@@ -752,6 +791,30 @@ class MongoStudentRepository(TenantScopedRepository):
 
         rows.sort(key=lambda row: (str(row["full_name_key"]), str(row["student_id"])))
 
+        # --- Issue #773: derive BEFORE paginating. ---
+        # `attendance` is one aggregation over a 90-day window however many
+        # students are passed, and `_lifecycle_states` is three queries, so
+        # widening them from "the page" to "everyone who matched the search"
+        # costs a constant number of round trips, not one per student.
+        candidate_ids = [str(row["student_id"]) for row in rows]
+        attendance = await self._attendance_summaries(academy_id, candidate_ids)
+        lifecycles = await self._lifecycle_states(
+            academy_id,
+            candidate_ids,
+            last_seen_by_student={
+                student_id: att.get("last_seen_at")  # type: ignore[misc]
+                for student_id, att in attendance.items()
+            },
+        )
+        lifecycle_counts: dict[str, int] = {}
+        for row in rows:
+            state = lifecycles.get(str(row["student_id"]), _NEVER_ENROLLED)
+            row["lifecycle"] = state
+            lifecycle_counts[state.state] = lifecycle_counts.get(state.state, 0) + 1
+        wanted = set(lifecycle) & PERSON_LIFECYCLES
+        if wanted:
+            rows = [row for row in rows if row["lifecycle"].state in wanted]  # type: ignore[union-attr]
+
         if cursor:
             decoded = decode_student_cursor(cursor)
             rows = [
@@ -770,7 +833,6 @@ class MongoStudentRepository(TenantScopedRepository):
         student_ids = [str(row["student_id"]) for row in page_rows]
 
         active_sessions = await self._active_session_summaries(academy_id, student_ids)
-        attendance = await self._attendance_summaries(academy_id, student_ids)
         dues = await self._dues_statuses(academy_id, student_ids)
 
         students: list[AdminStudentSummary] = []
@@ -790,6 +852,7 @@ class MongoStudentRepository(TenantScopedRepository):
                     dues_status=dues.get(student_id, "current"),
                     parent_name=row.get("parent_name"),  # type: ignore[arg-type]
                     parent_email=row.get("parent_email"),  # type: ignore[arg-type]
+                    lifecycle=row.get("lifecycle"),  # type: ignore[arg-type]
                 )
             )
 
@@ -800,7 +863,11 @@ class MongoStudentRepository(TenantScopedRepository):
                 str(last["full_name_key"]),
                 str(last["student_id"]),
             )
-        return AdminStudentPage(students=students, next_cursor=next_cursor)
+        return AdminStudentPage(
+            students=students,
+            next_cursor=next_cursor,
+            lifecycle_counts=lifecycle_counts,
+        )
 
     async def _admin_student_enrolled_sessions(
         self,
@@ -1613,6 +1680,157 @@ class MongoStudentRepository(TenantScopedRepository):
             ]
         )
         return {str(row["_id"]): int(row["count"]) async for row in cursor}
+
+    # ------------------------------------------------------------------
+    # Issue #773: derived person lifecycle
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _lifecycle_row(doc: dict[str, Any]) -> LifecycleEnrollment:
+        """Project one enrollment document onto the facts the derivation reads."""
+        return LifecycleEnrollment(
+            status=str(doc.get("status") or "active"),
+            pending_cancellation_at=MongoStudentRepository._coerce_datetime(
+                doc.get("pending_cancellation_at")
+            ),
+            hold_return_on=MongoStudentRepository._coerce_date(doc.get("hold_return_on")),
+            resume_on=MongoStudentRepository._coerce_date(doc.get("resume_on")),
+            ended_at=(
+                MongoStudentRepository._coerce_datetime(doc.get("withdrawal_date"))
+                or MongoStudentRepository._coerce_datetime(doc.get("cancelled_at"))
+                or MongoStudentRepository._coerce_datetime(doc.get("ended_at"))
+            ),
+            ordinal=(
+                MongoStudentRepository._coerce_datetime(doc.get("updated_at"))
+                or MongoStudentRepository._coerce_datetime(doc.get("created_at"))
+            ),
+        )
+
+    @staticmethod
+    def _coerce_date(value: object) -> date | None:
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+        if isinstance(value, str) and value.strip():
+            try:
+                return date.fromisoformat(value.strip()[:10])
+            except ValueError:
+                return None
+        return None
+
+    async def _enrollment_rows_by_student(
+        self,
+        academy_id: str,
+        student_ids: list[str],
+    ) -> tuple[dict[str, list[LifecycleEnrollment]], dict[str, set[str]]]:
+        """Every enrollment row for these students, plus their live session ids.
+
+        ONE query however many students are asked for — the directory calls
+        this for the whole academy before paginating, so a per-student fan-out
+        here would be the N+1 that the derivation-before-pagination rule
+        otherwise invites.
+        """
+        if not student_ids:
+            return {}, {}
+        rows: dict[str, list[LifecycleEnrollment]] = {}
+        live_sessions: dict[str, set[str]] = {}
+        cursor = self._db["enrollments"].find(
+            {"academy_id": academy_id, "student_id": {"$in": student_ids}},
+            projection={
+                "student_id": 1,
+                "session_id": 1,
+                "status": 1,
+                "pending_cancellation_at": 1,
+                "hold_return_on": 1,
+                "resume_on": 1,
+                "withdrawal_date": 1,
+                "cancelled_at": 1,
+                "ended_at": 1,
+                "created_at": 1,
+                "updated_at": 1,
+            },
+        )
+        async for doc in cursor:
+            student_id = str(doc.get("student_id") or "")
+            if not student_id:
+                continue
+            rows.setdefault(student_id, []).append(self._lifecycle_row(doc))
+            if doc.get("status") in SEAT_HOLDING and doc.get("session_id"):
+                live_sessions.setdefault(student_id, set()).add(str(doc["session_id"]))
+        return rows, live_sessions
+
+    async def _at_risk_cutoffs(
+        self,
+        academy_id: str,
+        live_sessions: dict[str, set[str]],
+    ) -> dict[str, datetime]:
+        """Start of the "last three scheduled dates" window, per student.
+
+        A student with no cutoff (a brand-new class with fewer than three past
+        occurrences) is never called at_risk — crying wolf over every student
+        in a session that has run twice would make the state worthless.
+
+        A student in two classes gets the EARLIER of the two windows: the
+        forgiving reading, so attending one of their classes clears the flag.
+        """
+        session_ids = sorted({sid for sids in live_sessions.values() for sid in sids})
+        if not session_ids:
+            return {}
+        now = datetime.now(UTC)
+        cursor = self._db["session_occurrences"].aggregate(
+            [
+                {
+                    "$match": {
+                        "academy_id": academy_id,
+                        "session_id": {"$in": session_ids},
+                        "status": {"$ne": "cancelled"},
+                        "start_at": {
+                            "$lte": now,
+                            "$gte": now - timedelta(days=_AT_RISK_LOOKBACK_DAYS),
+                        },
+                    }
+                },
+                {"$sort": {"start_at": -1}},
+                {"$group": {"_id": "$session_id", "starts": {"$push": "$start_at"}}},
+                {"$project": {"starts": {"$slice": ["$starts", _AT_RISK_OCCURRENCES]}}},
+            ]
+        )
+        per_session: dict[str, datetime] = {}
+        async for row in cursor:
+            starts = [s for s in row.get("starts") or [] if isinstance(s, datetime)]
+            if len(starts) < _AT_RISK_OCCURRENCES:
+                continue
+            per_session[str(row["_id"])] = self._as_utc(min(starts))
+
+        cutoffs: dict[str, datetime] = {}
+        for student_id, sids in live_sessions.items():
+            windows = [per_session[sid] for sid in sids if sid in per_session]
+            if windows:
+                cutoffs[student_id] = min(windows)
+        return cutoffs
+
+    async def _lifecycle_states(
+        self,
+        academy_id: str,
+        student_ids: list[str],
+        *,
+        last_seen_by_student: dict[str, datetime | None] | None = None,
+    ) -> dict[str, PersonLifecycleState]:
+        """Derive one lifecycle per student. Three queries, not 3N."""
+        if not student_ids:
+            return {}
+        rows, live_sessions = await self._enrollment_rows_by_student(academy_id, student_ids)
+        cutoffs = await self._at_risk_cutoffs(academy_id, live_sessions)
+        last_seen = last_seen_by_student or {}
+        return {
+            student_id: derive_lifecycle(
+                rows.get(student_id, []),
+                last_seen_at=last_seen.get(student_id),
+                at_risk_cutoff=cutoffs.get(student_id),
+            )
+            for student_id in student_ids
+        }
 
     async def _active_session_summaries(
         self,

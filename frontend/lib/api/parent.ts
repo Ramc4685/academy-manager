@@ -1,3 +1,5 @@
+import type { PersonLifecycle } from "@/lib/format/lifecycle-copy";
+
 import { apiFetch } from "./client";
 import type { SkillStatus } from "./curriculum";
 
@@ -101,7 +103,10 @@ export interface EnrollmentQuote {
 export interface ParentChild {
   student_id: string;
   full_name: string;
-  status: string;
+  /** Issue #773: the derived lifecycle; replaces the dead `status` field. */
+  lifecycle: PersonLifecycle;
+  /** ISO calendar date the state points at (resume, return, end); may be null. */
+  lifecycle_as_of?: string | null;
   active_session_count: number;
   /** Issue #740: enrollments on hold — counted apart from the active ones. */
   held_session_count?: number;

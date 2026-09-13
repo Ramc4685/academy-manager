@@ -149,6 +149,11 @@ from backend.v2.contexts.enrollment.application.use_cases.trial_requests import 
     SubmitTrialRequest,
 )
 from backend.v2.contexts.enrollment.domain.errors import SessionNotFound
+from backend.v2.contexts.enrollment.domain.lifecycle import (
+    LifecycleEnrollment,
+    PersonLifecycleState,
+    derive_lifecycle,
+)
 from backend.v2.contexts.enrollment.infrastructure.mongo_absence_notice_repo import (
     MongoAbsenceNoticeRepository,
 )
@@ -248,6 +253,25 @@ from .event_handlers import HandlerDeps, install_handlers
 
 T = TypeVar("T")
 log = logging.getLogger(__name__)
+
+
+def _as_datetime(value: object) -> datetime | None:
+    """Mongo hands back naive legacy datetimes and aware new ones alike."""
+    return value if isinstance(value, datetime) else None
+
+
+def _as_date(value: object) -> date | None:
+    """``hold_return_on`` / ``resume_on`` are stored as ISO calendar strings."""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            return date.fromisoformat(value.strip()[:10])
+        except ValueError:
+            return None
+    return None
 
 
 @dataclass
@@ -1128,12 +1152,51 @@ def compose_parent(
         )
         return [doc async for doc in cursor]
 
+    async def _child_lifecycle(academy_id: str, student_id: str) -> PersonLifecycleState:
+        """Issue #773: the SAME derivation the admin directory and the coach
+        roster use — the parent portal used to print ``students.status``, a
+        field nothing but the admin edit form ever wrote, so a paused or held
+        child still read "active" to their own family."""
+        cursor = db["enrollments"].find(
+            {"academy_id": academy_id, "student_id": student_id},
+            projection={
+                "status": 1,
+                "pending_cancellation_at": 1,
+                "hold_return_on": 1,
+                "resume_on": 1,
+                "withdrawal_date": 1,
+                "cancelled_at": 1,
+                "ended_at": 1,
+                "created_at": 1,
+                "updated_at": 1,
+            },
+        )
+        rows = [
+            LifecycleEnrollment(
+                status=str(doc.get("status") or "active"),
+                pending_cancellation_at=_as_datetime(doc.get("pending_cancellation_at")),
+                hold_return_on=_as_date(doc.get("hold_return_on")),
+                resume_on=_as_date(doc.get("resume_on")),
+                ended_at=(
+                    _as_datetime(doc.get("withdrawal_date"))
+                    or _as_datetime(doc.get("cancelled_at"))
+                    or _as_datetime(doc.get("ended_at"))
+                ),
+                ordinal=_as_datetime(doc.get("updated_at")) or _as_datetime(doc.get("created_at")),
+            )
+            async for doc in cursor
+        ]
+        # at_risk is an operator's word, not a parent's: the portal never tells
+        # a family their child is "at risk", so no attendance window is passed.
+        return derive_lifecycle(rows)
+
     async def list_children_for_parent(parent_id: str) -> list[dict[str, Any]]:
         academy_id = current_academy_id()  # request-time tenant (C4)
         students = await _parent_students(parent_id)
         rows: list[dict[str, Any]] = []
         for student in students:
             student_id = str(student.get("student_id") or student["_id"])
+            lifecycle = await _child_lifecycle(academy_id, student_id)
             active_session_count = await db["enrollments"].count_documents(
                 {"academy_id": academy_id, "student_id": student_id, "status": "active"}
             )
@@ -1157,7 +1220,8 @@ def compose_parent(
                 {
                     "student_id": student_id,
                     "full_name": str(student.get("full_name") or "Unnamed student"),
-                    "status": str(student.get("status") or "active"),
+                    "lifecycle": lifecycle.state,
+                    "lifecycle_as_of": lifecycle.as_of,
                     "active_session_count": active_session_count,
                     "held_session_count": held_session_count,
                     "attended_count": attended_count,

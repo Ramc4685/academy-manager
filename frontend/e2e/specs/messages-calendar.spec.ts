@@ -259,7 +259,7 @@ test.describe("calendar smoke", () => {
             {
               student_id: "st-1",
               full_name: "Ava Kim",
-              status: "active",
+              lifecycle: "active",
               active_session_count: 1,
               attended_count: 3,
               absent_count: 0,
