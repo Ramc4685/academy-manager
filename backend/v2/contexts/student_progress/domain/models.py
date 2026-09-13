@@ -21,10 +21,29 @@ LevelUpStatus = Literal[
     "NOT_READY",
     "READY",
     "RECOMMENDED",
+    # Issue #548: a review in flight. The reviewer compare-and-sets
+    # RECOMMENDED -> APPROVING/REJECTING before running any side effect, so a
+    # second reviewer with the opposite decision loses the claim instead of
+    # racing past a half-applied approval. Both are transient: the reviewer
+    # moves them on to APPROVED/REJECTED, or releases them back to
+    # RECOMMENDED. They still count as an active recommendation everywhere
+    # RECOMMENDED does. Any change here must be mirrored in the
+    # ``level_up_recommendations`` status enum (migration 0176).
+    "APPROVING",
+    "REJECTING",
     "APPROVED",
     "REJECTED",
     "COMPLETED",
 ]
+
+#: Statuses a review may claim: not yet decided. ``APPROVING``/``REJECTING``
+#: are listed because a claim whose holder died is reclaimable once its lease
+#: expires (see ``LevelUpRecommendationRepository.claim``).
+CLAIMABLE_LEVEL_UP_STATUSES = frozenset({"RECOMMENDED", "APPROVING", "REJECTING"})
+
+#: Statuses that hold a student's recommendation slot: a pending review, a
+#: claim in flight, or an approval already recorded.
+ACTIVE_LEVEL_UP_STATUSES = frozenset({"RECOMMENDED", "APPROVING", "REJECTING", "APPROVED"})
 
 LevelProgressStatus = Literal["active", "completed", "withdrawn"]
 
@@ -115,6 +134,10 @@ class LevelUpRecommendation(BaseModel):
     reviewed_by: str | None = None
     reviewed_at: datetime | None = None
     rejection_reason: str | None = None
+    #: When the in-flight review claimed this row (issue #548). Set with
+    #: APPROVING/REJECTING, cleared when the claim is released. It is the
+    #: lease clock: a claim older than the lease is reclaimable.
+    claimed_at: datetime | None = None
 
 
 class SkillCertificate(BaseModel):
