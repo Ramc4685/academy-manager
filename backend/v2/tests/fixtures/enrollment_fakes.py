@@ -411,6 +411,25 @@ class FakeBillingSync:
 
 
 @dataclass
+class FakeStudentsWithParent:
+    """Student rows that carry a ``parent_id``, like the real repo.
+
+    The roster-alert adapter falls back to this lookup when the caller passes
+    no ``parent_user_id`` — which the withdraw path never does — so a fake
+    without ``parent_id`` would silently hide every parent-copy send.
+    """
+
+    parent_id: str = "par-1"
+    full_name: str = "Alice Nguyen"
+
+    async def by_ids(self, student_ids: list[str]) -> list[Any]:
+        return [
+            type("S", (), {"full_name": self.full_name, "parent_id": self.parent_id})()
+            for _ in student_ids
+        ]
+
+
+@dataclass
 class FakeHoldNotifier:
     started_calls: list[dict[str, Any]] = field(default_factory=list)
     reclaimed_calls: list[dict[str, Any]] = field(default_factory=list)

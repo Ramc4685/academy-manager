@@ -283,8 +283,13 @@ _SUBJECT_VERBS: dict[RosterChangeKind, str] = {
 }
 
 
+# Issue #772: "withdrawn" is deliberately NOT here. `WithdrawEnrollment`
+# sends the family's copy of a Drop itself (`enrollment_dropped`, #743), so
+# adding it back means one Drop mails the family twice, with two different
+# wordings. The "withdrawn" entries below still render the STAFF alert, which
+# does not consult this set.
 _PARENT_STATUS_CHANGES: frozenset[str] = frozenset(
-    {"cancelled", "withdrawn", "paused", "resumed", "session_cancelled"}
+    {"cancelled", "paused", "resumed", "session_cancelled"}
 )
 
 _PARENT_STATUS_COPY: dict[str, tuple[str, str]] = {
