@@ -74,6 +74,12 @@ class CoachRosterEntry(BaseModel):
     # A calendar date, never an instant: it must read as the same day for the
     # coach, the parent and the admin.
     hold_return_on: date | None = None
+    # Issue #774: the family's overdue balance for THIS student, in integer
+    # cents, or None when nothing is overdue. The single money fact a coach
+    # sees — enough to say "there's a payment due" to the parent at the court,
+    # and deliberately nothing else: the billing drawer and the coach billing
+    # routes were deleted in the same change.
+    payment_due_cents: int | None = None
 
 
 class CoachSession(BaseModel):
@@ -90,6 +96,11 @@ class CoachSession(BaseModel):
     # their own id and a null name.
     coach_id: str | None = None
     coach_name: str | None = None
+    # Issue #777: a cancelled class stays on the coach's day instead of
+    # vanishing, so the coach learns the class is off (and why) from the same
+    # screen they'd otherwise show up for.
+    status: Literal["scheduled", "cancelled", "completed"] = "scheduled"
+    cancellation_reason: str | None = None
 
 
 class CoachTodayResponse(BaseModel):

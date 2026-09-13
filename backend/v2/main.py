@@ -11,6 +11,7 @@ Run standalone::
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import uuid
@@ -18,6 +19,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_MISSED
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -211,6 +213,10 @@ from backend.v2.shared.observability.ops_digest import (
     render_ops_digest,
     seed_job_heartbeats,
 )
+from backend.v2.shared.observability.owner_daily_brief import (
+    collect_owner_daily_brief,
+    render_owner_daily_brief,
+)
 from backend.v2.shared.scheduling import job_lease
 from backend.v2.shared.tenancy.context import current_tenant_origins, tenant_scope
 from backend.v2.shared.tenancy.lookup_cache import CachingAcademyLookup
@@ -218,6 +224,10 @@ from backend.v2.shared.tenancy.origins import TenantOriginsResolver
 from backend.v2.shared.tenancy.resolver import (
     TenantResolutionError,
     TenantResolver,
+)
+from backend.v2.shared.time.academy_timezone import (
+    academy_timezone_lookup,
+    resolve_reporting_timezone,
 )
 
 log = logging.getLogger(__name__)
@@ -228,6 +238,10 @@ log = logging.getLogger(__name__)
 #: ``max_runtime`` are minutes. Only the ids in ``settings.sentry_cron_jobs``
 #: actually check in — the rest are covered by the ops digest's stale-job
 #: section, whose thresholds live in ``ops_digest.JOB_STALE_AFTER``.
+#: Academy-local hour the past-due reminder sweep runs (issue #774). Morning,
+#: not midnight: a reminder that lands at 9am local is read the same day.
+_PAST_DUE_REMINDER_LOCAL_HOUR = 9
+
 SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
     "process_scheduled_resume_actions": {
         "schedule": {"type": "crontab", "value": "0 2 * * *"},
@@ -254,6 +268,11 @@ SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
         "checkin_margin": 10,
         "max_runtime": 10,
     },
+    "send_past_due_reminders": {
+        "schedule": {"type": "crontab", "value": "20 * * * *"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
+    },
     "process_dunning_retries": {
         "schedule": {"type": "interval", "value": 60, "unit": "minute"},
         "checkin_margin": 30,
@@ -276,6 +295,14 @@ SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
     },
     "send_ops_digest": {
         "schedule": {"type": "crontab", "value": "0 7 * * *"},
+        "checkin_margin": 60,
+        "max_runtime": 30,
+    },
+    # Issue #776: the owner's daily brief. Registered here (and in
+    # ``ops_digest.JOB_STALE_AFTER``) so a brief that silently stops firing is
+    # reported; add the id to ``SENTRY_CRON_JOBS`` to also check in to Sentry.
+    "send_owner_daily_brief": {
+        "schedule": {"type": "crontab", "value": "30 7 * * *"},
         "checkin_margin": 60,
         "max_runtime": 30,
     },
@@ -302,6 +329,16 @@ SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
         "schedule": {"type": "interval", "value": 15, "unit": "minute"},
         "checkin_margin": 10,
         "max_runtime": 10,
+    },
+    # Issue #778: win-back outreach at 30/60/90 days after departure. Daily,
+    # like the hold reminders above — a monthly cron would miss a family
+    # whose milestone fell on a day it didn't run, and idempotency is per
+    # (student, milestone) rather than per calendar tick, so an extra run
+    # never double-sends.
+    "send_win_back_notices": {
+        "schedule": {"type": "crontab", "value": "30 4 * * *"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
     },
 }
 assert SCHEDULED_JOB_MONITORS.keys() == JOB_STALE_AFTER.keys()
@@ -336,6 +373,45 @@ async def _verify_email_credentials(sender: Any) -> bool | None:
     else:
         log.warning("email_credential_unverified", extra=extra)
     return ok
+
+
+# Issue #752: how long shutdown lets an in-flight scheduled job finish before
+# the scheduler cancels it. Must stay comfortably under backend/fly.toml's
+# kill_timeout (30s), which also has to cover request draining.
+SCHEDULER_DRAIN_TIMEOUT_SECONDS = 10.0
+
+
+async def _drain_scheduler(scheduler: Any, *, drain_seconds: float) -> None:
+    """Let in-flight scheduled jobs finish before the scheduler tears them down.
+
+    Fly replaces the machine on every deploy, and a deploy that overlaps the
+    10-minute Stripe reconcile used to cut the job off mid-flight. APScheduler's
+    ``AsyncIOExecutor.shutdown`` ignores its ``wait`` argument (it cancels every
+    pending future unconditionally), so ``shutdown(wait=True)`` would change
+    nothing — the wait has to happen here, before shutdown.
+
+    Bounded by ``drain_seconds`` so a stuck job cannot hold the machine past Fly's
+    kill timeout, and never raises: this runs in the lifespan's ``finally``,
+    where an exception would strand the Mongo client and the outbox dispatcher.
+    """
+    try:
+        scheduler.pause()
+        pending = {
+            future
+            for executor in getattr(scheduler, "_executors", {}).values()
+            for future in set(getattr(executor, "_pending_futures", ()))
+            if not future.done()
+        }
+        if not pending:
+            return
+        log.info("scheduler_drain_started", extra={"in_flight": len(pending)})
+        _, still_running = await asyncio.wait(pending, timeout=drain_seconds)
+        if still_running:
+            # Left to shutdown's cancellation below; the resulting
+            # CancelledError is no longer reported as a job failure.
+            log.warning("scheduler_drain_timed_out", extra={"in_flight": len(still_running)})
+    except Exception:
+        log.warning("scheduler_drain_failed", exc_info=True)
 
 
 @asynccontextmanager
@@ -557,12 +633,18 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # being wired inside compose_admin).
     from backend.v2.composition.enrollment_holds import compose_enrollment_holds
 
-    _holds = compose_enrollment_holds(db, settings)
+    _holds = compose_enrollment_holds(db, settings, stripe=stripe_gw)
     app.state.admin.departure_policy = _holds.departure_policy
     app.state.admin.update_departure_policy = _holds.update_departure_policy
     app.state.admin.hold_enrollment = _holds.hold_enrollment
     app.state.admin.return_from_hold = _holds.return_from_hold
     app.state.enrollment_holds = _holds
+    # Issue #778: win-back outreach. Composed the same way — attached onto
+    # app.state rather than folded into compose_admin/compose_enrollment_holds,
+    # both of which are at their own wiring line budget.
+    from backend.v2.composition.win_back import compose_win_back
+
+    app.state.win_back = compose_win_back(db, settings)
     # Issue #743: WithdrawEnrollment is composed in composition/admin.py,
     # which cannot see `_holds.hold_notifier` (built here, after
     # compose_admin runs) and is at its own wiring line-budget cap. Attach
@@ -591,6 +673,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # ordinary cancel/drop and must reclaim a hold exactly like the route
     # does, so it needs the same broker.
     app.state.parent.promote_from_waitlist.set_seat_broker(_holds.seat_broker)
+    # Issue #782: and the ResumeEnrollment that promotion routes a paused
+    # head-of-queue student through — it reserves a seat of its own, so
+    # without this a class full only of holds refuses the resume instead of
+    # reclaiming one.
+    app.state.parent.promote_resume_enrollment.set_seat_broker(_holds.seat_broker)
     # ConfirmEnrollment (Billing.PaymentSucceeded -> new checkout enrollment)
     # is the same shape of seat demand as the routes above: a class full only
     # because of holds must reclaim, not force an auto-refund.
@@ -799,6 +886,28 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         if totals["sent"]:
             log.info("hold_reminders_sent", extra=totals)
 
+    async def _send_win_back_notices() -> None:
+        await _run_leased_job(
+            "send_win_back_notices", timedelta(minutes=5), _send_win_back_notices_body
+        )
+
+    async def _send_win_back_notices_body() -> None:
+        # Issue #778: daily, 30/60/90-day milestones — a monthly cron would
+        # send every family's outreach on the same calendar day and skip a
+        # whole month for any departure whose milestone anniversary fell on
+        # a day the job did not run (same reasoning as `send_hold_reminders`).
+        totals = {"academy_count": 0, "sent": 0}
+        for academy_id in await _scheduler_academy_ids(
+            MongoAcademyRepository(db),
+            runtime_academy_id,
+        ):
+            with tenant_scope(academy_id):
+                sent = await app.state.win_back.send_win_back_notices.execute(academy_id=academy_id)
+            totals["academy_count"] += 1
+            totals["sent"] += sent
+        if totals["sent"]:
+            log.info("win_back_notices_sent", extra=totals)
+
     async def _process_stripe_webhook_events() -> None:
         # 60s interval: keep TTL just under the interval so a clean run's early
         # release lets the next tick reclaim, and a crash frees the lease fast.
@@ -947,6 +1056,44 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         ):
             log.info("dunning_retries_processed", extra=totals)
 
+    async def _send_past_due_reminders() -> None:
+        await _run_leased_job(
+            "send_past_due_reminders", timedelta(minutes=10), _send_past_due_reminders_body
+        )
+
+    async def _send_past_due_reminders_body() -> None:
+        """Issue #774: the due+N reminder sweep, one academy-local day at a time.
+
+        Hourly tick rather than a single fixed-hour cron, and the calendar date
+        comes from EACH ACADEMY's timezone: the acceptance criteria say
+        "academy timezone", and a scheduler-timezone cron would mail an academy
+        on the other side of the date line on the wrong local day. Only the
+        tick whose academy-local hour is ``_PAST_DUE_REMINDER_LOCAL_HOUR`` does
+        any work; the offsets themselves come from Settings -> Billing rules,
+        and an empty list sends nothing.
+        """
+        academy_repo = MongoAcademyRepository(db)
+        academy_zone_reader = academy_timezone_lookup(db)
+        totals = {"academy_count": 0, "considered": 0, "sent": 0, "already_sent": 0, "failed": 0}
+        for academy_id in await _scheduler_academy_ids(academy_repo, runtime_academy_id):
+            with tenant_scope(academy_id):
+                zone_name = await resolve_reporting_timezone(academy_zone_reader, academy_id)
+                local_now = datetime.now(ZoneInfo(zone_name))
+                if local_now.hour != _PAST_DUE_REMINDER_LOCAL_HOUR:
+                    continue
+                billing_settings = await MongoBillingSettingsRepository(db).get()
+                result = await app.state.admin.send_past_due_reminders.execute(
+                    today=local_now.date(),
+                    reminder_days=billing_settings.reminder_days,
+                )
+            totals["academy_count"] += 1
+            totals["considered"] += result.considered
+            totals["sent"] += result.sent
+            totals["already_sent"] += result.already_sent
+            totals["failed"] += result.failed
+        if totals["sent"] or totals["failed"]:
+            log.info("past_due_reminders_processed", extra=totals)
+
     async def _generate_monthly_invoices() -> None:
         # 30-minute TTL: a full generation run walks every active enrollment in
         # every academy, so the lease must outlive a slow run rather than let a
@@ -1068,6 +1215,53 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             # without this the digest would go missing in silence.
             log.error("ops_digest_send_failed", extra=extra)
             capture_message(f"Ops digest send failed: {extra['failed_reason']}")
+
+    async def _send_owner_daily_brief() -> None:
+        await _run_leased_job(
+            "send_owner_daily_brief", timedelta(minutes=30), _send_owner_daily_brief_body
+        )
+
+    async def _send_owner_daily_brief_body() -> None:
+        # Issue #776: the academy-owner counterpart to the engineering ops
+        # digest above. Deliberately a second job rather than extra sections on
+        # the ops digest — different audience, different content, and the
+        # channel that reports "email is broken" keeps its own recipient.
+        #
+        # The 30-minute lease is what stops the 2026-09-02 hourly-resend class
+        # of bug: two app instances ticking the same cron send one brief, not
+        # two.
+        recipient_email = (settings.owner_brief_email or settings.ops_alert_email or "").strip()
+        if not recipient_email:
+            log.info("owner_brief_skipped: OWNER_BRIEF_EMAIL is not configured")
+            return
+        # Scheduler-timezone stamp: the cron fires at 07:30 local, so a UTC
+        # stamp would put yesterday's date on the subject in any UTC+ deploy.
+        brief = await collect_owner_daily_brief(db, now=datetime.now(scheduler.timezone))  # type: ignore[union-attr]
+        subject, body = render_owner_daily_brief(brief)
+        outcome = await app.state.ops_digest_sender.send(
+            recipient=ResolvedRecipient(
+                user_id="owner-brief",
+                email=recipient_email,
+                display_name="Owner",
+            ),
+            subject=subject,
+            body=body,
+        )
+        extra = {
+            "ok": bool(getattr(outcome, "ok", False)),
+            "failed_reason": getattr(outcome, "failed_reason", None),
+            "new_enrollments": brief.new_enrollments,
+            "departures": brief.departures_total,
+            "approvals_waiting": brief.approvals_waiting,
+            "payments_failed": brief.payments_failed,
+            "waivers_missing": brief.waivers_missing,
+            "emails_undeliverable": brief.emails_undeliverable,
+        }
+        if extra["ok"]:
+            log.info("owner_brief_processed", extra=extra)
+        else:
+            log.error("owner_brief_send_failed", extra=extra)
+            capture_message(f"Owner daily brief send failed: {extra['failed_reason']}")
 
     async def _send_coach_daily_digests() -> None:
         await _run_leased_job(
@@ -1298,6 +1492,25 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         max_instances=1,
     )
     scheduler.add_job(
+        _send_win_back_notices,
+        "cron",
+        hour=4,
+        minute=30,
+        id="send_win_back_notices",
+        replace_existing=True,
+        max_instances=1,
+    )
+    # Issue #774: hourly tick; the body no-ops for every academy whose local
+    # hour is not the reminder hour, so one cron serves every timezone.
+    scheduler.add_job(
+        _send_past_due_reminders,
+        "cron",
+        minute=20,
+        id="send_past_due_reminders",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
         _process_stripe_webhook_events,
         "interval",
         seconds=60,
@@ -1406,6 +1619,18 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         replace_existing=True,
         max_instances=1,
     )
+    # Issue #776: the owner's brief, half an hour behind the ops digest so the
+    # two never contend for the same send window. Same gated send port; skipped
+    # entirely when neither OWNER_BRIEF_EMAIL nor OPS_ALERT_EMAIL is set.
+    scheduler.add_job(
+        _send_owner_daily_brief,
+        "cron",
+        hour=7,
+        minute=30,
+        id="send_owner_daily_brief",
+        replace_existing=True,
+        max_instances=1,
+    )
     # Job crashes and misfires previously died in APScheduler's own logger and
     # never reached Sentry (only the request path was instrumented).
     scheduler.add_listener(handle_scheduler_job_event, EVENT_JOB_ERROR | EVENT_JOB_MISSED)
@@ -1424,6 +1649,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         if scheduler is not None:
+            await _drain_scheduler(scheduler, drain_seconds=SCHEDULER_DRAIN_TIMEOUT_SECONDS)
             scheduler.shutdown(wait=False)
         await dispatcher.stop()
         client.close()

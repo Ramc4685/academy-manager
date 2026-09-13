@@ -82,6 +82,9 @@ async function stubAdminShell(page: Page) {
   await page.route("**/api/v2/admin/messages*", (route) =>
     fulfillJson(route, { messages: [] }),
   );
+  await page.route("**/api/v2/admin/inbox/counts", (route) =>
+    fulfillJson(route, { counts: {}, total: 0 }),
+  );
   await page.route("**/api/v2/admin/registrations*", (route) =>
     fulfillJson(route, { registrations: [] }),
   );
@@ -98,7 +101,7 @@ test("withdrawn student is flagged and cannot be approved, live student can", as
     fulfillJson(route, { queue: [LIVE_REC, WITHDRAWN_REC] }),
   );
 
-  await page.goto("/admin/registrations?tab=level-ups");
+  await page.goto("/admin/inbox?tab=level-ups");
   await expect(page.getByTestId("admin-level-up-queue-tab")).toBeVisible();
 
   const gone = page.getByTestId("level-up-row-rec-gone");
@@ -135,7 +138,7 @@ test("approve refused by the backend after a withdrawal shows the lifecycle mess
     ),
   );
 
-  await page.goto("/admin/registrations?tab=level-ups");
+  await page.goto("/admin/inbox?tab=level-ups");
   const live = page.getByTestId("level-up-row-rec-live");
   await live.getByRole("button", { name: "Approve", exact: true }).click();
 

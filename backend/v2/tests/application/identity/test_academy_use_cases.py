@@ -121,14 +121,10 @@ async def test_get_academy_notifications():
     repo = AsyncMock()
     repo.find_by_id.return_value = {
         "_id": "acad-1",
-        "dues_reminders": True,
-        "attendance_alerts": False,
         "daily_digest_to_admin": True,
     }
     use_case = GetAcademyNotificationsUseCase(academy_repo=repo)
     output = await use_case.execute("acad-1")
-    assert output.dues_reminders is True
-    assert output.attendance_alerts is False
     assert output.daily_digest_to_admin is True
 
 
@@ -138,8 +134,6 @@ async def test_get_academy_notifications_uses_digest_env_fallback_when_override_
     repo.find_by_id.return_value = {
         "_id": "acad-1",
         "notifications": {
-            "dues_reminders": False,
-            "attendance_alerts": False,
             "daily_digest_to_admin": False,
         },
     }
@@ -161,8 +155,6 @@ async def test_get_academy_notifications_uses_parent_digest_env_fallback_when_ov
     repo.find_by_id.return_value = {
         "_id": "acad-1",
         "notifications": {
-            "dues_reminders": False,
-            "attendance_alerts": False,
             "daily_digest_to_admin": False,
         },
     }
@@ -217,14 +209,14 @@ async def test_update_academy_notifications():
     repo = AsyncMock()
     repo.update_by_id.return_value = {
         "_id": "acad-1",
-        "dues_reminders": True,
-        "attendance_alerts": True,
         "daily_digest_to_admin": True,
     }
     use_case = UpdateAcademyNotificationsUseCase(academy_repo=repo)
-    output = await use_case.execute("acad-1", {"attendance_alerts": True})
-    assert output.attendance_alerts is True
-    repo.update_by_id.assert_awaited_once_with("acad-1", {"notifications.attendance_alerts": True})
+    output = await use_case.execute("acad-1", {"daily_digest_to_admin": True})
+    assert output.daily_digest_to_admin is True
+    repo.update_by_id.assert_awaited_once_with(
+        "acad-1", {"notifications.daily_digest_to_admin": True}
+    )
 
 
 @pytest.mark.asyncio

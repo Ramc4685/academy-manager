@@ -182,8 +182,17 @@ async def test_set_invoice_schedule_writes_settings_and_audit_trail() -> None:
     assert entry.action == "invoice_schedule_changed"
     assert entry.actor_id == "admin-1"
     assert entry.reason == "align with payroll"
-    assert entry.before == {"billing_day": 1, "invoice_due_days": 7}
-    assert entry.after == {"billing_day": 5, "invoice_due_days": 10}
+    assert entry.before == {
+        "billing_day": 1,
+        "invoice_due_days": 7,
+        # Issue #774: the reminder offsets travel with the schedule audit.
+        "reminder_days": [15, 20],
+    }
+    assert entry.after == {
+        "billing_day": 5,
+        "invoice_due_days": 10,
+        "reminder_days": [15, 20],
+    }
     assert entry.at == NOW
 
 

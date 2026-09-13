@@ -92,6 +92,7 @@ export const queryKeys = {
     waivers: () => ["admin", "waivers"] as const,
     waiverTemplates: () => ["admin", "waivers", "templates"] as const,
     attention: () => ["admin", "dashboard", "attention"] as const,
+    inboxCounts: () => ["admin", "inbox", "counts"] as const,
     academy: () => ["admin", "academy"] as const,
     fees: () => ["admin", "academy", "fees"] as const,
     invoiceSchedule: () => ["admin", "billing", "invoice-schedule"] as const,

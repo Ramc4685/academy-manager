@@ -93,6 +93,8 @@ JOB_STALE_AFTER: dict[str, timedelta] = {
     "process_stripe_webhook_events": timedelta(minutes=5),
     "reconcile_stripe_payment_intents": timedelta(minutes=30),
     "process_dunning_retries": timedelta(hours=3),
+    # Issue #774: hourly tick, so three missed ticks is a real stall.
+    "send_past_due_reminders": timedelta(hours=3),
     "generate_monthly_invoices": timedelta(hours=26),
     "send_coach_daily_digests": timedelta(hours=3),
     "send_parent_daily_digests": timedelta(hours=3),
@@ -109,6 +111,11 @@ JOB_STALE_AFTER: dict[str, timedelta] = {
     # window comfortably above a few missed ticks catches a genuinely
     # stopped scheduler without paging on routine jitter.
     "process_stalled_hold_reclaims": timedelta(hours=1),
+    # Issue #778: daily win-back sweep (30/60/90-day milestones).
+    "send_win_back_notices": timedelta(hours=26),
+    # Issue #776: the owner's daily brief. Same 26h slack as every other daily
+    # cron — one missed tick must not read as a stopped scheduler.
+    "send_owner_daily_brief": timedelta(hours=26),
 }
 
 

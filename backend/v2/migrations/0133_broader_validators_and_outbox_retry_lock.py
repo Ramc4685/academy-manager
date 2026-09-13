@@ -185,6 +185,11 @@ VALIDATORS: dict[str, dict[str, Any]] = {
             "student_id": {"bsonType": "string"},
             "actor_id": {"bsonType": OPT_STRING},
             "reason": {"bsonType": OPT_STRING},
+            # Issue #775: the structured departure reason, next to the note.
+            # Declared here (rather than left undeclared) so the validator
+            # pins its type the way it pins every other event field;
+            # migration 0179 re-applies this schema to existing databases.
+            "reason_code": {"bsonType": OPT_STRING},
             "effective_at": {"bsonType": "date"},
             "occurred_at": {"bsonType": "date"},
             "billing_policy": {"bsonType": OPT_STRING},

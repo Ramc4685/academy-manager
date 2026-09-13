@@ -17,10 +17,11 @@ from pymongo.errors import DuplicateKeyError
 from backend.v2.composition.absence_notifications import compose_absence_notifier
 from backend.v2.composition.admin_registration_review import (
     AdminRegistrationReview,
-    RegistrationDeclineRefunds,
+    compose_registration_decline_refunds,
 )
 from backend.v2.composition.admin_session_staff import (
     attach_session_staff_names,
+    compose_assistant_eligibility_check,
     compose_set_session_assistants,
 )
 from backend.v2.composition.attendance_corrections import compose_attendance_corrections
@@ -40,9 +41,9 @@ from backend.v2.composition.digests import (
     compose_send_coach_digest_test,
     is_real_email_sender,
 )
+from backend.v2.composition.dues_reminders import compose_dues_reminders
 from backend.v2.composition.email_adapters import (
     AddCardReminderEmailAdapter,
-    DuesReminderEmailAdapter,
     InvoiceEmailAdapter,
     LoginInviteEmailAdapter,
 )
@@ -62,6 +63,11 @@ from backend.v2.composition.pathway import (
     compose_student_progress,
 )
 from backend.v2.composition.payment_student_resolver import resolve_student_names
+from backend.v2.composition.payout_input_lock import PayoutInputLock
+from backend.v2.composition.replacement_payout_snapshots import (
+    draft_payout_periods_for_occurrence,
+    recompute_draft_payout_periods,
+)
 from backend.v2.composition.roster_notifications import compose_enrollment_notifiers
 from backend.v2.composition.scheduled_cancellations import (
     compose_list_stuck_scheduled_actions,
@@ -110,7 +116,6 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
     ApplyPaymentDiscount,
     GenerateMonthlyPayments,
     MarkPaymentPaid,
-    SendDuesReminders,
     UndoPaymentPaid,
 )
 from backend.v2.contexts.billing.application.use_cases.bill_enrollment_period import (
@@ -395,6 +400,9 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_trial_request_repo impo
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_waitlist_repo import (
     MongoWaitlistRepository,
+)
+from backend.v2.contexts.enrollment.infrastructure.occurrence_dependents import (
+    occurrence_dependency_filters,
 )
 from backend.v2.contexts.finance.application.payout_calculator import (
     FinancePayoutCalculator,
@@ -694,7 +702,7 @@ def compose_admin(
     )
     # Issue #651: every attendance-stopping transition must reach billing.
     enrollment_billing_sync = compose_enrollment_billing_sync(
-        db, autopay=student_billing_enrollment_repo
+        db, autopay=student_billing_enrollment_repo, stripe=stripe
     )
     curriculum = compose_curriculum(db)
     student_progress = compose_student_progress(db, outbox, idempotency_store=idempotency_store)
@@ -717,7 +725,14 @@ def compose_admin(
     create_session = CreateSession(
         sessions=sessions_w, academy_id=academy_id, get_academy_timezone=session_tz
     )
-    edit_session = EditSession(sessions=sessions_w, get_academy_timezone=session_tz)
+    edit_session = EditSession(
+        sessions=sessions_w,
+        get_academy_timezone=session_tz,
+        # #783: the capacity guard counts the roster, not the seat counter.
+        enrollments=enrollments_w,
+        # #785: the PATCH route runs SetSessionAssistants' own vetting too.
+        assistant_eligibility=compose_assistant_eligibility_check(db, users_r, request_academy_id),
+    )
     # #613 welcome email + #612 roster alerts (composition/roster_notifications.py).
     notifiers = compose_enrollment_notifiers(db, settings, users=users_r)
     cancel_session = CancelSession(
@@ -846,6 +861,7 @@ def compose_admin(
         enrollment_events=enrollment_events,
         billing_sync=enrollment_billing_sync,
         occurrence_roster=occurrence_roster_repo,
+        billing_deferrals=billing_deferrals,
         roster_notifier=notifiers.roster,
         enrollments=enrollments_w,
         sessions=sessions_w,
@@ -979,6 +995,8 @@ def compose_admin(
         occurrence_roster=occurrence_roster_repo,
         # #682: a withdraw clears any pending end-of-period cancellation.
         scheduled_actions=scheduled_actions,
+        # #782: and closes the pause/hold deferral it ended inside.
+        billing_deferrals=billing_deferrals,
     )
 
     # Finance (# FINANCE)
@@ -991,13 +1009,22 @@ def compose_admin(
             rates=MongoCoachRateLookup(db),
         )
     )
+    payout_audit_log = MongoPayoutAuditLogRepository(db)
+    # #787: generation, approval and payment are money-moving transitions and
+    # each writes its own audit entry, like the corrections below.
     generate_payout_period = GeneratePayoutPeriod(
         calculator=coach_payout_calculator,
         repository=payout_periods_repo,
+        audit=payout_audit_log,
     )
-    approve_payout_period = ApprovePayoutPeriod(repository=payout_periods_repo)
-    mark_payout_paid = MarkPayoutPaid(repository=payout_periods_repo)
-    payout_audit_log = MongoPayoutAuditLogRepository(db)
+    approve_payout_period = ApprovePayoutPeriod(
+        repository=payout_periods_repo,
+        audit=payout_audit_log,
+    )
+    mark_payout_paid = MarkPayoutPaid(
+        repository=payout_periods_repo,
+        audit=payout_audit_log,
+    )
     billing_audit_log = MongoBillingAuditLogRepository(db)
     recompute_payout_period = RecomputePayoutPeriod(
         calculator=coach_payout_calculator,
@@ -1465,8 +1492,13 @@ def compose_admin(
             RemoveInvoiceLineCommand(invoice_id=invoice_id, line_id=line_id)
         )
 
+    # #784: a void hands applied credit back, closes the Stripe twin, audits.
     void_billing_invoice = build_void_billing_invoice(
-        ledger=billing_ledger_repo, dunning=dunning_state_repo
+        ledger=billing_ledger_repo,
+        dunning=dunning_state_repo,
+        credits=credits_repo,
+        stripe=stripe,
+        audit=billing_audit_log,
     )
 
     async def void_payment(*, payment_id: str, reason: str, actor_id: str | None) -> None:
@@ -1777,13 +1809,11 @@ def compose_admin(
         enrollment_events=enrollment_events,
         trial_conversion=link_trial_conversion,
         student_registrations=students_r,
-        refunds=RegistrationDeclineRefunds(
-            payments=payments_repo,
-            refunds=_RegistrationRefundExecutor(issue_refund),
-        ),
+        refunds=compose_registration_decline_refunds(payments_repo, issue_refund),
         paid_period_resolver=CheckoutPaidPeriodResolver(payments_repo),
         welcome_notifier=notifiers.welcome,
         roster_notifier=notifiers.roster,
+        decision_notifier=notifiers.decision,
         academy_id=None,
     )
     # Identity / Settings
@@ -2505,7 +2535,16 @@ def compose_admin(
             matched_session_doc=matched_doc,
         )
 
-    async def _is_clean_future_occurrence(doc: dict[str, Any], *, now: datetime) -> bool:
+    async def _is_unsettled_future_occurrence(doc: dict[str, Any], *, now: datetime) -> bool:
+        """Is this a future class that has not happened and has not been paid?
+
+        The "already acted on" guard for a session cancel (#589/#593/#694):
+        a past, attended, coach-marked or payroll-carrying occurrence is
+        history and a cancel never rewrites it. A make-up, trial, absence
+        notice or feedback row pointing at it does NOT make it history — the
+        class is still not going to run, and a soft-cancel keeps every one of
+        those foreign keys resolvable.
+        """
         starts_at = doc.get("start_at")
         if starts_at is None or ensure_utc(starts_at) < now:
             return False
@@ -2515,19 +2554,55 @@ def compose_admin(
             return False
         academy_id = str(doc.get("academy_id") or "")
         occurrence_id = str(doc.get("occurrence_id") or "")
-        if await db["attendance"].count_documents(
-            {"academy_id": academy_id, "occurrence_id": occurrence_id}, limit=1
-        ):
-            return False
-        if await db["coach_attendance"].count_documents(
-            {"academy_id": academy_id, "occurrence_id": occurrence_id}, limit=1
-        ):
-            return False
-        if await db["payout_period_lines"].count_documents(
-            {"academy_id": academy_id, "occurrence_id": occurrence_id}, limit=1
-        ):
-            return False
+        for collection in ("attendance", "coach_attendance", "payout_period_lines"):
+            if await db[collection].count_documents(
+                {"academy_id": academy_id, "occurrence_id": occurrence_id}, limit=1
+            ):
+                return False
         return True
+
+    async def _is_clean_future_occurrence(doc: dict[str, Any], *, now: datetime) -> bool:
+        """Is it safe to hard-delete this row? Stricter than "unsettled" (#783):
+        anything still referencing the occurrence_id makes it dirty."""
+        if not await _is_unsettled_future_occurrence(doc, now=now):
+            return False
+        academy_id = str(doc.get("academy_id") or "")
+        occurrence_id = str(doc.get("occurrence_id") or "")
+        for collection, match in occurrence_dependency_filters(
+            academy_id=academy_id, occurrence_id=occurrence_id
+        ):
+            if await db[collection].count_documents(match, limit=1):
+                return False
+        return True
+
+    def _is_live_future_occurrence(doc: dict[str, Any], *, now: datetime) -> bool:
+        """Would this row still show up as an upcoming class?
+
+        Narrower than :func:`_is_clean_future_occurrence`: it asks only about
+        the schedule and the status, never about dependents. A row that is
+        still ``scheduled`` in the future keeps appearing on coach/parent
+        calendars and keeps accruing attendance and payout, so it cannot be
+        left alone once the session stops claiming that slot (#783).
+        """
+
+        starts_at = doc.get("start_at")
+        if starts_at is None or ensure_utc(starts_at) < now:
+            return False
+        return str(doc.get("status") or "scheduled") == "scheduled"
+
+    async def _soft_cancel_occurrence(
+        academy_id: str, occurrence_id: str, *, reason: str, now: datetime
+    ) -> None:
+        await db["session_occurrences"].update_one(
+            {"academy_id": academy_id, "occurrence_id": occurrence_id},
+            {
+                "$set": {
+                    "status": "cancelled",
+                    "cancellation_reason": reason,
+                    "updated_at": now,
+                }
+            },
+        )
 
     async def maintain_session_occurrences(session) -> None:
         from backend.v2.shared.tenancy import current_academy_id
@@ -2560,22 +2635,16 @@ def compose_admin(
         for occurrence_id, doc in existing.items():
             if occurrence_id in candidate_ids:
                 continue
-            if not await _is_clean_future_occurrence(doc, now=now):
-                # Past / attended / already-paid occurrences are history: the
-                # class really happened and the coach must still be paid.
-                continue
             if session_is_cancelled:
+                if not await _is_unsettled_future_occurrence(doc, now=now):
+                    # Past / attended / already-paid occurrences are history:
+                    # the class really happened and the coach must still be
+                    # paid (#589/#593). A cancel never rewrites them.
+                    continue
                 # Soft-cancel, matching the parent session. Never delete: the
                 # occurrence is the audit trail for a class that was scheduled.
-                await db["session_occurrences"].update_one(
-                    {"academy_id": academy_id, "occurrence_id": occurrence_id},
-                    {
-                        "$set": {
-                            "status": "cancelled",
-                            "cancellation_reason": "session_cancelled",
-                            "updated_at": now,
-                        }
-                    },
+                await _soft_cancel_occurrence(
+                    academy_id, occurrence_id, reason="session_cancelled", now=now
                 )
                 # Issue #694: a make-up/trial row keyed to this occurrence
                 # has no other pruning path once the occurrence is cancelled
@@ -2585,16 +2654,31 @@ def compose_admin(
                     {"academy_id": academy_id, "occurrence_id": occurrence_id}
                 )
                 continue
-            await db["session_occurrences"].delete_one(
-                {"academy_id": academy_id, "occurrence_id": occurrence_id}
+            if await _is_clean_future_occurrence(doc, now=now):
+                await db["session_occurrences"].delete_one(
+                    {"academy_id": academy_id, "occurrence_id": occurrence_id}
+                )
+                continue
+            if not _is_live_future_occurrence(doc, now=now):
+                # Already cancelled, or in the past: nothing to take off the
+                # calendar.
+                continue
+            # #783: a dirty row (roster entry, absence notice, make-up, trial,
+            # feedback...) must not be deleted — but skipping it left a live
+            # "scheduled" class under the OLD occurrence_id while the new
+            # weekday was materialised alongside it. The class then ran twice a
+            # week forever: coaches could be marked present and paid for a slot
+            # the admin moved away from, and nobody was told. Soft-cancelling
+            # keeps every dependent's foreign key resolvable AND takes the
+            # stale class off the calendar.
+            await _soft_cancel_occurrence(
+                academy_id, occurrence_id, reason="schedule_changed", now=now
             )
-            # Issue #694: same rationale as the soft-cancel branch above —
-            # the occurrence itself is gone (schedule/time edit regenerated
-            # it under a new occurrence_id), so any one-time row still
-            # keyed to the old id is orphaned.
-            await db["occurrence_roster_entries"].delete_many(
-                {"academy_id": academy_id, "occurrence_id": occurrence_id}
-            )
+            # Deliberately NOT pruning occurrence_roster_entries here (unlike
+            # the session-cancel branch, #694): the row survives precisely
+            # because something depends on it, and #783 keeps that dependent
+            # resolvable. GetOccurrenceRoster already hides one-time rows
+            # whose occurrence is cancelled, so nothing renders unmarkable.
 
         for row in candidates:
             existing_doc = existing.get(str(row["occurrence_id"]))
@@ -2899,43 +2983,6 @@ def compose_admin(
         )
         return None if occurrence is None else await _occurrence_row(occurrence)
 
-    async def _clear_or_reject_replacement_payout_snapshots(
-        *,
-        academy_id: str,
-        occurrence_id: str,
-    ) -> None:
-        payout_line_cursor = db["payout_period_lines"].find(
-            {"academy_id": academy_id, "occurrence_id": occurrence_id},
-            {"period_id": 1},
-        )
-        payout_period_ids = sorted(
-            {str(row["period_id"]) async for row in payout_line_cursor if row.get("period_id")}
-        )
-        if not payout_period_ids:
-            return
-        period_cursor = db["payout_periods"].find(
-            {
-                "academy_id": academy_id,
-                "period_id": {"$in": payout_period_ids},
-            },
-            {"period_id": 1, "status": 1},
-        )
-        draft_period_ids: list[str] = []
-        async for period in period_cursor:
-            status = str(period.get("status") or "draft")
-            if status in {"approved", "paid"}:
-                raise ValueError(
-                    "Replacement coach cannot be changed after payout is approved or paid"
-                )
-            draft_period_ids.append(str(period["period_id"]))
-        if draft_period_ids:
-            await db["payout_period_lines"].delete_many(
-                {"academy_id": academy_id, "period_id": {"$in": draft_period_ids}}
-            )
-            await db["payout_periods"].delete_many(
-                {"academy_id": academy_id, "period_id": {"$in": draft_period_ids}}
-            )
-
     async def update_session_occurrence_replacement(
         *,
         occurrence_id: str,
@@ -2946,9 +2993,8 @@ def compose_admin(
         from backend.v2.shared.tenancy import current_academy_id
 
         academy_id = current_academy_id()
-        await _clear_or_reject_replacement_payout_snapshots(
-            academy_id=academy_id,
-            occurrence_id=occurrence_id,
+        draft_period_ids = await draft_payout_periods_for_occurrence(
+            db, academy_id=academy_id, occurrence_id=occurrence_id
         )
 
         update_fields: dict[str, Any] = {
@@ -2964,6 +3010,10 @@ def compose_admin(
         )
         if result.matched_count == 0:
             return None
+        # Recompute AFTER the coach change so the refreshed snapshot reflects it.
+        await recompute_draft_payout_periods(
+            recompute_payout_period, period_ids=draft_period_ids, actor_id=actor_id
+        )
         occurrence = await occurrences_r.get(occurrence_id)
         return None if occurrence is None else await _occurrence_row(occurrence)
 
@@ -3022,6 +3072,9 @@ def compose_admin(
         coach_attendance_audit=coach_attendance_audit_repo,
         occurrence_lookup=_AdminOccurrenceLookup(),
         academy_id=academy_id,
+        # #787: attendance status and rate overrides are payroll inputs; a
+        # frozen payout period will never re-read them.
+        payout_lock=PayoutInputLock(payout_periods_repo),
     )
 
     attendance_corrections = compose_attendance_corrections(
@@ -4039,108 +4092,25 @@ def compose_admin(
         )
         return {"artifact_id": artifact_id, "artifact_type": artifact_type, "status": "generated"}
 
-    _dues_reminder_email = DuesReminderEmailAdapter(academies=academy_repo, sender=_email_sender)
-
-    class _DuesReminderSender:
-        async def send_dues_reminders(
-            self,
-            *,
-            parent_ids: list[str] | None,
-            generate_invoice_artifacts: bool,
-        ) -> dict[str, object]:
-            from backend.v2.shared.tenancy import current_academy_id
-
-            request_academy_id = current_academy_id()
-            rows = await list_dues_followup()
-            if parent_ids is not None:
-                selected = set(parent_ids)
-                rows = [row for row in rows if str(row["parent_id"]) in selected]
-            generated = 0
-            if generate_invoice_artifacts:
-                for row in rows:
-                    invoice_cursor = (
-                        db["invoices"]
-                        .find(
-                            {
-                                "academy_id": request_academy_id,
-                                "status": {"$in": ["open", "partially_paid", "draft"]},
-                                "balance_due_cents": {"$gt": 0},
-                                "$or": [
-                                    {"parent_id": row["parent_id"]},
-                                    {"parent_user_id": row["parent_id"]},
-                                ],
-                                "is_deleted": {"$ne": True},
-                            }
-                        )
-                        .sort([("created_at", -1)])
-                    )
-                    async for invoice in invoice_cursor:
-                        await generate_billing_invoice_artifact(
-                            str(invoice.get("invoice_id") or invoice.get("invoice_number")),
-                            "invoice_pdf",
-                        )
-                        generated += 1
-
-            if not _email_sender_is_real:
-                return {
-                    "sent": 0,
-                    "blocked": True,
-                    "reason": (
-                        f"Local/test safety block: {len(rows)} reminder(s) were not sent "
-                        "(email delivery is not enabled for this environment)."
-                    ),
-                    "selected_parent_ids": parent_ids or [str(row["parent_id"]) for row in rows],
-                    "generated_invoice_artifacts": generated,
-                }
-
-            pay_url, _academy_name = await _parent_payments_link(request_academy_id)
-            membership_repo = MongoMembershipRepository(db)
-            sent = 0
-            skipped = 0
-            for row in rows:
-                parent_id = str(row["parent_id"])
-                membership = await membership_repo.get_membership(request_academy_id, parent_id)
-                if (
-                    membership is None
-                    or not membership.is_active()
-                    or "parent" not in membership.roles
-                ):
-                    skipped += 1
-                    continue
-                user = await users_r.get_by_id(parent_id)
-                email = str(user.email if user else "").strip()
-                if not email:
-                    skipped += 1
-                    continue
-                ok = await _dues_reminder_email.send_reminder(
-                    parent_id=parent_id,
-                    email=email,
-                    display_name=str(user.display_name if user else "") or None,
-                    total_due_cents=int(row["total_due_cents"]),
-                    pending_count=int(row["pending_count"]),
-                    currency="usd",
-                    pay_url=pay_url,
-                )
-                if ok:
-                    sent += 1
-                else:
-                    skipped += 1
-
-            reason = (
-                f"{skipped} parent(s) skipped (no active membership, no email on file, "
-                "or delivery failed)."
-                if skipped
-                else None
-            )
-            return {
-                "sent": sent,
-                "blocked": False,
-                "reason": reason,
-                "selected_parent_ids": parent_ids or [str(row["parent_id"]) for row in rows],
-                "generated_invoice_artifacts": generated,
-            }
-
-    send_dues_reminders = SendDuesReminders(sender=_DuesReminderSender())
+    # Every reminder pathway — the admin's manual send, the automated due+N
+    # sweep (#774) and the owner's autopay attention counts — is wired in
+    # composition/dues_reminders.py. admin.py is at its wiring line budget.
+    dues = compose_dues_reminders(
+        db,
+        academies=academy_repo,
+        users=users_r,
+        email_sender=_email_sender,
+        email_sender_is_real=_email_sender_is_real,
+        ledger=billing_ledger_repo,
+        billing_counters=billing_counters_repo,
+        billing_settings=billing_settings_repo,
+        parent_payments_link=_parent_payments_link,
+        list_dues_followup=list_dues_followup,
+        generate_invoice_artifact=generate_billing_invoice_artifact,
+    )
+    send_dues_reminders = dues.send_dues_reminders
+    send_past_due_reminders = dues.send_past_due_reminders
+    count_dunning_alerts = dues.count_dunning_alerts
 
     get_refunds_report = make_refunds_report(db)
     get_revenue_by_category_report = make_revenue_by_category_report(db)
@@ -4348,6 +4318,8 @@ def compose_admin(
         list_dues_followup=list_dues_followup,
         list_billing_deferral_warnings=billing_deferrals.list_admin_warnings,
         send_dues_reminders=send_dues_reminders,
+        send_past_due_reminders=send_past_due_reminders,
+        count_dunning_alerts=count_dunning_alerts,
         export_report_csv=export_report_csv,
         get_refunds_report=get_refunds_report,
         get_revenue_by_category_report=get_revenue_by_category_report,
@@ -4441,19 +4413,6 @@ def compose_admin(
     install_dunning_notifier(_invoice_email_port())
 
     return admin
-
-
-class _RegistrationRefundExecutor:
-    """`RefundExecutor` adapter over Billing's ``IssueRefund`` use case
-    (issue #514): refund the full remaining captured amount."""
-
-    def __init__(self, issue_refund: IssueRefund) -> None:
-        self._issue_refund = issue_refund
-
-    async def refund_remaining(self, *, payment_id: str, reason: str) -> None:
-        await self._issue_refund.execute(
-            IssueRefundCommand(payment_id=payment_id, amount_cents=None, reason=reason)
-        )
 
 
 class _SessionTypeChangedEventSink:

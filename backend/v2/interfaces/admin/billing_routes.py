@@ -1058,7 +1058,9 @@ async def void_invoice_route(
         )
     void_invoice_ = _required_callable(use_cases.void_billing_invoice, "Invoice voiding")
     try:
-        await void_invoice_(invoice_id=invoice_id, reason=body.reason)  # type: ignore[operator]
+        await void_invoice_(  # type: ignore[operator]
+            invoice_id=invoice_id, reason=body.reason, actor_id=claims.user_id
+        )
     except ValueError as exc:
         msg = str(exc)
         if "not found" in msg:

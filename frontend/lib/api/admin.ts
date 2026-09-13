@@ -9,6 +9,7 @@ import type {
   BillingRulesView,
   UpdateBillingRulesRequest,
 } from "@/lib/billing-rules-form";
+import type { DepartureReasonCode } from "@/lib/admin/departure-reasons";
 import type { PersonLifecycle } from "@/lib/format/lifecycle-copy";
 
 import { apiFetch } from "./client";
@@ -261,6 +262,8 @@ export interface WithdrawEnrollmentRequest {
   effective_date: string;
   outcome?: "credit" | "refund" | "adjustment";
   reason: string;
+  /** Issue #775: the closed-vocabulary departure reason, beside the note. */
+  reason_code?: DepartureReasonCode;
 }
 
 export interface RemoveEnrollmentRequest {
@@ -1229,6 +1232,8 @@ export interface AdminRegistrationRow {
   waiver_required: boolean;
   waiver_satisfied: boolean;
   zero_quote_period: string | null;
+  /** Issue #776: when the waitlist/decline email actually reached the family. */
+  family_notified_at: string | null;
   updated_at: string;
 }
 
@@ -1254,7 +1259,10 @@ export interface AdminRegistrationDetail extends AdminRegistrationRow {
 
 export type AdminAttentionSeverity = "high" | "medium" | "low";
 export type AdminAttentionKind =
+  | "pending_registrations"
   | "overdue_dues"
+  | "autopay_failure"
+  | "dunning_exhaustion"
   | "pause_requests"
   | "scheduled_resume_blocked"
   | "scheduled_action_failed"
@@ -1493,8 +1501,6 @@ export interface AdminFeesView {
 export type UpdateAdminFeesRequest = Partial<AdminFeesView>;
 
 export interface AdminNotificationsView {
-  dues_reminders: boolean;
-  attendance_alerts: boolean;
   daily_digest_to_admin: boolean;
   coach_digest_enabled: boolean;
   coach_digest_hour: number;
@@ -2988,6 +2994,16 @@ export function rejectAdminRegistration(
     `/admin/registrations/${encodeURIComponent(applicationId)}/reject`,
     { method: "POST", body: JSON.stringify(payload) },
   );
+}
+
+/** Issue #776: pending counts for every admin inbox queue, keyed by queue id. */
+export interface AdminInboxCounts {
+  counts: Record<string, number>;
+  total: number;
+}
+
+export function getAdminInboxCounts(): Promise<AdminInboxCounts> {
+  return apiFetch<AdminInboxCounts>("/admin/inbox/counts", { method: "GET" });
 }
 
 export function listAdminAttention(): Promise<AdminAttentionList> {

@@ -48,6 +48,8 @@ class FakeStripeGateway(StripeGateway):
         # that is already complete or expired. Tests add to this to exercise
         # the "parent paid on the old tab" race.
         self.unexpirable_checkouts: set[str] = set()
+        # Stripe Invoicing invoices voided alongside a ledger void (#784).
+        self.voided_invoices: list[str] = []
 
     async def create_checkout_session(
         self,
@@ -153,6 +155,15 @@ class FakeStripeGateway(StripeGateway):
         return_url: str,
         stripe_customer_id: str | None,
     ) -> str:
+        # Mirror RealStripeGateway: Stripe has no portal for a parent with no
+        # customer, so the fake must not hand back a redirect URL either. A
+        # permissive fake here made a local stack (no STRIPE_API_KEY ->
+        # FakeStripeGateway) redirect to a nonexistent fake.stripe.com page
+        # instead of showing the autopay prerequisite (issue #595).
+        if not stripe_customer_id:
+            raise ValueError(
+                "Billing portal will be available after the first successful autopay setup."
+            )
         portal_id = f"bps_test_{new_ulid()}"
         self.portal_sessions.append(
             {
@@ -211,6 +222,9 @@ class FakeStripeGateway(StripeGateway):
             "currency": "usd",
             "payment_intent": f"pi_fake_{stripe_invoice_id}",
         }
+
+    async def void_stripe_invoice(self, stripe_invoice_id: str) -> None:
+        self.voided_invoices.append(stripe_invoice_id)
 
     async def retrieve_subscription(self, stripe_subscription_id: str) -> dict[str, Any]:
         return {

@@ -94,6 +94,11 @@ class InvoiceFacts:
     paid_cents: int  # from allocations
     paid_method: str | None
     paid_at: datetime | None
+    #: Issue #774: when the automated due+N reminder job last emailed about
+    #: this invoice. Distinct from ``last_sent_at``, which is invoice
+    #: DELIVERY. Defaulted so invoices written before the job existed — and
+    #: the fixtures that predate it — read as "never reminded".
+    last_reminder_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -315,7 +320,15 @@ def _paid_payload(family: FamilyFacts, bucket: str) -> dict[str, Any] | None:
 
 
 def _last_reminder_at(owing: list[InvoiceFacts]) -> str | None:
-    sent = [inv.last_sent_at for inv in owing if inv.last_sent_at is not None]
+    """The most recent time this family heard about an owed invoice.
+
+    Both axes count (issue #774): the invoice delivery itself, and the
+    automated due+N reminder. Reading only the former made an automatically
+    chased family look untouched, so staff chased it again by hand.
+    """
+    sent = [
+        at for inv in owing for at in (inv.last_sent_at, inv.last_reminder_at) if at is not None
+    ]
     return _iso(max(sent)) if sent else None
 
 

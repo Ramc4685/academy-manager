@@ -149,6 +149,13 @@ APPROVED_COMPOSITION_EXCEPTIONS = {
 # say what it reads and why the read cannot be tenant-scoped. Admission bar:
 # read-only, operator-facing, never reachable from a tenant request path.
 APPROVED_CROSS_TENANT_EXCEPTIONS = {
+    Path("shared/observability/owner_daily_brief.py"): (
+        "By design cross-tenant and read-only: the daily owner brief (issue #776) "
+        "counts enrollments, enrollment_events, onboarding_applications, payments, "
+        "invoices, students, waiver_acceptances and email_suppressions across every "
+        "academy, the same way its sibling ops_digest does. It runs only from the "
+        "scheduler (no request path reaches it) and writes nothing at all."
+    ),
     Path("shared/observability/ops_digest.py"): (
         "By design cross-tenant and read-only: the daily owner ops digest counts "
         "stripe_webhook_events, dead_letter_events, dunning_states and the coach/"

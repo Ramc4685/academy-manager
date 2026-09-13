@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
+from datetime import date
 from typing import Any
 
 from fastapi import Request
@@ -113,6 +114,13 @@ class CoachUseCases:
     # to the academy-local calendar date instead of UTC (#510). Optional for
     # fixtures that predate it; real composition always sets it.
     get_academy_timezone: Callable[[str], Awaitable[str | None]] | None = None
+    # Issue #774: overdue balance in cents per student, so the roster row can
+    # carry ONE "PAYMENT DUE $X" chip. The owner's decision was that this is
+    # the only thing about money a coach ever sees; the billing drawer and the
+    # coach billing routes were deleted in the same change.
+    overdue_cents_by_student: Callable[[Sequence[str], date], Awaitable[dict[str, int]]] | None = (
+        None
+    )
     # Attendance correction (#517). Optional for fixtures that predate it;
     # real coach composition always sets it.
     correct_attendance: CorrectAttendance | None = None

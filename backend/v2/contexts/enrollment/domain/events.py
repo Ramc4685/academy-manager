@@ -7,6 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from backend.v2.contexts.enrollment.domain.departure_policy import DepartureReasonCode
 from backend.v2.shared.events.base import DomainEvent
 
 EnrollmentLifecycleEventType = Literal[
@@ -49,6 +50,11 @@ class EnrollmentLifecycleEvent(BaseModel):
     student_id: str
     actor_id: str | None = None
     reason: str | None = None
+    #: Issue #775: the structured departure reason, recorded next to the
+    #: free-text ``reason`` (never instead of it) by the Drop and
+    #: Stop-all-classes paths. ``None`` on every non-departure event, and on
+    #: system departures (reclaim, expiry) that no human coded.
+    reason_code: DepartureReasonCode | None = None
     effective_at: datetime
     occurred_at: datetime
     billing_policy: str | None = None

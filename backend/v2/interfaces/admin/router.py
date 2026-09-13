@@ -21,6 +21,7 @@ from .directory_routes import router as directory_router
 from .dues_routes import router as dues_router
 from .families_routes import router as families_router
 from .hold_routes import router as hold_router
+from .inbox_routes import router as inbox_router
 from .month_close_routes import router as month_close_router
 from .pathway_routes import router as pathway_router
 from .pause_routes import router as pause_router
@@ -40,6 +41,7 @@ from .waiver_routes import router as waiver_router
 router = APIRouter(prefix="/admin")
 router.include_router(audit_router)
 router.include_router(dashboard_router)
+router.include_router(inbox_router)
 router.include_router(directory_router)
 router.include_router(pause_router)
 router.include_router(registration_router)

@@ -55,8 +55,7 @@ export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
       { href: "/admin/students", label: "Students", icon: "user", match: startsWith("/admin/students") },
       { href: "/admin/pathway", label: "Pathway", icon: "trophy", match: startsWith("/admin/pathway") },
       { href: "/admin/users", label: "Users", icon: "user", match: startsWith("/admin/users") },
-      { href: "/admin/registrations", label: "Admissions", icon: "check", match: startsWith("/admin/registrations") },
-      { href: "/admin/requests", label: "Requests", icon: "check", match: startsWith("/admin/requests") },
+      { href: "/admin/inbox", label: "Inbox", icon: "check", match: startsWith("/admin/inbox") },
     ],
   },
   {
@@ -176,8 +175,11 @@ export const SCREEN_META: Record<string, AdminScreenMeta> = {
   "/admin/students": { title: "Students", subtitle: "Roster and enrollment", breadcrumbs: ["Admin", "Students"] },
   "/admin/pathway": { title: "Skill Pathways", subtitle: "Curriculum levels and skills", breadcrumbs: ["Admin", "Pathway"] },
   "/admin/users": { title: "Users", subtitle: "Coaches, parents, and admins", breadcrumbs: ["Admin", "Users"] },
-  "/admin/registrations": { title: "Admissions", subtitle: "Registrations, waitlist, level-ups", breadcrumbs: ["Admin", "Admissions"] },
-  "/admin/requests": { title: "Requests", subtitle: "Makeups, trials, absences, cancellations, pauses", breadcrumbs: ["Admin", "Requests"] },
+  "/admin/inbox": { title: "Inbox", subtitle: "Registrations, waitlist, level-ups, and parent requests", breadcrumbs: ["Admin", "Inbox"] },
+  // The registration detail page is the one route left under /admin/registrations
+  // now that the list redirects to the Inbox (#776); without its own key it would
+  // fall through to the generic fallback title.
+  "/admin/registrations/[applicationId]": { title: "Registration", subtitle: "Review and decide", breadcrumbs: ["Admin", "Inbox", "Registration"] },
   "/admin/payments": { title: "Payments", subtitle: "Who owes, who is charged, who paid", breadcrumbs: ["Admin", "Money", "Payments"] },
   "/admin/billing-health": { title: "Billing Health", subtitle: "Connect readiness, webhooks, reconciliation", breadcrumbs: ["Admin", "Money", "Billing Health"] },
   "/admin/families": { title: "Families", subtitle: "Every parent: balance, card on file, autopay", breadcrumbs: ["Admin", "Money", "Families"] },

@@ -11,6 +11,7 @@ from backend.v2.contexts.coaching.application.use_cases.mark_coach_attendance im
     MarkCoachAttendance,
     MarkCoachAttendanceCommand,
 )
+from backend.v2.contexts.coaching.domain.errors import PayoutPeriodFrozen
 from backend.v2.contexts.coaching.domain.models import CoachAttendance, CoachAttendanceAuditEntry
 
 
@@ -115,6 +116,71 @@ async def test_admin_can_mark_assistant_with_rate_override_and_note() -> None:
     assert row.rate_override_minor == 1500
     assert row.note == "Helped with beginner court"
     assert row.marked_by == "admin-1"
+
+
+class _FakePayoutPeriodLock:
+    """Stand-in for the finance-backed frozen-window lookup (#787)."""
+
+    def __init__(self, status: str | None) -> None:
+        self._status = status
+        self.calls: list[tuple[str, datetime]] = []
+
+    async def locked_status_for(self, *, coach_id: str, at: datetime) -> str | None:
+        self.calls.append((coach_id, at))
+        return self._status
+
+
+@pytest.mark.asyncio
+async def test_marking_attendance_is_refused_once_the_payout_period_is_approved() -> None:
+    """#787: payroll inputs must not drift behind a frozen payout snapshot."""
+    repo = _FakeCoachAttendanceRepo()
+    lock = _FakePayoutPeriodLock("approved")
+    use_case = MarkCoachAttendance(
+        coach_attendance=repo,
+        occurrence_lookup=_FakeOccurrenceLookup(),
+        academy_id="acad",
+        payout_lock=lock,
+        clock=lambda: _dt("2026-05-27T18:10:00"),
+    )
+
+    with pytest.raises(PayoutPeriodFrozen):
+        await use_case.execute(
+            MarkCoachAttendanceCommand(
+                occurrence_id="occ-1",
+                coach_id="coach-1",
+                status="absent",
+                source="admin",
+                rate_override_minor=9900,
+            ),
+            actor_id="admin-1",
+        )
+
+    assert repo.rows == {}
+    assert lock.calls == [("coach-1", _dt("2026-05-27T18:00:00"))]
+
+
+@pytest.mark.asyncio
+async def test_marking_attendance_still_works_while_the_period_is_draft() -> None:
+    repo = _FakeCoachAttendanceRepo()
+    use_case = MarkCoachAttendance(
+        coach_attendance=repo,
+        occurrence_lookup=_FakeOccurrenceLookup(),
+        academy_id="acad",
+        payout_lock=_FakePayoutPeriodLock(None),
+        clock=lambda: _dt("2026-05-27T18:10:00"),
+    )
+
+    row = await use_case.execute(
+        MarkCoachAttendanceCommand(
+            occurrence_id="occ-1",
+            coach_id="coach-1",
+            status="present",
+            source="admin",
+        ),
+        actor_id="admin-1",
+    )
+
+    assert row.status == "present"
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
 
 export default function AdminLevelUpQueuePage() {
-  redirect("/admin/registrations?tab=level-ups");
+  redirect("/admin/inbox?tab=level-ups");
 }

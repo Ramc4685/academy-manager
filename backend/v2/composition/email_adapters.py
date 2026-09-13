@@ -214,6 +214,39 @@ class InvoiceNaming(BaseModel):
     last_charge: LastCharge | None = None
 
 
+def tuition_for(period: str, naming: InvoiceNaming) -> str:
+    """Plain-text subject lead: ``"September 2026 tuition for Arjun"``.
+
+    Module level, not a method, because both the invoice emails and the
+    automated past-due reminder (issue #774) must name a month identically —
+    a second copy of this sentence is how ``2026-09`` leaks back into a
+    parent's inbox.
+    """
+    lead = f"{format_tuition_month(period)} tuition"
+    if naming.student_name:
+        lead = f"{lead} for {naming.student_name}"
+    return lead
+
+
+def tuition_html(period: str, naming: InvoiceNaming) -> str:
+    """Escaped body lead naming the month, the student and the class."""
+    parts = [f"<strong>{html.escape(format_tuition_month(period))} tuition</strong>"]
+    if naming.student_name:
+        parts.append(f"for <strong>{html.escape(naming.student_name)}</strong>")
+    if naming.session_label:
+        parts.append(f"({html.escape(naming.session_label)})")
+    return " ".join(parts)
+
+
+def invoice_number_html(naming: InvoiceNaming) -> str:
+    if not naming.invoice_number:
+        return ""
+    return (
+        f"<p style='color: {_BRAND_MUTED};'>Invoice "
+        f"<strong>{html.escape(naming.invoice_number)}</strong></p>"
+    )
+
+
 class InvoiceEmailAdapter:
     def __init__(
         self,
@@ -245,23 +278,8 @@ class InvoiceEmailAdapter:
             )
             return InvoiceNaming()
 
-    @staticmethod
-    def _tuition_for(period: str, naming: InvoiceNaming) -> str:
-        """Plain-text subject lead: ``"September 2026 tuition for Arjun"``."""
-        lead = f"{format_tuition_month(period)} tuition"
-        if naming.student_name:
-            lead = f"{lead} for {naming.student_name}"
-        return lead
-
-    @staticmethod
-    def _tuition_html(period: str, naming: InvoiceNaming) -> str:
-        """Escaped body lead naming the month, the student and the class."""
-        parts = [f"<strong>{html.escape(format_tuition_month(period))} tuition</strong>"]
-        if naming.student_name:
-            parts.append(f"for <strong>{html.escape(naming.student_name)}</strong>")
-        if naming.session_label:
-            parts.append(f"({html.escape(naming.session_label)})")
-        return " ".join(parts)
+    _tuition_for = staticmethod(tuition_for)
+    _tuition_html = staticmethod(tuition_html)
 
     @staticmethod
     def _last_charge_html(naming: InvoiceNaming) -> str:
@@ -280,14 +298,7 @@ class InvoiceEmailAdapter:
         )
         return f"<p>Your last charge was <strong>{html.escape(line)}</strong>.</p>"
 
-    @staticmethod
-    def _invoice_number_html(naming: InvoiceNaming) -> str:
-        if not naming.invoice_number:
-            return ""
-        return (
-            f"<p style='color: {_BRAND_MUTED};'>Invoice "
-            f"<strong>{html.escape(naming.invoice_number)}</strong></p>"
-        )
+    _invoice_number_html = staticmethod(invoice_number_html)
 
     async def send_invoice_email(
         self,
@@ -511,11 +522,94 @@ class InvoiceEmailAdapter:
 
 
 class DuesReminderEmailAdapter:
-    """Bridges the admin dues-followup action to communications' `EmailSendPort`."""
+    """Bridges the admin dues-followup action to communications' `EmailSendPort`.
 
-    def __init__(self, *, academies: MongoAcademyRepository, sender: EmailSendPort) -> None:
+    Two shapes of reminder live here. ``send_reminder`` is the admin's manual
+    aggregate ("you have N open invoices totaling $X"), unchanged.
+    ``send_past_due_reminder`` (issue #774) is the automated due+N email, and
+    it is per-invoice: it names the tuition month in words via the same
+    ``composition.invoice_naming`` resolver and ``format_tuition_month`` that
+    PR #795 gave the invoice emails, so a parent never reads a raw ``2026-09``
+    period code — the 2026-09-05 incident this naming rework exists to prevent.
+    """
+
+    def __init__(
+        self,
+        *,
+        academies: MongoAcademyRepository,
+        sender: EmailSendPort,
+        naming: Callable[[str], Awaitable[InvoiceNaming | None]] | None = None,
+    ) -> None:
         self._academies = academies
         self._sender = sender
+        self._naming = naming
+
+    async def _naming_for(self, invoice_id: str) -> InvoiceNaming:
+        if self._naming is None:
+            return InvoiceNaming()
+        try:
+            return await self._naming(invoice_id) or InvoiceNaming()
+        except Exception:
+            log.warning(
+                "dues_reminder_naming_unresolved",
+                extra={"invoice_id": invoice_id},
+                exc_info=True,
+            )
+            return InvoiceNaming()
+
+    async def send_past_due_reminder(
+        self,
+        *,
+        parent_id: str,
+        email: str,
+        display_name: str | None,
+        invoice_id: str,
+        period: str,
+        balance_due_cents: int,
+        currency: str,
+        days_past_due: int,
+        pay_url: str | None,
+    ) -> bool:
+        """One overdue invoice, named by month/student/class (issue #774)."""
+        academy_name = (
+            await self._academies.get_academy_name(current_academy_id()) or "Your academy"
+        )
+        naming = await self._naming_for(invoice_id)
+        tuition = tuition_for(period, naming)
+        lead_html = tuition_html(period, naming)
+        number_html = invoice_number_html(naming)
+        safe_name = html.escape(display_name or "there")
+        safe_amount = html.escape(format_money(balance_due_cents, currency))
+        day_word = "day" if days_past_due == 1 else "days"
+        pay_line = (
+            _branded_button(label="Pay now", url=pay_url)
+            if pay_url
+            else f"<p style='color: {_BRAND_MUTED};'>Please log in to the parent portal to pay.</p>"
+        )
+        inner = (
+            f"<h2 style='color: {_BRAND_HEADING}; font-size: 18px; margin: 0 0 12px;'>"
+            "Payment reminder</h2>"
+            f"<p>Hi {safe_name},</p>"
+            f"<p>{lead_html} is <strong>{safe_amount}</strong> and is now "
+            f"<strong>{days_past_due} {day_word}</strong> past its due date.</p>"
+            f"{number_html}"
+            f"{pay_line}"
+        )
+        body = _branded_shell(
+            academy_name=academy_name,
+            inner_html=inner,
+            footer_note="If you've already taken care of this, please disregard this message.",
+        )
+        outcome = await self._sender.send(
+            recipient=ResolvedRecipient(
+                user_id=parent_id,
+                email=email,
+                display_name=display_name or None,
+            ),
+            subject=f"Payment reminder: {tuition}",
+            body=body,
+        )
+        return outcome.ok
 
     async def send_reminder(
         self,

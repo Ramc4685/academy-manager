@@ -4,7 +4,10 @@ Kept out of ``composition/admin.py`` (at its structural line cap). Builds
 ``ProcessScheduledCancellationActions`` over the same repositories the admin
 cancel path uses, so a scheduled cancel and an admin cancel converge on the
 same writes: seat release, occurrence-roster cleanup, billing sync,
-lifecycle row, ``EnrollmentCancelled`` outbox event, staff alert.
+lifecycle row, ``EnrollmentCancelled`` outbox event, staff alert, and the
+close of an open pause/hold billing deferral (issue #782 — a paused or held
+row keeps its pending cancellation, so this worker can be the transition that
+ends a still-deferred enrollment).
 """
 
 from __future__ import annotations
@@ -17,6 +20,9 @@ from backend.v2.contexts.enrollment.application.ports import (
     EnrollmentEventRepository,
     OccurrenceRosterCleanup,
     RosterChangeNotifier,
+)
+from backend.v2.contexts.enrollment.application.use_cases.billing_deferrals import (
+    BillingDeferralRepository,
 )
 from backend.v2.contexts.enrollment.application.use_cases.process_scheduled_cancellation_actions import (
     ProcessScheduledCancellationActions,
@@ -40,6 +46,7 @@ def compose_process_scheduled_cancellation_actions(
     enrollment_events: EnrollmentEventRepository,
     billing_sync: EnrollmentBillingSync,
     occurrence_roster: OccurrenceRosterCleanup,
+    billing_deferrals: BillingDeferralRepository,
     roster_notifier: RosterChangeNotifier | None,
     enrollments: MongoEnrollmentWriter | None = None,
     sessions: MongoSessionWriter | None = None,
@@ -54,6 +61,7 @@ def compose_process_scheduled_cancellation_actions(
         enrollment_events=enrollment_events,
         billing_sync=billing_sync,
         occurrence_roster=occurrence_roster,
+        billing_deferrals=billing_deferrals,
         roster_notifier=roster_notifier,
     )
 

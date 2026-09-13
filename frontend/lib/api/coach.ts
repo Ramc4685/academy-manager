@@ -43,6 +43,12 @@ export interface CoachRosterEntry {
   expected_absence?: boolean;
   /** "enrollment" for regular roster rows; "makeup"/"trial" for one-time entries. */
   entry_source?: "enrollment" | "makeup" | "trial";
+  /**
+   * Issue #774: the family's overdue balance for this student, in integer
+   * cents, or null when nothing is overdue. The ONLY money fact a coach
+   * sees — the per-row billing drawer was removed in the same change.
+   */
+  payment_due_cents?: number | null;
 }
 
 export interface CoachSession {
@@ -57,6 +63,12 @@ export interface CoachSession {
   /** Primary coach of the session. Name is resolved only for admin/owner supervisors (#632). */
   coach_id?: string | null;
   coach_name?: string | null;
+  /**
+   * Issue #777: cancelled classes stay on the coach's day instead of silently
+   * disappearing, so nobody drives to a called-off class.
+   */
+  status?: "scheduled" | "cancelled" | "completed";
+  cancellation_reason?: string | null;
 }
 
 export interface CoachTodayResponse {

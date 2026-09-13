@@ -131,3 +131,28 @@ test("stale approval recovery exposes only the original decision", async ({ page
   await expect(page.getByRole("button", { name: "Waitlist", exact: true })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Reject", exact: true })).toBeDisabled();
 });
+
+test("decision buttons stay on screen on a 390px phone", async ({ page }) => {
+  // Issue #747: the three decision panels were laid out on an implicit grid
+  // track sized by their own content, so Approve/Waitlist/Reject sat past the
+  // right edge of a 390px viewport with no way to scroll to them.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await stubAdminShell(page);
+  await page.route("**/api/v2/admin/registrations/app-1", (route) =>
+    fulfillJson(route, PENDING),
+  );
+
+  await page.goto("/admin/registrations/app-1");
+  await expect(page.getByTestId("admin-registration-detail")).toBeVisible();
+
+  for (const label of ["Approve", "Waitlist", "Reject"]) {
+    const box = await page.getByRole("button", { name: label, exact: true }).boundingBox();
+    expect(box, `${label} button has no box`).not.toBeNull();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+  }
+  const overflows = await page.evaluate(
+    () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  );
+  expect(overflows).toBe(false);
+});

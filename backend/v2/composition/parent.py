@@ -16,12 +16,18 @@ from pymongo.errors import OperationFailure
 
 from backend.v2.composition.absence_notifications import compose_absence_notifier
 from backend.v2.composition.level_up_lifecycle import compose_expire_level_up_recommendations
-from backend.v2.composition.lifecycle_billing import compose_enrollment_billing_sync
+from backend.v2.composition.lifecycle_billing import (
+    build_autopay_status_gateway,
+    compose_enrollment_billing_sync,
+)
 from backend.v2.composition.pathway import (
     CurriculumComposition,
     StudentProgressComposition,
     compose_curriculum,
     compose_student_progress,
+)
+from backend.v2.composition.registration_decision_email import (
+    compose_registration_decision_notifier,
 )
 from backend.v2.composition.roster_notifications import compose_roster_notifier
 from backend.v2.contexts.billing.application.autopay_eligibility import (
@@ -118,6 +124,9 @@ from backend.v2.contexts.enrollment.application.use_cases.absence_notices import
 from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
     UpdateAdminStudentCommand,
 )
+from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
+    ResumeEnrollment,
+)
 from backend.v2.contexts.enrollment.application.use_cases.confirm_enrollment import (
     ConfirmEnrollment,
 )
@@ -156,6 +165,9 @@ from backend.v2.contexts.enrollment.domain.lifecycle import (
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_absence_notice_repo import (
     MongoAbsenceNoticeRepository,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_billing_deferral_repo import (
+    MongoBillingDeferralRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_event_repo import (
     MongoEnrollmentEventRepository,
@@ -295,6 +307,12 @@ class ParentComposition:
     # a route. It must be exposed here so main.py can reach it after
     # compose_enrollment_holds runs.
     promote_from_waitlist: PromoteFromWaitlist
+    #: Issue #782: the ``ResumeEnrollment`` instance the promotion above routes
+    #: a paused head-of-queue student through. Exposed for the same reason
+    #: ``promote_from_waitlist`` is — it reserves a seat, so main.py must hand
+    #: it the SeatBroker once ``compose_enrollment_holds`` has run, or a class
+    #: full only of holds refuses the resume instead of reclaiming one.
+    promote_resume_enrollment: ResumeEnrollment
     # Issue #704: ConfirmEnrollment (Billing.PaymentSucceeded -> new checkout
     # enrollment) is a sixth un-brokered seat-reservation site, same reason
     # as promote_from_waitlist above — exposed so main.py can wire the
@@ -949,7 +967,7 @@ def compose_parent(
         outbox=outbox,
         billing=_SelfCancelFeeBillingPort(),
         # Issue #651: void later-month invoices + disable autopay on self-cancel.
-        billing_sync=compose_enrollment_billing_sync(db),
+        billing_sync=compose_enrollment_billing_sync(db, stripe=stripe),
         enrollment_events=enrollment_events,
         roster_notifier=roster_notifier,
         # Issue #675: end_of_period enqueues a month-end cancel instead of
@@ -968,6 +986,23 @@ def compose_parent(
         enrollment_events=enrollment_events,
         academy_id=request_academy_id,
     )
+    # Issue #782: the outbox handler that promotes off a freed seat runs THIS
+    # instance, not composition/admin.py's — so a paused head-of-queue student
+    # promoted by a drop was flipped active by a bare `update_status` here,
+    # leaving autopay paused, the pause deferral open and monthly invoicing
+    # skipping a child who was back in class. Same `resume=` wiring as
+    # composition/admin.py's promote: one resume path, not two.
+    promote_resume = ResumeEnrollment(
+        enrollments=enrollments_writer,
+        sessions=sessions_writer,
+        students=students_query,
+        waitlist=waitlist,
+        enrollment_events=enrollment_events,
+        billing_deferrals=MongoBillingDeferralRepository(db),
+        autopay_status=build_autopay_status_gateway(MongoStudentBillingEnrollmentRepository(db)),
+        billing_sync=compose_enrollment_billing_sync(db, stripe=stripe),
+        roster_notifier=roster_notifier,
+    )
     promote = PromoteFromWaitlist(
         waitlist=waitlist,
         sessions=sessions_writer,
@@ -975,6 +1010,7 @@ def compose_parent(
         outbox=outbox,
         enrollment_events=enrollment_events,
         roster_notifier=roster_notifier,
+        resume=promote_resume,
         academy_id=request_academy_id,
     )
 
@@ -1007,6 +1043,10 @@ def compose_parent(
         student_registrations=students_query,
         clock=clock,
         checkout_retirement=checkout_retirement,
+        # Issue #776: the moment an application becomes reviewable, staff hear
+        # about it — otherwise a 22:00 registration waits for whoever next
+        # happens to open the queue.
+        submitted_notifier=compose_registration_decision_notifier(db, settings),
     )
     list_available_sessions = ListParentAvailableSessions(sessions=sessions_query)
     # Issue #616: a request nobody is told about sits PENDING for months.
@@ -2676,6 +2716,7 @@ def compose_parent(
         handle_webhook_event=handle_webhook,
         list_available_sessions=list_available_sessions,
         promote_from_waitlist=promote,
+        promote_resume_enrollment=promote_resume,
         confirm_enrollment=confirm_enrollment,
         list_payments_for_parent=list_payments_for_parent,
         list_credits_for_parent=list_credits_for_parent,

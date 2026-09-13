@@ -72,6 +72,21 @@ class PayoutPeriodRepository(Protocol):
 
     async def find_by_id(self, period_id: str) -> PayoutPeriod | None: ...
 
+    async def find_locked_status_for_coach(
+        self,
+        *,
+        coach_id: str,
+        at: datetime,
+    ) -> str | None:
+        """Status of the approved/paid period whose window contains ``at``.
+
+        ``None`` when the instant falls in no frozen period. Issue #787:
+        coaching and enrollment ask this (through their own ports, wired at
+        composition) before touching a payroll input, because a frozen
+        period never re-reads attendance.
+        """
+        ...
+
     async def save(self, period: PayoutPeriod) -> PayoutPeriod:
         """Insert the period and its lines atomically.
 

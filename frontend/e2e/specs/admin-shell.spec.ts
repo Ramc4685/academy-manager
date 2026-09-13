@@ -130,10 +130,11 @@ const ADMIN_ROUTES = [
   { href: "/admin/sessions", testid: "admin-sessions" },
   { href: "/admin/students", testid: "admin-students" },
   { href: "/admin/users", testid: "admin-users" },
-  { href: "/admin/registrations", testid: "admin-registrations" },
-  { href: "/admin/registrations?tab=waitlist", testid: "admin-waitlist-tab" },
-  { href: "/admin/registrations?tab=level-ups", testid: "admin-level-up-queue-tab" },
-  { href: "/admin/requests?tab=pauses", testid: "admin-pause-requests" },
+  { href: "/admin/inbox", testid: "admin-inbox" },
+  { href: "/admin/inbox?tab=registrations", testid: "admin-registrations-tab" },
+  { href: "/admin/inbox?tab=waitlist", testid: "admin-waitlist-tab" },
+  { href: "/admin/inbox?tab=level-ups", testid: "admin-level-up-queue-tab" },
+  { href: "/admin/inbox?tab=pauses", testid: "admin-pause-requests" },
   { href: "/admin/payments", testid: "admin-payments" },
   { href: "/admin/reports/session-economics", testid: "admin-session-economics" },
   { href: "/admin/reports", testid: "admin-month-close" },
@@ -370,6 +371,9 @@ async function stubAdminBff(
   await page.route("**/api/v2/admin/students*", (route) =>
     fulfillJson(route, { students: [] }),
   );
+  await page.route("**/api/v2/admin/inbox/counts", (route) =>
+    fulfillJson(route, { counts: {}, total: 0 }),
+  );
   await page.route("**/api/v2/admin/registrations*", (route) =>
     fulfillJson(route, { registrations: [] }),
   );
@@ -491,8 +495,6 @@ async function stubAdminBff(
     /\/api\/v2\/admin\/academy\/notifications(?:\?.*)?$/,
     (route) =>
       fulfillJson(route, {
-        dues_reminders: false,
-        attendance_alerts: false,
         daily_digest_to_admin: false,
       }),
   );
@@ -1035,9 +1037,10 @@ test.describe("Rally admin shell", () => {
       }),
     );
 
-    // Old URL now redirects into Requests → Pauses tab (UIC2); bookmarks keep working.
+    // Old URL now redirects into Inbox → Pauses tab (#776 merged Admissions +
+    // Requests into one Inbox); bookmarks keep working.
     await page.goto("/admin/pause-requests");
-    await expect(page).toHaveURL(/\/admin\/requests\?tab=pauses/, { timeout: 30_000 });
+    await expect(page).toHaveURL(/\/admin\/inbox\?tab=pauses/, { timeout: 30_000 });
     const row = page.getByTestId("admin-pause-requests-row-pause-1");
     await expect(row).toContainText("Abhishek Ajithkumar");
     await expect(row).toContainText("Student: Aadhya Abhishek");

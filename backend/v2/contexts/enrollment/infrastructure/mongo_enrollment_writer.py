@@ -9,6 +9,7 @@ from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.enrollment.domain.models import (
     LIVE,
+    RECLAIM_PENDING,
     SEAT_HOLDING,
     TERMINAL,
     Enrollment,
@@ -434,12 +435,29 @@ class MongoEnrollmentWriter(TenantScopedRepository):
         )
 
     async def find_for_session_student(self, session_id: str, student_id: str) -> Enrollment | None:
+        """The one row that matters for this session/student pair.
+
+        A pair may hold several rows — historical terminal ones next to a live
+        one — so the probe order IS the answer to "which row does a caller
+        mean". Live first, then the in-flight reclaim, then whatever is left
+        (history) so a re-registration after a drop still finds the old row.
+
+        Issue #782: ``held`` and ``reclaim_pending`` used to be reachable only
+        through the final unconditioned catch-all, i.e. incidentally and only
+        when no other row existed. Registration approval read that as "no
+        conflict" and created a second active row for a child already on hold
+        in the class. They are first-class steps now.
+        """
         base_filter = {"session_id": session_id, "student_id": student_id}
         doc = await self._find_one({**base_filter, "status": "active"})
         if doc is None:
             doc = await self._find_one({**base_filter, "status": {"$exists": False}})
         if doc is None:
             doc = await self._find_one({**base_filter, "status": "paused"})
+        if doc is None:
+            doc = await self._find_one({**base_filter, "status": "held"})
+        if doc is None:
+            doc = await self._find_one({**base_filter, "status": RECLAIM_PENDING})
         if doc is None:
             doc = await self._find_one(base_filter)
         return self._to_domain(doc) if doc else None

@@ -7,6 +7,7 @@
  * The PUT is owner-only; a plain admin's `updateDeparturePolicy` call 404s.
  */
 import { apiFetch } from "../client";
+import type { DepartureReasonCode } from "@/lib/admin/departure-reasons";
 
 export type HoldReclaimPolicy = "longest_held" | "never";
 
@@ -79,6 +80,9 @@ export interface StopAllClassesRequest {
   effective_date: string;
   outcome?: "credit" | "refund" | "adjustment" | null;
   reason: string;
+  /** Issue #775: one structured reason for the whole departure. Optional —
+   * omitted when the admin did not pick one; never sent as `""`. */
+  reason_code?: DepartureReasonCode;
 }
 
 export interface EnrollmentStopResult {
@@ -118,6 +122,9 @@ export interface LeavingReportRow {
   effective_at: string;
   event_type: string;
   reason: string | null;
+  /** Issue #775: the closed-vocabulary code recorded beside the note. Null
+   * for every departure recorded before the code existed. */
+  reason_code: string | null;
   actor_id: string | null;
   is_system_action: boolean;
   billing_result: string | null;

@@ -12,6 +12,18 @@
 export const BILLING_PORTAL_PREREQUISITE =
   "Billing portal is not set up yet. Start autopay for an enrollment first to get portal access.";
 
+/**
+ * Generic fallback the parent payments page shows when a portal open fails for
+ * a reason we cannot explain. Exported so the page and its tests share one
+ * copy of the string (issue #595).
+ */
+export const BILLING_PORTAL_OPEN_FAILED =
+  "Billing portal could not open. Please try again or contact the academy.";
+
+/** Shown when the academy's Stripe Connect account is not onboarded yet. */
+const ACADEMY_PAYMENTS_NOT_READY =
+  "Online payments aren't fully set up for your academy yet. Please try again later or contact the academy.";
+
 /** Stable backend error codes (DomainError.code via ApiError.code). */
 const CODE_MESSAGES: Record<string, string> = {
   // Server-side redirect allowlist rejection — a configuration problem the
@@ -21,8 +33,12 @@ const CODE_MESSAGES: Record<string, string> = {
   // The academy's Stripe Connect account is not onboarded/enabled yet, so no
   // checkout of any kind can start. Seen on staging as a 502 with message
   // "Stripe connected account is not ready for autopay setup."
-  "Billing.CheckoutCreationFailed":
-    "Online payments aren't fully set up for your academy yet. Please try again later or contact the academy.",
+  "Billing.CheckoutCreationFailed": ACADEMY_PAYMENTS_NOT_READY,
+  // The parent has no Stripe customer yet — a prerequisite with one concrete
+  // next step, not a failure. Raised by the backend before it ever calls a
+  // Stripe gateway, so it is the same on a configured stack and on a local
+  // stack running the fake gateway (issue #595).
+  "Billing.BillingPortalNotReady": BILLING_PORTAL_PREREQUISITE,
   // A pay link for this specific invoice could not be created — the gateway
   // errored, or the academy's Stripe account cannot receive charges. Distinct
   // from the generic 409 because retrying immediately will not help.

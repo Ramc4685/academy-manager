@@ -1507,7 +1507,7 @@ async def test_session_replacement_endpoint_rejects_date_outside_maintenance_win
 
 
 @pytest.mark.asyncio
-async def test_replacement_endpoint_clears_draft_payout_snapshot_for_recalculation() -> None:
+async def test_replacement_endpoint_recomputes_draft_payout_snapshot_in_place() -> None:
     mongomock_motor = pytest.importorskip("mongomock_motor")
     db = mongomock_motor.AsyncMongoMockClient()["admin-replacement-draft-payout"]
     await db.session_occurrences.insert_one(
@@ -1560,8 +1560,19 @@ async def test_replacement_endpoint_clears_draft_payout_snapshot_for_recalculati
 
     assert response.status_code == 200, response.text
     assert response.json()["actual_coach_id"] == "coach-replacement"
-    assert await db.payout_periods.count_documents({"academy_id": "academy-b"}) == 0
-    assert await db.payout_period_lines.count_documents({"academy_id": "academy-b"}) == 0
+    # #787: the draft period is recomputed, not deleted — deleting it orphaned
+    # every payout_audit_log row that pointed at the period_id.
+    assert await db.payout_periods.count_documents({"academy_id": "academy-b"}) == 1
+    assert (
+        await db.payout_period_lines.count_documents(
+            {"academy_id": "academy-b", "occurrence_id": "occ-draft-payout"}
+        )
+        == 0
+    )
+    audited = await db.payout_audit_log.find({"academy_id": "academy-b"}).to_list(None)
+    assert {row["action"] for row in audited} == {"recomputed"}
+    surviving = await db.payout_periods.find_one({"period_id": "pp-draft"})
+    assert surviving is not None and surviving["status"] == "draft"
 
 
 @pytest.mark.asyncio

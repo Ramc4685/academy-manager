@@ -5,6 +5,8 @@ import { useQuery } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
 
 import { getCoachSchedule } from "@/lib/api/coach";
+import { coachSessionHref } from "@/lib/coach/marking";
+import { sessionDateKey } from "@/lib/time/session-time";
 import { queryKeys } from "@/lib/query/keys";
 import type { CalendarViewEvent } from "@/components/calendar/PersonaCalendarView";
 import { Card } from "@/components/ds/card";
@@ -32,7 +34,10 @@ export default function CoachCalendarPage() {
         title: s.title,
         start: s.start_at,
         end: s.end_at,
-        url: `/coach/sessions/${encodeURIComponent(s.session_id)}`,
+        // Issue #777: the session screen is occurrence-scoped and resolves its
+        // roster from the class's LOCAL date — a session-id link with no date
+        // landed on "Session not found."
+        url: coachSessionHref(s.occurrence_id, sessionDateKey(s.start_at, s.timezone)),
       })),
     [data],
   );

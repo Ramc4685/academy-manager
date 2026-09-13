@@ -315,6 +315,7 @@ backend/v2/contexts/coaching/infrastructure/mongo_attendance_repo.py:0: note: de
 backend/v2/contexts/coaching/infrastructure/mongo_attendance_repo.py:0: note: def int(str | bytes | bytearray, /, base: SupportsIndex) -> int
 backend/v2/contexts/coaching/application/use_cases/session_feedback.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
 backend/v2/contexts/coaching/application/use_cases/session_feedback.py:0: error: Missing named argument "aggregate_id" for "SessionFeedbackPosted"  [call-arg]
+backend/v2/contexts/coaching/application/use_cases/session_feedback.py:0: note: "SessionFeedbackPosted" defined in "backend.v2.contexts.coaching.domain.events"
 backend/v2/contexts/coaching/application/use_cases/session_feedback.py:0: error: Missing named argument "payload" for "SessionFeedbackPosted"  [call-arg]
 backend/v2/contexts/coaching/application/use_cases/mark_attendance.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
 backend/v2/contexts/coaching/application/use_cases/mark_attendance.py:0: error: Item "None" of "OccurrenceDetails | None" has no attribute "status"  [union-attr]
@@ -724,8 +725,6 @@ backend/v2/interfaces/coach/roster_routes.py:0: error: "object" has no attribute
 backend/v2/interfaces/coach/profile_routes.py:0: error: Returning Any from function declared to return "CoachProfileResponse"  [no-any-return]
 backend/v2/interfaces/coach/profile_routes.py:0: error: Returning Any from function declared to return "CoachProfileResponse"  [no-any-return]
 backend/v2/interfaces/coach/feedback_routes.py:0: error: "object" has no attribute "is_coach_assigned"  [attr-defined]
-backend/v2/interfaces/coach/billing_enrollment_routes.py:0: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
-backend/v2/interfaces/coach/billing_enrollment_routes.py:0: error: "object" has no attribute "is_coach_assigned"  [attr-defined]
 backend/v2/interfaces/admin/waitlist_routes.py:0: error: "object" has no attribute "__iter__"; maybe "__dir__" or "__str__"? (not iterable)  [attr-defined]
 backend/v2/interfaces/admin/sessions_routes.py:0: error: Module "backend.v2.contexts.enrollment.application.use_cases.admin_writes" does not explicitly export attribute "DuplicateSessionSeries"  [attr-defined]
 backend/v2/interfaces/admin/sessions_routes.py:0: error: "object" has no attribute "execute"  [attr-defined]
