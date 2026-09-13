@@ -10,4 +10,4 @@ None. Frontend-only CSS/test change; no migrations, no environment variables, no
 ## Risk / rollback
 Low risk: the change is additive padding on one drawer header plus a new test. If an issue surfaces, revert this PR.
 
-PR: #0
+PR: #817
