@@ -425,6 +425,10 @@ class AdminUseCases:
     # Student attendance correction (#517). Optional for fixtures that
     # predate it; real admin composition always sets it.
     correct_attendance: object | None = None  # CorrectAttendance
+    # Void a student mark + read the marks on one occurrence (#554). Optional
+    # for fixtures that predate them; real admin composition always sets both.
+    void_attendance: object | None = None  # VoidAttendance
+    list_occurrence_attendance: object | None = None  # (occurrence_id) -> list[Attendance]
     # Departures / holds (issue #697). Wired in composition/enrollment_holds.py
     # (never composition/admin.py — see that module's docstring) and attached
     # onto this already-built object in main.py, mirroring

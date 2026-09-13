@@ -167,7 +167,10 @@ export interface ParentAttendanceRecord {
   student_name: string;
   session_id: string;
   session_title: string;
+  /** "voided" (#554) means the academy annulled the mark after the fact. */
   status: string;
+  /** What a voided mark used to say, so the change is visible, not silent. */
+  previous_status?: string | null;
   marked_at: string;
   coach_name: string | null;
 }

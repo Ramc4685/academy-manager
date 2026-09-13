@@ -37,7 +37,8 @@ class AttendanceCorrectedPayload(BaseModel):
     occurrence_id: str
     session_id: str
     student_id: str
-    previous_status: Literal["present", "absent", "late"]
+    # "voided" is reachable here: correcting a voided mark un-voids it (#554).
+    previous_status: Literal["present", "absent", "late", "voided"]
     status: Literal["present", "absent", "late"]
     corrected_by: str
     corrected_at: datetime
@@ -49,6 +50,31 @@ class AttendanceCorrected(DomainEvent):
     name: Literal["Coaching.AttendanceCorrected"] = "Coaching.AttendanceCorrected"
     schema_version: Literal[1] = 1
     payload: AttendanceCorrectedPayload
+
+
+class AttendanceVoidedPayload(BaseModel):
+    """An admin annulled a recorded mark (#554).
+
+    The row survives for its audit trail; every downstream reader treats a
+    voided mark as if attendance was never taken for that student.
+    """
+
+    model_config = {"frozen": True}
+
+    attendance_id: str
+    occurrence_id: str
+    session_id: str
+    student_id: str
+    previous_status: Literal["present", "absent", "late"]
+    voided_by: str
+    voided_at: datetime
+    reason: str
+
+
+class AttendanceVoided(DomainEvent):
+    name: Literal["Coaching.AttendanceVoided"] = "Coaching.AttendanceVoided"
+    schema_version: Literal[1] = 1
+    payload: AttendanceVoidedPayload
 
 
 class SessionFeedbackPosted(DomainEvent):

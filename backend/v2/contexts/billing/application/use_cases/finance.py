@@ -31,8 +31,14 @@ from backend.v2.shared.time import (
 )
 from backend.v2.shared.time.academy_timezone import UTC_NAME
 
-
 # FINANCE
+
+# Which recorded student marks count as "the student attended" (#554).
+# ``voided`` is deliberately absent: an annulled mark counts as unmarked for
+# payroll, exactly as if the coach had never taken attendance for that row.
+ATTENDED_STATUSES = ("present", "late")
+
+
 class Expense(BaseModel):
     model_config = {"frozen": True}
     expense_id: str
@@ -259,7 +265,7 @@ class MongoPayoutRepository(TenantScopedRepository):
             "attendance",
             {
                 "occurrence_id": {"$in": occurrence_ids},
-                "status": {"$in": ["present", "late"]},
+                "status": {"$in": list(ATTENDED_STATUSES)},
             },
             {"occurrence_id": 1, "student_id": 1},
         )

@@ -10,7 +10,15 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-AttendanceStatus = Literal["present", "absent", "late"]
+# The three marks a coach can record. Kept separate from ``AttendanceStatus``
+# because nothing may be *marked* or *corrected to* "voided" — a void goes
+# through VoidAttendance (#554).
+RecordedAttendanceStatus = Literal["present", "absent", "late"]
+# ``voided`` (#554) is an admin annulment of a mark: the row stays for its
+# audit trail but counts as UNMARKED everywhere downstream — attendance rate,
+# payroll and absence policy all enumerate the statuses they count, and none
+# of them list "voided".
+AttendanceStatus = Literal["present", "absent", "late", "voided"]
 # How the student got onto the occurrence's roster: a standing enrollment, or
 # an approved one-time make-up / trial entry (issue #672). Missing on
 # documents written before the field existed, which read as ``enrollment``.

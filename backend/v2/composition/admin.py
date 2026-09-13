@@ -23,6 +23,7 @@ from backend.v2.composition.admin_session_staff import (
     attach_session_staff_names,
     compose_set_session_assistants,
 )
+from backend.v2.composition.attendance_corrections import compose_attendance_corrections
 from backend.v2.composition.autopay_comms import (
     autopay_active_enrollment_ids,
     build_dunning_worker,
@@ -240,9 +241,6 @@ from backend.v2.contexts.billing.infrastructure.mongo_tuition_discount_repo impo
 from backend.v2.contexts.coaching.application.use_cases.compute_payout import (
     ComputeCoachPayout,
 )
-from backend.v2.contexts.coaching.application.use_cases.correct_attendance import (
-    CorrectAttendance,
-)
 from backend.v2.contexts.coaching.application.use_cases.generate_daily_teaching_plan import (
     GenerateDailyTeachingPlan,
 )
@@ -255,7 +253,6 @@ from backend.v2.contexts.coaching.application.use_cases.mark_coach_attendance im
     MarkCoachAttendance,
 )
 from backend.v2.contexts.coaching.infrastructure.mongo_attendance_repo import (
-    MongoAttendanceRepository,
     MongoCoachAttendanceAuditLogRepository,
     MongoCoachAttendanceRepository,
 )
@@ -3027,8 +3024,8 @@ def compose_admin(
         academy_id=academy_id,
     )
 
-    correct_attendance = CorrectAttendance(
-        attendance_repo=MongoAttendanceRepository(db),
+    attendance_corrections = compose_attendance_corrections(
+        db,
         occurrence_lookup=_AdminOccurrenceLookup(),
         outbox=outbox,
         academy_id=request_academy_id,
@@ -4342,7 +4339,9 @@ def compose_admin(
         add_session_replacement=add_session_replacement,
         update_session_occurrence_replacement=update_session_occurrence_replacement,
         mark_coach_attendance=mark_coach_attendance,
-        correct_attendance=correct_attendance,
+        correct_attendance=attendance_corrections.correct,
+        void_attendance=attendance_corrections.void,
+        list_occurrence_attendance=attendance_corrections.list_for_occurrence,
         list_admin_enrollments_for_session=list_admin_enrollments_for_session,
         list_waitlist_for_session=list_waitlist_for_session,
         list_audit_logs=list_audit_logs,

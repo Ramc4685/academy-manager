@@ -1456,6 +1456,11 @@ def compose_parent(
                     "session_id": str(attendance["session_id"]),
                     "session_title": str((session or {}).get("title") or "Session"),
                     "status": str(attendance["status"]),
+                    "previous_status": (
+                        str(attendance["previous_status"])
+                        if attendance.get("previous_status")
+                        else None
+                    ),
                     "marked_at": attendance["marked_at"],
                     "coach_name": coach_name,
                 }

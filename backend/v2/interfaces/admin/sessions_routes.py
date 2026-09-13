@@ -18,6 +18,9 @@ from backend.v2.contexts.coaching.application.use_cases.correct_attendance impor
 from backend.v2.contexts.coaching.application.use_cases.mark_coach_attendance import (
     MarkCoachAttendanceCommand,
 )
+from backend.v2.contexts.coaching.application.use_cases.void_attendance import (
+    VoidAttendanceCommand,
+)
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     AcademyTimezoneUnset,
     CancelEnrollmentCommand,
@@ -48,6 +51,7 @@ from backend.v2.interfaces.admin.views import (
     AdminSessionOccurrenceList,
     AdminSessionOccurrenceView,
     AdminSessionView,
+    AdminStudentAttendanceList,
     AdminStudentAttendanceView,
     CancelSessionOccurrenceRequest,
     CancelSessionOccurrenceResponse,
@@ -69,6 +73,7 @@ from backend.v2.interfaces.admin.views import (
     UpdateOccurrenceCoachAttendanceRequest,
     UpdateOccurrenceReplacementRequest,
     UpdateSessionOccurrenceCoachRequest,
+    VoidStudentAttendanceRequest,
     WithdrawEnrollmentRequest,
 )
 from backend.v2.shared.auth.claims import AuthClaims
@@ -457,6 +462,70 @@ async def correct_occurrence_student_attendance(
         ),
         actor_id=claims.user_id,
         actor_role="admin",
+    )
+    return AdminStudentAttendanceView(**result.model_dump())
+
+
+@router.get(
+    "/session-occurrences/{occurrence_id}/attendance",
+    response_model=AdminStudentAttendanceList,
+    summary="List the student attendance marks recorded for a dated occurrence (#554)",
+)
+async def list_occurrence_student_attendance(
+    occurrence_id: str,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminStudentAttendanceList:
+    reader = use_cases.list_occurrence_attendance
+    if reader is None:
+        raise HTTPException(status_code=503, detail="Attendance correction is not configured")
+    rows = await reader(occurrence_id)  # type: ignore[operator]
+    return AdminStudentAttendanceList(
+        attendance=[
+            AdminStudentAttendanceView(
+                attendance_id=row.attendance_id,
+                occurrence_id=row.occurrence_id,
+                session_id=row.session_id,
+                student_id=row.student_id,
+                status=row.status,
+                previous_status=row.previous_status,
+                corrected_by=row.corrected_by,
+                corrected_at=row.corrected_at,
+                correction_reason=row.correction_reason,
+                marked_by=row.marked_by,
+                marked_at=row.marked_at,
+            )
+            for row in rows
+        ]
+    )
+
+
+@router.patch(
+    "/session-occurrences/{occurrence_id}/attendance/{student_id}/void",
+    response_model=AdminStudentAttendanceView,
+    summary="Void a student's recorded attendance for a dated occurrence (#554)",
+)
+async def void_occurrence_student_attendance(
+    occurrence_id: str,
+    student_id: str,
+    body: VoidStudentAttendanceRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminStudentAttendanceView:
+    """Admin-only, any time, reason required (owner decision 2026-09-12).
+
+    Coaches have no void path: their own mis-tap is a correction inside the
+    24h window on the coach BFF.
+    """
+    if use_cases.void_attendance is None:
+        raise HTTPException(status_code=503, detail="Attendance voiding is not configured")
+    result = await use_cases.void_attendance.execute(  # type: ignore[attr-defined]
+        VoidAttendanceCommand(
+            occurrence_id=occurrence_id,
+            student_id=student_id,
+            reason=body.reason,
+        ),
+        actor_id=claims.user_id,
     )
     return AdminStudentAttendanceView(**result.model_dump())
 

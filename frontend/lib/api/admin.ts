@@ -89,6 +89,26 @@ export interface AdminCoachAttendanceView {
   note: string;
 }
 
+/** One student's recorded mark for one dated occurrence (#517, #554). */
+export interface AdminStudentAttendanceView {
+  attendance_id: string;
+  occurrence_id: string;
+  session_id: string;
+  student_id: string;
+  /** "voided" is an admin annulment: the row stays, but counts as unmarked. */
+  status: "present" | "absent" | "late" | "voided";
+  previous_status: "present" | "absent" | "late" | "voided" | null;
+  corrected_by: string | null;
+  corrected_at: string | null;
+  correction_reason: string | null;
+  marked_by: string | null;
+  marked_at: string | null;
+}
+
+export interface AdminStudentAttendanceList {
+  attendance: AdminStudentAttendanceView[];
+}
+
 export interface UpdateSessionOccurrenceCoachRequest {
   actual_coach_id?: string | null;
   substitute_coach_id?: string | null;
@@ -1762,6 +1782,35 @@ export function updateOccurrenceCoachAttendance(
     {
       method: "PATCH",
       body: JSON.stringify(payload),
+    }
+  );
+}
+
+export function listOccurrenceStudentAttendance(
+  occurrenceId: string
+): Promise<AdminStudentAttendanceList> {
+  return apiFetch<AdminStudentAttendanceList>(
+    `/admin/session-occurrences/${encodeURIComponent(occurrenceId)}/attendance`,
+    { method: "GET" }
+  );
+}
+
+/**
+ * Void one student's mark (#554). Admin-only, allowed at any time, and the
+ * reason is mandatory — it is the only explanation the audit trail keeps.
+ */
+export function voidOccurrenceStudentAttendance(
+  occurrenceId: string,
+  studentId: string,
+  reason: string
+): Promise<AdminStudentAttendanceView> {
+  return apiFetch<AdminStudentAttendanceView>(
+    `/admin/session-occurrences/${encodeURIComponent(occurrenceId)}/attendance/${encodeURIComponent(
+      studentId
+    )}/void`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ reason }),
     }
   );
 }

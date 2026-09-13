@@ -47,6 +47,12 @@ from backend.v2.shared.occurrences import occurrence_session_id
 from backend.v2.shared.tenancy import current_academy_id
 from backend.v2.shared.time import academy_timezone_lookup, resolve_reporting_timezone
 
+# Attendance-rate denominator and numerator (#554). ``voided`` appears in
+# neither: an annulled mark drops out of the rate entirely rather than
+# counting as an absence.
+ATTENDANCE_RATE_COUNTED_STATUSES = ("present", "late", "absent")
+ATTENDANCE_RATE_PRESENT_STATUSES = frozenset({"present", "late"})
+
 
 async def _reporting_timezone(db: AsyncIOMotorDatabase[Any], academy_id: str) -> str:
     """The zone every month bucket on this page is read off (#608).
@@ -692,12 +698,12 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
             {
                 "academy_id": academy_id,
                 "marked_at": {"$gte": start, "$lt": end},
-                "status": {"$in": ["present", "late", "absent"]},
+                "status": {"$in": list(ATTENDANCE_RATE_COUNTED_STATUSES)},
             }
         )
         async for attendance in attendance_cursor:
             recorded_count += 1
-            if str(attendance.get("status")) in {"present", "late"}:
+            if str(attendance.get("status")) in ATTENDANCE_RATE_PRESENT_STATUSES:
                 present_count += 1
         attendance_rate = round(present_count / recorded_count, 4) if recorded_count else None
 

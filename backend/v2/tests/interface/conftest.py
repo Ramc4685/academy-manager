@@ -46,6 +46,9 @@ from backend.v2.contexts.coaching.application.use_cases.session_notes import (
     ListProgressNotes,
     SetProgressNoteVisibility,
 )
+from backend.v2.contexts.coaching.application.use_cases.void_attendance import (
+    VoidAttendance,
+)
 from backend.v2.contexts.coaching.domain.errors import ConflictAttendanceExists
 from backend.v2.contexts.coaching.domain.models import Attendance, CoachAttendance
 from backend.v2.contexts.enrollment.application.use_cases.coach_roster_writes import (
@@ -2276,6 +2279,12 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         academy_id=lambda: "acad",
         clock=lambda: datetime(2026, 6, 20, 10, 35, tzinfo=UTC),
     )
+    void_attendance = VoidAttendance(
+        attendance_repo=_student_attendance,
+        outbox=outbox,
+        academy_id=lambda: "acad",
+        clock=lambda: datetime(2026, 6, 20, 10, 35, tzinfo=UTC),
+    )
 
     async def list_waitlist_for_session(session_id):
         return [e for e in waitlist.entries.values() if e.session_id == session_id]
@@ -2585,6 +2594,8 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         update_session_occurrence_coach=update_session_occurrence_coach,
         mark_coach_attendance=mark_coach_attendance,
         correct_attendance=correct_attendance,
+        void_attendance=void_attendance,
+        list_occurrence_attendance=_student_attendance.list_for_occurrence,
         list_admin_enrollments_for_session=list_admin_enrollments_for_session,
         list_waitlist_for_session=list_waitlist_for_session,
         list_audit_logs=list_audit_logs,
