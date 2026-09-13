@@ -17,7 +17,8 @@
           "attendance_status": null,
           "expected_absence": false,
           "entry_source": "enrollment",
-          "pending_cancellation_at": null
+          "pending_cancellation_at": null,
+          "hold_return_on": null
         },
         {
           "student_id": "st2",
@@ -26,7 +27,8 @@
           "attendance_status": null,
           "expected_absence": false,
           "entry_source": "enrollment",
-          "pending_cancellation_at": null
+          "pending_cancellation_at": null,
+          "hold_return_on": null
         }
       ],
       "coach_id": "coach-1",

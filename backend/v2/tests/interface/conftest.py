@@ -1401,6 +1401,8 @@ class FakeEnrollmentAutopayStatus:
 class FakeStudentWriter:
     students: dict[str, Any] = field(default_factory=dict)
     admin_status: dict[str, str] = field(default_factory=dict)
+    # Issue #773: the DERIVED person lifecycle per student, keyed student_id.
+    admin_lifecycle: dict[str, str] = field(default_factory=dict)
     admin_levels: dict[str, str | None] = field(default_factory=dict)
 
     async def upsert(self, student):
@@ -2363,7 +2365,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
             return [u for u in users if role is None or u.role == role]
 
     class _ListAdminStudents:
-        async def execute(self, search=None, status=None, limit=50, cursor=None, missing=()):
+        async def execute(self, search=None, lifecycle=(), limit=50, cursor=None, missing=()):
             from backend.v2.shared.profile.completeness import CHILD_REQUIRED
 
             unknown = set(missing) - set(CHILD_REQUIRED)
@@ -2372,9 +2374,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
             rows = []
             search_key = full_name_key(search or "") if search else None
             for s in students.students.values():
-                row_status = students.admin_status.get(s.student_id, "active")
-                if status and row_status != status:
-                    continue
+                row_lifecycle = students.admin_lifecycle.get(s.student_id, "active")
                 parent_name = "Parent One" if s.parent_id == "p-1" else None
                 parent_email = "parent@example.com" if s.parent_id == "p-1" else None
                 haystack = " ".join(
@@ -2391,7 +2391,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
                             parent_id=s.parent_id,
                             parent_name=parent_name,
                             parent_email=parent_email,
-                            status=row_status,
+                            lifecycle=row_lifecycle,
                             active_session_count=1,
                             attendance_rate=None,
                             dues_status="current",
@@ -2400,6 +2400,15 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
                     }
                 )
             rows.sort(key=lambda row: (row["full_name_key"], row["summary"].student_id))
+            # Issue #773: filter and count on the DERIVED lifecycle before the
+            # page is cut — the fake mirrors the real repo's ordering, since a
+            # permissive fake here would hide the bug the rule exists to stop.
+            lifecycle_counts: dict[str, int] = {}
+            for row in rows:
+                state = row["summary"].lifecycle
+                lifecycle_counts[state] = lifecycle_counts.get(state, 0) + 1
+            if lifecycle:
+                rows = [row for row in rows if row["summary"].lifecycle in set(lifecycle)]
             if cursor:
                 decoded = decode_student_cursor(cursor)
                 rows = [
@@ -2421,6 +2430,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
             return AdminStudentPage(
                 students=[row["summary"] for row in page_rows],
                 next_cursor=next_cursor,
+                lifecycle_counts=lifecycle_counts,
             )
 
     class _FakeRoleModifier:

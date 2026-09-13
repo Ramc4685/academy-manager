@@ -11,6 +11,10 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from backend.v2.contexts.enrollment.application.use_cases.person_lifecycle import (
+    PersonLifecycle,
+)
+
 # --- Onboarding ---
 
 
@@ -257,7 +261,12 @@ class ParentInvoiceDetailView(ParentInvoiceView):
 class ParentChildView(BaseModel):
     student_id: str
     full_name: str
-    status: str
+    # Issue #773: the DERIVED lifecycle, not the dead ``students.status``
+    # field the portal used to print. A paused or held child read "active"
+    # here for as long as the field had not been hand-edited.
+    lifecycle: PersonLifecycle = "never_enrolled"
+    #: Resume / return / end date for the state above; None when it has none.
+    lifecycle_as_of: date | None = None
     active_session_count: int
     # Issue #740: held enrollments are counted apart from active ones so the
     # card can say "on hold" instead of silently showing one class fewer.

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
@@ -12,6 +12,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_directory import
     MAX_ACTIVE_SESSION_NAMES,
     AdminStudentCursor,
     ChangeAdminStudentParentCommand,
+    UpdateAdminStudentCommand,
 )
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     CancelEnrollment,
@@ -182,7 +183,6 @@ async def test_list_admin_students_returns_rich_default_page_without_per_student
     repo = MongoStudentRepository(db)
     page = await repo.list_admin_students(
         search=None,
-        status=None,
         limit=50,
         cursor=None,
     )
@@ -277,7 +277,6 @@ async def test_list_admin_students_uses_ledger_invoice_balances_for_dues_status(
 
     page = await MongoStudentRepository(db).list_admin_students(
         search=None,
-        status=None,
         limit=50,
         cursor=None,
     )
@@ -291,13 +290,22 @@ async def test_list_admin_students_uses_ledger_invoice_balances_for_dues_status(
 
 
 @pytest.mark.asyncio
-async def test_list_admin_students_filters_search_and_status(db, acad) -> None:
+async def test_list_admin_students_filters_search_and_lifecycle(db, acad) -> None:
     await _seed_directory(db, acad)
+    await db["enrollments"].insert_one(
+        {
+            "academy_id": acad,
+            "enrollment_id": "enr-alice",
+            "student_id": "st-alice",
+            "session_id": "sess-1",
+            "status": "active",
+        }
+    )
     repo = MongoStudentRepository(db)
 
     page = await repo.list_admin_students(
         search="alice",
-        status="active",
+        lifecycle=("active",),
         limit=50,
         cursor=None,
     )
@@ -314,7 +322,6 @@ async def test_list_admin_students_missing_filter_returns_only_incomplete(db, ac
 
     page = await repo.list_admin_students(
         search=None,
-        status=None,
         limit=50,
         cursor=None,
         missing=("date_of_birth",),
@@ -331,7 +338,6 @@ async def test_list_admin_students_missing_filter_rejects_unknown_key(db, acad) 
     with pytest.raises(ValueError, match="status"):
         await repo.list_admin_students(
             search=None,
-            status=None,
             limit=50,
             cursor=None,
             missing=("status",),  # not a completeness field — must be rejected
@@ -356,7 +362,6 @@ async def test_list_admin_students_missing_filter_excludes_complete_students(db,
 
     page = await repo.list_admin_students(
         search=None,
-        status=None,
         limit=50,
         cursor=None,
         missing=("date_of_birth", "emergency_contact_name"),
@@ -375,14 +380,12 @@ async def test_list_admin_students_cursor_returns_next_page_and_opaque_next_curs
 
     first = await repo.list_admin_students(
         search=None,
-        status=None,
         limit=2,
         cursor=None,
     )
     cursor = AdminStudentCursor(full_name_key="alice chen", student_id="st-alice")
     second = await repo.list_admin_students(
         search=None,
-        status=None,
         limit=2,
         cursor=base64.urlsafe_b64encode(
             json.dumps(cursor.model_dump(), separators=(",", ":")).encode()
@@ -1164,7 +1167,7 @@ async def test_list_admin_students_returns_active_session_names(db, acad) -> Non
     )
 
     repo = MongoStudentRepository(db)
-    page = await repo.list_admin_students(search=None, status=None, limit=50, cursor=None)
+    page = await repo.list_admin_students(search=None, limit=50, cursor=None)
     student = next(s for s in page.students if s.student_id == "st-named")
 
     assert student.active_session_count == 2
@@ -1190,7 +1193,7 @@ async def test_list_admin_students_caps_active_session_names(db, acad) -> None:
     )
 
     repo = MongoStudentRepository(db)
-    page = await repo.list_admin_students(search=None, status=None, limit=50, cursor=None)
+    page = await repo.list_admin_students(search=None, limit=50, cursor=None)
     student = next(s for s in page.students if s.student_id == "st-many")
 
     assert student.active_session_count == 6
@@ -1211,7 +1214,7 @@ async def test_list_admin_students_without_active_sessions_returns_no_names(db, 
     )
 
     repo = MongoStudentRepository(db)
-    page = await repo.list_admin_students(search=None, status=None, limit=50, cursor=None)
+    page = await repo.list_admin_students(search=None, limit=50, cursor=None)
     student = next(s for s in page.students if s.student_id == "st-none")
 
     assert student.active_session_count == 0
@@ -1231,7 +1234,7 @@ async def test_list_admin_students_falls_back_for_missing_session_document(db, a
     )
 
     repo = MongoStudentRepository(db)
-    page = await repo.list_admin_students(search=None, status=None, limit=50, cursor=None)
+    page = await repo.list_admin_students(search=None, limit=50, cursor=None)
     student = next(s for s in page.students if s.student_id == "st-dangling")
 
     assert student.active_session_count == 1
@@ -1252,7 +1255,7 @@ async def test_list_admin_students_does_not_leak_session_names_across_tenants(db
     )
 
     repo = MongoStudentRepository(db)
-    page = await repo.list_admin_students(search=None, status=None, limit=50, cursor=None)
+    page = await repo.list_admin_students(search=None, limit=50, cursor=None)
     student = next(s for s in page.students if s.student_id == "st-tenant")
 
     assert student.active_session_names == ["Academy session"]
@@ -1276,7 +1279,7 @@ async def test_list_admin_students_total_counts_distinct_sessions_not_enrollment
     )
 
     repo = MongoStudentRepository(db)
-    page = await repo.list_admin_students(search=None, status=None, limit=50, cursor=None)
+    page = await repo.list_admin_students(search=None, limit=50, cursor=None)
     student = next(s for s in page.students if s.student_id == "st-dupe")
 
     assert student.active_session_count == 2
@@ -1586,3 +1589,255 @@ async def test_admin_withdraw_through_real_writer_shows_actor_and_reason_on_past
     assert row.cancelled_at is None
     assert row.cancelled_by == "admin"
     assert row.reason == "Family relocating"
+
+
+# ---------------------------------------------------------------------------
+# Issue #773: derived person lifecycle
+# ---------------------------------------------------------------------------
+
+
+async def _seed_lifecycle_students(db, academy_id: str, count: int) -> None:
+    """`count` students, alphabetically ordered, each with one enrollment.
+
+    Every third student is paused; the rest are active. Their
+    ``students.status`` is left saying "active" for everyone, which is exactly
+    the lie the derivation exists to stop.
+    """
+    students = []
+    enrollments = []
+    for i in range(count):
+        student_id = f"st-{i:03d}"
+        status = "paused" if i % 3 == 0 else "active"
+        students.append(
+            {
+                "academy_id": academy_id,
+                "student_id": student_id,
+                "full_name": f"Student {i:03d}",
+                "parent_id": "parent-1",
+                "status": "active",  # the dead field, deliberately wrong
+            }
+        )
+        enrollments.append(
+            {
+                "academy_id": academy_id,
+                "enrollment_id": f"enr-{i:03d}",
+                "student_id": student_id,
+                "session_id": "sess-1",
+                "status": status,
+                "resume_on": "2026-11-01" if status == "paused" else None,
+            }
+        )
+    await db["students"].insert_many(students)
+    await db["enrollments"].insert_many(enrollments)
+
+
+@pytest.mark.asyncio
+async def test_paused_enrollment_derives_paused_even_though_status_says_active(db, acad) -> None:
+    await _seed_lifecycle_students(db, acad, 3)
+    repo = MongoStudentRepository(db)
+
+    page = await repo.list_admin_students(search=None, limit=50, cursor=None)
+
+    by_id = {s.student_id: s for s in page.students}
+    assert by_id["st-000"].lifecycle == "paused"
+    assert by_id["st-000"].lifecycle_as_of == date(2026, 11, 1)
+    assert by_id["st-001"].lifecycle == "active"
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_filter_searches_every_row_not_just_the_first_page(db, acad) -> None:
+    """The rule this pins: derivation happens BEFORE ``rows[: limit + 1]``.
+
+    Nine of these 25 students are paused and they are scattered past the page
+    boundary. Filtering after the slice would return only the paused students
+    that happened to land in the first 5 rows — the same shape of bug as the
+    summary tiles counting the 25 loaded rows.
+    """
+    await _seed_lifecycle_students(db, acad, 25)
+    repo = MongoStudentRepository(db)
+
+    page = await repo.list_admin_students(search=None, lifecycle=("paused",), limit=5, cursor=None)
+
+    assert [s.student_id for s in page.students] == [
+        "st-000",
+        "st-003",
+        "st-006",
+        "st-009",
+        "st-012",
+    ]
+    assert page.next_cursor is not None
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_counts_cover_the_whole_directory_not_the_page(db, acad) -> None:
+    await _seed_lifecycle_students(db, acad, 25)
+    repo = MongoStudentRepository(db)
+
+    page = await repo.list_admin_students(search=None, limit=5, cursor=None)
+
+    assert len(page.students) == 5
+    assert page.lifecycle_counts == {"paused": 9, "active": 16}
+
+
+@pytest.mark.asyncio
+async def test_a_student_with_no_enrollments_derives_never_enrolled(db, acad) -> None:
+    await db["students"].insert_one(
+        {
+            "academy_id": acad,
+            "student_id": "st-new",
+            "full_name": "New Child",
+            "parent_id": "parent-1",
+            "status": "active",
+        }
+    )
+    repo = MongoStudentRepository(db)
+
+    page = await repo.list_admin_students(search=None, limit=50, cursor=None)
+
+    assert page.students[0].lifecycle == "never_enrolled"
+
+
+@pytest.mark.asyncio
+async def test_update_student_profile_no_longer_writes_the_dead_status_field(db, acad) -> None:
+    """#773: the admin edit form was the ONLY writer of ``students.status``."""
+    await db["students"].insert_one(
+        {
+            "academy_id": acad,
+            "student_id": "st-edit",
+            "full_name": "Edit Me",
+            "parent_id": "parent-1",
+            "status": "inactive",
+        }
+    )
+    repo = MongoStudentRepository(db)
+
+    await repo.update_student_profile(
+        "st-edit",
+        UpdateAdminStudentCommand(
+            full_name="Edited Name",
+            actor_id="admin-1",
+            reason="test",
+        ),
+    )
+
+    doc = await db["students"].find_one({"academy_id": acad, "student_id": "st-edit"})
+    assert doc is not None
+    assert doc["full_name"] == "Edited Name"
+    # Untouched — not corrected, not cleared. Reads ignore it; a migration
+    # retires the column.
+    assert doc["status"] == "inactive"
+
+
+@pytest.mark.asyncio
+async def test_active_student_who_stopped_showing_up_derives_at_risk(db, acad) -> None:
+    """at_risk = active, but no attendance across the last three scheduled dates."""
+    now = datetime.now(UTC)
+    await db["students"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "student_id": "st-ghost",
+                "full_name": "Ghost Child",
+                "parent_id": "parent-1",
+                "status": "active",
+            },
+            {
+                "academy_id": acad,
+                "student_id": "st-regular",
+                "full_name": "Regular Child",
+                "parent_id": "parent-1",
+                "status": "active",
+            },
+        ]
+    )
+    await db["enrollments"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "enrollment_id": f"enr-{student_id}",
+                "student_id": student_id,
+                "session_id": "sess-1",
+                "status": "active",
+            }
+            for student_id in ("st-ghost", "st-regular")
+        ]
+    )
+    await db["session_occurrences"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "occurrence_id": f"occ-{n}",
+                "session_id": "sess-1",
+                "start_at": now - timedelta(days=n * 7),
+                "status": "scheduled",
+            }
+            for n in (1, 2, 3, 4)
+        ]
+    )
+    # The regular child attended last week; the ghost's last mark predates the
+    # three-occurrence window.
+    await db["attendance"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "student_id": "st-regular",
+                "status": "present",
+                "marked_at": now - timedelta(days=7),
+            },
+            {
+                "academy_id": acad,
+                "student_id": "st-ghost",
+                "status": "present",
+                "marked_at": now - timedelta(days=40),
+            },
+        ]
+    )
+    repo = MongoStudentRepository(db)
+
+    page = await repo.list_admin_students(search=None, limit=50, cursor=None)
+
+    by_id = {s.student_id: s.lifecycle for s in page.students}
+    assert by_id["st-ghost"] == "at_risk"
+    assert by_id["st-regular"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_a_brand_new_class_never_calls_anyone_at_risk(db, acad) -> None:
+    """Two past occurrences cannot establish a three-date absence; guessing
+    would flag every student in a session that has just started."""
+    now = datetime.now(UTC)
+    await db["students"].insert_one(
+        {
+            "academy_id": acad,
+            "student_id": "st-new",
+            "full_name": "New Child",
+            "parent_id": "parent-1",
+            "status": "active",
+        }
+    )
+    await db["enrollments"].insert_one(
+        {
+            "academy_id": acad,
+            "enrollment_id": "enr-new",
+            "student_id": "st-new",
+            "session_id": "sess-new",
+            "status": "active",
+        }
+    )
+    await db["session_occurrences"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "occurrence_id": f"occ-new-{n}",
+                "session_id": "sess-new",
+                "start_at": now - timedelta(days=n * 7),
+                "status": "scheduled",
+            }
+            for n in (1, 2)
+        ]
+    )
+    repo = MongoStudentRepository(db)
+
+    page = await repo.list_admin_students(search=None, limit=50, cursor=None)
+
+    assert page.students[0].lifecycle == "active"

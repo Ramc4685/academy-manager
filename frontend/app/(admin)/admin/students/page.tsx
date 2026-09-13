@@ -12,31 +12,49 @@ import { Chip } from "@/components/ds/chip";
 import { Avatar } from "@/components/ds/avatar";
 import { Button } from "@/components/ds/button";
 import { BigNum, Overline } from "@/components/ds/typography";
+import {
+  ALL_LIFECYCLES,
+  OPERATIONAL_LIFECYCLES,
+  lifecycleLabel,
+  lifecycleName,
+  lifecycleVariant,
+  type PersonLifecycle,
+} from "@/lib/format/lifecycle-copy";
 
 const PAGE_LIMIT = 25;
 
-const STATUS_FILTERS = [
-  { id: "all", label: "All" },
-  { id: "active", label: "Active" },
-  { id: "paused", label: "Paused" },
-  { id: "inactive", label: "Inactive" },
-] as const;
-
-type StatusFilter = (typeof STATUS_FILTERS)[number]["id"];
+// Issue #773: filters are DERIVED lifecycles, not the free-text
+// students.status this page used to send. "Everyone" is deliberately not the
+// default — the directory opens on the people who are still somebody's
+// problem today.
+const LIFECYCLE_FILTERS: { id: string; label: string; states: PersonLifecycle[] }[] = [
+  { id: "operational", label: "On the books", states: OPERATIONAL_LIFECYCLES },
+  { id: "all", label: "Everyone", states: [] },
+  ...ALL_LIFECYCLES.map((state) => ({
+    id: state,
+    label: lifecycleName(state),
+    states: [state],
+  })),
+];
 
 export default function AdminStudentsPage() {
   const [searchInput, setSearchInput] = useState("");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [filterId, setFilterId] = useState<string>("operational");
 
   const search = searchInput.trim();
-  const status = statusFilter === "all" ? undefined : statusFilter;
+  const lifecycle =
+    LIFECYCLE_FILTERS.find((f) => f.id === filterId)?.states ?? [];
 
   const studentsQuery = useInfiniteQuery({
-    queryKey: queryKeys.admin.students({ search, status, limit: PAGE_LIMIT }),
+    queryKey: queryKeys.admin.students({
+      search,
+      lifecycle: filterId,
+      limit: PAGE_LIMIT,
+    }),
     queryFn: ({ pageParam }) =>
       listAdminStudents({
         search: search || undefined,
-        status,
+        lifecycle,
         limit: PAGE_LIMIT,
         cursor: typeof pageParam === "string" ? pageParam : undefined,
       }),
@@ -49,18 +67,21 @@ export default function AdminStudentsPage() {
     () => studentsQuery.data?.pages.flatMap((page) => page.students ?? []) ?? [],
     [studentsQuery.data],
   );
-  const hasFilters = Boolean(search || status);
+  const hasFilters = Boolean(search) || filterId !== "all";
+  // Issue #773: counts come from the backend, over every row that matched the
+  // search — not from the 25 rows this client happens to have loaded.
+  const counts = studentsQuery.data?.pages[0]?.lifecycle_counts ?? {};
 
   return (
     <section data-testid="admin-students" className="space-y-6">
-      <SummaryCards students={students} />
+      <SummaryCards counts={counts} students={students} />
 
       <Card p={0}>
         <StudentsToolbar
           search={searchInput}
-          statusFilter={statusFilter}
+          filterId={filterId}
           onSearchChange={setSearchInput}
-          onStatusChange={setStatusFilter}
+          onFilterChange={setFilterId}
           isFetching={studentsQuery.isFetching && !studentsQuery.isFetchingNextPage}
         />
 
@@ -96,34 +117,44 @@ export default function AdminStudentsPage() {
   );
 }
 
-function SummaryCards({ students }: { students: AdminStudentView[] }) {
-  const active = students.filter((student) => student.status === "active").length;
-  const paused = students.filter((student) => student.status === "paused").length;
+function SummaryCards({
+  counts,
+  students,
+}: {
+  counts: Record<string, number>;
+  students: AdminStudentView[];
+}) {
+  const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
   const paymentRisk = students.filter(
     (student) => student.dues_status === "due" || student.dues_status === "overdue",
   ).length;
 
   return (
-    <div className="grid gap-4 md:grid-cols-4">
+    <div className="grid gap-4 md:grid-cols-5">
       <Card p={20} accent="#2563eb">
         <Overline>Students</Overline>
-        <BigNum size={32}>{students.length}</BigNum>
-        <p className="mt-1 text-[11px] text-rally-subtle">Current result set</p>
+        <BigNum size={32}>{total}</BigNum>
+        <p className="mt-1 text-[11px] text-rally-subtle">Everyone on record</p>
       </Card>
       <Card p={20} accent="#10b981">
         <Overline>Active</Overline>
-        <BigNum size={32}>{active}</BigNum>
-        <p className="mt-1 text-[11px] text-rally-subtle">Currently enrolled</p>
+        <BigNum size={32}>{counts.active ?? 0}</BigNum>
+        <p className="mt-1 text-[11px] text-rally-subtle">Attending now</p>
+      </Card>
+      <Card p={20} accent="#f59e0b">
+        <Overline>At risk</Overline>
+        <BigNum size={32}>{counts.at_risk ?? 0}</BigNum>
+        <p className="mt-1 text-[11px] text-rally-subtle">Missed last 3 classes</p>
       </Card>
       <Card p={20} accent="var(--rally-subtle-ink)">
-        <Overline>Paused</Overline>
-        <BigNum size={32}>{paused}</BigNum>
-        <p className="mt-1 text-[11px] text-rally-subtle">Temporarily paused</p>
+        <Overline>Paused / hold</Overline>
+        <BigNum size={32}>{(counts.paused ?? 0) + (counts.on_hold ?? 0)}</BigNum>
+        <p className="mt-1 text-[11px] text-rally-subtle">Coming back</p>
       </Card>
       <Card p={20} accent="#ef4444">
         <Overline>Payment risk</Overline>
         <BigNum size={32}>{paymentRisk}</BigNum>
-        <p className="mt-1 text-[11px] text-rally-subtle">Due or overdue</p>
+        <p className="mt-1 text-[11px] text-rally-subtle">Due or overdue (loaded rows)</p>
       </Card>
     </div>
   );
@@ -131,27 +162,29 @@ function SummaryCards({ students }: { students: AdminStudentView[] }) {
 
 function StudentsToolbar({
   search,
-  statusFilter,
+  filterId,
   onSearchChange,
-  onStatusChange,
+  onFilterChange,
   isFetching,
 }: {
   search: string;
-  statusFilter: StatusFilter;
+  filterId: string;
   onSearchChange: (value: string) => void;
-  onStatusChange: (value: StatusFilter) => void;
+  onFilterChange: (value: string) => void;
   isFetching: boolean;
 }) {
   return (
     <div className="flex flex-col gap-3 border-b border-neutral-200 bg-white px-5 py-4 dark:border-neutral-800 dark:bg-neutral-950 lg:flex-row lg:items-center lg:justify-between">
       <div className="flex flex-wrap items-center gap-2">
-        {STATUS_FILTERS.map((filter) => {
-          const active = statusFilter === filter.id;
+        {LIFECYCLE_FILTERS.map((filter) => {
+          const active = filterId === filter.id;
           return (
             <button
               key={filter.id}
               type="button"
-              onClick={() => onStatusChange(filter.id)}
+              aria-pressed={active}
+              data-testid={`admin-students-filter-${filter.id}`}
+              onClick={() => onFilterChange(filter.id)}
               className={`inline-flex h-8 items-center rounded-md px-3 font-body text-[13px] font-semibold transition ${
                 active
                   ? "bg-rally-ink text-white"
@@ -190,13 +223,6 @@ function StudentsToolbar({
   );
 }
 
-function mapStatus(s: string) {
-  if (s === "active") return "enrolled";
-  if (s === "paused") return "paused";
-  if (s === "inactive") return "expired";
-  return "manual";
-}
-
 function StudentsTable({ students }: { students: AdminStudentView[] }) {
   return (
     <div className="overflow-x-auto">
@@ -209,7 +235,7 @@ function StudentsTable({ students }: { students: AdminStudentView[] }) {
             <th className="px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Attendance</th>
             <th className="px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Dues</th>
             <th className="px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Last attendance</th>
-            <th className="px-5 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Status</th>
+            <th className="px-5 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Lifecycle</th>
           </tr>
         </thead>
         <tbody>
@@ -254,7 +280,10 @@ function StudentsTable({ students }: { students: AdminStudentView[] }) {
                 {student.last_seen_at ? new Date(student.last_seen_at).toLocaleDateString() : "—"}
               </td>
               <td className="px-5 py-4">
-                <Chip variant={mapStatus(student.status)} label={student.status.toUpperCase()} />
+                <LifecycleChip
+                  state={student.lifecycle}
+                  asOf={student.lifecycle_as_of}
+                />
               </td>
             </tr>
           ))}
@@ -373,4 +402,21 @@ function Skeleton() {
       ))}
     </div>
   );
+}
+
+/**
+ * One chip per person, or nothing. A payload from before #773 (a cached page,
+ * a rolled-back backend) carries no lifecycle at all, and a blank cell beats a
+ * crashed table.
+ */
+function LifecycleChip({
+  state,
+  asOf,
+}: {
+  state: string | null | undefined;
+  asOf?: string | null;
+}) {
+  const label = lifecycleLabel(state, asOf);
+  if (!label) return <span className="text-xs text-rally-subtle">—</span>;
+  return <Chip variant={lifecycleVariant(state)} label={label} />;
 }

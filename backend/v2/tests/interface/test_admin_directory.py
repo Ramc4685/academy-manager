@@ -35,10 +35,13 @@ def test_admin_lists_students(admin_client):
     assert body["students"][0]["parent_id"] == "p-1"
     assert body["students"][0]["attendance_rate"] is None
     assert body["students"][0]["dues_status"] == "current"
+    # Issue #773: the derived lifecycle replaces the free-text students.status.
+    assert body["students"][0]["lifecycle"] == "active"
+    assert "status" not in body["students"][0]
     assert body["next_cursor"] is None
 
 
-def test_admin_students_supports_search_status_and_limit(admin_client):
+def test_admin_students_supports_search_lifecycle_and_limit(admin_client):
     admin_client.seed["students"].students["st-1"] = Student(
         student_id="st-1",
         academy_id="acad",
@@ -51,9 +54,9 @@ def test_admin_students_supports_search_status_and_limit(admin_client):
         parent_id="p-2",
         full_name="Bob Rao",
     )
-    admin_client.seed["students"].admin_status["st-2"] = "paused"
+    admin_client.seed["students"].admin_lifecycle["st-2"] = "paused"
 
-    r = admin_client.get("/api/v2/admin/students?search=ali&status=active&limit=1")
+    r = admin_client.get("/api/v2/admin/students?search=ali&lifecycle=active&limit=1")
 
     assert r.status_code == 200, r.text
     body = r.json()

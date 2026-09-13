@@ -1268,7 +1268,7 @@ test.describe("Rally admin shell", () => {
             parent_id: "parent-1",
             parent_name: "Maya Chen",
             parent_email: "maya@example.com",
-            status: "active",
+            lifecycle: "active",
             active_session_count: 2,
             last_seen_at: "2026-05-17T12:00:00Z",
             attendance_rate: 0.85,
@@ -1297,14 +1297,14 @@ test.describe("Rally admin shell", () => {
     ).toEqual([]);
   });
 
-  test("students status filter resets pagination cursor", async ({ page }) => {
+  test("students lifecycle filter resets pagination cursor", async ({ page }) => {
     const errors = collectConsoleErrors(page);
     await stubAdminBff(page);
-    const requests: Array<{ status: string; cursor: string }> = [];
+    const requests: Array<{ lifecycle: string; cursor: string }> = [];
     await page.route("**/api/v2/admin/students*", (route) => {
       const url = new URL(route.request().url());
       requests.push({
-        status: url.searchParams.get("status") ?? "",
+        lifecycle: url.searchParams.get("lifecycle") ?? "",
         cursor: url.searchParams.get("cursor") ?? "",
       });
       const cursor = url.searchParams.get("cursor");
@@ -1316,7 +1316,7 @@ test.describe("Rally admin shell", () => {
             parent_id: "parent-1",
             parent_name: "Maya Chen",
             parent_email: "maya@example.com",
-            status: url.searchParams.get("status") || "active",
+            lifecycle: url.searchParams.get("lifecycle") || "active",
             active_session_count: 1,
             last_seen_at: null,
             attendance_rate: null,
@@ -1329,11 +1329,11 @@ test.describe("Rally admin shell", () => {
 
     await page.goto("/admin/students");
     await page.getByRole("button", { name: "Next page" }).click();
-    await page.getByRole("button", { name: /Paused/i }).click();
+    await page.getByTestId("admin-students-filter-paused").click();
 
     await expect
       .poll(() =>
-        requests.some((req) => req.status === "paused" && req.cursor === ""),
+        requests.some((req) => req.lifecycle === "paused" && req.cursor === ""),
       )
       .toBe(true);
     expect(
@@ -1444,7 +1444,7 @@ test.describe("Rally admin shell", () => {
             parent_id: "parent-e2e-1",
             parent_name: "Parent E2E",
             parent_email: "parent@example.com",
-            status: "active",
+            lifecycle: "active",
             active_session_count: 1,
             active_session_total: 1,
             active_session_names: ["Session E2E"],

@@ -25,6 +25,7 @@ import { SessionDetailTabs } from "@/components/coach/SessionDetailTabs";
 import { Chip } from "@/components/ds/chip";
 import { queueMark, queuedMarksFor, type QueuedMark } from "@/lib/offline/attendance-queue";
 import { onSync, syncNow } from "@/lib/offline/sync";
+import { lifecycleLabel } from "@/lib/format/lifecycle-copy";
 import { queryKeys } from "@/lib/query/keys";
 import { useOnline } from "@/lib/pwa/online";
 import { formatSessionTimeRange } from "@/lib/time/session-time";
@@ -767,6 +768,33 @@ const MARK_BUTTON_BASE =
 const SECONDARY_BUTTON_BASE =
   "inline-flex min-h-[44px] flex-1 items-center justify-center rounded-md border px-3 py-1 text-xs font-medium transition-colors disabled:opacity-50 sm:flex-none";
 
+/**
+ * The single lifecycle chip a roster row may show, or null.
+ *
+ * Order is precedence, not preference: an ending enrollment is the fact the
+ * coach has to act on (say goodbye, stop expecting them), a hold is the
+ * second, and a row that is simply active needs no chip at all — a roster
+ * where every name carries a badge is a roster where none of them is read.
+ */
+function lifecycleChip(
+  student: CoachRosterEntry,
+): { variant: "closing" | "pending"; label: string } | null {
+  if (student.pending_cancellation_at) {
+    const day = new Date(student.pending_cancellation_at);
+    const label = Number.isNaN(day.getTime())
+      ? "ENDING"
+      : `ENDS ${day.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+    return { variant: "closing", label };
+  }
+  if (student.enrollment_status === "held" || student.enrollment_status === "reclaim_pending") {
+    return {
+      variant: "pending",
+      label: lifecycleLabel("on_hold", student.hold_return_on),
+    };
+  }
+  return null;
+}
+
 function RosterRow({
   student,
   sessionId,
@@ -849,6 +877,16 @@ function RosterRow({
           {student.expected_absence && <Chip variant="pending" label="EXPECTED ABSENCE" />}
           {student.entry_source === "makeup" && <Chip variant="makeup" label="MAKE-UP" />}
           {student.entry_source === "trial" && <Chip variant="waitlist" label="TRIAL" />}
+          {/* Issue #773: at most ONE lifecycle chip per row. The coach already
+              received enrollment_status and pending_cancellation_at and
+              rendered neither, so a student whose last class is next week
+              looked identical to one who just joined. */}
+          {lifecycleChip(student) && (
+            <Chip
+              variant={lifecycleChip(student)!.variant}
+              label={lifecycleChip(student)!.label}
+            />
+          )}
           {queued && (
             <span
               data-testid={`mark-queued-${student.student_id}`}

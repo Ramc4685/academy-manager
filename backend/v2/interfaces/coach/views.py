@@ -6,7 +6,7 @@ payout, admin-only, or other-persona fields. Per docs/security-matrix.md.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -47,7 +47,13 @@ class CoachRosterEntry(BaseModel):
     # "held" (#697) is a live roster status: GetSessionRoster deliberately
     # keeps held rows visible, so this Literal must accept it — one rejected
     # row fails response validation for the coach's entire day (#732).
-    enrollment_status: Literal["active", "paused", "held", "cancelled"] | None = None
+    # "reclaim_pending" (#697) is the in-flight state of a seat reclaim. It is
+    # NON_TERMINAL, so GetSessionRoster can hand it to us, and a Literal that
+    # omitted it would fail response validation for the coach's entire day —
+    # the #732 failure mode, one bad row taking down every session.
+    enrollment_status: (
+        Literal["active", "paused", "held", "reclaim_pending", "cancelled"] | None
+    ) = None
     # Already-recorded mark for this occurrence, so the client can hydrate
     # attendance state after a reload instead of treating everyone as unmarked.
     attendance_status: Literal["present", "absent", "late"] | None = None
@@ -60,6 +66,11 @@ class CoachRosterEntry(BaseModel):
     # Issue #675: set while a parent's end-of-period cancel is pending — the
     # student still attends; the UI may show "ends <date>".
     pending_cancellation_at: datetime | None = None
+    # Issue #773: the promised return date of a hold (#697), so the roster can
+    # say "ON HOLD until Oct 15" instead of showing a name with no explanation.
+    # A calendar date, never an instant: it must read as the same day for the
+    # coach, the parent and the admin.
+    hold_return_on: date | None = None
 
 
 class CoachSession(BaseModel):

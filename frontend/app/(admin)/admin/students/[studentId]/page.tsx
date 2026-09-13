@@ -33,6 +33,8 @@ import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
 import { StopAllClassesDialog } from "@/components/admin/enrollment/stop-all-classes-dialog";
+import { Chip } from "@/components/ds/chip";
+import { lifecycleLabel, lifecycleVariant } from "@/lib/format/lifecycle-copy";
 
 import { BillingEnrollmentsPanel } from "./BillingEnrollmentsPanel";
 import { DetailList } from "./DetailList";
@@ -629,7 +631,13 @@ function Header({
               {student.full_name}
             </h2>
             <div className="mt-1 flex items-center gap-2">
-              <StatusChip status={student.status} />
+              {/* Issue #773: the derived lifecycle, with its date. */}
+              {lifecycleLabel(student.lifecycle, student.lifecycle_as_of) && (
+                <Chip
+                  variant={lifecycleVariant(student.lifecycle)}
+                  label={lifecycleLabel(student.lifecycle, student.lifecycle_as_of)}
+                />
+              )}
             </div>
           </div>
         </div>

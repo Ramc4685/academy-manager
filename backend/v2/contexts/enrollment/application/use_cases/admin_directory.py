@@ -12,6 +12,7 @@ from typing import Literal, Protocol
 from pydantic import BaseModel, Field
 
 from backend.v2.contexts.enrollment.application.ports import EnrollmentAutopayLookup
+from backend.v2.contexts.enrollment.domain.lifecycle import PersonLifecycle
 
 DuesStatus = Literal["current", "due", "overdue"]
 WaiverStatus = Literal["signed", "missing", "unknown"]
@@ -38,7 +39,18 @@ class AdminStudentSummary(BaseModel):
     parent_id: str
     parent_name: str | None = None
     parent_email: str | None = None
-    status: str
+    # Issue #773: the DERIVED person lifecycle. It replaces the free-text
+    # ``students.status`` field, which only the admin edit form ever wrote —
+    # Drop, Stop-all, Pause, Hold and hold-expiry all left it alone, so every
+    # child ever registered read back "active". Derived in
+    # ``domain/lifecycle.py`` from this student's enrollments, holds, pending
+    # cancels and attendance, and computed BEFORE pagination so a
+    # ``lifecycle=`` filter and the summary counts describe the whole
+    # directory rather than the 25 rows that happened to load.
+    lifecycle: PersonLifecycle = "never_enrolled"
+    #: Resume / return / end / lead date — whatever the state means. None when
+    #: the state has no date to show.
+    lifecycle_as_of: date | None = None
     # Active enrollment documents. Predates active_session_total and can exceed
     # it when a student holds two active enrollments for the same session.
     active_session_count: int = 0
@@ -153,7 +165,10 @@ class UpdateAdminStudentCommand(BaseModel):
 
     full_name: str | None = Field(default=None, min_length=1, max_length=120)
     date_of_birth: date | None = None
-    status: str | None = Field(default=None, max_length=32)
+    # Issue #773: ``status`` is gone. It was the only writer of the dead
+    # ``students.status`` field, and an admin typing "active" into a student
+    # who had dropped every class is exactly the lie the derived lifecycle
+    # exists to stop.
     parent_id: str | None = Field(default=None, min_length=1, max_length=120)
     notes: str | None = Field(default=None, max_length=2000)
     previous_experience: str | None = Field(default=None, max_length=1000)
@@ -197,6 +212,11 @@ class AdminStudentPage(BaseModel):
 
     students: list[AdminStudentSummary]
     next_cursor: str | None = None
+    # Issue #773: one count per lifecycle over EVERY row that matched the
+    # search / missing filters, not just the loaded page. The admin summary
+    # tiles used to count the 25 rows the client happened to have, so
+    # "Paused" reported 0 for an academy with paused students.
+    lifecycle_counts: dict[str, int] = Field(default_factory=dict)
 
 
 def full_name_key(value: str) -> str:
@@ -227,7 +247,7 @@ class AdminStudentDirectoryQuery(Protocol):
         self,
         *,
         search: str | None,
-        status: str | None,
+        lifecycle: tuple[str, ...] = (),
         limit: int,
         cursor: str | None,
         missing: tuple[str, ...] = (),
@@ -262,14 +282,14 @@ class ListAdminStudents:
         self,
         *,
         search: str | None = None,
-        status: str | None = None,
+        lifecycle: tuple[str, ...] = (),
         limit: int = 50,
         cursor: str | None = None,
         missing: tuple[str, ...] = (),
     ) -> AdminStudentPage:
         return await self._students.list_admin_students(
             search=search,
-            status=status,
+            lifecycle=lifecycle,
             limit=limit,
             cursor=cursor,
             missing=missing,

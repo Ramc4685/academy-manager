@@ -117,7 +117,7 @@ export default function ParentDashboardPage() {
       homeChildren.map((child) => ({
         student_id: child.student_id,
         full_name: child.full_name,
-        status: "active",
+        lifecycle: "active",
         active_session_count: 0,
         attended_count: 0,
         absent_count: 0,

@@ -55,3 +55,26 @@ describe("holdScheduleNote", () => {
     expect(holdScheduleNote([{ status: "active" }])).toBeNull();
   });
 });
+
+describe("partitionByHold does not drop live rows", () => {
+  it("keeps a paused enrollment instead of losing it", () => {
+    // Issue #773: the parent portal rendered [...active, ...held], so a
+    // paused class vanished from the child's card with no explanation —
+    // the same shape of bug #740 fixed for held rows.
+    const rows = [
+      { status: "active" },
+      { status: "held" },
+      { status: "paused" },
+    ];
+    const { active, held, other } = partitionByHold(rows);
+    expect(active).toEqual([{ status: "active" }]);
+    expect(held).toEqual([{ status: "held" }]);
+    expect(other).toEqual([{ status: "paused" }]);
+    expect([...active, ...held, ...other]).toHaveLength(rows.length);
+  });
+
+  it("carries an unfamiliar status through rather than swallowing it", () => {
+    const { other } = partitionByHold([{ status: "reclaim_pending" }]);
+    expect(other).toEqual([{ status: "reclaim_pending" }]);
+  });
+});
