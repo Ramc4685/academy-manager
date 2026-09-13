@@ -500,12 +500,15 @@ test.describe("Family billing", () => {
 
     await expect.poll(() => posts.length).toBe(1);
     expect(posts[0].url).toContain("/admin/students/stu-arjun/invoices");
+    // #727: the dialog mints one request_id per open so a double-submit
+    // cannot create two blank drafts; its value is random, so match its shape.
     expect(posts[0].body).toEqual({
       student_id: "stu-arjun",
       parent_id: "parent-1",
       period: "2026-09",
       due_date: "2026-09-30",
       enrollment_id: "enr-arjun",
+      request_id: expect.stringMatching(/^[0-9a-f-]{36}$/),
     });
 
     // The draft lands on the page and Add charge opens on top of it, holding
@@ -573,9 +576,11 @@ test.describe("Family billing", () => {
     await expect(page.getByTestId("bill-period-dialog")).toBeVisible();
     await page.getByTestId("bill-period-period").fill("2026-09");
     await page.getByTestId("bill-period-due-date").fill("2026-09-30");
-    // Quotes the session price the backend will use, not the override.
+    // #724: the backend prices the period through the monthly generator's
+    // resolver (proration, 4-class cap), so the dialog no longer quotes a
+    // flat "/mo" figure it cannot know.
     await expect(page.getByTestId("bill-period-subject")).toHaveText(
-      "Arjun · Sat 9:00 Beginners · Sep 2026 · $60.00/mo",
+      "Arjun · Sat 9:00 Beginners · Sep 2026",
     );
     await expect(page.getByTestId("bill-period-draft-warning")).toContainText(
       "skips this class for this month",
