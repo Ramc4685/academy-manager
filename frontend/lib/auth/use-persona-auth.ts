@@ -104,7 +104,10 @@ export function usePersonaAuth(
           if (cancelled) return;
           if (isAuthRejection(err)) {
             // 401/403: the session really is dead — bounce to /login with
-            // the backend's reason code.
+            // the backend's reason code. Drop the identity too: the Firebase
+            // client session may still be present, so without this the dead
+            // session's user would stay attached to later events (#750).
+            setSentryUser(null);
             setState({ checked: true, authorized: false, user: null });
             replaceLocation(router, loginPathForError(err));
             return;
@@ -227,6 +230,9 @@ export function usePlatformAuth(): PlatformAuthState & { retry: () => void } {
         .catch((err: unknown) => {
           if (cancelled) return;
           if (isAuthRejection(err)) {
+            // Same as the persona hook: a rejected backend session must clear
+            // the Sentry identity even though Firebase still has a user (#750).
+            setSentryUser(null);
             setState({
               checked: true,
               authorized: false,
