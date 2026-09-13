@@ -48,6 +48,8 @@ class FakeStripeGateway(StripeGateway):
         # that is already complete or expired. Tests add to this to exercise
         # the "parent paid on the old tab" race.
         self.unexpirable_checkouts: set[str] = set()
+        # Stripe Invoicing invoices voided alongside a ledger void (#784).
+        self.voided_invoices: list[str] = []
 
     async def create_checkout_session(
         self,
@@ -211,6 +213,9 @@ class FakeStripeGateway(StripeGateway):
             "currency": "usd",
             "payment_intent": f"pi_fake_{stripe_invoice_id}",
         }
+
+    async def void_stripe_invoice(self, stripe_invoice_id: str) -> None:
+        self.voided_invoices.append(stripe_invoice_id)
 
     async def retrieve_subscription(self, stripe_subscription_id: str) -> dict[str, Any]:
         return {

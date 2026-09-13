@@ -1548,8 +1548,6 @@ async def main() -> None:
                 },
                 "manual_methods": ["cash", "check", "zelle"],
                 "notifications": {
-                    "dues_reminders": True,
-                    "attendance_alerts": True,
                     "daily_digest_to_admin": True,
                 },
                 "created_at": utcnow(),

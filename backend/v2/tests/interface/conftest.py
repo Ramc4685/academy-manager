@@ -163,13 +163,15 @@ class FakeOccurrenceQuery:
         return None
 
     async def list_for_coach_on_date(
-        self, *, coach_id: str, on_date: date
+        self, *, coach_id: str, on_date: date, include_cancelled: bool = False
     ) -> list[SessionOccurrence]:
+        # Mirrors MongoSessionOccurrenceRepository: cancelled rows are hidden
+        # unless the caller opts in (#777).
         return [
             occurrence
             for occurrence in self._occurrences
             if occurrence.start_at.date() == on_date
-            and occurrence.status != "cancelled"
+            and (include_cancelled or occurrence.status != "cancelled")
             and coach_id
             in {
                 occurrence.scheduled_coach_id,
@@ -202,11 +204,14 @@ class FakeOccurrenceQuery:
         ]
         return sorted(rows, key=lambda occurrence: occurrence.start_at)[:limit]
 
-    async def list_on_date(self, *, on_date: date) -> list[SessionOccurrence]:
+    async def list_on_date(
+        self, *, on_date: date, include_cancelled: bool = False
+    ) -> list[SessionOccurrence]:
         rows = [
             occurrence
             for occurrence in self._occurrences
-            if occurrence.start_at.date() == on_date and occurrence.status != "cancelled"
+            if occurrence.start_at.date() == on_date
+            and (include_cancelled or occurrence.status != "cancelled")
         ]
         return sorted(rows, key=lambda occurrence: occurrence.start_at)
 
@@ -818,6 +823,16 @@ def _build_use_cases(seed_data) -> CoachUseCases:
 
     _get_roster = GetSessionRoster(enrollments=enrollments, students=students)
 
+    # Issue #774: overdue cents per student, seeded per test via
+    # ``coach_client.seed["overdue_cents"]``. Empty = no PAYMENT DUE chip.
+    _overdue_seed: dict[str, int] = {}
+
+    async def _overdue_cents_by_student(student_ids, on_date):
+        _ = on_date
+        return {sid: cents for sid, cents in _overdue_seed.items() if sid in set(student_ids)}
+
+    _overdue_cents_by_student.seed = _overdue_seed  # type: ignore[attr-defined]
+
     use_cases = CoachUseCases(
         list_today=ListCoachOccurrencesForDate(occurrences=occurrences, sessions=sessions),
         get_roster=_get_roster,
@@ -854,6 +869,7 @@ def _build_use_cases(seed_data) -> CoachUseCases:
             clock=_now,
         ),
         list_attendance_for_occurrence=_attendance_repo.list_for_occurrence,
+        overdue_cents_by_student=_overdue_cents_by_student,
         get_dashboard_metrics=_dashboard,
         create_lesson_plan=CreateLessonPlan(notes=notes, sessions=session_lookup),
         list_lesson_plans=ListLessonPlans(notes=notes, sessions=session_lookup),
@@ -933,6 +949,7 @@ def coach_client(seed) -> Iterator[TestClient]:
     with TestClient(app) as client:
         client.coach_use_cases = use_cases  # type: ignore[attr-defined]
         client.messages_repo = use_cases._messages_repo  # type: ignore[attr-defined]
+        client.overdue_cents = use_cases.overdue_cents_by_student.seed  # type: ignore[attr-defined]
         yield client
 
 
@@ -1017,6 +1034,9 @@ from backend.v2.contexts.billing.application.use_cases.finance import (
     RecordExpense,
 )
 from backend.v2.contexts.billing.application.use_cases.issue_refund import IssueRefund
+from backend.v2.contexts.billing.application.use_cases.send_past_due_reminders import (
+    SendPastDueReminders,
+)
 from backend.v2.contexts.billing.application.use_cases.tuition_discounts import (
     RemoveTuitionDiscount,
     SetTuitionDiscount,
@@ -2019,6 +2039,8 @@ def admin_seed():
         "payouts": FakePayoutRepo(),
         "messages": FakeMessageRepo(),
         "waivers": FakeAdminWaivers(),
+        # Issue #774: owner-facing autopay counts for the home attention list.
+        "dunning_alerts": {"failed_autopay": 0, "dunning_exhausted": 0},
         "invoice_details": {},
         "invoice_artifacts": {},
         "outbox": _AdminFakeOutbox(),
@@ -2364,6 +2386,28 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
 
     send_dues_reminders = SendDuesReminders(sender=_FakeDuesReminderSender())
 
+    class _NoPastDueInvoices:
+        async def list_past_due(self, *, due_on):
+            _ = due_on
+            return []
+
+    class _UnusedPastDueSender:
+        async def send_past_due_reminder(self, *, invoice, days_past_due):
+            raise AssertionError("no past-due invoices in the interface fixtures")
+
+    class _UnusedReminderStamp:
+        async def stamp_reminder(self, *, invoice_id, days_past_due):
+            raise AssertionError("no past-due invoices in the interface fixtures")
+
+    async def count_dunning_alerts() -> dict[str, int]:
+        return dict(seed["dunning_alerts"])
+
+    send_past_due_reminders = SendPastDueReminders(
+        invoices=_NoPastDueInvoices(),  # type: ignore[arg-type]
+        sender=_UnusedPastDueSender(),  # type: ignore[arg-type]
+        stamps=_UnusedReminderStamp(),  # type: ignore[arg-type]
+    )
+
     async def export_report_csv(report_name):
         return f"name\n{report_name}\n"
 
@@ -2633,6 +2677,8 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         list_dues_followup=list_dues_followup,
         list_billing_deferral_warnings=billing_deferrals.list_admin_warnings,
         send_dues_reminders=send_dues_reminders,
+        send_past_due_reminders=send_past_due_reminders,
+        count_dunning_alerts=count_dunning_alerts,
         export_report_csv=export_report_csv,
         list_enrollment_events=enrollment_events.list_for_enrollment_paginated,
         comms=comms,

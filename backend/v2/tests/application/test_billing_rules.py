@@ -37,6 +37,8 @@ from backend.v2.contexts.billing.domain.billing_audit import BillingAuditEntry
 class _Schedule:
     billing_day: int
     invoice_due_days: int
+    #: Issue #774: the past-due reminder offsets, stored beside the schedule.
+    reminder_days: tuple[int, ...] = (15, 20)
 
 
 @dataclass
@@ -52,8 +54,13 @@ class _Policy:
 
 
 class _FakeSchedule:
-    def __init__(self, billing_day: int = 1, invoice_due_days: int = 7) -> None:
-        self.current = _Schedule(billing_day, invoice_due_days)
+    def __init__(
+        self,
+        billing_day: int = 1,
+        invoice_due_days: int = 7,
+        reminder_days: tuple[int, ...] = (15, 20),
+    ) -> None:
+        self.current = _Schedule(billing_day, invoice_due_days, reminder_days)
         self.commands: list[SetInvoiceScheduleCommand] = []
         self.fail = False
 
@@ -64,7 +71,11 @@ class _FakeSchedule:
         if self.fail:
             raise RuntimeError("schedule store down")
         self.commands.append(cmd)
-        self.current = _Schedule(cmd.billing_day, cmd.invoice_due_days)
+        self.current = _Schedule(
+            cmd.billing_day,
+            cmd.invoice_due_days,
+            self.current.reminder_days if cmd.reminder_days is None else cmd.reminder_days,
+        )
         return self.current
 
 
@@ -464,3 +475,71 @@ async def test_the_invoice_schedule_audit_names_the_real_owner() -> None:
 
     assert schedule.commands[-1].actor_id == "usr_owner"
     assert schedule.commands[-1].reason == "moving to mid-month"
+
+
+# --- reminder_days: the one list-valued rule (issue #774) -------------------
+
+
+@pytest.mark.asyncio
+async def test_reminder_days_is_an_editable_row_carrying_its_offsets() -> None:
+    view = await _build(_FakeSchedule(reminder_days=(15, 20)), _FakeFees(), _FakePolicy()).execute(
+        "acad-1"
+    )
+
+    row = view.row("reminder_days")
+    assert row.editable is True
+    assert row.values == (15, 20)
+    assert (row.min_value, row.max_value) == rules.REMINDER_DAY_BOUNDS
+
+
+@pytest.mark.asyncio
+async def test_reminder_days_round_trips_through_the_write() -> None:
+    schedule = _FakeSchedule(reminder_days=(15, 20))
+    uc = _update(schedule, _FakeFees(), _FakePolicy())
+
+    result = await uc.execute(
+        "acad-1", UpdateBillingRulesCommand(reminder_days=[20, 10], actor_id="admin-1")
+    )
+
+    assert result.changed_fields == ("reminder_days",)
+    assert schedule.commands[-1].reminder_days == (10, 20)
+    assert schedule.current.reminder_days == (10, 20)
+
+
+@pytest.mark.asyncio
+async def test_an_empty_reminder_days_list_turns_reminders_off() -> None:
+    """Empty is the off switch, and it is a real change — not "leave alone"."""
+    schedule = _FakeSchedule(reminder_days=(15, 20))
+    uc = _update(schedule, _FakeFees(), _FakePolicy())
+
+    result = await uc.execute(
+        "acad-1", UpdateBillingRulesCommand(reminder_days=[], actor_id="admin-1")
+    )
+
+    assert result.changed_fields == ("reminder_days",)
+    assert schedule.current.reminder_days == ()
+
+
+@pytest.mark.asyncio
+async def test_omitting_reminder_days_leaves_the_stored_offsets_alone() -> None:
+    schedule = _FakeSchedule(billing_day=1, reminder_days=(15, 20))
+    uc = _update(schedule, _FakeFees(), _FakePolicy())
+
+    await uc.execute("acad-1", UpdateBillingRulesCommand(billing_day=9, actor_id="admin-1"))
+
+    assert schedule.current.reminder_days == (15, 20)
+
+
+@pytest.mark.asyncio
+async def test_an_out_of_range_reminder_day_is_refused_naming_the_field() -> None:
+    schedule = _FakeSchedule(reminder_days=(15,))
+    uc = _update(schedule, _FakeFees(), _FakePolicy())
+
+    with pytest.raises(BillingRulesValidationError) as exc:
+        await uc.execute(
+            "acad-1", UpdateBillingRulesCommand(reminder_days=[15, 90], actor_id="admin-1")
+        )
+
+    assert exc.value.field == "reminder_days"
+    # Nothing was written: validation runs before any store is touched.
+    assert schedule.current.reminder_days == (15,)

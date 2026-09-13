@@ -12,6 +12,21 @@ from __future__ import annotations
 from backend.v2.shared.http.errors import DomainError
 
 
+class PayoutPeriodFrozen(DomainError):
+    """Payroll inputs for this date are already snapshotted into an
+    approved or paid payout period (#787).
+
+    Coaching learns this through the ``PayoutPeriodLock`` port — Finance
+    owns the period, Coaching only asks whether the window is frozen. The
+    refusal is deliberate: a frozen period does not re-read attendance, so
+    a status or rate-override change after approval is invisible money
+    drift rather than a correction. The owner reopens the period first.
+    """
+
+    code = "Coaching.PayoutPeriodFrozen"
+    status_code = 409
+
+
 class SessionCancelled(DomainError):
     code = "Coaching.SessionCancelled"
     status_code = 409

@@ -23,6 +23,11 @@ Side effects, all idempotent:
    raised — there is nothing to charge in that case.
 3. Suppress the dunning ladder of every voided invoice so the hourly worker
    stops re-claiming it.
+4. Unwind what each voided invoice was still holding (issue #784): hand back
+   the account credit it consumed and void its Stripe twin.
+5. Write one ``invoice_voided`` billing-audit row per voided invoice, the same
+   trail the admin void route leaves (issue #784) — a lifecycle void writes off
+   real money, so who/why must be recoverable from either path.
 """
 
 from __future__ import annotations
@@ -35,6 +40,12 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
 
+from backend.v2.contexts.billing.application.use_cases.void_invoice_side_effects import (
+    VoidCreditsPort,
+    VoidStripeInvoicePort,
+    unwind_voided_invoice,
+)
+from backend.v2.contexts.billing.domain.billing_audit import BillingAuditEntry
 from backend.v2.contexts.billing.domain.ledger import LedgerInvoice, void_invoice
 
 log = logging.getLogger(__name__)
@@ -67,6 +78,10 @@ class LifecycleInvoiceLedger(Protocol):
 
 class LifecycleAutopayGateway(Protocol):
     async def set_autopay_enrollment_status(self, *, enrollment_id: str, status: str) -> bool: ...
+
+
+class LifecycleBillingAuditLog(Protocol):
+    async def append(self, entry: BillingAuditEntry) -> None: ...
 
 
 class LifecycleDunningSuppressor(Protocol):
@@ -130,14 +145,60 @@ class ApplyEnrollmentLifecycle:
         ledger: LifecycleInvoiceLedger,
         autopay: LifecycleAutopayGateway | None = None,
         dunning: LifecycleDunningSuppressor | None = None,
+        credits: VoidCreditsPort | None = None,
+        stripe: VoidStripeInvoicePort | None = None,
+        audit: LifecycleBillingAuditLog | None = None,
         academy_timezone: AcademyTimezoneReader | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._ledger = ledger
         self._autopay = autopay
         self._dunning = dunning
+        # Issue #784: a voided invoice hands back the credit it consumed and
+        # closes its Stripe twin. Optional so every existing caller keeps
+        # working, but composition MUST pass them (see lifecycle_billing.py).
+        self._credits = credits
+        self._stripe = stripe
+        # Issue #784: the audit trail for a lifecycle void. Optional so an
+        # existing caller keeps working, but composition MUST pass it
+        # (see lifecycle_billing.py) or the write-off is untraceable.
+        self._audit = audit
         self._academy_timezone = academy_timezone
         self._now = clock
+
+    async def _write_void_audit(
+        self, invoice: LedgerInvoice, *, reason: str, actor_id: str | None, now: datetime
+    ) -> None:
+        """One ``invoice_voided`` row per lifecycle void (issue #784).
+
+        Runs AFTER the ledger void and the unwind, the order every other
+        money path uses: a failed audit write must never leave an invoice the
+        caller was told is void still collectible. The audit id is derived
+        from the invoice so a retried transition repairs a missed row instead
+        of duplicating one (the repo swallows the duplicate key).
+        """
+        if self._audit is None:
+            return
+        try:
+            await self._audit.append(
+                BillingAuditEntry(
+                    audit_id=f"baud-lifecycle-void-{invoice.academy_id}-{invoice.invoice_id}",
+                    academy_id=invoice.academy_id,
+                    action="invoice_voided",
+                    actor_id=actor_id or "system",
+                    at=now,
+                    invoice_id=invoice.invoice_id,
+                    parent_id=invoice.parent_id,
+                    reason=reason,
+                    before={"status": invoice.status},
+                    after={"status": "void", "total_cents": invoice.total_cents},
+                )
+            )
+        except Exception:
+            log.exception(
+                "apply_enrollment_lifecycle_void_audit_failed",
+                extra={"invoice_id": invoice.invoice_id},
+            )
 
     async def execute(self, cmd: ApplyEnrollmentLifecycleCommand) -> ApplyEnrollmentLifecycleResult:
         now = self._now()
@@ -161,6 +222,15 @@ class ApplyEnrollmentLifecycle:
                     continue
                 await self._ledger.save_invoice(void_invoice(invoice, reason=reason, now=now))
                 voided.append(invoice.invoice_id)
+                await unwind_voided_invoice(
+                    invoice_id=invoice.invoice_id,
+                    stripe_invoice_id=invoice.stripe_invoice_id,
+                    credits=self._credits,
+                    stripe=self._stripe,
+                    reason=reason,
+                    now=now,
+                )
+                await self._write_void_audit(invoice, reason=reason, actor_id=cmd.actor_id, now=now)
                 if self._dunning is not None and await self._dunning.suppress_for_invoice(
                     invoice_id=invoice.invoice_id, reason="invoice_voided", now=now
                 ):

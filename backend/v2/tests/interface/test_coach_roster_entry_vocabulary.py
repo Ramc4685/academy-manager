@@ -41,3 +41,23 @@ def test_a_held_row_carries_its_return_date_to_the_coach() -> None:
         hold_return_on=date(2026, 10, 15),
     )
     assert entry.hold_return_on == date(2026, 10, 15)
+
+
+def test_roster_row_carries_one_payment_due_amount_when_overdue(coach_client):
+    """Issue #774: the only money fact a coach sees, in integer cents."""
+    coach_client.overdue_cents["st1"] = 7000
+
+    r = coach_client.get("/api/v2/coach/today?date=2026-05-16")
+
+    assert r.status_code == 200, r.text
+    roster = r.json()["sessions"][0]["roster"]
+    by_student = {row["student_id"]: row["payment_due_cents"] for row in roster}
+    assert by_student["st1"] == 7000
+    # A student who owes nothing carries no chip at all — not a zero.
+    assert by_student["st2"] is None
+
+
+def test_coach_persona_no_longer_mounts_any_billing_route(coach_client):
+    """Owner decision 2026-09-12: coaches see the chip and nothing else."""
+    paths = {getattr(route, "path", "") for route in coach_client.app.routes}
+    assert not [path for path in paths if "billing" in path]

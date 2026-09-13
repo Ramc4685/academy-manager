@@ -22,6 +22,11 @@ import {
 import { Button } from "@/components/ds/button";
 import { Modal } from "@/components/ds/modal";
 import { OwnerOnlyHint, useIsOwner } from "@/components/admin/owner-context";
+import {
+  DEPARTURE_REASON_OPTIONS,
+  toReasonCode,
+  type DepartureReasonCode,
+} from "@/lib/admin/departure-reasons";
 
 import {
   defaultOutcomeFor,
@@ -45,6 +50,10 @@ export function StopAllClassesDialog({
   const isOwner = useIsOwner();
   const [effectiveDate, setEffectiveDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [reason, setReason] = useState("");
+  // Issue #775: the structured half of "why". Optional, and deliberately
+  // opens on "not coded" rather than pre-selecting a reason nobody chose —
+  // a pre-filled code is worse than no code for "why do families leave".
+  const [reasonCode, setReasonCode] = useState<DepartureReasonCode | "">("");
   const [outcome, setOutcome] = useState<MoneyOutcome>(() =>
     defaultOutcomeFor(policyDefaultOutcome),
   );
@@ -56,6 +65,9 @@ export function StopAllClassesDialog({
         effective_date: effectiveDate,
         outcome,
         reason,
+        // Omitted, never "": the route models it as optional and rejects the
+        // empty string.
+        ...(reasonCode ? { reason_code: toReasonCode(reasonCode) } : {}),
       }),
     onSuccess: (data) => {
       setResult(data);
@@ -133,6 +145,25 @@ export function StopAllClassesDialog({
               <OwnerOnlyHint />
             </span>
           )}
+        </label>
+        <label className="block text-sm">
+          <span className="mb-1 block font-medium text-rally-ink">Reason code</span>
+          <select
+            value={reasonCode}
+            data-testid="stop-all-classes-reason-code"
+            onChange={(event) => setReasonCode(event.target.value as DepartureReasonCode | "")}
+            className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
+          >
+            <option value="">Not specified</option>
+            {DEPARTURE_REASON_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <span className="mt-1 block text-xs text-rally-muted">
+            Groups this departure in the leaving report. The note below still says the rest.
+          </span>
         </label>
         <label className="block text-sm">
           <span className="mb-1 block font-medium text-rally-ink">Reason</span>

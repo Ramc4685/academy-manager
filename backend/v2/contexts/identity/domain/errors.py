@@ -90,6 +90,33 @@ class CannotRemoveLastRole(DomainError):
     status_code = 409
 
 
+class CoachHasFutureSessions(DomainError):
+    """Raised when a coaching role is removed while future work is assigned.
+
+    Dropping ``coach``/``assistant_coach`` only rewrote ``users.roles``; the
+    sessions and occurrences naming that user kept naming them, so the roster
+    rendered ``coach_name: None`` and nobody was accountable for the class
+    (#785). Removal now has to be preceded by a reassignment.
+    """
+
+    code = "Identity.CoachHasFutureSessions"
+    status_code = 409
+
+
+class ParentHasLiveChildren(DomainError):
+    """Raised when a parent account is disabled while a child is still enrolled.
+
+    The disable cascade (#785) suspends the membership and the Firebase
+    account, which is exactly the problem for a payer: the enrollments keep
+    running, invoices keep being raised against them, and the only person who
+    could see or pay them can no longer sign in. The academy has to withdraw
+    or transfer the live enrollments first.
+    """
+
+    code = "Identity.ParentHasLiveChildren"
+    status_code = 409
+
+
 class MagicLinkInvalid(DomainError):
     """The one-time magic-link token is unknown, already used, or tenant-mismatched.
 

@@ -333,7 +333,13 @@ async def test_reopen_paid_period_clears_payment_and_audits_before_snapshot() ->
     await repo.save(paid)
     uc = ReopenPayoutPeriod(repository=repo, audit=audit, clock=_clock)
 
-    stored = await uc.execute(period_id="pp-1", actor_id="admin-1", reason="attendance was wrong")
+    stored = await uc.execute(
+        period_id="pp-1",
+        actor_id="admin-1",
+        reason="attendance was wrong",
+        # #787: a paid period only reopens when the clawback is acknowledged.
+        acknowledge_paid_clawback=True,
+    )
 
     assert stored.status == "draft"
     assert stored.paid_at is None
@@ -346,7 +352,7 @@ async def test_reopen_paid_period_clears_payment_and_audits_before_snapshot() ->
     assert entry.before is not None
     assert entry.before["status"] == "paid"
     assert entry.before["paid_method"] == "cash"
-    assert entry.after == {"status": "draft"}
+    assert entry.after == {"status": "draft", "paid_clawback_acknowledged": True}
 
 
 @pytest.mark.asyncio

@@ -13,8 +13,6 @@ class AcademyRepo(Protocol):
 
 @dataclass(frozen=True)
 class GetAcademyNotificationsOutput:
-    dues_reminders: bool = False
-    attendance_alerts: bool = False
     daily_digest_to_admin: bool = False
     # Per-academy override for the coach teaching-plan digest. ``coach_digest_hour``
     # is interpreted in the scheduler timezone (see scheduler refactor in main.py),
@@ -46,8 +44,6 @@ def _notifications_output(
     default_parent_digest_hour: int = 6,
 ) -> GetAcademyNotificationsOutput:
     return GetAcademyNotificationsOutput(
-        dues_reminders=bool(notifs.get("dues_reminders", False)),
-        attendance_alerts=bool(notifs.get("attendance_alerts", False)),
         daily_digest_to_admin=bool(notifs.get("daily_digest_to_admin", False)),
         coach_digest_enabled=bool(notifs.get("coach_digest_enabled", default_coach_digest_enabled)),
         coach_digest_hour=_coerce_hour(

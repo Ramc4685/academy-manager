@@ -24,6 +24,10 @@ import {
 import { getDeparturePolicy } from "@/lib/api/v2/departure-policy";
 import { queryKeys } from "@/lib/query/keys";
 import {
+  DEPARTURE_REASON_OPTIONS,
+  type DepartureReasonCode,
+} from "@/lib/admin/departure-reasons";
+import {
   buildWithdrawRequest,
   initialWithdrawalOutcome,
   withdrawErrorMessage,
@@ -556,6 +560,10 @@ export function WithdrawalCreditDialog({
     chosenOutcome ??
     initialWithdrawalOutcome(departurePolicyQuery.data?.drop_default_outcome, isOwner);
   const [adminNote, setAdminNote] = useState("");
+  // Issue #775: the structured half of the departure reason. Optional, and
+  // opens on "not specified" — a pre-selected code would be recorded on
+  // every Drop where the admin simply did not look at the field.
+  const [reasonCode, setReasonCode] = useState<DepartureReasonCode | "">("");
   const [error, setError] = useState<string | null>(null);
   const previewMutation = useMutation({
     mutationFn: () =>
@@ -568,11 +576,17 @@ export function WithdrawalCreditDialog({
     mutationFn: () =>
       withdrawEnrollment(
         enrollment!.enrollment_id,
-        buildWithdrawRequest({ withdrawalDate, outcome, adminNote }),
+        buildWithdrawRequest({
+          withdrawalDate,
+          outcome,
+          adminNote,
+          ...(reasonCode ? { reasonCode } : {}),
+        }),
       ),
     onSuccess: () => {
       setChosenOutcome(null);
       setAdminNote("");
+      setReasonCode("");
       setError(null);
       onApproved();
     },
@@ -668,6 +682,26 @@ export function WithdrawalCreditDialog({
                 <p className="mt-1 text-xs text-neutral-500">{preview.message}</p>
               </div>
             )}
+            <Field label="Reason code">
+              <select
+                value={reasonCode}
+                data-testid="withdraw-reason-code"
+                onChange={(event) =>
+                  setReasonCode(event.target.value as DepartureReasonCode | "")
+                }
+                className={inputClass}
+              >
+                <option value="">Not specified</option>
+                {DEPARTURE_REASON_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-neutral-500">
+                Groups this departure in the leaving report. The note still says the rest.
+              </p>
+            </Field>
             <Field label="Admin note">
               <textarea
                 value={adminNote}

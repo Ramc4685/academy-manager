@@ -15,6 +15,19 @@ class SessionCancelled(DomainError):
     status_code = 409
 
 
+class PayoutPeriodFrozen(DomainError):
+    """The coach's payout period covering this date is approved or paid (#787).
+
+    Cancelling the date clears ``is_payable``, which is a payroll input the
+    frozen snapshot will never re-read — the coach stays paid for a class
+    the academy now says did not happen, with nothing flagging the
+    mismatch. The owner reopens the payout period first.
+    """
+
+    code = "Enrollment.PayoutPeriodFrozen"
+    status_code = 409
+
+
 class DuplicateSessionSeries(DomainError):
     code = "Enrollment.DuplicateSessionSeries"
     status_code = 409

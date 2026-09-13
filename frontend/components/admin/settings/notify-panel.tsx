@@ -23,8 +23,6 @@ const HOURS = Array.from({ length: 24 }, (_, h) => h);
 
 function normalize(data: AdminNotificationsView | null | undefined): AdminNotificationsView {
   return {
-    dues_reminders: data?.dues_reminders ?? false,
-    attendance_alerts: data?.attendance_alerts ?? false,
     daily_digest_to_admin: data?.daily_digest_to_admin ?? false,
     coach_digest_enabled: data?.coach_digest_enabled ?? false,
     coach_digest_hour: data?.coach_digest_hour ?? 6,
@@ -84,16 +82,12 @@ export function NotifyPanel() {
       <Card p={24} className="max-w-3xl">
         <Overline>Notifications</Overline>
         <div className="mt-5 grid gap-3">
-          <Toggle
-            label="Dues reminders"
-            checked={form.dues_reminders}
-            onChange={(checked) => setForm((prev) => ({ ...prev, dues_reminders: checked }))}
-          />
-          <Toggle
-            label="Attendance alerts"
-            checked={form.attendance_alerts}
-            onChange={(checked) => setForm((prev) => ({ ...prev, attendance_alerts: checked }))}
-          />
+          {/* Issue #774: the "Dues reminders" toggle used to live here. It was
+              persisted and read by nothing. The real control is Billing rules
+              → Past-due reminder days, where an empty list is the off switch. */}
+          <p className="text-sm text-rally-muted" data-testid="notify-dues-reminders-moved">
+            Past-due reminder emails are configured in Settings &rarr; Billing rules.
+          </p>
           <Toggle
             label="Daily admin digest"
             checked={form.daily_digest_to_admin}

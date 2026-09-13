@@ -34,6 +34,9 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_directory import
 from backend.v2.contexts.identity.domain.models import AcademyMembership, User
 from backend.v2.shared.tenancy import tenant_scope
 
+#: actor_id the void route forwarded, for the #784 attribution test.
+captured_void_actor: list[str | None] = []
+
 
 def _seed_payment(
     seed,
@@ -340,7 +343,12 @@ def _override_ledger(admin_client, ledger: _FakeLedger) -> None:
             RemoveInvoiceLineCommand(invoice_id=invoice_id, line_id=line_id)
         )
 
-    async def void_billing_invoice(*, invoice_id: str, reason: str) -> None:
+    async def void_billing_invoice(
+        *, invoice_id: str, reason: str, actor_id: str | None = None
+    ) -> None:
+        # Mirrors the real builder's signature: the route forwards the
+        # acting user so the void can be audited (#784).
+        captured_void_actor.append(actor_id)
         invoice = await ledger.get_invoice(invoice_id)
         if invoice is None:
             raise ValueError("invoice not found")
@@ -1434,6 +1442,20 @@ def test_void_invoice_rejects_recorded_payment_activity(admin_client):
     assert response.status_code == 409
     assert "recorded payments" in response.json()["detail"]
     assert ledger.invoices["inv-1"].status == "partially_paid"
+
+
+def test_void_invoice_forwards_the_acting_user(admin_client):
+    """Issue #784: the audit row needs to name who wrote the money off."""
+    ledger = _FakeLedger(invoices=[_invoice(status="open")])
+    _override_ledger(admin_client, ledger)
+    captured_void_actor.clear()
+
+    response = admin_client.post(
+        "/api/v2/admin/billing/invoices/inv-1/void", json={"reason": "duplicate"}
+    )
+
+    assert response.status_code == 200, response.text
+    assert captured_void_actor and captured_void_actor[0]
 
 
 def test_void_invoice_uses_request_body_reason(admin_client, monkeypatch):

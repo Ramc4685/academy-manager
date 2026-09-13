@@ -29,6 +29,12 @@ export interface BillingRuleRow {
   label: string;
   editable: boolean;
   value: number | null;
+  /**
+   * Issue #774: `reminder_days` is the one editable rule that is a LIST — the
+   * days after the due date a past-due reminder goes out. `null` on every
+   * other row; an EMPTY array means "send none", which is the off switch.
+   */
+  values?: number[] | null;
   unit: BillingRuleUnit | null;
   min_value: number | null;
   max_value: number | null;
@@ -49,16 +55,43 @@ export interface BillingRulesView {
 
 export type BillingRulesForm = Record<string, string>;
 
-export type UpdateBillingRulesRequest = Record<string, number | string | null>;
+export type UpdateBillingRulesRequest = Record<string, number | number[] | string | null>;
 
 export function editableRows(view: BillingRulesView | null | undefined): BillingRuleRow[] {
   return (view?.groups ?? []).flatMap((group) => group.rows.filter((row) => row.editable));
 }
 
+/** True for the one rule whose value is a list of day offsets (#774). */
+export function isListRow(row: BillingRuleRow): boolean {
+  return Array.isArray(row.values);
+}
+
 /** Stored value → the string the input shows. Cents rows show dollars. */
 export function rowToInput(row: BillingRuleRow): string {
+  if (isListRow(row)) return (row.values ?? []).join(", ");
   if (row.value === null || row.value === undefined) return "";
   return row.unit === "cents" ? (row.value / 100).toFixed(2) : String(row.value);
+}
+
+/**
+ * "15, 20" → [15, 20]; blank → [] (the off switch). `null` for anything that
+ * is not a list of whole numbers, so the panel can say so inline.
+ */
+export function inputToDays(raw: string): number[] | null {
+  const trimmed = raw.trim();
+  if (trimmed === "") return [];
+  const parts = trimmed.split(/[,\s]+/).filter(Boolean);
+  const days: number[] = [];
+  for (const part of parts) {
+    if (!/^\d+$/.test(part)) return null;
+    const day = Number(part);
+    if (!days.includes(day)) days.push(day);
+  }
+  return days.sort((a, b) => a - b);
+}
+
+function sameDays(a: number[], b: number[]): boolean {
+  return a.length === b.length && a.every((day, i) => day === b[i]);
 }
 
 export function toForm(view: BillingRulesView | null | undefined): BillingRulesForm {
@@ -82,6 +115,9 @@ export function inputToValue(row: BillingRuleRow, raw: string, money: MoneyCodec
 export function boundsMessage(row: BillingRuleRow, money: MoneyCodec): string {
   const low = row.min_value ?? 0;
   const high = row.max_value ?? 0;
+  if (isListRow(row)) {
+    return `Enter whole numbers between ${low} and ${high}, separated by commas. Leave empty to send none.`;
+  }
   if (row.unit === "cents") {
     return `Enter an amount between ${money.format(low)} and ${money.format(high)}.`;
   }
@@ -118,6 +154,29 @@ export function diffForm(
 
   for (const row of editableRows(view)) {
     const raw = form[row.key] ?? "";
+    if (isListRow(row)) {
+      // Blank is a REAL value here, not "leave alone": empty means send no
+      // reminders at all, which is how an academy turns them off (#774).
+      const days = inputToDays(raw);
+      const stored = row.values ?? [];
+      if (
+        days === null ||
+        days.some(
+          (day) =>
+            (row.min_value !== null && day < row.min_value) ||
+            (row.max_value !== null && day > row.max_value),
+        )
+      ) {
+        errors[row.key] = boundsMessage(row, money);
+        continue;
+      }
+      if (!sameDays(days, stored)) {
+        changed.push(row.key);
+        changedLabels.push(row.label);
+        payload[row.key] = days;
+      }
+      continue;
+    }
     if (raw.trim() === "") continue;
     const parsed = inputToValue(row, raw, money);
     if (parsed === null) {

@@ -26,6 +26,7 @@ class MongoEnrollmentEventRepository(TenantScopedRepository):
             student_id=str(doc["student_id"]),
             actor_id=doc.get("actor_id"),
             reason=doc.get("reason"),
+            reason_code=doc.get("reason_code"),
             effective_at=doc["effective_at"],
             occurred_at=doc["occurred_at"],
             billing_policy=doc.get("billing_policy"),

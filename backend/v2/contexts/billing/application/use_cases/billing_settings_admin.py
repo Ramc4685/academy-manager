@@ -101,6 +101,11 @@ class SetInvoiceScheduleCommand(BaseModel):
     # command boundary rather than by the model deep inside the write.
     billing_day: int = Field(ge=1, le=28)
     invoice_due_days: int = Field(ge=0, le=60)
+    #: Days AFTER the due date on which a past-due reminder email goes out
+    #: (issue #774). ``None`` leaves the stored value alone — this command is
+    #: shared with the older invoice-schedule panel, which knows nothing about
+    #: reminders. An EMPTY tuple is a real value: it turns reminders off.
+    reminder_days: tuple[int, ...] | None = None
     actor_id: str
     reason: str | None = None
 
@@ -110,6 +115,7 @@ class InvoiceScheduleResult(BaseModel):
 
     billing_day: int
     invoice_due_days: int
+    reminder_days: tuple[int, ...] = ()
 
 
 class GetInvoiceScheduleSettings:
@@ -121,6 +127,7 @@ class GetInvoiceScheduleSettings:
         return InvoiceScheduleResult(
             billing_day=current.billing_day,
             invoice_due_days=current.invoice_due_days,
+            reminder_days=current.reminder_days,
         )
 
 
@@ -147,13 +154,20 @@ class SetInvoiceScheduleSettings:
 
     async def execute(self, cmd: SetInvoiceScheduleCommand) -> InvoiceScheduleResult:
         current = await self._settings.get()
+        reminder_days = (
+            current.reminder_days
+            if cmd.reminder_days is None
+            else tuple(sorted(set(cmd.reminder_days)))
+        )
         if (
             current.billing_day == cmd.billing_day
             and current.invoice_due_days == cmd.invoice_due_days
+            and current.reminder_days == reminder_days
         ):
             return InvoiceScheduleResult(
                 billing_day=cmd.billing_day,
                 invoice_due_days=cmd.invoice_due_days,
+                reminder_days=reminder_days,
             )
         # Audit BEFORE the write, same rationale as SetPlatformChargeFallback:
         # the schedule must never change unaudited, and a failed upsert leaves
@@ -170,10 +184,12 @@ class SetInvoiceScheduleSettings:
                     before={
                         "billing_day": current.billing_day,
                         "invoice_due_days": current.invoice_due_days,
+                        "reminder_days": list(current.reminder_days),
                     },
                     after={
                         "billing_day": cmd.billing_day,
                         "invoice_due_days": cmd.invoice_due_days,
+                        "reminder_days": list(reminder_days),
                     },
                 )
             )
@@ -181,10 +197,12 @@ class SetInvoiceScheduleSettings:
             update={
                 "billing_day": cmd.billing_day,
                 "invoice_due_days": cmd.invoice_due_days,
+                "reminder_days": reminder_days,
             }
         )
         await self._settings.upsert(updated)
         return InvoiceScheduleResult(
             billing_day=cmd.billing_day,
             invoice_due_days=cmd.invoice_due_days,
+            reminder_days=reminder_days,
         )

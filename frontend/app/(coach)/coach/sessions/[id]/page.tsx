@@ -19,11 +19,12 @@ import {
   type ProgressNote,
 } from "@/lib/api/coach";
 import { AnnouncementsPanel } from "@/components/announcements/AnnouncementsPanel";
-import { BillingPreviewDrawer } from "@/components/coach/billing-preview-drawer";
 import { useIsAssistantCoach } from "@/components/coach/coach-surface-context";
 import { SessionDetailTabs } from "@/components/coach/SessionDetailTabs";
 import { Chip } from "@/components/ds/chip";
+import { formatCents } from "@/lib/money";
 import { queueMark, queuedMarksFor, type QueuedMark } from "@/lib/offline/attendance-queue";
+import { markProgress } from "@/lib/coach/marking";
 import { onSync, syncNow } from "@/lib/offline/sync";
 import { lifecycleLabel } from "@/lib/format/lifecycle-copy";
 import { queryKeys } from "@/lib/query/keys";
@@ -164,7 +165,6 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   const [noteOpen, setNoteOpen] = useState<string | null>(null);
   const [noteTexts, setNoteTexts] = useState<Record<string, string>>({});
   const [noteShare, setNoteShare] = useState<Record<string, boolean>>({});
-  const [billingOpen, setBillingOpen] = useState<string | null>(null);
 
   const progressNotesKey = queryKeys.coach.progressNotes(sessionId);
   const { data: notesData } = useQuery({
@@ -485,6 +485,16 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
     .map((student) => student.student_id);
   const queuedCount = Object.keys(queuedMarks).length;
   const anySavedMark = roster.some(hasServerMark);
+  // Issue #777: "am I done marking" needs a fraction, not a student count.
+  // Marks made on this phone (optimistic or queued offline) count too, so the
+  // header keeps up with the coach's own thumb.
+  const progress = markProgress(
+    roster,
+    new Set([
+      ...roster.filter(hasServerMark).map((student) => student.student_id),
+      ...Object.keys(queuedMarks),
+    ]),
+  );
 
   // Save a first mark on this phone (offline, or while an earlier queued mark
   // for the same student is still waiting — one queued mark per student).
@@ -649,8 +659,16 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
               className="text-sm font-semibold uppercase tracking-wide"
               style={{ color: "var(--rally-muted)" }}
             >
-              Attendance · {roster.length} students
+              Attendance · <span data-testid="marked-count">{progress.label}</span>
             </h2>
+            {!progress.complete && (
+              <span
+                data-testid="needs-marks-badge"
+                className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800"
+              >
+                Needs marks
+              </span>
+            )}
             {queuedCount > 0 && (
               <span
                 data-testid="queued-count"
@@ -728,13 +746,6 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
                     : null
                 }
                 noteVisibilityFailed={noteVisibilityMutation.isError}
-                showBilling={!assistant}
-                billingOpen={billingOpen === student.student_id}
-                onToggleBilling={() =>
-                  setBillingOpen((prev) =>
-                    prev === student.student_id ? null : student.student_id,
-                  )
-                }
               />
             ))}
           </ul>
@@ -815,9 +826,6 @@ function RosterRow({
   onNoteVisibility,
   noteVisibilityPendingId,
   noteVisibilityFailed,
-  showBilling,
-  billingOpen,
-  onToggleBilling,
 }: {
   student: CoachRosterEntry;
   sessionId: string;
@@ -840,10 +848,6 @@ function RosterRow({
   noteVisibilityPendingId: string | null;
   /** The last visibility change failed — the chip silently reverted, so say so. */
   noteVisibilityFailed: boolean;
-  /** False for assistant coaches: the billing preview is lead-only. */
-  showBilling: boolean;
-  billingOpen: boolean;
-  onToggleBilling: () => void;
 }) {
   // Optimistic local state wins; then a mark queued on this phone; otherwise
   // fall back to the server-recorded mark so a reload doesn't render a marked
@@ -887,6 +891,20 @@ function RosterRow({
               label={lifecycleChip(student)!.label}
             />
           )}
+          {/* Issue #774: the ONE money fact a coach sees. The owner's decision
+              (2026-09-12) replaced the per-row billing proration drawer with
+              this, so a coach can say "there's a payment due" to the parent at
+              the court and nothing more. Rendered only when something is
+              actually overdue — never a "$0.00 due". */}
+          {typeof student.payment_due_cents === "number" &&
+            student.payment_due_cents > 0 && (
+              <span data-testid={`payment-due-${student.student_id}`}>
+                <Chip
+                  variant="overdue"
+                  label={`PAYMENT DUE ${formatCents(student.payment_due_cents)}`}
+                />
+              </span>
+            )}
           {queued && (
             <span
               data-testid={`mark-queued-${student.student_id}`}
@@ -992,22 +1010,6 @@ function RosterRow({
             >
               Note
             </button>
-            {/* Billing preview toggle — online only (offline policy). */}
-            {showBilling && (
-              <button
-                data-testid={`billing-toggle-${student.student_id}`}
-                onClick={onToggleBilling}
-                aria-expanded={billingOpen}
-                disabled={!online}
-                className={SECONDARY_BUTTON_BASE}
-                style={{
-                  borderColor: "var(--rally-line)",
-                  color: "var(--rally-muted)",
-                }}
-              >
-                Billing
-              </button>
-            )}
           </div>
         </div>
       </div>
@@ -1141,14 +1143,6 @@ function RosterRow({
         </div>
       )}
 
-      {showBilling && billingOpen && (
-        <BillingPreviewDrawer
-          sessionId={sessionId}
-          studentId={student.student_id}
-          studentName={student.full_name}
-          onClose={onToggleBilling}
-        />
-      )}
     </li>
   );
 }

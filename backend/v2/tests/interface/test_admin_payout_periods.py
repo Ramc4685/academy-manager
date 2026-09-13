@@ -82,7 +82,7 @@ class _ApprovePayoutPeriod:
         self.period = period
         self.calls: list[str] = []
 
-    async def execute(self, *, period_id: str) -> PayoutPeriod:
+    async def execute(self, *, period_id: str, actor_id: str = "system") -> PayoutPeriod:
         self.calls.append(period_id)
         if self.period.unpaid_occurrence_ids:
             raise PayoutPeriodStateError("unresolved unpaid occurrences remain")
@@ -93,7 +93,7 @@ class _ApprovePayoutPeriod:
 
 
 class _ApprovePayoutPeriodRaises:
-    async def execute(self, *, period_id: str) -> PayoutPeriod:
+    async def execute(self, *, period_id: str, actor_id: str = "system") -> PayoutPeriod:
         raise PayoutPeriodStateError("cannot approve payout period with unresolved payout warnings")
 
 
@@ -102,7 +102,7 @@ class _MarkPayoutPaid:
         self.period = period
         self.calls: list[object] = []
 
-    async def execute(self, command) -> PayoutPeriod:
+    async def execute(self, command, *, actor_id: str = "system") -> PayoutPeriod:
         self.calls.append(command)
         if self.period.status == "paid":
             return self.period

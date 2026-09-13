@@ -30,6 +30,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     WithdrawEnrollment,
     WithdrawEnrollmentCommand,
 )
+from backend.v2.contexts.enrollment.domain.departure_policy import DepartureReasonCode
 from backend.v2.contexts.enrollment.domain.models import Enrollment
 
 log = logging.getLogger(__name__)
@@ -51,6 +52,10 @@ class StopAllClassesCommand(BaseModel):
     #: single-enrollment Drop is — this use case does not re-check it.
     outcome: WithdrawalOutcome
     reason: str = Field(min_length=1)
+    #: Issue #775: one structured reason for the whole departure — a family
+    #: leaves for ONE reason, and stamping it per-enrollment from the same
+    #: command is what lets the Left tab group departures at all.
+    reason_code: DepartureReasonCode | None = None
     actor_id: str
 
 
@@ -98,6 +103,7 @@ class StopAllClasses:
                         outcome=cmd.outcome,
                         actor_id=cmd.actor_id,
                         reason=cmd.reason,
+                        reason_code=cmd.reason_code,
                     )
                 )
                 results.append(

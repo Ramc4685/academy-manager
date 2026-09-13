@@ -56,7 +56,19 @@ BILLING_RULE_BOUNDS: Final[Mapping[str, tuple[int, int]]] = {
     "cancellation_fee_cents": (0, 100_000),
 }
 
-EDITABLE_RULE_KEYS: Final[tuple[str, ...]] = tuple(BILLING_RULE_BOUNDS)
+#: ``reminder_days`` is the one editable rule that is a LIST, not a number:
+#: the owner's decision was "due+15 and due+20, both editable, empty = off"
+#: (issue #774), and an empty list is the off switch. It therefore carries its
+#: own per-entry bounds instead of a row in ``BILLING_RULE_BOUNDS``, which the
+#: integer validate/diff/apply pipeline below iterates over.
+REMINDER_DAYS_KEY: Final[str] = "reminder_days"
+REMINDER_DAY_BOUNDS: Final[tuple[int, int]] = (1, 60)
+MAX_REMINDER_DAYS: Final[int] = 4
+
+#: Every editable rule, numeric ones first. ``test_billing_rules`` pins this
+#: tuple to both the view's editable rows and the write command's fields, so a
+#: rule can never be editable on the page and unwritable in the command.
+EDITABLE_RULE_KEYS: Final[tuple[str, ...]] = (*BILLING_RULE_BOUNDS, REMINDER_DAYS_KEY)
 
 
 # --- Ports -------------------------------------------------------------
@@ -135,6 +147,8 @@ class BillingRuleRow(BaseModel):
     editable: bool
     #: Editable rows only: the stored number, in the row's ``unit``.
     value: int | None = None
+    #: ``reminder_days`` only: the stored day offsets. Empty means "off".
+    values: tuple[int, ...] | None = None
     unit: RuleUnit | None = None
     min_value: int | None = None
     max_value: int | None = None
@@ -187,6 +201,20 @@ def _editable(key: str, label: str, value: int | None, unit: RuleUnit) -> Billin
         min_value=low,
         max_value=high,
     )
+
+
+def _reminder_days(schedule: InvoiceScheduleLike) -> tuple[int, ...]:
+    """Stored reminder offsets, tolerating a schedule reader that predates them.
+
+    ``getattr`` rather than a protocol member on purpose: the invoice-schedule
+    reader is also satisfied by older adapters and test doubles that only know
+    ``billing_day``/``invoice_due_days``, and a missing attribute must read as
+    "no reminders configured", never crash the whole settings page.
+    """
+    raw = getattr(schedule, "reminder_days", None)
+    if not raw:
+        return ()
+    return tuple(sorted({int(day) for day in raw}))
 
 
 def charge_hour_sentence() -> str:
@@ -353,10 +381,23 @@ class BuildBillingRulesView:
                             display="Sent by the dunning ladder",
                         ),
                         BillingRuleRow(
+                            key=REMINDER_DAYS_KEY,
+                            label="Past-due reminder days",
+                            editable=True,
+                            values=_reminder_days(schedule),
+                            unit="days",
+                            min_value=REMINDER_DAY_BOUNDS[0],
+                            max_value=REMINDER_DAY_BOUNDS[1],
+                            detail=(
+                                "Days after the due date the reminder job emails the "
+                                "parent. Leave empty to send none."
+                            ),
+                        ),
+                        BillingRuleRow(
                             key="manual_payer_reminders",
-                            label="Reminders to manual payers",
+                            label="Extra reminders to manual payers",
                             editable=False,
-                            display="Sent by hand from Payments. No automatic schedule.",
+                            display="Sent by hand from Payments, on top of the schedule above.",
                         ),
                     ),
                 ),
@@ -365,6 +406,32 @@ class BuildBillingRulesView:
 
 
 # --- Write -------------------------------------------------------------
+
+
+def _validate_reminder_days(raw: list[int] | None) -> tuple[int, ...] | None:
+    """Normalise the requested reminder offsets, or raise naming the field.
+
+    ``None`` in, ``None`` out: the field was not part of this request. An empty
+    list normalises to an empty tuple — a real value meaning "send none".
+    """
+    if raw is None:
+        return None
+    low, high = REMINDER_DAY_BOUNDS
+    for day in raw:
+        if not isinstance(day, int) or isinstance(day, bool):
+            raise BillingRulesValidationError(
+                REMINDER_DAYS_KEY, "reminder_days must be whole numbers of days"
+            )
+        if day < low or day > high:
+            raise BillingRulesValidationError(
+                REMINDER_DAYS_KEY, f"each reminder day must be between {low} and {high}"
+            )
+    days = tuple(sorted(set(raw)))
+    if len(days) > MAX_REMINDER_DAYS:
+        raise BillingRulesValidationError(
+            REMINDER_DAYS_KEY, f"at most {MAX_REMINDER_DAYS} reminder days are allowed"
+        )
+    return days
 
 
 class BillingRulesValidationError(ValueError):
@@ -401,12 +468,17 @@ class UpdateBillingRulesCommand(BaseModel):
     late_fee_cents: int | None = None
     cancellation_minimum_notice_days: int | None = None
     cancellation_fee_cents: int | None = None
+    #: Issue #774. ``None`` means "leave alone"; ``[]`` means "turn reminders
+    #: off", which is a real change and must not be confused with the former.
+    reminder_days: list[int] | None = None
     actor_id: str
     reason: str | None = None
 
     def requested(self) -> dict[str, int]:
+        """The numeric rules present in this request. ``reminder_days`` is a
+        list and is validated and diffed on its own path."""
         return {
-            key: value for key in EDITABLE_RULE_KEYS if (value := getattr(self, key)) is not None
+            key: value for key in BILLING_RULE_BOUNDS if (value := getattr(self, key)) is not None
         }
 
 
@@ -469,7 +541,8 @@ class UpdateBillingRules:
                 raise BillingRulesValidationError(
                     field, f"{field} must be between {low} and {high}"
                 )
-        if not requested:
+        reminder_days = _validate_reminder_days(cmd.reminder_days)
+        if not requested and reminder_days is None:
             return BillingRulesWriteResult(changed_fields=())
 
         schedule = await self._schedule_reader.execute()
@@ -482,8 +555,13 @@ class UpdateBillingRules:
             "late_fee_cents": fees.late_fee_cents,
             "cancellation_minimum_notice_days": policy.cancellation_minimum_notice_days,
             "cancellation_fee_cents": policy.cancellation_fee_cents,
+            REMINDER_DAYS_KEY: _reminder_days(schedule),
         }
-        changed = {field: value for field, value in requested.items() if before[field] != value}
+        changed: dict[str, Any] = {
+            field: value for field, value in requested.items() if before[field] != value
+        }
+        if reminder_days is not None and before[REMINDER_DAYS_KEY] != reminder_days:
+            changed[REMINDER_DAYS_KEY] = reminder_days
         if not changed:
             return BillingRulesWriteResult(changed_fields=())
 
@@ -507,7 +585,7 @@ class UpdateBillingRules:
         academy_id: str,
         before: dict[str, Any],
         applied: tuple[str, ...],
-        changed: dict[str, int],
+        changed: dict[str, Any],
     ) -> bool:
         """Append the audit entry; never let its failure mask what was written."""
         try:
@@ -525,17 +603,20 @@ class UpdateBillingRules:
         self,
         academy_id: str,
         before: dict[str, Any],
-        changed: dict[str, int],
+        changed: dict[str, Any],
         applied: list[str],
         actor_id: str,
         reason: str | None,
     ) -> None:
-        schedule_fields = [f for f in ("billing_day", "invoice_due_days") if f in changed]
+        schedule_fields = [
+            f for f in ("billing_day", "invoice_due_days", REMINDER_DAYS_KEY) if f in changed
+        ]
         if schedule_fields:
             await self._schedule_writer.execute(
                 SetInvoiceScheduleCommand(
                     billing_day=changed.get("billing_day", before["billing_day"]),
                     invoice_due_days=changed.get("invoice_due_days", before["invoice_due_days"]),
+                    reminder_days=changed.get(REMINDER_DAYS_KEY, before[REMINDER_DAYS_KEY]),
                     # The real owner, not a placeholder: anyone querying
                     # `invoice_schedule_changed` for "who moved invoice day"
                     # must get the same answer as the billing_rules_changed

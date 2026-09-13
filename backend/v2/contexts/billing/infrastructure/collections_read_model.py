@@ -355,6 +355,7 @@ class MongoCollectionsReadModel:
             due_date=due,
             delivery_status=str(inv.get("delivery_status") or "not_sent"),
             last_sent_at=_to_datetime(inv.get("last_sent_at")),
+            last_reminder_at=_to_datetime(inv.get("last_reminder_at")),
             enrollment_id=_opt_str(inv.get("enrollment_id")),
             student_id=_opt_str(inv.get("student_id")),
             autopay_enrollment_status=autopay_status,
@@ -412,6 +413,7 @@ class MongoCollectionsReadModel:
                 "due_date": 1,
                 "delivery_status": 1,
                 "last_sent_at": 1,
+                "last_reminder_at": 1,
             },
         )
         docs = [doc async for doc in cursor]

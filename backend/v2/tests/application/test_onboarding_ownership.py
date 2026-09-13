@@ -837,6 +837,71 @@ async def test_the_live_attempt_still_reaches_its_own_destructive_targets() -> N
 
 
 # ---------------------------------------------------------------------------
+# Issue #776 — staff hear about a new application
+# ---------------------------------------------------------------------------
+
+
+class RecordingSubmittedNotifier:
+    def __init__(self, fail: bool = False) -> None:
+        self.calls: list[dict[str, object]] = []
+        self._fail = fail
+
+    async def registration_submitted(self, **kwargs: object) -> None:
+        if self._fail:
+            raise RuntimeError("mail provider down")
+        self.calls.append(kwargs)
+
+
+@pytest.mark.asyncio
+async def test_reaching_pending_approval_alerts_staff() -> None:
+    app = _app().model_copy(
+        update={
+            "status": "CHECKOUT_PENDING",
+            "selected_session_id": "sess-1",
+            "child_profile": ChildProfile(first_name="Sam", last_name="Student"),
+        }
+    )
+    repo = FakeAppRepo(app)
+    notifier = RecordingSubmittedNotifier()
+    uc = TransitionApplication(apps=repo, submitted_notifier=notifier)
+
+    await uc.execute("app-1", "PENDING_APPROVAL")
+
+    assert len(notifier.calls) == 1
+    assert notifier.calls[0]["application_id"] == "app-1"
+    assert notifier.calls[0]["student_name"] == "Sam Student"
+    assert notifier.calls[0]["session_id"] == "sess-1"
+
+
+@pytest.mark.asyncio
+async def test_other_transitions_do_not_alert_staff() -> None:
+    repo = FakeAppRepo(_app())
+    notifier = RecordingSubmittedNotifier()
+    uc = TransitionApplication(apps=repo, submitted_notifier=notifier)
+
+    await uc.execute("app-1", "ABANDONED")
+
+    assert notifier.calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_failed_staff_alert_never_blocks_the_transition() -> None:
+    """The parent already paid. Mail is not allowed to hold the registration.
+
+    Without this the checkout-completed event handler would see an exception,
+    the outbox would retry, and a paid application could sit outside
+    PENDING_APPROVAL because a mail provider was down.
+    """
+    app = _app().model_copy(update={"status": "CHECKOUT_PENDING"})
+    repo = FakeAppRepo(app)
+    uc = TransitionApplication(apps=repo, submitted_notifier=RecordingSubmittedNotifier(fail=True))
+
+    updated = await uc.execute("app-1", "PENDING_APPROVAL")
+
+    assert updated.status == "PENDING_APPROVAL"
+
+
+# ---------------------------------------------------------------------------
 # Issue #537 — the 7-day TTL was never enforced: an expired DRAFT stayed
 # editable and checkout-able forever.
 # ---------------------------------------------------------------------------

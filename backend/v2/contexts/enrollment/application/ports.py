@@ -34,6 +34,7 @@ class SessionOccurrenceRepository(Protocol):
         *,
         coach_id: str,
         on_date: date,
+        include_cancelled: bool = False,
     ) -> list[SessionOccurrence]: ...
 
     async def list_for_coach_upcoming(
@@ -47,7 +48,9 @@ class SessionOccurrenceRepository(Protocol):
     # Academy-wide variants of the two coach queries above, for coach
     # supervisors (admin/owner covering any session). Same tenant scope,
     # same cancelled filter, no coach filter.
-    async def list_on_date(self, *, on_date: date) -> list[SessionOccurrence]: ...
+    async def list_on_date(
+        self, *, on_date: date, include_cancelled: bool = False
+    ) -> list[SessionOccurrence]: ...
 
     async def list_upcoming(
         self,
@@ -104,6 +107,17 @@ class EnrollmentQuery(Protocol):
 
     async def is_active(self, session_id: str, student_id: str) -> bool: ...
     async def active_for_student(self, student_id: str) -> list[Enrollment]: ...
+
+    async def seat_holding_for_student(self, student_id: str) -> list[Enrollment]:
+        """Rows in ``SEAT_HOLDING`` (``active`` or ``held``) for one student.
+
+        Distinct from ``active_for_student`` (active only) and
+        ``active_or_paused_for_student`` (active + paused, never held): a
+        ``held`` enrollment is a seat-holding re-enrollment (e.g. a
+        reclaim-pending / held student) and must count as "the series is
+        back on" for any caller — such as win-back outreach (issue #778) —
+        that needs to know whether a student currently occupies a seat.
+        """
 
     async def departable_for_student(self, student_id: str) -> list[Enrollment]:
         """Every row for one student that a Drop can still act on (issue #698).
@@ -381,6 +395,18 @@ class MakeupPolicyLookup(Protocol):
     """The academy's self-service policy, for the re-opened make-up window."""
 
     async def get_or_default(self) -> Any: ...
+
+
+class PayoutPeriodLock(Protocol):
+    """Is the coach's payroll for this instant already frozen? (#787)
+
+    Finance owns ``PayoutPeriod``; Enrollment must not import it, so the
+    composition layer reshapes it into this one question. Returns the
+    blocking period's status (``"approved"`` / ``"paid"``), or ``None``
+    when the window is still editable.
+    """
+
+    async def locked_status_for(self, *, coach_id: str, at: datetime) -> str | None: ...
 
 
 class OccurrenceBillingSync(Protocol):

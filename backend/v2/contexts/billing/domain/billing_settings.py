@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class BillingSettings(BaseModel):
@@ -42,6 +42,26 @@ class BillingSettings(BaseModel):
     # makes its first autopay charge attempt (DUNNING_SCHEDULE_DAYS starts at 0).
     billing_day: int = Field(default=1, ge=1, le=28)
     invoice_due_days: int = Field(default=7, ge=0, le=60)
+
+    # Automated past-due reminders (issue #774). Each entry is a number of days
+    # AFTER an invoice's due date on which the reminder job emails the parent,
+    # so ``(15, 20)`` is the owner's "due+15 and due+20". An EMPTY tuple means
+    # the academy sends no automatic reminders at all — that is the off switch,
+    # which is why there is no separate boolean beside it. Days are stored
+    # sorted and de-duplicated so the job can never send two emails for the
+    # same calendar day.
+    reminder_days: tuple[int, ...] = Field(default=(15, 20))
+
+    @field_validator("reminder_days", mode="before")
+    @classmethod
+    def _clean_reminder_days(cls, value: object) -> tuple[int, ...]:
+        if value is None:
+            return ()
+        if isinstance(value, int):
+            value = (value,)
+        if not isinstance(value, list | tuple):
+            return ()
+        return tuple(sorted({int(day) for day in value}))
 
     @classmethod
     def default(cls, academy_id: str) -> BillingSettings:

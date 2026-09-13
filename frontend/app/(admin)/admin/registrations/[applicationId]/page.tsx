@@ -64,14 +64,14 @@ export default function AdminRegistrationDetailPage() {
       }),
     onSuccess: () => {
       refresh();
-      router.push("/admin/registrations");
+      router.push("/admin/inbox?tab=registrations");
     },
     onError: (err: Error) => setError(err.message),
   });
 
   return (
     <section data-testid="admin-registration-detail" className="space-y-6">
-      <Link href="/admin/registrations" className="text-sm font-semibold text-rally-cobalt hover:underline">
+      <Link href="/admin/inbox?tab=registrations" className="text-sm font-semibold text-rally-cobalt hover:underline">
         Back to registrations
       </Link>
 
@@ -110,7 +110,12 @@ export default function AdminRegistrationDetailPage() {
 
           <LaneHeader index="02" title="Decision" />
           <Card p={20}>
-            <div className="grid gap-4 lg:grid-cols-3">
+            {/* Issue #747: `grid-cols-1` and `min-w-0` (below) are load-bearing.
+                Without an explicit base track the implicit column is sized by the
+                panels' intrinsic content, and a grid item defaults to
+                `min-width:auto` — so at 390px the Approve/Waitlist/Reject buttons
+                were pushed off the right edge with no way to reach them. */}
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
               <ActionPanel
                 title="Approve"
                 copy="Create the student record, reserve the roster seat, and activate enrollment."
@@ -228,7 +233,7 @@ function ActionPanel({
   onClick: () => void;
 }) {
   return (
-    <div className="rounded-md border border-neutral-200 p-4">
+    <div className="min-w-0 rounded-md border border-neutral-200 p-4">
       <h3 className="font-semibold text-rally-base">{title}</h3>
       <p className="mt-2 min-h-[42px] text-[12px] leading-5 text-rally-muted">{copy}</p>
       <label className="mt-4 block text-[12px] font-semibold text-rally-ink">

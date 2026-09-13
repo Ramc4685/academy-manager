@@ -7,6 +7,7 @@ import { getBillingRules, updateBillingRules } from "@/lib/api/admin";
 import {
   canSave,
   diffForm,
+  isListRow,
   saveSummary,
   toForm,
   type BillingRuleGroup,
@@ -150,15 +151,20 @@ function EditableRule({
   error?: string;
   onChange: (value: string) => void;
 }) {
+  // Issue #774: `reminder_days` holds a LIST ("15, 20"), so it is a text box
+  // rather than a number spinner, and an empty box is a real value meaning
+  // "send no reminders" — the off switch the owner asked for.
+  const list = isListRow(row);
   return (
     <label className="grid gap-1.5 text-sm font-medium text-rally-ink">
       {row.unit === "cents" ? `${row.label} ($)` : row.label}
       <input
-        type="number"
-        min={inputBound(row, row.min_value)}
-        max={inputBound(row, row.max_value)}
-        step={row.unit === "cents" ? "0.01" : "1"}
-        inputMode={row.unit === "cents" ? "decimal" : "numeric"}
+        type={list ? "text" : "number"}
+        min={list ? undefined : inputBound(row, row.min_value)}
+        max={list ? undefined : inputBound(row, row.max_value)}
+        step={list ? undefined : row.unit === "cents" ? "0.01" : "1"}
+        inputMode={list ? "numeric" : row.unit === "cents" ? "decimal" : "numeric"}
+        placeholder={list ? "15, 20 — empty to send none" : undefined}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         aria-invalid={error ? true : undefined}
@@ -172,6 +178,7 @@ function EditableRule({
           {error}
         </span>
       )}
+      {!error && row.detail && <span className="text-xs text-rally-muted">{row.detail}</span>}
     </label>
   );
 }

@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from datetime import UTC, date, datetime
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query
@@ -52,6 +54,27 @@ async def _resolve_date(
     return datetime.now(UTC).date()
 
 
+async def _read_overdue_cents(
+    reader: Any,
+    rosters: Sequence[Sequence[Any]],
+    on_date: date,
+) -> dict[str, int]:
+    """Overdue cents per student, never at the cost of the coach's day.
+
+    A billing read that fails must not take down ``/coach/today`` — the chip
+    is a nicety, the roster is the job — so an error degrades to "no chip".
+    """
+    student_ids = [r.student_id for roster in rosters for r in roster]
+    if not student_ids:
+        return {}
+    try:
+        result: dict[str, int] = await reader(student_ids, on_date)
+        return result
+    except Exception:
+        log.warning("coach roster overdue lookup failed; hiding payment chips", exc_info=True)
+        return {}
+
+
 @router.get(
     "/today",
     response_model=CoachTodayResponse,
@@ -68,10 +91,16 @@ async def get_today(
 ) -> CoachTodayResponse:
     target_date = await _resolve_date(on_date, academy_id=claims.academy_id, use_cases=use_cases)
     supervisor = is_coach_supervisor(claims)
+    # Cancelled classes stay on the coach's day (#777) — struck through with
+    # the reason by the client — so nobody drives to a called-off class.
     if supervisor:
-        sessions = await use_cases.list_today.execute_for_academy(target_date)
+        sessions = await use_cases.list_today.execute_for_academy(
+            target_date, include_cancelled=True
+        )
     else:
-        sessions = await use_cases.list_today.execute(claims.user_id, target_date)
+        sessions = await use_cases.list_today.execute(
+            claims.user_id, target_date, include_cancelled=True
+        )
     coach_names = await coach_names_for(sessions, use_cases=use_cases, supervisor=supervisor)
 
     # Fan-out roster fetches concurrently. Prefer the occurrence-scoped
@@ -105,6 +134,14 @@ async def get_today(
         for s, marks in zip(sessions, attendance_lists, strict=False):
             marks_by_occurrence[s.occurrence_id] = {m.student_id: m.status for m in marks}
 
+    # Issue #774: one money fact per roster row. Resolved in a single query
+    # across every student on the day's rosters, so the chip costs one read
+    # regardless of how many sessions the coach is teaching.
+    overdue_reader = getattr(use_cases, "overdue_cents_by_student", None)
+    overdue_cents: dict[str, int] = {}
+    if callable(overdue_reader):
+        overdue_cents = await _read_overdue_cents(overdue_reader, rosters, target_date)
+
     out = [
         CoachSession(
             session_id=s.session_id,
@@ -116,6 +153,8 @@ async def get_today(
             end_at=s.end_at,
             coach_id=getattr(s, "coach_id", None),
             coach_name=coach_names.get(getattr(s, "coach_id", None) or ""),
+            status=getattr(s, "status", "scheduled"),
+            cancellation_reason=getattr(s, "cancellation_reason", None),
             roster=[
                 CoachRosterEntry(
                     student_id=r.student_id,
@@ -128,6 +167,7 @@ async def get_today(
                     entry_source=getattr(r, "entry_source", "enrollment"),
                     pending_cancellation_at=getattr(r, "pending_cancellation_at", None),
                     hold_return_on=getattr(r, "hold_return_on", None),
+                    payment_due_cents=overdue_cents.get(r.student_id) or None,
                 )
                 for r in roster
             ],

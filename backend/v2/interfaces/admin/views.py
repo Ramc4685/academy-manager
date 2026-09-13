@@ -10,6 +10,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
+from backend.v2.contexts.enrollment.application.use_cases.departure_reasons import (
+    DepartureReasonCode,
+)
 from backend.v2.contexts.enrollment.application.use_cases.person_lifecycle import (
     PersonLifecycle,
 )
@@ -660,6 +663,9 @@ class WithdrawEnrollmentRequest(BaseModel):
     effective_date: date
     outcome: Literal["credit", "refund", "adjustment"] = "credit"
     reason: str = Field(min_length=1, max_length=500)
+    #: Issue #775: the structured "why". Optional so an older client (or a
+    #: script) can still drop a student with a note alone.
+    reason_code: DepartureReasonCode | None = None
 
 
 class RemoveEnrollmentRequest(BaseModel):
@@ -1263,6 +1269,10 @@ class BulkPayrollResultView(BaseModel):
 
 class ReopenPayoutPeriodRequest(BaseModel):
     reason: str = Field(min_length=1)
+    acknowledge_paid_clawback: bool = False
+    """Required to reopen a period already marked paid (#787): the money is
+    out, so reopening it means clawing the payment back or netting it off a
+    later period. Ignored for an approved (unpaid) period."""
 
 
 class OverridePayoutLineRequest(BaseModel):
@@ -1558,6 +1568,8 @@ class AdminRegistrationRowView(BaseModel):
     waiver_required: bool = False
     waiver_satisfied: bool = False
     zero_quote_period: str | None = None
+    # Issue #776: when the waitlist/decline email actually reached the family.
+    family_notified_at: datetime | None = None
     updated_at: datetime
 
 
@@ -1616,7 +1628,14 @@ class AdminWaiverSignatureDetailView(BaseModel):
 
 AdminAttentionSeverity = Literal["high", "medium", "low"]
 AdminAttentionKind = Literal[
+    # Issue #776: an application waiting for a decision. Listed first because
+    # the family has usually already paid by the time it lands here.
+    "pending_registrations",
     "overdue_dues",
+    # Issue #774: the two autopay signals that previously only ever
+    # reached the parent — a decline mid-ladder, and a ladder that gave up.
+    "autopay_failure",
+    "dunning_exhaustion",
     "pause_requests",
     "scheduled_resume_blocked",
     "scheduled_action_failed",
@@ -1751,8 +1770,6 @@ class UpdateAdminFeesRequest(BaseModel):
 
 
 class AdminNotificationsView(BaseModel):
-    dues_reminders: bool = False
-    attendance_alerts: bool = False
     daily_digest_to_admin: bool = False
     coach_digest_enabled: bool = False
     coach_digest_hour: int = 6
@@ -1761,8 +1778,6 @@ class AdminNotificationsView(BaseModel):
 
 
 class UpdateAdminNotificationsRequest(BaseModel):
-    dues_reminders: bool | None = None
-    attendance_alerts: bool | None = None
     daily_digest_to_admin: bool | None = None
     coach_digest_enabled: bool | None = None
     coach_digest_hour: int | None = Field(default=None, ge=0, le=23)

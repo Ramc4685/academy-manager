@@ -10,7 +10,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     EditSession,
     EditSessionCommand,
 )
-from backend.v2.contexts.enrollment.domain.errors import SessionNotFound
+from backend.v2.contexts.enrollment.domain.errors import CapacityExceeded, SessionNotFound
 from backend.v2.contexts.enrollment.domain.models import Session
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_writer import MongoSessionWriter
 from backend.v2.shared.tenancy.context import tenant_scope
@@ -198,3 +198,145 @@ async def test_editing_a_series_for_a_tenant_with_no_timezone_fails_closed() -> 
         )
 
     assert store.updated == []
+
+
+# -- Issue #783: capacity may never be lowered below the seats already held --
+
+
+@dataclass
+class FakeSeatCounter:
+    """Only the one ``EnrollmentWriter`` method ``EditSession`` reads."""
+
+    counts: dict[str, int] = field(default_factory=dict)
+    calls: list[str] = field(default_factory=list)
+
+    async def count_active_for_session(self, session_id: str) -> int:
+        self.calls.append(session_id)
+        return self.counts.get(session_id, 0)
+
+
+@pytest.mark.asyncio
+async def test_editing_capacity_below_the_seats_already_taken_is_rejected() -> None:
+    """#783: an admin could shrink a full class and oversell it silently.
+
+    ``capacity`` went straight from the command into the update with only a
+    ``ge=1`` bound, so a class with seven seat-holding rows could be saved at
+    capacity 5 — every later ``try_reserve_seat`` then reads a session that is
+    already over its own limit and no surface reports it.
+    """
+    store = FakeSessionStore(rows={"sess-1": _session().model_copy(update={"capacity": 10})})
+    seats = FakeSeatCounter(counts={"sess-1": 7})
+    use_case = EditSession(sessions=store, get_academy_timezone=_reader(), enrollments=seats)
+
+    with pytest.raises(CapacityExceeded) as exc:
+        await use_case.execute(
+            EditSessionCommand(session_id="sess-1", capacity=5, actor_id="admin-1")
+        )
+
+    assert "7" in str(exc.value)
+    # Refused before the write: the session is untouched.
+    assert store.updated == []
+    assert store.rows["sess-1"].capacity == 10
+
+
+@pytest.mark.asyncio
+async def test_editing_capacity_down_to_exactly_the_seats_taken_is_allowed() -> None:
+    """Closing a class to new joiners without evicting anyone is legitimate."""
+    store = FakeSessionStore(rows={"sess-1": _session().model_copy(update={"capacity": 10})})
+    seats = FakeSeatCounter(counts={"sess-1": 7})
+    use_case = EditSession(sessions=store, get_academy_timezone=_reader(), enrollments=seats)
+
+    updated = await use_case.execute(
+        EditSessionCommand(session_id="sess-1", capacity=7, actor_id="admin-1")
+    )
+
+    assert updated.capacity == 7
+    assert len(store.updated) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_edit_that_does_not_touch_capacity_never_counts_seats() -> None:
+    """The guard is scoped to the field it guards — no extra read per edit."""
+    store = FakeSessionStore(rows={"sess-1": _session().model_copy(update={"capacity": 10})})
+    seats = FakeSeatCounter(counts={"sess-1": 7})
+    use_case = EditSession(sessions=store, get_academy_timezone=_reader(), enrollments=seats)
+
+    updated = await use_case.execute(
+        EditSessionCommand(session_id="sess-1", title="Junior B", actor_id="admin-1")
+    )
+
+    assert updated.capacity == 10
+    assert seats.calls == []
+
+
+# ---------------------------------------------------------------------------
+# #785 — the assistant list on the edit path runs the same eligibility check
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_edit_runs_the_assistant_eligibility_check() -> None:
+    """``SetSessionAssistants`` vetted every id; ``EditSession`` wrote the list
+    straight through, so ``PATCH /admin/sessions/{id}`` could stamp a parent —
+    or a departed coach — as an assistant and hand them the coach surface."""
+    store = FakeSessionStore(rows={"sess-1": _session()})
+    checked: list[tuple[str, tuple[str, ...]]] = []
+
+    async def eligibility(*, session_id: str, assistant_coach_ids: tuple[str, ...]) -> None:
+        checked.append((session_id, assistant_coach_ids))
+
+    use_case = EditSession(
+        sessions=store,
+        get_academy_timezone=_reader(),
+        assistant_eligibility=eligibility,
+    )
+
+    await use_case.execute(
+        EditSessionCommand(session_id="sess-1", assistant_coach_ids=[" helper-1 ", "helper-1"])
+    )
+
+    assert checked == [("sess-1", ("helper-1",))]
+    assert store.rows["sess-1"].assistant_coach_ids == ("helper-1",)
+
+
+@pytest.mark.asyncio
+async def test_edit_refuses_an_ineligible_assistant_and_writes_nothing() -> None:
+    store = FakeSessionStore(rows={"sess-1": _session()})
+
+    class _Rejected(Exception):
+        pass
+
+    async def eligibility(*, session_id: str, assistant_coach_ids: tuple[str, ...]) -> None:
+        raise _Rejected(session_id)
+
+    use_case = EditSession(
+        sessions=store,
+        get_academy_timezone=_reader(),
+        assistant_eligibility=eligibility,
+    )
+
+    with pytest.raises(_Rejected):
+        await use_case.execute(
+            EditSessionCommand(session_id="sess-1", assistant_coach_ids=["a-parent"])
+        )
+
+    assert store.updated == []
+
+
+@pytest.mark.asyncio
+async def test_edit_that_does_not_touch_assistants_never_calls_the_check() -> None:
+    store = FakeSessionStore(rows={"sess-1": _session()})
+    calls: list[str] = []
+
+    async def eligibility(*, session_id: str, assistant_coach_ids: tuple[str, ...]) -> None:
+        calls.append(session_id)
+
+    use_case = EditSession(
+        sessions=store,
+        get_academy_timezone=_reader(),
+        assistant_eligibility=eligibility,
+    )
+
+    await use_case.execute(EditSessionCommand(session_id="sess-1", title="Junior B"))
+
+    assert calls == []

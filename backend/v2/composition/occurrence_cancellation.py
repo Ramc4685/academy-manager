@@ -20,6 +20,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from backend.v2.composition.payout_input_lock import compose_payout_input_lock
 from backend.v2.contexts.billing.application.use_cases.apply_occurrence_cancellation import (
     ApplyOccurrenceCancellation,
     ApplyOccurrenceCancellationCommand,
@@ -124,4 +125,6 @@ def compose_cancel_session_occurrence(
         makeup_policies=MongoSelfServicePolicyRepository(db),
         billing_sync=compose_occurrence_billing_sync(db),
         notifier=notifier,
+        # #787: refuse to call off a date whose payout is already frozen.
+        payout_lock=compose_payout_input_lock(db),
     )

@@ -11,7 +11,7 @@ from datetime import UTC, date, datetime
 from fastapi.testclient import TestClient
 
 from backend.v2.contexts.enrollment.application.use_cases.absence_notices import AbsenceNotice
-from backend.v2.contexts.enrollment.domain.models import Enrollment, Student
+from backend.v2.contexts.enrollment.domain.models import Enrollment, SessionOccurrence, Student
 from backend.v2.contexts.enrollment.domain.self_service import OccurrenceRosterEntry
 from backend.v2.tests.interface.conftest import _build_use_cases, _coach_claims, _make_app
 
@@ -220,3 +220,41 @@ def test_coach_today_includes_held_student_without_500(seed):
     assert set(by_id) == {"st1", "st2", "st-held"}
     assert by_id["st-held"]["enrollment_status"] == "held"
     assert by_id["st1"]["enrollment_status"] == "active"
+
+
+# ---------- cancelled classes stay on the coach's day (#777) ----------
+
+
+def test_coach_today_shows_cancelled_occurrence_with_reason(seed):
+    """Issue #777: a cancelled class must stay on the coach's day, labelled
+    with its status and reason. Dropping it silently is how a coach turns up
+    to an empty court."""
+    seed["occurrences"] = [
+        *seed["occurrences"],
+        SessionOccurrence(
+            occurrence_id="occ-today-cancelled",
+            academy_id="test-academy",
+            session_id="occurrence-session-1",
+            template_session_id="s-today-1",
+            start_at=datetime(2026, 5, 16, 15, 0, tzinfo=UTC),
+            end_at=datetime(2026, 5, 16, 16, 0, tzinfo=UTC),
+            status="cancelled",
+            cancellation_reason="Court flooded",
+            is_billable=False,
+            is_payable=False,
+            scheduled_coach_id="coach-1",
+        ),
+    ]
+    use_cases = _build_use_cases(seed)
+    app = _make_app(_coach_claims(), use_cases)
+    with TestClient(app) as client:
+        r = client.get("/api/v2/coach/today?date=2026-05-16")
+
+    assert r.status_code == 200, r.text
+    by_occurrence = {s["occurrence_id"]: s for s in r.json()["sessions"]}
+    assert "occ-today-cancelled" in by_occurrence
+    cancelled = by_occurrence["occ-today-cancelled"]
+    assert cancelled["status"] == "cancelled"
+    assert cancelled["cancellation_reason"] == "Court flooded"
+    assert by_occurrence["occ-today-1"]["status"] == "scheduled"
+    assert by_occurrence["occ-today-1"]["cancellation_reason"] is None

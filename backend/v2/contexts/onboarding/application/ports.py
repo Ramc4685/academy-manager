@@ -52,5 +52,27 @@ class ApplicationRepository(Protocol):
     async def complete_review(self, app: Application, *, claim_token: str) -> bool: ...
 
 
+class RegistrationSubmittedNotifier(Protocol):
+    """Tells the academy's staff that a new application needs reviewing (#776).
+
+    The onboarding context must never import communications, so this Protocol
+    is the seam; the adapter that resolves the admin audience and sends lives
+    in ``composition/registration_decision_email.py``.
+
+    Best-effort by contract: the family has usually already paid by the time an
+    application reaches ``PENDING_APPROVAL``, so a mail failure must never be
+    what stops the registration advancing.
+    """
+
+    async def registration_submitted(
+        self,
+        *,
+        application_id: str,
+        student_name: str,
+        parent_name: str | None,
+        session_id: str | None,
+    ) -> None: ...
+
+
 class WaiverRepository(Protocol):
     async def get_active(self) -> Waiver | None: ...
