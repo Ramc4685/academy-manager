@@ -24,6 +24,7 @@ from backend.v2.contexts.enrollment.domain.models import Session
 from backend.v2.contexts.identity.domain.identity_aliases import identity_aliases
 from backend.v2.contexts.identity.domain.models import AcademyMembership
 from backend.v2.shared.http.errors import DomainError
+from backend.v2.shared.tenancy.context import current_academy_id
 
 log = logging.getLogger(__name__)
 
@@ -154,10 +155,22 @@ class SetSessionAssistants:
 async def attach_session_staff_names(db: Any, rows: list[dict[str, Any]]) -> None:
     """Fill ``coach_name`` and ``assistant_coach_names`` on admin session rows.
 
-    One ``users`` query for every coach and assistant id across ``rows`` (no
-    N+1). Ids are matched the way the directory keys users: ``user_id``,
-    ``firebase_uid`` or the raw ``_id``. Unresolvable ids yield ``None`` for
-    the coach and are skipped for assistants so the view stays well-typed.
+    Two batched queries for every coach and assistant id across ``rows`` (no
+    N+1): one ``users`` ``$in`` for the candidate accounts, then one
+    ``academy_memberships`` ``$in`` carrying an explicit ``academy_id``.
+    ``users`` is global (an identity spans academies), so a membership row in
+    the *current* academy is the only thing that makes a name attachable here
+    — without that gate an id reused by, or colliding with, another academy
+    renders that academy's person on this roster. Same shape as
+    ``MongoAuditActorDirectory``; the tenant is read at execution time, never
+    captured when the composition is wired.
+
+    Ids are matched the way the directory keys users: ``user_id``,
+    ``firebase_uid`` or the raw ``_id``, and the membership hop is alias-aware
+    for the same reason ``get_membership`` is (a roster ``user_id`` on the
+    session, a provisioned ``firebase_uid`` on the membership row). Ids with
+    no membership in this academy stay unresolvable: ``None`` for the coach,
+    skipped for assistants, so the view stays well-typed.
     """
     wanted: set[str] = set()
     for row in rows:
@@ -167,26 +180,48 @@ async def attach_session_staff_names(db: Any, rows: list[dict[str, Any]]) -> Non
 
     names: dict[str, str] = {}
     if wanted:
+        academy_id = current_academy_id()
         ids = sorted(wanted)
         or_filter: list[dict[str, object]] = [
             {"user_id": {"$in": ids}},
+            {"auth_uid": {"$in": ids}},
             {"firebase_uid": {"$in": ids}},
         ]
         oid_ids = [BsonObjectId(uid) for uid in ids if BsonObjectId.is_valid(uid)]
         if oid_ids:
             or_filter.append({"_id": {"$in": oid_ids}})
+
+        # (aliases this account may be keyed by, its display name)
+        candidates: list[tuple[tuple[str, ...], str]] = []
+        alias_pool: set[str] = set(wanted)
         async for user_doc in db["users"].find({"$or": or_filter}):
             name = str(
                 user_doc.get("display_name")
                 or f"{user_doc.get('first_name', '')} {user_doc.get('last_name', '')}".strip()
                 or ""
             )
-            for key in (
-                str(user_doc.get("user_id") or ""),
-                str(user_doc.get("firebase_uid") or ""),
-                str(user_doc.get("_id") or ""),
-            ):
-                if key and key in wanted:
+            doc_aliases = identity_aliases(
+                user_doc.get("user_id"),
+                user_doc.get("auth_uid"),
+                user_doc.get("firebase_uid"),
+                user_doc.get("_id"),
+            )
+            candidates.append((doc_aliases, name))
+            alias_pool.update(doc_aliases)
+
+        member_ids = {
+            str(doc.get("user_id"))
+            async for doc in db["academy_memberships"].find(
+                {"academy_id": academy_id, "user_id": {"$in": sorted(alias_pool)}},
+                {"user_id": 1},
+            )
+        }
+
+        for doc_aliases, name in candidates:
+            if not member_ids.intersection(doc_aliases):
+                continue
+            for key in doc_aliases:
+                if key in wanted:
                     names[key] = name
 
     for row in rows:
