@@ -23,8 +23,15 @@ test asserts the runbook documents every gate title).
 Usage::
 
     source backend/.venv/bin/activate
+    export MONGO_URL=...            # or pass --mongo-url
+    export FRONTEND_URL=https://app.courtmastr.com   # or pass --frontend-url
     python -m backend.scripts.tenant_host_preflight --host blno.courtmastr.com
     python -m backend.scripts.tenant_host_preflight --host blno.courtmastr.com --json
+
+``MONGO_URL`` and ``FRONTEND_URL`` are both required: the origins allowlist is
+built from the deployment frontend URL, so running without it would report the
+blocking tenant-origins gate as a FAIL on a correctly configured host. The run
+exits 2 with a message rather than printing a misleading verdict.
 
 Exit code is 0 only when the two conclusively-checkable gates (host resolution
 and tenant origins) pass. A Firebase gate that could not be read degrades to
@@ -551,14 +558,26 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def missing_required(args: argparse.Namespace) -> tuple[str, ...]:
+    """Required inputs that are unset.
+
+    ``frontend_url`` is as required as ``mongo_url``: ``TenantOriginsResolver``
+    short-circuits to an empty origin set without it, which would report the
+    blocking Gate 3 as a definitive FAIL on a perfectly configured host.
+    """
+
+    missing = []
+    if not args.mongo_url:
+        missing.append("--mongo-url (or $MONGO_URL)")
+    if not args.frontend_url:
+        missing.append("--frontend-url (or $FRONTEND_URL)")
+    return tuple(missing)
+
+
 async def _main_async(args: argparse.Namespace) -> int:
     from motor.motor_asyncio import AsyncIOMotorClient
 
     from backend.v2.shared.tenancy.origins import TenantOriginsResolver
-
-    if not args.mongo_url:
-        print("--mongo-url (or $MONGO_URL) is required", file=sys.stderr)
-        return 2
 
     client = AsyncIOMotorClient(args.mongo_url)
     try:
@@ -586,7 +605,12 @@ async def _main_async(args: argparse.Namespace) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    return asyncio.run(_main_async(_parse_args(argv)))
+    args = _parse_args(argv)
+    missing = missing_required(args)
+    if missing:
+        print(f"{' and '.join(missing)} is required", file=sys.stderr)
+        return 2
+    return asyncio.run(_main_async(args))
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry point

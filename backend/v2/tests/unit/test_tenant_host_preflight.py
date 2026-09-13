@@ -179,3 +179,40 @@ def test_runbook_documents_every_gate_title() -> None:
     text = RUNBOOK.read_text(encoding="utf-8")
     for title in preflight.GATE_TITLES.values():
         assert title in text, f"runbook is missing gate heading: {title}"
+
+
+def test_main_refuses_to_run_without_frontend_url(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Without FRONTEND_URL the origins builder yields nothing, which would report
+    # the blocking tenant-origins gate as a FAIL on a healthy host. Refuse instead.
+    monkeypatch.delenv("FRONTEND_URL", raising=False)
+    monkeypatch.setenv("MONGO_URL", "mongodb://localhost:27017")
+
+    code = preflight.main(["--host", "academy.example.com"])
+
+    assert code == 2
+    assert "--frontend-url" in capsys.readouterr().err
+
+
+def test_main_refuses_to_run_without_mongo_url(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("MONGO_URL", raising=False)
+    monkeypatch.setenv("FRONTEND_URL", "https://app.example.com")
+
+    code = preflight.main(["--host", "academy.example.com"])
+
+    assert code == 2
+    assert "--mongo-url" in capsys.readouterr().err
+
+
+def test_missing_required_is_empty_when_both_inputs_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MONGO_URL", "mongodb://localhost:27017")
+    monkeypatch.setenv("FRONTEND_URL", "https://app.example.com")
+
+    args = preflight._parse_args(["--host", "academy.example.com"])
+
+    assert preflight.missing_required(args) == ()

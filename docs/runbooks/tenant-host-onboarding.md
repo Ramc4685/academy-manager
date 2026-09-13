@@ -23,6 +23,9 @@ python -m backend.scripts.tenant_host_preflight --host blno-badminton.courtmastr
 Configuration comes from the environment (`MONGO_URL`, `MONGO_DB_NAME`,
 `V2_FIREBASE_PROJECT_ID` / `FIREBASE_PROJECT_ID`, `PLATFORM_BASE_DOMAIN`,
 `FRONTEND_URL`) and can be overridden per flag; `--help` lists them.
+`MONGO_URL` and `FRONTEND_URL` are required — the origin allowlist is built from
+the deployment frontend URL, so the script exits `2` with a message rather than
+reporting Gate 3 as a false `FAIL` when either is unset.
 
 The script exits `0` only when the two gates it can conclusively verify (Gate 0
 and Gate 3) pass. Gates 1 and 2 are console settings: Gate 1 can never be read
