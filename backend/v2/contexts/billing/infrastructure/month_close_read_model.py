@@ -122,9 +122,15 @@ class MongoMonthCloseReadModel:
 
         # --- primary sources: a failure here is a 500, never a wrong number.
         invoices = await self._period_invoices(academy_id, period)
-        start, end = month_bounds(period)
+        start, end = month_bounds(period, tz_name)
         collected_cents = (
-            await cash_received_in_period(self._db, academy_id=academy_id, start=start, end=end)
+            await cash_received_in_period(
+                self._db,
+                academy_id=academy_id,
+                start=start,
+                end=end,
+                timezone_name=tz_name,
+            )
         ).net_cents
 
         invoice_ids = [inv["invoice_id"] for inv in invoices]

@@ -122,3 +122,60 @@ async def test_months_filter_drops_out_of_range_payments() -> None:
     snapshot = await reader.read(academy_id="academy-a", months=("2026-07",))
 
     assert snapshot.revenue_by_month == {"2026-07": 3_000}
+
+
+@pytest.mark.asyncio
+async def test_revenue_buckets_by_the_academy_timezone_not_utc() -> None:
+    """#608 — 05:30 UTC on Feb 1 is still January's money in Chicago."""
+
+    payments = _FakeCollection(
+        [
+            {
+                "amount_cents": 4_000,
+                "refunded_cents": 0,
+                "created_at": datetime(2026, 2, 1, 5, 30, tzinfo=UTC),
+            },
+            {
+                "amount_cents": 1_000,
+                "refunded_cents": 0,
+                "created_at": datetime(2026, 2, 15, 12, tzinfo=UTC),
+            },
+        ]
+    )
+
+    async def _chicago(_academy_id: str) -> str:
+        return "America/Chicago"
+
+    reader = MongoAcademyFinancialSnapshotReader(
+        _FakeDb({"payments": payments, "invoices": _FakeCollection([])}),
+        academy_timezone=_chicago,
+    )
+
+    snapshot = await reader.read(academy_id="academy-a")
+
+    assert snapshot.revenue_by_month == {"2026-01": 4_000, "2026-02": 1_000}
+
+
+@pytest.mark.asyncio
+async def test_revenue_stays_utc_when_the_academy_has_no_timezone() -> None:
+    payments = _FakeCollection(
+        [
+            {
+                "amount_cents": 4_000,
+                "refunded_cents": 0,
+                "created_at": datetime(2026, 2, 1, 5, 30, tzinfo=UTC),
+            }
+        ]
+    )
+
+    async def _unset(_academy_id: str) -> str | None:
+        return None
+
+    reader = MongoAcademyFinancialSnapshotReader(
+        _FakeDb({"payments": payments, "invoices": _FakeCollection([])}),
+        academy_timezone=_unset,
+    )
+
+    snapshot = await reader.read(academy_id="academy-a")
+
+    assert snapshot.revenue_by_month == {"2026-02": 4_000}

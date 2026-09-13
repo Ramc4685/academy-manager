@@ -18,6 +18,7 @@ from backend.v2.contexts.billing.application.admin_money import (
     invoice_outstanding_cents,
     invoice_paid_cents,
     invoice_to_admin_payment_row,
+    ledger_payment_effective_month,
     legacy_payment_cash_candidate_query,
     month_bounds,
     payment_collected_cents,
@@ -159,3 +160,36 @@ def test_cents_to_dollars_and_round_money_minor() -> None:
     # banker's rounding: .5 goes to the nearest even minor unit
     assert round_money_minor(Decimal("2.5")) == 2
     assert round_money_minor(Decimal("3.5")) == 4
+
+
+# --- #608: month bucketing follows the academy's clock, not UTC -------------
+
+
+def test_month_bounds_uses_academy_timezone_not_utc() -> None:
+    """Chicago's January starts at 06:00 UTC on the 1st (CST, UTC-6)."""
+    assert month_bounds("2026-01", timezone_name="America/Chicago") == (
+        datetime(2026, 1, 1, 6, tzinfo=UTC),
+        datetime(2026, 2, 1, 6, tzinfo=UTC),
+    )
+
+
+def test_month_bounds_falls_back_to_utc_on_an_unknown_zone() -> None:
+    assert month_bounds("2026-01", timezone_name="Mars/Olympus") == month_bounds("2026-01")
+
+
+def test_payment_effective_month_buckets_by_academy_timezone() -> None:
+    # 2026-02-01T05:30Z is 2026-01-31 23:30 in Chicago: January's money.
+    payment = {"paid_at": datetime(2026, 2, 1, 5, 30, tzinfo=UTC)}
+    assert payment_effective_month(payment) == "2026-02"
+    assert payment_effective_month(payment, timezone_name="America/Chicago") == "2026-01"
+
+
+def test_payment_effective_month_unchanged_away_from_the_boundary() -> None:
+    payment = {"paid_at": datetime(2026, 2, 15, 12, tzinfo=UTC)}
+    assert payment_effective_month(payment, timezone_name="America/Chicago") == "2026-02"
+
+
+def test_ledger_payment_effective_month_buckets_by_academy_timezone() -> None:
+    payment = {"paid_at": datetime(2026, 2, 1, 5, 30, tzinfo=UTC)}
+    assert ledger_payment_effective_month(payment) == "2026-02"
+    assert ledger_payment_effective_month(payment, timezone_name="America/Chicago") == "2026-01"

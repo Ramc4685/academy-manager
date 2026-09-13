@@ -11,15 +11,18 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from backend.v2.contexts.billing.application.admin_money import month_label
 from backend.v2.contexts.billing.application.ports import AcademyFinancialSnapshot
+from backend.v2.shared.time import AcademyTimezoneReader, resolve_reporting_timezone
 
 _REVENUE_PAYMENT_STATUSES = ("succeeded", "partially_refunded", "refunded")
 _OPEN_INVOICE_STATUSES = ("open", "partially_paid", "draft")
 
 
 class MongoAcademyFinancialSnapshotReader:
-    def __init__(self, db: Any) -> None:
+    def __init__(self, db: Any, *, academy_timezone: AcademyTimezoneReader | None = None) -> None:
         self._db = db
+        self._academy_timezone = academy_timezone
 
     async def read(
         self, *, academy_id: str, months: tuple[str, ...] | None = None
@@ -33,9 +36,15 @@ class MongoAcademyFinancialSnapshotReader:
             outstanding_invoice_count=outstanding_count,
         )
 
+    async def _timezone_name(self, academy_id: str) -> str:
+        if self._academy_timezone is None:
+            return "UTC"
+        return await resolve_reporting_timezone(self._academy_timezone, academy_id)
+
     async def _revenue_by_month(
         self, academy_id: str, months: tuple[str, ...] | None
     ) -> dict[str, int]:
+        timezone_name = await self._timezone_name(academy_id)
         cursor = self._db["payments"].find(
             {
                 "academy_id": academy_id,
@@ -46,7 +55,7 @@ class MongoAcademyFinancialSnapshotReader:
         )
         buckets: dict[str, int] = {}
         async for doc in cursor:
-            key = _month_key(doc.get("created_at"))
+            key = _month_key(doc.get("created_at"), timezone_name)
             if key is None:
                 continue
             if months is not None and key not in months:
@@ -73,11 +82,15 @@ class MongoAcademyFinancialSnapshotReader:
         return total, count
 
 
-def _month_key(value: object) -> str | None:
-    """Legacy documents store created_at as an ISO string, not a BSON date."""
+def _month_key(value: object, timezone_name: str = "UTC") -> str | None:
+    """Legacy documents store created_at as an ISO string, not a BSON date.
+
+    Dates bucket on the academy's clock (#608); the legacy strings carry no
+    zone to convert from, so their leading ``YYYY-MM`` is taken as written.
+    """
 
     if isinstance(value, datetime):
-        return value.strftime("%Y-%m")
+        return month_label(value, timezone_name)
     if isinstance(value, str) and len(value) >= 7:
         return value[:7]
     return None

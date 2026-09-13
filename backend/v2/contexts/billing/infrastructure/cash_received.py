@@ -46,6 +46,7 @@ from backend.v2.contexts.billing.application.admin_money import (
     payment_final_amount_cents,
     payment_provider_keys,
     payment_received_cents,
+    report_zone,
 )
 
 #: Ledger statuses that count as money in the door. Refunded rows are included
@@ -158,17 +159,23 @@ async def cash_received_in_period(
     academy_id: str,
     start: datetime,
     end: datetime,
+    timezone_name: str | None = None,
 ) -> CashReceived:
     """Money actually received by ``academy_id`` between ``start`` and ``end``.
 
     ``start``/``end`` are the ``month_bounds`` of a single month; the period
     string the legacy queries need is derived from ``start``, which is exact
     because ``month_bounds`` always returns the first instant of the month.
+    Since #608 that instant is the month's first instant *in the academy's
+    zone*, so the label is read off the same clock the bounds were built on.
     """
-    period = f"{start.year:04d}-{start.month:02d}"
+    local_start = start.astimezone(report_zone(timezone_name))
+    period = f"{local_start.year:04d}-{local_start.month:02d}"
 
     invoice_keys = await _period_invoice_keys(db, academy_id, period)
-    ledger_rows, ledger_keys, ledger_payment_ids = await _ledger_rows(db, academy_id, start, end)
+    ledger_rows, ledger_keys, ledger_payment_ids = await _ledger_rows(
+        db, academy_id, start, end, period, timezone_name
+    )
     await _add_all_time_ledger_keys(db, academy_id, ledger_keys, ledger_payment_ids)
     await _add_allocated_invoice_keys(db, academy_id, ledger_keys, ledger_payment_ids)
     legacy_rows = await _legacy_rows(
@@ -178,6 +185,7 @@ async def cash_received_in_period(
         start=start,
         end=end,
         excluded_keys=invoice_keys | ledger_keys,
+        timezone_name=timezone_name,
     )
 
     rows = tuple(ledger_rows + legacy_rows)
@@ -215,7 +223,12 @@ async def _period_invoice_keys(
 
 
 async def _ledger_rows(
-    db: AsyncIOMotorDatabase[Any], academy_id: str, start: datetime, end: datetime
+    db: AsyncIOMotorDatabase[Any],
+    academy_id: str,
+    start: datetime,
+    end: datetime,
+    period: str,
+    timezone_name: str | None = None,
 ) -> tuple[list[CashReceivedRow], set[str], set[str]]:
     rows: list[CashReceivedRow] = []
     keys: set[str] = set()
@@ -228,11 +241,10 @@ async def _ledger_rows(
         },
         _PAYMENT_MONEY_PROJECTION,
     )
-    period = f"{start.year:04d}-{start.month:02d}"
     async for payment in cursor:
         # The window query is deliberately loose (it accepts string dates too);
         # the month check is what actually decides membership.
-        if ledger_payment_effective_month(payment) != period:
+        if ledger_payment_effective_month(payment, timezone_name) != period:
             continue
         keys.update(payment_provider_keys(payment))
         payment_id = str(payment.get("payment_id") or "")
@@ -303,6 +315,7 @@ async def _legacy_rows(
     start: datetime,
     end: datetime,
     excluded_keys: set[str],
+    timezone_name: str | None = None,
 ) -> list[CashReceivedRow]:
     rows: list[CashReceivedRow] = []
     cursor = db["payments"].find(
@@ -315,7 +328,7 @@ async def _legacy_rows(
         },
     )
     async for payment in cursor:
-        if payment_effective_month(payment) != period:
+        if payment_effective_month(payment, timezone_name) != period:
             continue
         if payment_provider_keys(payment) & excluded_keys:
             continue

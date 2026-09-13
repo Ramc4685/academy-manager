@@ -40,11 +40,22 @@ from backend.v2.contexts.billing.application.admin_money import (
     payment_outstanding_cents,
     payment_provider_keys,
     payment_revenue_net_cents,
+    report_zone,
     round_money_minor,
 )
 from backend.v2.contexts.billing.infrastructure.cash_received import cash_received_in_period
 from backend.v2.shared.occurrences import occurrence_session_id
 from backend.v2.shared.tenancy import current_academy_id
+from backend.v2.shared.time import academy_timezone_lookup, resolve_reporting_timezone
+
+
+async def _reporting_timezone(db: AsyncIOMotorDatabase[Any], academy_id: str) -> str:
+    """The zone every month bucket on this page is read off (#608).
+
+    One extra ``academies`` lookup per report call. Reports must render, so an
+    unset or unreadable ``timezone`` degrades to UTC rather than 500-ing.
+    """
+    return await resolve_reporting_timezone(academy_timezone_lookup(db), academy_id)
 
 
 class AdminEffectiveRevenueQuery:
@@ -55,6 +66,7 @@ class AdminEffectiveRevenueQuery:
         from backend.v2.shared.tenancy import current_academy_id
 
         academy_id = current_academy_id()
+        timezone_name = await _reporting_timezone(self._db, academy_id)
         result: dict[str, int] = {}
         ledger_keys: set[str] = set()
         ledger_payment_ids: list[str] = []
@@ -77,10 +89,10 @@ class AdminEffectiveRevenueQuery:
 
         ledger_months = await self._aggregate_months(
             "ledger_payments",
-            self._ledger_revenue_pipeline(ledger_query),
+            self._ledger_revenue_pipeline(ledger_query, timezone_name),
         )
         if ledger_months is None:
-            ledger_months = await self._ledger_revenue_fallback(ledger_query)
+            ledger_months = await self._ledger_revenue_fallback(ledger_query, timezone_name)
         self._merge_months(result, ledger_months)
 
         ledger_key_projection = dict.fromkeys(provider_key_fields, 1)
@@ -110,16 +122,17 @@ class AdminEffectiveRevenueQuery:
 
         legacy_months = await self._aggregate_months(
             "payments",
-            self._legacy_revenue_pipeline(legacy_query),
+            self._legacy_revenue_pipeline(legacy_query, timezone_name),
         )
         if legacy_months is None:
-            legacy_months = await self._legacy_revenue_fallback(legacy_query)
+            legacy_months = await self._legacy_revenue_fallback(legacy_query, timezone_name)
         self._merge_months(result, legacy_months)
         if ledger_keys:
             duplicate_months = await self._legacy_duplicate_revenue_months(
                 legacy_query,
                 ledger_keys,
                 provider_key_fields,
+                timezone_name,
             )
             self._subtract_months(result, duplicate_months)
 
@@ -227,7 +240,9 @@ class AdminEffectiveRevenueQuery:
         }
 
     @classmethod
-    def _ledger_revenue_pipeline(cls, match: dict[str, Any]) -> list[dict[str, Any]]:
+    def _ledger_revenue_pipeline(
+        cls, match: dict[str, Any], timezone_name: str = "UTC"
+    ) -> list[dict[str, Any]]:
         return [
             {"$match": match},
             {
@@ -261,6 +276,7 @@ class AdminEffectiveRevenueQuery:
                         "$dateToString": {
                             "format": "%Y-%m",
                             "date": "$effective_at",
+                            "timezone": timezone_name,
                         }
                     },
                     "revenue_cents": {"$sum": "$net_cents"},
@@ -270,7 +286,9 @@ class AdminEffectiveRevenueQuery:
         ]
 
     @classmethod
-    def _legacy_revenue_pipeline(cls, match: dict[str, Any]) -> list[dict[str, Any]]:
+    def _legacy_revenue_pipeline(
+        cls, match: dict[str, Any], timezone_name: str = "UTC"
+    ) -> list[dict[str, Any]]:
         effective_value = {
             "$cond": [
                 {
@@ -315,6 +333,7 @@ class AdminEffectiveRevenueQuery:
                             "$dateToString": {
                                 "format": "%Y-%m",
                                 "date": "$$effective",
+                                "timezone": timezone_name,
                             }
                         },
                         {"$substrBytes": [{"$toString": "$$effective"}, 0, 7]},
@@ -376,7 +395,9 @@ class AdminEffectiveRevenueQuery:
                 return None
         return months
 
-    async def _ledger_revenue_fallback(self, match: dict[str, Any]) -> dict[str, int]:
+    async def _ledger_revenue_fallback(
+        self, match: dict[str, Any], timezone_name: str = "UTC"
+    ) -> dict[str, int]:
         projection = {
             "amount_cents": 1,
             "final_amount_cents": 1,
@@ -396,12 +417,14 @@ class AdminEffectiveRevenueQuery:
         }
         months: dict[str, int] = {}
         async for payment in self._db["ledger_payments"].find(match, projection):
-            month = ledger_payment_effective_month(payment)
+            month = ledger_payment_effective_month(payment, timezone_name)
             if month:
                 months[month] = months.get(month, 0) + payment_revenue_net_cents(payment)
         return months
 
-    async def _legacy_revenue_fallback(self, match: dict[str, Any]) -> dict[str, int]:
+    async def _legacy_revenue_fallback(
+        self, match: dict[str, Any], timezone_name: str = "UTC"
+    ) -> dict[str, int]:
         projection = {
             "amount_cents": 1,
             "final_amount_cents": 1,
@@ -423,7 +446,7 @@ class AdminEffectiveRevenueQuery:
         }
         months: dict[str, int] = {}
         async for payment in self._db["payments"].find(self._tenant_scoped(match), projection):
-            month = payment_effective_month(payment)
+            month = payment_effective_month(payment, timezone_name)
             if month:
                 months[month] = months.get(month, 0) + payment_revenue_net_cents(payment)
         return months
@@ -452,6 +475,7 @@ class AdminEffectiveRevenueQuery:
         base_query: dict[str, Any],
         ledger_keys: set[str],
         provider_key_fields: list[str],
+        timezone_name: str = "UTC",
     ) -> dict[str, int]:
         projection = {
             "payment_id": 1,
@@ -490,7 +514,7 @@ class AdminEffectiveRevenueQuery:
                 if not row_id or row_id in seen:
                     continue
                 seen.add(row_id)
-                month = payment_effective_month(payment)
+                month = payment_effective_month(payment, timezone_name)
                 if month:
                     months[month] = months.get(month, 0) + payment_revenue_net_cents(payment)
         return months
@@ -534,11 +558,14 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
 
     async def get_reports_dashboard(period: str) -> dict[str, Any]:
         academy_id = current_academy_id()
-        start, end = month_bounds(period)
+        timezone_name = await _reporting_timezone(db, academy_id)
+        start, end = month_bounds(period, timezone_name)
 
         # Spec 2026-09-07 §3.2: one reader is the definition of cash received.
         cash_collected_cents = (
-            await cash_received_in_period(db, academy_id=academy_id, start=start, end=end)
+            await cash_received_in_period(
+                db, academy_id=academy_id, start=start, end=end, timezone_name=timezone_name
+            )
         ).net_cents
         billed_cents = 0
         outstanding_dues_cents = 0
@@ -1141,7 +1168,7 @@ def make_refunds_report(
 
     async def get_refunds_report(period: str) -> dict[str, Any]:
         academy_id = current_academy_id()
-        start, end = month_bounds(period)
+        start, end = month_bounds(period, await _reporting_timezone(db, academy_id))
 
         refunds: list[dict[str, Any]] = []
         total_refunded_cents = 0
@@ -1256,7 +1283,8 @@ def make_revenue_by_category_report(
 
     async def get_revenue_by_category_report(period: str) -> dict[str, Any]:
         academy_id = current_academy_id()
-        start, end = month_bounds(period)
+        timezone_name = await _reporting_timezone(db, academy_id)
+        start, end = month_bounds(period, timezone_name)
 
         allocated_by_invoice: dict[str, int] = {}
         allocation_cursor = db["payment_allocations"].find(
@@ -1338,7 +1366,7 @@ def make_revenue_by_category_report(
             {"unapplied_amount_cents": 1, "paid_at": 1, "created_at": 1},
         )
         async for payment in unapplied_cursor:
-            if ledger_payment_effective_month(payment) != period:
+            if ledger_payment_effective_month(payment, timezone_name) != period:
                 continue
             unapplied_cents += max(int(payment.get("unapplied_amount_cents") or 0), 0)
 
@@ -1373,7 +1401,8 @@ def make_deposit_slip_report(
 
     async def get_deposit_slip_report(period: str) -> dict[str, Any]:
         academy_id = current_academy_id()
-        start, end = month_bounds(period)
+        timezone_name = await _reporting_timezone(db, academy_id)
+        start, end = month_bounds(period, timezone_name)
 
         day_totals: dict[str, dict[str, dict[str, int]]] = {}
         payment_cursor = db["ledger_payments"].find(
@@ -1385,12 +1414,13 @@ def make_deposit_slip_report(
             {"amount_cents": 1, "payment_method": 1, "paid_at": 1, "created_at": 1},
         )
         async for payment in payment_cursor:
-            if ledger_payment_effective_month(payment) != period:
+            if ledger_payment_effective_month(payment, timezone_name) != period:
                 continue
             effective_at = ledger_payment_effective_at(payment)
             if effective_at is None:
                 continue
-            day = effective_at.date().isoformat()
+            # Deposit days are the academy's business days, not UTC days (#608).
+            day = effective_at.astimezone(report_zone(timezone_name)).date().isoformat()
             method = str(payment.get("payment_method") or "unknown")
             amount_cents = max(int(payment.get("amount_cents") or 0), 0)
             bucket = day_totals.setdefault(day, {}).setdefault(
@@ -1453,7 +1483,10 @@ def make_financial_report_csv(db: AsyncIOMotorDatabase[Any]) -> object:
     async def financial_report_csv(report_name: str, period: str | None = None) -> str | None:
         if report_name not in {"refunds", "revenue-by-category", "deposit-slip", "quickbooks"}:
             return None
-        effective_period = period or datetime.now(UTC).strftime("%Y-%m")
+        timezone_name = await _reporting_timezone(db, current_academy_id())
+        effective_period = period or datetime.now(UTC).astimezone(
+            report_zone(timezone_name)
+        ).strftime("%Y-%m")
         out = io.StringIO()
         writer = csv.writer(out)
         if report_name == "refunds":
@@ -1540,8 +1573,10 @@ def make_financial_report_csv(db: AsyncIOMotorDatabase[Any]) -> object:
             revenue = await get_revenue_by_category_report(effective_period)
             deposits = await get_deposit_slip_report(effective_period)
             refunds = await get_refunds_report(effective_period)
-            _, month_end = month_bounds(effective_period)
-            journal_date = (month_end - timedelta(days=1)).strftime("%m/%d/%Y")
+            _, month_end = month_bounds(effective_period, timezone_name)
+            journal_date = (
+                month_end.astimezone(report_zone(timezone_name)) - timedelta(days=1)
+            ).strftime("%m/%d/%Y")
             writer.writerow(["JournalNo", "JournalDate", "Memo", "Account", "Debits", "Credits"])
             collected_cents = deposits["total_cents"]
             allocated_cents = revenue["total_allocated_cents"]
@@ -1628,7 +1663,7 @@ def make_session_economics_report(db: AsyncIOMotorDatabase[Any]) -> object:
 
     async def get_session_economics(period: str) -> dict[str, Any]:
         academy_id = current_academy_id()
-        start, end = month_bounds(period)
+        start, end = month_bounds(period, await _reporting_timezone(db, academy_id))
 
         occurrence_by_id: dict[str, str] = {}
         occurrences_by_session: dict[str, int] = {}
