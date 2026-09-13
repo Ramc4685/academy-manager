@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import Protocol
 
 from motor.motor_asyncio import AsyncIOMotorClientSession, AsyncIOMotorDatabase
 
@@ -21,10 +21,6 @@ class Outbox(Protocol):
         *,
         session: AsyncIOMotorClientSession | None = None,
     ) -> None: ...
-
-    async def pull_unprocessed(self, limit: int = 100) -> list[dict[str, Any]]: ...
-
-    async def mark_processed(self, event_id: str) -> None: ...
 
 
 class MongoOutbox:
@@ -64,14 +60,4 @@ class MongoOutbox:
                 "updated_at": now,
             },
             session=session,
-        )
-
-    async def pull_unprocessed(self, limit: int = 100) -> list[dict[str, Any]]:
-        cursor = self._collection.find({"processed": False}).sort([("created_at", 1)]).limit(limit)
-        return [doc async for doc in cursor]
-
-    async def mark_processed(self, event_id: str) -> None:
-        await self._collection.update_one(
-            {"event_id": event_id},
-            {"$set": {"processed": True, "processed_at": datetime.now(UTC)}},
         )

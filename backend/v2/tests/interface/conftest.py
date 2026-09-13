@@ -326,12 +326,6 @@ class FakeOutbox:
     async def append(self, event, *, session=None) -> None:
         self.appended.append(event)
 
-    async def pull_unprocessed(self, limit: int = 100):
-        return []
-
-    async def mark_processed(self, event_id: str) -> None:
-        pass
-
 
 class FakeIdempotencyStore:
     def __init__(self) -> None:
@@ -1098,12 +1092,6 @@ class _AdminFakeOutbox:
 
     async def append(self, event, *, session=None):
         self.events.append(event)
-
-    async def pull_unprocessed(self, limit=100):
-        return []
-
-    async def mark_processed(self, _):
-        pass
 
 
 @dataclass
