@@ -2073,6 +2073,7 @@ class EnrollmentEventDto(BaseModel):
 class EnrollmentEventsResponse(BaseModel):
     enrollment_id: str
     events: list[EnrollmentEventDto]
+    next_cursor: str | None = None
 
 
 # --- Email Campaigns ---

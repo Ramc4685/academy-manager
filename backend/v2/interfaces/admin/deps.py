@@ -260,7 +260,9 @@ class AdminUseCases:
     list_dues_followup: object  # callable
     send_dues_reminders: SendDuesReminders
     export_report_csv: object  # callable
-    list_enrollment_events: object  # async (enrollment_id: str) -> list[dict]
+    list_enrollment_events: (
+        object  # async (enrollment_id, *, limit, cursor) -> (list[dict], cursor | None)
+    )
     list_billing_deferral_warnings: object  # async (*, today: date, limit: int)
     # comms
     comms: CommsService

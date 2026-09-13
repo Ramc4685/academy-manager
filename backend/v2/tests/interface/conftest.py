@@ -1353,6 +1353,27 @@ class FakeEnrollmentEvents:
     async def list_for_enrollment(self, enrollment_id):
         return [event for event in self.rows if event.enrollment_id == enrollment_id]
 
+    async def list_for_enrollment_paginated(self, enrollment_id, *, limit=100, cursor=None):
+        # Mirrors the AdminUseCases.list_enrollment_events contract (#748):
+        # production wires that to the paginated read model, not to this
+        # repo's plain list_for_enrollment — a different fake method keeps
+        # the two contracts distinct here too. Most-recent-first, real
+        # cursor semantics, so route-level pagination tests exercise the
+        # actual limit/cursor/next_cursor round trip.
+        matches = sorted(
+            (e for e in self.rows if e.enrollment_id == enrollment_id),
+            key=lambda e: (e.occurred_at, e.event_id),
+            reverse=True,
+        )
+        if cursor is not None:
+            cursor_at, cursor_id = cursor
+            matches = [e for e in matches if (e.occurred_at, e.event_id) < (cursor_at, cursor_id)]
+        page = matches[: limit + 1]
+        has_more = len(page) > limit
+        page = page[:limit]
+        next_cursor = (page[-1].occurred_at, page[-1].event_id) if has_more and page else None
+        return page, next_cursor
+
 
 @dataclass
 class _AdminFakeEnrollmentQuery:
@@ -2603,7 +2624,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         list_billing_deferral_warnings=billing_deferrals.list_admin_warnings,
         send_dues_reminders=send_dues_reminders,
         export_report_csv=export_report_csv,
-        list_enrollment_events=enrollment_events.list_for_enrollment,
+        list_enrollment_events=enrollment_events.list_for_enrollment_paginated,
         comms=comms,
         list_admin_waivers=waivers,  # type: ignore[arg-type]
         admin_registration_review=AsyncMock(),

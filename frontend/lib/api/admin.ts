@@ -282,6 +282,7 @@ export interface EnrollmentEventView {
 export interface EnrollmentEventsResponse {
   enrollment_id: string;
   events: EnrollmentEventView[];
+  next_cursor: string | null;
 }
 
 export type WaitlistStatus = "waiting" | "skipped" | "promoted" | "removed";
@@ -1921,10 +1922,18 @@ export function returnFromHold(
   });
 }
 
-export function listEnrollmentEvents(enrollmentId: string): Promise<EnrollmentEventsResponse> {
-  return apiFetch<EnrollmentEventsResponse>(`/admin/enrollments/${enrollmentId}/events`, {
-    method: "GET",
-  });
+export function listEnrollmentEvents(
+  enrollmentId: string,
+  params?: { limit?: number; cursor?: string }
+): Promise<EnrollmentEventsResponse> {
+  const query = new URLSearchParams();
+  if (params?.limit != null) query.set("limit", String(params.limit));
+  if (params?.cursor) query.set("cursor", params.cursor);
+  const qs = query.toString();
+  return apiFetch<EnrollmentEventsResponse>(
+    `/admin/enrollments/${enrollmentId}/events${qs ? `?${qs}` : ""}`,
+    { method: "GET" }
+  );
 }
 
 // ---------------------------------------------------------------------------

@@ -608,13 +608,32 @@ async def add_to_roster(
     )
 
 
+def _encode_enrollment_events_cursor(cursor: tuple[datetime, str]) -> str:
+    occurred_at, event_id = cursor
+    return f"{occurred_at.isoformat()}|{event_id}"
+
+
+def _decode_enrollment_events_cursor(cursor: str) -> tuple[datetime, str]:
+    try:
+        occurred_at_raw, event_id = cursor.split("|", 1)
+        occurred_at = datetime.fromisoformat(occurred_at_raw)
+    except (ValueError, AttributeError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid cursor.") from exc
+    return occurred_at, event_id
+
+
 @router.get("/enrollments/{enrollment_id}/events", response_model=EnrollmentEventsResponse)
 async def get_enrollment_events(
     enrollment_id: str,
+    limit: int = Query(100, ge=1, le=500),
+    cursor: str | None = Query(None),
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> EnrollmentEventsResponse:
-    events = await use_cases.list_enrollment_events(enrollment_id)
+    decoded_cursor = _decode_enrollment_events_cursor(cursor) if cursor else None
+    events, next_cursor = await use_cases.list_enrollment_events(
+        enrollment_id, limit=limit, cursor=decoded_cursor
+    )
     return EnrollmentEventsResponse(
         enrollment_id=enrollment_id,
         events=[
@@ -633,6 +652,7 @@ async def get_enrollment_events(
             )
             for e in events
         ],
+        next_cursor=_encode_enrollment_events_cursor(next_cursor) if next_cursor else None,
     )
 
 

@@ -442,11 +442,13 @@ export function DuesChip({ status }: { status: "current" | "due" | "overdue" }) 
 export function EnrollmentHistory({ enrollmentId }: { enrollmentId: string }) {
   const eventsQuery = useQuery({
     queryKey: ["admin", "enrollment-events", enrollmentId],
-    queryFn: () => listEnrollmentEvents(enrollmentId),
+    queryFn: () => listEnrollmentEvents(enrollmentId, { limit: 1 }),
     staleTime: 30_000,
   });
   const events = eventsQuery.data?.events ?? [];
-  const latest = events.at(-1);
+  // Events now come back most-recent-first (see #748), so the latest event
+  // is the first row rather than the last.
+  const latest = events[0];
   if (!latest) {
     return null;
   }
