@@ -64,7 +64,10 @@ from backend.v2.contexts.enrollment.application.use_cases.billing_deferrals impo
 from backend.v2.contexts.enrollment.application.use_cases.scheduled_actions import (
     ScheduledEnrollmentActionRepository,
 )
-from backend.v2.contexts.enrollment.domain.departure_policy import EnrollmentNotPausable
+from backend.v2.contexts.enrollment.domain.departure_policy import (
+    DepartureReasonCode,
+    EnrollmentNotPausable,
+)
 from backend.v2.contexts.enrollment.domain.errors import (
     # Explicitly re-exported: the interface layer raises 422 on this but may not
     # import domain modules directly (import-linter rule 4).
@@ -120,6 +123,7 @@ async def _record_lifecycle_event(
     to_session_id: str | None = None,
     actor_id: str | None = None,
     reason: str | None = None,
+    reason_code: DepartureReasonCode | None = None,
     billing_policy: str | None = None,
     billing_result: str | None = None,
     credit_id: str | None = None,
@@ -141,6 +145,7 @@ async def _record_lifecycle_event(
             student_id=student_id,
             actor_id=actor_id,
             reason=reason,
+            reason_code=reason_code,
             effective_at=effective_at,
             occurred_at=occurred_at,
             billing_policy=billing_policy,
@@ -1849,6 +1854,10 @@ class WithdrawEnrollmentCommand(BaseModel):
     outcome: WithdrawalOutcome = "credit"
     actor_id: str
     reason: str = Field(min_length=1)
+    #: Issue #775: the structured "why they left", recorded on the lifecycle
+    #: event next to the free-text ``reason``. Optional: the system paths
+    #: (hold reclaim, hold expiry) have no admin to choose one.
+    reason_code: DepartureReasonCode | None = None
 
 
 async def _decide_withdrawal_billing(
@@ -2046,6 +2055,7 @@ class WithdrawEnrollment:
             student_id=e.student_id,
             actor_id=cmd.actor_id,
             reason=cmd.reason,
+            reason_code=cmd.reason_code,
             effective_at=cmd.effective_at,
             occurred_at=now,
             billing_policy=billing_decision.get("billing_policy"),

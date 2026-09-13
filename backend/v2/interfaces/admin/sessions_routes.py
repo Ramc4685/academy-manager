@@ -691,6 +691,7 @@ async def withdraw_enrollment(
             outcome=body.outcome,
             actor_id=claims.user_id,
             reason=body.reason,
+            reason_code=body.reason_code,
         )
     )
 

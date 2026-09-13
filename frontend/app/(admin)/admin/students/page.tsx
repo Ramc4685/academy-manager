@@ -27,6 +27,13 @@ const PAGE_LIMIT = 25;
 // students.status this page used to send. "Everyone" is deliberately not the
 // default — the directory opens on the people who are still somebody's
 // problem today.
+//
+// Issue #775: these are the People directory's TABS. Every one of them
+// carries its own count, because a tab with no number is a question ("are
+// there any?") the admin has to answer by clicking it — which is how the
+// Left tab stayed a dead end even after the data existed. `states` is
+// unchanged and so is each tab's id: the id IS the `lifecycle=` query this
+// tab sends.
 const LIFECYCLE_FILTERS: { id: string; label: string; states: PersonLifecycle[] }[] = [
   { id: "operational", label: "On the books", states: OPERATIONAL_LIFECYCLES },
   { id: "all", label: "Everyone", states: [] },
@@ -36,6 +43,19 @@ const LIFECYCLE_FILTERS: { id: string; label: string; states: PersonLifecycle[] 
     states: [state],
   })),
 ];
+
+// The "Everyone" tab counts every state; a single-state tab counts its own.
+// A tab whose states are all missing from the payload shows no number rather
+// than a confident zero — an older backend sends no counts at all.
+function tabCount(
+  states: PersonLifecycle[],
+  counts: Record<string, number>,
+): number | null {
+  const wanted = states.length > 0 ? states : ALL_LIFECYCLES;
+  const known = wanted.filter((state) => state in counts);
+  if (known.length === 0) return null;
+  return known.reduce((sum, state) => sum + (counts[state] ?? 0), 0);
+}
 
 export default function AdminStudentsPage() {
   const [searchInput, setSearchInput] = useState("");
@@ -80,6 +100,7 @@ export default function AdminStudentsPage() {
         <StudentsToolbar
           search={searchInput}
           filterId={filterId}
+          counts={counts}
           onSearchChange={setSearchInput}
           onFilterChange={setFilterId}
           isFetching={studentsQuery.isFetching && !studentsQuery.isFetchingNextPage}
@@ -163,35 +184,55 @@ function SummaryCards({
 function StudentsToolbar({
   search,
   filterId,
+  counts,
   onSearchChange,
   onFilterChange,
   isFetching,
 }: {
   search: string;
   filterId: string;
+  counts: Record<string, number>;
   onSearchChange: (value: string) => void;
   onFilterChange: (value: string) => void;
   isFetching: boolean;
 }) {
   return (
     <div className="flex flex-col gap-3 border-b border-neutral-200 bg-white px-5 py-4 dark:border-neutral-800 dark:bg-neutral-950 lg:flex-row lg:items-center lg:justify-between">
-      <div className="flex flex-wrap items-center gap-2">
+      <div
+        role="tablist"
+        aria-label="People by lifecycle"
+        data-testid="admin-students-tabs"
+        className="flex flex-wrap items-center gap-2"
+      >
         {LIFECYCLE_FILTERS.map((filter) => {
           const active = filterId === filter.id;
+          const count = tabCount(filter.states, counts);
           return (
             <button
               key={filter.id}
               type="button"
+              role="tab"
+              aria-selected={active}
               aria-pressed={active}
               data-testid={`admin-students-filter-${filter.id}`}
               onClick={() => onFilterChange(filter.id)}
-              className={`inline-flex h-8 items-center rounded-md px-3 font-body text-[13px] font-semibold transition ${
+              className={`inline-flex h-8 items-center gap-2 rounded-md px-3 font-body text-[13px] font-semibold transition ${
                 active
                   ? "bg-rally-ink text-white"
                   : "bg-transparent text-rally-muted hover:bg-neutral-100"
               }`}
             >
               {filter.label}
+              {count !== null && (
+                <span
+                  data-testid={`admin-students-filter-count-${filter.id}`}
+                  className={`font-mono text-[11px] tabular-nums ${
+                    active ? "text-white/70" : "text-rally-subtle"
+                  }`}
+                >
+                  {count}
+                </span>
+              )}
             </button>
           );
         })}

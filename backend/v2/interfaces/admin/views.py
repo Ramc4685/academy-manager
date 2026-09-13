@@ -10,6 +10,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
+from backend.v2.contexts.enrollment.application.use_cases.departure_reasons import (
+    DepartureReasonCode,
+)
 from backend.v2.contexts.enrollment.application.use_cases.person_lifecycle import (
     PersonLifecycle,
 )
@@ -635,6 +638,9 @@ class WithdrawEnrollmentRequest(BaseModel):
     effective_date: date
     outcome: Literal["credit", "refund", "adjustment"] = "credit"
     reason: str = Field(min_length=1, max_length=500)
+    #: Issue #775: the structured "why". Optional so an older client (or a
+    #: script) can still drop a student with a note alone.
+    reason_code: DepartureReasonCode | None = None
 
 
 class RemoveEnrollmentRequest(BaseModel):
