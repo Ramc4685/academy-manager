@@ -70,7 +70,7 @@ async def test_create_student_invoice_defaults_the_due_date_to_the_billing_rule(
             enrollment_id=None,
         )
 
-    assert created["due_date"] == (date.today() + timedelta(days=14)).isoformat()
+    assert created["due_date"] == (datetime.now(UTC).date() + timedelta(days=14)).isoformat()
 
 
 async def test_create_student_invoice_keeps_an_explicit_due_date(admin_db) -> None:
@@ -103,4 +103,4 @@ async def test_create_student_invoice_falls_back_to_seven_days_with_no_settings(
             enrollment_id=None,
         )
 
-    assert created["due_date"] == (date.today() + timedelta(days=7)).isoformat()
+    assert created["due_date"] == (datetime.now(UTC).date() + timedelta(days=7)).isoformat()

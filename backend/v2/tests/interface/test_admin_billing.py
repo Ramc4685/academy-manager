@@ -1917,7 +1917,7 @@ def test_bill_enrollment_period_defaults_the_due_date_to_the_billing_rule(admin_
     )
 
     assert response.status_code == 201, response.text
-    expected = (date.today() + timedelta(days=14)).isoformat()
+    expected = (datetime.now(UTC).date() + timedelta(days=14)).isoformat()
     assert response.json()["due_date"] == expected
 
 
