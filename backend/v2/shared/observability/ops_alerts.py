@@ -29,7 +29,7 @@ import logging
 import time
 from collections.abc import AsyncIterator, Mapping
 from contextlib import AbstractContextManager, asynccontextmanager, nullcontext
-from typing import Any
+from typing import Any, cast
 
 log = logging.getLogger(__name__)
 
@@ -174,7 +174,10 @@ def _job_transaction(sentry_sdk: Any, job_id: str) -> AbstractContextManager[Any
     falls back to a no-op context manager so the job body is unaffected.
     """
     try:
-        return sentry_sdk.start_transaction(op="scheduler.job", name=job_id)
+        return cast(
+            "AbstractContextManager[Any]",
+            sentry_sdk.start_transaction(op="scheduler.job", name=job_id),
+        )
     except Exception:
         log.debug("sentry_job_transaction_start_failed job_id=%s", job_id, exc_info=True)
         return nullcontext()
