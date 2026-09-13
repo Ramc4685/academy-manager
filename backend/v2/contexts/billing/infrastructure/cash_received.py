@@ -20,11 +20,19 @@ depends on all three of them and a caller that forgot one would silently
 double-count. The dashboard keeps its own ``invoice_keys`` for its unrelated
 ``risk_payments`` pass.
 
-**Not** used by the deposit slip or the QuickBooks journal (§3.2): the slip's
-gross is ``amount_cents`` per ledger row where this reader's is
-``paid_amount_cents``/``amount_received_cents`` when present, and the slip is
-ledger-only where this reader folds in legacy rows. Pointing the slip here
-would change book-keeping output, which needs its own sign-off (§11).
+The deposit slip and the QuickBooks journal read this too, since #693. They
+were deliberately left out at first (§3.2/§11) — the slip's gross was
+``amount_cents`` per ledger row where this reader's is
+``paid_amount_cents``/``amount_received_cents`` when present, and the slip was
+ledger-only where this reader folds in legacy rows — because pointing
+book-keeping output at a different definition of cash needed its own sign-off.
+The owner gave it on 2026-09-12: cash is defined by payment date everywhere,
+so the slip now buckets ``rows`` by day and method and the journal totals the
+slip. Do not reintroduce a second definition here.
+
+The slip sums ``gross_cents`` where month close sums ``net_cents``: a refund
+leaves the original deposit alone, and the journal books refunds as their own
+entry, so netting them into the slip would count them twice.
 """
 
 from __future__ import annotations

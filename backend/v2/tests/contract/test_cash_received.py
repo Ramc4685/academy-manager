@@ -9,6 +9,8 @@ reader's ``net_cents``.
 
 from __future__ import annotations
 
+import csv
+import io
 from datetime import UTC, datetime
 from typing import Any
 
@@ -18,13 +20,31 @@ from backend.v2.contexts.billing.application.admin_money import (
     month_bounds,
     payment_collected_cents,
 )
+from backend.v2.contexts.billing.application.use_cases.finance import (
+    MongoTuitionDiscountSummaryQuery,
+)
 from backend.v2.contexts.billing.infrastructure.admin_reports_read_model import (
+    make_deposit_slip_report,
+    make_financial_report_csv,
     make_reports_dashboard,
 )
 from backend.v2.contexts.billing.infrastructure.cash_received import (
     _WIDENED_KEY_SHAPES,
     cash_received_in_period,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo import (
+    MongoBillingSettingsRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_connected_account_repo import (
+    MongoConnectedAccountRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_parent_billing_customer_repo import (
+    MongoParentBillingCustomerRepository,
+)
+from backend.v2.contexts.billing.infrastructure.month_close_read_model import (
+    MongoMonthCloseReadModel,
+)
+from backend.v2.shared.time.academy_timezone import academy_timezone_lookup
 
 PERIOD = "2026-09"
 ACADEMY = "test-academy"
@@ -506,3 +526,37 @@ async def test_the_lookup_count_scales_with_the_candidate_keys_not_the_collectio
     await cash_received_in_period(_SpyAllDb(db, calls), academy_id=ACADEMY, start=START, end=END)
 
     assert len(calls) == baseline
+
+
+@pytest.mark.asyncio
+async def test_month_close_deposit_slip_and_journal_agree_on_one_period(db: Any, acad: str) -> None:
+    """#693: the three documents an owner reconciles a month with must report
+    the same cash. The seeded month contains both ways they used to diverge —
+    a ledger row that received less than it charged, and legacy cash with no
+    ledger row — and no refunds, the one deliberate difference (the slip is
+    gross because the journal books refunds as their own entry)."""
+    await db["academies"].insert_one({"academy_id": ACADEMY, "timezone": "UTC"})
+    await _ledger(db, payment_id="pay-partial", amount_cents=10_000, paid_amount_cents=9_500)
+    await _legacy(db, payment_id="leg-1", paid_amount_cents=3_000, period=PERIOD)
+
+    cash = await _read(db)
+    month_close = await MongoMonthCloseReadModel(
+        db,
+        academy_timezone=academy_timezone_lookup(db),
+        connected_accounts=MongoConnectedAccountRepository(db),
+        billing_settings=MongoBillingSettingsRepository(db),
+        customers=MongoParentBillingCustomerRepository(db),
+        tuition_discounts=MongoTuitionDiscountSummaryQuery(db),
+    ).build(PERIOD)
+    slip = await make_deposit_slip_report(db)(PERIOD)
+    journal = list(
+        csv.reader(io.StringIO(await make_financial_report_csv(db)("quickbooks", PERIOD)))  # type: ignore[operator]
+    )
+    undeposited = next(
+        row for row in journal[1:] if row[0] == f"{PERIOD}-REV" and row[3] == "Undeposited Funds"
+    )
+
+    assert cash.gross_cents == cash.net_cents == 12_500
+    assert month_close["money"]["collected_cents"] == cash.net_cents
+    assert slip["total_cents"] == cash.gross_cents
+    assert undeposited[4] == "125.00"

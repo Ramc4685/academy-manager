@@ -30,7 +30,6 @@ from backend.v2.contexts.billing.application.admin_money import (
     invoice_outstanding_cents,
     invoice_paid_cents,
     invoice_provider_keys,
-    ledger_payment_effective_at,
     ledger_payment_effective_month,
     ledger_payment_effective_window_query,
     month_bounds,
@@ -1393,9 +1392,17 @@ def make_deposit_slip_report(
 ) -> Callable[[str], Awaitable[dict[str, Any]]]:
     """Payments received grouped by day and payment method, for bank reconciliation.
 
-    Gross money received per day (UTC, on ``paid_at`` falling back to ``created_at``);
-    refunds are intentionally NOT netted out — a later refund does not change what
-    was deposited on the day the payment arrived.
+    Rows come from ``cash_received_in_period`` — the one definition of cash
+    received (spec 2026-09-07 §3.2) — so the slip, the QuickBooks journal that
+    totals it, and the month close tile can never disagree about what the month
+    collected (#693). Until then the slip summed the raw ``amount_cents`` of
+    ledger rows only, which overstated a partly settled payment and missed
+    legacy ``payments`` cash entirely.
+
+    Gross money received per day, on the academy's clock; refunds are
+    intentionally NOT netted out — a later refund does not change what was
+    deposited on the day the payment arrived, and the journal books refunds as
+    their own entry, so netting here would count them twice.
     """
     from backend.v2.shared.tenancy import current_academy_id
 
@@ -1405,28 +1412,19 @@ def make_deposit_slip_report(
         start, end = month_bounds(period, timezone_name)
 
         day_totals: dict[str, dict[str, dict[str, int]]] = {}
-        payment_cursor = db["ledger_payments"].find(
-            {
-                "academy_id": academy_id,
-                **ledger_payment_effective_window_query(start, end),
-                "status": {"$in": _LEDGER_SUCCESS_STATUSES},
-            },
-            {"amount_cents": 1, "payment_method": 1, "paid_at": 1, "created_at": 1},
+        cash = await cash_received_in_period(
+            db, academy_id=academy_id, start=start, end=end, timezone_name=timezone_name
         )
-        async for payment in payment_cursor:
-            if ledger_payment_effective_month(payment, timezone_name) != period:
-                continue
-            effective_at = ledger_payment_effective_at(payment)
-            if effective_at is None:
+        for row in cash.rows:
+            if row.at is None:
                 continue
             # Deposit days are the academy's business days, not UTC days (#608).
-            day = effective_at.astimezone(report_zone(timezone_name)).date().isoformat()
-            method = str(payment.get("payment_method") or "unknown")
-            amount_cents = max(int(payment.get("amount_cents") or 0), 0)
+            day = row.at.astimezone(report_zone(timezone_name)).date().isoformat()
+            method = row.method or "unknown"
             bucket = day_totals.setdefault(day, {}).setdefault(
                 method, {"amount_cents": 0, "count": 0}
             )
-            bucket["amount_cents"] += amount_cents
+            bucket["amount_cents"] += max(row.gross_cents, 0)
             bucket["count"] += 1
 
         days = []
@@ -1570,6 +1568,8 @@ def make_financial_report_csv(db: AsyncIOMotorDatabase[Any]) -> object:
             # Monthly summary journal entries in the QuickBooks Online CSV import
             # format. JE 1: cash received (debit Undeposited Funds, credit income by
             # category, balanced by an unapplied-payments line). JE 2: refunds given.
+            # The Undeposited Funds debit is the deposit slip's total, so since
+            # #693 it is the shared ``cash_received_in_period`` definition too.
             revenue = await get_revenue_by_category_report(effective_period)
             deposits = await get_deposit_slip_report(effective_period)
             refunds = await get_refunds_report(effective_period)
