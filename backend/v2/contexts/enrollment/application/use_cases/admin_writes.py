@@ -325,6 +325,32 @@ async def _drop_future_occurrence_roster(
         )
 
 
+async def _drop_future_occurrence_roster_for_session(
+    cleanup: OccurrenceRosterCleanup | None,
+    *,
+    session_id: str,
+    after: datetime,
+) -> None:
+    """Remove EVERY student's future make-up/trial roster rows for a
+    cancelled session (issue #694).
+
+    Make-up and trial students hold no enrollment on the session, so the
+    per-enrolled-student sweep (``_drop_future_occurrence_roster``) never
+    reaches their one-time rows. A whole-session cancel must sweep them too,
+    or they survive and render on the coach roster unmarkable. Never raises,
+    same rationale as the per-student sweep.
+    """
+    if cleanup is None:
+        return
+    try:
+        await cleanup.remove_future_for_session(session_id=session_id, after=after)
+    except Exception:
+        log.exception(
+            "enrollment.occurrence_roster_session_cleanup_failed",
+            extra={"session_id": session_id},
+        )
+
+
 class CreateSessionCommand(BaseModel):
     model_config = {"frozen": True}
     coach_id: str
@@ -725,6 +751,11 @@ class CancelSession:
                     ),
                 )
             )
+        # Issue #694: catches make-up/trial students, who never held an
+        # enrollment on this session and so were never in `rows` above.
+        await _drop_future_occurrence_roster_for_session(
+            self._occurrence_roster, session_id=cmd.session_id, after=now
+        )
         return await self._sessions.get(cmd.session_id)
 
     async def _close_paused_followups(self, enrollment_id: str, *, now: datetime) -> None:

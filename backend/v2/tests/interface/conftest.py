@@ -823,6 +823,7 @@ def _build_use_cases(seed_data) -> CoachUseCases:
             absence_notices=absence_notices,
             occurrence_roster=occurrence_roster,
             students=students,
+            occurrences=occurrences,
         ),
         mark_attendance=MarkAttendance(
             attendance_repo=_attendance_repo,

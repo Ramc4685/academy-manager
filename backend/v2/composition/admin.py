@@ -2577,8 +2577,22 @@ def compose_admin(
                         }
                     },
                 )
+                # Issue #694: a make-up/trial row keyed to this occurrence
+                # has no other pruning path once the occurrence is cancelled
+                # here — it would otherwise render on the coach roster
+                # forever unmarkable.
+                await db["occurrence_roster_entries"].delete_many(
+                    {"academy_id": academy_id, "occurrence_id": occurrence_id}
+                )
                 continue
             await db["session_occurrences"].delete_one(
+                {"academy_id": academy_id, "occurrence_id": occurrence_id}
+            )
+            # Issue #694: same rationale as the soft-cancel branch above —
+            # the occurrence itself is gone (schedule/time edit regenerated
+            # it under a new occurrence_id), so any one-time row still
+            # keyed to the old id is orphaned.
+            await db["occurrence_roster_entries"].delete_many(
                 {"academy_id": academy_id, "occurrence_id": occurrence_id}
             )
 
