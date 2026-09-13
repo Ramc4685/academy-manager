@@ -6,6 +6,7 @@ content assembly. Both use fakes — no Mongo, no Sentry, no Resend.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 from datetime import UTC, datetime, timedelta, timezone
@@ -88,6 +89,50 @@ def test_job_error_logs_and_reports_to_sentry(
     assert record.job_id == "process_dunning_retries"
     assert record.scheduled_run_time == "2026-08-27T03:00:00+00:00"
     assert record.exc_info is not None
+
+
+def test_job_cancelled_at_shutdown_is_not_reported_as_an_error(
+    sentry: _SentrySpy, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Issue #752: a deploy cancels in-flight jobs; that is not a failure.
+
+    Fly replaces the machine mid-tick, APScheduler cancels the job's task and
+    the resulting ``CancelledError`` arrives here as an EVENT_JOB_ERROR. Paging
+    on it buried the real failures of the same job.
+    """
+    cancelled = asyncio.CancelledError()
+    event = _FakeJobEvent(
+        job_id="reconcile_stripe_payment_intents",
+        code=2**7,
+        exception=cancelled,
+        scheduled_run_time=datetime(2026, 8, 27, 3, 0, tzinfo=UTC),
+    )
+
+    with caplog.at_level(logging.INFO):
+        ops_alerts.handle_scheduler_job_event(event)
+
+    assert sentry.exceptions == []
+    assert sentry.messages == []
+    assert not any(r.levelno >= logging.ERROR for r in caplog.records)
+    record = next(r for r in caplog.records if "scheduler_job_cancelled" in r.getMessage())
+    assert record.job_id == "reconcile_stripe_payment_intents"
+
+
+def test_other_errors_during_shutdown_are_still_reported(
+    sentry: _SentrySpy, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The #752 exemption is scoped to cancellation, not to shutdown at large."""
+    boom = RuntimeError("connection reset mid-shutdown")
+    event = _FakeJobEvent(job_id="reconcile_stripe_payment_intents", code=2**7, exception=boom)
+
+    with caplog.at_level(logging.INFO):
+        ops_alerts.handle_scheduler_job_event(event)
+
+    assert sentry.exceptions == [boom]
+    assert any(
+        r.levelno == logging.ERROR and "scheduler_job_error" in r.getMessage()
+        for r in caplog.records
+    )
 
 
 def test_job_missed_has_no_exception_so_reports_a_warning_message(
