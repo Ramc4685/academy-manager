@@ -988,9 +988,6 @@ class InvoiceLineDto(BaseModel):
     quantity: int | None = None
     unit_amount_cents: int | None = None
     amount_cents: int
-    line_type: str | None = None
-    quantity: int | None = None
-    unit_amount_cents: int | None = None
     source_type: str | None = None
     source_id: str | None = None
 
