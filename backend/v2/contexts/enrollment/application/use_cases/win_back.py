@@ -19,9 +19,9 @@ job, same idempotent-claim pattern (``claim_digest_send`` via
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from collections.abc import Callable
 from typing import Any, Protocol
 
 from backend.v2.contexts.enrollment.application.ports import (
