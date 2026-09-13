@@ -11,8 +11,8 @@ Verbatim means exactly that: the same ``ledger_payment_effective_window_query``
 window, the same success statuses, the same ``payment_revenue_net_cents`` for
 ledger rows and ``payment_collected_cents`` for legacy rows, and the same
 provider-key de-duplication of legacy ``payments`` against the period's
-invoices, against *every* successful ledger payment (not just this month's),
-and against the invoices those ledger payments were allocated to. The
+invoices, against successful ledger payments of *any* month (not just this
+one), and against the invoices those ledger payments were allocated to. The
 dashboard's existing tests are the proof that nothing moved.
 
 The key sets are rebuilt here rather than passed in, because the legacy dedup
@@ -33,6 +33,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
 
+from bson import ObjectId
+from bson.errors import InvalidId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from backend.v2.contexts.billing.application.admin_money import (
@@ -58,7 +60,9 @@ SUCCESSFUL_LEDGER_STATUSES: list[str] = ["succeeded", "paid", "partially_refunde
 #: with no refund netting (a partial or pending row banked what it banked).
 _RECEIVED_ONLY_LEGACY_STATUSES = frozenset({"partially_paid", "pending", "failed"})
 
-_ALLOCATION_BATCH = 500
+#: ``$in`` batch size for the dedup lookups. Bounded so one busy month cannot
+#: build a single query document Mongo refuses.
+_LOOKUP_BATCH = 500
 
 _PAYMENT_MONEY_PROJECTION: dict[str, int] = {
     "payment_id": 1,
@@ -93,6 +97,10 @@ _PROVIDER_KEY_PROJECTION: dict[str, int] = {
     "stripe_payment_intent_id": 1,
     "stripe_checkout_session_id": 1,
 }
+
+#: The fields ``payment_provider_keys`` reads, in the order the dedup ``$or``
+#: branches on them. Migration 0178 indexes every one of them.
+_PROVIDER_KEY_FIELDS: tuple[str, ...] = tuple(_PROVIDER_KEY_PROJECTION)
 
 
 @dataclass(frozen=True)
@@ -173,20 +181,16 @@ async def cash_received_in_period(
     period = f"{local_start.year:04d}-{local_start.month:02d}"
 
     invoice_keys = await _period_invoice_keys(db, academy_id, period)
-    ledger_rows, ledger_keys, ledger_payment_ids = await _ledger_rows(
-        db, academy_id, start, end, period, timezone_name
+    ledger_rows, ledger_keys = await _ledger_rows(db, academy_id, start, end, period, timezone_name)
+    legacy_candidates = await _legacy_candidates(
+        db, academy_id, period=period, start=start, end=end, timezone_name=timezone_name
     )
-    await _add_all_time_ledger_keys(db, academy_id, ledger_keys, ledger_payment_ids)
-    await _add_allocated_invoice_keys(db, academy_id, ledger_keys, ledger_payment_ids)
-    legacy_rows = await _legacy_rows(
-        db,
-        academy_id,
-        period=period,
-        start=start,
-        end=end,
-        excluded_keys=invoice_keys | ledger_keys,
-        timezone_name=timezone_name,
-    )
+    candidate_keys: set[str] = set()
+    for candidate in legacy_candidates:
+        candidate_keys |= payment_provider_keys(candidate)
+    await _add_colliding_ledger_keys(db, academy_id, candidate_keys, ledger_keys)
+    await _add_allocated_invoice_keys(db, academy_id, candidate_keys, ledger_keys)
+    legacy_rows = _legacy_rows(legacy_candidates, excluded_keys=invoice_keys | ledger_keys)
 
     rows = tuple(ledger_rows + legacy_rows)
     return CashReceived(
@@ -229,10 +233,9 @@ async def _ledger_rows(
     end: datetime,
     period: str,
     timezone_name: str | None = None,
-) -> tuple[list[CashReceivedRow], set[str], set[str]]:
+) -> tuple[list[CashReceivedRow], set[str]]:
     rows: list[CashReceivedRow] = []
     keys: set[str] = set()
-    payment_ids: set[str] = set()
     cursor = db["ledger_payments"].find(
         {
             "academy_id": academy_id,
@@ -248,8 +251,6 @@ async def _ledger_rows(
             continue
         keys.update(payment_provider_keys(payment))
         payment_id = str(payment.get("payment_id") or "")
-        if payment_id:
-            payment_ids.add(payment_id)
         gross, refunded = _ledger_amounts(payment)
         rows.append(
             CashReceivedRow(
@@ -261,63 +262,125 @@ async def _ledger_rows(
                 source="ledger",
             )
         )
-    return rows, keys, payment_ids
+    return rows, keys
 
 
-async def _add_all_time_ledger_keys(
+def _lookup_values(key: str) -> list[Any]:
+    """Every stored shape ``key`` could have been written as.
+
+    ``payment_provider_keys`` stringifies whatever it finds, so the old
+    all-history scan matched an invoice number stored as an int, or an id
+    stored as an ``ObjectId``, against a legacy row's string. A ``$in`` does
+    not coerce, so the lookups below have to carry those shapes explicitly or
+    they would silently stop de-duplicating those rows.
+    """
+    values: list[Any] = [key]
+    if key.isdigit():
+        values.append(int(key))
+    if len(key) == 24:
+        try:
+            values.append(ObjectId(key))
+        except (InvalidId, TypeError):
+            pass
+    return values
+
+
+def _batches(keys: set[str]) -> list[list[Any]]:
+    ordered = sorted(keys)
+    return [
+        [value for key in ordered[index : index + _LOOKUP_BATCH] for value in _lookup_values(key)]
+        for index in range(0, len(ordered), _LOOKUP_BATCH)
+    ]
+
+
+async def _add_colliding_ledger_keys(
     db: AsyncIOMotorDatabase[Any],
     academy_id: str,
+    candidate_keys: set[str],
     keys: set[str],
-    payment_ids: set[str],
 ) -> None:
-    """Every successful ledger payment, not just this month's.
+    """Ledger provider keys that a legacy candidate could collide with.
 
     A legacy row can carry the provider key of a ledger payment recorded in a
-    different month; without this pass it would be counted twice.
+    different month; without this pass it would be counted twice. The obvious
+    way to catch that is to stream *every* successful ledger payment and union
+    its keys — which is what this did, on every dashboard load, unbounded by
+    date (#526).
+
+    Looking the collision up by key instead is exactly equivalent, not an
+    approximation: ``keys`` is only ever consumed as
+    ``payment_provider_keys(legacy_row) & keys``, so a ledger key no legacy
+    candidate carries can never change a result. Nothing here is windowed by
+    date, so a legacy row still dedupes against a ledger payment of any age.
     """
-    cursor = db["ledger_payments"].find(
-        {"academy_id": academy_id, "status": {"$in": SUCCESSFUL_LEDGER_STATUSES}},
-        _PROVIDER_KEY_PROJECTION,
-    )
-    async for payment in cursor:
-        keys.update(payment_provider_keys(payment))
-        payment_id = str(payment.get("payment_id") or "")
-        if payment_id:
-            payment_ids.add(payment_id)
+    if not candidate_keys:
+        return
+    for batch in _batches(candidate_keys):
+        cursor = db["ledger_payments"].find(
+            {
+                "academy_id": academy_id,
+                "status": {"$in": SUCCESSFUL_LEDGER_STATUSES},
+                "$or": [{field: {"$in": batch}} for field in _PROVIDER_KEY_FIELDS],
+            },
+            _PROVIDER_KEY_PROJECTION,
+        )
+        async for payment in cursor:
+            keys.update(payment_provider_keys(payment))
 
 
 async def _add_allocated_invoice_keys(
     db: AsyncIOMotorDatabase[Any],
     academy_id: str,
+    candidate_keys: set[str],
     keys: set[str],
-    payment_ids: set[str],
 ) -> None:
     """Invoices a ledger payment settled — a legacy row keyed by such an
-    invoice id is the same money."""
-    ordered = sorted(payment_ids)
-    for index in range(0, len(ordered), _ALLOCATION_BATCH):
-        batch = ordered[index : index + _ALLOCATION_BATCH]
+    invoice id is the same money.
+
+    Walked backwards from the candidate keys for the same reason as
+    ``_add_colliding_ledger_keys``: only an invoice a legacy candidate is
+    actually keyed by can change the dedup. The second hop re-checks the
+    status, because only a *successful* ledger payment supersedes legacy cash.
+    """
+    if not candidate_keys:
+        return
+    invoices_by_payment: dict[str, set[str]] = {}
+    for batch in _batches(candidate_keys):
         cursor = db["payment_allocations"].find(
-            {"academy_id": academy_id, "payment_id": {"$in": batch}},
-            {"invoice_id": 1},
+            {"academy_id": academy_id, "invoice_id": {"$in": batch}},
+            {"invoice_id": 1, "payment_id": 1},
         )
         async for allocation in cursor:
             invoice_id = str(allocation.get("invoice_id") or "")
-            if invoice_id:
-                keys.add(invoice_id)
+            payment_id = str(allocation.get("payment_id") or "")
+            if invoice_id and payment_id:
+                invoices_by_payment.setdefault(payment_id, set()).add(invoice_id)
+    for batch in _batches(set(invoices_by_payment)):
+        cursor = db["ledger_payments"].find(
+            {
+                "academy_id": academy_id,
+                "status": {"$in": SUCCESSFUL_LEDGER_STATUSES},
+                "payment_id": {"$in": batch},
+            },
+            {"payment_id": 1},
+        )
+        async for payment in cursor:
+            keys.update(invoices_by_payment.get(str(payment.get("payment_id") or ""), set()))
 
 
-async def _legacy_rows(
+async def _legacy_candidates(
     db: AsyncIOMotorDatabase[Any],
     academy_id: str,
     *,
     period: str,
     start: datetime,
     end: datetime,
-    excluded_keys: set[str],
     timezone_name: str | None = None,
-) -> list[CashReceivedRow]:
-    rows: list[CashReceivedRow] = []
+) -> list[dict[str, Any]]:
+    """Legacy ``payments`` rows whose effective month is ``period``, before
+    de-duplication. Read before the dedup key sets are built so those lookups
+    can be bounded by the keys these rows actually carry (#526)."""
+    candidates: list[dict[str, Any]] = []
     cursor = db["payments"].find(
         legacy_payment_cash_candidate_query(academy_id, period, start, end),
         {
@@ -330,6 +393,15 @@ async def _legacy_rows(
     async for payment in cursor:
         if payment_effective_month(payment, timezone_name) != period:
             continue
+        candidates.append(payment)
+    return candidates
+
+
+def _legacy_rows(
+    candidates: list[dict[str, Any]], *, excluded_keys: set[str]
+) -> list[CashReceivedRow]:
+    rows: list[CashReceivedRow] = []
+    for payment in candidates:
         if payment_provider_keys(payment) & excluded_keys:
             continue
         gross, refunded = _legacy_amounts(payment)

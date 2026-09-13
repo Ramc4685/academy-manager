@@ -271,3 +271,134 @@ async def test_the_dashboard_reports_exactly_what_the_reader_returns(db: Any, ac
     assert reader.net_cents == 15_500
     assert dashboard["cash_collected_cents"] == reader.net_cents
     assert dashboard["profit_and_loss"]["revenue_cents"] == reader.net_cents
+
+
+class _SpyCollection:
+    """Records the filters a collection is queried with."""
+
+    def __init__(self, collection: Any, calls: list[dict[str, Any]]) -> None:
+        self._collection = collection
+        self._calls = calls
+
+    def find(self, filter: dict[str, Any] | None = None, *args: Any, **kwargs: Any) -> Any:
+        self._calls.append(dict(filter or {}))
+        return self._collection.find(filter, *args, **kwargs)
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(self._collection, item)
+
+
+class _SpyDb:
+    def __init__(self, db: Any, collection_name: str, calls: list[dict[str, Any]]) -> None:
+        self._db = db
+        self._collection_name = collection_name
+        self._calls = calls
+
+    def __getitem__(self, name: str) -> Any:
+        collection = self._db[name]
+        if name != self._collection_name:
+            return collection
+        return _SpyCollection(collection, self._calls)
+
+
+@pytest.mark.asyncio
+async def test_the_dedup_never_scans_the_whole_ledger_payment_history(db: Any) -> None:
+    """#526: every ``ledger_payments`` read is bounded.
+
+    The dedup used to stream *every* successful ledger payment the academy
+    had ever recorded on each dashboard load. A filter of nothing but
+    ``academy_id``/``status`` is that unbounded scan; the bounded passes all
+    carry either the effective-date window or the keys being looked up.
+    """
+    await _ledger(db, payment_id="pay-1", stripe_payment_intent_id="pi_1", paid_amount_cents=8_000)
+    await _legacy(db, payment_id="leg-1", stripe_payment_intent_id="pi_1", paid_amount_cents=8_000)
+    calls: list[dict[str, Any]] = []
+
+    await cash_received_in_period(
+        _SpyDb(db, "ledger_payments", calls),  # type: ignore[arg-type]
+        academy_id=ACADEMY,
+        start=START,
+        end=END,
+    )
+
+    assert calls, "expected the reader to query ledger_payments"
+    assert [call for call in calls if set(call) <= {"academy_id", "status"}] == []
+
+
+@pytest.mark.asyncio
+async def test_dedup_still_spans_a_ledger_payment_recorded_years_earlier(db: Any) -> None:
+    """The bounded lookup must not become a lookback window: a legacy row can
+    mirror a ledger payment of any age, and windowing would double-count it."""
+    await _ledger(
+        db,
+        payment_id="pay-ancient",
+        stripe_checkout_session_id="cs_ancient",
+        paid_at=datetime(2021, 3, 4, tzinfo=UTC),
+        paid_amount_cents=6_000,
+    )
+    await _legacy(
+        db, payment_id="leg-1", stripe_checkout_session_id="cs_ancient", paid_amount_cents=6_000
+    )
+
+    result = await _read(db)
+
+    assert result.net_cents == 0
+    assert result.rows == ()
+
+
+@pytest.mark.asyncio
+async def test_dedup_spans_an_invoice_allocated_to_an_older_ledger_payment(db: Any) -> None:
+    """The allocation pass is equally age-blind: an invoice settled by last
+    year's ledger payment still supersedes a legacy row keyed by it."""
+    await _ledger(
+        db,
+        payment_id="pay-old",
+        paid_at=datetime(2025, 1, 9, tzinfo=UTC),
+        paid_amount_cents=5_000,
+    )
+    await db["payment_allocations"].insert_one(
+        {"academy_id": ACADEMY, "payment_id": "pay-old", "invoice_id": "inv-old"}
+    )
+    await _legacy(db, payment_id="leg-1", invoice_id="inv-old", paid_amount_cents=5_000)
+
+    result = await _read(db)
+
+    assert result.net_cents == 0
+
+
+@pytest.mark.asyncio
+async def test_an_allocation_of_a_failed_ledger_payment_does_not_dedup(db: Any) -> None:
+    """Only *successful* ledger payments supersede legacy cash."""
+    await _ledger(
+        db,
+        payment_id="pay-failed",
+        status="failed",
+        paid_at=datetime(2025, 1, 9, tzinfo=UTC),
+        paid_amount_cents=0,
+    )
+    await db["payment_allocations"].insert_one(
+        {"academy_id": ACADEMY, "payment_id": "pay-failed", "invoice_id": "inv-failed"}
+    )
+    await _legacy(db, payment_id="leg-1", invoice_id="inv-failed", paid_amount_cents=5_000)
+
+    result = await _read(db)
+
+    assert result.net_cents == 5_000
+
+
+@pytest.mark.asyncio
+async def test_dedup_survives_a_provider_key_stored_as_a_number(db: Any) -> None:
+    """Keys are compared as strings, so a numeric ``invoice_number`` on the
+    ledger row must still supersede the legacy row that spells it as text."""
+    await _ledger(
+        db,
+        payment_id="pay-1",
+        invoice_number=1042,
+        paid_at=datetime(2026, 7, 2, tzinfo=UTC),
+        paid_amount_cents=4_500,
+    )
+    await _legacy(db, payment_id="leg-1", invoice_number="1042", paid_amount_cents=4_500)
+
+    result = await _read(db)
+
+    assert result.net_cents == 0
