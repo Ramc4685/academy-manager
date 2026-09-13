@@ -186,6 +186,61 @@ const FAMILY = {
   warnings: [],
 };
 
+/**
+ * A $0 draft with no class behind it — what "Create invoice" leaves on the
+ * page before any charge is added.
+ */
+const DRAFT_UNTIED = {
+  invoice_id: "inv-draft",
+  invoice_number: null,
+  period: "2026-09",
+  student_id: "stu-arjun",
+  student_name: "Arjun",
+  enrollment_id: null,
+  status: "draft",
+  total_cents: 0,
+  paid_cents: 0,
+  balance_due_cents: 0,
+  due_date: "2026-09-30",
+  created_at: "2026-09-10T16:00:00Z",
+  paid_at: null,
+  voided_at: null,
+  void_reason: null,
+  settlement_unlinked: false,
+  delivery: { status: "not_sent", last_sent_at: null, kind: "invoice" },
+  allocations: [],
+  credits: [],
+  chargeable: false,
+  actions: ["send", "void"],
+};
+
+/** What the ledger returns from the two draft-making POSTs. */
+function ledgerInvoice(over: Record<string, unknown>) {
+  return {
+    invoice_id: "inv-draft",
+    academy_id: ACADEMY_A,
+    parent_id: "parent-1",
+    student_id: "stu-arjun",
+    enrollment_id: null,
+    period: "2026-09",
+    status: "draft",
+    subtotal_cents: 0,
+    discount_cents: 0,
+    total_cents: 0,
+    balance_due_cents: 0,
+    currency: "usd",
+    due_date: "2026-09-30",
+    pdf_artifact_id: null,
+    delivery_status: "not_sent",
+    sent_at: null,
+    last_sent_at: null,
+    finalized_at: null,
+    created_at: "2026-09-10T16:00:00Z",
+    updated_at: "2026-09-10T16:00:00Z",
+    ...over,
+  };
+}
+
 async function stubShell(page: Page, owner: boolean): Promise<void> {
   await stubMe(page, owner ? ADMIN_USER_A : { ...ADMIN_USER_A, roles: ["admin"] });
   await stubMemberships(page, [
@@ -200,14 +255,17 @@ async function setup(page: Page, opts: { owner: boolean; view?: unknown }) {
   installTenantGuard(page);
   await stubShell(page, opts.owner);
   const posts: { url: string; body: unknown }[] = [];
+  // Swappable so a test can say what the page refetches after a write.
+  let view: unknown = opts.view ?? FAMILY;
   await page.route("**/api/v2/admin/families/**", (route) => {
     const req = route.request();
     if (req.method() === "POST") {
       posts.push({ url: req.url(), body: req.postDataJSON() });
       return fulfillJson(route, { paused_count: 1, active_count_before: 1, warnings: [] });
     }
-    return fulfillJson(route, opts.view ?? FAMILY);
+    return fulfillJson(route, view);
   });
+  // Also catches the Add charge line POST (.../invoices/{id}/lines).
   await page.route("**/api/v2/admin/billing/invoices/**", (route) => {
     const req = route.request();
     if (req.method() === "POST") {
@@ -218,9 +276,49 @@ async function setup(page: Page, opts: { owner: boolean; view?: unknown }) {
       entries: [{ action: "manual_payment_recorded", actor_id: "admin-1" }],
     });
   });
+  // The draft-making routes echo the request back, so a wrong period or
+  // enrollment in the payload shows up in what the page does next.
+  await page.route("**/api/v2/admin/students/*/invoices", (route) => {
+    const req = route.request();
+    const body = req.postDataJSON() as Record<string, unknown>;
+    posts.push({ url: req.url(), body });
+    return fulfillJson(
+      route,
+      ledgerInvoice({
+        student_id: body.student_id,
+        enrollment_id: body.enrollment_id ?? null,
+        period: body.period,
+        due_date: body.due_date,
+      }),
+    );
+  });
+  await page.route("**/api/v2/admin/enrollments/*/invoices/bill-period", (route) => {
+    const req = route.request();
+    const body = req.postDataJSON() as Record<string, unknown>;
+    posts.push({ url: req.url(), body });
+    return fulfillJson(
+      route,
+      ledgerInvoice({
+        enrollment_id: "enr-arjun",
+        period: body.period,
+        due_date: body.due_date,
+        // The backend prices the month off the session, so the toast must
+        // echo the ledger's number rather than anything the client held.
+        subtotal_cents: 7000,
+        total_cents: 7000,
+        balance_due_cents: 7000,
+      }),
+    );
+  });
   await page.goto("/admin/families/parent-1");
   await expect(page.getByTestId("admin-family-billing")).toBeVisible();
-  return { errors, posts };
+  return {
+    errors,
+    posts,
+    setView: (next: unknown) => {
+      view = next;
+    },
+  };
 }
 
 test.describe("Family billing", () => {
@@ -355,6 +453,115 @@ test.describe("Family billing", () => {
     await expect(page.getByTestId("family-link-parent-1")).toHaveAttribute(
       "href",
       "/admin/families/parent-1",
+    );
+  });
+  // #728: the three draft-invoice controls were covered only by unit tests, so
+  // a break in the dialog wiring (the prefill, the Create -> Add charge
+  // handoff, the posted payload) could ship unseen.
+  test("Create invoice posts the draft and hands off to a prefilled Add charge", async ({
+    page,
+  }) => {
+    const { posts, setView, errors } = await setup(page, { owner: true });
+    setView({ ...FAMILY, invoices: [DRAFT_UNTIED, ...FAMILY.invoices] });
+
+    await page.getByTestId("family-create-invoice").click();
+    await expect(page.getByTestId("create-invoice-dialog")).toBeVisible();
+    await page.getByTestId("create-invoice-student").selectOption("stu-arjun");
+    await page.getByTestId("create-invoice-enrollment").selectOption("enr-arjun");
+    await page.getByTestId("create-invoice-period").fill("2026-09");
+    await page.getByTestId("create-invoice-due-date").fill("2026-09-30");
+    await page.getByTestId("create-invoice-submit").click();
+
+    await expect.poll(() => posts.length).toBe(1);
+    expect(posts[0].url).toContain("/admin/students/stu-arjun/invoices");
+    expect(posts[0].body).toEqual({
+      student_id: "stu-arjun",
+      parent_id: "parent-1",
+      period: "2026-09",
+      due_date: "2026-09-30",
+      enrollment_id: "enr-arjun",
+    });
+
+    // The draft lands on the page and Add charge opens on top of it, holding
+    // the tuition line the monthly generator would have written.
+    await expect(page.getByTestId("invoice-row-inv-draft")).toBeVisible();
+    await expect(page.getByTestId("add-charge-dialog")).toBeVisible();
+    await expect(page.getByTestId("add-charge-description")).toHaveValue(
+      "Monthly tuition 2026-09",
+    );
+    await expect(page.getByTestId("add-charge-type")).toHaveValue("tuition");
+    await expect(page.getByTestId("add-charge-amount")).toHaveValue("60.00");
+
+    await page.getByTestId("add-charge-submit").click();
+    await expect.poll(() => posts.length).toBe(2);
+    expect(posts[1].url).toContain("/admin/billing/invoices/inv-draft/lines");
+    expect(posts[1].body).toEqual({
+      description: "Monthly tuition 2026-09",
+      line_type: "tuition",
+      quantity: 1,
+      unit_amount_cents: 6000,
+    });
+    await expect(page.getByTestId("add-charge-dialog")).toHaveCount(0);
+    expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
+  });
+
+  test("Add charge on an untied draft needs a description and posts the line", async ({
+    page,
+  }) => {
+    const view = { ...FAMILY, invoices: [DRAFT_UNTIED, ...FAMILY.invoices] };
+    const { posts } = await setup(page, { owner: true, view });
+
+    await page.getByTestId("invoice-add-charge-inv-draft").click();
+    await expect(page.getByTestId("add-charge-subject")).toHaveText("Sep 2026 · Arjun · $0.00");
+    // No class behind this draft, so there is nothing to prefill and the
+    // submit stays shut until the admin says what the charge is.
+    await expect(page.getByTestId("add-charge-description")).toHaveValue("");
+    await expect(page.getByTestId("add-charge-type")).toHaveValue("fee");
+    await expect(page.getByTestId("add-charge-submit")).toBeDisabled();
+
+    await page.getByTestId("add-charge-description").fill("Racquet restring");
+    await page.getByTestId("add-charge-type").selectOption("equipment");
+    await page.getByTestId("add-charge-quantity").fill("2");
+    await page.getByTestId("add-charge-amount").fill("12.50");
+    await page.getByTestId("add-charge-submit").click();
+
+    await expect.poll(() => posts.length).toBe(1);
+    expect(posts[0].url).toContain("/admin/billing/invoices/inv-draft/lines");
+    expect(posts[0].body).toEqual({
+      description: "Racquet restring",
+      line_type: "equipment",
+      quantity: 2,
+      unit_amount_cents: 1250,
+    });
+    await expect(page.getByTestId("add-charge-dialog")).toHaveCount(0);
+  });
+
+  test("Bill this month is offered on active classes only and posts the period", async ({
+    page,
+  }) => {
+    const { posts } = await setup(page, { owner: true });
+    // The paused class is not billable by hand either.
+    await expect(page.getByTestId("enrollment-bill-period-enr-hannah")).toHaveCount(0);
+
+    await page.getByTestId("enrollment-bill-period-enr-arjun").click();
+    await expect(page.getByTestId("bill-period-dialog")).toBeVisible();
+    await page.getByTestId("bill-period-period").fill("2026-09");
+    await page.getByTestId("bill-period-due-date").fill("2026-09-30");
+    // Quotes the session price the backend will use, not the override.
+    await expect(page.getByTestId("bill-period-subject")).toHaveText(
+      "Arjun · Sat 9:00 Beginners · Sep 2026 · $60.00/mo",
+    );
+    await expect(page.getByTestId("bill-period-draft-warning")).toContainText(
+      "skips this class for this month",
+    );
+    await page.getByTestId("bill-period-submit").click();
+
+    await expect.poll(() => posts.length).toBe(1);
+    expect(posts[0].url).toContain("/admin/enrollments/enr-arjun/invoices/bill-period");
+    expect(posts[0].body).toEqual({ period: "2026-09", due_date: "2026-09-30" });
+    await expect(page.getByTestId("bill-period-dialog")).toHaveCount(0);
+    await expect(page.getByTestId("family-toast")).toContainText(
+      "Draft invoice created for Arjun · Sat 9:00 Beginners · Sep 2026 · $70.00.",
     );
   });
 });

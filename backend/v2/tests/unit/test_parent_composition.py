@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 from datetime import UTC, date, datetime, timedelta
 from datetime import time as dt_time
@@ -28,6 +29,7 @@ from backend.v2.contexts.onboarding.domain.errors import (
     ApplicationNotEditable,
     IncompleteApplication,
 )
+from backend.v2.interfaces.parent.views import EnrollmentQuoteRequest
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.tenancy import tenant_scope
 
@@ -2298,6 +2300,195 @@ async def test_zero_amount_checkout_raises_quote_expired_when_consume_refuses(
 
     app_doc = await db["onboarding_applications"].find_one({"application_id": "app-1"})
     assert app_doc["status"] == "DRAFT"
+
+
+# ---------------------------------------------------------------------------
+# Issue #731 — the quote the review step displayed is the quote that is charged
+# ---------------------------------------------------------------------------
+
+
+async def test_checkout_charges_the_snapshot_the_review_step_displayed(
+    allow_app_origin,
+) -> None:
+    """The parent pays the figure they read, not a re-quote of it (#731).
+
+    The review step quotes once and shows that snapshot's amount, class count
+    and expiry. Checkout used to throw that snapshot away and quote again, so
+    anything that legitimately moved the price in between — a class crossing
+    the two-hour cutoff, an admin repricing or cancelling a date — charged the
+    parent an amount they had never seen, while the displayed snapshot stayed
+    OPEN forever because nothing ever consumed it.
+    """
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["displayed-quote-checkout"]
+
+    quote_now = _pinned_quote_clock()
+    await db["onboarding_applications"].insert_one(
+        _checkout_ready_application(datetime.now(UTC), status="DRAFT")
+    )
+    await db["sessions"].insert_one(_billable_session(quote_now))
+    await db["academy_connected_accounts"].insert_one(_connected_account_doc())
+
+    class _Stripe:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+
+        async def create_checkout_session(self, **kwargs: Any) -> tuple[str, str]:
+            self.calls.append(kwargs)
+            return "cs_displayed", "https://checkout.stripe.test/displayed"
+
+    stripe = _Stripe()
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=stripe,  # type: ignore[arg-type]
+        academy_id="acad",
+        clock=lambda: quote_now,
+    )
+
+    with tenant_scope("acad"):
+        displayed = await parent.quote_enrollment(parent_id="parent-1", session_id="sess-1")
+        # The price moved while the parent was reading the review step: a
+        # fresh quote at checkout time would now be twice the displayed one.
+        await db["sessions"].update_one(
+            {"session_id": "sess-1"}, {"$set": {"amount_cents": 12_000}}
+        )
+        result = await parent.start_checkout_for_application(
+            parent_id="parent-1",
+            application_id="app-1",
+            success_url="https://app.example.com/parent/checkout/return?application_id=app-1",
+            cancel_url="https://app.example.com/parent/onboarding",
+            snapshot_id=displayed.snapshot_id,
+        )
+
+    assert displayed.final_amount_cents > 0
+    assert len(stripe.calls) == 1
+    # The DISPLAYED figure, not what a re-quote would have said.
+    assert stripe.calls[0]["amount_cents"] == displayed.final_amount_cents
+    assert stripe.calls[0]["metadata"]["calculation_snapshot_id"] == displayed.snapshot_id
+    payment = await db["ledger_payments"].find_one({"payment_id": result.payment_id})
+    assert payment["amount_cents"] == displayed.final_amount_cents
+    # Exactly one snapshot exists — the displayed one — and it is CONSUMED.
+    # No second snapshot was minted behind the parent's back, and the one they
+    # read is no longer an eternally-OPEN row.
+    snapshots = [doc async for doc in db["billing_calculation_snapshots"].find({})]
+    assert [(doc["snapshot_id"], doc["status"]) for doc in snapshots] == [
+        (displayed.snapshot_id, "CONSUMED")
+    ]
+
+
+async def test_checkout_refuses_a_stale_displayed_snapshot_instead_of_charging_a_fresh_one(
+    allow_app_origin,
+) -> None:
+    """A snapshot that cannot be consumed must stop checkout, not re-quote it.
+
+    Expired, already burnt, or simply not this parent's quote for this session:
+    every case has to surface as QuoteExpired so the wizard re-quotes and shows
+    the parent the new amount, instead of silently charging a figure the review
+    step never rendered (#731).
+    """
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["stale-displayed-quote-checkout"]
+
+    quote_now = _pinned_quote_clock()
+    await db["onboarding_applications"].insert_one(
+        _checkout_ready_application(datetime.now(UTC), status="DRAFT")
+    )
+    await db["sessions"].insert_one(_billable_session(quote_now))
+    await db["academy_connected_accounts"].insert_one(_connected_account_doc())
+
+    class _Stripe:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+
+        async def create_checkout_session(self, **kwargs: Any) -> tuple[str, str]:
+            self.calls.append(kwargs)
+            return "cs_should_not_exist", "https://checkout.stripe.test/should-not-exist"
+
+    stripe = _Stripe()
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=stripe,  # type: ignore[arg-type]
+        academy_id="acad",
+        clock=lambda: quote_now,
+    )
+
+    with tenant_scope("acad"), pytest.raises(QuoteExpired):
+        await parent.start_checkout_for_application(
+            parent_id="parent-1",
+            application_id="app-1",
+            success_url="https://app.example.com/parent/checkout/return?application_id=app-1",
+            cancel_url="https://app.example.com/parent/onboarding",
+            snapshot_id="snap-burnt-or-never-existed",
+        )
+
+    assert stripe.calls == []
+    assert await db["ledger_payments"].find_one({}) is None
+    app_doc = await db["onboarding_applications"].find_one({"application_id": "app-1"})
+    assert app_doc["status"] == "DRAFT"
+    # And the refusal did not leave a replacement quote lying around OPEN: the
+    # wizard re-quotes for itself, so the snapshot it renders next is the one
+    # the next attempt consumes.
+    assert await db["billing_calculation_snapshots"].find_one({}) is None
+
+
+async def test_a_parent_cannot_choose_the_billing_start_that_prices_their_quote(
+    allow_app_origin,
+) -> None:
+    """No client lever on ``billing_start_at`` — checkout charges this quote.
+
+    Since checkout consumes the snapshot the review step minted, anything a
+    parent can push ``billing_start_at`` forward with prices their own first
+    month: every class before the chosen start is dropped as
+    ``BEFORE_BILLING_START``, so a start date late in the month mints a
+    near-zero OPEN snapshot for their real session, and checkout would then
+    charge that figure while the enrollment went ahead at full value. The
+    parent quote path therefore takes no start date at all — it prices from
+    the server clock, the same instant checkout falls back to, so a
+    review-step quote can never come in under what the server would charge on
+    its own.
+    """
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-quote-start-date"]
+
+    quote_now = _pinned_quote_clock()
+    await db["sessions"].insert_one(_billable_session(quote_now))
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=object(),  # type: ignore[arg-type]
+        academy_id="acad",
+        clock=lambda: quote_now,
+    )
+
+    # The lever does not exist on the use case...
+    assert "start_date" not in inspect.signature(parent.quote_enrollment).parameters
+    with pytest.raises(TypeError):
+        with tenant_scope("acad"):
+            await parent.quote_enrollment(
+                parent_id="parent-1",
+                session_id="sess-1",
+                start_date="2999-01-01",  # type: ignore[call-arg]
+            )
+
+    # ...nor on the wire: the request model drops the field, so an old bundle
+    # that still posts it is quoted from the server clock like everyone else.
+    request = EnrollmentQuoteRequest.model_validate(
+        {"session_id": "sess-1", "start_date": "2999-01-01"}
+    )
+    assert not hasattr(request, "start_date")
+
+    with tenant_scope("acad"):
+        quote = await parent.quote_enrollment(parent_id="parent-1", session_id="sess-1")
+
+    # Priced for the whole month ahead of the server clock, not for a sliver
+    # of it chosen by the caller.
+    assert quote.final_amount_cents > 0
+    assert "BEFORE_BILLING_START" not in quote.excluded_occurrences.values()
 
 
 # ---------------------------------------------------------------------------

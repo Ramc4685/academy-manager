@@ -70,7 +70,6 @@ async def quote_enrollment(
         parent_id=claims.user_id,
         student_id=body.student_id,
         session_id=body.session_id,
-        start_date=body.start_date,
     )
     return _quote_response(snapshot)
 
@@ -90,6 +89,7 @@ async def start_checkout(
         application_id=body.application_id,
         success_url=body.success_url,
         cancel_url=body.cancel_url,
+        snapshot_id=body.snapshot_id,
     )
     return StartCheckoutResponse(payment_id=result.payment_id, redirect_url=result.redirect_url)
 

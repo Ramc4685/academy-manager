@@ -1835,8 +1835,21 @@ def compose_parent(
         parent_id: str,
         session_id: str,
         student_id: str | None = None,
-        start_date: str | None = None,
     ):
+        """Price a parent's enrollment from *now*, and only from now.
+
+        There is deliberately no caller-chosen billing start here. Since #731
+        checkout consumes and charges the snapshot this quote minted, so any
+        lever a parent could pull to move ``billing_start_at`` forward is a
+        lever on their own price: a start date late in the month excludes the
+        classes before it (``BEFORE_BILLING_START`` in
+        ``FirstMonthProrationPolicy.quote``), mints a near-zero OPEN snapshot,
+        and checkout would then charge that figure while the enrollment went
+        ahead at full value. Pricing from the server clock — the same instant
+        checkout falls back to — keeps a review-step quote from ever being
+        lower than what the server would charge on its own. Admins still get
+        a start date on their own quote path, which is trusted and audited.
+        """
         if student_id:
             students = await _parent_students(parent_id)
             owned = {str(s.get("student_id") or s["_id"]) for s in students}
@@ -1845,8 +1858,11 @@ def compose_parent(
         return await quote_enrollment_uc.execute(
             QuoteEnrollmentCommand(
                 session_id=session_id,
-                billing_start_at=datetime.now(UTC),
-                billing_start_date=_parse_start_date(start_date),
+                # Same seam checkout prices against — identical in production
+                # (the default clock IS `datetime.now(UTC)`), but it keeps the
+                # quote the review step shows and the quote checkout consumes
+                # on one clock for the tests that pin it.
+                billing_start_at=clock(),
                 calculated_by=parent_id,
                 parent_id=parent_id,
                 student_id=student_id,
@@ -1859,7 +1875,15 @@ def compose_parent(
         application_id: str,
         success_url: str,
         cancel_url: str,
+        snapshot_id: str | None = None,
     ):
+        """`snapshot_id` is the quote the review step actually SHOWED (#731).
+
+        When the client hands it back, that snapshot is what gets consumed and
+        charged — the parent pays the figure they read. Omitting it keeps the
+        pre-#731 behaviour (quote now, consume what we just minted) so an older
+        cached bundle still checks out.
+        """
         _validate_checkout_redirect_urls(success_url, cancel_url)
         app = await get_status.execute(application_id, caller_user_id=parent_id)
         # Refuse a checkout this application can never legally complete, and
@@ -1913,14 +1937,43 @@ def compose_parent(
                 "selected session is not available for checkout",
                 session_id=app.selected_session_id,
             )
-        quote = await quote_enrollment_uc.execute(
-            QuoteEnrollmentCommand(
-                session_id=selected.session_id,
-                billing_start_at=clock(),
-                calculated_by=parent_id,
+        # The review step already priced this enrollment and showed the parent
+        # the result — amount, class count, and the quote's own expiry. Charge
+        # THAT snapshot. Re-quoting here mints an independent one whose amount
+        # can legitimately differ (a class crossed the two-hour cutoff while
+        # the parent filled the form in, a date was cancelled, the session was
+        # repriced), so the parent was charged a figure they never saw while
+        # the displayed snapshot stayed OPEN forever, consumed by nobody (#731).
+        quote_already_consumed = False
+        if snapshot_id:
+            quote = await payments_repo.consume_quote_snapshot(
+                snapshot_id,
                 parent_id=parent_id,
+                session_id=selected.session_id,
             )
-        )
+            if quote is None:
+                # Expired, already burnt by a concurrent attempt, or not this
+                # parent's quote for this session. Refuse instead of quietly
+                # charging a fresh figure: the wizard re-quotes, re-renders the
+                # review step, and the next attempt consumes the snapshot the
+                # parent has actually read. Deliberately no replacement quote
+                # is minted here — that would leave another OPEN row nobody
+                # consumes, which is the very leak this fix closes.
+                raise QuoteExpired(
+                    "quote expired before checkout could start; please retry",
+                    snapshot_id=snapshot_id,
+                    application_id=application_id,
+                )
+            quote_already_consumed = True
+        else:
+            quote = await quote_enrollment_uc.execute(
+                QuoteEnrollmentCommand(
+                    session_id=selected.session_id,
+                    billing_start_at=clock(),
+                    calculated_by=parent_id,
+                    parent_id=parent_id,
+                )
+            )
         if quote.final_amount_cents <= 0:
             # No billable classes remain this month, so there is nothing to
             # charge — Stripe rejects zero-amount Checkout Sessions. Skip
@@ -1939,7 +1992,7 @@ def compose_parent(
             # hours before local month-end (#541).
             zero_quote_period = quote.billing_period_label
             await apps_repo.save(app.model_copy(update={"zero_quote_period": zero_quote_period}))
-            if quote.snapshot_id:
+            if quote.snapshot_id and not quote_already_consumed:
                 consumed = await payments_repo.consume_quote_snapshot(quote.snapshot_id)
                 if consumed is None:
                     # The snapshot expired (or a concurrent request burnt it)
@@ -1965,7 +2018,9 @@ def compose_parent(
         # nothing has been created yet and the parent simply re-quotes.
         # (If the Stripe call below then fails, the snapshot stays CONSUMED
         # and a retry mints a fresh quote — the pre-existing behaviour.)
-        if quote.snapshot_id:
+        # A client-supplied snapshot was already consumed above, for the same
+        # reason and with the same TTL gate.
+        if quote.snapshot_id and not quote_already_consumed:
             consumed = await payments_repo.consume_quote_snapshot(quote.snapshot_id)
             if consumed is None:
                 raise QuoteExpired(
@@ -2786,21 +2841,3 @@ def _local_period_label(instant: datetime, timezone_name: str) -> str:
     except (KeyError, ValueError):
         tz = ZoneInfo("UTC")
     return moment.astimezone(tz).strftime("%Y-%m")
-
-
-def _parse_start_date(value: str | None) -> date | None:
-    """Parse a caller-supplied start date, leaving the timezone to the caller.
-
-    This used to pin the date to ``America/Chicago`` midnight and hand the
-    resulting instant down as ``billing_start_at``. That hardcoded zone is
-    wrong for any session that is not in Chicago, and once QuoteEnrollment
-    began reading the billing start in the *session's* timezone it became
-    actively harmful: Chicago midnight on the 1st is 22:00 on the last day of
-    the previous month in Los Angeles, so the quote would be labelled, priced
-    and persisted against the wrong month (#541). The calendar date now
-    travels down as a date and QuoteEnrollment resolves it against the
-    session's own clock.
-    """
-    if not value:
-        return None
-    return datetime.fromisoformat(value).date()
