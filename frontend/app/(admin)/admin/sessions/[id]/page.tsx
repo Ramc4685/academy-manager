@@ -143,9 +143,11 @@ export default function AdminSessionDetailPage() {
     queryFn: () => listSessionOccurrences(sessionId),
   });
 
+  // #521: this page only needs coach names for the replacement-coach table,
+  // not the full tenant user directory.
   const usersQuery = useQuery({
-    queryKey: queryKeys.admin.users(),
-    queryFn: () => listAdminUsers(),
+    queryKey: queryKeys.admin.users("coach"),
+    queryFn: () => listAdminUsers("coach"),
   });
 
   const waitlistQuery = useQuery({
