@@ -81,7 +81,7 @@ class _AutopayResult:
 class _ParentUseCases:
     def __init__(self) -> None:
         self.list_available_sessions = _ListAvailableSessions()
-        self.checkout_calls: list[dict[str, str]] = []
+        self.checkout_calls: list[dict[str, str | None]] = []
         self.autopay_calls: list[dict[str, str]] = []
         self.checkout_status_calls: list[dict[str, str | None]] = []
 
@@ -92,6 +92,7 @@ class _ParentUseCases:
         application_id: str,
         success_url: str,
         cancel_url: str,
+        snapshot_id: str | None = None,
     ) -> _CheckoutResult:
         self.checkout_calls.append(
             {
@@ -99,6 +100,7 @@ class _ParentUseCases:
                 "application_id": application_id,
                 "success_url": success_url,
                 "cancel_url": cancel_url,
+                "snapshot_id": snapshot_id,
             }
         )
         if application_id == "missing-session":
@@ -241,9 +243,28 @@ def test_checkout_start_uses_application_only_payload() -> None:
             "application_id": "app-1",
             "success_url": "https://app/success",
             "cancel_url": "https://app/cancel",
+            "snapshot_id": None,
         }
     ]
     assert "amount_cents" not in use_cases.checkout_calls[0]
+
+
+def test_checkout_start_forwards_the_displayed_quote_snapshot() -> None:
+    """The review step's snapshot id has to reach the use case, or checkout
+    re-quotes and charges an amount the parent never saw (#731)."""
+    with _make_client() as (client, use_cases):
+        response = client.post(
+            "/api/v2/parent/checkout/start",
+            json={
+                "application_id": "app-1",
+                "success_url": "https://app/success",
+                "cancel_url": "https://app/cancel",
+                "snapshot_id": "snap-displayed",
+            },
+        )
+
+    assert response.status_code == 200
+    assert use_cases.checkout_calls[0]["snapshot_id"] == "snap-displayed"
 
 
 def test_checkout_start_without_selected_session_returns_422() -> None:

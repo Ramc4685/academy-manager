@@ -1,5 +1,9 @@
 "use client";
 
+// TODO(#779): Multi-academy owner rollup is a FUTURE enhancement (owner decision
+// 2026-09-12). BLNO is a single academy; kept behind ENABLE_OWNER_ROLE=false in
+// production and not maintained as a live feature.
+
 /**
  * Franchise rollup — revenue and outstanding dues across every academy the
  * signed-in user owns (UIM11). The academy set comes from the server's read
