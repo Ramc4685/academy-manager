@@ -24,7 +24,10 @@ from backend.v2.contexts.identity.application.use_cases.admin_directory import (
 from backend.v2.contexts.identity.application.use_cases.load_auth_claims import (
     _user_is_active,
 )
-from backend.v2.contexts.identity.domain.errors import CoachHasFutureSessions
+from backend.v2.contexts.identity.domain.errors import (
+    CoachHasFutureSessions,
+    ParentHasLiveChildren,
+)
 from backend.v2.contexts.identity.infrastructure import mongo_user_repo as user_repo_module
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
 
@@ -299,3 +302,216 @@ async def test_removing_a_non_coaching_role_ignores_the_session_guard(db) -> Non
     )
 
     assert detail is not None
+
+
+# ---------------------------------------------------------------------------
+# 4. the DISABLE door clears the same dated-work guards as role removal
+# ---------------------------------------------------------------------------
+
+
+async def _seed_student(db, *, student_id: str, parent_id: str) -> None:
+    await db["students"].insert_one(
+        {
+            "student_id": student_id,
+            "academy_id": ACADEMY,
+            "parent_id": parent_id,
+            "first_name": "Kid",
+        }
+    )
+
+
+async def _seed_enrollment(db, *, student_id: str, status: str = "active") -> None:
+    await db["enrollments"].insert_one(
+        {
+            "enrollment_id": f"enr-{student_id}-{status}",
+            "academy_id": ACADEMY,
+            "student_id": student_id,
+            "session_id": "sess-1",
+            "status": status,
+        }
+    )
+
+
+def _disable(status: str = "disabled") -> UpdateAdminUserCommand:
+    return UpdateAdminUserCommand(status=status, actor_id="admin-1", reason="left the academy")
+
+
+@pytest.mark.asyncio
+async def test_disabling_a_coach_with_future_occurrences_is_refused(db, monkeypatch) -> None:
+    """Disable is wider than role removal, so it cannot be the softer door."""
+    await _seed_user(db, user_id="u-coach", email="coach@example.com", roles=["coach"])
+    await _seed_membership(db, user_id="u-coach", roles=["coach"])
+    await _seed_occurrence(db)
+    firebase = _RecordingFirebase()
+    monkeypatch.setattr(user_repo_module, "get_firebase_admin_adapter", lambda: firebase)
+    repo = MongoUserRepository(db, default_academy_id=ACADEMY)
+
+    with pytest.raises(CoachHasFutureSessions):
+        await repo.update_admin_user("u-coach", _disable(), academy_id=ACADEMY)
+
+    stored = await db["users"].find_one({"user_id": "u-coach"})
+    assert stored.get("global_status") != "disabled"
+    membership = await db["academy_memberships"].find_one({"user_id": "u-coach"})
+    assert membership["status"] == "active"
+    assert firebase.disabled == []
+
+
+@pytest.mark.asyncio
+async def test_disabling_a_coach_without_future_work_still_succeeds(db, monkeypatch) -> None:
+    await _seed_user(db, user_id="u-coach", email="coach@example.com", roles=["coach"])
+    await _seed_membership(db, user_id="u-coach", roles=["coach"])
+    await _seed_occurrence(db, start_at=datetime.now(UTC) - timedelta(days=3), status="completed")
+    monkeypatch.setattr(
+        user_repo_module, "get_firebase_admin_adapter", lambda: _RecordingFirebase()
+    )
+    repo = MongoUserRepository(db, default_academy_id=ACADEMY)
+
+    detail = await repo.update_admin_user("u-coach", _disable(), academy_id=ACADEMY)
+
+    assert detail is not None and detail.status == "disabled"
+
+
+@pytest.mark.asyncio
+async def test_disabling_a_parent_with_live_enrollments_is_refused(db, monkeypatch) -> None:
+    await _seed_user(db)
+    await _seed_membership(db, user_id="u-parent", roles=["parent"])
+    await _seed_student(db, student_id="s-1", parent_id="u-parent")
+    await _seed_enrollment(db, student_id="s-1", status="paused")
+    firebase = _RecordingFirebase()
+    monkeypatch.setattr(user_repo_module, "get_firebase_admin_adapter", lambda: firebase)
+    repo = MongoUserRepository(db, default_academy_id=ACADEMY)
+
+    with pytest.raises(ParentHasLiveChildren):
+        await repo.update_admin_user("u-parent", _disable(), academy_id=ACADEMY)
+
+    membership = await db["academy_memberships"].find_one({"user_id": "u-parent"})
+    assert membership["status"] == "active"
+    assert firebase.disabled == []
+
+
+@pytest.mark.asyncio
+async def test_disabling_a_parent_whose_children_have_all_withdrawn_succeeds(
+    db, monkeypatch
+) -> None:
+    await _seed_user(db)
+    await _seed_membership(db, user_id="u-parent", roles=["parent"])
+    await _seed_student(db, student_id="s-1", parent_id="u-parent")
+    await _seed_enrollment(db, student_id="s-1", status="withdrawn")
+    monkeypatch.setattr(
+        user_repo_module, "get_firebase_admin_adapter", lambda: _RecordingFirebase()
+    )
+    repo = MongoUserRepository(db, default_academy_id=ACADEMY)
+
+    detail = await repo.update_admin_user("u-parent", _disable(), academy_id=ACADEMY)
+
+    assert detail is not None and detail.status == "disabled"
+
+
+@pytest.mark.asyncio
+async def test_reenabling_never_runs_the_offboarding_guards(db, monkeypatch) -> None:
+    """The guards protect the *removal* of access, not its restoration."""
+    await _seed_user(db, status="disabled", is_active=False)
+    await _seed_membership(db, user_id="u-parent", roles=["parent"], status="suspended")
+    await _seed_student(db, student_id="s-1", parent_id="u-parent")
+    await _seed_enrollment(db, student_id="s-1")
+    monkeypatch.setattr(
+        user_repo_module, "get_firebase_admin_adapter", lambda: _RecordingFirebase()
+    )
+    repo = MongoUserRepository(db, default_academy_id=ACADEMY)
+
+    detail = await repo.update_admin_user(
+        "u-parent",
+        UpdateAdminUserCommand(status="active", actor_id="admin-1", reason="returned"),
+        academy_id=ACADEMY,
+    )
+
+    assert detail is not None and detail.status == "active"
+
+
+# ---------------------------------------------------------------------------
+# 5. one tenant's disable must not revoke a shared Firebase identity
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_disable_leaves_firebase_alone_when_another_academy_is_live(db, monkeypatch) -> None:
+    await _seed_user(db, firebase_uid="fb-parent")
+    await _seed_membership(db, user_id="u-parent", roles=["parent"])
+    await db["academy_memberships"].insert_one(
+        {
+            "membership_id": "m-other",
+            "academy_id": "academy-b",
+            "user_id": "fb-parent",
+            "roles": ["parent"],
+            "status": "active",
+        }
+    )
+    firebase = _RecordingFirebase()
+    monkeypatch.setattr(user_repo_module, "get_firebase_admin_adapter", lambda: firebase)
+    repo = MongoUserRepository(db, default_academy_id=ACADEMY)
+
+    await repo.update_admin_user("u-parent", _disable(), academy_id=ACADEMY)
+
+    # This academy is closed...
+    membership = await db["academy_memberships"].find_one(
+        {"academy_id": ACADEMY, "user_id": "u-parent"}
+    )
+    assert membership["status"] == "suspended"
+    # ...and academy-b's membership and the shared login are untouched.
+    other = await db["academy_memberships"].find_one({"academy_id": "academy-b"})
+    assert other["status"] == "active"
+    assert firebase.disabled == []
+
+
+@pytest.mark.asyncio
+async def test_disable_still_revokes_firebase_when_other_memberships_are_suspended(
+    db, monkeypatch
+) -> None:
+    await _seed_user(db, firebase_uid="fb-parent")
+    await _seed_membership(db, user_id="u-parent", roles=["parent"])
+    await db["academy_memberships"].insert_one(
+        {
+            "membership_id": "m-other",
+            "academy_id": "academy-b",
+            "user_id": "fb-parent",
+            "roles": ["parent"],
+            "status": "suspended",
+        }
+    )
+    firebase = _RecordingFirebase()
+    monkeypatch.setattr(user_repo_module, "get_firebase_admin_adapter", lambda: firebase)
+    repo = MongoUserRepository(db, default_academy_id=ACADEMY)
+
+    await repo.update_admin_user("u-parent", _disable(), academy_id=ACADEMY)
+
+    assert firebase.disabled == [("fb-parent", True)]
+
+
+@pytest.mark.asyncio
+async def test_enable_does_not_lift_another_academys_lockout(db, monkeypatch) -> None:
+    await _seed_user(db, firebase_uid="fb-parent", status="disabled", is_active=False)
+    await _seed_membership(db, user_id="u-parent", roles=["parent"], status="suspended")
+    await db["academy_memberships"].insert_one(
+        {
+            "membership_id": "m-other",
+            "academy_id": "academy-b",
+            "user_id": "fb-parent",
+            "roles": ["parent"],
+            "status": "suspended",
+        }
+    )
+    firebase = _RecordingFirebase()
+    monkeypatch.setattr(user_repo_module, "get_firebase_admin_adapter", lambda: firebase)
+    repo = MongoUserRepository(db, default_academy_id=ACADEMY)
+
+    await repo.update_admin_user(
+        "u-parent",
+        UpdateAdminUserCommand(status="active", actor_id="admin-1", reason="returned"),
+        academy_id=ACADEMY,
+    )
+
+    membership = await db["academy_memberships"].find_one(
+        {"academy_id": ACADEMY, "user_id": "u-parent"}
+    )
+    assert membership["status"] == "active"
+    assert firebase.disabled == []

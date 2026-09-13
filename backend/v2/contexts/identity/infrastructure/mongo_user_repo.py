@@ -26,6 +26,7 @@ from backend.v2.contexts.identity.application.use_cases.admin_directory import (
 from backend.v2.contexts.identity.domain.errors import (
     CannotRemoveLastRole,
     CoachHasFutureSessions,
+    ParentHasLiveChildren,
     RoleRevocationFailed,
     UserCreateFailed,
     UserEmailAlreadyExists,
@@ -77,6 +78,19 @@ _DISABLED_STATUSES: frozenset[str] = frozenset({"disabled", "inactive", "suspend
 
 #: Academy roles whose removal has to be preceded by reassigning the work.
 COACHING_ROLES: frozenset[str] = frozenset({"coach", "assistant_coach"})
+
+#: Enrollment statuses that still bind the academy to the family — the seat is
+#: either being taught or being held, and either way it is still billable.
+#: Mirrors `enrollment.domain.models.LIVE`; copied rather than imported because
+#: identity may not depend on the enrollment context (import-linter contract).
+_LIVE_ENROLLMENT_STATUSES: frozenset[str] = frozenset({"active", "paused", "held"})
+
+#: `academy_memberships.status` spellings that mean the membership grants
+#: nothing. Anything else (including a legacy row with no status at all) is
+#: treated as live, so a shared Firebase account is never disabled on a guess.
+_SUSPENDED_MEMBERSHIP_STATUSES: frozenset[str] = frozenset(
+    {"suspended", "revoked", "removed", "disabled", "inactive"}
+)
 
 
 def _global_status_from_doc(doc: dict[str, object], *, is_active: bool) -> GlobalUserStatus:
@@ -914,6 +928,13 @@ class MongoUserRepository:
             set_doc["global_status"] = "active" if command.status == "active" else "disabled"
             if str(before.get("status") or "active") != command.status:
                 status_change = command.status
+        if status_change is not None and status_change != "active":
+            # #785 review: the role-removal door was guarded and this one was
+            # not, so "Disable" stayed a way to strand exactly the work the
+            # guard exists to protect. A disable is strictly *wider* than a
+            # role removal — it suspends the membership and the Firebase
+            # account — so it has to clear at least the same bar.
+            await self._assert_offboardable(before, academy_id=academy_id)
         changed = [
             key
             for key, value in set_doc.items()
@@ -1045,6 +1066,90 @@ class MongoUserRepository:
                 f"{role.replace('_', ' ')}; reassign them before removing the role."
             )
 
+    async def _membership_statuses_elsewhere(
+        self, doc: dict[str, Any], *, academy_id: str
+    ) -> set[str]:
+        """Membership statuses this account holds in OTHER academies.
+
+        Alias matching widens identity only; `academy_id` stays an explicit
+        term (`identity_aliases` module docstring), so this asks a deliberately
+        narrow question: "which other tenants does the shared Firebase account
+        still serve, and in what state?".
+        """
+        aliases = list(self._membership_aliases(doc))
+        if not aliases:
+            return set()
+        return {
+            str(row.get("status") or "active")
+            async for row in self._db["academy_memberships"].find(
+                {"academy_id": {"$ne": academy_id}, "user_id": {"$in": aliases}},
+                {"status": 1},
+            )
+        }
+
+    async def _assert_offboardable(self, doc: dict[str, Any], *, academy_id: str) -> None:
+        """Every dated-work guard a *disable* has to clear, in one place.
+
+        Disabling is the widest offboarding door the admin UI has: it suspends
+        the membership and the Firebase account in one write. Guarding only
+        role removal (#785's first pass) left that door open, so the same
+        orphans came back through it.
+        """
+        roles = list(doc.get("roles") or ([doc["role"]] if doc.get("role") else []))
+        for role in sorted(COACHING_ROLES & set(roles)):
+            await self._assert_no_future_coaching_work(doc, role=role, academy_id=academy_id)
+        if "parent" in roles:
+            await self._assert_no_live_children(doc, academy_id=academy_id)
+
+    async def _assert_no_live_children(self, doc: dict[str, Any], *, academy_id: str) -> None:
+        """Refuse disabling a parent whose children are still enrolled.
+
+        A live enrollment keeps generating attendance and invoices; suspending
+        the payer's login leaves that money owed by an account that can no
+        longer see or pay it. ``held`` counts alongside ``active``/``paused``
+        because a held seat is still the academy's to bill or release — only a
+        withdrawal or a transfer really ends the relationship.
+        """
+        ids = list(self._offboarding_lookup_ids(doc))
+        if not ids:
+            return
+        student_ids = [
+            str(row["student_id"])
+            async for row in self._db["students"].find(
+                {
+                    "academy_id": academy_id,
+                    "$or": [{"parent_id": {"$in": ids}}, {"parent_user_id": {"$in": ids}}],
+                },
+                {"student_id": 1},
+            )
+            if row.get("student_id")
+        ]
+        if not student_ids:
+            return
+        live = await self._db["enrollments"].count_documents(
+            {
+                "academy_id": academy_id,
+                "student_id": {"$in": student_ids},
+                "status": {"$in": list(_LIVE_ENROLLMENT_STATUSES)},
+                "is_deleted": {"$ne": True},
+            }
+        )
+        if live:
+            raise ParentHasLiveChildren(
+                f"{live} enrollment(s) for this parent's children are still live; "
+                "withdraw or transfer them before disabling the account."
+            )
+
+    def _offboarding_lookup_ids(self, doc: dict[str, Any]) -> tuple[str, ...]:
+        """Alias set plus the raw ``_id``, which is what roster rows can carry.
+
+        `students.parent_id` is written by several paths and has been seen
+        holding the users `_id` as well as `user_id`/`firebase_uid`, so the
+        narrower membership alias set would miss a family and report the
+        parent as free to disable.
+        """
+        return identity_aliases(*self._membership_aliases(doc), doc.get("_id"))
+
     async def _cascade_status_change(
         self,
         doc: dict[str, Any],
@@ -1078,6 +1183,32 @@ class MongoUserRepository:
             )
         auth_uid = self._firebase_uid(doc)
         if not auth_uid:
+            return
+        # `set_user_disabled` is not academy-scoped: one Firebase account can
+        # back a separate `users` doc per academy (`ensure_parent_login` reuses
+        # the uid when it finds the person by email). Writing it from a
+        # single-tenant admin action would reach across tenants in both
+        # directions, so it is skipped whenever another academy's state still
+        # depends on it:
+        #
+        # * disabling while another academy's membership is live would deny
+        #   that tenant's user service on an admin's say-so they never granted;
+        # * enabling while another academy holds a suspended membership would
+        #   lift THAT academy's lockout.
+        #
+        # Skipping is safe because `LoadAuthClaims` checks the membership per
+        # academy, and the suspension above already closed this one.
+        elsewhere = await self._membership_statuses_elsewhere(doc, academy_id=academy_id)
+        live_elsewhere = bool(elsewhere - _SUSPENDED_MEMBERSHIP_STATUSES)
+        if (disabled and live_elsewhere) or (not disabled and bool(elsewhere)):
+            _log.info(
+                "identity.firebase_status_skipped_shared_account",
+                extra={
+                    "academy_id": academy_id,
+                    "auth_uid": auth_uid,
+                    "disabled": disabled,
+                },
+            )
             return
         # Best-effort by design: the local lockout is the part that must land.
         # Failing the request on a Firebase outage would leave the operator
