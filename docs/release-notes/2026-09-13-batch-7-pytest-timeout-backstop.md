@@ -10,4 +10,4 @@
 - Low risk: a hanging test now fails with a `Timeout` error and thread stack traceback at ~120s instead of hanging silently; a legitimately slow test (>120s) would need an explicit per-test `@pytest.mark.timeout(N)` override, but the full 5111-test suite was confirmed to pass under `-n auto` with the new cap in place, so none currently exceed it.
 - Rollback: revert this PR (removes the `--timeout=120` addopt, `timeout_method`, and the `pytest-timeout` pin).
 
-PR: #0
+PR: #806
