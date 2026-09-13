@@ -10,4 +10,4 @@ None. No schema, migration, or config changes; this is a pure code-removal clean
 ## Risk / rollback
 Low risk — the removed methods had no production callers (verified by search) and were never exercised outside the test fakes that mirrored them. Full test suite (5115 tests), ruff, import-linter, and mypy all pass. Rollback: revert this PR.
 
-PR: #0
+PR: #805
