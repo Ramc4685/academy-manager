@@ -145,6 +145,9 @@ class CheckoutStatusResponse(BaseModel):
     payment_id: str | None = None
     status: str
     parent_id: str
+    #: Invoices this checkout is settling (issue #635) — used to badge those
+    #: rows "Processing" while the Stripe webhook is still queued.
+    invoice_ids: list[str] = Field(default_factory=list)
 
 
 class EnrollmentQuoteRequest(BaseModel):

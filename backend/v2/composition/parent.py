@@ -1633,15 +1633,12 @@ def compose_parent(
                 )
                 enroll_autopay = False
         invoice_stripe = stripe if hasattr(stripe, "create_invoice_checkout_session") else None
-        # Opted-in payments must return with a checkout_session_id so the
-        # parent app's checkout-status poll can pick up autopay activation
-        # instead of relying solely on the webhook. Unmodified when not
-        # opted in, so the plain one-time-payment redirect is unchanged.
-        redirect_success_url = (
-            _success_url_with_checkout_session_placeholder(success_url)
-            if enroll_autopay
-            else success_url
-        )
+        # EVERY checkout return carries a checkout_session_id (issue #635):
+        # webhooks are processed on a 60s tick, so without it the parent lands
+        # back on a still-PENDING invoice with no way to tell that settlement
+        # is in flight. Opted-in payments additionally use it to pick up
+        # autopay activation. Stripe substitutes the id at redirect time.
+        redirect_success_url = _success_url_with_checkout_session_placeholder(success_url)
         result = await SendInvoice(
             ledger=billing_ledger_repo,
             stripe=invoice_stripe,  # type: ignore[arg-type]
@@ -1779,14 +1776,10 @@ def compose_parent(
                 "save_payment_method_for_autopay": True,
                 "autopay_enrollment_ids": active_ids,
             }
-        # Same reasoning as the single-invoice path: opted-in payments need a
-        # checkout_session_id on return so the checkout-status poll can pick
-        # up activation instead of relying solely on the webhook.
-        redirect_success_url = (
-            _success_url_with_checkout_session_placeholder(success_url)
-            if enroll_autopay
-            else success_url
-        )
+        # Same reasoning as the single-invoice path (issue #635): every return
+        # needs a checkout_session_id so the settlement poll can run, and the
+        # opted-in case also picks up autopay activation from it.
+        redirect_success_url = _success_url_with_checkout_session_placeholder(success_url)
         try:
             _, url = await invoice_stripe.create_invoice_checkout_session(
                 invoice_id=f"balance-{parent_id[:8]}",

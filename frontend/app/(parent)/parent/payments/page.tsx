@@ -35,7 +35,10 @@ const PAYMENT_START_FAILED =
 
 // Checkout-status polling: stop on terminal statuses ("active" plus the ACH
 // micro-deposit verification states and dead Stripe sessions), and hard-cap
-// at ~5 minutes so a never-terminal status can't poll forever.
+// at ~2 minutes so a never-terminal status can't poll forever. "processing"
+// is deliberately NOT terminal (issue #635): it means Stripe took the money
+// and our webhook worker has not written the ledger row yet, so the poll must
+// keep going until it does.
 const CHECKOUT_POLL_TERMINAL_STATUSES = new Set([
   "active",
   "succeeded",
@@ -46,7 +49,7 @@ const CHECKOUT_POLL_TERMINAL_STATUSES = new Set([
   "expired",
 ]);
 const CHECKOUT_POLL_INTERVAL_MS = 3000;
-const CHECKOUT_POLL_MAX_ATTEMPTS = 100; // 100 × 3s ≈ 5 minutes
+const CHECKOUT_POLL_MAX_ATTEMPTS = 40; // 40 × 3s ≈ 2 minutes
 
 /** "2026-04" -> "Apr 2026"; unknown formats render as-is. */
 function formatPeriodLabel(period: string): string {
@@ -160,6 +163,12 @@ export default function ParentPaymentsPage() {
   const autopayReturn = searchParams.get("autopay");
   const checkoutSessionId = searchParams.get("checkout_session_id");
   const returnedFromAutopayCheckout = autopayReturn === "success";
+  // Issue #635: EVERY return from Stripe Checkout carries a
+  // checkout_session_id now, not just autopay opt-ins, so the settlement poll
+  // and its banners run for plain invoice/balance payments too — that ~1-2
+  // minute webhook window is what made paid invoices look PENDING.
+  const returnedFromCheckout = Boolean(checkoutSessionId);
+  const [checkoutPollTimedOut, setCheckoutPollTimedOut] = useState(false);
   const [pauseEnrollmentId, setPauseEnrollmentId] = useState("");
   const [pauseKind, setPauseKind] = useState<"fixed" | "indefinite">("fixed");
   // Blank by default: resuming "today" is never a valid pause, so force an
@@ -183,20 +192,20 @@ export default function ParentPaymentsPage() {
   const paymentsQuery = useQuery({
     queryKey: ["parent", "payments"],
     queryFn: listParentPayments,
-    staleTime: returnedFromAutopayCheckout ? 0 : undefined,
-    refetchOnMount: returnedFromAutopayCheckout ? "always" : undefined,
+    staleTime: returnedFromCheckout ? 0 : undefined,
+    refetchOnMount: returnedFromCheckout ? "always" : undefined,
   });
   const enrollmentsQuery = useQuery({
     queryKey: ["parent", "enrollments"],
     queryFn: listParentEnrollments,
-    staleTime: returnedFromAutopayCheckout ? 0 : undefined,
-    refetchOnMount: returnedFromAutopayCheckout ? "always" : undefined,
+    staleTime: returnedFromCheckout ? 0 : undefined,
+    refetchOnMount: returnedFromCheckout ? "always" : undefined,
   });
   const invoicesQuery = useQuery({
     queryKey: ["parent", "invoices"],
     queryFn: listParentInvoices,
-    staleTime: returnedFromAutopayCheckout ? 0 : undefined,
-    refetchOnMount: returnedFromAutopayCheckout ? "always" : undefined,
+    staleTime: returnedFromCheckout ? 0 : undefined,
+    refetchOnMount: returnedFromCheckout ? "always" : undefined,
   });
   const invoiceDetailQuery = useQuery({
     queryKey: ["parent", "invoice-detail", selectedInvoiceId],
@@ -206,7 +215,7 @@ export default function ParentPaymentsPage() {
   const checkoutStatusQuery = useQuery({
     queryKey: ["parent", "checkout-status", checkoutSessionId],
     queryFn: () => getCheckoutStatus(checkoutSessionId ?? ""),
-    enabled: returnedFromAutopayCheckout && Boolean(checkoutSessionId),
+    enabled: returnedFromCheckout,
     staleTime: 0,
     refetchOnMount: "always",
     refetchInterval: (query) => {
@@ -273,10 +282,9 @@ export default function ParentPaymentsPage() {
   const invoicePaymentMutation = useMutation({
     mutationFn: ({ invoiceId, enrollAutopay }: { invoiceId: string; enrollAutopay: boolean }) =>
       startParentInvoicePayment(invoiceId, {
-        // The checkout-status poll (below) only runs when it sees
-        // `autopay=success` + a checkout_session_id, so opted-in payments
-        // must carry that marker to pick up activation on return. Unchecked
-        // payments keep the plain `invoice=paid` redirect, unchanged.
+        // The backend appends `checkout_session_id={CHECKOUT_SESSION_ID}` to
+        // every success_url (issue #635), so the settlement poll runs on any
+        // return. `autopay=success` only marks the opt-in copy/activation.
         success_url: enrollAutopay
           ? `${window.location.origin}/parent/payments?invoice=paid&autopay=success`
           : `${window.location.origin}/parent/payments?invoice=paid`,
@@ -344,11 +352,23 @@ export default function ParentPaymentsPage() {
   });
 
   useEffect(() => {
-    if (!returnedFromAutopayCheckout) return;
+    if (!returnedFromCheckout) return;
     void queryClient.invalidateQueries({ queryKey: ["parent", "payments"] });
     void queryClient.invalidateQueries({ queryKey: ["parent", "enrollments"] });
     void queryClient.invalidateQueries({ queryKey: ["parent", "invoices"] });
-  }, [queryClient, returnedFromAutopayCheckout]);
+  }, [queryClient, returnedFromCheckout]);
+
+  // The poll gives up at the cap; past it the parent gets the honest "Stripe
+  // has it, our side can take a few minutes" copy rather than a silent page.
+  useEffect(() => {
+    if (!returnedFromCheckout) return;
+    setCheckoutPollTimedOut(false);
+    const timer = window.setTimeout(
+      () => setCheckoutPollTimedOut(true),
+      CHECKOUT_POLL_INTERVAL_MS * CHECKOUT_POLL_MAX_ATTEMPTS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [returnedFromCheckout]);
 
   useEffect(() => {
     if (!checkoutStatusQuery.data?.status) return;
@@ -356,6 +376,18 @@ export default function ParentPaymentsPage() {
     void queryClient.invalidateQueries({ queryKey: ["parent", "enrollments"] });
     void queryClient.invalidateQueries({ queryKey: ["parent", "invoices"] });
   }, [checkoutStatusQuery.data?.status, queryClient]);
+
+  const checkoutStatus = checkoutStatusQuery.data?.status;
+  const checkoutSettled = Boolean(checkoutStatus && CHECKOUT_POLL_TERMINAL_STATUSES.has(checkoutStatus));
+  // Still in the webhook window: Stripe is done, our ledger is not. A failed
+  // status lookup shows nothing rather than promising a payment we cannot see.
+  const settlementPending =
+    returnedFromCheckout && !checkoutSettled && !(checkoutStatusQuery.isError && !checkoutStatus);
+  // Invoices this checkout is settling — badged "processing" instead of the
+  // stale "pending" until the ledger catches up. Derived, never persisted.
+  const settlingInvoiceIds = new Set(
+    checkoutStatus === "processing" ? (checkoutStatusQuery.data?.invoice_ids ?? []) : [],
+  );
 
   const payments = paymentsQuery.data?.payments ?? [];
   const enrollments = enrollmentsQuery.data?.enrollments ?? [];
@@ -404,9 +436,20 @@ export default function ParentPaymentsPage() {
       </div>
 
       {/* Status banners */}
-      {returnedFromAutopayCheckout && checkoutStatusQuery.isFetching && (
-        <p role="status" data-testid="autopay-checkout-confirming" className="rounded-xl border border-rally-cobalt-100 bg-rally-cobalt-50 px-4 py-3 text-sm text-rally-cobalt-700">
-          Confirming autopay…
+      {settlementPending && !checkoutPollTimedOut && (
+        <p
+          role="status"
+          data-testid={returnedFromAutopayCheckout ? "autopay-checkout-confirming" : "checkout-settlement-processing"}
+          className="rounded-xl border border-rally-cobalt-100 bg-rally-cobalt-50 px-4 py-3 text-sm text-rally-cobalt-700"
+        >
+          {returnedFromAutopayCheckout
+            ? "Confirming autopay…"
+            : "Payment received — updating your balance…"}
+        </p>
+      )}
+      {settlementPending && checkoutPollTimedOut && (
+        <p role="status" data-testid="checkout-settlement-slow" className="rounded-xl border border-status-amber-500/30 bg-status-amber-50 px-4 py-3 text-sm text-status-amber-800">
+          Confirmed by Stripe — this can take a few minutes to show up here. No need to pay again.
         </p>
       )}
       {enrollments.some((e) => e.payment_mode === "monthly" && e.autopay_enrollment_status === "setup_started") && (
@@ -507,6 +550,7 @@ export default function ParentPaymentsPage() {
                 (invoice.status === "open" || invoice.status === "partially_paid");
               const isVoid = invoice.status === "void";
               const isPaid = invoice.status === "paid" || isVoid;
+              const settling = settlingInvoiceIds.has(invoice.invoice_id) && invoice.balance_due_cents > 0;
               return (
                 <div
                   key={invoice.invoice_id}
@@ -516,7 +560,10 @@ export default function ParentPaymentsPage() {
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <p className="text-sm font-medium text-rally-ink">{formatPeriodLabel(invoice.period)}</p>
-                      <StatusPill status={invoice.status} label={isVoid ? "Cancelled" : undefined} />
+                      <StatusPill
+                        status={settling ? "processing" : invoice.status}
+                        label={isVoid ? "Cancelled" : undefined}
+                      />
                       {isVoid && invoice.void_reason && (
                         <p className="mt-1 text-xs text-rally-subtle">
                           {voidReasonText(invoice.void_reason)}
@@ -537,7 +584,7 @@ export default function ParentPaymentsPage() {
                       <div className="mt-2.5 flex gap-2">
                         <button
                           type="button"
-                          disabled={invoicePaymentMutation.isPending}
+                          disabled={invoicePaymentMutation.isPending || settling}
                           onClick={() =>
                             invoicePaymentMutation.mutate({
                               invoiceId: invoice.invoice_id,
@@ -548,9 +595,11 @@ export default function ParentPaymentsPage() {
                           }
                           className="flex-1 rounded-xl border border-rally-volt-400 bg-rally-volt-100 py-2 text-sm font-medium text-status-amber-800 disabled:opacity-60 active:scale-95 transition-transform"
                         >
-                          {payingInvoiceId === invoice.invoice_id
-                            ? "Starting…"
-                            : `Pay ${money(invoice.balance_due_cents, invoice.currency.toUpperCase())}`}
+                          {settling
+                            ? "Processing…"
+                            : payingInvoiceId === invoice.invoice_id
+                              ? "Starting…"
+                              : `Pay ${money(invoice.balance_due_cents, invoice.currency.toUpperCase())}`}
                         </button>
                         <button
                           type="button"
@@ -946,6 +995,7 @@ function statusPillClasses(status: string): string {
     succeeded: "bg-status-green-50 text-status-green-800",
     paid: "bg-status-green-50 text-status-green-800",
     pending: "bg-status-amber-50 text-status-amber-800",
+    processing: "bg-rally-cobalt-50 text-rally-cobalt-700",
     approved: "bg-status-amber-50 text-status-amber-800",
     open: "bg-status-red-50 text-status-red-800",
     past_due: "bg-status-red-50 text-status-red-800",
