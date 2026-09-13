@@ -8,7 +8,7 @@ EnrollmentCancelled handler's use case expires it.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -142,8 +142,12 @@ class _RecRepo:
             key=lambda r: r.recommended_at,
         )
 
-    async def list_pending_for_student(self, student_id: str) -> list[LevelUpRecommendation]:
-        return [r for r in await self.list_pending() if r.student_id == student_id]
+    async def list_recommended_for_student(self, student_id: str) -> list[LevelUpRecommendation]:
+        return [
+            r
+            for r in sorted(self.rows.values(), key=lambda r: r.recommended_at)
+            if r.student_id == student_id and r.status == "RECOMMENDED"
+        ]
 
 
 class _LevelProgressRepo:
@@ -575,3 +579,26 @@ async def test_expiry_does_not_overwrite_an_admin_decision_made_meanwhile() -> N
     assert result.expired_rec_ids == []
     assert recs.rows["rec-1"].rejection_reason == "not ready"
     assert recs.rows["rec-1"].reviewed_by == "admin-1"
+
+
+@pytest.mark.asyncio
+async def test_expiry_leaves_a_row_a_reviewer_is_holding_to_that_reviewer() -> None:
+    """Issue #548: a claimed row is mid-review, possibly mid-certificate.
+
+    Expiry must not compare-and-set it out from under the reviewer; it takes
+    only rows still in RECOMMENDED, and reports honestly that it took none.
+    """
+    recs = _RecRepo()
+    await recs.save(_rec("rec-claimed", "st-gone"))
+    await recs.save(_rec("rec-open", "st-gone", program_id="prog-2"))
+    await recs.claim("rec-claimed", "APPROVING", _NOW, lease=timedelta(minutes=10))
+    expire = ExpireLevelUpRecommendations(
+        recommendations=recs, enrollment_lookup=_EnrollmentLookup(live=set())
+    )
+
+    result = await expire.execute("st-gone")
+
+    assert result.expired_rec_ids == ["rec-open"]
+    assert recs.rows["rec-claimed"].status == "APPROVING"
+    assert recs.rows["rec-claimed"].rejection_reason is None
+    assert recs.rows["rec-open"].status == "REJECTED"

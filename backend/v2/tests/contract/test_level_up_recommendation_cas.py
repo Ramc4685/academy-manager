@@ -229,4 +229,6 @@ async def test_a_claimed_recommendation_stays_in_the_admin_queue(db, acad) -> No
     await repo.claim("rec-1", "REJECTING", _NOW, lease=_LEASE)
 
     assert [rec.rec_id for rec in await repo.list_pending()] == ["rec-1"]
-    assert [rec.rec_id for rec in await repo.list_pending_for_student("student-1")] == ["rec-1"]
+    # ...but the expiry feed deliberately skips it: the reviewer holding the
+    # claim owns the row until they commit or release it.
+    assert await repo.list_recommended_for_student("student-1") == []

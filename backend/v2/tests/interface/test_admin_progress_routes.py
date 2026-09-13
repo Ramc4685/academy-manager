@@ -328,8 +328,12 @@ class _FakeRecommendationRepo:
     async def list_pending(self) -> list:
         return [r for r in self.rows.values() if r.status in CLAIMABLE_LEVEL_UP_STATUSES]
 
-    async def list_pending_for_student(self, student_id: str) -> list:
-        return [r for r in await self.list_pending() if r.student_id == student_id]
+    async def list_recommended_for_student(self, student_id: str) -> list:
+        return [
+            r
+            for r in self.rows.values()
+            if r.student_id == student_id and r.status == "RECOMMENDED"
+        ]
 
 
 class _FakeEnrollmentLookup:

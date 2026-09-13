@@ -156,9 +156,17 @@ class MongoLevelUpRecommendationRepository(TenantScopedRepository):
         )
         return [self._to_domain(doc) async for doc in cursor]
 
-    async def list_pending_for_student(self, student_id: str) -> list[LevelUpRecommendation]:
+    async def list_recommended_for_student(self, student_id: str) -> list[LevelUpRecommendation]:
+        """Rows still waiting for a first decision — deliberately not claimed ones.
+
+        Issue #548: the expiry use case compare-and-sets every row this
+        returns out of ``RECOMMENDED``, and a row a reviewer is holding
+        (``APPROVING``/``REJECTING``) must be left to that reviewer — taking
+        it would either no-op the CAS or, worse, reject a row whose
+        certificate is already being written.
+        """
         cursor = self._find_many(
-            {"student_id": student_id, "status": {"$in": sorted(CLAIMABLE_LEVEL_UP_STATUSES)}},
+            {"student_id": student_id, "status": "RECOMMENDED"},
             sort=[("recommended_at", 1)],
         )
         return [self._to_domain(doc) async for doc in cursor]
