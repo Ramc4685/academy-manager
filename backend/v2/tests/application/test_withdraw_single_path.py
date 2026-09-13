@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
@@ -26,6 +27,7 @@ from backend.v2.contexts.enrollment.domain.errors import (
     EnrollmentNotWithdrawable,
 )
 from backend.v2.contexts.enrollment.domain.events import EnrollmentCancelled
+from backend.v2.shared.tenancy import tenant_scope
 from backend.v2.tests.application.test_enrollment_lifecycle_actions import (
     FakeEnrollmentEvents,
     FakeEnrollments,
@@ -39,7 +41,25 @@ from backend.v2.tests.application.test_enrollment_lifecycle_billing_sync import 
     RecordingBillingSync,
     RecordingRoster,
 )
-from backend.v2.tests.fixtures.enrollment_fakes import FakeHoldNotifier
+from backend.v2.tests.fixtures.enrollment_fakes import (
+    FakeHoldNotifier,
+    FakeStudentsWithParent,
+)
+from backend.v2.tests.unit.test_roster_alert_adapter import (
+    FakeSender as _AdapterSender,
+)
+from backend.v2.tests.unit.test_roster_alert_adapter import (
+    FakeSessions as _AdapterSessions,
+)
+from backend.v2.tests.unit.test_roster_alert_adapter import (
+    _adapter as _build_adapter,
+)
+from backend.v2.tests.unit.test_roster_alert_adapter import (
+    _session as _adapter_session,
+)
+from backend.v2.tests.unit.test_roster_alert_adapter import (
+    _staff as _adapter_staff,
+)
 
 EFFECTIVE = datetime(2026, 9, 15, 12, 0, tzinfo=UTC)
 
@@ -63,18 +83,24 @@ class Harness:
     events: FakeEnrollmentEvents
     decision: FakeWithdrawalDecision
     sync: RecordingBillingSync
-    roster: RecordingRoster
+    #: RecordingRoster, or the real adapter when a test wires the send path.
+    roster: Any
     notifier: FakeHoldNotifier
 
 
-def _build(status: str = "active", *, notifier: FakeHoldNotifier | None = None) -> Harness:
+def _build(
+    status: str = "active",
+    *,
+    notifier: FakeHoldNotifier | None = None,
+    roster: Any | None = None,
+) -> Harness:
     enrollments = FakeEnrollments(rows={"enr-1": _enrollment(status)})
     sessions = FakeSessions()
     outbox = FakeOutbox()
     events = FakeEnrollmentEvents()
     decision = FakeWithdrawalDecision()
     sync = RecordingBillingSync()
-    roster = RecordingRoster()
+    roster = roster if roster is not None else RecordingRoster()
     notifier = notifier if notifier is not None else FakeHoldNotifier()
     use_case = WithdrawEnrollment(
         enrollments=enrollments,
@@ -286,3 +312,32 @@ async def test_withdraw_family_notify_failure_never_fails_the_drop() -> None:
     await h.use_case.execute(_cmd("credit"))
 
     assert h.enrollments.rows["enr-1"].status == "dropped"
+
+
+@pytest.mark.asyncio
+async def test_withdraw_sends_the_family_exactly_one_email() -> None:
+    """Issue #772: one Drop, one family email.
+
+    Wired against the REAL roster-alert adapter, because the duplicate lived
+    in its parent-copy routing and a recording port fake cannot see it: the
+    staff alert and the family's drop notice both start from this one
+    ``execute``.
+    """
+    sender = _AdapterSender()
+    adapter = _build_adapter(
+        sessions=_AdapterSessions(rows={"sess-1": _adapter_session()}),
+        audiences=_adapter_staff(),
+        sender=sender,
+        students=FakeStudentsWithParent(),  # type: ignore[arg-type]
+    )
+    h = _build(roster=adapter)
+
+    with tenant_scope("acad"):
+        await h.use_case.execute(_cmd("credit"))
+
+    # the family hears once, from the drop notice
+    assert len(h.notifier.dropped_calls) == 1
+    assert [row["user_id"] for row in sender.sent if row["user_id"] == "par-1"] == []
+    # the coach/staff copy of the roster change is untouched (owner-1 made
+    # the change, so they are the one staff member who is not mailed)
+    assert [row["user_id"] for row in sender.sent] == ["coach-1", "admin-1"]
