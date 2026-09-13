@@ -12,4 +12,4 @@ No migrations. No manual steps. The unique index (`level_progress_active_unique`
 ## Risk / rollback
 Low risk — the change narrows an unhandled-500 code path to a 409 that the client already handles for the existing CAS-loser case. No schema or index changes. Rollback: revert this PR.
 
-PR: #0
+PR: #790
