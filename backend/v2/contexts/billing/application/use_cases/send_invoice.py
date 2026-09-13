@@ -610,6 +610,9 @@ class SendInvoice:
                     outcome="sent",
                     now=now,
                     provider_message_id=provider_message_id,
+                    # This branch is the pay-link email; the autopay notice is
+                    # recorded by its own hook (issue #692).
+                    delivery_kind="invoice_email",
                 )
                 invoice = await self._ledger.save_invoice(invoice)
                 log.info("send_invoice: email sent for invoice=%s", invoice_id)

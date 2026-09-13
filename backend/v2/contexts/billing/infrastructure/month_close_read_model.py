@@ -243,6 +243,7 @@ class MongoMonthCloseReadModel:
             outstanding_cents=invoice_outstanding_cents(inv),
             due_date=_to_date(inv.get("due_date")),
             delivery_status=str(inv.get("delivery_status") or "not_sent"),
+            delivery_kind=_opt_str(inv.get("delivery_kind")),
             void_reason=_opt_str(inv.get("void_reason")),
             parent_id=parent_id,
             parent_name=_opt_str((user or {}).get("display_name"))
@@ -292,6 +293,7 @@ class MongoMonthCloseReadModel:
                 "due_date": 1,
                 "created_at": 1,
                 "delivery_status": 1,
+                "delivery_kind": 1,
                 "last_sent_at": 1,
                 "voided_at": 1,
                 "void_reason": 1,

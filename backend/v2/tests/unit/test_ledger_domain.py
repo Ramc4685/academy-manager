@@ -278,6 +278,27 @@ def test_record_delivery_sent_at_not_overwritten_on_resend() -> None:
     assert second_result.last_sent_at == second_send
 
 
+def test_record_delivery_persists_the_kind_of_message_sent() -> None:
+    """Issue #692: the emailed/notice split must not be re-derived later."""
+    inv = _invoice(status="open")
+    result = record_delivery(inv, outcome="sent", now=NOW, delivery_kind="autopay_notice")
+    assert result.delivery_kind == "autopay_notice"
+
+
+def test_record_delivery_kind_is_none_until_a_send_supplies_one() -> None:
+    inv = _invoice(status="open")
+    assert inv.delivery_kind is None
+    assert record_delivery(inv, outcome="sent", now=NOW).delivery_kind is None
+
+
+def test_record_delivery_failure_keeps_the_last_known_kind() -> None:
+    """A retry that fails must not erase what the parent actually received."""
+    inv = _invoice(status="open")
+    sent = record_delivery(inv, outcome="sent", now=NOW, delivery_kind="invoice_email")
+    retried = record_delivery(sent, outcome="delivery_failed", now=NOW)
+    assert retried.delivery_kind == "invoice_email"
+
+
 def test_record_delivery_raises_on_draft() -> None:
     inv = _invoice(status="draft")
     with pytest.raises(ValueError, match="draft"):

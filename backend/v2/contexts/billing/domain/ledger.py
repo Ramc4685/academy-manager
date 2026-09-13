@@ -16,6 +16,11 @@ from backend.v2.contexts.billing.domain.models import CreditLedgerEntry
 
 InvoiceStatus = Literal["draft", "open", "partially_paid", "paid", "void"]
 LedgerPaymentStatus = Literal["pending", "succeeded", "failed", "refunded", "partially_refunded"]
+# Which parent-facing message a successful delivery actually was. Stamped at
+# send time (issue #692) because the enrollment's autopay status drifts: a
+# family emailed a pay link in March and switched autopay on in April would
+# otherwise re-read as an April-style autopay notice in March's Month close.
+DeliveryKind = Literal["invoice_email", "autopay_notice"]
 
 
 class LedgerInvoice(BaseModel):
@@ -59,6 +64,11 @@ class LedgerInvoice(BaseModel):
     # in the Resend dashboard). Only overwritten on a successful send; a later
     # delivery_failed leaves the last good id in place so the link still works.
     email_provider_message_id: str | None = None
+    # What the most recent successful send actually was (issue #692). None on
+    # invoices delivered before the field existed, and on any invoice whose
+    # kind the 0176 backfill could not infer: readers treat that as unknown
+    # and fall back to the old approximation rather than guessing.
+    delivery_kind: DeliveryKind | None = None
     # In-flight Stripe Checkout Session for this invoice. Set while a parent is paying
     # manually, cleared by the session's terminal webhook. Autopay refuses to charge a
     # held invoice so a manual payment and a dunning tick cannot both collect the same
@@ -417,6 +427,7 @@ def record_delivery(
     outcome: Literal["sent", "delivery_failed"],
     now: datetime,
     provider_message_id: str | None = None,
+    delivery_kind: DeliveryKind | None = None,
 ) -> LedgerInvoice:
     """Update delivery tracking only. Financial status is never changed by this op.
 
@@ -424,6 +435,10 @@ def record_delivery(
     successful send. It is only stored on a ``sent`` outcome and only when a
     non-empty id is supplied — a failed send, or a send by a provider that does
     not return an id, leaves any previously stored id untouched.
+
+    ``delivery_kind`` follows the same rule: which message the parent received
+    is only knowable from a send that succeeded, so a later ``delivery_failed``
+    retry leaves the last known kind in place (issue #692).
     """
     if invoice.status == "draft":
         raise ValueError("cannot record delivery on a draft invoice")
@@ -436,6 +451,8 @@ def record_delivery(
         updates["sent_at"] = now
     if outcome == "sent" and provider_message_id:
         updates["email_provider_message_id"] = provider_message_id
+    if outcome == "sent" and delivery_kind is not None:
+        updates["delivery_kind"] = delivery_kind
     return invoice.model_copy(update=updates)
 
 

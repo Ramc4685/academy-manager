@@ -212,6 +212,14 @@ async def test_successful_send_persists_provider_message_id() -> None:
     assert result.invoice.email_provider_message_id == "re_abc123"
 
 
+async def test_pay_link_send_stamps_the_invoice_email_kind() -> None:
+    """Issue #692: the pay-link branch records WHAT it sent, not just that it sent."""
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open")])
+    result = await _uc(repo, email=FakeInvoiceEmail()).execute("inv-1")
+
+    assert result.invoice.delivery_kind == "invoice_email"
+
+
 async def test_send_without_provider_id_leaves_field_none() -> None:
     """A provider that returns no id (or a stub) leaves the field unset."""
     repo = FakeLedgerRepository(invoices=[_invoice(status="open")])
