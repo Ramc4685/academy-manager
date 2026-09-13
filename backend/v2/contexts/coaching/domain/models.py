@@ -67,6 +67,27 @@ class CoachAttendance(BaseModel):
     note: str = ""
 
 
+class CoachAttendanceAuditEntry(BaseModel):
+    """Before/after record of one edit to a coach's payroll attendance mark.
+
+    Written only when an existing mark's status or rate_override_minor
+    actually changes — creation of the first mark and no-op resubmits are
+    not audited (see #539)."""
+
+    model_config = {"frozen": True}
+
+    audit_id: str
+    academy_id: str
+    occurrence_id: str
+    coach_id: str
+    actor_id: str
+    at: datetime
+    before_status: CoachAttendanceStatus
+    after_status: CoachAttendanceStatus
+    before_rate_override_minor: int | None = Field(default=None, ge=0)
+    after_rate_override_minor: int | None = Field(default=None, ge=0)
+
+
 class SessionFeedback(BaseModel):
     """One coach-authored feedback entry for a student in a session."""
 

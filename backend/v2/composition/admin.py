@@ -256,6 +256,7 @@ from backend.v2.contexts.coaching.application.use_cases.mark_coach_attendance im
 )
 from backend.v2.contexts.coaching.infrastructure.mongo_attendance_repo import (
     MongoAttendanceRepository,
+    MongoCoachAttendanceAuditLogRepository,
     MongoCoachAttendanceRepository,
 )
 from backend.v2.contexts.coaching.infrastructure.mongo_coach_rate_repo import (
@@ -671,6 +672,7 @@ def compose_admin(
     sessions_r = MongoSessionRepository(db)
     occurrences_r = MongoSessionOccurrenceRepository(db)
     coach_attendance_repo = MongoCoachAttendanceRepository(db)
+    coach_attendance_audit_repo = MongoCoachAttendanceAuditLogRepository(db)
     enrollments_w = MongoEnrollmentWriter(db)
     enrollments_r = MongoEnrollmentRepository(db)
     enrollment_events = MongoEnrollmentEventRepository(db)
@@ -3003,6 +3005,7 @@ def compose_admin(
 
     mark_coach_attendance = MarkCoachAttendance(
         coach_attendance=coach_attendance_repo,
+        coach_attendance_audit=coach_attendance_audit_repo,
         occurrence_lookup=_AdminOccurrenceLookup(),
         academy_id=academy_id,
     )
