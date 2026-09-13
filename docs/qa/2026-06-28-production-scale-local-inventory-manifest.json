@@ -1781,21 +1781,29 @@
       "workflows": [
         "List users",
         "Create user",
+        "Bulk invite parents",
         "Change role"
       ],
       "controls": {
         "buttons": [
           "Create user",
+          "Bulk invite parents",
+          "Upload CSV",
+          "Send invites",
+          "Retry failed",
           "Edit role",
           "Deactivate"
         ],
         "inputs": [
           "Email",
           "Name",
-          "Role filter"
+          "Role filter",
+          "Bulk invite paste",
+          "Bulk invite CSV file"
         ],
         "modals": [
           "Create user",
+          "Bulk invite parents",
           "Role change"
         ]
       },
@@ -1803,21 +1811,29 @@
         "loading",
         "empty",
         "duplicate email",
-        "mutation error"
+        "mutation error",
+        "bulk invite preview",
+        "bulk invite partial success"
       ],
       "risk_edges": [
         "Duplicate email",
         "Invalid role",
-        "Multi-role precedence"
+        "Multi-role precedence",
+        "Bulk batch over 100 rows",
+        "Bulk invite partial failure"
       ],
       "acceptance": [
         "User mutations show errors without leaking cross-tenant data",
+        "Bulk invite never sends malformed, duplicate, or over-limit rows to the endpoint",
         "Workflow evidence: \"List users\" completes for the admin route /admin/users with real-user evidence and no framework or runtime errors.",
         "Workflow evidence: \"Create user\" completes for the admin route /admin/users with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Bulk invite parents\" completes for the admin route /admin/users with real-user evidence and no framework or runtime errors.",
         "Workflow evidence: \"Change role\" completes for the admin route /admin/users with real-user evidence and no framework or runtime errors.",
         "Risk evidence: \"Duplicate email\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"Invalid role\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Multi-role precedence\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+        "Risk evidence: \"Multi-role precedence\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Bulk batch over 100 rows\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Bulk invite partial failure\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     },
     {

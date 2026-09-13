@@ -3437,6 +3437,45 @@ export function createAdminUser(payload: CreateAdminUserRequest): Promise<AdminU
   });
 }
 
+/**
+ * UIM6 (#449) — bulk parent invites.
+ *
+ * Mirrors `BulkInviteRequest`/`BulkInviteResponse` in
+ * `backend/v2/interfaces/admin/views.py`. The role is hardcoded to `parent`
+ * server-side, so the payload carries no role. Partial success is normal: the
+ * call returns 200 with per-row `created` / `skipped` / `failed` statuses.
+ */
+export interface BulkInviteUserRequest {
+  email: string;
+  display_name: string;
+}
+
+export interface BulkInviteRequest {
+  users: BulkInviteUserRequest[];
+  reason?: string;
+}
+
+export interface BulkInviteResultItem {
+  email: string;
+  status: "created" | "skipped" | "failed";
+  user_id: string | null;
+  detail: string | null;
+}
+
+export interface BulkInviteResponse {
+  created: number;
+  skipped: number;
+  failed: number;
+  results: BulkInviteResultItem[];
+}
+
+export function bulkInviteParents(payload: BulkInviteRequest): Promise<BulkInviteResponse> {
+  return apiFetch<BulkInviteResponse>("/admin/users/bulk-invite", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export interface AdminSessionTypeView {
   session_type_id: string;
   name: string;
