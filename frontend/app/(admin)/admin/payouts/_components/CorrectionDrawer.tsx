@@ -74,7 +74,7 @@ export function CorrectionDrawer({
         onClick={onClose}
       />
       <aside className="absolute inset-y-0 right-0 flex w-[min(100vw,420px)] flex-col border-l border-rally-line bg-white shadow-2xl">
-        <div className="flex items-start justify-between gap-4 border-b border-rally-line px-5 py-4">
+        <div className="flex items-start justify-between gap-4 border-b border-rally-line px-5 pb-4 pt-[calc(1rem+env(safe-area-inset-top,0px))]">
           <div>
             <h3 id="correction-drawer-title" className="text-base font-semibold text-rally-ink">
               Correct occurrence
