@@ -42,6 +42,10 @@ from backend.v2.shared.tenancy import current_academy_id
 logger = logging.getLogger(__name__)
 REVIEW_CLAIM_TTL = timedelta(minutes=15)
 
+# Sentinel distinguishing "no template argument given" (fetch it) from an
+# explicit `template=None` (no waiver template configured) in `_row`.
+_UNSET = object()
+
 
 class RegistrationWaiverTemplateQuery(Protocol):
     async def get_registration_template(self) -> AdminWaiverTemplateRecord | None: ...
@@ -244,6 +248,9 @@ class AdminRegistrationReview:
         apps = await self._apps.list_by_status(
             ["PENDING_APPROVAL", "APPROVING", "WAITLISTING", "DECLINING"]
         )
+        # Fetch the waiver template once for the whole page instead of once
+        # per row -- it does not vary per application.
+        template = await self._registration_template()
         rows: list[AdminRegistrationRow] = []
         for app in apps:
             if app.status != "PENDING_APPROVAL" and not self._review_claim_is_stale(app):
@@ -253,10 +260,14 @@ class AdminRegistrationReview:
             except ApplicationNotEditable:
                 # Keep ambiguous legacy identities visible to academy staff
                 # without guessing which child record should be changed.
-                rows.append((await self._row(app)).model_copy(update={"status": "MANUAL_REVIEW"}))
+                rows.append(
+                    (await self._row(app, template=template)).model_copy(
+                        update={"status": "MANUAL_REVIEW"}
+                    )
+                )
                 continue
             if existing_student_id is None:
-                rows.append(await self._row(app))
+                rows.append(await self._row(app, template=template))
         return rows
 
     async def detail(self, application_id: str) -> AdminRegistrationDetail:
@@ -690,8 +701,14 @@ class AdminRegistrationReview:
             )
         )
 
-    async def _row(self, app: Application) -> AdminRegistrationRow:
-        template = await self._registration_template()
+    async def _row(
+        self,
+        app: Application,
+        *,
+        template: AdminWaiverTemplateRecord | None = _UNSET,  # type: ignore[assignment]
+    ) -> AdminRegistrationRow:
+        if template is _UNSET:
+            template = await self._registration_template()
         return AdminRegistrationRow(
             application_id=app.application_id,
             status=app.status,

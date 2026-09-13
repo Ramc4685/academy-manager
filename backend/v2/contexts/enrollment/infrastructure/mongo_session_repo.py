@@ -378,15 +378,13 @@ class MongoSessionRepository(TenantScopedRepository):
             seen_template_sessions.add(session_id)
             docs.append(doc)
         docs.sort(key=session_start_sort_key)
+        session_ids = [str(doc["session_id"]) for doc in docs]
+        enrolled_counts = await self._enrolled_counts_by_session(session_ids)
         rows: list[ParentAvailableSession] = []
         for doc in docs:
             capacity = int(doc.get("capacity") or doc.get("max_students") or 1)
             session_id = str(doc["session_id"])
-            enrolled_count = int(
-                await self._db["enrollments"].count_documents(
-                    self._scoped({"session_id": session_id, "status": "active"})
-                )
-            )
+            enrolled_count = enrolled_counts.get(session_id, 0)
             reserved_seats = int(doc.get("reserved_seats") or enrolled_count)
             occupied = max(enrolled_count, reserved_seats)
             available_seats = max(capacity - occupied, 0)
@@ -411,6 +409,24 @@ class MongoSessionRepository(TenantScopedRepository):
             if len(rows) >= 100:
                 break
         return rows
+
+    async def _enrolled_counts_by_session(self, session_ids: list[str]) -> dict[str, int]:
+        """Active-enrollment counts for every given session, in one query.
+
+        Replaces the previous per-session ``count_documents`` fan with a
+        single ``$group`` aggregation. ``$group`` omits keys with no
+        matching documents, so callers must default missing session ids
+        to 0 (via ``.get(session_id, 0)``) rather than treating absence as
+        an error."""
+        if not session_ids:
+            return {}
+        cursor = self._db["enrollments"].aggregate(
+            [
+                {"$match": self._scoped({"session_id": {"$in": session_ids}, "status": "active"})},
+                {"$group": {"_id": "$session_id", "n": {"$sum": 1}}},
+            ]
+        )
+        return {str(doc["_id"]): int(doc["n"]) async for doc in cursor}
 
 
 def _amount_cents(doc: dict[str, object], default_amount_cents: int) -> int:
