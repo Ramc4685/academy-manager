@@ -28,8 +28,8 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import AsyncIterator, Mapping
-from contextlib import asynccontextmanager
-from typing import Any
+from contextlib import AbstractContextManager, asynccontextmanager, nullcontext
+from typing import Any, cast
 
 log = logging.getLogger(__name__)
 
@@ -154,13 +154,33 @@ async def cron_checkin(
         yield
         return
     started = time.monotonic()
+    with _job_transaction(sentry_sdk, job_id):
+        try:
+            yield
+        except BaseException:
+            _checkin(sentry_sdk, job_id, check_in_id, "error", monitor_config, started)
+            raise
+        else:
+            _checkin(sentry_sdk, job_id, check_in_id, "ok", monitor_config, started)
+
+
+def _job_transaction(sentry_sdk: Any, job_id: str) -> AbstractContextManager[Any]:
+    """Performance transaction spanning a cron job's body (#749).
+
+    Without this, only HTTP requests ever produced a Sentry transaction — a
+    scheduler job could run for a non-zero ``sentry_traces_sample_rate`` and
+    never show up in Performance. Best-effort like the rest of this module:
+    any SDK error (including an older sentry-sdk without ``start_transaction``)
+    falls back to a no-op context manager so the job body is unaffected.
+    """
     try:
-        yield
-    except BaseException:
-        _checkin(sentry_sdk, job_id, check_in_id, "error", monitor_config, started)
-        raise
-    else:
-        _checkin(sentry_sdk, job_id, check_in_id, "ok", monitor_config, started)
+        return cast(
+            "AbstractContextManager[Any]",
+            sentry_sdk.start_transaction(op="scheduler.job", name=job_id),
+        )
+    except Exception:
+        log.debug("sentry_job_transaction_start_failed job_id=%s", job_id, exc_info=True)
+        return nullcontext()
 
 
 def _checkin(
