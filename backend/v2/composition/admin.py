@@ -1129,6 +1129,12 @@ def compose_admin(
             email=_invoice_email_port(),
             connected_accounts=connected_accounts_repo,
             settings=billing_settings_repo,
+            # Issue #738: an autopay family gets the pre-charge notice, not a
+            # pay link the dunning worker would then double-collect.
+            # ``send_autopay_notice`` is bound later in this same function;
+            # this body only runs at request time, long after it exists.
+            autopay=student_billing_enrollment_repo,
+            notify_autopay=send_autopay_notice if _invoice_email_port() else None,
             success_url=f"{frontend_url}/parent/payments?invoice=paid",
             cancel_url=f"{frontend_url}/parent/payments?invoice=cancelled",
         ).execute(invoice_id, bundle_student_balance=True)
@@ -1139,6 +1145,8 @@ def compose_admin(
             "last_sent_at": result.invoice.last_sent_at,
             "checkout_url": result.checkout_url,
             "checkout_failure_code": result.checkout_failure_code,
+            "autopay_notified": result.autopay_notified,
+            "skipped_autopay": result.skipped_autopay,
         }
 
     async def send_generated_invoices(
