@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
+from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.student_progress.application.use_cases.place_student import (
     PlaceStudentInLevel,
@@ -66,6 +67,21 @@ class _LevelProgressRepo:
         self.rows: dict[str, StudentLevelProgress] = {}
 
     async def save(self, progress: StudentLevelProgress) -> None:
+        # Mirrors the real partial-unique-index semantics (academy_id,
+        # student_id, program_id) where status=active — see "Test Fakes Must
+        # Mirror Real Store Semantics". A permissive fake here would hide the
+        # exact concurrency bug #592 is about.
+        if progress.status == "active":
+            for row in self.rows.values():
+                if (
+                    row.progress_id != progress.progress_id
+                    and row.student_id == progress.student_id
+                    and row.program_id == progress.program_id
+                    and row.status == "active"
+                ):
+                    raise DuplicateKeyError(
+                        "E11000 duplicate key error: level_progress_active_unique"
+                    )
         self.rows[progress.progress_id] = progress
 
     async def get_active(self, student_id: str, program_id: str) -> StudentLevelProgress | None:
@@ -855,3 +871,98 @@ async def test_lost_approve_race_leaves_no_duplicate_certificate_or_level_row() 
     assert len(level_2_rows) == 1
     assert level_2_rows[0].status == "active"
     assert level_progress.rows["progress-1"].status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_true_concurrent_double_approve_returns_already_reviewed_not_500() -> None:
+    """A genuine concurrent double-approve must 409, never an unhandled 500.
+
+    Unlike ``test_lost_approve_race_leaves_no_duplicate_certificate_or_level_row``,
+    both reviewers here observe the *same* pre-race snapshot (the original
+    level-1 row) before either has written anything — the interleaving the
+    unique index actually exists to protect against. The loser's own insert
+    then collides with the winner's already-committed active row, and the
+    real bug is that this DuplicateKeyError previously propagated unhandled
+    out of ``execute()`` instead of being mapped to the same 409 the CAS
+    loser already gets a few lines below.
+    """
+    level_progress = _LevelProgressRepo()
+    await level_progress.save(_active_progress())
+    skill_progress = _SkillProgressRepo()
+    recommendations = _RecommendationRepo()
+    await recommendations.save(_pending_recommendation())
+    certs = _CertificateRepo()
+    repos = {
+        "recommendations": recommendations,
+        "level_progress": level_progress,
+        "skill_progress": skill_progress,
+        "certs": certs,
+    }
+    winner = _review_use_case(**repos)  # type: ignore[arg-type]
+    loser = _review_use_case(**repos)  # type: ignore[arg-type]
+
+    original_get_active = level_progress.get_active
+
+    async def _observe_pre_race_then_let_winner_finish(student_id: str, program_id: str):
+        # Snapshot exactly what a concurrent reader would see before either
+        # party has written anything, then let the winner run to completion
+        # (it commits a new active level-2 row and completes the old one).
+        # Hand the loser the STALE pre-race snapshot, not the post-winner
+        # state — this is the interleaving a real concurrent read produces.
+        pre_race = await original_get_active(student_id, program_id)
+        level_progress.get_active = original_get_active  # type: ignore[method-assign]
+        await winner.execute(_approve_command())
+        return pre_race
+
+    level_progress.get_active = _observe_pre_race_then_let_winner_finish  # type: ignore[method-assign]
+
+    with tenant_scope("academy-1"):
+        with pytest.raises(RecommendationAlreadyReviewed):
+            await loser.execute(_approve_command())
+
+    assert len(certs.rows) == 1
+    level_2_rows = [row for row in level_progress.rows.values() if row.level_id == "level-2"]
+    assert len(level_2_rows) == 1
+    assert level_2_rows[0].status == "active"
+    assert level_progress.rows["progress-1"].status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_pre_read_replay_guard_is_load_bearing() -> None:
+    """The pre-read guard must reject a replay on its own, without depending
+    on the compare-and-set below it.
+
+    The CAS (``update_status`` with ``expected_status``) would also catch an
+    ordinary sequential replay, so a test that only exercises the CAS cannot
+    tell whether the earlier ``if rec.status != PENDING_STATUS`` guard is
+    doing anything at all. Here the CAS is defeated (monkeypatched to always
+    report success) so only the pre-read guard stands between a replayed
+    approve and re-running every approval side effect a second time.
+    """
+    level_progress = _LevelProgressRepo()
+    await level_progress.save(_active_progress())
+    skill_progress = _SkillProgressRepo()
+    recommendations = _RecommendationRepo()
+    await recommendations.save(_pending_recommendation())
+    certs = _CertificateRepo()
+    use_case = _review_use_case(
+        recommendations=recommendations,
+        level_progress=level_progress,
+        skill_progress=skill_progress,
+        certs=certs,
+    )
+
+    with tenant_scope("academy-1"):
+        first = await use_case.execute(_approve_command())
+        assert first.status == "APPROVED"
+
+        # Defeat the CAS: it now reports success no matter what status it
+        # expected, so the pre-read guard is the only thing left that can
+        # refuse a replay.
+        async def _always_claims(*args, **kwargs) -> bool:
+            return True
+
+        recommendations.update_status = _always_claims  # type: ignore[method-assign]
+
+        with pytest.raises(RecommendationAlreadyReviewed):
+            await use_case.execute(_approve_command())
