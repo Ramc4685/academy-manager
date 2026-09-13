@@ -1466,6 +1466,39 @@ def compose_admin(
         ledger=billing_ledger_repo, dunning=dunning_state_repo
     )
 
+    async def void_payment(*, payment_id: str, reason: str, actor_id: str | None) -> None:
+        """Owner void of a test/erroneous payment (#619).
+
+        The repository does the money work — reverse the allocations, give the
+        invoice balance back, stamp the row ``voided`` — and this wrapper adds
+        the accountability half. The audit append happens AFTER the money move,
+        the same order the refund and manual-payment paths use: an audit write
+        that fails must not leave a payment the operator believes was voided.
+        """
+        from backend.v2.shared.tenancy import current_academy_id
+
+        academy_id = current_academy_id()
+        now = datetime.now(UTC)
+        voided = await billing_ledger_repo.void_payment(
+            payment_id, reason=reason, voided_by=actor_id, now=now
+        )
+        await billing_audit_log.append(
+            BillingAuditEntry(
+                audit_id=f"baud-{new_ulid()}",
+                academy_id=academy_id,
+                action="payment_voided",
+                actor_id=actor_id or "system",
+                at=now,
+                payment_id=payment_id,
+                parent_id=voided.parent_id,
+                reason=reason,
+                after={
+                    "status": voided.status,
+                    "amount_cents": voided.amount_cents,
+                },
+            )
+        )
+
     async def record_manual_payment(
         *,
         invoice_id: str,
@@ -3006,7 +3039,7 @@ def compose_admin(
             )
         return rows
 
-    async def list_payments_recent(fetch_cap: int = 200):
+    async def list_payments_recent(fetch_cap: int = 200, *, include_voided: bool = False):
         from backend.v2.shared.tenancy import current_academy_id
 
         fetch_cap = max(1, min(int(fetch_cap), 1000))
@@ -3176,6 +3209,11 @@ def compose_admin(
                 # Settled an invoice: keep the invoice row, carry the facts over.
                 _settle_invoice_rows(payment_keys, doc)
                 continue
+            if str(doc.get("status") or "") == "voided" and not include_voided:
+                # Hidden, but its keys were registered above on purpose: a legacy
+                # `payments` row shadowing this ledger payment must still be
+                # deduplicated away, or voiding one would resurrect the other.
+                continue
             ledger_rows.append(
                 {
                     "payment_id": str(doc.get("payment_id") or ""),
@@ -3194,6 +3232,9 @@ def compose_admin(
                         stripe_payment_intent_id or stripe_invoice_id or stripe_checkout_session_id
                     ),
                     "payment_method": settlement_method(doc),
+                    "void_reason": doc.get("void_reason"),
+                    "voided_at": doc.get("voided_at"),
+                    "voided_by": doc.get("voided_by"),
                     "created_at": doc["created_at"],
                     "paid_at": doc.get("paid_at"),
                 }
@@ -3292,10 +3333,11 @@ def compose_admin(
         q: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        include_voided: bool = False,
     ) -> dict[str, Any]:
         date_from = _ensure_utc(date_from)
         date_to = _ensure_utc(date_to)
-        rows = await list_payments_recent(fetch_cap=1000)
+        rows = await list_payments_recent(fetch_cap=1000, include_voided=include_voided)
         rows = await _enrich_parent_names(rows)
         for row in rows:
             row["paid_at"] = _effective_paid_at(row)
@@ -4206,6 +4248,7 @@ def compose_admin(
         add_invoice_line=add_invoice_line,
         remove_invoice_line=remove_invoice_line,
         void_billing_invoice=void_billing_invoice,
+        void_payment=void_payment,
         record_manual_payment=record_manual_payment,
         issue_invoice_refund=issue_invoice_refund,
         list_billing_audit=list_billing_audit,

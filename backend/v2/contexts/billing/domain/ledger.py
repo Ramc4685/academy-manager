@@ -15,7 +15,15 @@ from pydantic import BaseModel, Field
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry
 
 InvoiceStatus = Literal["draft", "open", "partially_paid", "paid", "void"]
-LedgerPaymentStatus = Literal["pending", "succeeded", "failed", "refunded", "partially_refunded"]
+LedgerPaymentStatus = Literal[
+    "pending", "succeeded", "failed", "refunded", "partially_refunded", "voided"
+]
+#: Statuses that mean real money settled against this payment. Voiding one of
+#: these is only a correction when no provider ever moved funds — see
+#: :func:`void_payment`.
+SETTLED_PAYMENT_STATUSES: frozenset[str] = frozenset(
+    {"succeeded", "refunded", "partially_refunded"}
+)
 # Which parent-facing message a successful delivery actually was. Stamped at
 # send time (issue #692) because the enrollment's autopay status drifts: a
 # family emailed a pay link in March and switched autopay on in April would
@@ -126,6 +134,13 @@ class LedgerPayment(BaseModel):
     recorded_by: str | None = None
     notes: str | None = None
     metadata: dict[str, str] | None = None
+    # Why/when/by whom the payment was voided (issue #619) — the mirror of
+    # LedgerInvoice.void_reason/voided_at. A void is a soft, terminal state: the
+    # row is kept for audit, its allocations are reversed, and every reader that
+    # sums money uses a status allow-list that "voided" is not on.
+    void_reason: str | None = None
+    voided_at: datetime | None = None
+    voided_by: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -416,6 +431,43 @@ def void_invoice(invoice: LedgerInvoice, *, reason: str, now: datetime) -> Ledge
             "status": "void",
             "void_reason": reason,
             "voided_at": now,
+            "updated_at": now,
+        }
+    )
+
+
+def void_payment(
+    payment: LedgerPayment,
+    *,
+    reason: str,
+    voided_by: str | None,
+    now: datetime,
+) -> LedgerPayment:
+    """Mark a payment void — the payment mirror of :func:`void_invoice` (#619).
+
+    Voiding is for rows that should never have been on the books: a manual
+    payment recorded by mistake, a test row, an EXPIRED checkout that collected
+    nothing. It is deliberately NOT a way out of real money: a payment whose
+    status says a provider settled funds AND that is linked to Stripe has to go
+    through the refund flow, which actually returns the money, instead of being
+    quietly erased from the reports.
+
+    ``unapplied_amount_cents`` is zeroed: a voided payment must not leave
+    spendable funds behind for an allocator to pick up. The caller is
+    responsible for reversing any allocations the payment already made.
+    """
+    if payment.status == "voided":
+        raise ValueError("payment is already voided")
+    stripe_linked = bool(payment.stripe_payment_intent_id or payment.stripe_invoice_id)
+    if stripe_linked and payment.status in SETTLED_PAYMENT_STATUSES:
+        raise ValueError("Stripe-linked payments with settled funds must be refunded, not voided")
+    return payment.model_copy(
+        update={
+            "status": "voided",
+            "void_reason": reason,
+            "voided_at": now,
+            "voided_by": voided_by,
+            "unapplied_amount_cents": 0,
             "updated_at": now,
         }
     )

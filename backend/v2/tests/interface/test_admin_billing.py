@@ -841,6 +841,84 @@ def test_undo_manual_paid(admin_client):
     assert admin_client.seed["payments"].rows["pay-cash"].status == "pending"
 
 
+# --- # VOID PAYMENT (#619) ---
+
+
+def test_void_payment_requires_a_reason(admin_client):
+    r = admin_client.post("/api/v2/admin/payments/pay-1/void", json={"reason": "   "})
+    assert r.status_code == 422, r.text
+
+
+def test_void_payment_passes_reason_and_actor(admin_client):
+    captured: dict[str, object] = {}
+
+    async def void_payment(**kwargs):
+        captured.update(kwargs)
+
+    admin_client.use_cases.void_payment = void_payment
+
+    r = admin_client.post("/api/v2/admin/payments/pay-1/void", json={"reason": "  test row  "})
+
+    assert r.status_code == 200, r.text
+    assert r.json() == {"ok": True}
+    assert captured == {"payment_id": "pay-1", "reason": "test row", "actor_id": "u-admin"}
+
+
+def test_void_payment_maps_stripe_refusal_to_409(admin_client):
+    async def void_payment(**_kwargs):
+        raise ValueError("Stripe-linked payments with settled funds must be refunded, not voided")
+
+    admin_client.use_cases.void_payment = void_payment
+
+    r = admin_client.post("/api/v2/admin/payments/pay-1/void", json={"reason": "test row"})
+
+    assert r.status_code == 409, r.text
+    assert "refunded" in r.json()["detail"]
+
+
+def test_void_payment_maps_missing_payment_to_404(admin_client):
+    async def void_payment(**_kwargs):
+        raise ValueError("ledger payment not found")
+
+    admin_client.use_cases.void_payment = void_payment
+
+    r = admin_client.post("/api/v2/admin/payments/pay-1/void", json={"reason": "test row"})
+
+    assert r.status_code == 404, r.text
+
+
+def test_void_payment_is_hidden_from_a_plain_admin(admin_only_client):
+    """Owner-only, the same tier as refund/discount/undo-paid."""
+
+    async def void_payment(**_kwargs):  # pragma: no cover - must never run
+        raise AssertionError("a plain admin reached the void use case")
+
+    admin_only_client.use_cases.void_payment = void_payment
+
+    r = admin_only_client.post("/api/v2/admin/payments/pay-1/void", json={"reason": "test row"})
+
+    assert r.status_code == 404, r.text
+
+
+def test_list_payments_hides_voided_rows_by_default(admin_client):
+    captured: dict[str, object] = {}
+
+    async def list_payments_filtered(**kwargs):
+        captured.update(kwargs)
+        return {"payments": [], "total": 0, "limit": 200, "offset": 0}
+
+    admin_client.use_cases.list_payments_filtered = list_payments_filtered
+
+    assert admin_client.get("/api/v2/admin/payments").status_code == 200
+    assert captured["include_voided"] is False
+
+    assert (
+        admin_client.get("/api/v2/admin/payments", params={"include_voided": "true"}).status_code
+        == 200
+    )
+    assert captured["include_voided"] is True
+
+
 # --- # FINANCE ---
 
 

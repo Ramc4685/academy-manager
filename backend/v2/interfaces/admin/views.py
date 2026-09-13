@@ -728,6 +728,11 @@ class AdminPaymentView(BaseModel):
     stripe_invoice_id: str | None = None
     stripe_payment_intent_id: str | None = None
     reconciliation_status: str | None = None
+    # Soft-void trail (#619). Present only on voided rows, which the list hides
+    # unless `include_voided=true`.
+    void_reason: str | None = None
+    voided_at: datetime | None = None
+    voided_by: str | None = None
     created_at: datetime
     paid_at: datetime | None = None
 

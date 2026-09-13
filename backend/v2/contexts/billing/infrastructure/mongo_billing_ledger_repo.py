@@ -18,6 +18,7 @@ from backend.v2.contexts.billing.domain.ledger import (
     allocate_payment_to_invoice,
     recompute_totals,
 )
+from backend.v2.contexts.billing.domain.ledger import void_payment as apply_void_payment_rules
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry
 from backend.v2.contexts.billing.domain.payment_attempt_kinds import (
     exclude_non_charge_attempts,
@@ -68,6 +69,9 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             recorded_by=doc.get("recorded_by"),
             notes=doc.get("notes"),
             metadata=doc.get("metadata"),
+            void_reason=doc.get("void_reason"),
+            voided_at=doc.get("voided_at"),
+            voided_by=doc.get("voided_by"),
             created_at=doc["created_at"],
             updated_at=doc["updated_at"],
         )
@@ -749,6 +753,79 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             now=reversed_at,
         )
         return reversal_doc
+
+    async def void_payment(
+        self,
+        payment_id: str,
+        *,
+        reason: str,
+        voided_by: str | None,
+        now: datetime,
+    ) -> LedgerPayment:
+        """Soft-void a payment and give back every invoice it had settled (#619).
+
+        Order matters. The allocations are reversed FIRST, through the same
+        ``reverse_payment_allocation`` an ACH return uses: it writes a
+        ``payment_allocation_reversals`` row (the audit trail), removes the
+        allocation, and re-derives both the invoice balance and the payment's
+        unapplied funds from the rows that survive. Only then is the payment
+        stamped ``voided``. A crash between the two therefore leaves a payment
+        that still LOOKS live with its money given back — visible and
+        re-runnable — rather than a voided payment still holding an invoice
+        hostage, which nothing would ever notice.
+
+        The domain check runs before any write, so a Stripe-settled payment is
+        refused with its allocations untouched.
+        """
+        academy_id = current_academy_id()
+        doc = await self.ledger_payments.find_one(
+            {"academy_id": academy_id, "payment_id": payment_id}
+        )
+        if doc is None:
+            raise ValueError("ledger payment not found")
+        # Raises for an already-voided row or settled Stripe funds.
+        apply_void_payment_rules(
+            self._payment_from_doc(doc), reason=reason, voided_by=voided_by, now=now
+        )
+
+        allocation_docs = [
+            allocation
+            async for allocation in self._db["payment_allocations"].find(
+                {"academy_id": academy_id, "payment_id": payment_id}
+            )
+        ]
+        for allocation in allocation_docs:
+            allocation_key = allocation.get("idempotency_key")
+            if not allocation_key:
+                # Pre-0130 rows carry no idempotency key, which is the handle
+                # reverse_payment_allocation reverses by. Refuse rather than
+                # void a payment whose invoice would stay wrongly settled.
+                raise ValueError("payment has an un-reversible legacy allocation; reconcile first")
+            await self.reverse_payment_allocation(
+                allocation_idempotency_key=str(allocation_key),
+                reversal_idempotency_key=f"void:{payment_id}:{allocation['allocation_id']}",
+                reason=f"payment_voided:{reason}",
+                return_code=None,
+                reversed_at=now,
+            )
+
+        updated = await self.ledger_payments.find_one_and_update(
+            {"academy_id": academy_id, "payment_id": payment_id, "status": {"$ne": "voided"}},
+            {
+                "$set": {
+                    "status": "voided",
+                    "void_reason": reason,
+                    "voided_at": now,
+                    "voided_by": voided_by,
+                    "unapplied_amount_cents": 0,
+                    "updated_at": now,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        if updated is None:
+            raise ValueError("payment is already voided")
+        return self._payment_from_doc(updated)
 
     async def sum_allocations_for_invoice(self, invoice_id: str) -> int:
         return await self._sum_allocations(academy_id=current_academy_id(), invoice_id=invoice_id)

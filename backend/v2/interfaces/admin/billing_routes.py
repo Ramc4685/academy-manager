@@ -7,7 +7,7 @@ from typing import Annotated, Any, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 
 from backend.v2.contexts.billing.application.first_month_quote_presentation import (
     first_month_quote_formula,
@@ -397,6 +397,10 @@ async def list_payments(
     q: str | None = Query(default=None, max_length=100),
     limit: int = Query(default=200, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    # Voided payments are excluded by default (#619): they are test/erroneous
+    # rows kept only for audit, and showing them by default would put back the
+    # noise the void was for.
+    include_voided: bool = Query(default=False),
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminPaymentList:
@@ -410,6 +414,7 @@ async def list_payments(
             q=q,
             limit=limit,
             offset=offset,
+            include_voided=include_voided,
         )
         return AdminPaymentList(
             payments=[_payment_view(p) for p in result["payments"]],
@@ -556,6 +561,47 @@ async def undo_payment_paid(
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> dict[str, bool]:
     await use_cases.undo_payment_paid.execute(UndoPaymentPaidCommand(payment_id=payment_id))
+    return {"ok": True}
+
+
+class VoidPaymentRequest(BaseModel):
+    reason: str = Field(min_length=1, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def _reason_not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("void reason is required")
+        return value
+
+
+@router.post("/payments/{payment_id}/void")
+async def void_payment_route(
+    payment_id: str,
+    body: VoidPaymentRequest,
+    claims: AuthClaims = Depends(require_owner()),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> dict[str, bool]:
+    """Soft-void a test/erroneous payment (#619).
+
+    Owner-only, the same tier as refund/discount/undo-paid: it changes what
+    every money report says. Nothing is deleted — the row keeps its amount and
+    gains ``voided_at``/``voided_by``/``void_reason``, its allocations are
+    reversed so the invoice balance reopens, and it drops out of the payments
+    list unless "show voided" is on. Real Stripe money is refused here on
+    purpose: refunding it is the flow that actually gives it back.
+    """
+    void_payment_ = _required_callable(use_cases.void_payment, "Payment voiding")
+    try:
+        await void_payment_(  # type: ignore[operator]
+            payment_id=payment_id, reason=body.reason, actor_id=claims.user_id
+        )
+    except ValueError as exc:
+        msg = str(exc)
+        if "not found" in msg:
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=409, detail=msg) from exc
     return {"ok": True}
 
 
