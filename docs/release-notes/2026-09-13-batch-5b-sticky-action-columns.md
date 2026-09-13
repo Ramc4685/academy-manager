@@ -1,6 +1,6 @@
 # Sticky action columns in admin approval queues
 
-PR: #0
+PR: #819
 
 ## What changed
 - Fixes #747 — the Approve/Deny/Review action column in the admin approval queues (Makeups, Trials, Pauses, Level-ups, Registrations, now consolidated under `/admin/inbox` per #776) was not sticky and could scroll off-screen on wide tables; it now uses the same sticky-action-column pattern already shipped on the session detail page (#716/#717).
