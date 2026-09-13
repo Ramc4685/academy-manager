@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal, Protocol, TypeVar
 
 from pydantic import BaseModel
@@ -742,6 +742,17 @@ class LedgerRepository(Protocol):
     async def list_undelivered_invoices_for_period(
         self, period: str, *, limit: int = 100
     ) -> list[LedgerInvoice]: ...
+    async def list_overdue_invoices(
+        self, *, due_before: date, limit: int = 200
+    ) -> list[LedgerInvoice]:
+        """Collectable invoices whose due date is strictly before ``due_before``.
+
+        Drives the automated late-fee pass (issue #552). ``due_before`` is
+        exclusive so the caller can express "the grace period has fully
+        elapsed" as ``today - grace_days`` without an off-by-one.
+        """
+        ...
+
     async def get_payment_by_stripe_payment_intent_id(
         self, stripe_payment_intent_id: str
     ) -> LedgerPayment | None: ...

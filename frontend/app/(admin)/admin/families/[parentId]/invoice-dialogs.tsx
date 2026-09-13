@@ -20,7 +20,13 @@ import {
 const inputClass =
   "w-full rounded-lg border border-rally-line bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30";
 
-const LINE_TYPES = ["tuition", "equipment", "fee", "adjustment"];
+/**
+ * "late_fee" is the line type the automated late-fee pass writes (#552). It is
+ * offered here so a hand-entered late fee lands on the same type, and the
+ * automation's one-fee-per-invoice guard recognises it instead of adding a
+ * second fee on top of the operator's.
+ */
+const LINE_TYPES = ["tuition", "equipment", "fee", "late_fee", "adjustment"];
 
 export interface CreateInvoiceResult {
   student_id: string;

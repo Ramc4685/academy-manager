@@ -49,6 +49,7 @@ from backend.v2.composition.digests import (
 )
 from backend.v2.composition.email_adapters import build_user_facing_invite_sender
 from backend.v2.composition.families import compose_admin_families
+from backend.v2.composition.late_fees import compose_apply_late_fees
 from backend.v2.composition.month_close import compose_admin_month_close
 from backend.v2.composition.owner import compose_owner
 from backend.v2.composition.parent import compose_parent, compose_parent_webhook_handler
@@ -615,6 +616,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Billing Health plumbing, owner-only (spec 2026-09-07 §5.1).
     app.state.admin_billing_health = compose_admin_billing_health(db, stripe_gw)
     app.state.admin_month_close = compose_admin_month_close(db)
+    # Automated late fees, driven from the dunning tick below (#552).
+    app.state.apply_late_fees = compose_apply_late_fees(db)
 
     # Owner (franchise) BFF wiring — UIM11. Left unset when the flag is off so
     # the routes 404 even if something mounts them.
@@ -892,12 +895,25 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             "notifications_sent": 0,
             "notifications_failed": 0,
             "autopay_disabled": 0,
+            "late_fees_applied": 0,
         }
         for academy_id in await _scheduler_academy_ids(
             MongoAcademyRepository(db),
             runtime_academy_id,
         ):
             with tenant_scope(academy_id):
+                # Late fees run BEFORE the retries: the fee raises
+                # balance_due_cents, so the dunning notice this same tick may
+                # send quotes the new total (#552). Failures are logged, never
+                # fatal — a late fee must not cost an academy its retries.
+                late_fees = getattr(app.state, "apply_late_fees", None)
+                if late_fees is not None:
+                    try:
+                        fee_result = await late_fees.execute(academy_id=academy_id)
+                    except Exception:
+                        log.exception("late_fee_pass_failed", extra={"academy_id": academy_id})
+                    else:
+                        totals["late_fees_applied"] += int(fee_result.applied)
                 worker = getattr(app.state.admin, "process_dunning_retries", None)
                 if worker is None:
                     log.warning(
@@ -923,7 +939,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 "autopay_disabled",
             ):
                 totals[key] += int(getattr(result, key, 0) or 0)
-        if totals["processed"] or totals["dunned"] or totals["autopay_disabled"]:
+        if (
+            totals["processed"]
+            or totals["dunned"]
+            or totals["autopay_disabled"]
+            or totals["late_fees_applied"]
+        ):
             log.info("dunning_retries_processed", extra=totals)
 
     async def _generate_monthly_invoices() -> None:

@@ -15,6 +15,12 @@ from backend.v2.contexts.onboarding.application.use_cases.manage_application imp
     PatchApplicationCommand,
     TransitionApplication,
 )
+from backend.v2.contexts.onboarding.application.use_cases.manage_application import (
+    StartApplication as StartApplicationUC,
+)
+from backend.v2.contexts.onboarding.application.use_cases.manage_application import (
+    StartApplicationCommand as StartApplicationCmd,
+)
 from backend.v2.contexts.onboarding.domain.errors import (
     ApplicationForPaymentNotFound,
     ApplicationNotEditable,
@@ -828,3 +834,125 @@ async def test_the_live_attempt_still_reaches_its_own_destructive_targets() -> N
     expired = await uc.execute_for_payment("pay-first", "CHECKOUT_EXPIRED")
 
     assert expired.status == "CHECKOUT_EXPIRED"
+
+
+# ---------------------------------------------------------------------------
+# Issue #537 — the 7-day TTL was never enforced: an expired DRAFT stayed
+# editable and checkout-able forever.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_start_application_abandons_expired_draft_and_creates_fresh() -> None:
+    fake_now = datetime(2026, 1, 1, tzinfo=UTC)
+    old = _app().model_copy(update={"expires_at": fake_now - timedelta(seconds=1)})
+    repo = FakeAppRepo(old)
+    uc = StartApplicationUC(apps=repo, academy_id=lambda: "acad", clock=lambda: fake_now)
+
+    result = await uc.execute(
+        StartApplicationCmd(parent_user_id=old.parent_user_id, parent_email=old.parent_email)
+    )
+
+    # Got a NEW application, not the stale draft.
+    assert result.application_id != old.application_id
+    assert result.status == "DRAFT"
+    # The old one was retired, not left DRAFT.
+    assert repo.saved[0].status == "ABANDONED"
+    assert repo.saved[0].application_id == old.application_id
+
+
+@pytest.mark.asyncio
+async def test_start_application_returns_a_not_yet_expired_draft_untouched() -> None:
+    fake_now = datetime(2026, 1, 1, tzinfo=UTC)
+    fresh = _app().model_copy(update={"expires_at": fake_now + timedelta(days=1)})
+    repo = FakeAppRepo(fresh)
+    uc = StartApplicationUC(apps=repo, academy_id=lambda: "acad", clock=lambda: fake_now)
+
+    result = await uc.execute(
+        StartApplicationCmd(parent_user_id=fresh.parent_user_id, parent_email=fresh.parent_email)
+    )
+
+    assert result.application_id == fresh.application_id
+    assert result.status == "DRAFT"
+    assert repo.saved == []  # untouched — no spurious ABANDONED write
+
+
+@pytest.mark.asyncio
+async def test_start_application_abandons_an_expired_checkout_pending_too() -> None:
+    """CHECKOUT_PENDING also carries expires_at and must retire the same way,
+    rather than falling into the resume branch forever."""
+    fake_now = datetime(2026, 1, 1, tzinfo=UTC)
+    stale_checkout = _checkout_pending().model_copy(
+        update={"expires_at": fake_now - timedelta(seconds=1)}
+    )
+    repo = FakeAppRepo(stale_checkout)
+    retirement = RecordingRetirement()
+    uc = StartApplicationUC(
+        apps=repo,
+        academy_id=lambda: "acad",
+        clock=lambda: fake_now,
+        checkout_retirement=retirement,
+    )
+
+    result = await uc.execute(
+        StartApplicationCmd(
+            parent_user_id=stale_checkout.parent_user_id,
+            parent_email=stale_checkout.parent_email,
+        )
+    )
+
+    assert result.application_id != stale_checkout.application_id
+    assert result.status == "DRAFT"
+    assert repo.saved[0].status == "ABANDONED"
+    # Expiry, not the resume path, handled it: no checkout retirement fired.
+    assert retirement.calls == []
+
+
+@pytest.mark.asyncio
+async def test_patch_application_rejects_expired_draft() -> None:
+    fake_now = datetime(2026, 1, 1, tzinfo=UTC)
+    expired = _app().model_copy(update={"expires_at": fake_now - timedelta(seconds=1)})
+    repo = FakeAppRepo(expired)
+    uc = PatchApplication(apps=repo, waivers=FakeWaiverRepo(), clock=lambda: fake_now)
+
+    with pytest.raises(ApplicationNotEditable):
+        await uc.execute(
+            PatchApplicationCommand(
+                application_id=expired.application_id,
+                caller_user_id=expired.parent_user_id,
+                selected_session_id="s1",
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_patch_application_allows_a_not_yet_expired_draft() -> None:
+    fake_now = datetime(2026, 1, 1, tzinfo=UTC)
+    fresh = _app().model_copy(update={"expires_at": fake_now + timedelta(days=1)})
+    repo = FakeAppRepo(fresh)
+    uc = PatchApplication(apps=repo, waivers=FakeWaiverRepo(), clock=lambda: fake_now)
+
+    result = await uc.execute(
+        PatchApplicationCommand(
+            application_id=fresh.application_id,
+            caller_user_id=fresh.parent_user_id,
+            selected_session_id="s1",
+        )
+    )
+
+    assert result.selected_session_id == "s1"
+
+
+def test_application_is_expired_only_for_editable_ish_statuses_past_ttl() -> None:
+    fake_now = datetime(2026, 1, 1, tzinfo=UTC)
+    draft = _app().model_copy(update={"expires_at": fake_now - timedelta(seconds=1)})
+    assert draft.is_expired(fake_now) is True
+
+    not_yet = _app().model_copy(update={"expires_at": fake_now + timedelta(seconds=1)})
+    assert not_yet.is_expired(fake_now) is False
+
+    # A terminal status is never "expired" — there is nothing left to retire.
+    terminal = _app().model_copy(
+        update={"status": "PENDING_APPROVAL", "expires_at": fake_now - timedelta(seconds=1)}
+    )
+    assert terminal.is_expired(fake_now) is False

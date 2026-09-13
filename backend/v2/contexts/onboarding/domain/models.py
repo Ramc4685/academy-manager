@@ -12,7 +12,7 @@ State machine (mirrors legacy):
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field
@@ -105,6 +105,28 @@ class Application(BaseModel):
     expires_at: datetime  # 7d TTL after creation
     created_at: datetime
     updated_at: datetime
+
+    def is_expired(self, now: datetime) -> bool:
+        """True once the 7-day TTL has passed on an application that is still
+        sitting in an editable-ish state (issue #537).
+
+        DRAFT and CHECKOUT_PENDING both carry `expires_at` and both must stop
+        being editable/startable once it passes — otherwise an abandoned draft
+        (or a checkout the parent never returned to) stays live forever.
+
+        Naive datetimes (some seeded/legacy rows carry them — see the Session
+        Timezone repair) are treated as UTC rather than raising, so a stray
+        naive `expires_at` fails closed as "editable" instead of 500ing the
+        whole request.
+        """
+        if self.status not in {"DRAFT", "CHECKOUT_PENDING"}:
+            return False
+        expires_at = self.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=UTC)
+        return now >= expires_at
 
 
 class Waiver(BaseModel):

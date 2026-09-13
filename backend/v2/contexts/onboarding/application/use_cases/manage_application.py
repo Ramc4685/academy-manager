@@ -78,6 +78,15 @@ class StartApplication:
 
     async def execute(self, cmd: StartApplicationCommand) -> Application:
         existing = await self._apps.latest_for_parent(cmd.parent_user_id)
+        if existing is not None and existing.is_expired(self._now()):
+            # The TTL passed with nobody finishing the wizard or Stripe.
+            # Retire it (issue #537) rather than handing it back below, or a
+            # parent who abandoned a draft weeks ago keeps editing/paying
+            # against a quote and a seat hold that should already be gone.
+            await self._apps.save(
+                existing.model_copy(update={"status": "ABANDONED", "updated_at": self._now()})
+            )
+            existing = None
         if existing and existing.status in _EDITABLE:
             return existing
         if existing is not None and _RESUME_TO in _TRANSITIONS.get(existing.status, set()):
@@ -207,7 +216,7 @@ class PatchApplication:
             # 404 (not 403) so a parent can't probe other parents'
             # application ids. Per docs/security-matrix.md.
             raise ApplicationNotFound("application missing", application_id=cmd.application_id)
-        if app.status not in _EDITABLE:
+        if app.status not in _EDITABLE or app.is_expired(self._now()):
             raise ApplicationNotEditable(
                 "application is not in an editable state",
                 status=app.status,

@@ -1955,7 +1955,11 @@ def compose_parent(
         # so without this guard a retry from, say, terminal CHECKOUT_EXPIRED
         # leaves a burnt quote and a dangling pending Payment row behind every
         # single time, on top of the 409 the parent already sees.
-        if app.status not in _CHECKOUT_STARTABLE_STATUSES:
+        if app.status not in _CHECKOUT_STARTABLE_STATUSES or app.is_expired(clock()):
+            # An expired DRAFT/CHECKOUT_PENDING is still nominally in a
+            # "startable" status, but the TTL means the parent's seat hold and
+            # quoted price are stale (issue #537) — reject it the same way as
+            # a terminal status, before any Stripe/Payment side effect below.
             raise ApplicationNotEditable(
                 "illegal application transition",
                 from_status=app.status,
