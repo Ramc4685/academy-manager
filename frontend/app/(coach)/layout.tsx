@@ -84,23 +84,33 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
         } as React.CSSProperties
       }
     >
+      {/*
+        #745: this row must survive its widest combination — an academy admin
+        covering a session (back button + persona switcher) whose phone has
+        gone offline (Offline chip) with a service-worker update waiting
+        (Refresh). On one no-wrap line that overflowed a 390px viewport and
+        pushed Log out off-screen, so both clusters wrap (the admin session
+        header did the same in #716). The safe-area top padding (#647) stays.
+      */}
       <header
-        className="sticky top-0 z-10 flex items-center justify-between px-4 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top,0px))]"
+        className="sticky top-0 z-10 flex flex-wrap items-center gap-y-2 px-4 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top,0px))]"
         style={{ background: "#0a0f1c", borderBottom: "1px solid #1e293b" }}
       >
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 items-center gap-2">
           <ShellBackButton known={COACH_TOP_LEVEL_ROUTES} home={COACH_HOME} variant="dark" />
-          <Link href={COACH_HOME} className="flex items-center gap-2">
+          <Link href={COACH_HOME} className="flex min-w-0 items-center gap-2">
             <div
-              className="h-7 w-7 rounded-md flex items-center justify-center font-bold text-xs"
+              className="h-7 w-7 shrink-0 rounded-md flex items-center justify-center font-bold text-xs"
               style={{ background: "#facc15", color: "#0a0f1c" }}
             >
               C
             </div>
-            <span className="font-semibold text-white text-[15px] tracking-tight">Academy</span>
+            <span className="truncate font-semibold text-white text-[15px] tracking-tight">
+              Academy
+            </span>
           </Link>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2">
           <Link
             href="/coach/calendar"
             data-testid="nav-calendar"
