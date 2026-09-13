@@ -33,21 +33,37 @@ const PORTAL_OPEN_FAILED =
 const PAYMENT_START_FAILED =
   "Payment could not start. Please try again or contact the academy.";
 
-// Checkout-status polling: stop on terminal statuses ("active" plus the ACH
-// micro-deposit verification states and dead Stripe sessions), and hard-cap
-// at ~2 minutes so a never-terminal status can't poll forever. "processing"
-// is deliberately NOT terminal (issue #635): it means Stripe took the money
-// and our webhook worker has not written the ledger row yet, so the poll must
-// keep going until it does.
+// Checkout-status polling: stop on terminal statuses, and hard-cap at ~2
+// minutes so a never-terminal status can't poll forever. "processing" is
+// deliberately NOT terminal (issue #635): it means Stripe took the money and
+// our webhook worker has not written the ledger row yet, so the poll must keep
+// going until it does.
+//
+// The set covers BOTH families the endpoint can return: the subscription/ACH
+// states of an autopay checkout, and every terminal PaymentStatus a plain
+// invoice/balance Payment settles into (backend PaymentStatus in
+// billing/domain/models.py). Anything terminal but unsuccessful must be in
+// here too, or the poll keeps "pending" alive and eventually tells a parent
+// whose payment failed that there is no need to pay again.
 const CHECKOUT_POLL_TERMINAL_STATUSES = new Set([
+  // Autopay subscription / ACH verification states.
   "active",
-  "succeeded",
   "past_due",
   "cancelled",
   "verification_required",
   "verification_pending",
+  // Payment states.
+  "succeeded",
+  "partially_paid",
+  "failed",
+  "refunded",
+  "partially_refunded",
   "expired",
+  "waived",
 ]);
+// Terminal statuses that mean the money did NOT land. These get their own
+// banner instead of the reassuring "Confirmed by Stripe" copy.
+const CHECKOUT_UNSUCCESSFUL_STATUSES = new Set(["failed", "expired"]);
 const CHECKOUT_POLL_INTERVAL_MS = 3000;
 const CHECKOUT_POLL_MAX_ATTEMPTS = 40; // 40 × 3s ≈ 2 minutes
 
@@ -383,6 +399,12 @@ export default function ParentPaymentsPage() {
   // status lookup shows nothing rather than promising a payment we cannot see.
   const settlementPending =
     returnedFromCheckout && !checkoutSettled && !(checkoutStatusQuery.isError && !checkoutStatus);
+  // Terminal but unsuccessful (e.g. an ACH debit that fails after Stripe
+  // already marked the session complete): say so plainly instead of leaving
+  // the parent with reassuring "no need to pay again" copy.
+  const checkoutUnsuccessful = Boolean(
+    returnedFromCheckout && checkoutStatus && CHECKOUT_UNSUCCESSFUL_STATUSES.has(checkoutStatus),
+  );
   // Invoices this checkout is settling — badged "processing" instead of the
   // stale "pending" until the ledger catches up. Derived, never persisted.
   const settlingInvoiceIds = new Set(
@@ -450,6 +472,11 @@ export default function ParentPaymentsPage() {
       {settlementPending && checkoutPollTimedOut && (
         <p role="status" data-testid="checkout-settlement-slow" className="rounded-xl border border-status-amber-500/30 bg-status-amber-50 px-4 py-3 text-sm text-status-amber-800">
           Confirmed by Stripe — this can take a few minutes to show up here. No need to pay again.
+        </p>
+      )}
+      {checkoutUnsuccessful && (
+        <p role="alert" data-testid="checkout-payment-unsuccessful" className="rounded-xl border border-status-red-500/30 bg-status-red-50 px-4 py-3 text-sm text-status-red-800">
+          This payment did not go through. Please try again or contact the academy.
         </p>
       )}
       {enrollments.some((e) => e.payment_mode === "monthly" && e.autopay_enrollment_status === "setup_started") && (
