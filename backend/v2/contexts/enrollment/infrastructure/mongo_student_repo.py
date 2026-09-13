@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from typing import Any, Final
+from typing import Any, Final, cast
 
 from bson import ObjectId as BsonObjectId
 from pymongo import ReturnDocument
@@ -813,7 +813,9 @@ class MongoStudentRepository(TenantScopedRepository):
             lifecycle_counts[state.state] = lifecycle_counts.get(state.state, 0) + 1
         wanted = set(lifecycle) & PERSON_LIFECYCLES
         if wanted:
-            rows = [row for row in rows if row["lifecycle"].state in wanted]  # type: ignore[union-attr]
+            rows = [
+                row for row in rows if cast(PersonLifecycleState, row["lifecycle"]).state in wanted
+            ]
 
         if cursor:
             decoded = decode_student_cursor(cursor)
