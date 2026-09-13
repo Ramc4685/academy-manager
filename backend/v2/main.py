@@ -130,6 +130,9 @@ from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
 from backend.v2.contexts.identity.infrastructure.mongo_bootstrap_store import (
     MongoTenantBootstrapStore,
 )
+from backend.v2.contexts.identity.infrastructure.mongo_login_audit_recorder import (
+    MongoLoginAuditRecorder,
+)
 from backend.v2.contexts.identity.infrastructure.mongo_magic_link_repo import (
     MongoMagicLinkRepository,
 )
@@ -387,6 +390,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         users=users_repo,
         memberships=membership_repo,
         platform_roles=platform_role_repo,
+        # Real sign-ins on the audit trail (#468); deduped per token so one
+        # session is one row, not one row per request.
+        login_audit=MongoLoginAuditRecorder(db),
     )
     app.state.load_auth_claims = load_claims
     app.state.list_my_memberships = ListMyMembershipsUseCase(

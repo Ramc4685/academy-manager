@@ -173,3 +173,24 @@ class CustomTokenPort(Protocol):
     """
 
     async def create_custom_token(self, uid: str) -> str: ...
+
+
+class LoginAuditRecorder(Protocol):
+    """Append one sign-in to the academy's audit trail (#468).
+
+    Implementations MUST be idempotent per ``dedupe_key``: every authenticated
+    request re-runs ``LoadAuthClaims``, so the key (derived from the token's
+    ``iat``) is what turns "one token" into "one audit row".
+    """
+
+    async def record_login(
+        self,
+        *,
+        user_id: str,
+        academy_id: str,
+        membership_id: str,
+        roles: Sequence[str],
+        provider: str | None,
+        persona: str | None,
+        dedupe_key: str,
+    ) -> None: ...
