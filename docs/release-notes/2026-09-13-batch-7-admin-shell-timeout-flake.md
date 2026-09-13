@@ -7,4 +7,4 @@ No migrations. No manual steps. Test-only change (Playwright spec timeout).
 ## Risk / rollback
 Minimal risk: the change only widens an assertion timeout in an e2e spec to match the pattern already used elsewhere in the same file; it does not alter any application behavior. Rollback is reverting this PR.
 
-PR: #0
+PR: #815
