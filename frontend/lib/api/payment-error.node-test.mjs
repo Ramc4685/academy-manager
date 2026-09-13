@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  BILLING_PORTAL_OPEN_FAILED,
   BILLING_PORTAL_PREREQUISITE,
+  isStripeUnconfiguredPortalMessage,
   toPaymentErrorMessage,
   toPortalErrorMessage,
 } from "./payment-error.ts";
@@ -71,4 +73,25 @@ test("falls back for non-Error values", () => {
   assert.equal(toPaymentErrorMessage(undefined, FALLBACK), FALLBACK);
   assert.equal(toPaymentErrorMessage("string error", FALLBACK), FALLBACK);
   assert.equal(toPaymentErrorMessage({ message: "plain object" }, FALLBACK), FALLBACK);
+});
+
+// Issue #595: the local real-auth E2E spec must tell "Stripe is not configured
+// on this stack" apart from the real assertion ("start autopay first"), so it
+// can skip instead of failing on a default seeded stack.
+test("recognises the banners a Stripe-unconfigured stack renders for the portal", () => {
+  assert.equal(isStripeUnconfiguredPortalMessage(BILLING_PORTAL_OPEN_FAILED), true);
+  assert.equal(
+    isStripeUnconfiguredPortalMessage(
+      "Online payments aren't fully set up for your academy yet. Please try again later or contact the academy.",
+    ),
+    true,
+  );
+  // Banner text arrives from the DOM, so tolerate surrounding whitespace.
+  assert.equal(isStripeUnconfiguredPortalMessage(`\n  ${BILLING_PORTAL_OPEN_FAILED}  \n`), true);
+});
+
+test("does not treat the real prerequisite banner as an unconfigured stack", () => {
+  assert.equal(isStripeUnconfiguredPortalMessage(BILLING_PORTAL_PREREQUISITE), false);
+  assert.equal(isStripeUnconfiguredPortalMessage("Request failed"), false);
+  assert.equal(isStripeUnconfiguredPortalMessage(""), false);
 });

@@ -386,3 +386,9 @@ Connect flow (Express account links — no `STRIPE_CONNECT_CLIENT_ID` needed):
 Until a connected account is ready, parent payment attempts fail with the
 parent-safe message "Online payments aren't fully set up for your academy
 yet…" — that is expected, not a bug.
+
+The local real-auth spec `frontend/e2e/specs/local-auth-qa.spec.ts` has one
+test ("seeded parent billing portal reports the autopay prerequisite") that
+needs the Stripe test-mode setup above; without it the test detects the
+unconfigured-Stripe banner and skips itself with a pointer back to this
+section, so a default seeded stack reports it as skipped rather than failed.

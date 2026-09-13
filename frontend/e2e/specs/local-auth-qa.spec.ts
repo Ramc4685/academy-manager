@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { isStripeUnconfiguredPortalMessage } from "../../lib/api/payment-error";
+
 const LOCAL_AUTH_ENABLED = process.env.LOCAL_AUTH_E2E === "1";
 
 const PARENT_EMAIL = process.env.LOCAL_AUTH_PARENT_EMAIL ?? "";
@@ -16,7 +18,7 @@ test.describe("local authenticated QA defect coverage", () => {
     "Set LOCAL_AUTH_E2E=1 and run against approved local SaaS staging seed data.",
   );
 
-  test("seeded parent exercises onboarding controls, billing portal redirect, and wrong-role redirects", async ({
+  test("seeded parent exercises onboarding controls and wrong-role redirects", async ({
     page,
   }) => {
     await signIn(page, PARENT_EMAIL, PARENT_PASSWORD, /\/parent\/payments/);
@@ -38,13 +40,6 @@ test.describe("local authenticated QA defect coverage", () => {
     await page.getByRole("radio", { name: "Beginner" }).click();
     await expect(page.getByRole("radio", { name: "Beginner" })).toBeChecked();
 
-    await page.goto("/parent/payments");
-    await page.getByRole("button", { name: "Billing portal" }).click();
-    await expect(page.getByTestId("billing-portal-error")).toContainText(
-      "Start autopay for an enrollment first",
-    );
-    await expect(page.getByTestId("billing-portal-error")).not.toContainText("Request failed");
-
     await page.goto("/admin");
     await expect(page).toHaveURL(/\/parent\/payments\?access_denied=admin/);
     await expect(page.getByTestId("persona-access-denied")).toContainText("admin access");
@@ -52,6 +47,29 @@ test.describe("local authenticated QA defect coverage", () => {
     await page.goto("/coach/sessions");
     await expect(page).toHaveURL(/\/parent\/payments\?access_denied=coach/);
     await expect(page.getByTestId("persona-access-denied")).toContainText("coach access");
+  });
+
+  test("seeded parent billing portal reports the autopay prerequisite", async ({ page }) => {
+    await signIn(page, PARENT_EMAIL, PARENT_PASSWORD, /\/parent\/payments/);
+
+    await page.goto("/parent/payments");
+    await page.getByRole("button", { name: "Billing portal" }).click();
+    const portalError = page.getByTestId("billing-portal-error");
+    await expect(portalError).toBeVisible();
+    // Raw backend detail must never reach the banner, configured or not.
+    await expect(portalError).not.toContainText("Request failed");
+
+    // A default seeded stack has no Stripe test-mode config and no connected
+    // account (issue #595), so the portal call fails on configuration long
+    // before it can reach the "no Stripe customer yet" prerequisite asserted
+    // below. Skip with a runbook pointer rather than failing every local run.
+    const banner = (await portalError.textContent()) ?? "";
+    test.skip(
+      isStripeUnconfiguredPortalMessage(banner),
+      "Stripe test mode is not configured on this local stack. See docs/runbooks/saas-local-staging.md, section \"Stripe test mode (payments + Connect on staging)\".",
+    );
+
+    await expect(portalError).toContainText("Start autopay for an enrollment first");
   });
 
   test("seeded admin can load the protected admin workspace", async ({ page }) => {
