@@ -292,8 +292,9 @@ async def test_admin_void_restores_credit_voids_stripe_and_audits(mongo_db) -> N
 
 
 @pytest.mark.asyncio
-async def test_lifecycle_void_restores_credit_and_voids_stripe(mongo_db) -> None:
-    """The cancel/withdraw/pause path owes the same unwind as the admin path."""
+async def test_lifecycle_void_restores_credit_voids_stripe_and_audits(mongo_db) -> None:
+    """The cancel/withdraw/pause path owes the same unwind AND the same
+    ``invoice_voided`` audit row as the admin path (#784)."""
     await mongo_db["academies"].insert_one({"academy_id": ACADEMY, "timezone": "America/Chicago"})
     await mongo_db["invoices"].insert_one(
         {
@@ -321,6 +322,39 @@ async def test_lifecycle_void_restores_credit_and_voids_stripe(mongo_db) -> None
     assert outcome["voided_invoice_ids"] == ["inv-oct"]
     assert balance == 4000
     assert stripe.voided_invoices == ["in_stripe_2"]
+    audit = await mongo_db["billing_audit_log"].find_one({"invoice_id": "inv-oct"})
+    assert audit is not None and audit["action"] == "invoice_voided"
+    assert audit["actor_id"] == "admin-1"
+    assert audit["reason"] == "moving"
+    assert audit["parent_id"] == "parent-1"
+    assert audit["after"]["status"] == "void"
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_void_audits_without_stripe_or_credit(mongo_db) -> None:
+    """The audit row is not conditional on a Stripe twin or applied credit:
+    a plain pause-triggered void of an ordinary invoice still leaves a trail."""
+    await mongo_db["academies"].insert_one({"academy_id": ACADEMY, "timezone": "America/Chicago"})
+    await mongo_db["invoices"].insert_one(
+        _invoice_doc("inv-nov", enrollment_id="enr-2", period="2026-11")
+    )
+
+    with tenant_scope(ACADEMY):
+        outcome = await compose_enrollment_billing_sync(mongo_db).apply(
+            enrollment_id="enr-2",
+            transition="paused",
+            effective_at=datetime(2026, 9, 15, tzinfo=UTC),
+            reason="",
+            actor_id=None,
+        )
+
+    assert outcome["voided_invoice_ids"] == ["inv-nov"]
+    audit = await mongo_db["billing_audit_log"].find_one({"invoice_id": "inv-nov"})
+    assert audit is not None and audit["action"] == "invoice_voided"
+    # No actor on the command (worker-driven pause) still records *something*.
+    assert audit["actor_id"] == "system"
+    assert audit["reason"] == "enrollment_paused"
+    assert audit["before"]["status"] == "open"
 
 
 @pytest.mark.asyncio

@@ -44,6 +44,9 @@ from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import 
 )
 from backend.v2.contexts.billing.domain.billing_audit import BillingAuditEntry
 from backend.v2.contexts.billing.domain.ledger import void_invoice
+from backend.v2.contexts.billing.infrastructure.mongo_billing_audit_log import (
+    MongoBillingAuditLogRepository,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_billing_counter_repo import (
     MongoBillingCounterRepository,
 )
@@ -135,6 +138,7 @@ def compose_enrollment_billing_sync(
     dunning: MongoDunningStateRepository | None = None,
     credits: MongoCreditLedgerRepository | None = None,
     stripe: Any | None = None,
+    audit: Any | None = None,
 ) -> EnrollmentBillingSyncAdapter:
     """Build the adapter. Repos may be shared with the caller's own instances.
 
@@ -169,6 +173,10 @@ def compose_enrollment_billing_sync(
         # parent self-cancel, hold reclaim — gets the unwind.
         credits=credits or MongoCreditLedgerRepository(db),
         stripe=stripe,
+        # Issue #784: the lifecycle void writes the same ``invoice_voided``
+        # audit row the admin route does — defaulted here so no caller can
+        # forget it and leave a write-off with no actor/reason trail.
+        audit=audit or MongoBillingAuditLogRepository(db),
         academy_timezone=request_academy_timezone,
     )
     return EnrollmentBillingSyncAdapter(use_case)
