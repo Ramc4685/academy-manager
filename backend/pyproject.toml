@@ -51,7 +51,8 @@ ignore_missing_imports = true
 asyncio_mode = "auto"
 pythonpath = [".."]
 testpaths = ["v2/tests"]
-addopts = "-ra --strict-markers"
+addopts = "-ra --strict-markers --timeout=120"
+timeout_method = "thread"
 
 [tool.coverage.run]
 source = ["v2/shared", "v2/contexts", "v2/interfaces"]
