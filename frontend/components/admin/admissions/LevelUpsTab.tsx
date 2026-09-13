@@ -12,8 +12,11 @@ import {
 import { Card } from "@/components/ds/card";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { Button } from "@/components/ds/button";
+import { actionCellClass, actionHeaderClass } from "@/lib/sticky-action-column";
 
 import { isWithdrawn, reviewErrorMessage, WITHDRAWN_APPROVE_HINT } from "./level-up-review";
+
+const LEVEL_UP_HEADERS = ["Student", "Program", "From Level", "Recommended By", "Date", "Status"];
 
 function levelUpChipVariant(status: LevelUpRecommendation["status"]): ChipVariant {
   switch (status) {
@@ -117,16 +120,19 @@ export function LevelUpsTab() {
             <table className="w-full min-w-[760px] text-sm">
               <thead>
                 <tr className="border-b border-neutral-200 text-left dark:border-neutral-800">
-                  {["Student", "Program", "From Level", "Recommended By", "Date", "Status", ""].map(
-                    (h) => (
-                      <th
-                        key={h}
-                        className="px-4 pb-3 pt-4 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted"
-                      >
-                        {h}
-                      </th>
-                    ),
-                  )}
+                  {LEVEL_UP_HEADERS.map((h) => (
+                    <th
+                      key={h}
+                      className="px-4 pb-3 pt-4 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted"
+                    >
+                      {h}
+                    </th>
+                  ))}
+                  <th
+                    className={`px-4 pb-3 pt-4 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted ${actionHeaderClass}`}
+                  >
+                    Actions
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -206,7 +212,7 @@ function QueueRow({
       <td className="px-4 py-3">
         <Chip variant={levelUpChipVariant(rec.status)} label={rec.status.toUpperCase()} />
       </td>
-      <td className="px-4 py-3">
+      <td className={`${actionCellClass} bg-white`}>
         {isPending && (
           <div className="space-y-2">
             {!showReject ? (

@@ -24,10 +24,8 @@ const DEFAULT_TIMEZONE: string | null = null;
 // and WaitlistTable. Not a "pure format helper" in the strictest sense, but kept
 // here (rather than a fourth tiny file) since all three consumers already import
 // from ./format — see MT5 split judgment calls.
-export const actionHeaderClass =
-  "sticky right-0 z-10 bg-white shadow-[-12px_0_16px_-18px_rgba(15,23,42,0.5)]";
-export const actionCellClass =
-  "sticky right-0 z-10 px-4 py-3 shadow-[-12px_0_16px_-18px_rgba(15,23,42,0.5)]";
+// Shared with the admin approval queues (#747) — see lib/sticky-action-column.ts.
+export { actionHeaderClass, actionCellClass } from "@/lib/sticky-action-column";
 
 // Shared text-input class used across SessionEditing.tsx and dialogs.tsx dialogs.
 export const inputClass =
