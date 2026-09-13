@@ -1117,7 +1117,7 @@ test.describe("Rally admin shell", () => {
     ).toBeVisible();
     await expect(page.getByTestId("payment-row-legacy-waived")).toBeVisible();
     await expect(
-      page.getByTestId("payment-row-legacy-waived").getByText("VOID"),
+      page.getByTestId("payment-row-legacy-waived").getByText("VOID", { exact: true }),
     ).toBeVisible();
     expect(
       errors,
