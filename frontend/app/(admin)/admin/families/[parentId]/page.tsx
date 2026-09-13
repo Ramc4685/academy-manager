@@ -321,6 +321,7 @@ export default function FamilyBillingPage() {
             period: r.period,
             due_date: r.due_date,
             enrollment_id: r.enrollment_id,
+            request_id: r.request_id,
           });
           await refresh();
           setCreateOpen(false);

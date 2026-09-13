@@ -754,6 +754,11 @@ class CreateStudentInvoiceRequest(BaseModel):
     #: hand-made invoice is dated like a generated one (#739).
     due_date: date | None = None
     enrollment_id: str | None = None
+    #: One id per dialog submit, minted by the client. It is what makes a
+    #: double-click or a retried request land on the first draft instead of
+    #: opening a second blank one (#727). Optional so older clients, which
+    #: send none, keep working (they just get no de-duplication).
+    request_id: str | None = None
 
 
 class BillEnrollmentPeriodRequest(BaseModel):
@@ -1132,7 +1137,7 @@ async def list_invoice_audit(
 async def create_student_invoice(
     student_id: str,
     body: CreateStudentInvoiceRequest,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> dict:
     if body.student_id != student_id:
@@ -1144,12 +1149,16 @@ async def create_student_invoice(
         enrollment_id=body.enrollment_id,
     )
     create_invoice = _required_callable(use_cases.create_student_invoice, "Invoice creation")
+    # Same actor trail as "Bill this month" next to it, and the client's
+    # request id so a retry returns the first draft (#727).
     return await create_invoice(  # type: ignore[operator]
         student_id=student_id,
         parent_id=body.parent_id,
         period=body.period,
         due_date=body.due_date,
         enrollment_id=body.enrollment_id,
+        actor_id=claims.user_id,
+        request_id=body.request_id,
     )
 
 

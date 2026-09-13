@@ -12,6 +12,7 @@ import {
   currentPeriod,
   defaultDueDate,
   enrollmentOptions,
+  mintRequestId,
   periodLabel,
   type EnrollmentOption,
 } from "./family-view";
@@ -26,6 +27,12 @@ export interface CreateInvoiceResult {
   enrollment_id: string | null;
   period: string;
   due_date: string;
+  /**
+   * Minted once per dialog open, so a double-click or a retried request
+   * de-duplicates onto the first draft instead of opening a second blank
+   * invoice on the family (#727).
+   */
+  request_id: string;
 }
 
 /**
@@ -51,6 +58,7 @@ export function CreateInvoiceDialog({
   const [enrollmentId, setEnrollmentId] = useState("");
   const [period, setPeriod] = useState(() => currentPeriod());
   const [dueDate, setDueDate] = useState(() => defaultDueDate(new Date(), dueDays));
+  const [requestId, setRequestId] = useState(mintRequestId);
 
   useEffect(() => {
     if (open) {
@@ -58,6 +66,10 @@ export function CreateInvoiceDialog({
       setEnrollmentId("");
       setPeriod(currentPeriod());
       setDueDate(defaultDueDate(new Date(), dueDays));
+      // A fresh id per open, so re-opening the dialog can still create a
+      // second invoice for the same family — only retries of one submit
+      // collapse (#727).
+      setRequestId(mintRequestId());
     }
   }, [open, onlyStudentId, dueDays]);
 
@@ -71,6 +83,7 @@ export function CreateInvoiceDialog({
         enrollment_id: enrollmentId || null,
         period,
         due_date: dueDate,
+        request_id: requestId,
       }),
   });
   const disabled = !studentId || !period || !dueDate || mutation.isPending;

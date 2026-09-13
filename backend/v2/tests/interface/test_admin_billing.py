@@ -361,9 +361,14 @@ def _override_ledger(admin_client, ledger: _FakeLedger) -> None:
         period: str,
         due_date: date,
         enrollment_id: str | None,
+        actor_id: str | None = None,
+        request_id: str | None = None,
     ) -> dict:
+        # Mirrors the real closure: a fresh invoice id per call, and an
+        # idempotency key built from the caller's own inputs so a retried
+        # submit de-duplicates onto the first draft (#727).
         invoice = LedgerInvoice(
-            invoice_id="inv-test",
+            invoice_id=f"inv-test-{len(ledger.invoices) + 1}",
             academy_id="acad",
             parent_id=parent_id,
             student_id=student_id,
@@ -382,7 +387,11 @@ def _override_ledger(admin_client, ledger: _FakeLedger) -> None:
         created = await ledger.create_invoice(
             invoice,
             lines=[],
-            idempotency_key=f"admin-invoice-{invoice.invoice_id}",
+            idempotency_key=(
+                f"admin-invoice-{parent_id}-{request_id}"
+                if request_id
+                else f"admin-invoice-{invoice.invoice_id}"
+            ),
         )
         return created.model_dump(mode="json")
 
@@ -1948,3 +1957,55 @@ def test_create_student_invoice_accepts_a_body_without_a_due_date(admin_client):
 
     assert response.status_code == 201, response.text
     assert seen == [None]
+
+
+def test_create_student_invoice_forwards_the_actor_and_request_id(admin_client):
+    """#727: the audit row needs who, and the idempotency key needs the client's id."""
+    seen: list[dict[str, str | None]] = []
+    _override_ledger(admin_client, _FakeLedger())
+    _override_admin_student(admin_client, _student_detail(enrollment_ids=["enroll-1"]))
+    wrapped = admin_client.use_cases.create_student_invoice
+
+    async def create_student_invoice(
+        *, actor_id: str | None = None, request_id: str | None = None, **kwargs
+    ) -> dict:
+        seen.append({"actor_id": actor_id, "request_id": request_id})
+        return await wrapped(actor_id=actor_id, request_id=request_id, **kwargs)
+
+    admin_client.use_cases.create_student_invoice = create_student_invoice
+
+    response = admin_client.post(
+        "/api/v2/admin/students/student-1/invoices",
+        json={
+            "student_id": "student-1",
+            "parent_id": "parent-1",
+            "period": "2026-06",
+            "due_date": "2026-06-30",
+            "request_id": "req-0123456789abcdef",
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    assert seen == [{"actor_id": "u-admin", "request_id": "req-0123456789abcdef"}]
+
+
+def test_create_student_invoice_double_submit_returns_the_same_draft(admin_client):
+    """A double-click used to leave the family with two blank drafts (#727)."""
+    ledger = _FakeLedger()
+    _override_ledger(admin_client, ledger)
+    _override_admin_student(admin_client, _student_detail(enrollment_ids=["enroll-1"]))
+    body = {
+        "student_id": "student-1",
+        "parent_id": "parent-1",
+        "period": "2026-06",
+        "due_date": "2026-06-30",
+        "request_id": "req-0123456789abcdef",
+    }
+
+    first = admin_client.post("/api/v2/admin/students/student-1/invoices", json=body)
+    second = admin_client.post("/api/v2/admin/students/student-1/invoices", json=body)
+
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+    assert second.json()["invoice_id"] == first.json()["invoice_id"]
+    assert len(ledger.invoices) == 1

@@ -387,6 +387,7 @@ _AUDIT_SUMMARIES: dict[str, str] = {
     "autopay_paused": "Autopay turned off",
     "invoice_voided": "Invoice voided by admin",
     "invoice_hand_billed": "Invoice created by admin",
+    "invoice_hand_created": "Invoice created by admin",
     "invoice_line_added": "Charge added to invoice",
     "invoice_line_removed": "Charge removed from invoice",
     "discount_set": "Discount set",

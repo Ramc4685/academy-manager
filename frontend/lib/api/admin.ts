@@ -719,6 +719,8 @@ export interface CreateStudentInvoiceRequest {
   period: string;
   due_date: string;
   enrollment_id?: string | null;
+  /** One id per dialog submit: a retry lands on the first draft (#727). */
+  request_id?: string;
 }
 
 export interface BillEnrollmentPeriodRequest {

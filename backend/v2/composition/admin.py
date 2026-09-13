@@ -53,6 +53,7 @@ from backend.v2.composition.lifecycle_billing import (
     compose_enrollment_move_billing_sync,
     compose_withdrawal_decision,
 )
+from backend.v2.composition.manual_invoice import create_manual_invoice
 from backend.v2.composition.occurrence_cancellation import compose_cancel_session_occurrence
 from backend.v2.composition.pathway import (
     compose_curriculum,
@@ -136,9 +137,6 @@ from backend.v2.contexts.billing.application.use_cases.finance import (  # FINAN
     MongoTuitionDiscountSummaryQuery,
     RecordExpense,
 )
-from backend.v2.contexts.billing.application.use_cases.invoice_due_date import (
-    resolve_invoice_due_date,
-)
 from backend.v2.contexts.billing.application.use_cases.issue_refund import (
     IssueRefund,
     IssueRefundCommand,
@@ -180,9 +178,6 @@ from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import 
     PreviewWithdrawalCredit,
 )
 from backend.v2.contexts.billing.domain.billing_audit import BillingAuditEntry
-from backend.v2.contexts.billing.domain.ledger import (
-    LedgerInvoice,
-)
 from backend.v2.contexts.billing.domain.product import Product
 from backend.v2.contexts.billing.infrastructure.admin_reports_read_model import (
     AdminEffectiveRevenueQuery,
@@ -1629,37 +1624,26 @@ def compose_admin(
         period: str,
         due_date: date | None,
         enrollment_id: str | None,
+        actor_id: str | None = None,
+        request_id: str | None = None,
     ) -> dict[str, Any]:
         from backend.v2.shared.tenancy import current_academy_id
 
-        now = datetime.now(UTC)
-        resolved_due_date = await resolve_invoice_due_date(
-            billing_settings_repo, due_date=due_date, today=now.date()
-        )
-        invoice_id = f"inv-{new_ulid()}"
-        invoice = LedgerInvoice(
-            invoice_id=invoice_id,
+        # Idempotency + the audit append live in composition/manual_invoice.py:
+        # admin.py is at its wiring line budget (#727).
+        return await create_manual_invoice(
+            ledger=billing_ledger_repo,
+            settings_repo=billing_settings_repo,
+            audit_log=billing_audit_log,
             academy_id=current_academy_id(),
-            parent_id=parent_id,
             student_id=student_id,
-            enrollment_id=enrollment_id,
+            parent_id=parent_id,
             period=period,
-            status="draft",
-            subtotal_cents=0,
-            discount_cents=0,
-            total_cents=0,
-            balance_due_cents=0,
-            currency="usd",
-            due_date=resolved_due_date,
-            created_at=now,
-            updated_at=now,
+            due_date=due_date,
+            enrollment_id=enrollment_id,
+            actor_id=actor_id,
+            request_id=request_id,
         )
-        created = await billing_ledger_repo.create_invoice(
-            invoice,
-            lines=[],
-            idempotency_key=f"admin-invoice-{invoice_id}",
-        )
-        return created.model_dump(mode="json")
 
     async def bill_enrollment_period(
         *,
