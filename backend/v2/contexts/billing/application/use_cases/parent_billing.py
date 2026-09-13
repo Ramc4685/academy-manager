@@ -66,6 +66,10 @@ class CheckoutStatusResult(BaseModel):
     payment_id: str | None = None
     status: str
     parent_id: str
+    #: Invoices this checkout is settling, derived from the Stripe session's
+    #: metadata (issue #635). Lets the portal badge exactly those rows
+    #: "Processing" while the webhook is still queued; nothing is persisted.
+    invoice_ids: list[str] = Field(default_factory=list)
 
 
 class AutopaySetupCompletionResult(BaseModel):
@@ -753,6 +757,11 @@ class GetCheckoutStatus:
                     expected_parent_id=parent_id,
                     consent_context=consent_context,
                 )
+            if _is_plain_payment_checkout(checkout):
+                return self._status_from_plain_payment_checkout(
+                    checkout,
+                    expected_parent_id=parent_id,
+                )
         if subscription is None:
             raise PaymentNotFound(
                 "checkout session not found",
@@ -825,6 +834,35 @@ class GetCheckoutStatus:
             payment_id=None,
             status=result.status,
             parent_id=result.parent_id,
+        )
+
+    def _status_from_plain_payment_checkout(
+        self,
+        checkout: dict[str, Any],
+        *,
+        expected_parent_id: str,
+    ) -> CheckoutStatusResult:
+        """Status for an ordinary invoice/balance payment checkout whose
+        Payment row has not been written yet (issue #635).
+
+        Inbound Stripe webhooks are drained by a 60s scheduler tick, so for up
+        to ~1-2 minutes after a successful payment there is no local Payment to
+        report. Returning a derived, non-persisted "processing" lets the parent
+        portal say "Payment received — updating your balance" instead of
+        rendering the stale PENDING invoice (or 404-ing the poll).
+        """
+        checkout_id = _stripe_id(checkout.get("id")) or ""
+        checkout_parent_id = _checkout_parent_id(checkout)
+        if checkout_parent_id != expected_parent_id:
+            raise PaymentNotFound("checkout session not found", checkout_session_id=checkout_id)
+        status = str(checkout.get("status") or "")
+        return CheckoutStatusResult(
+            checkout_session_id=checkout_id,
+            payment_id=None,
+            # "complete" at Stripe but unsettled locally == webhook in flight.
+            status="processing" if status == "complete" else (status or "pending"),
+            parent_id=expected_parent_id,
+            invoice_ids=_checkout_invoice_ids(checkout),
         )
 
     async def _status_from_autopay_optin_payment_checkout(
@@ -1024,6 +1062,20 @@ def _is_autopay_setup_checkout(checkout: dict[str, Any]) -> bool:
 def _is_autopay_optin_payment_checkout(checkout: dict[str, Any]) -> bool:
     metadata = _string_metadata(checkout.get("metadata"))
     return str(checkout.get("mode") or "") == "payment" and metadata.get("autopay_optin") == "true"
+
+
+def _checkout_invoice_ids(checkout: dict[str, Any]) -> list[str]:
+    """Invoices a payment checkout settles: one for an invoice pay link, many
+    for a balance payment (comma-separated, as SendInvoice/composition stamp
+    them)."""
+    metadata = _string_metadata(checkout.get("metadata"))
+    raw = metadata.get("invoice_ids") or metadata.get("invoice_id") or ""
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+def _is_plain_payment_checkout(checkout: dict[str, Any]) -> bool:
+    """An ordinary one-time invoice/balance payment (no autopay opt-in)."""
+    return str(checkout.get("mode") or "") == "payment"
 
 
 def _checkout_parent_id(checkout: dict[str, Any]) -> str | None:

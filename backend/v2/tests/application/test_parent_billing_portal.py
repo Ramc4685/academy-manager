@@ -30,7 +30,7 @@ from backend.v2.contexts.billing.domain.errors import (
     CheckoutCreationFailed,
     PaymentNotFound,
 )
-from backend.v2.contexts.billing.domain.models import Subscription
+from backend.v2.contexts.billing.domain.models import Payment, Subscription
 
 
 class _PortalGateway:
@@ -1645,24 +1645,32 @@ async def test_checkout_status_optin_payment_checkout_rejects_wrong_parent() -> 
 
 
 @pytest.mark.asyncio
-async def test_checkout_status_plain_payment_checkout_still_raises_payment_not_found() -> None:
-    """A mode=payment session WITHOUT the opt-in metadata takes none of the new
-    branches — unchanged 404 behavior."""
+async def test_checkout_status_plain_payment_checkout_takes_no_autopay_branch() -> None:
+    """A mode=payment session WITHOUT the opt-in metadata activates no autopay.
+
+    It reports the derived in-flight "processing" status instead (issue #635);
+    it used to 404, which is what made the parent poll look like a failure.
+    """
     now = datetime(2026, 7, 5, tzinfo=UTC)
     checkout = _optin_payment_checkout()
     checkout["metadata"] = {"academy_id": "acad", "parent_id": "p1", "invoice_id": "inv-1"}
     gateway = _optin_payment_gateway(checkout)
+    consents = _ConsentRepo()
+    enrollment_autopay = _EnrollmentAutopay()
     uc = _optin_status_uc(
         gateway,
         customers=_CustomerRepo(),
-        consents=_ConsentRepo(),
+        consents=consents,
         outbox=_Outbox(),
-        enrollment_autopay=_EnrollmentAutopay(),
+        enrollment_autopay=enrollment_autopay,
         now=now,
     )
 
-    with pytest.raises(PaymentNotFound):
-        await uc.execute("cs_pay_optin", parent_id="p1")
+    result = await uc.execute("cs_pay_optin", parent_id="p1")
+
+    assert result.status == "processing"
+    assert enrollment_autopay.setup_completed == []
+    assert consents.consents == []
 
 
 # ---------------------------------------------------------------------------
@@ -1715,3 +1723,129 @@ async def test_checkout_status_resolves_callable_academy_id_at_execute_time() ->
 
     assert result.status == "active"
     assert enrollment_autopay.setup_completed == ["enr-1"]
+
+
+# ---------------------------------------------------------------------------
+# Plain (non-autopay) invoice/balance payment checkout — issue #635
+# ---------------------------------------------------------------------------
+
+
+def _plain_payment_checkout(
+    *,
+    session_id: str = "cs_pay_plain",
+    status: str = "complete",
+    parent_id: str = "p1",
+) -> dict[str, object]:
+    """An ordinary invoice/balance Checkout Session: mode=payment, no autopay."""
+    return {
+        "id": session_id,
+        "object": "checkout.session",
+        "mode": "payment",
+        "status": status,
+        "payment_status": "paid" if status == "complete" else "unpaid",
+        "customer": "cus_parent",
+        "payment_intent": "pi_plain",
+        "client_reference_id": parent_id,
+        "metadata": {
+            "academy_id": "acad",
+            "parent_id": parent_id,
+            "invoice_id": "inv-1",
+            "source": "invoice_pay_link",
+        },
+    }
+
+
+def _plain_status_uc(gateway: _CheckoutGateway, *, payments=None) -> GetCheckoutStatus:
+    return GetCheckoutStatus(
+        payments=payments or _NoPaymentRepo(),
+        stripe=gateway,
+        academy_id="acad",
+        clock=lambda: datetime(2026, 9, 2, tzinfo=UTC),
+    )
+
+
+@pytest.mark.asyncio
+async def test_checkout_status_reports_processing_while_webhook_is_queued() -> None:
+    """Issue #635: Stripe says the session completed but our webhook worker has
+    not written the Payment yet. The parent must see "processing", not a 404 —
+    that gap is what made the portal look like the payment failed."""
+    gateway = _CheckoutGateway(retrieved=_plain_payment_checkout())
+    uc = _plain_status_uc(gateway)
+
+    result = await uc.execute("cs_pay_plain", parent_id="p1")
+
+    assert result.status == "processing"
+    assert result.payment_id is None
+    assert result.parent_id == "p1"
+    assert result.checkout_session_id == "cs_pay_plain"
+    # The invoices under settlement so the portal can badge exactly those rows
+    # "Processing" instead of the stale "Pending".
+    assert result.invoice_ids == ["inv-1"]
+
+
+@pytest.mark.asyncio
+async def test_checkout_status_processing_reports_every_balance_invoice() -> None:
+    """A balance payment settles many invoices at once — all of them are in
+    flight while the webhook is queued."""
+    checkout = _plain_payment_checkout()
+    checkout["metadata"] = {
+        "academy_id": "acad",
+        "parent_id": "p1",
+        "invoice_ids": "inv-aug,inv-sep",
+        "source": "invoice_balance",
+    }
+    uc = _plain_status_uc(_CheckoutGateway(retrieved=checkout))
+
+    result = await uc.execute("cs_pay_plain", parent_id="p1")
+
+    assert result.status == "processing"
+    assert result.invoice_ids == ["inv-aug", "inv-sep"]
+
+
+@pytest.mark.asyncio
+async def test_checkout_status_reports_open_plain_checkout_as_pending() -> None:
+    gateway = _CheckoutGateway(retrieved=_plain_payment_checkout(status="open"))
+    uc = _plain_status_uc(gateway)
+
+    result = await uc.execute("cs_pay_plain", parent_id="p1")
+
+    assert result.status == "open"
+    assert result.payment_id is None
+
+
+@pytest.mark.asyncio
+async def test_checkout_status_plain_checkout_rejects_other_parent() -> None:
+    """A parent must not be able to probe another parent's checkout session."""
+    gateway = _CheckoutGateway(retrieved=_plain_payment_checkout(parent_id="p2"))
+    uc = _plain_status_uc(gateway)
+
+    with pytest.raises(PaymentNotFound):
+        await uc.execute("cs_pay_plain", parent_id="p1")
+
+
+@pytest.mark.asyncio
+async def test_checkout_status_returns_settled_payment_once_webhook_lands() -> None:
+    """Once the webhook worker writes the Payment, the poll sees the real
+    terminal status and the parent app stops polling."""
+    now = datetime(2026, 9, 2, tzinfo=UTC)
+
+    class _SettledPaymentRepo:
+        async def get_by_checkout_session(self, checkout_session_id: str):
+            return Payment(
+                payment_id="pay-1",
+                academy_id="acad",
+                parent_id="p1",
+                stripe_checkout_session_id=checkout_session_id,
+                amount_cents=12_000,
+                status="succeeded",
+                created_at=now,
+                updated_at=now,
+            )
+
+    gateway = _CheckoutGateway(retrieved=_plain_payment_checkout())
+    uc = _plain_status_uc(gateway, payments=_SettledPaymentRepo())
+
+    result = await uc.execute("cs_pay_plain", parent_id="p1")
+
+    assert result.status == "succeeded"
+    assert result.payment_id == "pay-1"

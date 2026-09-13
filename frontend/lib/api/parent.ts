@@ -326,8 +326,11 @@ export function openBillingPortal(payload: {
 export function getCheckoutStatus(checkoutSessionId: string): Promise<{
   checkout_session_id: string;
   payment_id: string | null;
+  /** "processing" == Stripe took the money, our webhook has not landed yet. */
   status: string;
   parent_id: string;
+  /** Invoices this checkout is settling (issue #635). */
+  invoice_ids?: string[];
 }> {
   return apiFetch(`/parent/checkout/status/${checkoutSessionId}`, {
     method: "GET",

@@ -487,8 +487,12 @@ async def test_parent_single_invoice_payment_ignores_enroll_autopay_for_inactive
     call = stripe.invoice_checkout_calls[0]
     assert "save_payment_method_for_autopay" not in call
     assert "autopay_enrollment_ids" not in call
-    # No opt-in means the plain redirect: no checkout_session_id placeholder.
-    assert call["success_url"] == "https://app.example.com/parent/payments?invoice=paid"
+    # Issue #635: EVERY checkout return carries a checkout_session_id so the
+    # parent app can poll settlement, opted in or not.
+    assert call["success_url"] == (
+        "https://app.example.com/parent/payments?invoice=paid"
+        "&checkout_session_id={CHECKOUT_SESSION_ID}"
+    )
 
 
 @pytest.mark.asyncio
@@ -627,9 +631,12 @@ async def test_parent_balance_payment_without_flag_omits_autopay_kwargs(
     assert "save_payment_method_for_autopay" not in call
     assert "autopay_enrollment_ids" not in call
     assert not str(call["idempotency_key"]).endswith(":autopay-optin")
-    # Byte-identical redirect when not opted in — no checkout_session_id
-    # placeholder appended.
-    assert call["success_url"] == "https://app.example.com/parent/payments?invoice=paid"
+    # Issue #635: the balance path also always returns with a
+    # checkout_session_id so the settlement poll can run without autopay.
+    assert call["success_url"] == (
+        "https://app.example.com/parent/payments?invoice=paid"
+        "&checkout_session_id={CHECKOUT_SESSION_ID}"
+    )
 
 
 @pytest.mark.asyncio
