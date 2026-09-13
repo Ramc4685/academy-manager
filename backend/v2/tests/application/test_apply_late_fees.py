@@ -261,3 +261,76 @@ async def test_invoice_inside_the_autopay_retry_ladder_is_skipped() -> None:
     assert result.skipped_in_retry == 1
     assert _late_fee_lines(ledger) == []
     assert audit.entries == []
+
+
+def _seed_line(
+    ledger: _FakeLedger,
+    *,
+    line_type: str,
+    description: str,
+    invoice_id: str = "inv-1",
+) -> None:
+    ledger.lines.setdefault(invoice_id, []).append(
+        InvoiceLine(
+            line_id=f"line-{line_type}-{invoice_id}",
+            academy_id=ACADEMY_ID,
+            invoice_id=invoice_id,
+            line_type=line_type,
+            description=description,
+            quantity=1,
+            unit_amount_cents=0,
+            amount_cents=0,
+            created_at=NOW,
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    ("line_type", "description"),
+    [
+        # What the admin "Add charge" dropdown could actually produce before
+        # it offered a `late_fee` option (#552 review).
+        ("fee", "Late fee"),
+        ("fee", "LATE FEE - August"),
+        ("adjustment", "Late charge for August invoice"),
+        ("fee", "Late-fee assessed by front desk"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_hand_entered_late_fee_under_a_legacy_line_type_suppresses_the_automatic_one(
+    line_type: str, description: str
+) -> None:
+    ledger = _FakeLedger([_invoice()])
+    _seed_line(ledger, line_type=line_type, description=description)
+    use_case, audit = _build(ledger, fees=_Fees(late_fee_cents=1_500, grace_days=5))
+
+    result = await use_case.execute(academy_id=ACADEMY_ID)
+
+    assert result.applied == 0
+    assert result.skipped_existing == 1
+    assert _late_fee_lines(ledger) == []
+    assert audit.entries == []
+    assert ledger.invoices["inv-1"].balance_due_cents == 10_000
+
+
+@pytest.mark.parametrize(
+    ("line_type", "description"),
+    [
+        # An unrelated fee must not buy the family a free pass on lateness.
+        ("fee", "Tournament entry fee"),
+        ("adjustment", "Goodwill credit"),
+        ("equipment", "Late shipment of restring — replacement grip"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_an_unrelated_fee_line_does_not_suppress_the_late_fee(
+    line_type: str, description: str
+) -> None:
+    ledger = _FakeLedger([_invoice()])
+    _seed_line(ledger, line_type=line_type, description=description)
+    use_case, _ = _build(ledger, fees=_Fees(late_fee_cents=1_500, grace_days=5))
+
+    result = await use_case.execute(academy_id=ACADEMY_ID)
+
+    assert result.applied == 1
+    assert len(_late_fee_lines(ledger)) == 1

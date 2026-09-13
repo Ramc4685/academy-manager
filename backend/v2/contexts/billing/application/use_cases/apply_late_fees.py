@@ -15,10 +15,13 @@ Rules, in the order they are checked:
 * **The grace period must have fully elapsed**: the fee lands the day *after*
   ``due_date + grace_days``, so the last grace day is still free.
 * **One fee per invoice, ever.** The guard is a check-then-add over the
-  invoice's existing lines, so a hand-added ``late_fee`` line (what operators
-  do today) also suppresses the automatic one — the parent is never charged
-  twice for the same lateness. Migration 0181 backs this with a partial unique
-  index on the policy-written lines.
+  invoice's existing lines, so a hand-added late fee also suppresses the
+  automatic one — the parent is never charged twice for the same lateness.
+  Operators only got a ``late_fee`` option in the admin "Add charge" dropdown
+  alongside this feature; every late fee entered before that is sitting on the
+  invoice as a ``fee`` or ``adjustment`` line whose description says so, so the
+  guard matches those by keyword too (see :func:`_is_late_fee_line`). Migration
+  0181 backs the guard with a partial unique index on the policy-written lines.
 * **Autopay families still inside the retry ladder are skipped.** Their card
   is being retried on our schedule; the money is not late because the parent
   ignored us. Once the ladder finishes (``dunned``/``suppressed``/``resolved``)
@@ -47,7 +50,7 @@ from backend.v2.contexts.billing.application.use_cases.billing_settings_admin im
     BillingAuditAppender,
 )
 from backend.v2.contexts.billing.domain.billing_audit import BillingAuditEntry
-from backend.v2.contexts.billing.domain.ledger import LedgerInvoice
+from backend.v2.contexts.billing.domain.ledger import InvoiceLine, LedgerInvoice
 from backend.v2.shared.ids import new_ulid
 
 log = logging.getLogger(__name__)
@@ -57,6 +60,17 @@ log = logging.getLogger(__name__)
 #: charged", so an operator who got there first is not doubled up on.
 LATE_FEE_LINE_TYPE = "late_fee"
 
+#: Line types an operator could reach *before* ``late_fee`` was offered in the
+#: admin "Add charge" dropdown. A late fee typed in back then is a plain
+#: ``fee``/``adjustment`` line, so matching the type alone would miss it and
+#: charge the family a second time for the same lateness.
+LEGACY_LATE_FEE_LINE_TYPES = frozenset({"fee", "adjustment"})
+
+#: Description keywords that identify one of those legacy lines as a late fee.
+#: Matched case-insensitively on the operator-typed description; deliberately
+#: narrow, since a false positive silently forgives a real fee.
+LEGACY_LATE_FEE_KEYWORDS = ("late fee", "late-fee", "late charge", "late payment fee")
+
 #: Marks the lines *this policy* wrote, as opposed to a hand-added one. The
 #: unique index (migration 0181) is scoped to this value so it can never
 #: collide with fees an operator entered before the automation existed.
@@ -65,6 +79,23 @@ LATE_FEE_SOURCE_TYPE = "late_fee_policy"
 #: Audit actor for an unattended write. Mirrors the other worker-written
 #: entries: a human id would be a lie about who decided this.
 LATE_FEE_ACTOR_ID = "system:late_fee_policy"
+
+
+def _is_late_fee_line(line: InvoiceLine) -> bool:
+    """Has this invoice already been charged a late fee, by anyone?
+
+    ``late_fee`` covers this policy's own lines and anything added through the
+    dropdown from now on. The keyword arm covers the fees academies have been
+    adding by hand for years under ``fee``/``adjustment`` — without it the very
+    academies that were diligent about late fees would be the ones whose
+    parents got double-charged the first time this pass ran.
+    """
+    if line.line_type == LATE_FEE_LINE_TYPE:
+        return True
+    if line.line_type not in LEGACY_LATE_FEE_LINE_TYPES:
+        return False
+    description = (line.description or "").casefold()
+    return any(keyword in description for keyword in LEGACY_LATE_FEE_KEYWORDS)
 
 
 class DunningRetryLookup(Protocol):
@@ -132,7 +163,7 @@ class ApplyLateFees:
             if invoice.status not in ("open", "partially_paid") or invoice.balance_due_cents <= 0:
                 continue
             lines = await self._ledger.get_lines_for_invoice(invoice.invoice_id)
-            if any(line.line_type == LATE_FEE_LINE_TYPE for line in lines):
+            if any(_is_late_fee_line(line) for line in lines):
                 counts["skipped_existing"] += 1
                 continue
             if self._dunning is not None and await self._dunning.has_active_retry(
