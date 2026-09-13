@@ -7,7 +7,7 @@
  * production cutover canary (W1A-20) is the integration gate.
  */
 
-import { test as base, type Page, type Route } from "@playwright/test";
+import { test as base, expect, type Page, type Route } from "@playwright/test";
 
 export interface MockState {
   /**
@@ -91,6 +91,13 @@ export interface MockState {
   skillNotes: MockSkillNote[];
   skillNoteCalls: Array<Record<string, unknown>>;
   skillNoteVisibilityCalls: Array<{ note_id: string; visibility: string }>;
+  /**
+   * Pathnames of every `/api/v2/**` request that hit the catch-all below
+   * because no specific route claimed it. Specs can assert this stays empty
+   * (see `expectNoUnstubbedRequests`) to prove they aren't quietly falling
+   * through to the dead e2e backend.
+   */
+  unstubbed: string[];
 }
 
 export interface MockProgressNote {
@@ -223,6 +230,7 @@ export const test = base.extend<{
       skillNotes: [],
       skillNoteCalls: [],
       skillNoteVisibilityCalls: [],
+      unstubbed: [],
       teachingPlan: {
         date: new Date().toISOString().slice(0, 10),
         program_id: "prog-badminton",
@@ -386,6 +394,22 @@ export const test = base.extend<{
         students: skillStudents,
       })),
     };
+
+    // Terminal catch-all: registered FIRST so every later, more specific
+    // page.route() below still wins (Playwright resolves overlapping
+    // patterns last-registered-first). Anything left over is a request no
+    // spec stubbed — instead of falling through to the dead e2e backend
+    // (ECONNREFUSED 127.0.0.1:8001, see #540), fulfil it fast with a
+    // distinctive 404 and record the path so specs can assert on it.
+    await page.route("**/api/v2/**", async (route: Route) => {
+      const path = new URL(route.request().url()).pathname;
+      state.unstubbed.push(path);
+      return route.fulfill({
+        status: 404,
+        contentType: "application/json",
+        body: JSON.stringify({ error: { code: "e2e_unstubbed", message: path } }),
+      });
+    });
 
     await page.route("**/api/v2/me", async (route: Route) => {
       if (route.request().method() !== "GET") return route.fallback();
@@ -841,7 +865,15 @@ export const test = base.extend<{
   },
 });
 
-export { expect } from "@playwright/test";
+export { expect };
+
+/** Assert nothing hit the catch-all route — i.e. every request the spec triggered was stubbed. */
+export function expectNoUnstubbedRequests(mock: MockState): void {
+  expect(
+    mock.unstubbed,
+    `unexpected unstubbed /api/v2 requests: ${mock.unstubbed.join(", ")}`,
+  ).toEqual([]);
+}
 
 export async function bypassAuth(page: Page): Promise<void> {
   // For pages that gate on Firebase, we navigate directly to coach surfaces
