@@ -130,10 +130,11 @@ const ADMIN_ROUTES = [
   { href: "/admin/sessions", testid: "admin-sessions" },
   { href: "/admin/students", testid: "admin-students" },
   { href: "/admin/users", testid: "admin-users" },
-  { href: "/admin/registrations", testid: "admin-registrations" },
-  { href: "/admin/registrations?tab=waitlist", testid: "admin-waitlist-tab" },
-  { href: "/admin/registrations?tab=level-ups", testid: "admin-level-up-queue-tab" },
-  { href: "/admin/requests?tab=pauses", testid: "admin-pause-requests" },
+  { href: "/admin/inbox", testid: "admin-inbox" },
+  { href: "/admin/inbox?tab=registrations", testid: "admin-registrations-tab" },
+  { href: "/admin/inbox?tab=waitlist", testid: "admin-waitlist-tab" },
+  { href: "/admin/inbox?tab=level-ups", testid: "admin-level-up-queue-tab" },
+  { href: "/admin/inbox?tab=pauses", testid: "admin-pause-requests" },
   { href: "/admin/payments", testid: "admin-payments" },
   { href: "/admin/reports/session-economics", testid: "admin-session-economics" },
   { href: "/admin/reports", testid: "admin-month-close" },
@@ -369,6 +370,9 @@ async function stubAdminBff(
   });
   await page.route("**/api/v2/admin/students*", (route) =>
     fulfillJson(route, { students: [] }),
+  );
+  await page.route("**/api/v2/admin/inbox/counts", (route) =>
+    fulfillJson(route, { counts: {}, total: 0 }),
   );
   await page.route("**/api/v2/admin/registrations*", (route) =>
     fulfillJson(route, { registrations: [] }),

@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Literal, Protocol
@@ -16,6 +17,7 @@ from pydantic import BaseModel
 
 from backend.v2.contexts.onboarding.application.ports import (
     ApplicationRepository,
+    RegistrationSubmittedNotifier,
     WaiverRepository,
 )
 from backend.v2.contexts.onboarding.domain.errors import (
@@ -38,6 +40,9 @@ APPLICATION_TTL_DAYS = 7
 # "DRAFT" literal at each site) because the legality of the move lives in
 # _TRANSITIONS, not in the resume code — see StartApplication._resume.
 _RESUME_TO = "DRAFT"
+
+
+logger = logging.getLogger(__name__)
 
 
 class SupersededCheckoutRetirement(Protocol):
@@ -345,11 +350,13 @@ class TransitionApplication:
         student_registrations: StudentRegistrationQuery | None = None,
         clock=lambda: datetime.now(UTC),
         checkout_retirement: SupersededCheckoutRetirement | None = None,
+        submitted_notifier: RegistrationSubmittedNotifier | None = None,
     ) -> None:
         self._apps = apps
         self._student_registrations = student_registrations
         self._now = clock
         self._checkout_retirement = checkout_retirement
+        self._submitted_notifier = submitted_notifier
 
     async def execute_for_payment(
         self,
@@ -469,7 +476,35 @@ class TransitionApplication:
             updates["payment_id"] = payment_id
         updated = app.model_copy(update=updates)
         await self._apps.save(updated)
+        if to == "PENDING_APPROVAL":
+            await self._alert_staff(updated)
         return updated
+
+    async def _alert_staff(self, app: Application) -> None:
+        """Issue #776: a new application landing in the review queue is news.
+
+        After the save, and never able to undo it: the money has usually
+        already moved by this point, so a mail outage must not be what leaves a
+        paid registration outside ``PENDING_APPROVAL``.
+        """
+        if self._submitted_notifier is None:
+            return
+        child = app.child_profile
+        student_name = f"{child.first_name} {child.last_name}".strip() or "New student"
+        parent = app.parent_profile
+        parent_name = f"{parent.first_name} {parent.last_name}".strip() or None
+        try:
+            await self._submitted_notifier.registration_submitted(
+                application_id=app.application_id,
+                student_name=student_name,
+                parent_name=parent_name,
+                session_id=app.selected_session_id,
+            )
+        except Exception:
+            logger.exception(
+                "registration_staff_alert_failed",
+                extra={"application_id": app.application_id},
+            )
 
     async def _restamp_checkout(
         self,

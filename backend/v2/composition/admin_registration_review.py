@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
-from typing import Protocol
+from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
 
+from backend.v2.contexts.billing.application.use_cases.issue_refund import IssueRefundCommand
 from backend.v2.contexts.enrollment.application.ports import (
     EnrollmentEventRepository,
     EnrollmentWelcomeNotifier,
@@ -106,6 +107,44 @@ class RegistrationRefundIssuer(Protocol):
     async def refund_registration_payment(self, *, payment_id: str, reason: str) -> None: ...
 
 
+class RegistrationDecisionNotifier(Protocol):
+    """Tells a family what their registration decision was (issue #776).
+
+    Approval already had a channel (the #613 welcome email); the two outcomes
+    that leave the family with nothing to do next — waitlisted, and declined
+    with a refund on the way — had none, so a parent who had paid could be
+    refunded in silence.
+
+    Sibling of ``EnrollmentWelcomeNotifier``/``RosterChangeNotifier`` and held
+    to the same contract: implementations are best-effort and are called AFTER
+    the decision is committed, so a mail outage can never roll a decision back.
+    """
+
+    async def registration_waitlisted(
+        self,
+        *,
+        application_id: str,
+        parent_user_id: str,
+        parent_email: str | None,
+        parent_name: str | None,
+        student_name: str,
+        session_id: str,
+        reason: str | None,
+    ) -> None: ...
+
+    async def registration_declined(
+        self,
+        *,
+        application_id: str,
+        parent_user_id: str,
+        parent_email: str | None,
+        parent_name: str | None,
+        student_name: str,
+        reason: str,
+        refund_issued: bool,
+    ) -> None: ...
+
+
 class TrialConversionLinker(Protocol):
     """Port for the enrollment context's ``LinkTrialConversion`` use case
     (R3, Task 7). Declared here (rather than imported directly) so this
@@ -149,6 +188,7 @@ class AdminRegistrationRow(BaseModel):
     waiver_required: bool = False
     waiver_satisfied: bool = False
     zero_quote_period: str | None = None
+    family_notified_at: datetime | None = None
     updated_at: datetime
 
 
@@ -214,6 +254,7 @@ class AdminRegistrationReview:
         paid_period_resolver: PaidPeriodResolver | None = None,
         welcome_notifier: EnrollmentWelcomeNotifier | None = None,
         roster_notifier: RosterChangeNotifier | None = None,
+        decision_notifier: RegistrationDecisionNotifier | None = None,
         seat_broker: SeatBroker | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
@@ -232,6 +273,7 @@ class AdminRegistrationReview:
         self._paid_period_resolver = paid_period_resolver
         self._welcome_notifier = welcome_notifier
         self._roster_notifier = roster_notifier
+        self._decision_notifier = decision_notifier
         # Departures design contract §3.1: every caller that needs a seat
         # routes through SeatBroker.acquire so a class that is full only
         # because held enrollments occupy it reclaims the longest-held hold
@@ -578,6 +620,21 @@ class AdminRegistrationReview:
                 }
             )
             await self._complete_review(decided, app)
+            # Issue #776. After `_complete_review`, never before: the family is
+            # told about a decision that is already durable, and a mail failure
+            # cannot unwind it.
+            decided = await self._notify_family(
+                decided,
+                lambda notifier, target: notifier.registration_waitlisted(
+                    application_id=target.application_id,
+                    parent_user_id=target.parent_user_id,
+                    parent_email=str(target.parent_email) or None,
+                    parent_name=self._parent_name(target) or None,
+                    student_name=self._student_name(target),
+                    session_id=session_id,
+                    reason=command.reason,
+                ),
+            )
             return await self._detail(decided)
         except Exception:
             if student_id is not None:
@@ -630,7 +687,56 @@ class AdminRegistrationReview:
                 updated_at=self._now(),
             )
             raise
+        # Issue #776. Strictly outside the try/except above: that block's job is
+        # to release the review when the refund or the write fails, and a
+        # decline email must never be what triggers a release of an application
+        # whose money has already gone back.
+        decided = await self._notify_family(
+            decided,
+            lambda notifier, target: notifier.registration_declined(
+                application_id=target.application_id,
+                parent_user_id=target.parent_user_id,
+                parent_email=str(target.parent_email) or None,
+                parent_name=self._parent_name(target) or None,
+                student_name=self._student_name(target),
+                reason=command.reason,
+                refund_issued=bool(self._refunds is not None and app.payment_id),
+            ),
+        )
         return await self._detail(decided)
+
+    async def _notify_family(
+        self,
+        decided: Application,
+        send: Callable[[RegistrationDecisionNotifier, Application], Awaitable[None]],
+    ) -> Application:
+        """Best-effort decision email, stamped only when it actually went.
+
+        Returns the application to render: the stamped copy on success, the
+        unchanged one otherwise, so ``family_notified_at`` is evidence rather
+        than an intention — an admin looking at the queue can tell a family
+        that was told from one that still needs a phone call.
+        """
+        if self._decision_notifier is None:
+            return decided
+        try:
+            await send(self._decision_notifier, decided)
+        except Exception:
+            logger.exception(
+                "registration_decision_notification_failed",
+                extra={"application_id": decided.application_id, "status": decided.status},
+            )
+            return decided
+        stamped = decided.model_copy(update={"family_notified_at": self._now()})
+        try:
+            await self._apps.save(stamped)
+        except Exception:
+            logger.exception(
+                "registration_decision_notified_stamp_failed",
+                extra={"application_id": decided.application_id},
+            )
+            return decided
+        return stamped
 
     async def _get(self, application_id: str) -> Application:
         app = await self._apps.get(application_id)
@@ -715,6 +821,7 @@ class AdminRegistrationReview:
             waiver_required=template is not None,
             waiver_satisfied=template is None or app.waiver_acceptance is not None,
             zero_quote_period=app.zero_quote_period,
+            family_notified_at=app.family_notified_at,
             updated_at=app.updated_at,
         )
 
@@ -1062,3 +1169,23 @@ class RegistrationDeclineRefunds:
         if payment.amount_cents <= 0 or payment.refunded_cents >= payment.amount_cents:
             return
         await self._refunds.refund_remaining(payment_id=payment_id, reason=reason)
+
+
+def compose_registration_decline_refunds(
+    payments: RegistrationPaymentQuery,
+    issue_refund: Any,
+) -> RegistrationDeclineRefunds:
+    """Wire the #514 decline refund over Billing's ``IssueRefund`` use case.
+
+    Lives here rather than in ``composition/admin.py`` so that module stays one
+    line per concern under the wiring line budget enforced by
+    ``tests/structural/test_composition_is_wiring.py``.
+    """
+
+    class _RefundExecutor:
+        async def refund_remaining(self, *, payment_id: str, reason: str) -> None:
+            await issue_refund.execute(
+                IssueRefundCommand(payment_id=payment_id, amount_cents=None, reason=reason)
+            )
+
+    return RegistrationDeclineRefunds(payments=payments, refunds=_RefundExecutor())

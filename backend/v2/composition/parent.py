@@ -26,6 +26,9 @@ from backend.v2.composition.pathway import (
     compose_curriculum,
     compose_student_progress,
 )
+from backend.v2.composition.registration_decision_email import (
+    compose_registration_decision_notifier,
+)
 from backend.v2.composition.roster_notifications import compose_roster_notifier
 from backend.v2.contexts.billing.application.autopay_eligibility import (
     CHARGEABLE_INVOICE_STATUSES,
@@ -1040,6 +1043,10 @@ def compose_parent(
         student_registrations=students_query,
         clock=clock,
         checkout_retirement=checkout_retirement,
+        # Issue #776: the moment an application becomes reviewable, staff hear
+        # about it — otherwise a 22:00 registration waits for whoever next
+        # happens to open the queue.
+        submitted_notifier=compose_registration_decision_notifier(db, settings),
     )
     list_available_sessions = ListParentAvailableSessions(sessions=sessions_query)
     # Issue #616: a request nobody is told about sits PENDING for months.

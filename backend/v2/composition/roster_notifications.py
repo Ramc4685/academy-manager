@@ -50,6 +50,10 @@ from backend.v2.composition.enrollment_welcome_email import (
     EnrollmentWelcomeEmailAdapter,
     format_session_when,
 )
+from backend.v2.composition.registration_decision_email import (
+    RegistrationDecisionEmailAdapter,
+    compose_registration_decision_notifier,
+)
 from backend.v2.contexts.communications.application.ports import (
     AudienceResolver,
     EmailSendPort,
@@ -957,6 +961,10 @@ class EnrollmentNotifiers:
 
     welcome: EnrollmentWelcomeEmailAdapter
     roster: RosterAlertAdapter
+    #: Issue #776 — the waitlisted/declined family emails and the new-application
+    #: staff alert. Built here with its siblings so ``composition/admin.py``
+    #: stays one line per concern under its wiring line budget.
+    decision: RegistrationDecisionEmailAdapter
 
 
 def compose_enrollment_notifiers(
@@ -987,6 +995,7 @@ def compose_enrollment_notifiers(
             sender=sender,
         ),
         roster=compose_roster_notifier(db, settings, sessions=sessions, academies=academies),
+        decision=compose_registration_decision_notifier(db, settings),
     )
 
 

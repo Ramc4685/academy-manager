@@ -207,6 +207,10 @@ from backend.v2.shared.observability.ops_digest import (
     render_ops_digest,
     seed_job_heartbeats,
 )
+from backend.v2.shared.observability.owner_daily_brief import (
+    collect_owner_daily_brief,
+    render_owner_daily_brief,
+)
 from backend.v2.shared.scheduling import job_lease
 from backend.v2.shared.tenancy.context import current_tenant_origins, tenant_scope
 from backend.v2.shared.tenancy.lookup_cache import CachingAcademyLookup
@@ -272,6 +276,14 @@ SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
     },
     "send_ops_digest": {
         "schedule": {"type": "crontab", "value": "0 7 * * *"},
+        "checkin_margin": 60,
+        "max_runtime": 30,
+    },
+    # Issue #776: the owner's daily brief. Registered here (and in
+    # ``ops_digest.JOB_STALE_AFTER``) so a brief that silently stops firing is
+    # reported; add the id to ``SENTRY_CRON_JOBS`` to also check in to Sentry.
+    "send_owner_daily_brief": {
+        "schedule": {"type": "crontab", "value": "30 7 * * *"},
         "checkin_margin": 60,
         "max_runtime": 30,
     },
@@ -1085,6 +1097,53 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             log.error("ops_digest_send_failed", extra=extra)
             capture_message(f"Ops digest send failed: {extra['failed_reason']}")
 
+    async def _send_owner_daily_brief() -> None:
+        await _run_leased_job(
+            "send_owner_daily_brief", timedelta(minutes=30), _send_owner_daily_brief_body
+        )
+
+    async def _send_owner_daily_brief_body() -> None:
+        # Issue #776: the academy-owner counterpart to the engineering ops
+        # digest above. Deliberately a second job rather than extra sections on
+        # the ops digest — different audience, different content, and the
+        # channel that reports "email is broken" keeps its own recipient.
+        #
+        # The 30-minute lease is what stops the 2026-09-02 hourly-resend class
+        # of bug: two app instances ticking the same cron send one brief, not
+        # two.
+        recipient_email = (settings.owner_brief_email or settings.ops_alert_email or "").strip()
+        if not recipient_email:
+            log.info("owner_brief_skipped: OWNER_BRIEF_EMAIL is not configured")
+            return
+        # Scheduler-timezone stamp: the cron fires at 07:30 local, so a UTC
+        # stamp would put yesterday's date on the subject in any UTC+ deploy.
+        brief = await collect_owner_daily_brief(db, now=datetime.now(scheduler.timezone))  # type: ignore[union-attr]
+        subject, body = render_owner_daily_brief(brief)
+        outcome = await app.state.ops_digest_sender.send(
+            recipient=ResolvedRecipient(
+                user_id="owner-brief",
+                email=recipient_email,
+                display_name="Owner",
+            ),
+            subject=subject,
+            body=body,
+        )
+        extra = {
+            "ok": bool(getattr(outcome, "ok", False)),
+            "failed_reason": getattr(outcome, "failed_reason", None),
+            "new_enrollments": brief.new_enrollments,
+            "departures": brief.departures_total,
+            "approvals_waiting": brief.approvals_waiting,
+            "payments_failed": brief.payments_failed,
+            "waivers_missing": brief.waivers_missing,
+            "emails_undeliverable": brief.emails_undeliverable,
+        }
+        if extra["ok"]:
+            log.info("owner_brief_processed", extra=extra)
+        else:
+            log.error("owner_brief_send_failed", extra=extra)
+            capture_message(f"Owner daily brief send failed: {extra['failed_reason']}")
+
     async def _send_coach_daily_digests() -> None:
         await _run_leased_job(
             "send_coach_daily_digests", timedelta(minutes=10), _send_coach_daily_digests_body
@@ -1417,6 +1476,18 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         hour=7,
         minute=0,
         id="send_ops_digest",
+        replace_existing=True,
+        max_instances=1,
+    )
+    # Issue #776: the owner's brief, half an hour behind the ops digest so the
+    # two never contend for the same send window. Same gated send port; skipped
+    # entirely when neither OWNER_BRIEF_EMAIL nor OPS_ALERT_EMAIL is set.
+    scheduler.add_job(
+        _send_owner_daily_brief,
+        "cron",
+        hour=7,
+        minute=30,
+        id="send_owner_daily_brief",
         replace_existing=True,
         max_instances=1,
     )

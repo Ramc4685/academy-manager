@@ -17,7 +17,7 @@ from pymongo.errors import DuplicateKeyError
 from backend.v2.composition.absence_notifications import compose_absence_notifier
 from backend.v2.composition.admin_registration_review import (
     AdminRegistrationReview,
-    RegistrationDeclineRefunds,
+    compose_registration_decline_refunds,
 )
 from backend.v2.composition.admin_session_staff import (
     attach_session_staff_names,
@@ -1807,13 +1807,11 @@ def compose_admin(
         enrollment_events=enrollment_events,
         trial_conversion=link_trial_conversion,
         student_registrations=students_r,
-        refunds=RegistrationDeclineRefunds(
-            payments=payments_repo,
-            refunds=_RegistrationRefundExecutor(issue_refund),
-        ),
+        refunds=compose_registration_decline_refunds(payments_repo, issue_refund),
         paid_period_resolver=CheckoutPaidPeriodResolver(payments_repo),
         welcome_notifier=notifiers.welcome,
         roster_notifier=notifiers.roster,
+        decision_notifier=notifiers.decision,
         academy_id=None,
     )
     # Identity / Settings
@@ -4471,19 +4469,6 @@ def compose_admin(
     install_dunning_notifier(_invoice_email_port())
 
     return admin
-
-
-class _RegistrationRefundExecutor:
-    """`RefundExecutor` adapter over Billing's ``IssueRefund`` use case
-    (issue #514): refund the full remaining captured amount."""
-
-    def __init__(self, issue_refund: IssueRefund) -> None:
-        self._issue_refund = issue_refund
-
-    async def refund_remaining(self, *, payment_id: str, reason: str) -> None:
-        await self._issue_refund.execute(
-            IssueRefundCommand(payment_id=payment_id, amount_cents=None, reason=reason)
-        )
 
 
 class _SessionTypeChangedEventSink:

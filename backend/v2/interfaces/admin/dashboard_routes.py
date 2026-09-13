@@ -56,6 +56,29 @@ async def dashboard_attention(
     items: list[AdminAttentionItemView] = []
     today = date.today()
 
+    # Issue #776: a registration waiting for a decision is the single most
+    # time-sensitive thing an academy can be sitting on — the family has
+    # usually already paid — and it used to appear nowhere on the home screen.
+    pending_registrations = await _read_attention_source(
+        "pending_registrations", _pending_registration_count, 0, use_cases
+    )
+    if pending_registrations:
+        items.append(
+            AdminAttentionItemView(
+                attention_id="pending-registrations",
+                kind="pending_registrations",
+                title="Registrations waiting",
+                detail=(
+                    f"{pending_registrations} "
+                    f"application{'s' if pending_registrations != 1 else ''} "
+                    f"{'need' if pending_registrations != 1 else 'needs'} a decision."
+                ),
+                severity="high",
+                href="/admin/inbox?tab=registrations",
+                count=pending_registrations,
+            )
+        )
+
     stuck_actions_reader = getattr(use_cases, "list_stuck_scheduled_actions", None)
 
     # Fan out all independent data fetches concurrently.
@@ -143,7 +166,7 @@ async def dashboard_attention(
                 title="Pending pause requests",
                 detail=detail,
                 severity="high" if stale else "medium",
-                href="/admin/pause-requests",
+                href="/admin/inbox?tab=pauses",
                 count=len(pending_pauses),
             )
         )
@@ -169,7 +192,7 @@ async def dashboard_attention(
                     "because the class is full."
                 ),
                 severity="medium",
-                href="/admin/pause-requests",
+                href="/admin/inbox?tab=pauses",
                 count=count,
             )
         )
@@ -187,7 +210,7 @@ async def dashboard_attention(
                     "and needs a manual fix."
                 ),
                 severity="high",
-                href="/admin/requests",
+                href="/admin/inbox?tab=cancellations",
                 count=count,
             )
         )
@@ -252,6 +275,13 @@ async def dashboard_attention(
         )
 
     return AdminAttentionList(items=items)
+
+
+async def _pending_registration_count(use_cases: AdminUseCases) -> int:
+    review = use_cases.admin_registration_review
+    if review is None:
+        return 0
+    return len(list(await review.list_pending()))
 
 
 async def _read_attention_source(

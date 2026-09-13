@@ -111,6 +111,9 @@ JOB_STALE_AFTER: dict[str, timedelta] = {
     "process_stalled_hold_reclaims": timedelta(hours=1),
     # Issue #778: daily win-back sweep (30/60/90-day milestones).
     "send_win_back_notices": timedelta(hours=26),
+    # Issue #776: the owner's daily brief. Same 26h slack as every other daily
+    # cron — one missed tick must not read as a stopped scheduler.
+    "send_owner_daily_brief": timedelta(hours=26),
 }
 
 

@@ -1211,6 +1211,8 @@ export interface AdminRegistrationRow {
   waiver_required: boolean;
   waiver_satisfied: boolean;
   zero_quote_period: string | null;
+  /** Issue #776: when the waitlist/decline email actually reached the family. */
+  family_notified_at: string | null;
   updated_at: string;
 }
 
@@ -1236,6 +1238,7 @@ export interface AdminRegistrationDetail extends AdminRegistrationRow {
 
 export type AdminAttentionSeverity = "high" | "medium" | "low";
 export type AdminAttentionKind =
+  | "pending_registrations"
   | "overdue_dues"
   | "pause_requests"
   | "scheduled_resume_blocked"
@@ -2927,6 +2930,16 @@ export function rejectAdminRegistration(
     `/admin/registrations/${encodeURIComponent(applicationId)}/reject`,
     { method: "POST", body: JSON.stringify(payload) },
   );
+}
+
+/** Issue #776: pending counts for every admin inbox queue, keyed by queue id. */
+export interface AdminInboxCounts {
+  counts: Record<string, number>;
+  total: number;
+}
+
+export function getAdminInboxCounts(): Promise<AdminInboxCounts> {
+  return apiFetch<AdminInboxCounts>("/admin/inbox/counts", { method: "GET" });
 }
 
 export function listAdminAttention(): Promise<AdminAttentionList> {

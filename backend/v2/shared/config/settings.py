@@ -173,6 +173,15 @@ class Settings(BaseSettings):
             "job logs and skips; nothing is sent."
         ),
     )
+    owner_brief_email: str | None = Field(
+        default=None,
+        description=(
+            "Owner address for the daily academy brief (issue #776). Falls back to "
+            "ops_alert_email; unset both ⇒ the brief job logs and skips. Deliberately "
+            "separate from the engineering ops digest: same cadence, different audience "
+            "and content."
+        ),
+    )
     coach_digest_enabled: bool = Field(
         default=False,
         description="When True, the daily coach teaching-plan digest cron job is registered.",
@@ -300,6 +309,8 @@ class Settings(BaseSettings):
             self.sender_email = os.environ.get("SENDER_EMAIL", self.sender_email)
         if "V2_OPS_ALERT_EMAIL" not in os.environ:
             self.ops_alert_email = os.environ.get("OPS_ALERT_EMAIL", self.ops_alert_email)
+        if "V2_OWNER_BRIEF_EMAIL" not in os.environ:
+            self.owner_brief_email = os.environ.get("OWNER_BRIEF_EMAIL", self.owner_brief_email)
         if "V2_EMAIL_DELIVERY_ENABLED" not in os.environ:
             self.email_delivery_enabled = _env_bool(
                 "EMAIL_DELIVERY_ENABLED",

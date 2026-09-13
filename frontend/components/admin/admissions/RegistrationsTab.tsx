@@ -64,6 +64,14 @@ function RegistrationsTable({ registrations }: { registrations: AdminRegistratio
                         <Chip variant="nocharge" label="NO PAYMENT" />
                       </div>
                     )}
+                    {/* Issue #776: evidence, not intent — the stamp is only
+                        written when a waitlist/decline email actually went, so
+                        an un-chipped decided row still needs a phone call. */}
+                    {registration.family_notified_at && (
+                      <div className="mt-1" data-testid={`admin-registration-family-notified-${registration.application_id}`}>
+                        <Chip variant="approved" label="FAMILY NOTIFIED" />
+                      </div>
+                    )}
                   </div>
                 </div>
               </td>

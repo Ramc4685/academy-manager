@@ -52,7 +52,7 @@ def test_admin_dashboard_attention_aggregates_real_signals(admin_client):
     assert r.status_code == 200, r.text
     body = r.json()
     assert [(item["kind"], item["href"], item["count"]) for item in body["items"]] == [
-        ("pause_requests", "/admin/pause-requests", 1),
+        ("pause_requests", "/admin/inbox?tab=pauses", 1),
         ("waivers", "/admin/waivers", 3),
     ]
 
@@ -152,3 +152,18 @@ def test_admin_dashboard_attention_keeps_fresh_pause_requests_medium(admin_clien
 def test_admin_dashboard_attention_wrong_persona_404(coach_on_admin_client, parent_on_admin_client):
     assert coach_on_admin_client.get("/api/v2/admin/dashboard/attention").status_code == 404
     assert parent_on_admin_client.get("/api/v2/admin/dashboard/attention").status_code == 404
+
+
+def test_pending_registrations_reach_the_home_attention_lane(admin_client):
+    """Issue #776: the family has usually already paid by this point."""
+    admin_client.use_cases.admin_registration_review.list_pending = AsyncMock(
+        return_value=[object(), object()]
+    )
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    assert r.status_code == 200, r.text
+    item = r.json()["items"][0]
+    assert item["kind"] == "pending_registrations"
+    assert item["href"] == "/admin/inbox?tab=registrations"
+    assert item["count"] == 2

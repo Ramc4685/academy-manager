@@ -1538,6 +1538,8 @@ class AdminRegistrationRowView(BaseModel):
     waiver_required: bool = False
     waiver_satisfied: bool = False
     zero_quote_period: str | None = None
+    # Issue #776: when the waitlist/decline email actually reached the family.
+    family_notified_at: datetime | None = None
     updated_at: datetime
 
 
@@ -1596,6 +1598,9 @@ class AdminWaiverSignatureDetailView(BaseModel):
 
 AdminAttentionSeverity = Literal["high", "medium", "low"]
 AdminAttentionKind = Literal[
+    # Issue #776: an application waiting for a decision. Listed first because
+    # the family has usually already paid by the time it lands here.
+    "pending_registrations",
     "overdue_dues",
     "pause_requests",
     "scheduled_resume_blocked",

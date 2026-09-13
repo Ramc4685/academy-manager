@@ -136,23 +136,28 @@ const ADMIN_ROUTE_MATRIX = [
   { label: "students", href: "/admin/students", testId: "admin-students" },
   { label: "users", href: "/admin/users", testId: "admin-users" },
   {
+    label: "inbox",
+    href: "/admin/inbox",
+    testId: "admin-inbox",
+  },
+  {
     label: "registrations",
-    href: "/admin/registrations",
-    testId: "admin-registrations",
+    href: "/admin/inbox?tab=registrations",
+    testId: "admin-registrations-tab",
   },
   {
     label: "waitlist",
-    href: "/admin/registrations?tab=waitlist",
+    href: "/admin/inbox?tab=waitlist",
     testId: "admin-waitlist-tab",
   },
   {
     label: "level-ups",
-    href: "/admin/registrations?tab=level-ups",
+    href: "/admin/inbox?tab=level-ups",
     testId: "admin-level-up-queue-tab",
   },
   {
     label: "pause requests",
-    href: "/admin/requests?tab=pauses",
+    href: "/admin/inbox?tab=pauses",
     testId: "admin-pause-requests",
   },
   { label: "payments", href: "/admin/payments", testId: "admin-payments" },
@@ -189,6 +194,9 @@ async function stubAdminLaunchBff(page: Page): Promise<void> {
   );
   await page.route("**/api/v2/admin/users*", (route) =>
     fulfillJson(route, { users: [] })
+  );
+  await page.route("**/api/v2/admin/inbox/counts", (route) =>
+    fulfillJson(route, { counts: {}, total: 0 }),
   );
   await page.route("**/api/v2/admin/registrations*", (route) =>
     fulfillJson(route, { registrations: [] })

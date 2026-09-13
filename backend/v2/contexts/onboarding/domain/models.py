@@ -98,6 +98,11 @@ class Application(BaseModel):
     decision_reason: str | None = None
     decided_by: str | None = None
     decided_at: datetime | None = None
+    # When the family was actually told the outcome (issue #776). Stamped only
+    # after a send succeeds, so the admin queue never claims a parent was
+    # informed of a waitlist or a decline (which refunds money) when the mail
+    # never left. Absent on approvals, which have their own #613 welcome path.
+    family_notified_at: datetime | None = None
     review_claimed_at: datetime | None = None
     review_claim_token: str | None = None
     # "YYYY-MM" billed $0 at checkout; see admin_registration_review

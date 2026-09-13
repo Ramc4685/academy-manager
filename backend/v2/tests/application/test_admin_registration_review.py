@@ -1823,3 +1823,139 @@ async def test_approve_without_a_seat_broker_still_reports_the_session_full() ->
 
     with pytest.raises(ApplicationNotEditable, match="Selected session is full"):
         await review.approve(ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1"))
+
+
+# ---------------------------------------------------------------------------
+# Issue #776 — the family hears about the decision
+#
+# Approval already sent a welcome email (#613). Waitlisting and declining sent
+# nothing at all, and a decline moves money (the #514 refund), so the two
+# outcomes that most need explaining were the two that were silent.
+# ---------------------------------------------------------------------------
+
+
+class RecordingDecisionNotifier:
+    def __init__(self, fail: bool = False) -> None:
+        self.waitlisted: list[dict[str, object]] = []
+        self.declined: list[dict[str, object]] = []
+        self._fail = fail
+
+    async def registration_waitlisted(self, **kwargs: object) -> None:
+        if self._fail:
+            raise RuntimeError("mail provider down")
+        self.waitlisted.append(kwargs)
+
+    async def registration_declined(self, **kwargs: object) -> None:
+        if self._fail:
+            raise RuntimeError("mail provider down")
+        self.declined.append(kwargs)
+
+
+def _review_with_notifier(
+    apps: InMemoryApplications,
+    notifier: RecordingDecisionNotifier | None,
+    *,
+    refunds: RecordingRefunds | None = None,
+) -> AdminRegistrationReview:
+    return AdminRegistrationReview(
+        apps=apps,
+        sessions=InMemorySessions([_session()]),
+        students=InMemoryStudents(),
+        enrollments=InMemoryEnrollments(),
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        refunds=refunds,
+        decision_notifier=notifier,
+        clock=lambda: NOW,
+    )
+
+
+@pytest.mark.asyncio
+async def test_waitlist_emails_the_family_and_stamps_when_it_was_notified() -> None:
+    apps = InMemoryApplications(_application())
+    notifier = RecordingDecisionNotifier()
+    review = _review_with_notifier(apps, notifier)
+
+    detail = await review.waitlist(
+        WaitlistRegistrationCommand(application_id="app-1", actor_id="admin-1", reason="class full")
+    )
+
+    assert detail.status == "WAITLISTED"
+    assert len(notifier.waitlisted) == 1
+    sent = notifier.waitlisted[0]
+    assert sent["parent_email"] == "parent@example.com"
+    assert sent["session_id"] == "sess-1"
+    assert sent["student_name"] == "Sam Student"
+    assert apps.apps["app-1"].family_notified_at == NOW
+    assert detail.family_notified_at == NOW
+
+
+@pytest.mark.asyncio
+async def test_reject_emails_the_family_with_the_refund_note() -> None:
+    app = _application().model_copy(update={"payment_id": "pay-1"})
+    apps = InMemoryApplications(app)
+    notifier = RecordingDecisionNotifier()
+    review = _review_with_notifier(apps, notifier, refunds=RecordingRefunds())
+
+    detail = await review.reject(
+        RejectRegistrationCommand(application_id="app-1", actor_id="admin-1", reason="too young")
+    )
+
+    assert detail.status == "DECLINED"
+    assert len(notifier.declined) == 1
+    sent = notifier.declined[0]
+    assert sent["reason"] == "too young"
+    # The parent paid at checkout, so the decline email must say the money is
+    # coming back — a bare "declined" after a charge reads as a lost payment.
+    assert sent["refund_issued"] is True
+    assert apps.apps["app-1"].family_notified_at == NOW
+
+
+@pytest.mark.asyncio
+async def test_reject_without_payment_says_no_refund_is_coming() -> None:
+    apps = InMemoryApplications(_application())
+    notifier = RecordingDecisionNotifier()
+    review = _review_with_notifier(apps, notifier, refunds=RecordingRefunds())
+
+    await review.reject(
+        RejectRegistrationCommand(application_id="app-1", actor_id="admin-1", reason="duplicate")
+    )
+
+    assert notifier.declined[0]["refund_issued"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_failed_family_email_never_undoes_the_decision() -> None:
+    """Best-effort, exactly like the #613 welcome and #612 roster alerts.
+
+    The decision is already committed when the email is attempted; a decline
+    that reported failure because Resend blipped would be retried against an
+    already-declined, already-refunded application.
+    """
+    apps = InMemoryApplications(_application().model_copy(update={"payment_id": "pay-1"}))
+    review = _review_with_notifier(
+        apps, RecordingDecisionNotifier(fail=True), refunds=RecordingRefunds()
+    )
+
+    detail = await review.reject(
+        RejectRegistrationCommand(application_id="app-1", actor_id="admin-1", reason="full")
+    )
+
+    assert detail.status == "DECLINED"
+    assert apps.apps["app-1"].status == "DECLINED"
+    # Nothing was sent, so nothing is stamped: the registrations tab must not
+    # claim the family was told when it was not.
+    assert apps.apps["app-1"].family_notified_at is None
+
+
+@pytest.mark.asyncio
+async def test_decisions_still_work_without_a_notifier_wired() -> None:
+    apps = InMemoryApplications(_application())
+    review = _review_with_notifier(apps, None)
+
+    detail = await review.waitlist(
+        WaitlistRegistrationCommand(application_id="app-1", actor_id="admin-1")
+    )
+
+    assert detail.status == "WAITLISTED"
+    assert apps.apps["app-1"].family_notified_at is None
