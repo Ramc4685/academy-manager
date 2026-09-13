@@ -129,7 +129,7 @@ describe("lib/observability/sentry", () => {
     });
   });
 
-  it("defaults the environment to production and omits an unset release", async () => {
+  it("defaults the environment to development and omits an unset release", async () => {
     vi.stubEnv("NEXT_PUBLIC_SENTRY_DSN", "https://key@o1.ingest.us.sentry.io/1");
     vi.stubEnv("NEXT_PUBLIC_APP_ENV", "");
     vi.stubEnv("NEXT_PUBLIC_SENTRY_RELEASE", "");
@@ -137,9 +137,36 @@ describe("lib/observability/sentry", () => {
     await initSentry();
 
     expect(sentryMock.init.mock.calls[0][0]).toMatchObject({
-      environment: "production",
+      environment: "development",
       release: undefined,
     });
+  });
+
+  it("does not load the SDK on localhost unless force-local is set (#753)", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SENTRY_DSN", "https://key@o1.ingest.us.sentry.io/1");
+    vi.stubGlobal("window", { location: { hostname: "localhost" } });
+
+    expect(await initSentry()).toBeNull();
+    expect(sentryMock.init).not.toHaveBeenCalled();
+  });
+
+  it("loads the SDK on localhost when NEXT_PUBLIC_SENTRY_FORCE_LOCAL=1 (#753)", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SENTRY_DSN", "https://key@o1.ingest.us.sentry.io/1");
+    vi.stubEnv("NEXT_PUBLIC_SENTRY_FORCE_LOCAL", "1");
+    vi.stubGlobal("window", { location: { hostname: "127.0.0.1" } });
+
+    await initSentry();
+
+    expect(sentryMock.init).toHaveBeenCalledTimes(1);
+  });
+
+  it("initialises normally on a real deployed hostname (#753)", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SENTRY_DSN", "https://key@o1.ingest.us.sentry.io/1");
+    vi.stubGlobal("window", { location: { hostname: "app.example.com" } });
+
+    await initSentry();
+
+    expect(sentryMock.init).toHaveBeenCalledTimes(1);
   });
 
   it("captures errors with the Next digest as a tag", async () => {

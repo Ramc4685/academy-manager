@@ -91,7 +91,16 @@ export function initSentry(): Promise<Sentry | null> {
   // e2e runs must not post envelopes to the real project, and the e2e
   // tenant-isolation fixture treats any stray network call as a failure.
   const automated = typeof navigator !== "undefined" && navigator.webdriver === true;
-  if (!dsn || typeof window === "undefined" || automated) {
+  // Local dev often carries the same DSN as staging/prod (copied .env.local);
+  // without this guard every local run would post real events tagged
+  // environment=production into the prod frontend Sentry project (#753).
+  // NEXT_PUBLIC_SENTRY_FORCE_LOCAL=1 opts a machine back in when someone
+  // deliberately wants to test the real SDK against localhost.
+  const host = typeof window !== "undefined" ? window.location?.hostname : undefined;
+  const isLocalHost =
+    !!host && (host === "localhost" || host === "127.0.0.1" || host.endsWith(".localhost"));
+  const forceLocal = process.env.NEXT_PUBLIC_SENTRY_FORCE_LOCAL === "1";
+  if (!dsn || typeof window === "undefined" || automated || (isLocalHost && !forceLocal)) {
     sdk = Promise.resolve(null);
     return sdk;
   }
@@ -99,7 +108,7 @@ export function initSentry(): Promise<Sentry | null> {
     .then((mod) => {
       mod.init({
         dsn,
-        environment: process.env.NEXT_PUBLIC_APP_ENV || "production",
+        environment: process.env.NEXT_PUBLIC_APP_ENV || "development",
         release: process.env.NEXT_PUBLIC_SENTRY_RELEASE || undefined,
         // Every error event, plus a sampled slice of navigation/fetch spans
         // via browserTracingIntegration (matches the backend's 0.2 sample
