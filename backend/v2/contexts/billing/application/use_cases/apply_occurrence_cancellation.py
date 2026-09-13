@@ -70,6 +70,7 @@ from backend.v2.contexts.billing.domain.models import CreditLedgerEntry
 from backend.v2.contexts.billing.domain.proration import (
     CANCELLED_AFTER_PRICING_STATUS,
     ClassOccurrence,
+    unused_paid_classes,
 )
 from backend.v2.shared.ids import new_ulid
 
@@ -474,31 +475,50 @@ def _billed_classes(
 ) -> tuple[int, frozenset[str] | None]:
     """``(divisor, the ids the charge covered)`` for one family's period.
 
-    The second element is ``None`` when membership is unknown — a full-month
-    charge buys every class in the month, so there is nothing to check.
+    The second element is ``None`` when membership is unknown — no snapshot,
+    or one written before the charge recorded which dates it covered.
     """
     if basis is not None:
-        if basis.calculation_type == "FIRST_MONTH_PRORATION" and basis.billable_remaining_classes:
-            # ``charge / classes the charge bought``. For a first month that is
-            # ``min(remaining, 4 * weekly meetings)``, NOT the whole remaining
-            # list: a 5-class month is charged at the 4-class rate, so dividing
-            # by 5 would credit each cancelled date more than it was billed at.
-            return _paid_classes(basis), frozenset(basis.included_occurrence_ids)
-        if basis.calculation_type == "MONTHLY_TUITION" and basis.total_eligible_classes:
-            return basis.total_eligible_classes, None
+        if (
+            basis.calculation_type in {"FIRST_MONTH_PRORATION", "MONTHLY_TUITION"}
+            and basis.billable_remaining_classes
+        ):
+            # ``charge / classes the charge bought``: ``min(remaining,
+            # 4 * weekly meetings)``, NOT the whole remaining list. A 5-class
+            # month is charged at the 4-class rate whether the family joined
+            # this month or last spring (#730), so dividing by 5 would credit
+            # each cancelled date more than it was billed at.
+            covered = frozenset(basis.included_occurrence_ids)
+            return _paid_classes(basis), covered or None
     fallback = [o for o in priced if billing_start is None or o.start_at >= billing_start]
     return len(fallback), None
 
 
 def _paid_classes(basis: PeriodChargeBasis) -> int:
-    """The classes a first-month charge actually paid for."""
-    denominator = basis.billable_classes_denominator or basis.billable_remaining_classes
-    return min(basis.billable_remaining_classes, denominator)
+    """The classes this period's charge actually paid for.
+
+    The same domain rule the withdrawal credit and the from-side of a
+    mid-period move divide by, so the three agree to the cent (#729)."""
+    paid, _ = unused_paid_classes(
+        billable_remaining_classes=basis.billable_remaining_classes,
+        billable_classes_denominator=basis.billable_classes_denominator,
+        scheduled_unused=basis.billable_remaining_classes,
+    )
+    return paid
 
 
 def _free_extra_classes(basis: PeriodChargeBasis | None) -> int:
-    """Scheduled-but-not-charged classes in a first month (the free extras)."""
-    if basis is None or basis.calculation_type != "FIRST_MONTH_PRORATION":
+    """Scheduled-but-not-charged classes in the period (the free extras).
+
+    The monthly rate buys four classes per weekly meeting for every family, so
+    a continuing family's flat full month carries the same free 5th class a
+    first month does (#730). Snapshots written before that rule have no
+    denominator and yield 0 here, crediting at the rate they charged.
+    """
+    if basis is None or basis.calculation_type not in {
+        "FIRST_MONTH_PRORATION",
+        "MONTHLY_TUITION",
+    }:
         return 0
     return max(basis.billable_remaining_classes - _paid_classes(basis), 0)
 

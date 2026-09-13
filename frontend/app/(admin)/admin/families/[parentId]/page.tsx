@@ -14,6 +14,7 @@ import {
   createStudentInvoice,
   enableBillingSetupAutopay,
   fetchInvoiceAudit,
+  getInvoiceSchedule,
   inviteBillingSetupParent,
   refundAdminInvoice,
   sendAdminInvoice,
@@ -37,6 +38,7 @@ import { TimelinePanel } from "./TimelinePanel";
 import { ReasonDialog, type ReasonDialogKind, type ReasonDialogResult } from "./family-dialogs";
 import {
   enrollmentOptions,
+  invoiceDueDays,
   mintRequestId,
   periodLabel,
   tuitionLineDescription,
@@ -101,6 +103,13 @@ export default function FamilyBillingPage() {
     queryKey: queryKeys.admin.familyBilling(parentId),
     queryFn: () => fetchAdminFamilyBilling(parentId),
   });
+  // Both hand-billing dialogs date their invoice like the monthly run does, so
+  // one month never carries two due dates for the same family (#739).
+  const schedule = useQuery({
+    queryKey: queryKeys.admin.invoiceSchedule(),
+    queryFn: getInvoiceSchedule,
+  });
+  const dueDays = invoiceDueDays(schedule.data);
 
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: queryKeys.admin.familyBilling(parentId) });
@@ -304,6 +313,7 @@ export default function FamilyBillingPage() {
       <CreateInvoiceDialog
         students={view.students}
         open={createOpen}
+        dueDays={dueDays}
         onClose={() => setCreateOpen(false)}
         onSubmit={async (r) => {
           const created = await createStudentInvoice(r.student_id, {
@@ -311,6 +321,7 @@ export default function FamilyBillingPage() {
             period: r.period,
             due_date: r.due_date,
             enrollment_id: r.enrollment_id,
+            request_id: r.request_id,
           });
           await refresh();
           setCreateOpen(false);
@@ -338,6 +349,7 @@ export default function FamilyBillingPage() {
         <BillPeriodDialog
           open
           option={billOption}
+          dueDays={dueDays}
           onClose={() => setBillEnrollmentId(null)}
           onSubmit={async (r) => {
             const created = await billEnrollmentPeriod(billOption.enrollment_id, r);

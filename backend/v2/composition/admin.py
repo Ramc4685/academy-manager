@@ -53,6 +53,7 @@ from backend.v2.composition.lifecycle_billing import (
     compose_enrollment_move_billing_sync,
     compose_withdrawal_decision,
 )
+from backend.v2.composition.manual_invoice import create_manual_invoice
 from backend.v2.composition.occurrence_cancellation import compose_cancel_session_occurrence
 from backend.v2.composition.pathway import (
     compose_curriculum,
@@ -177,9 +178,6 @@ from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import 
     PreviewWithdrawalCredit,
 )
 from backend.v2.contexts.billing.domain.billing_audit import BillingAuditEntry
-from backend.v2.contexts.billing.domain.ledger import (
-    LedgerInvoice,
-)
 from backend.v2.contexts.billing.domain.product import Product
 from backend.v2.contexts.billing.infrastructure.admin_reports_read_model import (
     AdminEffectiveRevenueQuery,
@@ -1131,6 +1129,12 @@ def compose_admin(
             email=_invoice_email_port(),
             connected_accounts=connected_accounts_repo,
             settings=billing_settings_repo,
+            # Issue #738: an autopay family gets the pre-charge notice, not a
+            # pay link the dunning worker would then double-collect.
+            # ``send_autopay_notice`` is bound later in this same function;
+            # this body only runs at request time, long after it exists.
+            autopay=student_billing_enrollment_repo,
+            notify_autopay=send_autopay_notice if _invoice_email_port() else None,
             success_url=f"{frontend_url}/parent/payments?invoice=paid",
             cancel_url=f"{frontend_url}/parent/payments?invoice=cancelled",
         ).execute(invoice_id, bundle_student_balance=True)
@@ -1141,6 +1145,8 @@ def compose_admin(
             "last_sent_at": result.invoice.last_sent_at,
             "checkout_url": result.checkout_url,
             "checkout_failure_code": result.checkout_failure_code,
+            "autopay_notified": result.autopay_notified,
+            "skipped_autopay": result.skipped_autopay,
         }
 
     async def send_generated_invoices(
@@ -1624,42 +1630,34 @@ def compose_admin(
         student_id: str,
         parent_id: str,
         period: str,
-        due_date: date,
+        due_date: date | None,
         enrollment_id: str | None,
+        actor_id: str | None = None,
+        request_id: str | None = None,
     ) -> dict[str, Any]:
         from backend.v2.shared.tenancy import current_academy_id
 
-        now = datetime.now(UTC)
-        invoice_id = f"inv-{new_ulid()}"
-        invoice = LedgerInvoice(
-            invoice_id=invoice_id,
+        # Idempotency + the audit append live in composition/manual_invoice.py:
+        # admin.py is at its wiring line budget (#727).
+        return await create_manual_invoice(
+            ledger=billing_ledger_repo,
+            settings_repo=billing_settings_repo,
+            audit_log=billing_audit_log,
             academy_id=current_academy_id(),
-            parent_id=parent_id,
             student_id=student_id,
-            enrollment_id=enrollment_id,
+            parent_id=parent_id,
             period=period,
-            status="draft",
-            subtotal_cents=0,
-            discount_cents=0,
-            total_cents=0,
-            balance_due_cents=0,
-            currency="usd",
             due_date=due_date,
-            created_at=now,
-            updated_at=now,
+            enrollment_id=enrollment_id,
+            actor_id=actor_id,
+            request_id=request_id,
         )
-        created = await billing_ledger_repo.create_invoice(
-            invoice,
-            lines=[],
-            idempotency_key=f"admin-invoice-{invoice_id}",
-        )
-        return created.model_dump(mode="json")
 
     async def bill_enrollment_period(
         *,
         enrollment_id: str,
         period: str,
-        due_date: date,
+        due_date: date | None,
         actor_id: str | None = None,
     ) -> dict[str, Any]:
         from backend.v2.shared.tenancy import current_academy_id
@@ -1672,6 +1670,7 @@ def compose_admin(
                 counters=billing_counters_repo,
                 settings=billing_settings_repo,
             ),
+            settings=billing_settings_repo,
         ).execute(
             BillEnrollmentPeriodCommand(
                 enrollment_id=enrollment_id,

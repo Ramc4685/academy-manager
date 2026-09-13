@@ -7,6 +7,9 @@ Calling flow
 ------------
 1. Load invoice by invoice_id (raises ValueError if not found).
 2. If status == "draft": call finalize() → save. Financial status becomes "open".
+2b. If the autopay worker will charge this invoice (``ladder_eligibility``),
+   send the pre-charge notice and stop — no pay link, no checkout hold
+   (issue #738). With no notice adapter wired, send nothing at all.
 3. If balance_due_cents > 0: create a Stripe Checkout Session for the balance.
 4. Send email to parent with the pay link via EmailSendPort when configured.
 5. Record delivery only after email succeeds; record delivery_failed after email errors.
@@ -53,11 +56,13 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from pydantic import BaseModel
 
+from backend.v2.contexts.billing.application.autopay_eligibility import ladder_eligibility
 from backend.v2.contexts.billing.application.ports import (
     BillingSettingsRepository,
     ConnectedAccountRepository,
@@ -83,6 +88,7 @@ __all__ = [
     "CHECKOUT_FAILURE_ACCOUNTS_NOT_CONFIGURED",
     "CHECKOUT_FAILURE_ACCOUNT_NOT_READY",
     "CHECKOUT_FAILURE_STRIPE_ERROR",
+    "AutopayStatusReader",
     "InvoiceEmailPort",
     "InvoiceStripeGateway",
     "SendInvoice",
@@ -135,6 +141,12 @@ class InvoiceEmailPort(Protocol):
         ...
 
 
+class AutopayStatusReader(Protocol):
+    """The slice of ``EnrollmentAutopayGateway`` this use case needs."""
+
+    async def get_autopay_enrollment_status(self, *, enrollment_id: str) -> str | None: ...
+
+
 class EmptyInvoiceNotSendable(Exception):
     """A draft with no charges on it — finalizing would mail the parent a $0 bill."""
 
@@ -153,6 +165,12 @@ class SendInvoiceResult(BaseModel):
     #: funds could not be routed to the academy's connected account). ``None``
     #: for "no Stripe configured" and for invoices that are simply not payable.
     checkout_failure_code: str | None = None
+    #: The family was told what will be charged and when, instead of being
+    #: sent a pay link the autopay worker would double-collect (issue #738).
+    autopay_notified: bool = False
+    #: Autopay-active, but the notice adapter is unwired: nothing was sent.
+    #: Deliberately NOT a fallback to the pay-link email.
+    skipped_autopay: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +189,8 @@ class SendInvoice:
         email: InvoiceEmailPort | None = None,
         connected_accounts: ConnectedAccountRepository | None = None,
         settings: BillingSettingsRepository | None = None,
+        autopay: AutopayStatusReader | None = None,
+        notify_autopay: Callable[[str], Awaitable[object]] | None = None,
         success_url: str = "https://app.example.com/pay/success",
         cancel_url: str = "https://app.example.com/pay/cancel",
         clock=lambda: datetime.now(UTC),
@@ -180,6 +200,10 @@ class SendInvoice:
         self._email = email
         self._connected_accounts = connected_accounts
         self._settings = settings
+        self._autopay = autopay
+        # Issue #738: the pre-charge notice for autopay families. When unwired,
+        # an autopay-active invoice is skipped rather than pay-linked.
+        self._notify_autopay = notify_autopay
         self._success_url = success_url
         self._cancel_url = cancel_url
         self._now = clock
@@ -228,6 +252,72 @@ class SendInvoice:
                 held_primary = stamped
         return held_primary
 
+    async def _is_autopaying(self, invoice: LedgerInvoice) -> bool:
+        """True when the autopay/dunning worker will charge this invoice itself.
+
+        Decided by ``ladder_eligibility`` — the same predicate
+        ``prepare_due_states`` applies (issue #662) — so the email branch can
+        never disagree with what actually gets charged. An invoice with no
+        enrollment, no balance, or a non-``active`` autopay status is billed
+        normally. A status lookup that raises is treated as "not autopaying":
+        a parent who receives a pay link they were also charged for is
+        recoverable; a parent who silently receives nothing is not.
+        """
+        if self._autopay is None or not invoice.enrollment_id:
+            return False
+        try:
+            status = await self._autopay.get_autopay_enrollment_status(
+                enrollment_id=invoice.enrollment_id
+            )
+        except Exception:
+            log.exception(
+                "send_invoice: autopay status lookup failed for invoice=%s — "
+                "falling through to the normal invoice email",
+                invoice.invoice_id,
+            )
+            return False
+        return ladder_eligibility(
+            invoice_status=invoice.status,
+            balance_due_cents=invoice.balance_due_cents,
+            enrollment_id=invoice.enrollment_id,
+            autopay_enrollment_status=status,
+        ).eligible
+
+    async def _notify_autopay_family(
+        self, invoice: LedgerInvoice, *, now: datetime
+    ) -> SendInvoiceResult:
+        """Send "X will be charged on <due date>" instead of a pay link.
+
+        When the notice adapter is not wired (email delivery disabled), nothing
+        is sent — falling back to the pay-link email is exactly the
+        double-signal issue #738 reports.
+        """
+        if self._notify_autopay is None:
+            log.info(
+                "send_invoice: invoice=%s is autopay-active and the notice adapter is "
+                "unwired — skipping (a pay link would be double-collected)",
+                invoice.invoice_id,
+            )
+            return SendInvoiceResult(invoice=invoice, skipped_autopay=True)
+        try:
+            await self._notify_autopay(invoice.invoice_id)
+        except Exception as exc:
+            # Same posture as the invoice email below: never downgrade an
+            # invoice that was already successfully delivered.
+            if invoice.delivery_status != "sent":
+                invoice = record_delivery(invoice, outcome="delivery_failed", now=now)
+                invoice = await self._ledger.save_invoice(invoice)
+            log.warning(
+                "send_invoice: autopay notice failed invoice=%s err=%s",
+                invoice.invoice_id,
+                exc,
+            )
+            return SendInvoiceResult(invoice=invoice)
+        # The notice hook records delivery on the invoice itself; re-read so
+        # callers report the delivery the parent actually received.
+        refreshed = await self._ledger.get_invoice(invoice.invoice_id)
+        return SendInvoiceResult(invoice=refreshed or invoice, autopay_notified=True)
+
     async def execute(
         self,
         invoice_id: str,
@@ -249,6 +339,15 @@ class SendInvoice:
             invoice = finalize(invoice, now=now)
             invoice = await self._ledger.save_invoice(invoice)
             log.info("send_invoice: finalized draft invoice=%s", invoice_id)
+
+        # 2b. Autopay-active families are collected by the worker on the due
+        # date, so a "Pay invoice" link invites a double payment (issue #738).
+        # They get the pre-charge notice instead — the branch the monthly pass
+        # (``SendGeneratedInvoices``) has always taken, now reached by the
+        # admin's hand-send too. Returning here also means no checkout session
+        # and no checkout hold are minted for an invoice we will not collect.
+        if await self._is_autopaying(invoice):
+            return await self._notify_autopay_family(invoice, now=now)
 
         # 3. Generate Stripe Checkout Session for unpaid balance
         checkout_url: str | None = None

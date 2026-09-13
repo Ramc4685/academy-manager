@@ -1081,3 +1081,198 @@ async def test_no_pay_link_means_no_hold() -> None:
     invoice = await repo.get_invoice("inv-1")
     assert invoice is not None
     assert invoice.checkout_hold_session_id is None
+
+
+# ---------------------------------------------------------------------------
+# Autopay-active families: pre-charge notice, never a pay link (issue #738)
+# ---------------------------------------------------------------------------
+
+
+class _FakeAutopayStatus:
+    def __init__(self, status: str | None = "active", *, raises: bool = False) -> None:
+        self.status = status
+        self.raises = raises
+        self.calls: list[str] = []
+
+    async def get_autopay_enrollment_status(self, *, enrollment_id: str) -> str | None:
+        self.calls.append(enrollment_id)
+        if self.raises:
+            raise RuntimeError("autopay status store unavailable")
+        return self.status
+
+
+class _FakeAutopayNotice:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def __call__(self, invoice_id: str) -> dict[str, str]:
+        self.calls.append(invoice_id)
+        return {"invoice_id": invoice_id, "delivery_status": "sent"}
+
+
+def _autopay_uc(
+    repo: FakeLedgerRepository,
+    *,
+    stripe: FakeInvoiceStripe,
+    email: FakeInvoiceEmail,
+    autopay: _FakeAutopayStatus | None,
+    notify_autopay: _FakeAutopayNotice | None,
+) -> SendInvoice:
+    return SendInvoice(
+        ledger=repo,
+        stripe=stripe,
+        email=email,  # type: ignore[arg-type]
+        connected_accounts=_FakeConnectedAccounts(_StubConnectedAccount(ready=True)),  # type: ignore[arg-type]
+        autopay=autopay,  # type: ignore[arg-type]
+        notify_autopay=notify_autopay,  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    )
+
+
+async def test_hand_send_to_autopay_active_enrollment_sends_notice_not_pay_link() -> None:
+    """A hand-sent invoice the dunning worker will charge gets the pre-charge
+    notice, never a 'Pay invoice' link (issue #738)."""
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open", enrollment_id="enr-1")])
+    stripe = FakeInvoiceStripe()
+    email = FakeInvoiceEmail()
+    notify = _FakeAutopayNotice()
+
+    result = await _autopay_uc(
+        repo,
+        stripe=stripe,
+        email=email,
+        autopay=_FakeAutopayStatus("active"),
+        notify_autopay=notify,
+    ).execute("inv-1", bundle_student_balance=True)
+
+    assert email.calls == [], "autopay family must not receive a pay-link email"
+    assert stripe.calls == [], "no checkout session may be minted for an auto-charged invoice"
+    assert notify.calls == ["inv-1"]
+    assert result.checkout_url is None
+    assert result.checkout_failure_code is None
+    assert result.autopay_notified is True
+    assert result.skipped_autopay is False
+
+
+async def test_autopay_notice_leaves_no_checkout_hold() -> None:
+    """No pay link means no hold: the worker must stay free to charge on the due date."""
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open", enrollment_id="enr-1")])
+
+    await _autopay_uc(
+        repo,
+        stripe=FakeInvoiceStripe(),
+        email=FakeInvoiceEmail(),
+        autopay=_FakeAutopayStatus("active"),
+        notify_autopay=_FakeAutopayNotice(),
+    ).execute("inv-1")
+
+    invoice = await repo.get_invoice("inv-1")
+    assert invoice is not None
+    assert invoice.checkout_hold_session_id is None
+
+
+async def test_hand_send_autopay_active_without_notice_hook_skips_silently() -> None:
+    """Unwired notice adapter: skip, never fall back to the pay-link email (#738)."""
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open", enrollment_id="enr-1")])
+    stripe = FakeInvoiceStripe()
+    email = FakeInvoiceEmail()
+
+    result = await _autopay_uc(
+        repo,
+        stripe=stripe,
+        email=email,
+        autopay=_FakeAutopayStatus("active"),
+        notify_autopay=None,
+    ).execute("inv-1")
+
+    assert email.calls == []
+    assert stripe.calls == []
+    assert result.skipped_autopay is True
+    assert result.autopay_notified is False
+    assert result.checkout_failure_code is None
+    assert result.invoice.delivery_status == "not_sent"
+
+
+async def test_paused_autopay_enrollment_still_gets_the_pay_link_email() -> None:
+    """Only an *active* autopay enrollment is auto-charged; paused families must be billed."""
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open", enrollment_id="enr-1")])
+    stripe = FakeInvoiceStripe()
+    email = FakeInvoiceEmail()
+    notify = _FakeAutopayNotice()
+
+    result = await _autopay_uc(
+        repo,
+        stripe=stripe,
+        email=email,
+        autopay=_FakeAutopayStatus("paused"),
+        notify_autopay=notify,
+    ).execute("inv-1")
+
+    assert notify.calls == []
+    assert len(email.calls) == 1
+    assert result.checkout_url == "https://checkout.stripe.com/pay/test"
+    assert result.invoice.delivery_status == "sent"
+
+
+async def test_autopay_lookup_failure_falls_through_to_the_pay_link_email() -> None:
+    """Fail-closed: an unreadable autopay status must not silence the invoice."""
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open", enrollment_id="enr-1")])
+    email = FakeInvoiceEmail()
+    notify = _FakeAutopayNotice()
+
+    await _autopay_uc(
+        repo,
+        stripe=FakeInvoiceStripe(),
+        email=email,
+        autopay=_FakeAutopayStatus(raises=True),
+        notify_autopay=notify,
+    ).execute("inv-1")
+
+    assert notify.calls == []
+    assert len(email.calls) == 1
+
+
+async def test_autopay_invoice_with_no_balance_is_not_treated_as_auto_charged() -> None:
+    """A settled invoice is never picked up by the worker, so it takes the normal path."""
+    repo = FakeLedgerRepository(
+        invoices=[_invoice(status="paid", balance_due_cents=0, enrollment_id="enr-1")]
+    )
+    email = FakeInvoiceEmail()
+    notify = _FakeAutopayNotice()
+
+    await _autopay_uc(
+        repo,
+        stripe=FakeInvoiceStripe(),
+        email=email,
+        autopay=_FakeAutopayStatus("active"),
+        notify_autopay=notify,
+    ).execute("inv-1")
+
+    assert notify.calls == []
+    assert len(email.calls) == 1
+
+
+async def test_autopay_notice_failure_marks_delivery_failed_and_sends_no_pay_link() -> None:
+    """A notice that blows up must not turn into a pay link the worker will double-collect."""
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open", enrollment_id="enr-1")])
+    email = FakeInvoiceEmail()
+
+    class _FailingNotice:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        async def __call__(self, invoice_id: str) -> dict[str, str]:
+            self.calls.append(invoice_id)
+            raise RuntimeError("resend unavailable")
+
+    result = await _autopay_uc(
+        repo,
+        stripe=FakeInvoiceStripe(),
+        email=email,
+        autopay=_FakeAutopayStatus("active"),
+        notify_autopay=_FailingNotice(),  # type: ignore[arg-type]
+    ).execute("inv-1")
+
+    assert email.calls == []
+    assert result.invoice.delivery_status == "delivery_failed"
+    assert result.autopay_notified is False

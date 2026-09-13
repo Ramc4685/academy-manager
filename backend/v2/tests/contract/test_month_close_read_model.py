@@ -168,12 +168,12 @@ async def test_a_seeded_month_fills_every_tile(db: Any, acad: str) -> None:
     assert view.invoices.generated == 2
     assert view.invoices.autopay_notices == 2
     assert view.invoices.emailed == 0
-    # The draft counts toward billed, exactly as the dashboard counts it:
-    # ``billed`` excludes voids only (spec §4.3).
-    assert view.money.billed_cents == 30_000
+    # The draft is counted as generated but never as money: it was never sent,
+    # so it owes nothing, exactly as the family page says (#736).
+    assert view.money.billed_cents == 20_000
     assert view.money.collected_cents == 10_000
-    assert view.money.outstanding_cents == 20_000
-    assert view.money.collection_rate == 0.3333
+    assert view.money.outstanding_cents == 10_000
+    assert view.money.collection_rate == 0.5
     assert view.warnings == []
 
 
@@ -253,17 +253,18 @@ def odd(view: dict[str, Any], code: str) -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
-async def test_an_invoice_with_no_enrollment_is_odd(db: Any, acad: str) -> None:
+async def test_an_invoice_pointing_at_a_missing_enrollment_is_odd(db: Any, acad: str) -> None:
     await seed_academy(db, acad)
     await seed_parent(db)
+    # "Not tied to a class" is a legitimate hand-created invoice, not a defect.
     await seed_invoice(db, academy_id=acad, invoice_id="inv-1", enrollment_id=None)
-    # A dangling reference is the same defect.
+    # A dangling reference is the defect the check exists for.
     await seed_invoice(db, academy_id=acad, invoice_id="inv-2", enrollment_id="enr-gone")
 
     row = odd(await reader(db).build(PERIOD), "invoice_without_enrollment")
 
-    assert row["count"] == 2
-    assert {item["id"] for item in row["items"]} == {"inv-1", "inv-2"}
+    assert row["count"] == 1
+    assert {item["id"] for item in row["items"]} == {"inv-2"}
 
 
 @pytest.mark.asyncio

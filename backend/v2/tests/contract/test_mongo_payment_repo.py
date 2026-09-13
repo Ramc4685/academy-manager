@@ -602,7 +602,7 @@ async def _seed_enrollment_without_billing_start(
 
     Neither admin_registration_review.py nor confirm_enrollment.py ever stamp
     billing_start_at/enrolled_at/created_at onto the enrollment document, so
-    _resolve_charge_for_enrollment's billing_start is always None for these —
+    resolve_monthly_charge's billing_start is always None for these —
     it never takes the first-month-proration branch, only the full-tuition
     one. skip_periods is therefore the only signal that can prevent a $0-quote
     period from being billed at full price once the enrollment exists.
@@ -683,7 +683,7 @@ async def test_generate_monthly_skips_zero_quote_period_via_skip_periods(db, aca
 async def test_generate_monthly_without_skip_periods_charges_full_tuition(db, acad) -> None:
     """Characterizes the bug this fix prevents: absent skip_periods, an
     enrollment with no billing_start_at is billed the FULL monthly price
-    (not prorated, not $0) because _resolve_charge_for_enrollment has no
+    (not prorated, not $0) because resolve_monthly_charge has no
     proration signal at all for these documents.
     """
     ledger_repo = MongoBillingLedgerRepository(db)

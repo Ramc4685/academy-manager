@@ -62,9 +62,10 @@ MAX_AUTOPAY_ATTEMPTS = MAX_DUNNING_ATTEMPTS
 _FAILED_LADDER_STATUSES: frozenset[str] = frozenset({"active", "processing"})
 _DUNNED_STATUS = "dunned"
 
-# ``draft`` invoices with a balance are owed money but the worker will never
-# charge them; they count for the reminder buckets (2/3) only.
-_OWING_STATUSES: frozenset[str] = CHARGEABLE_INVOICE_STATUSES | {"draft"}
+# The one rule, shared with the family page: a ``draft`` is the manual
+# invoicing working state and owes nothing until it is sent, so it never lands
+# a family in a reminder bucket (#736).
+_OWING_STATUSES: frozenset[str] = CHARGEABLE_INVOICE_STATUSES
 
 # The read model already excludes voids; the classifier ignores them anyway so a
 # stray void can never put a family in the Paid bucket (spec §2).
@@ -243,7 +244,7 @@ def _autopay_payload(
         return None
     if bucket == "autopay_scheduled":
         # The charge date is the ELIGIBLE invoice's due date (the one the worker
-        # will take), not the earliest owing one, which may be a draft.
+        # will take), not the earliest owing one, which may not be chargeable.
         charged = trigger or owing[0]
         return {
             "status": "eligible",

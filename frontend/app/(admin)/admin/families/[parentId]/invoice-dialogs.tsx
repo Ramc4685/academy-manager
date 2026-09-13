@@ -6,12 +6,13 @@ import { useMutation } from "@tanstack/react-query";
 import { Button, DialogActions, DialogError, Field, RallyModal } from "@/components/ds";
 import type { AddInvoiceLineRequest } from "@/lib/api/admin";
 import type { FamilyStudent } from "@/lib/api/admin-families";
-import { formatCents, parseDollarsToCents } from "@/lib/money";
+import { parseDollarsToCents } from "@/lib/money";
 
 import {
   currentPeriod,
   defaultDueDate,
   enrollmentOptions,
+  mintRequestId,
   periodLabel,
   type EnrollmentOption,
 } from "./family-view";
@@ -26,6 +27,12 @@ export interface CreateInvoiceResult {
   enrollment_id: string | null;
   period: string;
   due_date: string;
+  /**
+   * Minted once per dialog open, so a double-click or a retried request
+   * de-duplicates onto the first draft instead of opening a second blank
+   * invoice on the family (#727).
+   */
+  request_id: string;
 }
 
 /**
@@ -35,11 +42,14 @@ export interface CreateInvoiceResult {
 export function CreateInvoiceDialog({
   students,
   open,
+  dueDays,
   onClose,
   onSubmit,
 }: {
   students: FamilyStudent[];
   open: boolean;
+  /** The academy's "Days until due" Billing rule (#739). */
+  dueDays: number;
   onClose: () => void;
   onSubmit: (result: CreateInvoiceResult) => Promise<unknown>;
 }) {
@@ -47,16 +57,21 @@ export function CreateInvoiceDialog({
   const [studentId, setStudentId] = useState(onlyStudentId);
   const [enrollmentId, setEnrollmentId] = useState("");
   const [period, setPeriod] = useState(() => currentPeriod());
-  const [dueDate, setDueDate] = useState(() => defaultDueDate());
+  const [dueDate, setDueDate] = useState(() => defaultDueDate(new Date(), dueDays));
+  const [requestId, setRequestId] = useState(mintRequestId);
 
   useEffect(() => {
     if (open) {
       setStudentId(onlyStudentId);
       setEnrollmentId("");
       setPeriod(currentPeriod());
-      setDueDate(defaultDueDate());
+      setDueDate(defaultDueDate(new Date(), dueDays));
+      // A fresh id per open, so re-opening the dialog can still create a
+      // second invoice for the same family — only retries of one submit
+      // collapse (#727).
+      setRequestId(mintRequestId());
     }
-  }, [open, onlyStudentId]);
+  }, [open, onlyStudentId, dueDays]);
 
   const options = enrollmentOptions(students).filter(
     (option) => !studentId || option.student_id === studentId,
@@ -68,6 +83,7 @@ export function CreateInvoiceDialog({
         enrollment_id: enrollmentId || null,
         period,
         due_date: dueDate,
+        request_id: requestId,
       }),
   });
   const disabled = !studentId || !period || !dueDate || mutation.isPending;
@@ -295,23 +311,26 @@ export interface BillPeriodResult {
 export function BillPeriodDialog({
   open,
   option,
+  dueDays,
   onClose,
   onSubmit,
 }: {
   open: boolean;
   option: EnrollmentOption;
+  /** The academy's "Days until due" Billing rule (#739). */
+  dueDays: number;
   onClose: () => void;
   onSubmit: (result: BillPeriodResult) => Promise<unknown>;
 }) {
   const [period, setPeriod] = useState(() => currentPeriod());
-  const [dueDate, setDueDate] = useState(() => defaultDueDate());
+  const [dueDate, setDueDate] = useState(() => defaultDueDate(new Date(), dueDays));
 
   useEffect(() => {
     if (open) {
       setPeriod(currentPeriod());
-      setDueDate(defaultDueDate());
+      setDueDate(defaultDueDate(new Date(), dueDays));
     }
-  }, [open, option.enrollment_id]);
+  }, [open, option.enrollment_id, dueDays]);
 
   const mutation = useMutation({ mutationFn: () => onSubmit({ period, due_date: dueDate }) });
   const disabled = !period || !dueDate || mutation.isPending;
@@ -334,13 +353,11 @@ export function BillPeriodDialog({
       >
         <p className="text-sm text-rally-ink" data-testid="bill-period-subject">
           {option.label} · {periodLabel(period)}
-          {option.bill_period_price_cents != null
-            ? ` · ${formatCents(option.bill_period_price_cents)}/mo`
-            : ""}
         </p>
         <p className="text-xs text-rally-muted" data-testid="bill-period-draft-warning">
-          The monthly billing run skips this class for this month while the draft sits unsent —
-          send it or void it.
+          The backend prices the month the way the monthly run would — a class that starts
+          mid-month is prorated — so check the draft before sending it. The monthly billing run
+          skips this class for this month while the draft sits unsent — send it or void it.
         </p>
         <Field label="Month" required>
           <input

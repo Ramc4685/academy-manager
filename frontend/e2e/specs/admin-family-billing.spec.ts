@@ -250,7 +250,10 @@ async function stubShell(page: Page, owner: boolean): Promise<void> {
   await page.route("**/api/v2/admin/messages/**", (route) => fulfillJson(route, { messages: [] }));
 }
 
-async function setup(page: Page, opts: { owner: boolean; view?: unknown }) {
+async function setup(
+  page: Page,
+  opts: { owner: boolean; view?: unknown; invoiceDueDays?: number },
+) {
   const errors = collectConsoleErrors(page);
   installTenantGuard(page);
   await stubShell(page, opts.owner);
@@ -265,6 +268,10 @@ async function setup(page: Page, opts: { owner: boolean; view?: unknown }) {
     }
     return fulfillJson(route, view);
   });
+  // The hand-billing dialogs date their invoice from this Billing rule (#739).
+  await page.route("**/api/v2/admin/billing/settings/invoice-schedule", (route) =>
+    fulfillJson(route, { billing_day: 1, invoice_due_days: opts.invoiceDueDays ?? 7 }),
+  );
   // Also catches the Add charge line POST (.../invoices/{id}/lines).
   await page.route("**/api/v2/admin/billing/invoices/**", (route) => {
     const req = route.request();
@@ -455,6 +462,25 @@ test.describe("Family billing", () => {
       "/admin/families/parent-1",
     );
   });
+
+  test("both hand-billing dialogs default their due date to the Billing rule", async ({
+    page,
+  }) => {
+    // #739: the dialogs used to hard-code a week, so an academy on 10 days got
+    // manual and generated invoices for the same month on different due dates.
+    await setup(page, { owner: true, invoiceDueDays: 10 });
+    const expected = new Date();
+    expected.setDate(expected.getDate() + 10);
+    const iso = `${expected.getFullYear()}-${String(expected.getMonth() + 1).padStart(2, "0")}-${String(expected.getDate()).padStart(2, "0")}`;
+
+    await page.getByTestId("family-create-invoice").click();
+    await expect(page.getByTestId("create-invoice-due-date")).toHaveValue(iso);
+    await page.keyboard.press("Escape");
+
+    await page.getByTestId("enrollment-bill-period-enr-arjun").click();
+    await expect(page.getByTestId("bill-period-due-date")).toHaveValue(iso);
+  });
+
   // #728: the three draft-invoice controls were covered only by unit tests, so
   // a break in the dialog wiring (the prefill, the Create -> Add charge
   // handoff, the posted payload) could ship unseen.
@@ -474,12 +500,15 @@ test.describe("Family billing", () => {
 
     await expect.poll(() => posts.length).toBe(1);
     expect(posts[0].url).toContain("/admin/students/stu-arjun/invoices");
+    // #727: the dialog mints one request_id per open so a double-submit
+    // cannot create two blank drafts; its value is random, so match its shape.
     expect(posts[0].body).toEqual({
       student_id: "stu-arjun",
       parent_id: "parent-1",
       period: "2026-09",
       due_date: "2026-09-30",
       enrollment_id: "enr-arjun",
+      request_id: expect.stringMatching(/^[0-9a-f-]{36}$/),
     });
 
     // The draft lands on the page and Add charge opens on top of it, holding
@@ -547,9 +576,11 @@ test.describe("Family billing", () => {
     await expect(page.getByTestId("bill-period-dialog")).toBeVisible();
     await page.getByTestId("bill-period-period").fill("2026-09");
     await page.getByTestId("bill-period-due-date").fill("2026-09-30");
-    // Quotes the session price the backend will use, not the override.
+    // #724: the backend prices the period through the monthly generator's
+    // resolver (proration, 4-class cap), so the dialog no longer quotes a
+    // flat "/mo" figure it cannot know.
     await expect(page.getByTestId("bill-period-subject")).toHaveText(
-      "Arjun · Sat 9:00 Beginners · Sep 2026 · $60.00/mo",
+      "Arjun · Sat 9:00 Beginners · Sep 2026",
     );
     await expect(page.getByTestId("bill-period-draft-warning")).toContainText(
       "skips this class for this month",

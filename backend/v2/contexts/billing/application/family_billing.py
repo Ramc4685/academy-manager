@@ -325,12 +325,31 @@ def family_actions(
     return actions
 
 
+def _is_unsent_draft(inv: dict[str, Any]) -> bool:
+    """A draft nobody has been sent yet — the manual-invoicing working state.
+
+    ``send`` finalizes a draft into ``open``, so in practice a draft never
+    carries a ``last_sent_at``; the check is belt and braces so a row that
+    somehow did would not be treated as fresh.
+    """
+    delivery = inv.get("delivery") or {}
+    return inv.get("status") == "draft" and delivery.get("last_sent_at") is None
+
+
+def _visible_invoice_actions(inv: dict[str, Any]) -> list[str]:
+    # #726: a plain admin can create a draft (Create invoice / Bill this
+    # month are both admin routes), so a plain admin must be able to discard
+    # one — otherwise the draft blocks that month's generator until the owner
+    # logs in. Matches `ensure_owner_for_invoice_void` on the write side.
+    hidden = OWNER_ONLY_ACTIONS - {"void"} if _is_unsent_draft(inv) else OWNER_ONLY_ACTIONS
+    return [a for a in inv["actions"] if a not in hidden]
+
+
 def strip_owner_actions(view: dict[str, Any]) -> dict[str, Any]:
     """Remove owner-only actions for a non-owner caller (interface layer)."""
     out = dict(view)
     out["invoices"] = [
-        {**inv, "actions": [a for a in inv["actions"] if a not in OWNER_ONLY_ACTIONS]}
-        for inv in view["invoices"]
+        {**inv, "actions": _visible_invoice_actions(inv)} for inv in view["invoices"]
     ]
     out["students"] = [
         {
@@ -387,6 +406,7 @@ _AUDIT_SUMMARIES: dict[str, str] = {
     "autopay_paused": "Autopay turned off",
     "invoice_voided": "Invoice voided by admin",
     "invoice_hand_billed": "Invoice created by admin",
+    "invoice_hand_created": "Invoice created by admin",
     "invoice_line_added": "Charge added to invoice",
     "invoice_line_removed": "Charge removed from invoice",
     "discount_set": "Discount set",

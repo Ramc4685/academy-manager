@@ -83,9 +83,10 @@ class InvoiceFacts:
     """One invoice of the period, plus everything joined onto it.
 
     ``enrollment_found`` is False when ``enrollment_id`` points at a row the
-    ``enrollments`` query did not return — a dangling reference, which is a
-    different defect from having no ``enrollment_id`` at all but produces the
-    same odd row.
+    ``enrollments`` query did not return — a dangling reference, and the only
+    shape ``invoice_without_enrollment`` flags. Having no ``enrollment_id`` at
+    all is not a defect: a hand-created invoice can legitimately be tied to no
+    class (#737).
     """
 
     invoice_id: str
@@ -151,8 +152,15 @@ def _iso(value: date | datetime | None) -> str | None:
 
 
 def _live(invoices: Iterable[InvoiceFacts]) -> list[InvoiceFacts]:
-    """Non-void invoices — what "billed" and every odd check are about."""
-    return [inv for inv in invoices if not inv.is_void]
+    """Real, still-owed money — what "billed" and every odd check are about.
+
+    Voids are gone and drafts have not happened yet: a draft is the manual
+    invoicing working state, never sent, and the family page says it owes
+    nothing (#722). Counting one here billed the owner for money nobody was
+    asked for, fired odd checks on it, and let its placeholder due date pull
+    the autopay run's charge date forward (#736).
+    """
+    return [inv for inv in invoices if not inv.is_void and not inv.is_draft]
 
 
 def _family_href(parent_id: str | None) -> str:
@@ -337,7 +345,12 @@ def build_odd_section(
         hits[code].append(_family_item(inv))
 
     for inv in live:
-        if not inv.enrollment_id or not inv.enrollment_found:
+        # Only a *dangling* reference is odd. A null ``enrollment_id`` is the
+        # legitimate "Not tied to a class" state a hand-created invoice
+        # (#722) or a consumed checkout-period snapshot carries, so flagging
+        # it kept the box permanently non-zero and taught the owner to ignore
+        # it (#737, #725).
+        if inv.enrollment_id and not inv.enrollment_found:
             hits["invoice_without_enrollment"].append(_invoice_item(inv))
         if inv.outstanding_cents > 0 and inv.enrollment_status == _PAUSED_ENROLLMENT:
             add_family("paused_family_invoiced", inv)

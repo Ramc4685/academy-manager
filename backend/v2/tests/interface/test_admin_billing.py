@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
@@ -360,9 +361,14 @@ def _override_ledger(admin_client, ledger: _FakeLedger) -> None:
         period: str,
         due_date: date,
         enrollment_id: str | None,
+        actor_id: str | None = None,
+        request_id: str | None = None,
     ) -> dict:
+        # Mirrors the real closure: a fresh invoice id per call, and an
+        # idempotency key built from the caller's own inputs so a retried
+        # submit de-duplicates onto the first draft (#727).
         invoice = LedgerInvoice(
-            invoice_id="inv-test",
+            invoice_id=f"inv-test-{len(ledger.invoices) + 1}",
             academy_id="acad",
             parent_id=parent_id,
             student_id=student_id,
@@ -381,10 +387,28 @@ def _override_ledger(admin_client, ledger: _FakeLedger) -> None:
         created = await ledger.create_invoice(
             invoice,
             lines=[],
-            idempotency_key=f"admin-invoice-{invoice.invoice_id}",
+            idempotency_key=(
+                f"admin-invoice-{parent_id}-{request_id}"
+                if request_id
+                else f"admin-invoice-{invoice.invoice_id}"
+            ),
         )
         return created.model_dump(mode="json")
 
+    async def get_billing_invoice_detail(invoice_id: str) -> dict:
+        # Mirrors the real closure's shape for the two fields the #726 void
+        # gate reads; a permissive fake here would hide the gate entirely.
+        invoice = await ledger.get_invoice(invoice_id)
+        if invoice is None:
+            raise LookupError("invoice not found")
+        return {
+            "invoice_id": invoice.invoice_id,
+            "status": invoice.status,
+            "delivery_status": getattr(invoice, "delivery_status", "not_sent"),
+            "last_sent_at": getattr(invoice, "last_sent_at", None),
+        }
+
+    admin_client.use_cases.get_billing_invoice_detail = get_billing_invoice_detail
     admin_client.use_cases.send_billing_invoice = send_billing_invoice
     admin_client.use_cases.add_invoice_line = add_invoice_line
     admin_client.use_cases.remove_invoice_line = remove_invoice_line
@@ -402,19 +426,35 @@ class _FakeEnrollmentTargets:
         return self.target
 
 
+class _FakeBillingSettings:
+    """Only the one field the due-date default reads (#739)."""
+
+    def __init__(self, invoice_due_days: int) -> None:
+        self._invoice_due_days = invoice_due_days
+
+    async def get(self):
+        return SimpleNamespace(invoice_due_days=self._invoice_due_days)
+
+
 def _override_bill_enrollment_period(
-    admin_client, ledger: _FakeLedger, target: EnrollmentBillingTarget | None
+    admin_client,
+    ledger: _FakeLedger,
+    target: EnrollmentBillingTarget | None,
+    *,
+    invoice_due_days: int | None = None,
 ) -> list[str | None]:
     actors: list[str | None] = []
+    settings = None if invoice_due_days is None else _FakeBillingSettings(invoice_due_days)
 
     async def bill_enrollment_period(
-        *, enrollment_id: str, period: str, due_date: date, actor_id: str | None = None
+        *, enrollment_id: str, period: str, due_date: date | None, actor_id: str | None = None
     ) -> dict:
         actors.append(actor_id)
         return await BillEnrollmentPeriod(
             ledger=ledger,
             enrollments=_FakeEnrollmentTargets(target),
             add_line=AddInvoiceLine(ledger=ledger),
+            settings=settings,
         ).execute(
             BillEnrollmentPeriodCommand(
                 enrollment_id=enrollment_id, period=period, due_date=due_date
@@ -1482,6 +1522,35 @@ def test_bill_enrollment_period_drafts_invoice_with_tuition_line(admin_client):
     assert line.unit_amount_cents == 12_000
 
 
+def test_bill_enrollment_period_prices_and_describes_a_prorated_first_month(admin_client):
+    """A first month bills the resolved amount under the resolver's own copy (#724)."""
+    ledger = _FakeLedger()
+    _override_bill_enrollment_period(
+        admin_client,
+        ledger,
+        EnrollmentBillingTarget(
+            enrollment_id="enroll-1",
+            academy_id="acad",
+            student_id="student-1",
+            parent_id="parent-1",
+            monthly_price_cents=3_750,
+            tuition_description="Monthly tuition 2026-06: 3 of 8 classes",
+            snapshot_id="snap-1",
+        ),
+    )
+
+    response = admin_client.post(
+        "/api/v2/admin/enrollments/enroll-1/invoices/bill-period",
+        json={"period": "2026-06", "due_date": "2026-06-30"},
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["total_cents"] == 3_750
+    line = next(iter(ledger.lines.values()))
+    assert line.unit_amount_cents == 3_750
+    assert line.description == "Monthly tuition 2026-06: 3 of 8 classes"
+
+
 def test_bill_enrollment_period_rejects_a_second_invoice_for_the_period(admin_client):
     ledger = _FakeLedger(invoices=[_invoice(status="open")])
     _override_bill_enrollment_period(
@@ -1824,3 +1893,175 @@ def test_admin_invoice_list_falls_back_to_invoice_id_when_no_number_minted(admin
 
     assert response.status_code == 200, response.text
     assert response.json()["invoices"][0]["invoice_number"] == "inv-legacy-1"
+
+
+def test_bill_enrollment_period_defaults_the_due_date_to_the_billing_rule(admin_client):
+    """A body with no due_date takes the academy's window, not a hard-coded 7 (#739)."""
+    ledger = _FakeLedger()
+    _override_bill_enrollment_period(
+        admin_client,
+        ledger,
+        EnrollmentBillingTarget(
+            enrollment_id="enroll-1",
+            academy_id="acad",
+            student_id="student-1",
+            parent_id="parent-1",
+            monthly_price_cents=12_000,
+        ),
+        invoice_due_days=14,
+    )
+
+    response = admin_client.post(
+        "/api/v2/admin/enrollments/enroll-1/invoices/bill-period",
+        json={"period": "2026-06"},
+    )
+
+    assert response.status_code == 201, response.text
+    expected = (datetime.now(UTC).date() + timedelta(days=14)).isoformat()
+    assert response.json()["due_date"] == expected
+
+
+def test_bill_enrollment_period_keeps_an_explicitly_chosen_due_date(admin_client):
+    ledger = _FakeLedger()
+    _override_bill_enrollment_period(
+        admin_client,
+        ledger,
+        EnrollmentBillingTarget(
+            enrollment_id="enroll-1",
+            academy_id="acad",
+            student_id="student-1",
+            parent_id="parent-1",
+            monthly_price_cents=12_000,
+        ),
+        invoice_due_days=14,
+    )
+
+    response = admin_client.post(
+        "/api/v2/admin/enrollments/enroll-1/invoices/bill-period",
+        json={"period": "2026-06", "due_date": "2026-06-30"},
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["due_date"] == "2026-06-30"
+
+
+def test_create_student_invoice_accepts_a_body_without_a_due_date(admin_client):
+    """The route hands ``None`` down so the use case can apply Billing rules (#739)."""
+    ledger = _FakeLedger()
+    seen: list[date | None] = []
+    _override_ledger(admin_client, ledger)
+    _override_admin_student(admin_client, _student_detail(enrollment_ids=["enroll-1"]))
+    wrapped = admin_client.use_cases.create_student_invoice
+
+    async def create_student_invoice(*, due_date: date | None, **kwargs) -> dict:
+        seen.append(due_date)
+        return await wrapped(due_date=due_date or date(2026, 6, 30), **kwargs)
+
+    admin_client.use_cases.create_student_invoice = create_student_invoice
+
+    response = admin_client.post(
+        "/api/v2/admin/students/student-1/invoices",
+        json={
+            "student_id": "student-1",
+            "parent_id": "parent-1",
+            "period": "2026-06",
+            "enrollment_id": "enroll-1",
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    assert seen == [None]
+
+
+def test_create_student_invoice_forwards_the_actor_and_request_id(admin_client):
+    """#727: the audit row needs who, and the idempotency key needs the client's id."""
+    seen: list[dict[str, str | None]] = []
+    _override_ledger(admin_client, _FakeLedger())
+    _override_admin_student(admin_client, _student_detail(enrollment_ids=["enroll-1"]))
+    wrapped = admin_client.use_cases.create_student_invoice
+
+    async def create_student_invoice(
+        *, actor_id: str | None = None, request_id: str | None = None, **kwargs
+    ) -> dict:
+        seen.append({"actor_id": actor_id, "request_id": request_id})
+        return await wrapped(actor_id=actor_id, request_id=request_id, **kwargs)
+
+    admin_client.use_cases.create_student_invoice = create_student_invoice
+
+    response = admin_client.post(
+        "/api/v2/admin/students/student-1/invoices",
+        json={
+            "student_id": "student-1",
+            "parent_id": "parent-1",
+            "period": "2026-06",
+            "due_date": "2026-06-30",
+            "request_id": "req-0123456789abcdef",
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    assert seen == [{"actor_id": "u-admin", "request_id": "req-0123456789abcdef"}]
+
+
+def test_create_student_invoice_double_submit_returns_the_same_draft(admin_client):
+    """A double-click used to leave the family with two blank drafts (#727)."""
+    ledger = _FakeLedger()
+    _override_ledger(admin_client, ledger)
+    _override_admin_student(admin_client, _student_detail(enrollment_ids=["enroll-1"]))
+    body = {
+        "student_id": "student-1",
+        "parent_id": "parent-1",
+        "period": "2026-06",
+        "due_date": "2026-06-30",
+        "request_id": "req-0123456789abcdef",
+    }
+
+    first = admin_client.post("/api/v2/admin/students/student-1/invoices", json=body)
+    second = admin_client.post("/api/v2/admin/students/student-1/invoices", json=body)
+
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+    assert second.json()["invoice_id"] == first.json()["invoice_id"]
+    assert len(ledger.invoices) == 1
+
+
+def test_plain_admin_can_void_the_unsent_draft_they_created(admin_only_client):
+    """#726: draft creation is admin-reachable, so discarding one must be too."""
+    ledger = _FakeLedger(invoices=[_invoice(status="draft")])
+    _override_ledger(admin_only_client, ledger)
+
+    response = admin_only_client.post(
+        "/api/v2/admin/billing/invoices/inv-1/void",
+        json={"reason": "Created by mistake"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"ok": True}
+    assert ledger.invoices["inv-1"].status == "void"
+
+
+def test_plain_admin_still_cannot_void_an_open_invoice(admin_only_client):
+    """Everything past draft stays owner-only, and 404s exactly like before."""
+    ledger = _FakeLedger(invoices=[_invoice(status="open")])
+    _override_ledger(admin_only_client, ledger)
+
+    response = admin_only_client.post(
+        "/api/v2/admin/billing/invoices/inv-1/void",
+        json={"reason": "Cannot collect"},
+    )
+
+    assert response.status_code == 404, response.text
+    assert ledger.invoices["inv-1"].status == "open"
+
+
+def test_owner_can_still_void_an_open_invoice(admin_client):
+    ledger = _FakeLedger(invoices=[_invoice(status="open")])
+    _override_ledger(admin_client, ledger)
+
+    response = admin_client.post(
+        "/api/v2/admin/billing/invoices/inv-1/void",
+        json={"reason": "Cannot collect"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert ledger.invoices["inv-1"].status == "void"

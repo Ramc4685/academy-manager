@@ -98,8 +98,27 @@ export function currentPeriod(today: Date = new Date()): string {
   return `${today.getFullYear()}-${pad(today.getMonth() + 1)}`;
 }
 
-/** Default invoice due date: a week out, as the API's "YYYY-MM-DD". */
-export function defaultDueDate(today: Date = new Date(), days = 7): string {
+/**
+ * Fallback window, matching the backend's BillingSettings default. Only used
+ * while the Billing-rules query is in flight or unavailable.
+ */
+export const DEFAULT_INVOICE_DUE_DAYS = 7;
+
+/**
+ * The academy's "Days until due" Billing rule (#739). A configured 0 means due
+ * today, so only a missing schedule falls back — never `||`.
+ */
+export function invoiceDueDays(
+  schedule: { invoice_due_days: number } | null | undefined,
+): number {
+  return schedule?.invoice_due_days ?? DEFAULT_INVOICE_DUE_DAYS;
+}
+
+/** Default invoice due date: the configured window out, as the API's "YYYY-MM-DD". */
+export function defaultDueDate(
+  today: Date = new Date(),
+  days: number = DEFAULT_INVOICE_DUE_DAYS,
+): string {
   const due = new Date(today.getFullYear(), today.getMonth(), today.getDate() + days);
   return `${due.getFullYear()}-${pad(due.getMonth() + 1)}-${pad(due.getDate())}`;
 }
@@ -118,23 +137,12 @@ export function enrollmentPriceCents(enrollment: FamilyEnrollment): number | nul
   return enrollment.override_price_cents ?? enrollment.monthly_price_cents ?? null;
 }
 
-/**
- * What "Bill this month" will actually charge: the session's monthly price.
- * The backend prices a hand-billed month off the session document exactly as the
- * monthly generator does and ignores `override_price_cents`, so quoting the
- * override here would show the admin a number the invoice never carries.
- */
-export function enrollmentBillPeriodPriceCents(enrollment: FamilyEnrollment): number | null {
-  return enrollment.monthly_price_cents ?? null;
-}
-
 export interface EnrollmentOption {
   enrollment_id: string;
   student_id: string;
   student_name: string;
   label: string;
   price_cents: number | null;
-  bill_period_price_cents: number | null;
 }
 
 /** Flattens the family's students into one pickable list of enrollments. */
@@ -146,7 +154,6 @@ export function enrollmentOptions(students: FamilyStudent[]): EnrollmentOption[]
       student_name: student.name,
       label: `${student.name} · ${enrollment.session_title ?? "Class"}`,
       price_cents: enrollmentPriceCents(enrollment),
-      bill_period_price_cents: enrollmentBillPeriodPriceCents(enrollment),
     })),
   );
 }
