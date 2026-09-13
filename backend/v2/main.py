@@ -1179,8 +1179,19 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             # `digest_date` rolls over.
             if not digest_window_open(schedule, current_hour):
                 continue
+            # A fresh use case (and its provider) per academy per tick — NOT
+            # ``app.state.parent_digest`` — because ``_ParentDigestProvider``
+            # memoizes academy/program lookups and "today's" occurrences on
+            # itself (#531) for the lifetime of the instance it is called on.
+            # A process-lifetime singleton reused across every academy in this
+            # loop would leak academy A's cached occurrences/academy doc into
+            # academy B's run on the same tick (cross-tenant data in a parent's
+            # email) and would never notice an admin's later edit to the
+            # academy doc or default program (stale data until restart).
+            # Composing here scopes the provider to exactly what its docstring
+            # promises: one run, for one academy.
             with tenant_scope(academy_id):
-                result = await app.state.parent_digest.execute(
+                result = await compose_send_parent_daily_digest(db).execute(
                     SendParentDailyDigestCommand(
                         academy_id=academy_id,
                         digest_date=on_date,
@@ -1324,10 +1335,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         max_instances=1,
     )
     # Parent daily digest — same hourly-tick + per-academy-effective-hour model as
-    # the coach digest above. Composed unconditionally so the per-academy override
-    # works regardless of the env flag; the composed sender is still the stub
-    # unless email delivery is explicitly on.
-    app.state.parent_digest = compose_send_parent_daily_digest(db)
+    # the coach digest above; composed fresh per academy per tick inside
+    # ``_send_parent_daily_digests_body`` (not stashed on ``app.state`` like the
+    # coach digest) because ``_ParentDigestProvider`` memoizes per-run state on
+    # itself and must not be shared across academies or across ticks (#531).
     scheduler.add_job(
         _send_parent_daily_digests,
         "cron",

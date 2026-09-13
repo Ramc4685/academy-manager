@@ -549,7 +549,9 @@ class _ParentDigestProvider:
         # being re-fetched/re-queried per parent (or per enrollment, for
         # occurrences).
         self._academy_and_program_cache: dict[str, tuple[dict[str, Any] | None, str, str]] = {}
-        self._occurrences_by_session_cache: dict[date, dict[str, list[Any]]] = {}
+        # Keyed by (academy_id, on_date), not on_date alone — see
+        # `_occurrences_for_run`'s docstring for why.
+        self._occurrences_by_session_cache: dict[tuple[str, date], dict[str, list[Any]]] = {}
 
     async def build_view(self, parent_id: str, on_date: date) -> ParentDigestView | None:
         children_students = await self._list_children(parent_id)
@@ -708,11 +710,21 @@ class _ParentDigestProvider:
     async def _occurrences_for_run(self, on_date: date) -> dict[str, list[Any]]:
         """Every non-cancelled occurrence on ``on_date``, grouped by both
         ``session_id`` and ``template_session_id`` (mirroring the ``$or`` in
-        ``list_for_session_between``), fetched once per ``on_date`` and reused
-        for every enrollment across the run instead of one query per
-        enrollment (#531).
+        ``list_for_session_between``), fetched once per (academy, ``on_date``)
+        and reused for every enrollment across the run instead of one query
+        per enrollment (#531).
+
+        Keyed by ``(current_academy_id(), on_date)``, NOT ``on_date`` alone:
+        the scheduler processes every academy on the same tick, so a key of
+        just ``on_date`` would let academy B's ``build_view`` calls hit an
+        entry populated by academy A's query for the same date — academy A's
+        session times/locations leaking into academy B's parent emails. This
+        provider is meant to be composed fresh per academy per run (see
+        ``compose_send_parent_daily_digest`` and its call site), but the cache
+        key is scoped defensively in case that invariant is ever broken.
         """
-        cached = self._occurrences_by_session_cache.get(on_date)
+        cache_key = (current_academy_id(), on_date)
+        cached = self._occurrences_by_session_cache.get(cache_key)
         if cached is not None:
             return cached
         scheduler_tz = getattr(get_settings(), "scheduler_tz", None) or "UTC"
@@ -729,7 +741,7 @@ class _ParentDigestProvider:
             template_id = getattr(occurrence, "template_session_id", None)
             if template_id:
                 by_session.setdefault(str(template_id), []).append(occurrence)
-        self._occurrences_by_session_cache[on_date] = by_session
+        self._occurrences_by_session_cache[cache_key] = by_session
         return by_session
 
     async def _session_today(self, student_id: str, on_date: date) -> tuple[str, str, str] | None:

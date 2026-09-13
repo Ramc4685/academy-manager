@@ -13,9 +13,10 @@ from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import mongomock_motor
 import pytest
 from backend.v2.composition import digests as digests_module
-from backend.v2.composition.digests import _ParentDigestProvider
+from backend.v2.composition.digests import _ParentDigestProvider, compose_send_parent_daily_digest
 from backend.v2.contexts.communications.application.whatsapp_groups_block import (
     WhatsAppGroupLink,
 )
@@ -501,3 +502,54 @@ async def test_build_view_batches_occurrence_queries_across_enrollments() -> Non
     assert {child.child_name for child in view.children} == {"Maithri", "Rohan"}
     assert occurrences_repo.list_between.call_count == 1
     assert occurrences_repo.list_for_session_between.call_count == 0
+
+
+def test_occurrences_cache_is_scoped_to_the_academy_not_just_the_date() -> None:
+    """Regression for the #531 review finding: the cache backing
+    ``_occurrences_for_run`` used to be keyed by ``on_date`` alone, so two
+    academies processed on the same scheduler tick for the same date would
+    share one entry — the second academy's ``build_view`` call would silently
+    receive the FIRST academy's occurrences (cross-tenant leak) instead of
+    issuing its own query. Keying by (academy_id, on_date) — exercised here via
+    two different tenant scopes on the SAME provider instance — must produce
+    two independent queries, and academy B's parents must never see academy
+    A's session data."""
+    provider = _full_family_provider()
+
+    async def _run() -> None:
+        with tenant_scope("acad-A"):
+            await provider.build_view("p1", ON_DATE)
+        with tenant_scope("acad-B"):
+            await provider.build_view("p1", ON_DATE)
+
+    import asyncio
+
+    asyncio.run(_run())
+
+    occurrences_repo = provider._occurrences
+    assert occurrences_repo.list_between.call_count == 2, (
+        "academy B's run reused academy A's cached occurrences instead of "
+        "issuing its own list_between query — a cross-tenant data leak"
+    )
+
+
+@pytest.mark.asyncio
+async def test_composed_provider_is_not_reused_across_calls() -> None:
+    """Regression for the #531 review finding: ``compose_send_parent_daily_digest``
+    must build a FRESH ``_ParentDigestProvider`` on every call, as its own
+    docstring claims, rather than the caller holding one process-lifetime
+    instance and looping tenant scopes through it. A shared instance would leak
+    cached occurrences across academies on the same tick and would never see an
+    admin's later edit to the academy doc or default program (stale data until
+    process restart)."""
+    client = mongomock_motor.AsyncMongoMockClient()
+    db = client["test_db"]
+
+    first = compose_send_parent_daily_digest(db)
+    second = compose_send_parent_daily_digest(db)
+
+    assert first.provider is not second.provider, (
+        "compose_send_parent_daily_digest returned the same provider instance "
+        "twice; a caller that composes once and reuses it across academies/ticks "
+        "would share the provider's per-run caches across tenants"
+    )
