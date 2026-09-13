@@ -105,6 +105,17 @@ class EnrollmentQuery(Protocol):
     async def is_active(self, session_id: str, student_id: str) -> bool: ...
     async def active_for_student(self, student_id: str) -> list[Enrollment]: ...
 
+    async def seat_holding_for_student(self, student_id: str) -> list[Enrollment]:
+        """Rows in ``SEAT_HOLDING`` (``active`` or ``held``) for one student.
+
+        Distinct from ``active_for_student`` (active only) and
+        ``active_or_paused_for_student`` (active + paused, never held): a
+        ``held`` enrollment is a seat-holding re-enrollment (e.g. a
+        reclaim-pending / held student) and must count as "the series is
+        back on" for any caller — such as win-back outreach (issue #778) —
+        that needs to know whether a student currently occupies a seat.
+        """
+
     async def departable_for_student(self, student_id: str) -> list[Enrollment]:
         """Every row for one student that a Drop can still act on (issue #698).
 

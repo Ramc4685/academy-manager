@@ -44,13 +44,16 @@ _LOOKBACK_DAYS = max(WIN_BACK_MILESTONE_DAYS) + 2
 
 
 class WinBackSendRepository(Protocol):
-    """Idempotent claim per ``(student_id, milestone_key)`` — the same shape
-    as ``MongoHoldNoticeSendRepository.try_claim``, wrapping
+    """Idempotent claim per ``(student_id, milestone_key, dropped_event_id)``
+    — the same shape as ``MongoHoldNoticeSendRepository.try_claim``, wrapping
     ``claim_digest_send`` so a missed tick or a concurrent worker can never
-    double-send a milestone."""
+    double-send a milestone. ``dropped_event_id`` scopes the claim to one
+    departure cycle (review fix on #778): a student who drops, re-enrolls,
+    and drops again must be eligible for a fresh 30/60/90 series, not
+    permanently blocked by the first cycle's claims."""
 
     async def try_claim(
-        self, *, academy_id: str, student_id: str, milestone_key: str
+        self, *, academy_id: str, student_id: str, milestone_key: str, dropped_event_id: str
     ) -> dict[str, Any] | None: ...
 
     async def mark_sent(self, send_id: str) -> None: ...
@@ -139,10 +142,10 @@ class SendWinBackNotices:
         if due_milestone is None:
             return 0
 
-        # Cancelled by re-enrollment: any currently active/held enrollment
-        # for this student means the series is over — never claim, never
-        # send, for ANY still-due milestone.
-        current = await self._enrollments.active_for_student(event.student_id)
+        # Cancelled by re-enrollment: any currently active/held (SEAT_HOLDING)
+        # enrollment for this student means the series is over — never
+        # claim, never send, for ANY still-due milestone.
+        current = await self._enrollments.seat_holding_for_student(event.student_id)
         if current:
             return 0
 
@@ -161,6 +164,7 @@ class SendWinBackNotices:
             academy_id=academy_id,
             student_id=event.student_id,
             milestone_key=milestone_key,
+            dropped_event_id=event.event_id,
         )
         if claim is None:
             return 0

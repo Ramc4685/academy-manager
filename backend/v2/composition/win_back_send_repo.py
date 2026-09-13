@@ -33,19 +33,25 @@ class MongoWinBackSendRepository(TenantScopedRepository):
     collection_name = "win_back_notice_sends"
 
     async def try_claim(
-        self, *, academy_id: str, student_id: str, milestone_key: str
+        self, *, academy_id: str, student_id: str, milestone_key: str, dropped_event_id: str
     ) -> dict[str, Any] | None:
         send_id = str(new_ulid())
+        # `digest_date` folds in `dropped_event_id` (review fix on #778): a
+        # student can drop, get win-back outreach, re-enroll, then drop
+        # again — each departure cycle must get its own claim namespace, or
+        # the first cycle's 30/60/90 claims permanently block every later
+        # cycle's. `milestone_key` alone stays on the doc for readability /
+        # querying; `digest_date` is the compound value `claim_digest_send`
+        # actually matches on (mirrors the "<date>#test:<ulid>" synthetic
+        # composition documented in `claim_digest_send`).
+        digest_date = f"{milestone_key}:{dropped_event_id}"
         doc = {
             "send_id": send_id,
             "academy_id": academy_id,
             "student_id": student_id,
             "milestone_key": milestone_key,
-            # See `MongoHoldNoticeSendRepository`'s identical comment:
-            # `claim_digest_send`'s post-insert verify filters on
-            # `digest_date`, not `milestone_key` — load-bearing, not
-            # decorative.
-            "digest_date": milestone_key,
+            "dropped_event_id": dropped_event_id,
+            "digest_date": digest_date,
             "status": str(DigestSendStatus.QUEUED),
             "provider_message_id": None,
             "failed_reason": None,
@@ -59,7 +65,7 @@ class MongoWinBackSendRepository(TenantScopedRepository):
             academy_id=academy_id,
             recipient_field="student_id",
             recipient_id=student_id,
-            digest_date=milestone_key,
+            digest_date=digest_date,
         )
 
     async def mark_sent(self, send_id: str) -> None:

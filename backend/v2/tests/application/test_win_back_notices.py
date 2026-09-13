@@ -61,7 +61,7 @@ class FakeEnrollmentQuery:
     def __init__(self, active_by_student: dict[str, list[Enrollment]] | None = None) -> None:
         self._active_by_student = active_by_student or {}
 
-    async def active_for_student(self, student_id: str) -> list[Enrollment]:
+    async def seat_holding_for_student(self, student_id: str) -> list[Enrollment]:
         return self._active_by_student.get(student_id, [])
 
 
@@ -80,15 +80,17 @@ class FakeWinBackSendRepository:
     """In-memory stand-in for the unique-index-backed Mongo claim."""
 
     def __init__(self) -> None:
-        self._claimed: set[tuple[str, str, str]] = set()
+        self._claimed: set[tuple[str, str, str, str]] = set()
         self.sent_ids: list[str] = []
 
-    async def try_claim(self, *, academy_id: str, student_id: str, milestone_key: str):
-        key = (academy_id, student_id, milestone_key)
+    async def try_claim(
+        self, *, academy_id: str, student_id: str, milestone_key: str, dropped_event_id: str
+    ):
+        key = (academy_id, student_id, milestone_key, dropped_event_id)
         if key in self._claimed:
             return None
         self._claimed.add(key)
-        send_id = f"send-{student_id}-{milestone_key}"
+        send_id = f"send-{student_id}-{milestone_key}-{dropped_event_id}"
         return {"send_id": send_id}
 
     async def mark_sent(self, send_id: str) -> None:
@@ -154,7 +156,7 @@ async def test_sends_exactly_one_notice_at_30_day_milestone():
     assert sent == 1
     assert len(notifier.sent) == 1
     assert notifier.sent[0]["milestone_days"] == 30
-    assert (ACADEMY_ID, "stu-1", "30") in send_repo._claimed
+    assert (ACADEMY_ID, "stu-1", "30", "evt-stu-1") in send_repo._claimed
 
 
 @pytest.mark.asyncio
@@ -193,6 +195,35 @@ async def test_re_enrolled_student_is_skipped_and_no_claim_written():
         events=[event],
         students=[student],
         active_by_student={"stu-1": [active_enrollment]},
+        now=now,
+    )
+
+    sent = await use_case.execute(academy_id=ACADEMY_ID)
+
+    assert sent == 0
+    assert notifier.sent == []
+    assert send_repo._claimed == set()
+
+
+@pytest.mark.asyncio
+async def test_held_re_enrollment_is_skipped_and_no_claim_written():
+    """Review fix (#778): a `held` re-enrollment is SEAT_HOLDING, same as
+    `active` — it must cancel win-back outreach too, not just `active`."""
+    now = datetime(2026, 9, 13, tzinfo=UTC)
+    dropped_at = now - timedelta(days=30)
+    event = _dropped_event("stu-1", effective_at=dropped_at)
+    student = _student("stu-1")
+    held_enrollment = Enrollment(
+        enrollment_id="enr-held",
+        academy_id=ACADEMY_ID,
+        session_id="sess-1",
+        student_id="stu-1",
+        status="held",
+    )
+    use_case, send_repo, notifier = _build(
+        events=[event],
+        students=[student],
+        active_by_student={"stu-1": [held_enrollment]},
         now=now,
     )
 
@@ -243,3 +274,43 @@ async def test_no_notifier_configured_is_a_safe_noop():
     sent = await use_case.execute(academy_id=ACADEMY_ID)
 
     assert sent == 0
+
+
+@pytest.mark.asyncio
+async def test_second_departure_cycle_gets_its_own_claim_namespace():
+    """Review fix (#778): a student who drops, gets win-back outreach,
+    re-enrolls, then drops again months later must be eligible for a fresh
+    30/60/90 series — the first cycle's claims must not block the second's."""
+    send_repo = FakeWinBackSendRepository()
+
+    first_now = datetime(2026, 9, 13, tzinfo=UTC)
+    first_dropped_at = first_now - timedelta(days=30)
+    first_event = _dropped_event("stu-1", effective_at=first_dropped_at)
+    student = _student("stu-1")
+    use_case_one, send_repo, _notifier_one = _build(
+        events=[first_event], students=[student], send_repo=send_repo, now=first_now
+    )
+    first_sent = await use_case_one.execute(academy_id=ACADEMY_ID)
+
+    # Student re-enrolls, then drops again — a distinct lifecycle event.
+    second_now = first_now + timedelta(days=200)
+    second_dropped_at = second_now - timedelta(days=30)
+    second_event = EnrollmentLifecycleEvent(
+        event_id="evt-stu-1-cycle-2",
+        academy_id=ACADEMY_ID,
+        event_type="dropped",
+        enrollment_id="enr-stu-1-cycle-2",
+        student_id="stu-1",
+        effective_at=second_dropped_at,
+        occurred_at=second_dropped_at,
+    )
+    use_case_two, send_repo, notifier_two = _build(
+        events=[second_event], students=[student], send_repo=send_repo, now=second_now
+    )
+    second_sent = await use_case_two.execute(academy_id=ACADEMY_ID)
+
+    assert first_sent == 1
+    assert second_sent == 1
+    assert len(notifier_two.sent) == 1
+    assert (ACADEMY_ID, "stu-1", "30", "evt-stu-1") in send_repo._claimed
+    assert (ACADEMY_ID, "stu-1", "30", "evt-stu-1-cycle-2") in send_repo._claimed

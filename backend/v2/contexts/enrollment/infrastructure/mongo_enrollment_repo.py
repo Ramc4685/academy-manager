@@ -7,6 +7,7 @@ from datetime import date
 from backend.v2.contexts.enrollment.domain.models import (
     ACTIVE_OR_PAUSED,
     LIVE,
+    SEAT_HOLDING,
     Enrollment,
 )
 from backend.v2.shared.tenancy import TenantScopedRepository
@@ -76,6 +77,16 @@ class MongoEnrollmentRepository(TenantScopedRepository):
     async def active_for_student(self, student_id: str) -> list[Enrollment]:
         cursor = self._find_many(
             {"student_id": student_id, "status": "active"},
+            sort=[("enrollment_id", 1)],
+        )
+        return [self._to_domain(doc) async for doc in cursor]
+
+    async def seat_holding_for_student(self, student_id: str) -> list[Enrollment]:
+        """Rows in ``SEAT_HOLDING`` (``active`` or ``held``) for one student
+        (issue #778 review fix): a ``held`` re-enrollment still occupies a
+        seat and must count as "back", the same as ``active``."""
+        cursor = self._find_many(
+            {"student_id": student_id, "status": {"$in": sorted(SEAT_HOLDING)}},
             sort=[("enrollment_id", 1)],
         )
         return [self._to_domain(doc) async for doc in cursor]
