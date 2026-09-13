@@ -75,6 +75,33 @@ describe("buildWithdrawRequest", () => {
       buildWithdrawRequest({ withdrawalDate: "2026-09-15", outcome: "refund", adminNote: "" }),
     ).toEqual({ effective_date: "2026-09-15", outcome: "refund", reason: "Withdrawal refund" });
   });
+
+  // Issue #775: the structured code rides beside the note, and "not coded"
+  // is an ABSENT key — the route's `DepartureReasonCode | None` rejects "".
+  it("sends the structured reason code beside the note when one was picked", () => {
+    expect(
+      buildWithdrawRequest({
+        withdrawalDate: "2026-09-15",
+        outcome: "adjustment",
+        adminNote: "Dad took a job in Austin",
+        reasonCode: "moved_away",
+      }),
+    ).toEqual({
+      effective_date: "2026-09-15",
+      outcome: "adjustment",
+      reason: "Dad took a job in Austin",
+      reason_code: "moved_away",
+    });
+  });
+
+  it("omits reason_code entirely when the admin did not pick one", () => {
+    const body = buildWithdrawRequest({
+      withdrawalDate: "2026-09-15",
+      outcome: "adjustment",
+      adminNote: "left",
+    });
+    expect("reason_code" in body).toBe(false);
+  });
 });
 
 describe("withdrawErrorMessage", () => {

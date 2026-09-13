@@ -8,6 +8,7 @@
  * hidden from plain admins here rather than shown and then refused.
  */
 
+import type { DepartureReasonCode } from "@/lib/admin/departure-reasons";
 import type { WithdrawEnrollmentRequest } from "@/lib/api/admin";
 import type { DropDefaultOutcome } from "@/lib/api/v2/departure-policy";
 
@@ -82,17 +83,26 @@ export function initialWithdrawalOutcome(
   return outcome;
 }
 
-/** The one request body both dialog paths used to build separately. */
+/**
+ * The one request body both dialog paths used to build separately.
+ *
+ * `reasonCode` (issue #775) is the structured half of the departure reason
+ * and is left OFF the body when the admin did not pick one: the route models
+ * it as `DepartureReasonCode | None`, which rejects `""`, and an omitted key
+ * is what "not coded" has to look like on the wire.
+ */
 export function buildWithdrawRequest(input: {
   withdrawalDate: string;
   outcome: WithdrawalOutcome;
   adminNote: string;
+  reasonCode?: DepartureReasonCode;
 }): WithdrawEnrollmentRequest {
   const note = input.adminNote.trim();
   return {
     effective_date: input.withdrawalDate,
     outcome: input.outcome,
     reason: note || `Withdrawal ${input.outcome}`,
+    ...(input.reasonCode ? { reason_code: input.reasonCode } : {}),
   };
 }
 

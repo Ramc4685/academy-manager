@@ -32,7 +32,13 @@ from backend.v2.contexts.enrollment.domain.models import Session, Student
 #: taking effect (``self_cancel.py``) and a previously-scheduled cancel being
 #: processed (``process_scheduled_cancellation_actions.py``) record — without
 #: it, every family that left BY THEIR OWN ACTION was invisible to this
-#: report and so to the People directory's Left tab (#775). The sibling
+#: report (#775). Scope note, because the first pass at #775 overstated this:
+#: the People directory's Left tab is NOT built on this report. That tab is
+#: ``derive_lifecycle`` (``domain/lifecycle.py``, rule R5: every enrollment
+#: row terminal) and reads no events at all, so a self-cancelled family
+#: already appeared there. #775's acceptance criteria ask for the Left tab to
+#: be rebuilt on this report and for a Re-enroll action on Left rows; neither
+#: is built yet and both remain open scope of that issue. The sibling
 #: ``cancellation_scheduled`` stays out on purpose: it is a promise with a
 #: future date, and the real departure row follows when it runs.
 DEPARTURE_EVENT_TYPES: frozenset[str] = frozenset(

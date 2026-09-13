@@ -212,8 +212,10 @@ function StudentsToolbar({
               key={filter.id}
               type="button"
               role="tab"
+              // `aria-selected` is the tab's own selected state; `aria-pressed`
+              // is the toggle-button vocabulary these filters used before they
+              // became a tablist and is not valid on role="tab".
               aria-selected={active}
-              aria-pressed={active}
               data-testid={`admin-students-filter-${filter.id}`}
               onClick={() => onFilterChange(filter.id)}
               className={`inline-flex h-8 items-center gap-2 rounded-md px-3 font-body text-[13px] font-semibold transition ${

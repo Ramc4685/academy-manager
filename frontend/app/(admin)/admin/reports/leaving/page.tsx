@@ -11,6 +11,7 @@ import { useQuery } from "@tanstack/react-query";
 import { getLeavingReport } from "@/lib/api/v2/departure-policy";
 import { Card } from "@/components/ds/card";
 import { BigNum, Overline } from "@/components/ds/typography";
+import { departureReasonLabel } from "@/lib/admin/departure-reasons";
 
 function monthStartIso(period: string): string {
   return `${period}-01T00:00:00.000Z`;
@@ -103,6 +104,7 @@ export default function AdminLeavingReportPage() {
                   <th className="px-2 py-2">Student</th>
                   <th className="px-2 py-2">Class</th>
                   <th className="px-2 py-2">Type</th>
+                  <th className="px-2 py-2">Reason code</th>
                   <th className="px-2 py-2">Reason</th>
                   <th className="px-2 py-2">Actor</th>
                   <th className="px-2 py-2">Revenue effect</th>
@@ -118,6 +120,12 @@ export default function AdminLeavingReportPage() {
                     <td className="px-2 py-2 text-rally-muted">{row.session_title ?? "—"}</td>
                     <td className="px-2 py-2 text-rally-ink">
                       {EVENT_LABEL[row.event_type] ?? row.event_type}
+                    </td>
+                    {/* Issue #775: the grouped half of "why". Blank for every
+                        departure recorded before the vocabulary existed, and
+                        for any an admin chose not to code. */}
+                    <td className="px-2 py-2 text-rally-ink">
+                      {departureReasonLabel(row.reason_code) ?? "—"}
                     </td>
                     <td className="px-2 py-2 text-rally-muted">{row.reason ?? "—"}</td>
                     <td className="px-2 py-2 text-rally-muted">

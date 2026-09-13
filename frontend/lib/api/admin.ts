@@ -9,6 +9,7 @@ import type {
   BillingRulesView,
   UpdateBillingRulesRequest,
 } from "@/lib/billing-rules-form";
+import type { DepartureReasonCode } from "@/lib/admin/departure-reasons";
 import type { PersonLifecycle } from "@/lib/format/lifecycle-copy";
 
 import { apiFetch } from "./client";
@@ -241,6 +242,8 @@ export interface WithdrawEnrollmentRequest {
   effective_date: string;
   outcome?: "credit" | "refund" | "adjustment";
   reason: string;
+  /** Issue #775: the closed-vocabulary departure reason, beside the note. */
+  reason_code?: DepartureReasonCode;
 }
 
 export interface RemoveEnrollmentRequest {
