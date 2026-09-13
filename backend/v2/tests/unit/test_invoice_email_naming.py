@@ -16,7 +16,7 @@ from datetime import date
 
 import pytest
 
-from backend.v2.composition.email_adapters import InvoiceEmailAdapter, InvoiceNaming
+from backend.v2.composition.email_adapters import InvoiceEmailAdapter, InvoiceNaming, LastCharge
 from backend.v2.contexts.communications.application.ports import SendOutcome
 from backend.v2.contexts.identity.domain.models import AcademyMembership, User
 from backend.v2.shared.tenancy import tenant_scope
@@ -236,3 +236,65 @@ async def test_adapter_survives_a_failing_naming_resolver() -> None:
         )
 
     assert "September 2026" in sender.calls[0]["subject"]
+
+
+_LAST_CHARGE = LastCharge(
+    amount_cents=7_000,
+    currency="usd",
+    period="2026-08",
+    charged_on=date(2026, 9, 3),
+)
+
+
+async def test_autopay_notice_explains_the_previous_month_charge() -> None:
+    """The sentence the incident asked for: two charges five days apart only
+    read as one duplicate while the earlier one is unnamed (#659)."""
+    sender = _FakeSender()
+    naming = _FULL_NAMING.model_copy(update={"last_charge": _LAST_CHARGE})
+    with tenant_scope("acad"):
+        await _adapter(sender, naming=naming).send_autopay_notice(
+            parent_id="parent-1",
+            invoice_id=RAW_INVOICE_ID,
+            period="2026-09",
+            amount_cents=7_000,
+            currency="usd",
+            charge_on=date(2026, 9, 8),
+            portal_url="https://app.test/parent/payments",
+        )
+
+    body = sender.calls[0]["body"]
+    assert "Your last charge was" in body
+    assert "$70.00 for August 2026 tuition on September 3" in body
+
+
+async def test_autopay_receipt_explains_the_previous_month_charge() -> None:
+    sender = _FakeSender()
+    naming = _FULL_NAMING.model_copy(update={"last_charge": _LAST_CHARGE})
+    with tenant_scope("acad"):
+        await _adapter(sender, naming=naming).send_autopay_receipt(
+            parent_id="parent-1",
+            invoice_id=RAW_INVOICE_ID,
+            period="2026-09",
+            amount_cents=7_000,
+            currency="usd",
+        )
+
+    assert "$70.00 for August 2026 tuition on September 3" in sender.calls[0]["body"]
+
+
+async def test_no_last_charge_sentence_when_there_is_no_recent_charge() -> None:
+    """Silence, not "no previous charge": a first-month family must not be told
+    anything about a payment history they do not have."""
+    sender = _FakeSender()
+    with tenant_scope("acad"):
+        await _adapter(sender, naming=_FULL_NAMING).send_autopay_notice(
+            parent_id="parent-1",
+            invoice_id=RAW_INVOICE_ID,
+            period="2026-09",
+            amount_cents=7_000,
+            currency="usd",
+            charge_on=date(2026, 9, 8),
+            portal_url=None,
+        )
+
+    assert "last charge" not in sender.calls[0]["body"].lower()

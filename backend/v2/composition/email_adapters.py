@@ -25,7 +25,7 @@ from pydantic import BaseModel
 from backend.v2.contexts.billing.application.ports import (
     InviteEmailOutcome as AddCardReminderEmailOutcome,
 )
-from backend.v2.contexts.billing.domain.ledger import format_tuition_month
+from backend.v2.contexts.billing.domain.ledger import format_charge_date, format_tuition_month
 from backend.v2.contexts.communications.application.ports import (
     EmailSendPort,
     ResolvedRecipient,
@@ -175,6 +175,24 @@ def build_user_facing_invite_sender(
     return LoginInviteEmailAdapter(sender=sender)
 
 
+class LastCharge(BaseModel):
+    """The most recent successful charge on the same enrollment (issue #659).
+
+    The incident copy the owner asked for is "Your last charge was $70.00 for
+    August 2026 tuition on September 3": back-to-back months only explain
+    themselves if the *previous* month is named next to the upcoming one.
+    Resolved by ``composition.invoice_naming`` and capped at 45 days there, so
+    the sentence is always about a charge the parent still remembers.
+    """
+
+    model_config = {"frozen": True}
+
+    amount_cents: int
+    currency: str
+    period: str
+    charged_on: date
+
+
 class InvoiceNaming(BaseModel):
     """What a parent needs to recognise a charge (issue #659).
 
@@ -191,6 +209,9 @@ class InvoiceNaming(BaseModel):
     #: The human ``ACADEMYCODE-YYYY-MM-NNNN`` number. The raw ``invoice_id`` is
     #: deliberately NOT a fallback — a parent must never see the internal slug.
     invoice_number: str | None = None
+    #: The previous successful charge on this enrollment, when one landed in
+    #: the last 45 days. ``None`` means "say nothing" — never "no charge".
+    last_charge: LastCharge | None = None
 
 
 class InvoiceEmailAdapter:
@@ -241,6 +262,23 @@ class InvoiceEmailAdapter:
         if naming.session_label:
             parts.append(f"({html.escape(naming.session_label)})")
         return " ".join(parts)
+
+    @staticmethod
+    def _last_charge_html(naming: InvoiceNaming) -> str:
+        """ "Your last charge was $70.00 for August 2026 tuition on September 3."
+
+        Omitted entirely when there is no recent charge: an empty sentence is
+        better than one that implies the family has never paid.
+        """
+        charge = naming.last_charge
+        if charge is None:
+            return ""
+        amount = format_money(charge.amount_cents, charge.currency)
+        line = (
+            f"{amount} for {format_tuition_month(charge.period)} tuition "
+            f"on {format_charge_date(charge.charged_on)}"
+        )
+        return f"<p>Your last charge was <strong>{html.escape(line)}</strong>.</p>"
 
     @staticmethod
     def _invoice_number_html(naming: InvoiceNaming) -> str:
@@ -422,6 +460,7 @@ class InvoiceEmailAdapter:
             f"<p>Your saved card will be charged on <strong>{safe_date}</strong>. "
             "Nothing to do if that works for you. Pay early or update your card "
             "before then if not.</p>"
+            f"{self._last_charge_html(naming)}"
             f"{action}"
             f"{self._invoice_number_html(naming)}"
         )
@@ -459,6 +498,7 @@ class InvoiceEmailAdapter:
             f"<p>We charged <strong>{html.escape(amount)}</strong> to your saved card for "
             f"{self._tuition_html(period, naming)}.</p>"
             f"<p style='color: {_BRAND_MUTED};'>Thank you. No action is needed.</p>"
+            f"{self._last_charge_html(naming)}"
             f"{self._invoice_number_html(naming)}"
         )
         outcome = await self._sender.send(

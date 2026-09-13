@@ -4,7 +4,7 @@ Lives in ``composition`` for the same reason ``email_adapters`` does: it joins
 billing's ledger to the roster collections that belong to other contexts, which
 the contexts themselves may not import.
 
-One resolver call answers three questions for one ``invoice_id``:
+One resolver call answers four questions for one ``invoice_id``:
 
 * **Which child?** — ``invoices.student_id`` → ``students.full_name``.
 * **Which class?** — ``invoices.enrollment_id`` → ``enrollments.session_id`` →
@@ -13,6 +13,9 @@ One resolver call answers three questions for one ``invoice_id``:
   for the invoices that predate numbering so a parent never sees the internal
   ``inv-monthly-...`` slug. (Owner decision 2026-09-12: historical invoices
   keep their ids and gain a number on first display or send.)
+* **What did they last pay?** — the newest ``payment_allocations`` row against
+  another invoice for the same enrollment within 45 days, so back-to-back
+  months explain themselves instead of reading as one duplicate charge.
 
 Every lookup is best effort. A resolver that returns partial or empty naming
 costs an email its detail; one that raises would cost the family the email,
@@ -23,9 +26,10 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from backend.v2.composition.email_adapters import InvoiceNaming
+from backend.v2.composition.email_adapters import InvoiceNaming, LastCharge
 from backend.v2.contexts.billing.application.use_cases.invoice_numbering import (
     mint_invoice_number,
 )
@@ -34,6 +38,11 @@ from backend.v2.shared.tenancy import current_academy_id
 
 log = logging.getLogger(__name__)
 
+#: How far back a previous charge is still worth naming (issue #659). The
+#: incident was two charges five days apart; a charge older than a billing
+#: cycle or two explains nothing and only adds noise to the email.
+LAST_CHARGE_WINDOW = timedelta(days=45)
+
 
 def build_invoice_naming_resolver(
     *,
@@ -41,7 +50,10 @@ def build_invoice_naming_resolver(
     db: Any,
     billing_counters: Any,
     billing_settings: Any,
+    now: Callable[[], datetime] | None = None,
 ) -> Callable[[str], Awaitable[InvoiceNaming]]:
+    _now = now or (lambda: datetime.now(UTC))
+
     async def resolve(invoice_id: str) -> InvoiceNaming:
         academy_id = current_academy_id()
         invoice = await ledger.get_invoice(invoice_id)
@@ -57,10 +69,12 @@ def build_invoice_naming_resolver(
             billing_counters=billing_counters,
             billing_settings=billing_settings,
         )
+        last_charge = await _last_charge(db, academy_id, invoice, now=_now())
         return InvoiceNaming(
             student_name=student_name,
             session_label=session_label,
             invoice_number=number,
+            last_charge=last_charge,
         )
 
     return resolve
@@ -95,6 +109,69 @@ async def _session_label(db: Any, academy_id: str, enrollment_id: str | None) ->
         days_of_week=list(session.get("days_of_week") or []),
         start_time=str(session.get("start_time") or "") or None,
     )
+
+
+async def _last_charge(
+    db: Any, academy_id: str, invoice: Any, *, now: datetime
+) -> LastCharge | None:
+    """The newest settled charge on the same enrollment, inside the window.
+
+    Issue #659's core ask: "Your last charge was $70.00 for August 2026 tuition
+    on September 3" is what turns two charges five days apart from a suspected
+    duplicate into two named months.
+
+    The invoice being sent is excluded — a parent reading about September does
+    not want September's own allocation quoted back at them — and so is any
+    allocation of zero, which is a bookkeeping row rather than money moving.
+    Best effort like the rest of this module: a failed lookup drops the
+    sentence, never the email.
+    """
+    enrollment_id = getattr(invoice, "enrollment_id", None)
+    if not enrollment_id:
+        return None
+    try:
+        siblings = {
+            str(doc.get("invoice_id") or ""): doc
+            async for doc in db["invoices"].find(
+                {
+                    "academy_id": academy_id,
+                    "enrollment_id": enrollment_id,
+                    "invoice_id": {"$ne": invoice.invoice_id},
+                },
+                {"invoice_id": 1, "period": 1, "currency": 1},
+            )
+        }
+        siblings.pop("", None)
+        if not siblings:
+            return None
+        allocation = await db["payment_allocations"].find_one(
+            {
+                "academy_id": academy_id,
+                "invoice_id": {"$in": list(siblings)},
+                "amount_cents": {"$gt": 0},
+                "created_at": {"$gte": now - LAST_CHARGE_WINDOW},
+            },
+            sort=[("created_at", -1)],
+        )
+        if allocation is None:
+            return None
+        paid_invoice = siblings[str(allocation["invoice_id"])]
+        created_at = allocation.get("created_at")
+        if not isinstance(created_at, datetime):
+            return None
+        return LastCharge(
+            amount_cents=int(allocation.get("amount_cents") or 0),
+            currency=str(paid_invoice.get("currency") or "usd"),
+            period=str(paid_invoice.get("period") or ""),
+            charged_on=created_at.date(),
+        )
+    except Exception:
+        log.warning(
+            "invoice_last_charge_unresolved",
+            extra={"invoice_id": getattr(invoice, "invoice_id", None)},
+            exc_info=True,
+        )
+        return None
 
 
 async def _lazily_mint(

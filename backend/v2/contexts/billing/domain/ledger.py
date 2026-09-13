@@ -200,6 +200,17 @@ def format_tuition_month(period: str) -> str:
     return text
 
 
+def format_charge_date(value: date) -> str:
+    """Render a charge date as ``"September 3"`` (issue #659).
+
+    Spelled from ``_MONTH_NAMES`` rather than ``strftime`` for the same reason
+    ``format_tuition_month`` is: a parent-facing email must read the same on
+    every host regardless of the process locale. The year is omitted on
+    purpose — this only ever renders a charge inside the last 45 days.
+    """
+    return f"{_MONTH_NAMES[value.month - 1]} {value.day}"
+
+
 def format_session_label(
     *,
     name: str | None,
