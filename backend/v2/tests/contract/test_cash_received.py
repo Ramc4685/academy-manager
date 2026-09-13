@@ -22,6 +22,7 @@ from backend.v2.contexts.billing.infrastructure.admin_reports_read_model import 
     make_reports_dashboard,
 )
 from backend.v2.contexts.billing.infrastructure.cash_received import (
+    _WIDENED_KEY_SHAPES,
     cash_received_in_period,
 )
 
@@ -402,3 +403,106 @@ async def test_dedup_survives_a_provider_key_stored_as_a_number(db: Any) -> None
     result = await _read(db)
 
     assert result.net_cents == 0
+
+
+class _SpyAllDb:
+    """Records ``(collection, filter)`` for every read the reader issues."""
+
+    def __init__(self, db: Any, calls: list[tuple[str, dict[str, Any]]]) -> None:
+        self._db = db
+        self._calls = calls
+
+    def __getitem__(self, name: str) -> Any:
+        return _SpyNamedCollection(self._db[name], name, self._calls)
+
+
+class _SpyNamedCollection:
+    def __init__(self, collection: Any, name: str, calls: list[tuple[str, dict[str, Any]]]) -> None:
+        self._collection = collection
+        self._name = name
+        self._calls = calls
+
+    def find(self, filter: dict[str, Any] | None = None, *args: Any, **kwargs: Any) -> Any:
+        self._calls.append((self._name, dict(filter or {})))
+        return self._collection.find(filter, *args, **kwargs)
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(self._collection, item)
+
+
+def _in_clauses(filter: dict[str, Any]) -> list[tuple[str, list[Any], bool]]:
+    """``(field, values, is_or_branch)`` for every ``$in`` in ``filter``."""
+    clauses: list[tuple[str, list[Any], bool]] = []
+    for field, condition in filter.items():
+        if field == "$or":
+            for branch in condition:
+                clauses += [(name, values, True) for name, values, _ in _in_clauses(branch)]
+        elif isinstance(condition, dict) and "$in" in condition:
+            clauses.append((field, list(condition["$in"]), False))
+    return clauses
+
+
+@pytest.mark.asyncio
+async def test_the_dedup_lookups_stay_eligible_for_the_partial_indexes(db: Any) -> None:
+    """#526 review: a mixed-type ``$in`` is a collection scan in disguise.
+
+    Every index on these fields is partial, and Mongo only uses a partial
+    index when the predicate implies its filter. One non-string literal in a
+    shared ``$in`` therefore takes *all six* ``$or`` branches off their
+    indexes — the exact scan #526 removed. So the widened shapes must live in
+    their own single-field query, on a field indexed to accept them.
+    """
+    await _ledger(db, payment_id="pay-1", invoice_number=1042, paid_amount_cents=4_500)
+    await _legacy(
+        db,
+        payment_id="leg-1",
+        invoice_number="1042",
+        invoice_id="64b7f2c1a9e4d3b2c1a9e4d3",
+        stripe_payment_intent_id="pi_1",
+        paid_amount_cents=4_500,
+    )
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    await cash_received_in_period(
+        _SpyAllDb(db, calls),  # type: ignore[arg-type]
+        academy_id=ACADEMY,
+        start=START,
+        end=END,
+    )
+
+    widened_seen = 0
+    for collection, filter in calls:
+        for field, values, in_or in _in_clauses(filter):
+            if field == "status":
+                continue
+            shapes = {type(value) for value in values}
+            assert len(shapes) == 1, f"{collection}.{field} mixes {shapes} in one $in"
+            if shapes != {str}:
+                widened_seen += 1
+                assert field in _WIDENED_KEY_SHAPES, f"{collection}.{field} widened unexpectedly"
+                assert not in_or, f"{collection}.{field} widened inside an $or"
+    assert widened_seen, "expected the numeric invoice number to be looked up as an int"
+
+
+@pytest.mark.asyncio
+async def test_the_lookup_count_scales_with_the_candidate_keys_not_the_collection(
+    db: Any,
+) -> None:
+    """The bound is the candidate-key batch count, so a ledger full of
+    unrelated history cannot add a single extra read."""
+    await _legacy(db, payment_id="leg-1", stripe_payment_intent_id="pi_1", paid_amount_cents=1_000)
+    calls: list[tuple[str, dict[str, Any]]] = []
+    await cash_received_in_period(_SpyAllDb(db, calls), academy_id=ACADEMY, start=START, end=END)
+    baseline = len(calls)
+
+    for index in range(25):
+        await _ledger(
+            db,
+            payment_id=f"pay-old-{index}",
+            paid_at=datetime(2024, 5, 6, tzinfo=UTC),
+            paid_amount_cents=100,
+        )
+    calls.clear()
+    await cash_received_in_period(_SpyAllDb(db, calls), academy_id=ACADEMY, start=START, end=END)
+
+    assert len(calls) == baseline

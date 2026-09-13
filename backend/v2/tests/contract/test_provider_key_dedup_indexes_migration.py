@@ -14,7 +14,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from backend.v2.contexts.billing.infrastructure.cash_received import _PROVIDER_KEY_FIELDS
+from backend.v2.contexts.billing.infrastructure.cash_received import (
+    _PROVIDER_KEY_FIELDS,
+    _WIDENED_KEY_SHAPES,
+)
 from backend.v2.migrations import runner
 
 MODULE_NAME = "backend.v2.migrations.0178_provider_key_dedup_indexes"
@@ -38,8 +41,26 @@ async def test_creates_the_missing_provider_key_indexes(db, migration) -> None:
     for collection, field, name in migration.INDEXES:
         index = (await db[collection].index_information())[name]
         assert index["key"] == [("academy_id", 1), (field, 1)]
-        assert index["partialFilterExpression"] == {field: {"$type": "string"}}
+        assert index["partialFilterExpression"] == migration.partial_filter(field)
         assert index.get("unique") is not True
+
+
+@pytest.mark.asyncio
+async def test_the_non_string_keys_are_indexed_on_existence_not_on_string_type(
+    db, migration
+) -> None:
+    """``invoice_id``/``invoice_number`` are looked up as an ``ObjectId`` and
+    an int too. A ``$type: "string"`` filter would leave those lookups on a
+    collection scan, because the predicate would not imply the filter."""
+    await migration.up(db)
+
+    for collection, field, name in migration.INDEXES:
+        index = (await db[collection].index_information())[name]
+        expected = (
+            {"$exists": True} if field in migration.NON_STRING_KEY_FIELDS else {"$type": "string"}
+        )
+        assert index["partialFilterExpression"] == {field: expected}
+    assert migration.NON_STRING_KEY_FIELDS == frozenset(_WIDENED_KEY_SHAPES)
 
 
 @pytest.mark.asyncio

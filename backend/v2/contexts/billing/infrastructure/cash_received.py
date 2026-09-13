@@ -265,32 +265,84 @@ async def _ledger_rows(
     return rows, keys
 
 
-def _lookup_values(key: str) -> list[Any]:
-    """Every stored shape ``key`` could have been written as.
+def _as_int(key: str) -> Any | None:
+    return int(key) if key.isdigit() else None
 
-    ``payment_provider_keys`` stringifies whatever it finds, so the old
-    all-history scan matched an invoice number stored as an int, or an id
-    stored as an ``ObjectId``, against a legacy row's string. A ``$in`` does
-    not coerce, so the lookups below have to carry those shapes explicitly or
-    they would silently stop de-duplicating those rows.
+
+def _as_object_id(key: str) -> Any | None:
+    if len(key) != 24:
+        return None
+    try:
+        return ObjectId(key)
+    except (InvalidId, TypeError):
+        return None
+
+
+#: The non-string shape each provider key could legitimately have been stored
+#: as. ``payment_provider_keys`` stringifies whatever it finds, so an invoice
+#: number written as an int, or an invoice id written as an ``ObjectId``, has
+#: to be looked up in that shape too or it would silently stop de-duplicating.
+#:
+#: Deliberately **per field**, not per value: every index on these fields is
+#: partial on ``{$type: "string"}``, and Mongo can only use a partial index
+#: when the predicate implies its filter. A single ``$in`` carrying one
+#: non-string literal does not, so mixing shapes into one list shared by all
+#: six ``$or`` branches would take *every* branch off its index and put the
+#: whole dedup back on the collection scan #526 removed. The two fields below
+#: are the only ones this codebase ever writes as something other than a
+#: string (``payment_id`` and the ``stripe_*`` ids are provider- or
+#: uuid-issued strings, and carry unique string-partial indexes that prove
+#: it), and migration 0178 indexes them on ``$exists`` so their widened
+#: lookups stay index-backed.
+_WIDENED_KEY_SHAPES: dict[str, Any] = {
+    "invoice_number": _as_int,
+    "invoice_id": _as_object_id,
+}
+
+
+def _chunks(values: list[Any]) -> list[list[Any]]:
+    return [values[index : index + _LOOKUP_BATCH] for index in range(0, len(values), _LOOKUP_BATCH)]
+
+
+def _string_batches(keys: set[str]) -> list[list[str]]:
+    return _chunks(sorted(keys))
+
+
+def _widened_batches(field: str, keys: set[str]) -> list[list[Any]]:
+    """The non-string values ``field`` could hold for ``keys`` — never mixed
+    with the string batches, so each query stays on one index."""
+    shape = _WIDENED_KEY_SHAPES.get(field)
+    if shape is None:
+        return []
+    widened = [value for key in sorted(keys) if (value := shape(key)) is not None]
+    return _chunks(widened)
+
+
+def _field_filters(field: str, keys: set[str]) -> list[dict[str, Any]]:
+    """Single-field lookups for ``keys``: the string pass, then one pass per
+    batch of widened shapes."""
+    filters: list[dict[str, Any]] = [{field: {"$in": batch}} for batch in _string_batches(keys)]
+    filters += [{field: {"$in": batch}} for batch in _widened_batches(field, keys)]
+    return filters
+
+
+def _provider_key_filters(keys: set[str]) -> list[dict[str, Any]]:
+    """Lookups covering every provider-key field for ``keys``.
+
+    One ``$or`` per batch of string keys across all six fields — each branch
+    a pure-string ``$in``, so each is served by that field's partial index —
+    plus a separately scoped query per field that can hold a non-string
+    shape. Splitting rather than widening in place is the whole point: a
+    mixed-type ``$in`` in any branch disqualifies the partial index for all
+    of them.
     """
-    values: list[Any] = [key]
-    if key.isdigit():
-        values.append(int(key))
-    if len(key) == 24:
-        try:
-            values.append(ObjectId(key))
-        except (InvalidId, TypeError):
-            pass
-    return values
-
-
-def _batches(keys: set[str]) -> list[list[Any]]:
-    ordered = sorted(keys)
-    return [
-        [value for key in ordered[index : index + _LOOKUP_BATCH] for value in _lookup_values(key)]
-        for index in range(0, len(ordered), _LOOKUP_BATCH)
+    filters: list[dict[str, Any]] = [
+        {"$or": [{field: {"$in": batch}} for field in _PROVIDER_KEY_FIELDS]}
+        for batch in _string_batches(keys)
     ]
+    for field in _PROVIDER_KEY_FIELDS:
+        filters += [{field: {"$in": batch}} for batch in _widened_batches(field, keys)]
+    return filters
 
 
 async def _add_colliding_ledger_keys(
@@ -315,12 +367,12 @@ async def _add_colliding_ledger_keys(
     """
     if not candidate_keys:
         return
-    for batch in _batches(candidate_keys):
+    for lookup in _provider_key_filters(candidate_keys):
         cursor = db["ledger_payments"].find(
             {
                 "academy_id": academy_id,
                 "status": {"$in": SUCCESSFUL_LEDGER_STATUSES},
-                "$or": [{field: {"$in": batch}} for field in _PROVIDER_KEY_FIELDS],
+                **lookup,
             },
             _PROVIDER_KEY_PROJECTION,
         )
@@ -345,9 +397,9 @@ async def _add_allocated_invoice_keys(
     if not candidate_keys:
         return
     invoices_by_payment: dict[str, set[str]] = {}
-    for batch in _batches(candidate_keys):
+    for lookup in _field_filters("invoice_id", candidate_keys):
         cursor = db["payment_allocations"].find(
-            {"academy_id": academy_id, "invoice_id": {"$in": batch}},
+            {"academy_id": academy_id, **lookup},
             {"invoice_id": 1, "payment_id": 1},
         )
         async for allocation in cursor:
@@ -355,12 +407,12 @@ async def _add_allocated_invoice_keys(
             payment_id = str(allocation.get("payment_id") or "")
             if invoice_id and payment_id:
                 invoices_by_payment.setdefault(payment_id, set()).add(invoice_id)
-    for batch in _batches(set(invoices_by_payment)):
+    for lookup in _field_filters("payment_id", set(invoices_by_payment)):
         cursor = db["ledger_payments"].find(
             {
                 "academy_id": academy_id,
                 "status": {"$in": SUCCESSFUL_LEDGER_STATUSES},
-                "payment_id": {"$in": batch},
+                **lookup,
             },
             {"payment_id": 1},
         )
