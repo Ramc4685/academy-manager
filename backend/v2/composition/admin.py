@@ -21,6 +21,7 @@ from backend.v2.composition.admin_registration_review import (
 )
 from backend.v2.composition.admin_session_staff import (
     attach_session_staff_names,
+    compose_assistant_eligibility_check,
     compose_set_session_assistants,
 )
 from backend.v2.composition.autopay_comms import (
@@ -722,6 +723,8 @@ def compose_admin(
         get_academy_timezone=session_tz,
         # #783: the capacity guard counts the roster, not the seat counter.
         enrollments=enrollments_w,
+        # #785: the PATCH route runs SetSessionAssistants' own vetting too.
+        assistant_eligibility=compose_assistant_eligibility_check(db, users_r, request_academy_id),
     )
     # #613 welcome email + #612 roster alerts (composition/roster_notifications.py).
     notifiers = compose_enrollment_notifiers(db, settings, users=users_r)

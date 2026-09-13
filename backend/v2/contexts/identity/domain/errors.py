@@ -90,6 +90,19 @@ class CannotRemoveLastRole(DomainError):
     status_code = 409
 
 
+class CoachHasFutureSessions(DomainError):
+    """Raised when a coaching role is removed while future work is assigned.
+
+    Dropping ``coach``/``assistant_coach`` only rewrote ``users.roles``; the
+    sessions and occurrences naming that user kept naming them, so the roster
+    rendered ``coach_name: None`` and nobody was accountable for the class
+    (#785). Removal now has to be preceded by a reassignment.
+    """
+
+    code = "Identity.CoachHasFutureSessions"
+    status_code = 409
+
+
 class MagicLinkInvalid(DomainError):
     """The one-time magic-link token is unknown, already used, or tenant-mismatched.
 

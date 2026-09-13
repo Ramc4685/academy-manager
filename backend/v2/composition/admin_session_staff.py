@@ -23,6 +23,9 @@ from backend.v2.contexts.enrollment.domain.errors import SessionNotFound
 from backend.v2.contexts.enrollment.domain.models import Session
 from backend.v2.contexts.identity.domain.identity_aliases import identity_aliases
 from backend.v2.contexts.identity.domain.models import AcademyMembership
+from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
+    MongoMembershipRepository,
+)
 from backend.v2.shared.http.errors import DomainError
 
 log = logging.getLogger(__name__)
@@ -131,24 +134,48 @@ class SetSessionAssistants:
         return updated
 
     async def _ensure_eligible(self, academy_id: str, user_id: str, *, session_id: str) -> None:
-        # Same alias-aware membership read `load_auth_claims` builds request
-        # claims from, so "eligible here" and "will get coach claims here"
-        # can never disagree.
-        user = await self._users.get_by_id(user_id)
-        aliases = identity_aliases(user.user_id, user.firebase_uid, user.auth_uid) if user else ()
-        membership = await self._memberships.get_membership(academy_id, user_id, aliases=aliases)
-        if membership is None or not membership.is_active():
-            raise InvalidSessionAssistant(
-                "assistant must be an active member of this academy",
-                session_id=session_id,
-                user_id=user_id,
-            )
-        if not any(role in ASSISTANT_ELIGIBLE_ROLES for role in membership.roles):
-            raise InvalidSessionAssistant(
-                "assistant must hold the coach or assistant_coach role",
-                session_id=session_id,
-                user_id=user_id,
-            )
+        await ensure_assistant_eligible(
+            academy_id,
+            user_id,
+            session_id=session_id,
+            users=self._users,
+            memberships=self._memberships,
+        )
+
+
+async def ensure_assistant_eligible(
+    academy_id: str,
+    user_id: str,
+    *,
+    session_id: str,
+    users: _UserLookup,
+    memberships: _MembershipLookup,
+) -> None:
+    """Raise unless ``user_id`` may be listed as an assistant on this session.
+
+    A free function so `EditSession` can run the identical check (#785): it
+    used to write ``assistant_coach_ids`` straight through, which made
+    ``PATCH /admin/sessions/{id}`` a way around everything below.
+
+    Same alias-aware membership read `load_auth_claims` builds request claims
+    from, so "eligible here" and "will get coach claims here" can never
+    disagree.
+    """
+    user = await users.get_by_id(user_id)
+    aliases = identity_aliases(user.user_id, user.firebase_uid, user.auth_uid) if user else ()
+    membership = await memberships.get_membership(academy_id, user_id, aliases=aliases)
+    if membership is None or not membership.is_active():
+        raise InvalidSessionAssistant(
+            "assistant must be an active member of this academy",
+            session_id=session_id,
+            user_id=user_id,
+        )
+    if not any(role in ASSISTANT_ELIGIBLE_ROLES for role in membership.roles):
+        raise InvalidSessionAssistant(
+            "assistant must hold the coach or assistant_coach role",
+            session_id=session_id,
+            user_id=user_id,
+        )
 
 
 async def attach_session_staff_names(db: Any, rows: list[dict[str, Any]]) -> None:
@@ -194,6 +221,32 @@ async def attach_session_staff_names(db: Any, rows: list[dict[str, Any]]) -> Non
         row["assistant_coach_names"] = [
             names[str(uid)] for uid in row.get("assistant_coach_ids") or [] if str(uid) in names
         ]
+
+
+def compose_assistant_eligibility_check(
+    db: Any, users: _UserLookup, academy_id: Callable[[], str]
+) -> Callable[..., Any]:
+    """The `EditSession` hook for the same vetting `SetSessionAssistants` does.
+
+    Positional and self-contained (it builds its own membership repository) to
+    keep `composition/admin.py` — already at its wiring budget — to one line.
+    Raises on the first ineligible id, so the session edit is refused outright
+    rather than written with a half-vetted roster.
+    """
+    memberships = MongoMembershipRepository(db)
+
+    async def check(*, session_id: str, assistant_coach_ids: Sequence[str]) -> None:
+        resolved = academy_id()
+        for user_id in assistant_coach_ids:
+            await ensure_assistant_eligible(
+                resolved,
+                user_id,
+                session_id=session_id,
+                users=users,
+                memberships=memberships,
+            )
+
+    return check
 
 
 def compose_set_session_assistants(

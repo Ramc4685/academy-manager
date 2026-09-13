@@ -425,6 +425,18 @@ class EditSessionCommand(BaseModel):
 _CLEARABLE_SESSION_FIELDS: frozenset[str] = frozenset({"amount_cents", *COMMUNICATION_PACK_FIELDS})
 
 
+class AssistantEligibilityCheck(Protocol):
+    """Raises when an id may not be listed as a session assistant.
+
+    Implemented in composition (``admin_session_staff``), because deciding it
+    means reading academy memberships — identity state this context is not
+    allowed to import. Kept as one call for the whole list so the check is
+    all-or-nothing: a partially-vetted list must never reach the write.
+    """
+
+    async def __call__(self, *, session_id: str, assistant_coach_ids: tuple[str, ...]) -> None: ...
+
+
 class EditSession:
     def __init__(
         self,
@@ -432,6 +444,7 @@ class EditSession:
         sessions: SessionWriter,
         get_academy_timezone: AcademyTimezoneReader,
         enrollments: EnrollmentWriter | None = None,
+        assistant_eligibility: AssistantEligibilityCheck | None = None,
     ) -> None:
         self._sessions = sessions
         self._get_academy_timezone = get_academy_timezone
@@ -439,6 +452,12 @@ class EditSession:
         # dozens of edit paths that never touch capacity keep constructing
         # this use case with two arguments.
         self._enrollments = enrollments
+        # Issue #785: `SetSessionAssistants` vets every id against the academy
+        # membership before listing it; this path wrote the list straight
+        # through, so `PATCH /admin/sessions/{id}` could hand the coach surface
+        # to a parent or a departed coach. Injected because the check reads
+        # identity, which this context may not import (lint-imports).
+        self._assistant_eligibility = assistant_eligibility
 
     async def execute(self, cmd: EditSessionCommand) -> Session:
         current = await self._sessions.get(cmd.session_id)
@@ -484,7 +503,14 @@ class EditSession:
         # occurrence re-sync for this list is the route's job
         # (`maintain_session_occurrences` re-stamps clean future rows).
         if cmd.assistant_coach_ids is not None:
-            update["assistant_coach_ids"] = _normalize_assistant_ids(cmd.assistant_coach_ids)
+            assistants = _normalize_assistant_ids(cmd.assistant_coach_ids)
+            # Vet BEFORE anything is written, so a rejected id leaves the
+            # session exactly as it was rather than half-edited (#785).
+            if self._assistant_eligibility is not None:
+                await self._assistant_eligibility(
+                    session_id=cmd.session_id, assistant_coach_ids=assistants
+                )
+            update["assistant_coach_ids"] = assistants
 
         recurring_values = {
             "days_of_week": update.get("days_of_week", current.days_of_week),

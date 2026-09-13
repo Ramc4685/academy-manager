@@ -25,6 +25,7 @@ from backend.v2.contexts.identity.application.use_cases.admin_directory import (
 )
 from backend.v2.contexts.identity.domain.errors import (
     CannotRemoveLastRole,
+    CoachHasFutureSessions,
     RoleRevocationFailed,
     UserCreateFailed,
     UserEmailAlreadyExists,
@@ -36,7 +37,12 @@ from backend.v2.contexts.identity.domain.identity_aliases import (
     identity_aliases,
     membership_match_rank,
 )
-from backend.v2.contexts.identity.domain.models import Role, User, normalize_email
+from backend.v2.contexts.identity.domain.models import (
+    GlobalUserStatus,
+    Role,
+    User,
+    normalize_email,
+)
 from backend.v2.contexts.identity.infrastructure.firebase_admin_adapter import (
     get_firebase_admin_adapter,
 )
@@ -66,6 +72,37 @@ def _lowers_privilege(previous: list[str], role: str) -> bool:
     return _ROLE_PRIVILEGE.get(role, 0) < ceiling
 
 
+#: Legacy ``users.status`` spellings that mean "cannot sign in".
+_DISABLED_STATUSES: frozenset[str] = frozenset({"disabled", "inactive", "suspended"})
+
+#: Academy roles whose removal has to be preceded by reassigning the work.
+COACHING_ROLES: frozenset[str] = frozenset({"coach", "assistant_coach"})
+
+
+def _global_status_from_doc(doc: dict[str, object], *, is_active: bool) -> GlobalUserStatus:
+    """Resolve the SaaS ``global_status`` a stored ``users`` doc stands for.
+
+    `User.global_status` defaults to ``"active"`` and `_user_is_active` in
+    `load_auth_claims` trusts it *first* — so leaving it unmapped meant the
+    legacy ``is_active`` fallback was never reached and "Disable" changed
+    nothing about who could sign in (#785).
+
+    Precedence: an explicit ``global_status`` (written by the disable path
+    below) wins; otherwise the legacy ``status``/``is_active`` pair is
+    translated. A doc carrying *neither* field must resolve to ``"active"``,
+    or the backfill locks out every account that predates the column.
+    """
+    explicit = doc.get("global_status")
+    if isinstance(explicit, str) and explicit in {"active", "disabled", "deleted"}:
+        return cast("GlobalUserStatus", explicit)
+    status = doc.get("status")
+    if isinstance(status, str) and status.lower() == "deleted":
+        return "deleted"
+    if isinstance(status, str) and status.lower() in _DISABLED_STATUSES:
+        return "disabled"
+    return "active" if is_active else "disabled"
+
+
 class MongoUserRepository:
     collection_name = "users"
 
@@ -88,6 +125,7 @@ class MongoUserRepository:
 
         status = doc.get("status")
         is_active = bool(doc.get("is_active", status != "inactive" and status != "disabled"))
+        global_status = _global_status_from_doc(doc, is_active=is_active)
 
         raw_fuid = doc.get("firebase_uid") or doc.get("auth_uid")
         raw_auth_uid = doc.get("auth_uid")
@@ -104,6 +142,7 @@ class MongoUserRepository:
             display_name=str(doc.get("display_name") or doc.get("name") or doc["email"]),
             phone=str(raw_phone) if raw_phone else None,
             roles=normalized_roles,
+            global_status=global_status,
             is_active=is_active,
             academy_id=str(doc.get("academy_id") or self._default_academy_id),
             email_confirmed_at=raw_confirmed if isinstance(raw_confirmed, datetime) else None,
@@ -865,9 +904,16 @@ class MongoUserRepository:
             set_doc["display_name"] = " ".join(command.display_name.split())
         if command.phone is not None:
             set_doc["phone"] = command.phone.strip() or None
+        status_change: str | None = None
         if command.status is not None:
             set_doc["status"] = command.status
             set_doc["is_active"] = command.status == "active"
+            # #785: `status`/`is_active` alone never reached auth. `_to_domain`
+            # now reads `global_status` first, so the disable write has to
+            # produce it, or the read-back resolves the account back to active.
+            set_doc["global_status"] = "active" if command.status == "active" else "disabled"
+            if str(before.get("status") or "active") != command.status:
+                status_change = command.status
         changed = [
             key
             for key, value in set_doc.items()
@@ -896,6 +942,10 @@ class MongoUserRepository:
                     },
                 )
                 raise
+        if status_change is not None:
+            await self._cascade_status_change(
+                doc, academy_id=academy_id, status=status_change, now=set_doc["updated_at"]
+            )
         if changed:
             await self._write_audit(
                 academy_id=academy_id,
@@ -952,6 +1002,103 @@ class MongoUserRepository:
             await get_firebase_admin_adapter().delete_user(uid)
         except Exception:
             return
+
+    async def _assert_no_future_coaching_work(
+        self,
+        doc: dict[str, Any],
+        *,
+        role: str,
+        academy_id: str,
+    ) -> None:
+        """Refuse a coaching-role removal that would strand dated work.
+
+        Scoped to ``session_occurrences`` rather than ``sessions`` on purpose:
+        a recurring series has no single "is it over" instant, while its
+        materialised occurrences carry the real dates — and they are what the
+        attendance, roster and payroll reads join on. ``start_at`` is stored in
+        UTC (migration 0160 repaired the rows that were not), so comparing it
+        against an aware ``now`` is timezone-correct without re-deriving the
+        academy's zone here.
+
+        Cancelled occurrences are excluded: nobody has to run them, so they
+        cannot orphan.
+        """
+        ids = list(self._membership_aliases(doc))
+        if not ids:
+            return
+        assignment: dict[str, object] = (
+            {"$or": [{"scheduled_coach_id": {"$in": ids}}, {"actual_coach_id": {"$in": ids}}]}
+            if role == "coach"
+            else {"assistant_coach_ids": {"$in": ids}}
+        )
+        pending = await self._db["session_occurrences"].count_documents(
+            {
+                "academy_id": academy_id,
+                "start_at": {"$gte": datetime.now(UTC)},
+                "status": {"$nin": ["cancelled", "completed"]},
+                **assignment,
+            }
+        )
+        if pending:
+            raise CoachHasFutureSessions(
+                f"{pending} upcoming session(s) are still assigned to this "
+                f"{role.replace('_', ' ')}; reassign them before removing the role."
+            )
+
+    async def _cascade_status_change(
+        self,
+        doc: dict[str, Any],
+        *,
+        academy_id: str,
+        status: str,
+        now: Any,
+    ) -> None:
+        """Carry an admin "Disable"/"Enable" through to the other two doors.
+
+        Before #785 this write stopped at the ``users`` doc, which is not what
+        auth reads: `LoadAuthClaims` rejects a non-active *membership*, and
+        Firebase owns the password itself. A "disabled" parent therefore kept
+        their claims and kept their login, and the admin screen said otherwise.
+
+        Both cascades resolve through the full alias set — a membership row
+        keyed by `firebase_uid` while the directory is keyed by `user_id` is
+        the normal shape for a parent provisioned by the invite path (#400).
+        """
+        disabled = status != "active"
+        aliases = list(self._membership_aliases(doc))
+        if aliases:
+            await self._db["academy_memberships"].update_many(
+                {"academy_id": academy_id, "user_id": {"$in": aliases}},
+                {
+                    "$set": {
+                        "status": "suspended" if disabled else "active",
+                        "updated_at": now,
+                    }
+                },
+            )
+        auth_uid = self._firebase_uid(doc)
+        if not auth_uid:
+            return
+        # Best-effort by design: the local lockout is the part that must land.
+        # Failing the request on a Firebase outage would leave the operator
+        # unable to disable anyone at the exact moment they most need to.
+        try:
+            await get_firebase_admin_adapter().set_user_disabled(auth_uid, disabled)
+        except Exception:
+            _log.warning(
+                "identity.firebase_disable_failed",
+                extra={
+                    "academy_id": academy_id,
+                    "auth_uid": auth_uid,
+                    "disabled": disabled,
+                },
+                exc_info=True,
+            )
+            capture_message(
+                f"Firebase account status not synced for {auth_uid} "
+                f"after an admin {'disable' if disabled else 'enable'}",
+                level="warning",
+            )
 
     @staticmethod
     async def _update_firebase_email(auth_uid: str, email: str) -> None:
@@ -1363,6 +1510,14 @@ class MongoUserRepository:
             new_roles = [r for r in current if r != role]
             if not new_roles:
                 raise CannotRemoveLastRole(user_id)
+            # #785: this method rewrote `roles` and nothing else. Sessions and
+            # occurrences kept naming the ex-coach, so the roster rendered
+            # `coach_name: None` and no one was accountable for the class.
+            # Refuse while future work is still assigned — the same shape as
+            # the `CannotRemoveLastRole` guard directly above — so the admin
+            # has to reassign first rather than discover the orphan later.
+            if role in COACHING_ROLES:
+                await self._assert_no_future_coaching_work(before, role=role, academy_id=academy_id)
         # Keep the legacy single `role` field meaningful: preserve it unless
         # it was the role being removed, in which case fall back to the first
         # remaining role.

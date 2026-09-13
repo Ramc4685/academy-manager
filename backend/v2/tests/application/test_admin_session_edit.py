@@ -267,3 +267,76 @@ async def test_an_edit_that_does_not_touch_capacity_never_counts_seats() -> None
 
     assert updated.capacity == 10
     assert seats.calls == []
+
+
+# ---------------------------------------------------------------------------
+# #785 — the assistant list on the edit path runs the same eligibility check
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_edit_runs_the_assistant_eligibility_check() -> None:
+    """``SetSessionAssistants`` vetted every id; ``EditSession`` wrote the list
+    straight through, so ``PATCH /admin/sessions/{id}`` could stamp a parent —
+    or a departed coach — as an assistant and hand them the coach surface."""
+    store = FakeSessionStore(rows={"sess-1": _session()})
+    checked: list[tuple[str, tuple[str, ...]]] = []
+
+    async def eligibility(*, session_id: str, assistant_coach_ids: tuple[str, ...]) -> None:
+        checked.append((session_id, assistant_coach_ids))
+
+    use_case = EditSession(
+        sessions=store,
+        get_academy_timezone=_reader(),
+        assistant_eligibility=eligibility,
+    )
+
+    await use_case.execute(
+        EditSessionCommand(session_id="sess-1", assistant_coach_ids=[" helper-1 ", "helper-1"])
+    )
+
+    assert checked == [("sess-1", ("helper-1",))]
+    assert store.rows["sess-1"].assistant_coach_ids == ("helper-1",)
+
+
+@pytest.mark.asyncio
+async def test_edit_refuses_an_ineligible_assistant_and_writes_nothing() -> None:
+    store = FakeSessionStore(rows={"sess-1": _session()})
+
+    class _Rejected(Exception):
+        pass
+
+    async def eligibility(*, session_id: str, assistant_coach_ids: tuple[str, ...]) -> None:
+        raise _Rejected(session_id)
+
+    use_case = EditSession(
+        sessions=store,
+        get_academy_timezone=_reader(),
+        assistant_eligibility=eligibility,
+    )
+
+    with pytest.raises(_Rejected):
+        await use_case.execute(
+            EditSessionCommand(session_id="sess-1", assistant_coach_ids=["a-parent"])
+        )
+
+    assert store.updated == []
+
+
+@pytest.mark.asyncio
+async def test_edit_that_does_not_touch_assistants_never_calls_the_check() -> None:
+    store = FakeSessionStore(rows={"sess-1": _session()})
+    calls: list[str] = []
+
+    async def eligibility(*, session_id: str, assistant_coach_ids: tuple[str, ...]) -> None:
+        calls.append(session_id)
+
+    use_case = EditSession(
+        sessions=store,
+        get_academy_timezone=_reader(),
+        assistant_eligibility=eligibility,
+    )
+
+    await use_case.execute(EditSessionCommand(session_id="sess-1", title="Junior B"))
+
+    assert calls == []
