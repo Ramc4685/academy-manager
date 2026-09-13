@@ -66,6 +66,9 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     _record_lifecycle_event,
     _sync_billing,
 )
+from backend.v2.contexts.enrollment.application.use_cases.billing_deferrals import (
+    BillingDeferralRepository,
+)
 from backend.v2.contexts.enrollment.application.use_cases.scheduled_actions import (
     ScheduledEnrollmentAction,
     ScheduledEnrollmentActionRepository,
@@ -127,6 +130,7 @@ class ProcessScheduledCancellationActions:
         enrollment_events: EnrollmentEventRepository | None = None,
         billing_sync: EnrollmentBillingSync | None = None,
         occurrence_roster: OccurrenceRosterCleanup | None = None,
+        billing_deferrals: BillingDeferralRepository | None = None,
         roster_notifier: RosterChangeNotifier | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
@@ -137,6 +141,7 @@ class ProcessScheduledCancellationActions:
         self._enrollment_events = enrollment_events
         self._billing_sync = billing_sync
         self._occurrence_roster = occurrence_roster
+        self._billing_deferrals = billing_deferrals
         self._roster_notifier = roster_notifier
         self._now = clock
 
@@ -241,7 +246,10 @@ class ProcessScheduledCancellationActions:
         # EnrollmentCancelled that offers the seat to the waitlist, the staff
         # alert. `scheduled_actions` is deliberately NOT passed: this path IS a
         # scheduled action and retiring the queue here would cancel the very
-        # row `mark_succeeded` is about to close below.
+        # row `mark_succeeded` is about to close below. `billing_deferrals` IS
+        # passed: a paused/held row keeps its pending cancellation, so this
+        # worker can be the transition that ends a still-deferred enrollment
+        # and must close that deferral or it warns admins forever.
         await close_terminal_enrollment_dependents(
             before,
             effective_at=cancelled_at,
@@ -251,6 +259,7 @@ class ProcessScheduledCancellationActions:
             outbox_reason="parent_cancel",
             dependents=TerminalDependents(
                 occurrence_roster=self._occurrence_roster,
+                billing_deferrals=self._billing_deferrals,
                 outbox=self._outbox,
                 roster_notifier=self._roster_notifier,
             ),

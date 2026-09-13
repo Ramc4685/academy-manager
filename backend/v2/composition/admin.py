@@ -843,6 +843,7 @@ def compose_admin(
         enrollment_events=enrollment_events,
         billing_sync=enrollment_billing_sync,
         occurrence_roster=occurrence_roster_repo,
+        billing_deferrals=billing_deferrals,
         roster_notifier=notifiers.roster,
         enrollments=enrollments_w,
         sessions=sessions_w,
