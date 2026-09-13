@@ -219,6 +219,14 @@ test.describe("admin students", () => {
     });
 
     await page.goto("/admin/students");
+    // Issue #773: the directory opens on the "operational" lifecycle filter,
+    // not "Everyone" — a zero-result page under that default filter is
+    // truthfully "no matches", not "no students registered".
+    await expect(page.getByTestId("admin-students-empty")).toContainText(
+      "No students match those filters.",
+    );
+
+    await page.getByTestId("admin-students-filter-all").click();
     await expect(page.getByTestId("admin-students-empty")).toContainText("No students registered yet.");
   });
 
