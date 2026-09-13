@@ -3,8 +3,9 @@
 Production regressions showed two distinct portal failures: the parent has
 no stored Stripe customer id yet (expected, must surface the friendly
 prerequisite message) and Stripe itself rejecting the call (expired key,
-missing live portal configuration). Both must map to CheckoutCreationFailed
-(502) rather than an unhandled 500.
+missing live portal configuration). The first maps to BillingPortalNotReady
+(409, issue #595) so the frontend can print the one actionable next step; the
+second maps to CheckoutCreationFailed (502) rather than an unhandled 500.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from backend.v2.contexts.billing.application.use_cases.parent_billing import (
 from backend.v2.contexts.billing.domain.connected_account import ConnectedAccount
 from backend.v2.contexts.billing.domain.errors import (
     AutopayActivationFailed,
+    BillingPortalNotReady,
     CheckoutCreationFailed,
     PaymentNotFound,
 )
@@ -60,9 +62,10 @@ class _PortalGateway:
 
 
 @pytest.mark.asyncio
-async def test_portal_without_stripe_customer_maps_to_checkout_creation_failed() -> None:
-    uc = CreateCustomerPortalSession(stripe=_PortalGateway())
-    with pytest.raises(CheckoutCreationFailed) as exc_info:
+async def test_portal_without_stripe_customer_maps_to_portal_not_ready() -> None:
+    gateway = _PortalGateway()
+    uc = CreateCustomerPortalSession(stripe=gateway)
+    with pytest.raises(BillingPortalNotReady) as exc_info:
         await uc.execute(
             CreateCustomerPortalSessionCommand(
                 parent_id="p1",
@@ -71,6 +74,43 @@ async def test_portal_without_stripe_customer_maps_to_checkout_creation_failed()
             )
         )
     assert "autopay setup" in str(exc_info.value)
+    # Prerequisite is decided before the gateway, so a permissive dev/test
+    # gateway can never turn it into a bogus redirect (issue #595).
+    assert gateway.calls == []
+    assert not isinstance(exc_info.value, CheckoutCreationFailed)
+
+
+@pytest.mark.asyncio
+async def test_fake_gateway_refuses_portal_without_customer() -> None:
+    """The dev/test gateway must not be more permissive than Stripe.
+
+    A local stack with no STRIPE_API_KEY is wired to FakeStripeGateway; when it
+    happily returned a fake portal URL for a parent with no customer, the
+    payments page redirected to a nonexistent page instead of showing the
+    autopay prerequisite (issue #595).
+    """
+    from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import FakeStripeGateway
+
+    gateway = FakeStripeGateway()
+    uc = CreateCustomerPortalSession(stripe=gateway)
+    with pytest.raises(BillingPortalNotReady):
+        await uc.execute(
+            CreateCustomerPortalSessionCommand(
+                parent_id="p1",
+                return_url="https://app.example.com/parent/payments",
+                stripe_customer_id=None,
+            )
+        )
+    assert gateway.portal_sessions == []
+
+    result = await uc.execute(
+        CreateCustomerPortalSessionCommand(
+            parent_id="p1",
+            return_url="https://app.example.com/parent/payments",
+            stripe_customer_id="cus_fake_1",
+        )
+    )
+    assert result.redirect_url.startswith("https://fake.stripe.com/portal/")
 
 
 @pytest.mark.asyncio

@@ -155,6 +155,15 @@ class FakeStripeGateway(StripeGateway):
         return_url: str,
         stripe_customer_id: str | None,
     ) -> str:
+        # Mirror RealStripeGateway: Stripe has no portal for a parent with no
+        # customer, so the fake must not hand back a redirect URL either. A
+        # permissive fake here made a local stack (no STRIPE_API_KEY ->
+        # FakeStripeGateway) redirect to a nonexistent fake.stripe.com page
+        # instead of showing the autopay prerequisite (issue #595).
+        if not stripe_customer_id:
+            raise ValueError(
+                "Billing portal will be available after the first successful autopay setup."
+            )
         portal_id = f"bps_test_{new_ulid()}"
         self.portal_sessions.append(
             {

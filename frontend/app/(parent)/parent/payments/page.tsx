@@ -18,7 +18,11 @@ import {
   startParentBalancePayment,
   startParentInvoicePayment,
 } from "@/lib/api/parent";
-import { toPaymentErrorMessage, toPortalErrorMessage } from "@/lib/api/payment-error";
+import {
+  BILLING_PORTAL_OPEN_FAILED,
+  toPaymentErrorMessage,
+  toPortalErrorMessage,
+} from "@/lib/api/payment-error";
 import {
   AUTOPAY_OPTIN_LABEL,
   resolveEnrollAutopayChecked,
@@ -28,8 +32,6 @@ import {
 
 const AUTOPAY_START_FAILED =
   "Something went wrong starting autopay. Please try again or contact the academy.";
-const PORTAL_OPEN_FAILED =
-  "Billing portal could not open. Please try again or contact the academy.";
 const PAYMENT_START_FAILED =
   "Payment could not start. Please try again or contact the academy.";
 
@@ -266,7 +268,7 @@ export default function ParentPaymentsPage() {
       window.location.href = res.redirect_url;
     },
     onError: (error) => {
-      setPortalError(toPortalErrorMessage(error, PORTAL_OPEN_FAILED));
+      setPortalError(toPortalErrorMessage(error, BILLING_PORTAL_OPEN_FAILED));
     },
   });
 

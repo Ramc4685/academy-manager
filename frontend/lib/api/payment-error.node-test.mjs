@@ -72,3 +72,31 @@ test("falls back for non-Error values", () => {
   assert.equal(toPaymentErrorMessage("string error", FALLBACK), FALLBACK);
   assert.equal(toPaymentErrorMessage({ message: "plain object" }, FALLBACK), FALLBACK);
 });
+
+// Issue #595: "no Stripe customer yet" is now its own backend code, so the
+// parent sees the one actionable next step instead of the generic
+// "payments aren't set up" copy — on a configured stack and on a local stack
+// wired to the fake Stripe gateway alike.
+test("maps Billing.BillingPortalNotReady by code to the autopay prerequisite", () => {
+  const err = apiError("Billing portal will be available after the first successful autopay setup.", {
+    code: "Billing.BillingPortalNotReady",
+    status: 409,
+  });
+  assert.equal(toPortalErrorMessage(err, FALLBACK), BILLING_PORTAL_PREREQUISITE);
+  assert.doesNotMatch(toPortalErrorMessage(err, FALLBACK), /Stripe/);
+});
+
+test("portal-not-ready is distinct from the academy-setup failure copy", () => {
+  const notReady = apiError("no customer", {
+    code: "Billing.BillingPortalNotReady",
+    status: 409,
+  });
+  const setupBroken = apiError("Stripe connected account is not ready for autopay setup.", {
+    code: "Billing.CheckoutCreationFailed",
+    status: 502,
+  });
+  assert.notEqual(
+    toPortalErrorMessage(notReady, FALLBACK),
+    toPortalErrorMessage(setupBroken, FALLBACK),
+  );
+});
