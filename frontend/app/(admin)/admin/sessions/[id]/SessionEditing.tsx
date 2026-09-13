@@ -7,11 +7,14 @@ import {
   addSessionReplacement,
   cancelSessionOccurrence,
   listAdminUsers,
+  listOccurrenceStudentAttendance,
+  voidOccurrenceStudentAttendance,
   setSessionAssistants,
   updateAdminSession,
   updateSessionOccurrenceReplacement,
   type AdminSessionOccurrenceView,
   type AdminSessionView,
+  type AdminStudentAttendanceView,
   type AdminUserView,
   type EditSessionRequest,
 } from "@/lib/api/admin";
@@ -71,6 +74,7 @@ export function ReplacementCoachTable({
   timezone,
   onEdit,
   onCancel,
+  onViewAttendance,
   showStatus = false,
   emptyLabel,
 }: {
@@ -87,6 +91,11 @@ export function ReplacementCoachTable({
    * the dialog for an action that was never possible.
    */
   onCancel?: (occurrence: AdminSessionOccurrenceView) => void;
+  /**
+   * Issue #554. When given, a date whose attendance was taken offers
+   * "Attendance", which opens the per-student marks with a Void action.
+   */
+  onViewAttendance?: (occurrence: AdminSessionOccurrenceView) => void;
   /** Show the Cancelled chip column (#671). */
   showStatus?: boolean;
   emptyLabel?: string;
@@ -196,6 +205,19 @@ export function ReplacementCoachTable({
                       onClick={() => onCancel(occurrence)}
                     >
                       Cancel this date
+                    </Button>
+                  )}
+                  {/* Issue #554: attendance can only be corrected or voided
+                      on a date that was actually marked, so the action only
+                      appears where there is something to act on. */}
+                  {onViewAttendance && occurrence.attendance_marked_count > 0 && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      data-testid={`attendance-occurrence-${occurrence.occurrence_id}`}
+                      onClick={() => onViewAttendance(occurrence)}
+                    >
+                      Attendance
                     </Button>
                   )}
                 </div>
@@ -322,6 +344,188 @@ export function CancelOccurrenceDialog({
           </Button>
         </DialogActions>
       </form>
+    </RallyDialog>
+  );
+}
+
+const ATTENDANCE_CHIP: Record<string, string> = {
+  present: "bg-rally-line text-rally-ink",
+  late: "bg-rally-line text-rally-ink",
+  absent: "bg-rally-line text-rally-muted",
+  voided: "bg-rally-line text-rally-subtle line-through",
+};
+
+/**
+ * Per-student attendance for one class date, with "Void mark" (issue #554).
+ *
+ * A void is not a delete: the row survives with who voided it and why, and
+ * every downstream reader (attendance rate, payroll, absence policy) then
+ * treats the student as unmarked. The reason is required because it is the
+ * only explanation anyone reading the history later gets, so the confirm
+ * button stays disabled until one is typed.
+ */
+export function OccurrenceAttendanceDialog({
+  occurrence,
+  timezone,
+  studentNameById,
+  onClose,
+}: {
+  occurrence: AdminSessionOccurrenceView | null;
+  timezone: string | null;
+  studentNameById: Map<string, string>;
+  onClose: () => void;
+}) {
+  const [voidTarget, setVoidTarget] = useState<string | null>(null);
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const open = Boolean(occurrence);
+  const { timeZone } = resolveAcademyTimeZone(timezone);
+  const occurrenceId = occurrence?.occurrence_id ?? null;
+
+  useEffect(() => {
+    if (!open) return;
+    setVoidTarget(null);
+    setReason("");
+    setError(null);
+  }, [open, occurrenceId]);
+
+  const attendanceQuery = useQuery({
+    queryKey: ["admin", "occurrence-attendance", occurrenceId],
+    queryFn: () => listOccurrenceStudentAttendance(occurrenceId as string),
+    enabled: open && Boolean(occurrenceId),
+  });
+
+  const rows: AdminStudentAttendanceView[] = attendanceQuery.data?.attendance ?? [];
+
+  const mutation = useMutation({
+    mutationFn: () => {
+      if (!occurrenceId || !voidTarget) throw new Error("No mark selected.");
+      return voidOccurrenceStudentAttendance(occurrenceId, voidTarget, reason.trim());
+    },
+    onSuccess: async () => {
+      setVoidTarget(null);
+      setReason("");
+      await attendanceQuery.refetch();
+    },
+    onError: (err: Error) => setError(err.message ?? "Failed to void this mark."),
+  });
+
+  const when = occurrence
+    ? parseAcademyInstant(occurrence.start_at).toLocaleString("en-US", {
+        weekday: "long",
+        month: "short",
+        day: "numeric",
+        timeZone,
+      })
+    : "";
+
+  return (
+    <RallyDialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+      title="Attendance"
+      description={
+        when
+          ? `${when}. Voiding a mark leaves it on the record but stops it counting towards attendance, payroll and absence policy.`
+          : ""
+      }
+      overline="Class date"
+    >
+      {error && <DialogError message={error} />}
+      {attendanceQuery.isLoading ? (
+        <p className="text-sm text-rally-subtle">Loading marks...</p>
+      ) : rows.length === 0 ? (
+        <p className="text-sm text-rally-subtle">
+          No attendance was recorded for this date.
+        </p>
+      ) : (
+        <ul className="space-y-2" data-testid="occurrence-attendance-list">
+          {rows.map((row) => (
+            <li
+              key={row.attendance_id}
+              className="flex items-center justify-between gap-3 border-b border-rally-line/60 pb-2"
+            >
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-rally-ink">
+                  {studentNameById.get(row.student_id) ?? row.student_id}
+                </p>
+                <span
+                  className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium capitalize ${
+                    ATTENDANCE_CHIP[row.status] ?? "bg-rally-line text-rally-muted"
+                  }`}
+                  data-testid={`attendance-status-${row.student_id}`}
+                >
+                  {row.status}
+                </span>
+                {row.status === "voided" && row.correction_reason && (
+                  <p className="mt-1 text-xs text-rally-subtle">
+                    Voided: {row.correction_reason}
+                  </p>
+                )}
+              </div>
+              {row.status !== "voided" && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  type="button"
+                  data-testid={`void-attendance-${row.student_id}`}
+                  onClick={() => {
+                    setVoidTarget(row.student_id);
+                    setReason("");
+                    setError(null);
+                  }}
+                >
+                  Void mark
+                </Button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {voidTarget && (
+        <form
+          className="mt-4 space-y-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            mutation.mutate();
+          }}
+        >
+          <Field
+            label={`Why is ${studentNameById.get(voidTarget) ?? voidTarget}'s mark being voided?`}
+          >
+            <input
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              className={inputClass}
+              placeholder="Marked on the wrong class"
+              maxLength={500}
+              data-testid="void-attendance-reason"
+            />
+          </Field>
+          <DialogActions>
+            <Button
+              variant="secondary"
+              size="sm"
+              type="button"
+              onClick={() => setVoidTarget(null)}
+            >
+              Keep the mark
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              type="submit"
+              data-testid="confirm-void-attendance"
+              disabled={mutation.isPending || reason.trim().length === 0}
+            >
+              {mutation.isPending ? "Voiding..." : "Void mark"}
+            </Button>
+          </DialogActions>
+        </form>
+      )}
     </RallyDialog>
   );
 }

@@ -9,6 +9,8 @@ const sentryMock = vi.hoisted(() => {
     captureException: vi.fn(),
     withScope: vi.fn((cb: (s: typeof scope) => void) => cb(scope)),
     metrics: { distribution: vi.fn() },
+    setUser: vi.fn(),
+    setTag: vi.fn(),
     browserTracingIntegration: vi.fn(() => browserTracingIntegration),
   };
 });
@@ -18,6 +20,7 @@ vi.mock("@sentry/browser", () => sentryMock);
 import {
   captureError,
   initSentry,
+  setSentryUser,
   recordVital,
   resetSentryForTests,
   scrubBreadcrumbUrls,
@@ -186,5 +189,41 @@ describe("lib/observability/sentry", () => {
       unit: "none",
       attributes: { rating: "good", route: "coach.today", id: "v2" },
     });
+  });
+
+  it("attaches the signed-in identity and academy tag, never email or name (#750)", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SENTRY_DSN", "https://key@o1.ingest.us.sentry.io/1");
+
+    setSentryUser({ id: "u1", segment: "coach", academyId: "acad-1" });
+    await initSentry();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(sentryMock.setUser).toHaveBeenCalledWith({ id: "u1", segment: "coach" });
+    const identity = sentryMock.setUser.mock.calls[0][0] as Record<string, unknown>;
+    expect(Object.keys(identity).sort()).toEqual(["id", "segment"]);
+    expect(sentryMock.setTag).toHaveBeenCalledWith("academy_id", "acad-1");
+  });
+
+  it("clears the Sentry user on sign-out (#750)", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SENTRY_DSN", "https://key@o1.ingest.us.sentry.io/1");
+
+    setSentryUser(null);
+    await initSentry();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(sentryMock.setUser).toHaveBeenCalledWith(null);
+    expect(sentryMock.setTag).toHaveBeenCalledWith("academy_id", undefined);
+  });
+
+  it("never identifies anyone when the DSN is unset (#750)", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SENTRY_DSN", "");
+
+    setSentryUser({ id: "u1", segment: "parent", academyId: "acad-1" });
+    setSentryUser(null);
+    await initSentry();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(sentryMock.setUser).not.toHaveBeenCalled();
+    expect(sentryMock.setTag).not.toHaveBeenCalled();
   });
 });

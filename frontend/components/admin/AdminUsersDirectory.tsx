@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
+import { Plus, Users } from "lucide-react";
 
 import {
   createAdminUser,
@@ -22,6 +22,7 @@ import { roleLabel } from "@/lib/admin/role-label";
 import { Avatar } from "@/components/ds/avatar";
 import { Button } from "@/components/ds/button";
 import { CoachEngagementStatsStrip } from "@/components/admin/CoachEngagementStatsStrip";
+import { BulkInviteDialog } from "@/components/admin/bulk-invite-dialog";
 
 const roles: Array<{ label: string; value: AdminUserRole | undefined }> = [
   { label: "All", value: undefined },
@@ -52,6 +53,7 @@ export function AdminUsersDirectory({
   const router = useRouter();
   const searchParams = useSearchParams();
   const [createOpen, setCreateOpen] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   // URL is the single source of truth for the active role tab.
   const role = fixedRole ?? parseRoleParam(searchParams.get("role"));
@@ -71,6 +73,9 @@ export function AdminUsersDirectory({
 
   const users = data?.users ?? [];
   const createLabel = fixedRole === "coach" ? "Add coach" : fixedRole === "parent" ? "Add parent" : "Add user";
+  // The bulk endpoint mints parents only (role is hardcoded server-side), so
+  // the action is offered on the parent tab and on the unfiltered directory.
+  const canBulkInvite = (fixedRole ?? role ?? "parent") === "parent";
 
   return (
     <section data-testid="admin-users" className="space-y-6">
@@ -95,15 +100,29 @@ export function AdminUsersDirectory({
         ) : (
           <div />
         )}
-        <Button
-          type="button"
-          size="sm"
-          icon={<Plus className="size-4" aria-hidden="true" />}
-          onClick={() => setCreateOpen(true)}
-          data-testid="admin-users-add"
-        >
-          {createLabel}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          {canBulkInvite && (
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              icon={<Users className="size-4" aria-hidden="true" />}
+              onClick={() => setBulkOpen(true)}
+              data-testid="admin-users-bulk-invite"
+            >
+              Bulk invite parents
+            </Button>
+          )}
+          <Button
+            type="button"
+            size="sm"
+            icon={<Plus className="size-4" aria-hidden="true" />}
+            onClick={() => setCreateOpen(true)}
+            data-testid="admin-users-add"
+          >
+            {createLabel}
+          </Button>
+        </div>
       </div>
 
       {!fixedRole && role === "coach" && <CoachEngagementStatsStrip />}
@@ -114,6 +133,14 @@ export function AdminUsersDirectory({
         fixedRole={fixedRole}
         onCreated={() => {
           setCreateOpen(false);
+          void queryClient.invalidateQueries({ queryKey: ["admin", "users"] });
+        }}
+      />
+
+      <BulkInviteDialog
+        open={bulkOpen}
+        onOpenChange={setBulkOpen}
+        onInvited={() => {
           void queryClient.invalidateQueries({ queryKey: ["admin", "users"] });
         }}
       />

@@ -5,7 +5,11 @@ from __future__ import annotations
 from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.coaching.domain.errors import ConflictAttendanceExists
-from backend.v2.contexts.coaching.domain.models import Attendance, CoachAttendance
+from backend.v2.contexts.coaching.domain.models import (
+    Attendance,
+    CoachAttendance,
+    CoachAttendanceAuditEntry,
+)
 from backend.v2.shared.tenancy import TenantScopedRepository
 
 
@@ -156,3 +160,13 @@ class MongoCoachAttendanceRepository(TenantScopedRepository):
             sort=[("marked_at", 1)],
         )
         return [self._to_domain(doc) async for doc in cursor]
+
+
+class MongoCoachAttendanceAuditLogRepository(TenantScopedRepository):
+    """Append-only before/after log for edited coach attendance marks (#539)."""
+
+    collection_name = "coach_attendance_audit_log"
+
+    async def append(self, entry: CoachAttendanceAuditEntry) -> None:
+        doc = {k: v for k, v in entry.model_dump(mode="python").items() if k != "academy_id"}
+        await self._insert_one(doc)

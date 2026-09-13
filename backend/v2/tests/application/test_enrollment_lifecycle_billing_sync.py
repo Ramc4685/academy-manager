@@ -124,6 +124,7 @@ class RecordingScheduledActions:
 @dataclass
 class RecordingOccurrenceRoster:
     calls: list[dict[str, Any]] = field(default_factory=list)
+    session_calls: list[dict[str, Any]] = field(default_factory=list)
     fail: bool = False
 
     async def remove_future_for_student(
@@ -132,6 +133,12 @@ class RecordingOccurrenceRoster:
         if self.fail:
             raise RuntimeError("roster store down")
         self.calls.append({"session_id": session_id, "student_id": student_id, "after": after})
+        return 1
+
+    async def remove_future_for_session(self, *, session_id: str, after: datetime) -> int:
+        if self.fail:
+            raise RuntimeError("roster store down")
+        self.session_calls.append({"session_id": session_id, "after": after})
         return 1
 
 
@@ -564,6 +571,36 @@ async def test_cancel_session_sweeps_paused_rows_without_double_releasing() -> N
     assert {c["student_id"] for c in cleanup.calls} == {"stu-1", "stu-2"}
     assert all(c["after"] == _now() for c in cleanup.calls)
     assert len(outbox.rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_cancel_session_sweeps_one_time_rows_for_non_enrolled_students() -> None:
+    """Issue #694: make-up/trial students hold no enrollment on the session,
+    so the per-enrolled-student sweep never reaches their one-time roster
+    rows. Cancelling the whole session must sweep those too."""
+    enrollments = DatedEnrollments(rows={"enr-1": _enrollment()})
+    sessions = FakeSessionWriter(reserved={"sess-1": 1})
+    sync = RecordingBillingSync()
+    roster = RecordingRoster()
+    cleanup = RecordingOccurrenceRoster()
+    outbox = FakeOutbox()
+    await CancelSession(
+        sessions=sessions,
+        enrollments_query=FakeQuery(list(enrollments.rows.values())),
+        enrollments_writer=enrollments,
+        outbox=outbox,
+        academy_id="acad",
+        roster_notifier=roster,
+        billing_sync=sync,
+        occurrence_roster=cleanup,
+        clock=_now,
+    ).execute(CancelSessionCommand(session_id="sess-1"))
+
+    # The per-enrolled-student sweep still runs for enr-1's own rows...
+    assert cleanup.calls == [{"session_id": "sess-1", "student_id": "stu-1", "after": _now()}]
+    # ...and a whole-session sweep also runs, catching make-up/trial rows
+    # for students who never held an enrollment on this session.
+    assert cleanup.session_calls == [{"session_id": "sess-1", "after": _now()}]
 
 
 @pytest.mark.asyncio

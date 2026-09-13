@@ -430,6 +430,7 @@ _AUDIT_SUMMARIES: dict[str, str] = {
     "discount_removed": "Discount removed",
     "platform_fallback_toggled": "Charge routing changed",
     "invoice_schedule_changed": "Invoice schedule changed",
+    "late_fee_applied": "Late fee added automatically",
 }
 
 #: Every value backend.v2.contexts.enrollment.domain.events.EnrollmentLifecycleEventType

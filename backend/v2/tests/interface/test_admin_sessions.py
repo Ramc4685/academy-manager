@@ -2129,6 +2129,71 @@ def test_admin_correct_student_attendance_missing_mark_404(admin_client):
     assert r.json()["error"]["code"] == "Coaching.AttendanceNotFound"
 
 
+# --- issue #554: admin void workflow ---
+
+
+def test_admin_can_void_student_attendance_with_a_reason(admin_client):
+    r = admin_client.patch(
+        "/api/v2/admin/session-occurrences/occ-admin-1/attendance/st-1/void",
+        json={"reason": "marked on the wrong class"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "voided"
+    assert body["previous_status"] == "present"
+    assert body["corrected_by"] == "u-admin"
+    assert body["correction_reason"] == "marked on the wrong class"
+
+
+def test_admin_void_requires_a_reason(admin_client):
+    blank = admin_client.patch(
+        "/api/v2/admin/session-occurrences/occ-admin-1/attendance/st-1/void",
+        json={"reason": "   "},
+    )
+    assert blank.status_code == 422, blank.text
+    missing = admin_client.patch(
+        "/api/v2/admin/session-occurrences/occ-admin-1/attendance/st-1/void",
+        json={},
+    )
+    assert missing.status_code == 422, missing.text
+
+
+def test_admin_void_missing_mark_404(admin_client):
+    r = admin_client.patch(
+        "/api/v2/admin/session-occurrences/occ-admin-1/attendance/ghost/void",
+        json={"reason": "mis-tap"},
+    )
+    assert r.status_code == 404
+    assert r.json()["error"]["code"] == "Coaching.AttendanceNotFound"
+
+
+def test_admin_lists_occurrence_student_attendance(admin_client):
+    listing = admin_client.get(
+        "/api/v2/admin/session-occurrences/occ-admin-1/attendance",
+    )
+    assert listing.status_code == 200, listing.text
+    rows = listing.json()["attendance"]
+    assert [r["student_id"] for r in rows] == ["st-1"]
+    assert rows[0]["status"] == "present"
+
+    voided = admin_client.patch(
+        "/api/v2/admin/session-occurrences/occ-admin-1/attendance/st-1/void",
+        json={"reason": "wrong class"},
+    )
+    assert voided.status_code == 200, voided.text
+
+    after = admin_client.get("/api/v2/admin/session-occurrences/occ-admin-1/attendance")
+    assert after.json()["attendance"][0]["status"] == "voided"
+
+
+def test_coach_persona_cannot_void_student_attendance(coach_on_admin_client):
+    r = coach_on_admin_client.patch(
+        "/api/v2/admin/session-occurrences/occ-admin-1/attendance/st-1/void",
+        json={"reason": "nope"},
+    )
+    assert r.status_code == 404
+
+
 # --- issue #467: cancel is a soft delete; cancelled sessions must not re-list ---
 
 

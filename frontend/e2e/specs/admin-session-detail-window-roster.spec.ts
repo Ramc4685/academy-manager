@@ -240,4 +240,15 @@ test.describe("admin session detail — class dates window and roster tabs (#711
     await expect(page.getByRole("tab", { name: /Past/ })).toHaveAttribute("aria-selected", "true");
     await expect(page.getByTestId("enrollment-row-enr-paused")).toBeVisible();
   });
+
+  // #521: the page only needs coach names (for the replacement-coach table),
+  // but used to fetch the entire tenant user directory on every load.
+  test("fetches only coach-role users, not the full tenant directory", async ({ page }) => {
+    const usersRequest = page.waitForRequest(
+      (request) => request.method() === "GET" && request.url().includes("/api/v2/admin/users"),
+    );
+    await page.reload();
+    const request = await usersRequest;
+    expect(new URL(request.url()).searchParams.get("role")).toBe("coach");
+  });
 });

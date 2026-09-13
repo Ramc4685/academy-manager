@@ -49,6 +49,10 @@ BillingAuditAction = Literal[
     # (UpdateAcademyFeesUseCase writes no entry), so this is the trail for
     # them (spec 2026-09-07-billing-rules-design SS4.1).
     "billing_rules_changed",
+    # Unattended: the late-fee policy charged an overdue invoice the academy's
+    # configured fee (#552). Nobody clicked anything, so the trail is the only
+    # place the parent's extra charge can be explained from.
+    "late_fee_applied",
 ]
 
 

@@ -51,6 +51,9 @@ from backend.v2.contexts.enrollment.application.terminal_dependents import (
     drop_future_occurrence_roster as _drop_future_occurrence_roster,
 )
 from backend.v2.contexts.enrollment.application.terminal_dependents import (
+    drop_future_occurrence_roster_for_session as _drop_future_occurrence_roster_for_session,
+)
+from backend.v2.contexts.enrollment.application.terminal_dependents import (
     notify_roster_change as _notify_roster_change,
 )
 from backend.v2.contexts.enrollment.application.terminal_dependents import (
@@ -747,6 +750,11 @@ class CancelSession:
                     ),
                 )
             )
+        # Issue #694: catches make-up/trial students, who never held an
+        # enrollment on this session and so were never in `rows` above.
+        await _drop_future_occurrence_roster_for_session(
+            self._occurrence_roster, session_id=cmd.session_id, after=now
+        )
         return await self._sessions.get(cmd.session_id)
 
     async def _close_paused_followups(self, enrollment_id: str, *, now: datetime) -> None:

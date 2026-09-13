@@ -284,6 +284,16 @@ class Settings(BaseSettings):
             )
         if "V2_SENTRY_DSN" not in os.environ:
             self.sentry_dsn = os.environ.get("SENTRY_DSN", self.sentry_dsn)
+        if (
+            "V2_SENTRY_TRACES_SAMPLE_RATE" not in os.environ
+            and "SENTRY_TRACES_SAMPLE_RATE" not in os.environ
+            and self.env == "prod"
+        ):
+            # #749: nothing in the repo set this secret, so prod tracing was
+            # silently 0.0 forever. Default it on in prod only; test/dev/CI
+            # keep the errors-first 0.0 default, and an explicit env var
+            # (either name) still wins over this.
+            self.sentry_traces_sample_rate = 0.1
         if "V2_SENTRY_LOGS_ENABLED" not in os.environ and "SENTRY_LOGS_ENABLED" in os.environ:
             self.sentry_logs_enabled = os.environ["SENTRY_LOGS_ENABLED"].strip().lower() in {
                 "1",

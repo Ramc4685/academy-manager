@@ -46,6 +46,9 @@ from backend.v2.contexts.coaching.application.use_cases.session_notes import (
     ListProgressNotes,
     SetProgressNoteVisibility,
 )
+from backend.v2.contexts.coaching.application.use_cases.void_attendance import (
+    VoidAttendance,
+)
 from backend.v2.contexts.coaching.domain.errors import ConflictAttendanceExists
 from backend.v2.contexts.coaching.domain.models import Attendance, CoachAttendance
 from backend.v2.contexts.enrollment.application.use_cases.coach_roster_writes import (
@@ -838,6 +841,7 @@ def _build_use_cases(seed_data) -> CoachUseCases:
             absence_notices=absence_notices,
             occurrence_roster=occurrence_roster,
             students=students,
+            occurrences=occurrences,
         ),
         mark_attendance=MarkAttendance(
             attendance_repo=_attendance_repo,
@@ -1368,6 +1372,27 @@ class FakeEnrollmentEvents:
 
     async def list_for_enrollment(self, enrollment_id):
         return [event for event in self.rows if event.enrollment_id == enrollment_id]
+
+    async def list_for_enrollment_paginated(self, enrollment_id, *, limit=100, cursor=None):
+        # Mirrors the AdminUseCases.list_enrollment_events contract (#748):
+        # production wires that to the paginated read model, not to this
+        # repo's plain list_for_enrollment — a different fake method keeps
+        # the two contracts distinct here too. Most-recent-first, real
+        # cursor semantics, so route-level pagination tests exercise the
+        # actual limit/cursor/next_cursor round trip.
+        matches = sorted(
+            (e for e in self.rows if e.enrollment_id == enrollment_id),
+            key=lambda e: (e.occurred_at, e.event_id),
+            reverse=True,
+        )
+        if cursor is not None:
+            cursor_at, cursor_id = cursor
+            matches = [e for e in matches if (e.occurred_at, e.event_id) < (cursor_at, cursor_id)]
+        page = matches[: limit + 1]
+        has_more = len(page) > limit
+        page = page[:limit]
+        next_cursor = (page[-1].occurred_at, page[-1].event_id) if has_more and page else None
+        return page, next_cursor
 
 
 @dataclass
@@ -2299,6 +2324,12 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         academy_id=lambda: "acad",
         clock=lambda: datetime(2026, 6, 20, 10, 35, tzinfo=UTC),
     )
+    void_attendance = VoidAttendance(
+        attendance_repo=_student_attendance,
+        outbox=outbox,
+        academy_id=lambda: "acad",
+        clock=lambda: datetime(2026, 6, 20, 10, 35, tzinfo=UTC),
+    )
 
     async def list_waitlist_for_session(session_id):
         return [e for e in waitlist.entries.values() if e.session_id == session_id]
@@ -2325,7 +2356,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
             calculated_by="admin",
         )
 
-    async def list_audit_logs():
+    async def list_audit_logs(actor_type=None):
         return []
 
     async def list_dues_followup():
@@ -2638,6 +2669,8 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         update_session_occurrence_coach=update_session_occurrence_coach,
         mark_coach_attendance=mark_coach_attendance,
         correct_attendance=correct_attendance,
+        void_attendance=void_attendance,
+        list_occurrence_attendance=_student_attendance.list_for_occurrence,
         list_admin_enrollments_for_session=list_admin_enrollments_for_session,
         list_waitlist_for_session=list_waitlist_for_session,
         list_audit_logs=list_audit_logs,
@@ -2647,7 +2680,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         send_past_due_reminders=send_past_due_reminders,
         count_dunning_alerts=count_dunning_alerts,
         export_report_csv=export_report_csv,
-        list_enrollment_events=enrollment_events.list_for_enrollment,
+        list_enrollment_events=enrollment_events.list_for_enrollment_paginated,
         comms=comms,
         list_admin_waivers=waivers,  # type: ignore[arg-type]
         admin_registration_review=AsyncMock(),

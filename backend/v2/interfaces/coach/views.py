@@ -56,7 +56,10 @@ class CoachRosterEntry(BaseModel):
     ) = None
     # Already-recorded mark for this occurrence, so the client can hydrate
     # attendance state after a reload instead of treating everyone as unmarked.
-    attendance_status: Literal["present", "absent", "late"] | None = None
+    # "voided" (#554) is a live row state an admin can set at any time; it
+    # must be accepted here or one voided mark fails validation for the
+    # coach's whole day (same failure shape as #732).
+    attendance_status: Literal["present", "absent", "late", "voided"] | None = None
     # True when a parent submitted an AbsenceNotice (R1) for this student on
     # this occurrence.
     expected_absence: bool = False
@@ -143,7 +146,9 @@ class CorrectAttendanceResponse(BaseModel):
     session_id: str
     student_id: str
     status: Literal["present", "absent", "late"]
-    previous_status: Literal["present", "absent", "late"] | None = None
+    # Correcting a voided mark un-voids it (#554), so the replaced status may
+    # be "voided" even though nothing can be corrected *to* it.
+    previous_status: Literal["present", "absent", "late", "voided"] | None = None
     corrected_by: str | None = None
     corrected_at: datetime | None = None
 

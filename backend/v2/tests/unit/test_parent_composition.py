@@ -2822,8 +2822,13 @@ async def test_zero_quote_period_is_stamped_in_the_session_timezone(
     mongomock_motor = pytest.importorskip("mongomock_motor")
     db = mongomock_motor.AsyncMongoMockClient()["zero-quote-period-tz"]
 
+    # Seed the application's own clock at the same pinned instant the checkout
+    # call prices against (issue #537 TTL enforcement) — using the real wall
+    # clock here would put `expires_at` in 2026 while the checkout call is
+    # pinned a year ahead in 2027, which is a genuinely expired application,
+    # not the session-timezone case this test targets.
     await db["onboarding_applications"].insert_one(
-        _checkout_ready_application(datetime.now(UTC), status="DRAFT")
+        _checkout_ready_application(_MONTH_END_EVENING_CHICAGO, status="DRAFT")
     )
     await db["sessions"].insert_one(_catalog_session_meeting_soon())
 

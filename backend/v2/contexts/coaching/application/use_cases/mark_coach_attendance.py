@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from pydantic import BaseModel, Field
 
 from backend.v2.contexts.coaching.application.ports import (
+    CoachAttendanceAuditRepository,
     CoachAttendanceRepository,
     OccurrenceLookup,
     PayoutPeriodLock,
@@ -25,6 +26,7 @@ from backend.v2.contexts.coaching.application.ports import (
 from backend.v2.contexts.coaching.domain.errors import PayoutPeriodFrozen
 from backend.v2.contexts.coaching.domain.models import (
     CoachAttendance,
+    CoachAttendanceAuditEntry,
     CoachAttendanceRole,
     CoachAttendanceSource,
     CoachAttendanceStatus,
@@ -51,12 +53,14 @@ class MarkCoachAttendance:
         academy_id: str,
         payout_lock: PayoutPeriodLock | None = None,
         clock: Callable[[], datetime] | None = None,
+        coach_attendance_audit: CoachAttendanceAuditRepository | None = None,
     ) -> None:
         self._coach_attendance = coach_attendance
         self._occurrence_lookup = occurrence_lookup
         self._academy_id = academy_id
         self._payout_lock = payout_lock
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._coach_attendance_audit = coach_attendance_audit
 
     async def execute(
         self,
@@ -99,7 +103,28 @@ class MarkCoachAttendance:
             rate_override_minor=command.rate_override_minor,
             note=command.note,
         )
-        return await self._coach_attendance.upsert(row)
+        saved = await self._coach_attendance.upsert(row)
+
+        changed = existing is not None and (
+            existing.status != row.status or existing.rate_override_minor != row.rate_override_minor
+        )
+        if changed and existing is not None and self._coach_attendance_audit is not None:
+            await self._coach_attendance_audit.append(
+                CoachAttendanceAuditEntry(
+                    audit_id=new_ulid(),
+                    academy_id=self._academy_id,
+                    occurrence_id=command.occurrence_id,
+                    coach_id=command.coach_id,
+                    actor_id=actor_id,
+                    at=self._clock(),
+                    before_status=existing.status,
+                    after_status=row.status,
+                    before_rate_override_minor=existing.rate_override_minor,
+                    after_rate_override_minor=row.rate_override_minor,
+                )
+            )
+
+        return saved
 
     async def _assert_payout_window_open(self, *, coach_id: str, at: datetime) -> None:
         if self._payout_lock is None:

@@ -47,6 +47,12 @@ from backend.v2.shared.occurrences import occurrence_session_id
 from backend.v2.shared.tenancy import current_academy_id
 from backend.v2.shared.time import academy_timezone_lookup, resolve_reporting_timezone
 
+# Attendance-rate denominator and numerator (#554). ``voided`` appears in
+# neither: an annulled mark drops out of the rate entirely rather than
+# counting as an absence.
+ATTENDANCE_RATE_COUNTED_STATUSES = ("present", "late", "absent")
+ATTENDANCE_RATE_PRESENT_STATUSES = frozenset({"present", "late"})
+
 
 async def _reporting_timezone(db: AsyncIOMotorDatabase[Any], academy_id: str) -> str:
     """The zone every month bucket on this page is read off (#608).
@@ -692,12 +698,12 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
             {
                 "academy_id": academy_id,
                 "marked_at": {"$gte": start, "$lt": end},
-                "status": {"$in": ["present", "late", "absent"]},
+                "status": {"$in": list(ATTENDANCE_RATE_COUNTED_STATUSES)},
             }
         )
         async for attendance in attendance_cursor:
             recorded_count += 1
-            if str(attendance.get("status")) in {"present", "late"}:
+            if str(attendance.get("status")) in ATTENDANCE_RATE_PRESENT_STATUSES:
                 present_count += 1
         attendance_rate = round(present_count / recorded_count, 4) if recorded_count else None
 
@@ -1973,28 +1979,66 @@ def _allocate_report_amount(
     return allocations
 
 
+#: Hard ceiling on a single page of enrollment events, regardless of what a
+#: caller asks for — keeps one request from materialising an enrollment's
+#: entire (potentially years-long) event history and blowing the BFF
+#: Worker's CPU/memory budget (#748).
+ENROLLMENT_EVENTS_MAX_LIMIT = 500
+ENROLLMENT_EVENTS_DEFAULT_LIMIT = 100
+
+
 def make_list_enrollment_events(db: Any) -> object:
     from backend.v2.shared.tenancy import current_academy_id
 
-    async def list_enrollment_events(enrollment_id: str) -> list[dict[str, Any]]:
+    async def list_enrollment_events(
+        enrollment_id: str,
+        *,
+        limit: int = ENROLLMENT_EVENTS_DEFAULT_LIMIT,
+        cursor: tuple[datetime, str] | None = None,
+    ) -> tuple[list[dict[str, Any]], tuple[datetime, str] | None]:
         academy_id = current_academy_id()
-        cursor = db.enrollment_events.find(
-            {"enrollment_id": enrollment_id, "academy_id": academy_id},
-            sort=[("occurred_at", 1)],
-        )
-        results = []
-        async for doc in cursor:
-            results.append(
-                {
-                    "event_id": str(doc.get("event_id") or doc.get("_id", "")),
-                    "event_type": str(doc.get("event_type", "")),
-                    "effective_date": str(doc.get("effective_at", ""))[:10],
-                    "actor_id": str(doc.get("actor_id", "")),
-                    "reason": doc.get("reason"),
-                    "billing_result": doc.get("billing_result"),
-                    "credit_id": doc.get("credit_id"),
-                }
-            )
-        return results
+        page_size = max(1, min(limit, ENROLLMENT_EVENTS_MAX_LIMIT))
+        query: dict[str, Any] = {"enrollment_id": enrollment_id, "academy_id": academy_id}
+        if cursor is not None:
+            cursor_at, cursor_event_id = cursor
+            query["$or"] = [
+                {"occurred_at": {"$lt": cursor_at}},
+                {"occurred_at": cursor_at, "event_id": {"$lt": cursor_event_id}},
+            ]
+
+        # Tie-break on `event_id` (unique, string, already the id upserts key
+        # on — see mongo_enrollment_event_repo.py) rather than Mongo's
+        # auto-generated `_id`: the opaque pagination cursor round-trips this
+        # value through a string, and BSON type ordering means an ObjectId
+        # is never `$lt` a string, so an `_id` tie-break silently drops
+        # same-`occurred_at` events on every page boundary after the first.
+        mongo_cursor = db.enrollment_events.find(
+            query,
+            sort=[("occurred_at", -1), ("event_id", -1)],
+        ).limit(page_size + 1)
+
+        docs = [doc async for doc in mongo_cursor]
+        has_more = len(docs) > page_size
+        docs = docs[:page_size]
+
+        results = [
+            {
+                "event_id": str(doc.get("event_id") or doc.get("_id", "")),
+                "event_type": str(doc.get("event_type", "")),
+                "effective_date": str(doc.get("effective_at", ""))[:10],
+                "actor_id": str(doc.get("actor_id", "")),
+                "reason": doc.get("reason"),
+                "billing_result": doc.get("billing_result"),
+                "credit_id": doc.get("credit_id"),
+            }
+            for doc in docs
+        ]
+
+        next_cursor: tuple[datetime, str] | None = None
+        if has_more and docs:
+            last = docs[-1]
+            next_cursor = (last["occurred_at"], str(last.get("event_id") or last.get("_id", "")))
+
+        return results, next_cursor
 
     return list_enrollment_events

@@ -9,6 +9,8 @@ EnrollmentCancelled handler's use case expires it.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+from typing import ClassVar
 
 import pytest
 
@@ -377,8 +379,109 @@ async def test_approve_still_works_for_a_paused_student() -> None:
         ReviewLevelUpCommand(rec_id="rec-1", action="approve", reviewed_by="admin-1")
     )
 
-    assert result.status == "APPROVED"
+    assert result.status == "COMPLETED"
     assert result.cert_id
+
+
+@pytest.mark.asyncio
+async def test_approved_recommendation_does_not_block_next_level_up() -> None:
+    """Issue #786: approval must reach a terminal status.
+
+    Before the fix, approve stamped the row ``APPROVED`` forever, and
+    ``APPROVED`` counted as an active recommendation — so a student could
+    never be recommended for their *next* level once their first one was
+    approved. Approve must move the row somewhere that stops matching the
+    active-recommendation lookup, and ``RecommendLevelUp`` must succeed again
+    for the same student/program afterwards.
+    """
+
+    class _SeqSkillLookup:
+        """A two-level program: lvl-1 -> lvl-2, each with one required skill."""
+
+        _levels: ClassVar[dict[str, int]] = {"lvl-1": 1, "lvl-2": 2}
+        _required_skill: ClassVar[dict[str, str]] = {"lvl-1": "skill-1", "lvl-2": "skill-2"}
+
+        async def get_skill(self, skill_id):
+            return None
+
+        async def get_level(self, level_id):
+            return SimpleNamespace(level_id=level_id, sequence=self._levels[level_id])
+
+        async def list_skills_for_level(self, level_id):
+            return [SimpleNamespace(skill_id=self._required_skill[level_id], is_required=True)]
+
+        async def get_next_level(self, program_id, current_sequence):
+            for level_id, seq in self._levels.items():
+                if seq == current_sequence + 1:
+                    return SimpleNamespace(level_id=level_id)
+            return None
+
+    class _PassableSkillProgressRepo(_SkillProgressRepo):
+        def __init__(self) -> None:
+            super().__init__()
+            self.passed: set[tuple[str, str]] = set()
+
+        async def list_passed_for_student_level(self, student_id, level_id):
+            skill_id = _SeqSkillLookup._required_skill[level_id]
+            if (student_id, skill_id) in self.passed:
+                return [SimpleNamespace(skill_id=skill_id)]
+            return []
+
+    recs = _RecRepo()
+    level_progress = _LevelProgressRepo()
+    skill_progress = _PassableSkillProgressRepo()
+    skill_progress.passed.add(("st-1", "skill-1"))
+    await level_progress.save(
+        StudentLevelProgress(
+            progress_id="progress-lvl1",
+            academy_id="acad",
+            student_id="st-1",
+            program_id="prog-1",
+            level_id="lvl-1",
+            status="active",
+            started_at=_NOW,
+            completed_at=None,
+            created_at=_NOW,
+        )
+    )
+    lookup = _EnrollmentLookup(live={"st-1"})
+    skill_lookup = _SeqSkillLookup()
+
+    recommend = RecommendLevelUp(
+        level_progress=level_progress,
+        skill_progress=skill_progress,
+        recommendations=recs,
+        skill_lookup=skill_lookup,
+        enrollment_lookup=lookup,
+    )
+    review = ReviewLevelUpRecommendation(
+        recommendations=recs,
+        level_progress=level_progress,
+        skill_progress=skill_progress,
+        certificates=_CertRepo(),
+        skill_lookup=skill_lookup,
+        enrollment_lookup=lookup,
+    )
+
+    rec1 = await recommend.execute(
+        RecommendLevelUpCommand(student_id="st-1", program_id="prog-1", recommended_by="coach-1")
+    )
+    assert rec1.status == "RECOMMENDED"
+
+    approved = await review.execute(
+        ReviewLevelUpCommand(rec_id=rec1.rec_id, action="approve", reviewed_by="admin-1")
+    )
+    assert approved.status == "COMPLETED"
+    assert (await recs.get(rec1.rec_id)).status == "COMPLETED"
+
+    # The student is now active on lvl-2 with its required skill passed.
+    skill_progress.passed.add(("st-1", "skill-2"))
+
+    rec2 = await recommend.execute(
+        RecommendLevelUpCommand(student_id="st-1", program_id="prog-1", recommended_by="coach-1")
+    )
+    assert rec2.status == "RECOMMENDED"
+    assert rec2.from_level_id == "lvl-2"
 
 
 @pytest.mark.asyncio
@@ -463,7 +566,7 @@ async def test_interleaved_approve_and_reject_never_certifies_a_rejected_student
 
     # One winner, one refusal — never two recorded decisions.
     assert sorted(outcomes) in (
-        ["approve:APPROVED", "reject:refused"],
+        ["approve:COMPLETED", "reject:refused"],
         ["approve:refused", "reject:REJECTED"],
     )
     stored = recs.rows["rec-1"]
@@ -471,7 +574,7 @@ async def test_interleaved_approve_and_reject_never_certifies_a_rejected_student
         assert certs.rows == []
         assert level_progress.rows == {}
     else:
-        assert stored.status == "APPROVED"
+        assert stored.status == "COMPLETED"
         assert len(certs.rows) == 1
 
 

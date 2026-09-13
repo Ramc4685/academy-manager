@@ -17,6 +17,9 @@ from backend.v2.composition.admin_registration_review import (
 from backend.v2.contexts.enrollment.application.seat_broker import SeatBroker
 from backend.v2.contexts.enrollment.domain.models import Enrollment, Session, Student
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
+from backend.v2.contexts.onboarding.application.use_cases.admin_waiver_templates import (
+    AdminWaiverTemplateRecord,
+)
 from backend.v2.contexts.onboarding.domain.errors import (
     ApplicationNotEditable,
     IncompleteApplication,
@@ -681,6 +684,55 @@ async def test_pending_list_routes_ambiguous_legacy_child_to_manual_review() -> 
     assert rows[0].status == "MANUAL_REVIEW"
     detail = await review.detail("app-1")
     assert detail.status == "MANUAL_REVIEW"
+
+
+class CountingWaiverTemplateQuery:
+    """Spies on how many times the registration waiver template is fetched.
+
+    Real waiver-template lookups are Mongo reads; `list_pending()` must fetch
+    the template once for the whole page, not once per application row.
+    """
+
+    def __init__(self, template: AdminWaiverTemplateRecord | None) -> None:
+        self._template = template
+        self.calls = 0
+
+    async def get_registration_template(self) -> AdminWaiverTemplateRecord | None:
+        self.calls += 1
+        return self._template
+
+
+@pytest.mark.asyncio
+async def test_pending_list_fetches_waiver_template_once_for_whole_page() -> None:
+    apps = [
+        _application(application_id="app-1", student_id=None),
+        _application(application_id="app-2", student_id=None),
+        _application(application_id="app-3", student_id=None),
+    ]
+    template = AdminWaiverTemplateRecord(
+        waiver_template_id="wt-1",
+        title="Registration Waiver",
+        body="...",
+        status="active",
+        updated_at=NOW,
+    )
+    waiver_templates = CountingWaiverTemplateQuery(template)
+    review = AdminRegistrationReview(
+        apps=InMemoryApplications(apps),
+        sessions=InMemorySessions([_session()]),
+        students=InMemoryStudents(),
+        enrollments=InMemoryEnrollments(),
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        waiver_templates=waiver_templates,
+        clock=lambda: NOW,
+    )
+
+    rows = await review.list_pending()
+
+    assert len(rows) == 3
+    assert all(row.waiver_required for row in rows)
+    assert waiver_templates.calls == 1
 
 
 @pytest.mark.asyncio

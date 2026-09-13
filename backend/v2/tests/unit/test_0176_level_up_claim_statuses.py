@@ -18,7 +18,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from backend.v2.contexts.student_progress.domain.models import (
-    ACTIVE_LEVEL_UP_STATUSES,
     CLAIMABLE_LEVEL_UP_STATUSES,
     LevelUpStatus,
 )
@@ -105,6 +104,13 @@ async def test_active_unique_index_is_rebuilt_over_the_claimed_statuses(migratio
 
     Otherwise the claim window is exactly the window in which a second live
     recommendation for the same student and level could be inserted.
+
+    This pins 0176's own filter, not the live ``ACTIVE_LEVEL_UP_STATUSES``
+    constant: a migration is an append-only record of what was applied, and
+    migration 0179 (issue #786) later narrows the *rebuilt* index to drop
+    ``APPROVED`` — this migration's own historical widening (adding the claim
+    statuses to ``RECOMMENDED``/``APPROVED``) must keep reading the same way
+    it always has.
     """
     db = _mock_db()
 
@@ -115,4 +121,4 @@ async def test_active_unique_index_is_rebuilt_over_the_claimed_statuses(migratio
     _keys, kwargs = recs.create_index.await_args
     assert kwargs["unique"] is True
     assert kwargs["name"] == "recs_active_unique"
-    assert set(kwargs["partialFilterExpression"]["status"]["$in"]) == ACTIVE_LEVEL_UP_STATUSES
+    assert set(kwargs["partialFilterExpression"]["status"]["$in"]) == set(migration.ACTIVE_STATUSES)

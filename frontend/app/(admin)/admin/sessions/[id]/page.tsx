@@ -53,6 +53,7 @@ import {
 import { RosterMetrics, RosterTable, partitionRoster, seatsHeldCount } from "./RosterPanel";
 import {
   CancelOccurrenceDialog,
+  OccurrenceAttendanceDialog,
   OccurrenceReplacementDialog,
   ReplacementCoachTable,
   SessionAssistantsDialog,
@@ -117,6 +118,10 @@ export default function AdminSessionDetailPage() {
   const [replacementOpen, setReplacementOpen] = useState(false);
   // Issue #671: the date an admin is calling off, or null.
   const [cancelTarget, setCancelTarget] = useState<AdminSessionOccurrenceView | null>(null);
+  // Issue #554: the date whose per-student marks an admin is reviewing, or null.
+  const [attendanceTarget, setAttendanceTarget] = useState<AdminSessionOccurrenceView | null>(
+    null,
+  );
   const [assistantsOpen, setAssistantsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<DetailTab>("roster");
   const [rosterView, setRosterView] = useState<RosterView>("active");
@@ -138,9 +143,11 @@ export default function AdminSessionDetailPage() {
     queryFn: () => listSessionOccurrences(sessionId),
   });
 
+  // #521: this page only needs coach names for the replacement-coach table,
+  // not the full tenant user directory.
   const usersQuery = useQuery({
-    queryKey: queryKeys.admin.users(),
-    queryFn: () => listAdminUsers(),
+    queryKey: queryKeys.admin.users("coach"),
+    queryFn: () => listAdminUsers("coach"),
   });
 
   const waitlistQuery = useQuery({
@@ -215,6 +222,15 @@ export default function AdminSessionDetailPage() {
   const rosterRows = rosterView === "active" ? activeEnrollments : pastEnrollments;
   const userNameById = new Map(
     (usersQuery.data?.users ?? []).map((user) => [user.user_id, user.display_name || user.email])
+  );
+  // The attendance dialog reads ids; the roster already has the names, so no
+  // extra request is needed to label them (#554).
+  const studentNameById = useMemo(
+    () =>
+      new Map(
+        enrollments.map((enrollment) => [enrollment.student_id, enrollment.full_name]),
+      ),
+    [enrollments],
   );
   const waitlist = waitlistQuery.data?.waitlist ?? [];
   const waitingCount = waitlist.filter((w) => w.status === "waiting").length;
@@ -380,6 +396,7 @@ export default function AdminSessionDetailPage() {
               timezone={session?.timezone ?? null}
               onEdit={setOccurrenceTarget}
               onCancel={setCancelTarget}
+              onViewAttendance={setAttendanceTarget}
               showStatus
               emptyLabel="No dates scheduled yet."
             />
@@ -622,6 +639,12 @@ export default function AdminSessionDetailPage() {
             queryKey: queryKeys.admin.sessionOccurrences(sessionId),
           });
         }}
+      />
+      <OccurrenceAttendanceDialog
+        occurrence={attendanceTarget}
+        timezone={session?.timezone ?? null}
+        studentNameById={studentNameById}
+        onClose={() => setAttendanceTarget(null)}
       />
       <OccurrenceReplacementDialog
         sessionId={sessionId}

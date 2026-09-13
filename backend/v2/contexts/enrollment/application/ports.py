@@ -348,6 +348,17 @@ class OccurrenceRosterCleanup(Protocol):
         self, *, session_id: str, student_id: str, after: datetime
     ) -> int: ...
 
+    async def remove_future_for_session(self, *, session_id: str, after: datetime) -> int:
+        """Drop every one-time row for FUTURE occurrences of ``session_id``,
+        regardless of student (issue #694).
+
+        A whole-session cancel only walks enrolled students, so make-up and
+        trial students — who hold no enrollment row on the session — would
+        otherwise keep their one-time rows and render unmarkable on the
+        coach roster. Best-effort, like ``remove_future_for_student``.
+        """
+        ...
+
 
 class OccurrenceRosterPurge(Protocol):
     """Drop every one-time roster row for ONE cancelled date (issue #671).

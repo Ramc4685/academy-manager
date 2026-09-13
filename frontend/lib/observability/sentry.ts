@@ -144,6 +144,38 @@ export function captureError(error: unknown, context: CaptureContext = {}): void
   });
 }
 
+/** The identity attached to browser events. Deliberately id-only. */
+export interface SentryIdentity {
+  /** Backend `user_id` — an opaque id, never the email or display name. */
+  id: string;
+  /** Persona the shell resolved for this session (`coach`, `parent`, ...). */
+  segment: string;
+  /** Tenant slug, sent as the `academy_id` tag. */
+  academyId: string;
+}
+
+/**
+ * Identify (or, with `null`, forget) the signed-in user so Sentry can count
+ * "users affected" — without it every browser event ships anonymous and that
+ * number stays 0 (#750).
+ *
+ * Only the opaque `user_id`, the persona and the academy slug are sent. NEVER
+ * add `email`, `username` or `ip_address` here: the module already strips
+ * emails and login tokens out of URLs, and `sendDefaultPii: false` keeps the
+ * SDK from adding its own — an identity field would put the PII straight back.
+ *
+ * Passing `null` on sign-out matters on shared devices: otherwise the previous
+ * user's id stays on the scope and gets stamped on the next person's errors.
+ */
+export function setSentryUser(identity: SentryIdentity | null): void {
+  if (!isSentryEnabled()) return;
+  void initSentry().then((mod) => {
+    if (!mod) return;
+    mod.setUser(identity ? { id: identity.id, segment: identity.segment } : null);
+    mod.setTag("academy_id", identity?.academyId);
+  });
+}
+
 /**
  * Record a Web Vital as a Sentry distribution metric (`Sentry.metrics` is part
  * of @sentry/browser 10.x). No-op unless the DSN is set.

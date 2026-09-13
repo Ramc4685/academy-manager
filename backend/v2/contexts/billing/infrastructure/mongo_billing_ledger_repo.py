@@ -255,6 +255,33 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         )
         return [self._invoice_from_doc(doc) async for doc in cursor]
 
+    async def list_overdue_invoices(
+        self, *, due_before: date, limit: int = 200
+    ) -> list[LedgerInvoice]:
+        """Collectable invoices whose due date is strictly before ``due_before``.
+
+        Feeds the automated late-fee pass (issue #552). ``due_date`` is stored
+        as a UTC-midnight datetime (see ``_mongo_doc`` at the foot of this
+        module), so the
+        boundary is compared as one too rather than as a ``date``, which BSON
+        cannot order against a stored datetime.
+
+        Oldest-first so an academy holding more overdue invoices than ``limit``
+        drains deterministically across ticks instead of starving the tail.
+        """
+        cutoff = datetime.combine(due_before, time.min, tzinfo=UTC)
+        cursor = self.collection.find(
+            {
+                "academy_id": current_academy_id(),
+                "status": {"$in": ["open", "partially_paid"]},
+                "balance_due_cents": {"$gt": 0},
+                "due_date": {"$lt": cutoff},
+            },
+            sort=[("due_date", 1), ("invoice_id", 1)],
+            limit=limit,
+        )
+        return [self._invoice_from_doc(doc) async for doc in cursor]
+
     async def get_payment_by_stripe_payment_intent_id(
         self, stripe_payment_intent_id: str
     ) -> LedgerPayment | None:

@@ -20,6 +20,7 @@ in Mongo or other contexts.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Protocol
 
@@ -331,15 +332,46 @@ class CoachPayoutSnapshotReader(Protocol):
     ) -> list[CoachPayoutSnapshot]: ...
 
 
+class CoachComplianceCounts(Protocol):
+    """Shape of one row returned by MarkedWithin24hReader."""
+
+    @property
+    def coach_id(self) -> str: ...
+
+    @property
+    def marked_within_24h_count(self) -> int: ...
+
+    @property
+    def total_marked_count(self) -> int: ...
+
+
+class MarkedWithin24hReader(Protocol):
+    """Per-coach compliance: share of past occurrences marked within 24h.
+
+    "Marked within 24h" means the occurrence's earliest attendance
+    ``marked_at`` is at or before ``end_at + 24h``. Only occurrences whose
+    attendance has been recorded at all are counted (an occurrence with no
+    attendance yet contributes to neither numerator nor denominator — it is
+    not yet a compliance failure or success). Paying coach = actual_coach_id
+    when set, else scheduled_coach_id, matching MonthlyCoachOccurrenceReader.
+    """
+
+    async def compliance_for_periods(
+        self, *, academy_id: str, periods: list[str]
+    ) -> Sequence[CoachComplianceCounts]: ...
+
+
 __all__ = [
     "AcademyRevenueSnapshotRepository",
     "ApplicationFunnelReader",
     "AttendanceSnapshotReader",
     "BillingLedgerReader",
     "BillingPeriodTotals",
+    "CoachComplianceCounts",
     "CoachMonthOccurrences",
     "CoachPayoutSnapshotReader",
     "CoachPayoutSnapshotRepository",
+    "MarkedWithin24hReader",
     "MonthlyCoachOccurrenceReader",
     "PayoutAuditLog",
     "PayoutCalculation",
