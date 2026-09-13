@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -32,6 +32,8 @@ from backend.v2.contexts.student_progress.domain.errors import (
     RecommendationAlreadyReviewed,
 )
 from backend.v2.contexts.student_progress.domain.models import (
+    ACTIVE_LEVEL_UP_STATUSES,
+    CLAIMABLE_LEVEL_UP_STATUSES,
     LevelUpRecommendation,
     SkillCertificate,
     StudentLevelProgress,
@@ -165,6 +167,29 @@ class _RecommendationRepo:
     async def save(self, rec: LevelUpRecommendation) -> None:
         self.rows[rec.rec_id] = rec
 
+    async def claim(self, rec_id, claim_status, claimed_at, *, lease) -> bool:
+        """Mirrors the Mongo CAS: RECOMMENDED, or a claim past its lease."""
+        rec = self.rows.get(rec_id)
+        if rec is None:
+            return False
+        stale = rec.claimed_at is not None and rec.claimed_at < claimed_at - lease
+        claimable = rec.status == "RECOMMENDED" or (
+            rec.status in ("APPROVING", "REJECTING") and stale
+        )
+        if not claimable:
+            return False
+        self.rows[rec_id] = rec.model_copy(
+            update={"status": claim_status, "claimed_at": claimed_at}
+        )
+        return True
+
+    async def release(self, rec_id, *, claim_status) -> bool:
+        rec = self.rows.get(rec_id)
+        if rec is None or rec.status != claim_status:
+            return False
+        self.rows[rec_id] = rec.model_copy(update={"status": "RECOMMENDED", "claimed_at": None})
+        return True
+
     async def update_status(
         self,
         rec_id: str,
@@ -200,13 +225,13 @@ class _RecommendationRepo:
             if (
                 row.student_id == student_id
                 and row.program_id == program_id
-                and row.status in {"RECOMMENDED", "APPROVED"}
+                and row.status in ACTIVE_LEVEL_UP_STATUSES
             ):
                 return row
         return None
 
     async def list_pending(self) -> list[LevelUpRecommendation]:
-        return [row for row in self.rows.values() if row.status == "RECOMMENDED"]
+        return [row for row in self.rows.values() if row.status in CLAIMABLE_LEVEL_UP_STATUSES]
 
 
 class _CertificateRepo:
@@ -656,6 +681,14 @@ def _approve_command(rec_id: str = "rec-1") -> ReviewLevelUpCommand:
     )
 
 
+def _expire_the_claim(recommendations: _RecommendationRepo, rec_id: str) -> None:
+    """Age the in-flight claim past its lease so another reviewer may take it."""
+    row = recommendations.rows[rec_id]
+    recommendations.rows[rec_id] = row.model_copy(
+        update={"claimed_at": datetime.now(UTC) - timedelta(days=1)}
+    )
+
+
 def _review_use_case(
     *,
     recommendations: _RecommendationRepo,
@@ -788,53 +821,80 @@ async def test_approval_that_fails_leaves_the_recommendation_re_decidable() -> N
 
 
 @pytest.mark.asyncio
-async def test_lost_review_race_reports_the_post_cas_status() -> None:
-    """The 409 must describe the decision that actually won, not the stale read."""
+async def test_lost_review_race_reports_the_post_claim_status() -> None:
+    """The 409 must describe the decision that actually won, not the stale read.
+
+    The racing reject lands in the window between this approval's pre-read
+    and its claim — the only window left (issue #548): once the claim is
+    taken, no second decision can be recorded, and the approval has written
+    nothing before it. So the loser is the approval, and it has to report
+    REJECTED rather than the RECOMMENDED it read a moment earlier.
+    """
     level_progress = _LevelProgressRepo()
     await level_progress.save(_active_progress())
     skill_progress = _SkillProgressRepo()
     recommendations = _RecommendationRepo()
     await recommendations.save(_pending_recommendation())
     certs = _CertificateRepo()
-    use_case = _review_use_case(
+    rejecter = _review_use_case(
         recommendations=recommendations,
         level_progress=level_progress,
         skill_progress=skill_progress,
         certs=certs,
     )
 
-    original_get_active = level_progress.get_active
+    class _RejectsFirst:
+        """Stands in for the reviewer that commits between read and claim.
 
-    async def _reject_midway(student_id: str, program_id: str):
-        # Stands in for the racing reviewer that commits while this approval
-        # is still doing its side effects.
-        await recommendations.update_status(
-            "rec-1",
-            "REJECTED",
-            "admin-2",
-            _NOW,
-            "not ready",
-            expected_status="RECOMMENDED",
-        )
-        level_progress.get_active = original_get_active  # type: ignore[method-assign]
-        return await original_get_active(student_id, program_id)
+        The enrollment lookup is the last thing an approval does before
+        claiming the row, which makes it the seam for this interleaving.
+        """
 
-    level_progress.get_active = _reject_midway  # type: ignore[method-assign]
+        async def has_active_or_paused_enrollment(self, student_id: str) -> bool:
+            rejected = await rejecter.execute(
+                ReviewLevelUpCommand(
+                    rec_id="rec-1",
+                    action="reject",
+                    reviewed_by="admin-2",
+                    rejection_reason="not ready",
+                )
+            )
+            assert rejected.status == "REJECTED"
+            return True
+
+        async def students_with_active_or_paused_enrollment(
+            self, student_ids: list[str]
+        ) -> set[str]:
+            return set(student_ids)
+
+    use_case = ReviewLevelUpRecommendation(
+        recommendations=recommendations,
+        level_progress=level_progress,
+        skill_progress=skill_progress,
+        certificates=certs,
+        skill_lookup=_SkillLookup(),
+        enrollment_lookup=_RejectsFirst(),
+    )
 
     with tenant_scope("academy-1"):
         with pytest.raises(RecommendationAlreadyReviewed) as excinfo:
             await use_case.execute(_approve_command())
 
     assert excinfo.value.details["status"] == "REJECTED"
+    # Issue #548: the refused approval issued nothing on its way out.
+    assert certs.rows == []
+    assert [row for row in level_progress.rows.values() if row.level_id == "level-2"] == []
 
 
 @pytest.mark.asyncio
 async def test_lost_approve_race_leaves_no_duplicate_certificate_or_level_row() -> None:
     """The loser of a double-click re-applies the same writes, it does not add.
 
-    Both reviewers read the recommendation while it is still RECOMMENDED, so
-    both run the approval side effects; only the compare-and-set separates
-    them. Every side effect has to be idempotent for that to be safe.
+    Since issue #548 a review claims the row before touching anything, so the
+    only way two approvals both run their side effects is a stalled claim
+    that the second reviewer reclaims once the lease expires. The
+    compare-and-set at the end is what still separates them, and every side
+    effect has to be idempotent for that to be safe.
     """
     level_progress = _LevelProgressRepo()
     await level_progress.save(_active_progress())
@@ -854,8 +914,12 @@ async def test_lost_approve_race_leaves_no_duplicate_certificate_or_level_row() 
     original_get_active = level_progress.get_active
 
     async def _let_the_winner_finish(student_id: str, program_id: str):
-        # The loser is descheduled at the top of its side effects; the winning
-        # request completes the whole approval in the meantime.
+        # The loser is descheduled at the top of its side effects for longer
+        # than the claim lease (issue #548), so the winning request may
+        # reclaim the row and complete the whole approval in the meantime.
+        # This is now the only interleaving in which two approvals both run
+        # their side effects, and it is still required to be idempotent.
+        _expire_the_claim(recommendations, "rec-1")
         level_progress.get_active = original_get_active  # type: ignore[method-assign]
         await winner.execute(_approve_command())
         return await original_get_active(student_id, program_id)
@@ -880,7 +944,8 @@ async def test_true_concurrent_double_approve_returns_already_reviewed_not_500()
     Unlike ``test_lost_approve_race_leaves_no_duplicate_certificate_or_level_row``,
     both reviewers here observe the *same* pre-race snapshot (the original
     level-1 row) before either has written anything — the interleaving the
-    unique index actually exists to protect against. The loser's own insert
+    unique index actually exists to protect against, reachable since issue
+    #548 only by reclaiming a stalled claim. The loser's own insert
     then collides with the winner's already-committed active row, and the
     real bug is that this DuplicateKeyError previously propagated unhandled
     out of ``execute()`` instead of being mapped to the same 409 the CAS
@@ -910,6 +975,7 @@ async def test_true_concurrent_double_approve_returns_already_reviewed_not_500()
         # Hand the loser the STALE pre-race snapshot, not the post-winner
         # state — this is the interleaving a real concurrent read produces.
         pre_race = await original_get_active(student_id, program_id)
+        _expire_the_claim(recommendations, "rec-1")
         level_progress.get_active = original_get_active  # type: ignore[method-assign]
         await winner.execute(_approve_command())
         return pre_race
@@ -934,7 +1000,7 @@ async def test_pre_read_replay_guard_is_load_bearing() -> None:
 
     The CAS (``update_status`` with ``expected_status``) would also catch an
     ordinary sequential replay, so a test that only exercises the CAS cannot
-    tell whether the earlier ``if rec.status != PENDING_STATUS`` guard is
+    tell whether the earlier already-reviewed guard on the pre-read is
     doing anything at all. Here the CAS is defeated (monkeypatched to always
     report success) so only the pre-read guard stands between a replayed
     approve and re-running every approval side effect a second time.

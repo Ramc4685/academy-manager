@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import contextlib
+from datetime import UTC, datetime, timedelta
 
 from pydantic import BaseModel
 from pymongo.errors import DuplicateKeyError
@@ -28,6 +29,7 @@ from backend.v2.contexts.student_progress.domain.events import (
 )
 from backend.v2.contexts.student_progress.domain.logic import generate_cert_number
 from backend.v2.contexts.student_progress.domain.models import (
+    CLAIMABLE_LEVEL_UP_STATUSES,
     LevelUpRecommendation,
     SkillCertificate,
     StudentLevelProgress,
@@ -37,7 +39,12 @@ from backend.v2.shared.events import Outbox
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import current_academy_id
 
-PENDING_STATUS = "RECOMMENDED"
+#: How long a claim holds the recommendation before another reviewer may take
+#: it (issue #548). Only a reviewer whose process died leaves a claim to time
+#: out — an ordinary failure releases it — so this is sized to outlast a slow
+#: approval, not to be waited on routinely. There is deliberately no recovery
+#: job: the next reviewer's claim is the recovery.
+CLAIM_LEASE = timedelta(minutes=10)
 
 
 def _resolve_academy_id() -> str:
@@ -88,7 +95,7 @@ class ReviewLevelUpRecommendation:
         rec = await self._recs.get(cmd.rec_id)
         if rec is None:
             raise RecommendationNotFound("recommendation not found", rec_id=cmd.rec_id)
-        if rec.status != PENDING_STATUS:
+        if rec.status not in CLAIMABLE_LEVEL_UP_STATUSES:
             # Ordinary replay (a re-submitted form, a retried request): the
             # decision is already recorded, so refuse before touching anything.
             raise RecommendationAlreadyReviewed(
@@ -100,60 +107,78 @@ class ReviewLevelUpRecommendation:
         now = datetime.now(UTC)
         # (cert_id, cert_number, progress_id) once the approval has been applied.
         approval: tuple[str, str, str | None] | None = None
-        decision = "APPROVED" if cmd.action == "approve" else "REJECTED"
+        approving = cmd.action == "approve"
+        decision = "APPROVED" if approving else "REJECTED"
+        # Mirrors LevelUpStatus in domain/models.py and the enum in migration
+        # 0176 — all three have to list the same two claim statuses.
+        claim_status = "APPROVING" if approving else "REJECTING"
 
-        if cmd.action == "approve":
+        if approving:
             # Issue #673: a withdrawn / cancelled student must not be advanced
-            # or certified. Checked before any side effect so a refused
-            # approval leaves the row untouched; reject is still allowed so
-            # the admin can clear it.
+            # or certified. Checked before the claim so a refused approval
+            # leaves the row untouched and still RECOMMENDED; reject is still
+            # allowed so the admin can clear it.
             if not await self._enrollments.has_active_or_paused_enrollment(rec.student_id):
                 raise EnrollmentEnded(
                     "student no longer has an active or paused enrollment",
                     rec_id=cmd.rec_id,
                     student_id=rec.student_id,
                 )
-            # Approval side effects run *before* the status stamp and every one
-            # of them is idempotent, so the status transition below is the
-            # commit point. Two consequences, both deliberate:
-            #   * a failure part-way through leaves the recommendation
-            #     RECOMMENDED, so the admin can simply approve again — it never
-            #     parks in APPROVED-with-no-certificate, which would also count
-            #     as an active recommendation and block the student from ever
-            #     being re-recommended;
-            #   * the loser of a genuine double-click race re-applies the same
-            #     writes (no duplicate certificate, no second active level row,
-            #     no re-seeded skills) and is then refused by the CAS.
+
+        # Issue #548: claim the row before any side effect. The approval's
+        # writes (certificate, level advance, skill seeding) cannot be undone,
+        # so a reject arriving mid-approval must be refused here rather than
+        # winning a status race after the certificate has been issued. The
+        # claim is a compare-and-set of its own, so exactly one of the two
+        # reviewers gets past this line.
+        if not await self._recs.claim(cmd.rec_id, claim_status, now, lease=CLAIM_LEASE):
+            # Either already decided, or another reviewer is holding a live
+            # claim. Report the authoritative status, not our stale read.
+            current = await self._recs.get(cmd.rec_id)
+            raise RecommendationAlreadyReviewed(
+                "recommendation has already been reviewed",
+                rec_id=cmd.rec_id,
+                status=current.status if current is not None else "UNKNOWN",
+            )
+
+        if approving:
+            # Every approval side effect is idempotent, and the status stamp
+            # below is still the commit point, so a failure part-way through
+            # never parks the row in APPROVED-with-no-certificate — which
+            # would also count as an active recommendation and block the
+            # student from ever being re-recommended. On failure the claim is
+            # handed straight back, so the admin can simply approve again.
             try:
                 approval = await self._apply_approval(rec, cmd, now)
             except DuplicateKeyError:
-                # A true concurrent double-approve: both reviewers read the
-                # recommendation while it was still RECOMMENDED and both
-                # attempted to insert the new active level row, but the
-                # partial unique index only lets one insert land. This is
-                # the same "already reviewed" outcome the CAS below reports
-                # for the ordinary interleaving — report it the same way
-                # instead of letting the 500 escape.
+                # A concurrent approval (only reachable now by reclaiming an
+                # expired lease) already inserted the new active level row,
+                # and the partial unique index let just one land. Same
+                # "already reviewed" outcome the claim reports above —
+                # report it the same way instead of letting the 500 escape.
+                await self._release_claim(cmd.rec_id, claim_status)
                 current = await self._recs.get(cmd.rec_id)
                 raise RecommendationAlreadyReviewed(
                     "recommendation has already been reviewed",
                     rec_id=cmd.rec_id,
                     status=current.status if current is not None else "UNKNOWN",
                 ) from None
+            except Exception:
+                await self._release_claim(cmd.rec_id, claim_status)
+                raise
 
-        # Compare-and-set: only the caller that finds the recommendation still
-        # pending records the decision.
-        claimed = await self._recs.update_status(
+        # Commit the decision. The row is ours, so this normally just lands;
+        # it stays a compare-and-set because a lease long enough to expire
+        # mid-approval must not let two decisions both be recorded.
+        committed = await self._recs.update_status(
             cmd.rec_id,
             decision,
             cmd.reviewed_by,
             now,
-            cmd.rejection_reason if cmd.action != "approve" else None,
-            expected_status=PENDING_STATUS,
+            None if approving else cmd.rejection_reason,
+            expected_status=claim_status,
         )
-        if not claimed:
-            # Report the authoritative post-CAS state, not the status read
-            # before the race was lost.
+        if not committed:
             current = await self._recs.get(cmd.rec_id)
             raise RecommendationAlreadyReviewed(
                 "recommendation has already been reviewed",
@@ -198,6 +223,15 @@ class ReviewLevelUpRecommendation:
             status=decision,
             cert_id=approval[0] if approval is not None else None,
         )
+
+    async def _release_claim(self, rec_id: str, claim_status: str) -> None:
+        """Hand the claim back so a retry does not have to wait out the lease.
+
+        Best effort on purpose: if the release itself fails, the lease is the
+        backstop, and the caller's original error is the one worth raising.
+        """
+        with contextlib.suppress(Exception):
+            await self._recs.release(rec_id, claim_status=claim_status)
 
     async def _apply_approval(
         self,

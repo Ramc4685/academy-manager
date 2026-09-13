@@ -8,7 +8,7 @@ EnrollmentCancelled handler's use case expires it.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -30,13 +30,22 @@ from backend.v2.contexts.student_progress.application.use_cases.review_level_up 
     ReviewLevelUpCommand,
     ReviewLevelUpRecommendation,
 )
-from backend.v2.contexts.student_progress.domain.errors import EnrollmentEnded
+from backend.v2.contexts.student_progress.domain.errors import (
+    EnrollmentEnded,
+    RecommendationAlreadyReviewed,
+)
 from backend.v2.contexts.student_progress.domain.models import (
+    ACTIVE_LEVEL_UP_STATUSES,
+    CLAIMABLE_LEVEL_UP_STATUSES,
     LevelUpRecommendation,
     StudentLevelProgress,
 )
 
 _NOW = datetime(2026, 8, 20, 9, 0, tzinfo=UTC)
+# Mirrors the Mongo repo's status filters (issue #548): a claimed row is
+# still pending for the admin and still blocks a fresh recommendation.
+_ACTIVE = ACTIVE_LEVEL_UP_STATUSES
+_CLAIMABLE = CLAIMABLE_LEVEL_UP_STATUSES
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +77,29 @@ class _RecRepo:
             raise AssertionError("duplicate rec_id")
         self.rows[rec.rec_id] = rec
 
+    async def claim(self, rec_id, claim_status, claimed_at, *, lease) -> bool:
+        """Mirrors the Mongo CAS: RECOMMENDED, or a claim past its lease."""
+        rec = self.rows.get(rec_id)
+        if rec is None:
+            return False
+        stale = rec.claimed_at is not None and rec.claimed_at < claimed_at - lease
+        claimable = rec.status == "RECOMMENDED" or (
+            rec.status in ("APPROVING", "REJECTING") and stale
+        )
+        if not claimable:
+            return False
+        self.rows[rec_id] = rec.model_copy(
+            update={"status": claim_status, "claimed_at": claimed_at}
+        )
+        return True
+
+    async def release(self, rec_id, *, claim_status) -> bool:
+        rec = self.rows.get(rec_id)
+        if rec is None or rec.status != claim_status:
+            return False
+        self.rows[rec_id] = rec.model_copy(update={"status": "RECOMMENDED", "claimed_at": None})
+        return True
+
     async def update_status(
         self, rec_id, status, reviewed_by, reviewed_at, rejection_reason, *, expected_status
     ) -> bool:
@@ -92,9 +124,7 @@ class _RecRepo:
             (
                 r
                 for r in self.rows.values()
-                if r.student_id == student_id
-                and r.program_id == program_id
-                and r.status in ("RECOMMENDED", "APPROVED")
+                if r.student_id == student_id and r.program_id == program_id and r.status in _ACTIVE
             ),
             None,
         )
@@ -103,19 +133,21 @@ class _RecRepo:
         return [
             r
             for r in self.rows.values()
-            if r.student_id in student_ids
-            and r.program_id == program_id
-            and r.status in ("RECOMMENDED", "APPROVED")
+            if r.student_id in student_ids and r.program_id == program_id and r.status in _ACTIVE
         ]
 
     async def list_pending(self) -> list[LevelUpRecommendation]:
         return sorted(
-            (r for r in self.rows.values() if r.status == "RECOMMENDED"),
+            (r for r in self.rows.values() if r.status in _CLAIMABLE),
             key=lambda r: r.recommended_at,
         )
 
-    async def list_pending_for_student(self, student_id: str) -> list[LevelUpRecommendation]:
-        return [r for r in await self.list_pending() if r.student_id == student_id]
+    async def list_recommended_for_student(self, student_id: str) -> list[LevelUpRecommendation]:
+        return [
+            r
+            for r in sorted(self.rows.values(), key=lambda r: r.recommended_at)
+            if r.student_id == student_id and r.status == "RECOMMENDED"
+        ]
 
 
 class _LevelProgressRepo:
@@ -371,6 +403,78 @@ async def test_reject_is_allowed_for_a_withdrawn_student() -> None:
     assert lookup.single_calls == []
 
 
+@pytest.mark.asyncio
+async def test_interleaved_approve_and_reject_never_certifies_a_rejected_student() -> None:
+    """Issue #548: approve and reject arriving together must not both land.
+
+    The approval's side effects (certificate, level advance, skill seeding)
+    used to run before anything guarded the row, so a reject that committed
+    while they were in flight left the recommendation REJECTED *and* the
+    student holding a certificate for the level. Exactly one decision may
+    take effect, and a REJECTED row must never coexist with a certificate.
+    """
+    recs = _RecRepo()
+    await recs.save(_rec("rec-1", "st-live"))
+    level_progress = _LevelProgressRepo()
+    certs = _CertRepo()
+    shared: dict[str, object] = {
+        "recommendations": recs,
+        "level_progress": level_progress,
+        "skill_progress": _SkillProgressRepo(),
+        "certificates": certs,
+        "skill_lookup": _SkillLookup(),
+        "enrollment_lookup": _EnrollmentLookup(live={"st-live"}),
+    }
+    approve = ReviewLevelUpRecommendation(**shared)  # type: ignore[arg-type]
+    reject = ReviewLevelUpRecommendation(**shared)  # type: ignore[arg-type]
+
+    outcomes: list[str] = []
+    original_get_active = level_progress.get_active
+
+    async def _reject_midway(student_id: str, program_id: str):
+        # The other admin's request arrives once this approval has started
+        # its side effects but before it has recorded any decision.
+        level_progress.get_active = original_get_active  # type: ignore[method-assign]
+        try:
+            rejected = await reject.execute(
+                ReviewLevelUpCommand(
+                    rec_id="rec-1",
+                    action="reject",
+                    reviewed_by="admin-2",
+                    rejection_reason="not ready",
+                )
+            )
+        except RecommendationAlreadyReviewed:
+            outcomes.append("reject:refused")
+        else:
+            outcomes.append(f"reject:{rejected.status}")
+        return await original_get_active(student_id, program_id)
+
+    level_progress.get_active = _reject_midway  # type: ignore[method-assign]
+
+    try:
+        approved = await approve.execute(
+            ReviewLevelUpCommand(rec_id="rec-1", action="approve", reviewed_by="admin-1")
+        )
+    except RecommendationAlreadyReviewed:
+        outcomes.append("approve:refused")
+    else:
+        outcomes.append(f"approve:{approved.status}")
+
+    # One winner, one refusal — never two recorded decisions.
+    assert sorted(outcomes) in (
+        ["approve:APPROVED", "reject:refused"],
+        ["approve:refused", "reject:REJECTED"],
+    )
+    stored = recs.rows["rec-1"]
+    if stored.status == "REJECTED":
+        assert certs.rows == []
+        assert level_progress.rows == {}
+    else:
+        assert stored.status == "APPROVED"
+        assert len(certs.rows) == 1
+
+
 # ---------------------------------------------------------------------------
 # Recommend (defence in depth behind the coach route's 404)
 # ---------------------------------------------------------------------------
@@ -475,3 +579,26 @@ async def test_expiry_does_not_overwrite_an_admin_decision_made_meanwhile() -> N
     assert result.expired_rec_ids == []
     assert recs.rows["rec-1"].rejection_reason == "not ready"
     assert recs.rows["rec-1"].reviewed_by == "admin-1"
+
+
+@pytest.mark.asyncio
+async def test_expiry_leaves_a_row_a_reviewer_is_holding_to_that_reviewer() -> None:
+    """Issue #548: a claimed row is mid-review, possibly mid-certificate.
+
+    Expiry must not compare-and-set it out from under the reviewer; it takes
+    only rows still in RECOMMENDED, and reports honestly that it took none.
+    """
+    recs = _RecRepo()
+    await recs.save(_rec("rec-claimed", "st-gone"))
+    await recs.save(_rec("rec-open", "st-gone", program_id="prog-2"))
+    await recs.claim("rec-claimed", "APPROVING", _NOW, lease=timedelta(minutes=10))
+    expire = ExpireLevelUpRecommendations(
+        recommendations=recs, enrollment_lookup=_EnrollmentLookup(live=set())
+    )
+
+    result = await expire.execute("st-gone")
+
+    assert result.expired_rec_ids == ["rec-open"]
+    assert recs.rows["rec-claimed"].status == "APPROVING"
+    assert recs.rows["rec-claimed"].rejection_reason is None
+    assert recs.rows["rec-open"].status == "REJECTED"

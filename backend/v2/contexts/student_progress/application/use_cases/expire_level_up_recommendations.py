@@ -64,9 +64,15 @@ class ExpireLevelUpRecommendations:
 
         now = datetime.now(UTC)
         expired: list[str] = []
-        for rec in await self._recs.list_pending_for_student(student_id):
-            # Compare-and-set, same as an admin review: if an admin decided the
-            # row between our read and this write, their decision stands.
+        # Only rows still in PENDING_STATUS are listed: a row an admin is
+        # mid-review on (APPROVING/REJECTING, issue #548) belongs to that
+        # reviewer, and rejecting it here would race the certificate they are
+        # already writing. The approve guard in ``review_level_up.py`` refuses
+        # the withdrawn student anyway, and an abandoned claim falls back to
+        # RECOMMENDED, so nothing is stranded.
+        for rec in await self._recs.list_recommended_for_student(student_id):
+            # Compare-and-set, same as an admin review: if an admin decided or
+            # claimed the row between our read and this write, theirs stands.
             applied = await self._recs.update_status(
                 rec.rec_id,
                 "REJECTED",
