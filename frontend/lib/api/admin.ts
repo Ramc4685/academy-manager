@@ -264,6 +264,12 @@ export interface WithdrawEnrollmentRequest {
   reason: string;
   /** Issue #775: the closed-vocabulary departure reason, beside the note. */
   reason_code?: DepartureReasonCode;
+  /**
+   * Issue #820: schedule the drop for the academy-local period end instead of
+   * performing it now (the `no_credit_end_of_period` departure policy). The
+   * backend ignores `effective_date` when this is set.
+   */
+  defer_to_period_end?: boolean;
 }
 
 export interface RemoveEnrollmentRequest {
@@ -1885,6 +1891,16 @@ export function withdrawEnrollment(
   return apiFetch<void>(`/admin/enrollments/${enrollmentId}/withdraw`, {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+/**
+ * Issue #820: call off a drop scheduled for the end of the period, before the
+ * month-end worker performs it. Leaves the enrollment exactly as it was.
+ */
+export function cancelScheduledDrop(enrollmentId: string): Promise<void> {
+  return apiFetch<void>(`/admin/enrollments/${enrollmentId}/cancel-scheduled-drop`, {
+    method: "POST",
   });
 }
 

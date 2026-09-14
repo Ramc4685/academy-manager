@@ -30,6 +30,7 @@ import {
 import {
   buildWithdrawRequest,
   initialWithdrawalOutcome,
+  shouldDeferToPeriodEnd,
   withdrawErrorMessage,
   withdrawalOutcomeOptions,
   type WithdrawalOutcome,
@@ -559,6 +560,12 @@ export function WithdrawalCreditDialog({
   const outcome =
     chosenOutcome ??
     initialWithdrawalOutcome(departurePolicyQuery.data?.drop_default_outcome, isOwner);
+  // Issue #820: the TIMING half of the same policy value. `no_credit_end_of_period`
+  // schedules the drop for the academy-local month end rather than performing it
+  // on the date below, which the backend then ignores.
+  const deferToPeriodEnd = shouldDeferToPeriodEnd(
+    departurePolicyQuery.data?.drop_default_outcome,
+  );
   const [adminNote, setAdminNote] = useState("");
   // Issue #775: the structured half of the departure reason. Optional, and
   // opens on "not specified" — a pre-selected code would be recorded on
@@ -581,6 +588,7 @@ export function WithdrawalCreditDialog({
           outcome,
           adminNote,
           ...(reasonCode ? { reasonCode } : {}),
+          deferToPeriodEnd,
         }),
       ),
     onSuccess: () => {
@@ -651,18 +659,29 @@ export function WithdrawalCreditDialog({
                 {outcomeOptions.find((option) => option.disabledReason)?.disabledReason}
               </p>
             )}
-            <Field label="Drop date" required>
-              <input
-                type="date"
-                required
-                value={withdrawalDate}
-                onChange={(event) => {
-                  setWithdrawalDate(event.target.value);
-                  previewMutation.reset();
-                }}
-                className={inputClass}
-              />
-            </Field>
+            {deferToPeriodEnd ? (
+              <p
+                data-testid="withdraw-defer-notice"
+                className="rounded-md bg-neutral-50 p-3 text-sm text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300"
+              >
+                This academy drops at the end of the billing period. The student keeps
+                their place and their seat until the last day of this month, and the drop
+                is applied automatically then. You can call it off until it runs.
+              </p>
+            ) : (
+              <Field label="Drop date" required>
+                <input
+                  type="date"
+                  required
+                  value={withdrawalDate}
+                  onChange={(event) => {
+                    setWithdrawalDate(event.target.value);
+                    previewMutation.reset();
+                  }}
+                  className={inputClass}
+                />
+              </Field>
+            )}
             {outcome === "credit" && (
               <button
                 type="button"

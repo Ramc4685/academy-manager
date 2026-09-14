@@ -774,8 +774,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
 
     async def _process_scheduled_cancellations_body() -> None:
-        # Issue #675: month-end parent self-cancels. Hourly, so the flip lands
-        # within the hour after the academy-local month ends.
+        # Issue #675: month-end parent self-cancels, and #820's admin drops.
+        # Hourly, so the flip lands within the hour after the academy-local
+        # month ends.
         totals = {
             "processed": 0,
             "succeeded": 0,
@@ -791,11 +792,21 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 result = await app.state.admin.process_scheduled_cancellation_actions.execute(
                     limit=100
                 )
+                # Issue #820: the admin "drop at end of period" queue rides
+                # the SAME hourly tick and lease — it is the same month-end
+                # boundary, and a second cron job would be a second stale-job
+                # alert to wire for identical work. The two workers each filter
+                # strictly on their own `action_type`, so neither can retire
+                # the other's rows (the #675 worker contract).
+                admin_drops = app.state.admin.process_scheduled_admin_drop_actions
+                drops = await admin_drops.execute(limit=100) if admin_drops else None
             totals["academy_count"] += 1
-            totals["processed"] += result.processed
-            totals["succeeded"] += result.succeeded
-            totals["skipped_already_ended"] += result.skipped_already_ended
-            totals["failed"] += result.failed
+            totals["processed"] += result.processed + (drops.processed if drops else 0)
+            totals["succeeded"] += result.succeeded + (drops.succeeded if drops else 0)
+            totals["skipped_already_ended"] += result.skipped_already_ended + (
+                drops.skipped_already_ended if drops else 0
+            )
+            totals["failed"] += result.failed + (drops.failed if drops else 0)
         if totals["processed"]:
             log.info("scheduled_cancellation_actions_processed", extra=totals)
 

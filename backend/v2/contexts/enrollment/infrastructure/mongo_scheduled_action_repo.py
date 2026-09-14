@@ -26,6 +26,12 @@ class MongoScheduledEnrollmentActionRepository(TenantScopedRepository):
                 str(doc["pause_request_id"]) if doc.get("pause_request_id") is not None else None
             ),
             run_at=doc["run_at"],
+            # Issue #820: admin-drop fields; absent (and therefore None) on
+            # every pause-resume / parent-cancel row ever written.
+            outcome=doc.get("outcome"),
+            actor_id=doc.get("actor_id"),
+            reason=doc.get("reason"),
+            reason_code=doc.get("reason_code"),
             status=doc.get("status", "pending"),
             attempt_count=int(doc.get("attempt_count") or 0),
             last_attempt_at=doc.get("last_attempt_at"),
@@ -47,6 +53,10 @@ class MongoScheduledEnrollmentActionRepository(TenantScopedRepository):
                 "action_type": action.action_type,
             }
         else:
+            # Both period-end types (parent ``cancel_at_period_end`` and admin
+            # ``admin_drop_at_period_end``, issue #820) are one PENDING row per
+            # enrollment PER TYPE — ``action_type`` is part of the key, so the
+            # two never collide on the partial unique indexes.
             key = {
                 "enrollment_id": action.enrollment_id,
                 "action_type": action.action_type,

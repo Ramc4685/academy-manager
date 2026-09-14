@@ -177,6 +177,7 @@ export function RosterTable({
   onReturn,
   onTransfer,
   onWithdraw,
+  onUndoScheduledDrop,
   academyTimezone,
 }: {
   enrollments: AdminEnrollmentView[];
@@ -195,6 +196,7 @@ export function RosterTable({
   onReturn: (enrollment: AdminEnrollmentView) => void;
   onTransfer: (enrollment: AdminEnrollmentView) => void;
   onWithdraw: (enrollment: AdminEnrollmentView) => void;
+  onUndoScheduledDrop: (enrollment: AdminEnrollmentView) => void;
 }) {
   const isOwner = useIsOwner();
   // Issue #741: Delete is owner-only only when the academy's departure policy
@@ -314,7 +316,9 @@ export function RosterTable({
                     layout="menu"
                     isOwner={isOwner}
                     deleteRequiresOwner={deleteRequiresOwner}
-                    actions={rosterActionsFor(e.status)}
+                    actions={rosterActionsFor(e.status, {
+                      dropScheduled: Boolean(e.pending_cancellation_at),
+                    })}
                     onAction={(action, enrollmentId) =>
                       dispatchRosterAction(action, enrollmentId, e, {
                         onDelete,
@@ -324,6 +328,7 @@ export function RosterTable({
                         onReturn,
                         onTransfer,
                         onWithdraw,
+                        onUndoScheduledDrop,
                       })
                     }
                   />
@@ -347,8 +352,15 @@ export function RosterTable({
  * it comes from the shared `holdActionsFor`, so the roster and the student
  * profile Sessions panel offer it on exactly the same statuses.
  */
-export function rosterActionsFor(status: EnrollmentStatus): DepartureAction[] {
+export function rosterActionsFor(
+  status: EnrollmentStatus,
+  { dropScheduled = false }: { dropScheduled?: boolean } = {},
+): DepartureAction[] {
   const actions: DepartureAction[] = [];
+  // Issue #820: a row with a pending end-of-period drop can be called off.
+  // Offered alongside Drop, not instead of it — an admin may still want the
+  // student gone today, and the immediate Drop retires the queued action.
+  if (dropScheduled) actions.push("undo_scheduled_drop");
   if (status === "active") actions.push("pause");
   if (status === "paused") actions.push("resume");
   // #697's seat-safe pair, beside the transitional pause/resume group.
@@ -371,6 +383,7 @@ function dispatchRosterAction(
     onReturn: (enrollment: AdminEnrollmentView) => void;
     onTransfer: (enrollment: AdminEnrollmentView) => void;
     onWithdraw: (enrollment: AdminEnrollmentView) => void;
+    onUndoScheduledDrop: (enrollment: AdminEnrollmentView) => void;
   },
 ): void {
   switch (action) {
@@ -394,6 +407,9 @@ function dispatchRosterAction(
       break;
     case "delete":
       handlers.onDelete(enrollment);
+      break;
+    case "undo_scheduled_drop":
+      handlers.onUndoScheduledDrop(enrollment);
       break;
     default:
       // stop_all_classes is not offered on this roster row (#698); reaching

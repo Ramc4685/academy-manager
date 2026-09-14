@@ -13,7 +13,12 @@ export type DepartureAction =
   | "delete"
   | "pause"
   | "resume"
-  | "stop_all_classes";
+  | "stop_all_classes"
+  // Issue #820: undo a drop that was scheduled for the end of the period and
+  // has not fired yet. Offered only on rows that actually have one. Named
+  // "Undo", never "Cancel": in this interface Cancel belongs to classes and
+  // dates, and enrollments are Dropped (see the label test).
+  | "undo_scheduled_drop";
 
 export const DEPARTURE_ACTION_LABEL: Record<DepartureAction, string> = {
   transfer: "Transfer",
@@ -24,6 +29,7 @@ export const DEPARTURE_ACTION_LABEL: Record<DepartureAction, string> = {
   pause: "Pause",
   resume: "Resume",
   stop_all_classes: "Stop all classes",
+  undo_scheduled_drop: "Undo scheduled drop",
 };
 
 /**

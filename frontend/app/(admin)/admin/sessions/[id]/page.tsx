@@ -14,6 +14,7 @@ import { useParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 import {
+  cancelScheduledDrop,
   getAdminSession,
   listAdminUsers,
   listSessionEnrollments,
@@ -192,6 +193,15 @@ export default function AdminSessionDetailPage() {
       void queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) });
       void queryClient.invalidateQueries({ queryKey: queryKeys.admin.waitlist(sessionId) });
       void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
+    },
+  });
+
+  // Issue #820: call off a drop scheduled for the end of the period. Same
+  // invalidations as a resume — the row's chip and its menu both change.
+  const undoScheduledDropMutation = useMutation({
+    mutationFn: (enrollmentId: string) => cancelScheduledDrop(enrollmentId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) });
     },
   });
 
@@ -528,6 +538,9 @@ export default function AdminSessionDetailPage() {
               onReturn={(enrollment) => setReturnTarget(enrollment)}
               onTransfer={(enrollment) => setTransferTarget(enrollment)}
               onWithdraw={(enrollment) => setWithdrawalTarget(enrollment)}
+              onUndoScheduledDrop={(enrollment) =>
+                undoScheduledDropMutation.mutate(enrollment.enrollment_id)
+              }
             />
           )}
         </Card>

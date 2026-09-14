@@ -13,7 +13,13 @@ export type MoneyOutcome = "credit" | "refund" | "adjustment";
  *
  * The mapping itself lives in `lib/admin/withdrawal.ts` (issue #742) so that
  * this bulk path and the single-enrollment Drop dialog read one table; an
- * unset policy keeps this dialog's own "no credit" fallback. */
+ * unset policy keeps this dialog's own "no credit" fallback.
+ *
+ * SCOPE NOTE (issue #820): only the MONEY half is shared. #820 taught the
+ * single-enrollment Drop to honour `no_credit_end_of_period`'s TIMING half by
+ * scheduling the drop, via `defer_to_period_end` on the withdraw route. Stop
+ * all classes posts to its own route (`stopAllClasses`), which has no deferred
+ * arm, so it still stops every class on the chosen date under that policy. */
 export function defaultOutcomeFor(policyDefault: DropDefaultOutcome | undefined): MoneyOutcome {
   if (policyDefault === undefined) return "adjustment";
   return policyWithdrawalOutcome(policyDefault);

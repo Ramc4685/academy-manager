@@ -10,6 +10,12 @@ Identity differs per action type:
   approved pause request.
 - ``cancel_at_period_end`` has no pause request; it is keyed by
   ``enrollment_id`` — at most one PENDING cancellation per enrollment.
+- ``admin_drop_at_period_end`` (issue #820) is the ADMIN-owned twin of
+  ``cancel_at_period_end``, keyed the same way. It is a separate type, not a
+  flag on the parent one, because it replays ``WithdrawEnrollment`` with the
+  admin's actor / money outcome and lands a ``dropped`` lifecycle row — a
+  parent cancellation and an admin drop are different events to every
+  downstream reader, and each type has its own worker.
 """
 
 from __future__ import annotations
@@ -19,6 +25,9 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, Field
 
+from backend.v2.contexts.enrollment.application.ports import WithdrawalOutcome
+from backend.v2.contexts.enrollment.domain.departure_policy import DepartureReasonCode
+
 ScheduledActionStatus = Literal[
     "pending",
     "succeeded",
@@ -26,7 +35,11 @@ ScheduledActionStatus = Literal[
     "failed",
     "cancelled",
 ]
-ScheduledActionType = Literal["resume_from_pause", "cancel_at_period_end"]
+ScheduledActionType = Literal[
+    "resume_from_pause",
+    "cancel_at_period_end",
+    "admin_drop_at_period_end",
+]
 
 
 class ScheduledEnrollmentAction(BaseModel):
@@ -39,6 +52,13 @@ class ScheduledEnrollmentAction(BaseModel):
     #: Required for ``resume_from_pause``; ``None`` for ``cancel_at_period_end``.
     pause_request_id: str | None = None
     run_at: datetime
+    #: Issue #820 — the admin's decision, frozen at request time so the
+    #: month-end worker can replay ``WithdrawEnrollment`` exactly as the
+    #: admin asked. All four are ``None`` on the two parent/pause types.
+    outcome: WithdrawalOutcome | None = None
+    actor_id: str | None = None
+    reason: str | None = None
+    reason_code: DepartureReasonCode | None = None
     status: ScheduledActionStatus = "pending"
     attempt_count: int = Field(default=0, ge=0)
     last_attempt_at: datetime | None = None

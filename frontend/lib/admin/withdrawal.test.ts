@@ -8,6 +8,7 @@ import {
   defaultWithdrawalOutcome,
   initialWithdrawalOutcome,
   policyWithdrawalOutcome,
+  shouldDeferToPeriodEnd,
   withdrawErrorMessage,
   withdrawalOutcomeOptions,
 } from "./withdrawal";
@@ -63,7 +64,35 @@ describe("initialWithdrawalOutcome", () => {
   });
 });
 
+// Issue #820: the timing half of `no_credit_end_of_period`. Before this the
+// policy value only chose the money outcome and the drop still took effect on
+// the chosen date.
+describe("shouldDeferToPeriodEnd", () => {
+  it("defers only for the end-of-period policy", () => {
+    expect(shouldDeferToPeriodEnd("no_credit_end_of_period")).toBe(true);
+    expect(shouldDeferToPeriodEnd("no_credit_mid_month")).toBe(false);
+    expect(shouldDeferToPeriodEnd("credit_mid_month")).toBe(false);
+    expect(shouldDeferToPeriodEnd(undefined)).toBe(false);
+  });
+});
+
 describe("buildWithdrawRequest", () => {
+  it("asks the backend to schedule the drop for the end-of-period policy", () => {
+    expect(
+      buildWithdrawRequest({
+        withdrawalDate: "2026-09-15",
+        outcome: "adjustment",
+        adminNote: "moving",
+        deferToPeriodEnd: true,
+      }),
+    ).toEqual({
+      effective_date: "2026-09-15",
+      outcome: "adjustment",
+      reason: "moving",
+      defer_to_period_end: true,
+    });
+  });
+
   it("sends every outcome through the same withdraw body", () => {
     expect(
       buildWithdrawRequest({ withdrawalDate: "2026-09-15", outcome: "credit", adminNote: " moving " }),

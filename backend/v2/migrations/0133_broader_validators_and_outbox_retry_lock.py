@@ -221,10 +221,24 @@ VALIDATORS: dict[str, dict[str, Any]] = {
             # Issue #675: ``cancel_at_period_end`` has no pause request. The
             # original schema required ``pause_request_id`` as a string;
             # migration 0169 re-applies this corrected definition.
-            "action_type": {"enum": ["resume_from_pause", "cancel_at_period_end"]},
+            # Issue #820 added ``admin_drop_at_period_end``; migration 0182
+            # re-applies this corrected definition.
+            "action_type": {
+                "enum": [
+                    "resume_from_pause",
+                    "cancel_at_period_end",
+                    "admin_drop_at_period_end",
+                ]
+            },
             "enrollment_id": {"bsonType": "string"},
             "pause_request_id": {"bsonType": OPT_STRING},
             "run_at": {"bsonType": "date"},
+            # Issue #820: the admin's drop decision, frozen at request time so
+            # the month-end worker replays it exactly. Null on every other type.
+            "outcome": {"bsonType": OPT_STRING},
+            "actor_id": {"bsonType": OPT_STRING},
+            "reason": {"bsonType": OPT_STRING},
+            "reason_code": {"bsonType": OPT_STRING},
             "status": {"bsonType": "string"},
             "attempt_count": {"bsonType": ["int", "long", "null"]},
             "last_attempt_at": {"bsonType": OPT_DATE},
