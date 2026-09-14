@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { listAdminRegistrations, type AdminRegistrationRow } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
 import { Avatar, Card, Chip, Overline } from "@/components/ds";
+import { actionCellClass, actionHeaderClass } from "@/lib/sticky-action-column";
 
 export function RegistrationsTab() {
   const query = useQuery({
@@ -43,7 +44,7 @@ function RegistrationsTable({ registrations }: { registrations: AdminRegistratio
             <th className="px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Parent</th>
             <th className="px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Waiver</th>
             <th className="px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Updated</th>
-            <th className="px-5 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Review</th>
+            <th className={`px-5 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted ${actionHeaderClass}`}>Review</th>
           </tr>
         </thead>
         <tbody>
@@ -86,7 +87,7 @@ function RegistrationsTable({ registrations }: { registrations: AdminRegistratio
                 />
               </td>
               <td className="px-3 py-4 font-mono text-[11px] text-rally-muted">{formatDate(registration.updated_at)}</td>
-              <td className="px-5 py-4">
+              <td className={`${actionCellClass} bg-white`}>
                 <Link
                   href={`/admin/registrations/${encodeURIComponent(registration.application_id)}`}
                   className="inline-flex min-h-touch items-center rounded-md bg-rally-ink px-3 py-2 text-sm font-semibold text-white"

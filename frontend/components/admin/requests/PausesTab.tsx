@@ -11,6 +11,7 @@ import {
 import { Card } from "@/components/ds/card";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { Button } from "@/components/ds/button";
+import { actionCellClass, actionHeaderClass } from "@/lib/sticky-action-column";
 
 export function PausesTab() {
   const queryClient = useQueryClient();
@@ -52,7 +53,7 @@ export function PausesTab() {
                   <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Pause</th>
                   <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Reason</th>
                   <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Status</th>
-                  <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted sr-only">Actions</th>
+                  <th className={`px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted ${actionHeaderClass}`}>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -115,7 +116,7 @@ function PauseRow({
       <td className="px-2 py-3">
         <Chip variant={mapStatus(request.status)} label={request.status.toUpperCase()} />
       </td>
-      <td className="px-2 py-3">
+      <td className={`${actionCellClass} bg-white`}>
         {isPending ? (
           <div className="flex justify-end gap-2">
             <Button

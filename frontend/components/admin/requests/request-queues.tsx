@@ -11,6 +11,8 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { actionCellClass, actionHeaderClass } from "@/lib/sticky-action-column";
+
 import {
   approveMakeup,
   approveTrial,
@@ -143,7 +145,7 @@ export function MakeupsTab() {
                   <Th>Requested target</Th>
                   <Th>Expires</Th>
                   <Th>Status</Th>
-                  <Th className="sr-only">Actions</Th>
+                  <Th className={actionHeaderClass}>Actions</Th>
                 </tr>
               </thead>
               <tbody>
@@ -167,7 +169,7 @@ export function MakeupsTab() {
                         <p className="mt-1 text-xs text-rally-subtle">{m.denial_reason}</p>
                       )}
                     </td>
-                    <td className="px-2 py-3">
+                    <td className={`${actionCellClass} bg-white`}>
                       {m.status === "pending" ? (
                         <div className="flex justify-end gap-2">
                           <Button variant="secondary" size="sm" onClick={() => setDenyTarget(m)}>
@@ -325,7 +327,7 @@ export function TrialsTab() {
                   <Th>Preferred window</Th>
                   <Th>Assigned occurrence</Th>
                   <Th>Status</Th>
-                  <Th className="sr-only">Actions</Th>
+                  <Th className={actionHeaderClass}>Actions</Th>
                 </tr>
               </thead>
               <tbody>
@@ -348,7 +350,7 @@ export function TrialsTab() {
                         <p className="mt-1 text-xs text-rally-subtle">{t.denial_reason}</p>
                       )}
                     </td>
-                    <td className="px-2 py-3">
+                    <td className={`${actionCellClass} bg-white`}>
                       {t.status === "pending" ? (
                         <div className="flex justify-end gap-2">
                           <Button variant="secondary" size="sm" onClick={() => setDenyTarget(t)}>
