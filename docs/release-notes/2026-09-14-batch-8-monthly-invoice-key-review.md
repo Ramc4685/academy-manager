@@ -1,6 +1,6 @@
 # Let an operator review a monthly invoice key the generator can never repair
 
-PR: #0
+PR: #829
 
 ## What changed
 - Fixes #599 — Invoices recovered before PR #494 keep the old shape and their tuition line is `$setOnInsert`, so the recovery path in `MongoMonthlyBillingRepo` re-derives the same unrepairable failure and re-reports the same handful of `billing_invoice_keys` duplicate-key rows on every monthly generation run, forever.
