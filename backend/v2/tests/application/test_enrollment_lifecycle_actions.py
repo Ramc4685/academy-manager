@@ -129,6 +129,26 @@ class FakeWaitlist:
             for entry in self.entries
         ]
 
+    async def get(self, waitlist_id: str) -> WaitlistEntry | None:
+        return next((e for e in self.entries if e.waitlist_id == waitlist_id), None)
+
+    async def mark_offered(self, waitlist_id: str, *, offer_expires_at) -> None:
+        self.entries = [
+            entry.model_copy(update={"status": "offered", "offer_expires_at": offer_expires_at})
+            if entry.waitlist_id == waitlist_id
+            else entry
+            for entry in self.entries
+        ]
+
+    async def find_expired_offers(self, *, before) -> list[WaitlistEntry]:
+        return [
+            e
+            for e in self.entries
+            if e.status == "offered"
+            and e.offer_expires_at is not None
+            and e.offer_expires_at <= before
+        ]
+
     async def find_waiting_for_session_student(
         self, session_id: str, student_id: str
     ) -> WaitlistEntry | None:

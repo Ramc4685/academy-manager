@@ -831,6 +831,8 @@ def compose_admin(
         outbox=outbox,
         enrollment_events=enrollment_events,
         roster_notifier=notifiers.roster,
+        # #828: the family's "a seat opened — confirm by <date>" mail.
+        offer_notifier=notifiers.roster,
         # A paused student at the head of the queue resumes (#651), one path.
         resume=resume_enrollment,
         academy_id=request_academy_id,

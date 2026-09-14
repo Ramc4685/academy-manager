@@ -56,6 +56,7 @@ from backend.v2.composition.month_close import compose_admin_month_close
 from backend.v2.composition.owner import compose_owner
 from backend.v2.composition.parent import compose_parent, compose_parent_webhook_handler
 from backend.v2.composition.student import compose_student
+from backend.v2.composition.waitlist_offers import compose_sweep_expired_waitlist_offers
 from backend.v2.contexts.billing.application.ports import StripeGateway
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     GenerateMonthlyPaymentsCommand,
@@ -255,6 +256,15 @@ SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
     },
     "expire_makeup_requests": {
         "schedule": {"type": "crontab", "value": "30 2 * * *"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
+    },
+    # Issue #828: releases waitlist offers nobody confirmed inside the
+    # three-day window and hands the seat to the next family. Hourly and
+    # offset from the cancellation sweep at :15, so the seats that sweep
+    # frees are already on the waitlist when this one runs.
+    "sweep_expired_waitlist_offers": {
+        "schedule": {"type": "crontab", "value": "35 * * * *"},
         "checkin_margin": 30,
         "max_runtime": 30,
     },
@@ -765,6 +775,33 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             totals["failed"] += result.failed
         if totals["processed"]:
             log.info("scheduled_resume_actions_processed", extra=totals)
+
+    async def _sweep_expired_waitlist_offers() -> None:
+        await _run_leased_job(
+            "sweep_expired_waitlist_offers",
+            timedelta(minutes=5),
+            _sweep_expired_waitlist_offers_body,
+        )
+
+    async def _sweep_expired_waitlist_offers_body() -> None:
+        # Issue #828. A held seat that nobody claims is a seat the class runs
+        # short, so this is hourly rather than daily: the longest an expired
+        # offer can sit on a seat is one tick.
+        totals = {"expired": 0, "released": 0, "reoffered": 0, "academy_count": 0}
+        sweep = compose_sweep_expired_waitlist_offers(
+            db, settings, promote=app.state.admin.promote_from_waitlist
+        )
+        for academy_id in await _scheduler_academy_ids(
+            MongoAcademyRepository(db),
+            runtime_academy_id,
+        ):
+            with tenant_scope(academy_id):
+                result = await sweep.execute()
+            totals["academy_count"] += 1
+            for key in ("expired", "released", "reoffered"):
+                totals[key] += result[key]
+        if totals["expired"]:
+            log.info("waitlist_offers_swept", extra=totals)
 
     async def _process_scheduled_cancellations() -> None:
         await _run_leased_job(
@@ -1458,6 +1495,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         "cron",
         minute=15,
         id="process_scheduled_cancellation_actions",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _sweep_expired_waitlist_offers,
+        "cron",
+        minute=35,
+        id="sweep_expired_waitlist_offers",
         replace_existing=True,
         max_instances=1,
     )

@@ -1489,6 +1489,25 @@ class FakeWaitlistRepo:
         if e is not None:
             self.entries[waitlist_id] = e.model_copy(update={"status": status})
 
+    async def get(self, waitlist_id):
+        return self.entries.get(waitlist_id)
+
+    async def mark_offered(self, waitlist_id, *, offer_expires_at):
+        e = self.entries.get(waitlist_id)
+        if e is not None:
+            self.entries[waitlist_id] = e.model_copy(
+                update={"status": "offered", "offer_expires_at": offer_expires_at}
+            )
+
+    async def find_expired_offers(self, *, before):
+        return [
+            e
+            for e in self.entries.values()
+            if e.status == "offered"
+            and e.offer_expires_at is not None
+            and e.offer_expires_at <= before
+        ]
+
     async def find_waiting_for_session_student(self, session_id, student_id):
         return next(
             (

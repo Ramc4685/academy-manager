@@ -203,3 +203,30 @@ class OccurrenceNotCancellable(DomainError):
 
     code = "Enrollment.OccurrenceNotCancellable"
     status_code = 409
+
+
+class WaitlistOfferNotFound(DomainError):
+    """No offer with that id belongs to this family (issue #828).
+
+    Deliberately the same answer for "no such entry" and "somebody else's
+    entry": a confirm link is a guessable id, and a 403 on a stranger's offer
+    would confirm that the entry exists.
+    """
+
+    code = "Enrollment.WaitlistOfferNotFound"
+    status_code = 404
+
+
+class WaitlistOfferExpired(DomainError):
+    """The three-day confirmation window closed; the seat went to the next
+    family on the list (issue #828)."""
+
+    code = "Enrollment.WaitlistOfferExpired"
+    status_code = 409
+
+
+class WaitlistOfferNotOpen(DomainError):
+    """The entry is not an open offer — still waiting, skipped or removed."""
+
+    code = "Enrollment.WaitlistOfferNotOpen"
+    status_code = 409

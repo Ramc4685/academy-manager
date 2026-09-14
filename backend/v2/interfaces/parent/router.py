@@ -22,6 +22,7 @@ from .schedule_routes import router as schedule_router
 from .self_cancel_routes import router as self_cancel_router
 from .session_routes import router as session_router
 from .trial_routes import router as trial_router
+from .waitlist_routes import router as waitlist_router
 from .waiver_routes import router as waiver_router
 from .webhook_routes import router as webhook_router
 
@@ -43,6 +44,7 @@ router.include_router(schedule_router)
 router.include_router(self_cancel_router)
 router.include_router(session_router)
 router.include_router(trial_router)
+router.include_router(waitlist_router)
 router.include_router(waiver_router)
 router.include_router(webhook_router)
 router.include_router(progress_skill_router)

@@ -1,16 +1,25 @@
-"""FIFO waitlist promotion.
+"""FIFO waitlist promotion — offer first, seat on confirmation (#828).
 
 Triggered by `Enrollment.EnrollmentCancelled` (admin cancel) or by admin
-direct invocation. Picks the oldest waiting entry for the session and
-transitions to `promoted`, emitting `WaitlistPromoted` for downstream
-notification handlers.
+direct invocation. Picks the oldest waiting entry for the session and, for a
+family that needs a new enrollment, HOLDS the freed seat and marks the entry
+`offered` with a three-day `offer_expires_at` instead of seating the child on
+the spot. `ConfirmWaitlistOffer` turns an offer into the enrollment;
+`SweepExpiredWaitlistOffers` releases an unanswered one and offers the seat to
+the next family (both in `waitlist_offers.py`).
+
+Two heads of the queue skip the window because no seat is being handed out to
+a new family: an already-`active` row (nothing to claim) and a `paused` row,
+which is the same enrollment coming back through `ResumeEnrollment`. Those go
+straight to `promoted` via :func:`record_promotion`, which also emits
+`WaitlistPromoted` for downstream notification handlers.
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 from backend.v2.contexts.enrollment.application.ports import (
@@ -18,6 +27,7 @@ from backend.v2.contexts.enrollment.application.ports import (
     EnrollmentWriter,
     RosterChangeNotifier,
     SessionWriter,
+    WaitlistOfferNotifier,
     WaitlistRepository,
 )
 from backend.v2.contexts.enrollment.application.seat_broker import (
@@ -31,12 +41,94 @@ from backend.v2.contexts.enrollment.domain.events import (
     WaitlistPromotedPayload,
 )
 from backend.v2.contexts.enrollment.domain.models import Enrollment
+from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.ids import new_ulid
 
 log = logging.getLogger(__name__)
 
 Clock = Callable[[], datetime]
+
+#: Issue #828 — how long a family has to claim a seat that opened for them.
+#: The seat is held (reserved on the session) for the whole window, so this is
+#: also how long the class runs one seat short when nobody answers.
+DEFAULT_OFFER_WINDOW = timedelta(days=3)
+
+
+async def record_promotion(
+    entry: WaitlistEntry,
+    enrollment: Enrollment,
+    *,
+    academy_id: str,
+    waitlist: WaitlistRepository,
+    outbox: Outbox,
+    now: datetime,
+    enrollment_events: EnrollmentEventRepository | None = None,
+    roster_notifier: RosterChangeNotifier | None = None,
+    actor_id: str | None = None,
+    reason: str | None = None,
+    notify_parent: bool = True,
+) -> None:
+    """Everything a promotion leaves behind once the seat is really taken.
+
+    Shared by ``PromoteFromWaitlist`` (the paused/already-active head of the
+    queue, which never goes through the offer window) and
+    ``ConfirmWaitlistOffer`` (the family claiming an offered seat), so the
+    lifecycle row, the ``WaitlistPromoted`` event and the staff/family alert
+    are written in exactly one place rather than diverging between the two
+    ways a seat gets taken (issue #828).
+    """
+    await waitlist.update_status(entry.waitlist_id, "promoted")
+    if enrollment_events is not None:
+        await enrollment_events.record(
+            EnrollmentLifecycleEvent(
+                event_id=str(new_ulid()),
+                academy_id=academy_id,
+                event_type="promoted",
+                enrollment_id=enrollment.enrollment_id,
+                waitlist_id=entry.waitlist_id,
+                session_id=entry.session_id,
+                student_id=entry.student_id,
+                actor_id=actor_id,
+                reason=reason,
+                effective_at=now,
+                occurred_at=now,
+            )
+        )
+    await outbox.append(
+        WaitlistPromoted(
+            aggregate_id=entry.waitlist_id,
+            academy_id=academy_id,
+            payload=WaitlistPromotedPayload(
+                waitlist_id=entry.waitlist_id,
+                session_id=entry.session_id,
+                student_id=entry.student_id,
+                parent_id=entry.parent_id,
+            ),
+        )
+    )
+    # #612: staff alert *and* the family's "a seat opened" email, both behind
+    # one best-effort call. Last statement, after the seat, the enrollment row
+    # and the waitlist status have all settled — and swallowing, because a
+    # promotion that reports failure would be re-run against a waitlist entry
+    # that is already `promoted`. A resumed row already sent "resumed" from
+    # ResumeEnrollment (#651); a second "a seat opened" email for the same
+    # event would be noise.
+    if roster_notifier is not None and notify_parent:
+        try:
+            await roster_notifier.roster_changed(
+                change="promoted",
+                session_id=entry.session_id,
+                student_id=entry.student_id,
+                enrollment_id=enrollment.enrollment_id,
+                actor_id=actor_id,
+                parent_user_id=entry.parent_id or None,
+            )
+        except Exception:
+            log.exception(
+                "enrollment.roster_notification_failed",
+                extra={"change": "promoted", "session_id": entry.session_id},
+            )
 
 
 class PausedEnrollmentResumer(Protocol):
@@ -72,6 +164,8 @@ class PromoteFromWaitlist:
         roster_notifier: RosterChangeNotifier | None = None,
         resume: PausedEnrollmentResumer | None = None,
         seat_broker: SeatBroker | None = None,
+        offer_notifier: WaitlistOfferNotifier | None = None,
+        offer_window: timedelta = DEFAULT_OFFER_WINDOW,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._waitlist = waitlist
@@ -87,6 +181,8 @@ class PromoteFromWaitlist:
         # `set_seat_broker` from main.py (composition/admin.py is at its
         # line-budget cap, and SeatBroker is composed later).
         self._seat_broker = seat_broker
+        self._offer_notifier = offer_notifier
+        self._offer_window = offer_window
         self._now = clock
 
     def set_seat_broker(self, seat_broker: SeatBroker) -> None:
@@ -159,91 +255,86 @@ class PromoteFromWaitlist:
                 return None
             enrollment = existing.model_copy(update={"status": "active"})
             resumed = True
-        else:
-            acquisition = None
-            if self._seat_broker is not None:
-                acquisition = await self._seat_broker.acquire(
-                    entry.session_id, requested_by=f"waitlist_promotion:{entry.waitlist_id}"
-                )
-                reserved = acquisition.granted
-            else:
-                reserved = await self._sessions.try_reserve_seat(entry.session_id)
+        elif existing is not None and existing.status == "paused":
+            # Kept only for callers that wire no ``resume`` (#651). No offer
+            # window either way: a paused child is a seat coming BACK to the
+            # family that already had it, not one being handed to somebody new.
+            acquisition, reserved = await self._reserve(entry)
             if not reserved:
                 return None
-            # Contract §3.8: a failure here must compensate through
-            # SeatBroker.release, not a bare release_seat — a
-            # reclaim-granted acquisition already dropped and emailed a
-            # different family for this seat, and only the broker records
-            # that as a `hold_reclaim_orphaned` audit event rather than
-            # pretending nothing happened.
             try:
-                if existing is not None and existing.status == "paused":
-                    # Kept only for callers that wire no ``resume`` (#651).
-                    await self._enrollments.update_status(existing.enrollment_id, "active")
-                    enrollment = existing.model_copy(update={"status": "active"})
-                else:
-                    enrollment = Enrollment(
-                        enrollment_id=str(new_ulid()),
-                        academy_id=academy_id,
-                        session_id=entry.session_id,
-                        student_id=entry.student_id,
-                        status="active",
-                    )
-                    await self._enrollments.create(enrollment)
+                await self._enrollments.update_status(existing.enrollment_id, "active")
             except BaseException:
                 await self._release_quietly(entry.session_id, acquisition)
                 raise
+            enrollment = existing.model_copy(update={"status": "active"})
+        else:
+            # Issue #828: a brand-new seat is OFFERED, not seated. The seat is
+            # held for the confirmation window and the family claims it
+            # through ``ConfirmWaitlistOffer``; ``SweepExpiredWaitlistOffers``
+            # gives it to the next family if nobody answers.
+            return await self._offer_seat(entry)
 
-        await self._waitlist.update_status(entry.waitlist_id, "promoted")
         now = self._now()
-        if self._enrollment_events is not None:
-            await self._enrollment_events.record(
-                EnrollmentLifecycleEvent(
-                    event_id=str(new_ulid()),
-                    academy_id=academy_id,
-                    event_type="promoted",
-                    enrollment_id=enrollment.enrollment_id,
-                    waitlist_id=entry.waitlist_id,
-                    session_id=entry.session_id,
-                    student_id=entry.student_id,
-                    actor_id=actor_id,
-                    reason=reason,
-                    effective_at=now,
-                    occurred_at=now,
-                )
-            )
-        await self._outbox.append(
-            WaitlistPromoted(
-                aggregate_id=entry.waitlist_id,
-                academy_id=academy_id,
-                payload=WaitlistPromotedPayload(
-                    waitlist_id=entry.waitlist_id,
-                    session_id=entry.session_id,
-                    student_id=entry.student_id,
-                    parent_id=entry.parent_id,
-                ),
-            )
+        await record_promotion(
+            entry,
+            enrollment,
+            academy_id=academy_id,
+            waitlist=self._waitlist,
+            outbox=self._outbox,
+            now=now,
+            enrollment_events=self._enrollment_events,
+            roster_notifier=self._roster_notifier,
+            actor_id=actor_id,
+            reason=reason,
+            notify_parent=not resumed,
         )
-        # #612: staff alert *and* the family's "a seat opened" email, both
-        # behind one best-effort call. Last statement, after the seat, the
-        # enrollment row and the waitlist status have all settled — and
-        # swallowing, because a promotion that reports failure would be
-        # re-run against a waitlist entry that is already `promoted`.
-        # A resumed row already sent "resumed" from ResumeEnrollment (#651); a
-        # second "a seat opened" email for the same event would be noise.
-        if self._roster_notifier is not None and not resumed:
+        return entry.waitlist_id
+
+    async def _reserve(self, entry: WaitlistEntry) -> tuple[SeatAcquisition | None, bool]:
+        """Take the freed seat, through the broker when one is wired."""
+        if self._seat_broker is not None:
+            acquisition = await self._seat_broker.acquire(
+                entry.session_id, requested_by=f"waitlist_promotion:{entry.waitlist_id}"
+            )
+            return acquisition, acquisition.granted
+        return None, await self._sessions.try_reserve_seat(entry.session_id)
+
+    async def _offer_seat(self, entry: WaitlistEntry) -> str | None:
+        """Hold the freed seat and give this family until the deadline (#828).
+
+        Returns the entry's id once the offer is on the row, or ``None`` when
+        no seat could be had — same "nothing promoted" answer the immediate
+        path used to give a full class.
+        """
+        acquisition, reserved = await self._reserve(entry)
+        if not reserved:
+            return None
+        expires_at = self._now() + self._offer_window
+        # Contract §3.8: compensation goes through SeatBroker.release, not a
+        # bare release_seat — a reclaim-granted acquisition already dropped and
+        # emailed a different family for this seat.
+        try:
+            await self._waitlist.mark_offered(entry.waitlist_id, offer_expires_at=expires_at)
+        except BaseException:
+            await self._release_quietly(entry.session_id, acquisition)
+            raise
+        # Best-effort, and last: an offer the family never hears about is
+        # recovered by the sweep (seat released, next family offered), while an
+        # offer that reports failure would be re-made against an entry that is
+        # already `offered` — a second held seat for the same family.
+        if self._offer_notifier is not None and entry.parent_id:
             try:
-                await self._roster_notifier.roster_changed(
-                    change="promoted",
+                await self._offer_notifier.waitlist_offer_made(
+                    waitlist_id=entry.waitlist_id,
                     session_id=entry.session_id,
                     student_id=entry.student_id,
-                    enrollment_id=enrollment.enrollment_id,
-                    actor_id=actor_id,
-                    parent_user_id=entry.parent_id or None,
+                    parent_user_id=entry.parent_id,
+                    offer_expires_at=expires_at,
                 )
             except Exception:
                 log.exception(
-                    "enrollment.roster_notification_failed",
-                    extra={"change": "promoted", "session_id": entry.session_id},
+                    "enrollment.waitlist_offer_notification_failed",
+                    extra={"waitlist_id": entry.waitlist_id, "session_id": entry.session_id},
                 )
         return entry.waitlist_id

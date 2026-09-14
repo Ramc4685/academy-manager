@@ -74,6 +74,25 @@ class FakeWaitlistRepository:
         e = self.entries[waitlist_id]
         self.entries[waitlist_id] = e.model_copy(update={"status": status})
 
+    async def get(self, waitlist_id: str) -> WaitlistEntry | None:
+        return self.entries.get(waitlist_id)
+
+    async def mark_offered(self, waitlist_id: str, *, offer_expires_at) -> None:
+        self.updated_status[waitlist_id] = "offered"
+        e = self.entries[waitlist_id]
+        self.entries[waitlist_id] = e.model_copy(
+            update={"status": "offered", "offer_expires_at": offer_expires_at}
+        )
+
+    async def find_expired_offers(self, *, before) -> list[WaitlistEntry]:
+        return [
+            e
+            for e in self.entries.values()
+            if e.status == "offered"
+            and e.offer_expires_at is not None
+            and e.offer_expires_at <= before
+        ]
+
     async def find_waiting_for_session_student(
         self, session_id: str, student_id: str
     ) -> WaitlistEntry | None:
@@ -321,10 +340,17 @@ async def test_promote_from_waitlist_reclaims_a_held_seat_through_the_broker() -
         seat_broker=broker,
         clock=lambda: NOW,
     )
-    promoted_id = await promote.execute("sess-1")
+    offered_id = await promote.execute("sess-1")
 
-    assert promoted_id == "wl-1"
-    assert waitlist.updated_status["wl-1"] == "promoted"
+    # Issue #828: the reclaimed seat is HELD and offered, not seated. The
+    # broker half is unchanged — the held row is still dropped and the seat
+    # still handed over with no arithmetic — but the waiting family now has
+    # three days to claim it.
+    assert offered_id == "wl-1"
+    assert waitlist.updated_status["wl-1"] == "offered"
+    assert waitlist.entries["wl-1"].offer_expires_at == NOW + timedelta(days=3)
     assert enrollments.rows["held-1"].status == "dropped"
     assert sessions.reserved_seats["sess-1"] == 1
     assert sessions.release_calls == []
+    # Nothing is enrolled until the family confirms.
+    assert [r for r in enrollments.rows.values() if r.student_id == "stu-waiting"] == []

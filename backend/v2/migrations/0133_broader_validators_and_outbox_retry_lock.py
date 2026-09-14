@@ -149,7 +149,13 @@ VALIDATORS: dict[str, dict[str, Any]] = {
             "student_id": {"bsonType": "string"},
             "parent_id": {"bsonType": "string"},
             "joined_at": {"bsonType": "date"},
-            "status": {"enum": ["waiting", "promoted", "skipped", "removed", None]},
+            # "offered"/"expired" + offer_expires_at: the #828 confirmation
+            # window. Corrected here (single source of truth, as 0165/0169/0182
+            # do) and re-applied by 0183.
+            "status": {
+                "enum": ["waiting", "offered", "promoted", "expired", "skipped", "removed", None]
+            },
+            "offer_expires_at": {"bsonType": OPT_DATE},
         },
     ),
     "pause_requests": _schema(

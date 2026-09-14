@@ -179,7 +179,11 @@ async def test_resume_enrollment_compensates_via_broker_when_update_status_fails
 
 
 @pytest.mark.asyncio
-async def test_promote_from_waitlist_compensates_via_broker_when_create_fails() -> None:
+async def test_promote_from_waitlist_compensates_via_broker_when_the_offer_write_fails() -> None:
+    """Issue #828 moved the failure point: the seat is reclaimed and then
+    HELD for an offer, so it is ``mark_offered`` — not the enrollment write —
+    that can leave a reclaimed seat with nobody in it. Compensation still has
+    to go through the broker so the dropped family's seat is accounted for."""
     enrollments = _RaisingOnCreate(
         rows={
             "held-1": make_enrollment(
@@ -203,7 +207,10 @@ async def test_promote_from_waitlist_compensates_via_broker_when_create_fails() 
             return self.entry
 
         async def update_status(self, waitlist_id: str, status: str) -> None:
-            raise AssertionError("must not be reached — the enrollment write failed first")
+            raise AssertionError("must not be reached — the offer write failed first")
+
+        async def mark_offered(self, waitlist_id: str, *, offer_expires_at) -> None:
+            raise _Boom("offer write failed")
 
     waitlist = _Waitlist(
         entry=WaitlistEntry(
@@ -220,7 +227,7 @@ async def test_promote_from_waitlist_compensates_via_broker_when_create_fails() 
     @dataclass
     class _Outbox:
         async def append(self, event) -> None:
-            raise AssertionError("must not be reached — the enrollment write failed first")
+            raise AssertionError("must not be reached — the offer write failed first")
 
     promote = PromoteFromWaitlist(
         waitlist=waitlist,

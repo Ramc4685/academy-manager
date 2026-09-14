@@ -12,7 +12,12 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-WaitlistStatus = Literal["waiting", "promoted", "skipped", "removed"]
+#: Issue #828 — a freed seat is now OFFERED for a confirmation window rather
+#: than seated instantly. ``offered`` means the seat is held (reserved on the
+#: session) and ``offer_expires_at`` is stamped; ``expired`` means the window
+#: closed unconfirmed and the seat went to the next family. Mongo's validator
+#: for this enum lives in migration 0133 and is widened by 0183.
+WaitlistStatus = Literal["waiting", "offered", "promoted", "expired", "skipped", "removed"]
 
 
 class WaitlistEntry(BaseModel):
@@ -25,3 +30,6 @@ class WaitlistEntry(BaseModel):
     parent_id: str
     joined_at: datetime
     status: WaitlistStatus = "waiting"
+    #: Set only while ``status == "offered"`` (#828): the instant the held seat
+    #: is released back to the next family if nobody confirms.
+    offer_expires_at: datetime | None = None
