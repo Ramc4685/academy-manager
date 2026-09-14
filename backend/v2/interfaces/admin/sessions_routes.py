@@ -792,7 +792,7 @@ async def withdraw_enrollment(
         schedule = use_cases.schedule_admin_drop_at_period_end
         if schedule is None:  # pragma: no cover - wiring bug, never in prod
             raise HTTPException(500, "Scheduled drops are not available")
-        await schedule.execute(
+        await schedule.execute(  # type: ignore[attr-defined]
             ScheduleAdminDropAtPeriodEndCommand(
                 enrollment_id=enrollment_id,
                 outcome=body.outcome,
@@ -831,7 +831,9 @@ async def cancel_scheduled_drop(
     cancel = use_cases.cancel_scheduled_admin_drop
     if cancel is None:  # pragma: no cover - wiring bug, never in prod
         raise HTTPException(500, "Scheduled drops are not available")
-    await cancel.execute(enrollment_id=enrollment_id, actor_id=claims.user_id)
+    await cancel.execute(  # type: ignore[attr-defined]
+        enrollment_id=enrollment_id, actor_id=claims.user_id
+    )
 
 
 @router.post("/enrollments/{enrollment_id}/resume", status_code=204, response_model=None)
