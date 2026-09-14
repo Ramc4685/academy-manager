@@ -948,6 +948,29 @@ test.describe("Rally admin shell", () => {
     ).toEqual([]);
   });
 
+  // #827: the old people bookmarks. Same #689 shape as the dues pair — they
+  // used to render the `(admin)` layout just to throw the redirect signal.
+  test("the parents and coaches bookmarks redirect into the Users directory", async ({
+    page,
+  }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    for (const [bookmark, role] of [
+      ["/admin/parents", "parent"],
+      ["/admin/coaches", "coach"],
+    ]) {
+      await page.goto(bookmark);
+      await expect(page).toHaveURL(
+        new RegExp(`/admin/users\\?role=${role}$`),
+        { timeout: 30_000 },
+      );
+    }
+    expect(
+      errors,
+      `App console errors on people redirects: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
   test("/admin/session-economics redirects into Reports → Session economics (UIC3)", async ({
     page,
   }) => {

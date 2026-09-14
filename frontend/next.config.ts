@@ -60,6 +60,14 @@ const CONTENT_SECURITY_POLICY = [
 const RETIRED_ROUTE_REDIRECTS = [
   { source: "/admin/dues", destination: "/admin/payments", permanent: true },
   { source: "/admin/reports/dues", destination: "/admin/payments", permanent: true },
+  // #827: the old people routes. Both were already forwards, but they forwarded
+  // by rendering the `(admin)` layout and throwing `redirect()` from it —
+  // exactly what tripped the Cloudflare Workers resource ceiling on the Dues
+  // paths (#689). Matched here, before route resolution, the layout never runs.
+  // The page files stay as the fallback for anything that reaches route
+  // resolution anyway, and so the route-manifest equality test still passes.
+  { source: "/admin/parents", destination: "/admin/users?role=parent", permanent: true },
+  { source: "/admin/coaches", destination: "/admin/users?role=coach", permanent: true },
 ];
 
 const config: NextConfig = {
