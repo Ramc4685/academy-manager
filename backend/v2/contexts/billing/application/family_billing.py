@@ -199,6 +199,28 @@ class CustomerFacts:
 
 
 @dataclass(frozen=True)
+class EmailDeliveryFacts:
+    """What the provider knows about this family's address (#778).
+
+    Sourced from the suppression list (#556), which has recorded hard bounces
+    and spam complaints since it was built but had no admin-facing surface:
+    a dead address was invoiced, dunned and eventually dropped in silence.
+
+    Deliberately flat and provider-agnostic — the billing context never
+    imports communications; the read model translates one ``EmailSuppression``
+    into this and nothing else crosses the boundary.
+    """
+
+    email: str | None
+    reason: str | None
+    since: datetime | None
+
+    @property
+    def undeliverable(self) -> bool:
+        return bool(self.reason and self.since)
+
+
+@dataclass(frozen=True)
 class FamilyFacts:
     parent: ParentFacts
     students: tuple[StudentFacts, ...]
@@ -211,6 +233,10 @@ class FamilyFacts:
     available_credit_cents: int
     connected_account_ready: bool | None
     warnings: tuple[str, ...]
+    #: Defaults to None so every existing caller/test keeps working, and so a
+    #: suppression-lookup failure degrades to "no known problem" rather than
+    #: taking the whole family page down (the #748 503 pattern).
+    email_delivery: EmailDeliveryFacts | None = None
 
 
 # --------------------------------------------------------------------------- helpers
@@ -647,6 +673,38 @@ def _event_entries(facts: FamilyFacts, zone: tzinfo) -> list[dict[str, Any]]:
     return entries
 
 
+_UNDELIVERABLE_SUMMARIES: dict[str, str] = {
+    "hard_bounce": "Email to {email} bounced — nothing reaches this address",
+    "complaint": "{email} marked our email as spam — digests and news are blocked",
+    "manual": "{email} was put on the do-not-email list",
+}
+
+
+def _email_delivery_entries(facts: FamilyFacts) -> list[dict[str, Any]]:
+    """One entry, so "why did this family never reply?" has an answer in place.
+
+    Muted like every other ``comms`` row: it is context for the money rows
+    above it, not an event an admin has to act on in the timeline itself —
+    the header chip is what asks for action.
+    """
+    delivery = facts.email_delivery
+    if delivery is None or not delivery.undeliverable or delivery.since is None:
+        return []
+    address = delivery.email or facts.parent.email or "this address"
+    template = _UNDELIVERABLE_SUMMARIES.get(
+        delivery.reason or "", "Email to {email} is undeliverable"
+    )
+    return [
+        _entry(
+            at=delivery.since,
+            kind="comms",
+            code="email_undeliverable",
+            summary=template.format(email=address),
+            reason=delivery.reason,
+        )
+    ]
+
+
 def build_timeline(facts: FamilyFacts, *, zone: tzinfo) -> list[dict[str, Any]]:
     """Spec §4: one merged list, newest first (ties by code), capped, comms muted."""
     entries = [
@@ -656,6 +714,7 @@ def build_timeline(facts: FamilyFacts, *, zone: tzinfo) -> list[dict[str, Any]]:
         *_dunning_entries(facts),
         *_audit_entries(facts),
         *_event_entries(facts, zone),
+        *_email_delivery_entries(facts),
     ]
     # Two stable sorts: ascending code as the tiebreak, then newest first.
     entries.sort(key=lambda e: e["code"])
@@ -837,6 +896,15 @@ def build_family_billing_view(
                 "state": registration,
                 "card_on_file": bool(facts.customer.has_card),
                 "last_invited_at": _iso(facts.customer.last_invited_at),
+            },
+            # #778: the admin's only sign that this family hears nothing we send.
+            "email_delivery": {
+                "undeliverable": facts.email_delivery is not None
+                and facts.email_delivery.undeliverable,
+                "since": _iso(facts.email_delivery.since) if facts.email_delivery else None,
+                "reason": facts.email_delivery.reason if facts.email_delivery else None,
+                "email": (facts.email_delivery.email if facts.email_delivery else None)
+                or facts.parent.email,
             },
             "enrollment_counts": {
                 "active": sum(1 for e in enrollments if e.status == "active"),

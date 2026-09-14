@@ -16,6 +16,7 @@ from backend.v2.contexts.billing.application.family_billing import (
     AuditFacts,
     CustomerFacts,
     DunningFacts,
+    EmailDeliveryFacts,
     EnrollmentFacts,
     EventFacts,
     FamilyFacts,
@@ -509,3 +510,69 @@ def test_strip_owner_actions_drops_void_on_a_draft_that_was_already_sent() -> No
     stripped = strip_owner_actions(view)
 
     assert stripped["invoices"][0]["actions"] == ["send"]
+
+
+# ------------------------------------------------- undeliverable email (#778)
+
+
+def test_header_reports_no_delivery_problem_when_the_address_is_fine() -> None:
+    """The common case must stay quiet: no chip, nothing on the timeline."""
+    view = build_family_billing_view(
+        _facts(), timezone="America/Chicago", generated_at=NOW, today=TODAY
+    )
+
+    assert view["header"]["email_delivery"] == {
+        "undeliverable": False,
+        "since": None,
+        "reason": None,
+        "email": "s@example.com",
+    }
+    assert [e for e in view["timeline"] if e["code"] == "email_undeliverable"] == []
+
+
+def test_header_surfaces_an_undeliverable_address_and_puts_it_on_the_timeline() -> None:
+    """#778: a hard-bounced parent was invoiced, dunned and dropped in silence.
+
+    The suppression list has known the address was dead since #556; nothing
+    admin-facing ever said so.
+    """
+    facts = _facts(
+        email_delivery=EmailDeliveryFacts(
+            email="s@example.com",
+            reason="hard_bounce",
+            since=datetime(2026, 9, 2, 8, 30, tzinfo=UTC),
+        )
+    )
+
+    view = build_family_billing_view(
+        facts, timezone="America/Chicago", generated_at=NOW, today=TODAY
+    )
+
+    assert view["header"]["email_delivery"] == {
+        "undeliverable": True,
+        "since": "2026-09-02T08:30:00+00:00",
+        "reason": "hard_bounce",
+        "email": "s@example.com",
+    }
+    entry = next(e for e in view["timeline"] if e["code"] == "email_undeliverable")
+    assert entry["kind"] == "comms"
+    assert entry["at"] == "2026-09-02T08:30:00+00:00"
+    assert "s@example.com" in entry["summary"]
+
+
+def test_a_complaint_is_undeliverable_for_marketing_but_still_flagged() -> None:
+    """A spam complaint still blocks digests, so admins must see it too."""
+    facts = _facts(
+        email_delivery=EmailDeliveryFacts(
+            email="s@example.com",
+            reason="complaint",
+            since=datetime(2026, 9, 4, 9, 0, tzinfo=UTC),
+        )
+    )
+
+    view = build_family_billing_view(
+        facts, timezone="America/Chicago", generated_at=NOW, today=TODAY
+    )
+
+    assert view["header"]["email_delivery"]["undeliverable"] is True
+    assert view["header"]["email_delivery"]["reason"] == "complaint"

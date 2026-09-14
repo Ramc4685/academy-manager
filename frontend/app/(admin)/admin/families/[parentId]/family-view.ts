@@ -2,6 +2,7 @@
 import type { ChipVariant } from "@/components/ds/chip";
 import type {
   FamilyAutopay,
+  FamilyEmailDelivery,
   FamilyEnrollment,
   FamilyStudent,
   InvoiceAction,
@@ -81,6 +82,41 @@ export function registrationChip(state: RegistrationState): RegistrationChip {
   if (state === "registered") return { label: "Card on file", variant: "paid" };
   if (state === "invited") return { label: "Invited", variant: "pending" };
   return { label: "Not invited", variant: "manual" };
+}
+
+export interface UndeliverableChip {
+  label: string;
+  variant: ChipVariant;
+  detail: string;
+}
+
+/**
+ * #778: the suppression list has known these addresses were dead since #556,
+ * but nothing admin-facing said so — the family was invoiced, dunned and
+ * eventually dropped in silence.
+ *
+ * A hard bounce blocks everything including invoices, so it is a red chip and
+ * an instruction. A complaint only blocks digests and news, so it says that
+ * instead of frightening an admin into chasing a working address.
+ */
+export function undeliverableChip(
+  delivery: FamilyEmailDelivery | undefined | null,
+): UndeliverableChip | null {
+  if (!delivery?.undeliverable || !delivery.since) return null;
+  const day = shortDate(delivery.since) ?? "an earlier date";
+  const address = delivery.email ?? "this address";
+  if (delivery.reason === "complaint") {
+    return {
+      label: `Marked as spam on ${day}`,
+      variant: "pending",
+      detail: `${address} reported our email as spam, so summaries and news are blocked. Invoices still send.`,
+    };
+  }
+  return {
+    label: `Email undeliverable since ${day}`,
+    variant: "failed",
+    detail: `Nothing we send reaches ${address}. Ask for a new address.`,
+  };
 }
 
 export type TimelineTone = "muted" | TimelineKind;
