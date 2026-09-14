@@ -7,6 +7,9 @@ import {
   updateSessionOccurrenceCoach,
   updateOccurrenceReplacement,
 } from "@/lib/api/v2/sessions";
+import type { ApiError } from "@/lib/api/client";
+
+const PAYOUT_FROZEN = "Coaching.PayoutPeriodFrozen";
 
 interface CorrectionDrawerProps {
   occurrenceId: string;
@@ -31,6 +34,11 @@ export function CorrectionDrawer({
   const [coachReason, setCoachReason] = useState("");
   const [replacementId, setReplacementId] = useState("");
   const [replacementReason, setReplacementReason] = useState("");
+  // The payout period covering this date is approved or paid, so attendance is
+  // frozen (#787). An owner can still correct it by stating a reason (#821);
+  // the prompt only appears once the backend has actually refused the edit.
+  const [frozen, setFrozen] = useState(false);
+  const [overrideReason, setOverrideReason] = useState("");
 
   const canSubmitCoach = coachId !== "" && coachReason.trim().length > 0;
 
@@ -39,8 +47,16 @@ export function CorrectionDrawer({
       updateOccurrenceCoachAttendance(occurrenceId, {
         coach_id: actualCoachId ?? scheduledCoachId,
         status,
+        ...(frozen && overrideReason.trim() ? { override_reason: overrideReason.trim() } : {}),
       }),
-    onSuccess: onApplied,
+    onSuccess: () => {
+      setFrozen(false);
+      setOverrideReason("");
+      onApplied();
+    },
+    onError: (error: ApiError) => {
+      if (error.code === PAYOUT_FROZEN) setFrozen(true);
+    },
   });
 
   const applyCoach = useMutation({
@@ -110,7 +126,7 @@ export function CorrectionDrawer({
                         ? "rounded-md bg-rally-ink px-3 py-2 text-sm font-semibold capitalize text-white"
                         : "rounded-md border border-rally-line bg-white px-3 py-2 text-sm font-semibold capitalize text-rally-ink hover:bg-neutral-50"
                     }
-                    disabled={busy}
+                    disabled={busy || (frozen && overrideReason.trim().length === 0)}
                     onClick={() => toggleAttendance.mutate(status)}
                   >
                     {status}
@@ -118,6 +134,26 @@ export function CorrectionDrawer({
                 );
               })}
             </div>
+            {frozen && (
+              <div className="space-y-2 rounded-md border border-rally-line bg-status-amber-50 p-3">
+                <p className="text-xs text-rally-ink">
+                  This payout period is already approved or paid. Only an academy owner
+                  can change attendance now, and the reason is recorded in the payroll
+                  audit trail.
+                </p>
+                <label className="grid gap-1.5 text-sm font-semibold text-rally-ink">
+                  Override reason
+                  <input
+                    type="text"
+                    placeholder="Required to edit a locked period"
+                    value={overrideReason}
+                    onChange={(e) => setOverrideReason(e.target.value)}
+                    required
+                    className="h-10 w-full rounded-md border border-rally-line bg-white px-3 text-sm font-normal text-rally-ink outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
+                  />
+                </label>
+              </div>
+            )}
           </section>
 
           <section className="space-y-3">

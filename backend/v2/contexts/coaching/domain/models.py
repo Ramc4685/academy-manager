@@ -80,7 +80,13 @@ class CoachAttendanceAuditEntry(BaseModel):
 
     Written only when an existing mark's status or rate_override_minor
     actually changes — creation of the first mark and no-op resubmits are
-    not audited (see #539)."""
+    not audited (see #539).
+
+    The one exception is an owner override of a frozen payout period (#821):
+    *every* such write is audited, including the first mark for a coach, so
+    that money moved inside an approved or paid period always leaves a trace.
+    ``before_status`` is then ``None`` (there was nothing to change) and
+    ``override_reason`` carries the owner's stated justification."""
 
     model_config = {"frozen": True}
 
@@ -90,10 +96,11 @@ class CoachAttendanceAuditEntry(BaseModel):
     coach_id: str
     actor_id: str
     at: datetime
-    before_status: CoachAttendanceStatus
+    before_status: CoachAttendanceStatus | None = None
     after_status: CoachAttendanceStatus
     before_rate_override_minor: int | None = Field(default=None, ge=0)
     after_rate_override_minor: int | None = Field(default=None, ge=0)
+    override_reason: str | None = None
 
 
 class SessionFeedback(BaseModel):

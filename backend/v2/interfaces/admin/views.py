@@ -446,6 +446,9 @@ class UpdateOccurrenceCoachAttendanceRequest(BaseModel):
     role: Literal["lead", "assistant"] = "lead"
     rate_override_minor: int | None = Field(default=None, ge=0)
     note: str = ""
+    override_reason: str | None = None
+    """Force the edit through an approved or paid payout period (#821). Honoured
+    only for owners; the reason is written to the coach-attendance audit log."""
 
 
 class CorrectStudentAttendanceRequest(BaseModel):

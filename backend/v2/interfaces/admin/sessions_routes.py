@@ -434,8 +434,13 @@ async def update_occurrence_coach_attendance(
                 source="admin",
                 rate_override_minor=body.rate_override_minor,
                 note=body.note,
+                override_reason=body.override_reason,
             ),
             actor_id=claims.user_id,
+            # Ordinary admins must keep marking attendance, so the owner check
+            # is a condition on the frozen-period override (#821), not a gate on
+            # the route itself.
+            actor_is_owner="owner" in claims.roles,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

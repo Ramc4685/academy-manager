@@ -1799,6 +1799,54 @@ def test_admin_can_mark_occurrence_coach_attendance(admin_client):
     assert listing["occurrences"][0]["coach_attendance"][0]["coach_id"] == "coach-2"
 
 
+def test_coach_attendance_in_an_approved_payout_period_is_refused(admin_client):
+    """#787/#821: a frozen payout window does not re-read attendance, so the
+    edit is refused rather than accepted and silently ignored."""
+    r = admin_client.patch(
+        "/api/v2/admin/session-occurrences/occ-admin-1/coach-attendance",
+        json={"coach_id": "coach-frozen", "status": "absent"},
+    )
+
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["code"] == "Coaching.PayoutPeriodFrozen"
+    assert admin_client.seed["coach_attendance"].rows == {}
+
+
+def test_owner_overrides_the_payout_freeze_with_a_reason(admin_client):
+    """#821: the owner can still push a correction through, and the reason is
+    written to the coach-attendance audit trail."""
+    r = admin_client.patch(
+        "/api/v2/admin/session-occurrences/occ-admin-1/coach-attendance",
+        json={
+            "coach_id": "coach-frozen",
+            "status": "absent",
+            "override_reason": "marked present by mistake, payroll corrected",
+        },
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "absent"
+    entries = admin_client.seed["coach_attendance_audit"].entries
+    assert len(entries) == 1
+    assert entries[0].override_reason == "marked present by mistake, payroll corrected"
+    assert entries[0].actor_id == "u-admin"
+
+
+def test_non_owner_admin_cannot_override_the_payout_freeze(admin_only_client):
+    r = admin_only_client.patch(
+        "/api/v2/admin/session-occurrences/occ-admin-1/coach-attendance",
+        json={
+            "coach_id": "coach-frozen",
+            "status": "absent",
+            "override_reason": "I think payroll is wrong",
+        },
+    )
+
+    assert r.status_code == 409, r.text
+    assert admin_only_client.seed["coach_attendance"].rows == {}
+    assert admin_only_client.seed["coach_attendance_audit"].entries == []
+
+
 def test_list_session_occurrences_wrong_persona_returns_404(coach_on_admin_client):
     r = coach_on_admin_client.get("/api/v2/admin/sessions/sess-1/occurrences")
     assert r.status_code == 404
