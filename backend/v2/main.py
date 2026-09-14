@@ -1834,6 +1834,7 @@ async def _run_monthly_invoice_generation(
         "repaired_orphan_keys": 0,
         "repaired_partial_invoices": 0,
         "failed_repair": 0,
+        "skipped_reviewed": 0,
         "invoices_emailed": 0,
         "invoice_emails_failed": 0,
         "invoice_emails_skipped_autopay": 0,
@@ -1922,6 +1923,7 @@ async def _run_monthly_invoice_generation(
                     "repaired_orphan_keys",
                     "repaired_partial_invoices",
                     "failed_repair",
+                    "skipped_reviewed",
                 ):
                     totals[key] += int(getattr(result, key, 0) or 0)
             if ran_any:
