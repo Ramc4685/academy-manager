@@ -1,6 +1,6 @@
 # Parent notification preferences and undeliverable-email visibility
 
-PR: #0
+PR: #825
 
 ## What changed
 - Fixes #778 (parent-facing) — The GET/PUT `/parent/email-preferences` endpoints have existed since #555 with no portal surface, so the only way a family could change what we email them was the unsubscribe link at the foot of an email they may have deleted. The parent Profile page now has a Notifications card wired to those endpoints; the opt-out/opt-in inversion and channel copy live in a pure, unit-tested module (`frontend/lib/parent/notification-preferences.ts`), and the card sends exactly the three allowed flags since the PUT body forbids unknown keys.
