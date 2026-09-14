@@ -1,6 +1,6 @@
 # Finish identity lifecycle events: parent change and departed children
 
-PR: #0
+PR: #826
 
 ## What changed
 - Fixes #785 — Publishing a new registration-waiver template version superseded the row carrying `assigned_to_registration` without moving the flag, so `get_registration_template` found nothing and registration silently stopped asking anyone to sign. The assignment now rides onto the published version and is cleared on the rows it supersedes, so exactly one row ever claims the slot; the registration read and the parent prompt also now share one "live" status set instead of disagreeing (active/published vs active only); and waiver signatures are keyed by student plus signing parent, so a child moved to a new guardian is re-asked to sign instead of inheriting a stranger's consent.
