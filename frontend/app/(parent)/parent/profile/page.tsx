@@ -10,12 +10,22 @@ import { useToast } from "@/components/ds/toast";
 import { queryKeys } from "@/lib/query/keys";
 import {
   confirmParentEmail,
+  getParentEmailPreferences,
   getParentProfile,
   updateParentChild,
+  updateParentEmailPreferences,
   updateParentProfile,
   type ParentSelfChild,
   type ParentSelfProfile,
 } from "@/lib/api/parent";
+import {
+  ALWAYS_ON_NOTICE,
+  NOTIFICATION_CHANNELS,
+  isChannelOn,
+  setChannel,
+  type NotificationChannelKey,
+  type ParentEmailPreferences,
+} from "@/lib/parent/notification-preferences";
 
 const NO_MEDICAL_SENTINEL = "__none_declared__";
 
@@ -50,6 +60,7 @@ export default function ParentProfilePage() {
       ) : (
         <div className="space-y-4 stagger-children">
           <AboutYouCard profile={data} />
+          <NotificationsCard />
           {data.children.map((child) => (
             <ChildCard key={child.student_id} child={child} />
           ))}
@@ -160,6 +171,91 @@ function AboutYouCard({ profile }: { profile: ParentSelfProfile }) {
           </Button>
         </div>
       </form>
+    </article>
+  );
+}
+
+/**
+ * Issue #778: the email-preferences endpoint has existed since #555 with no
+ * portal surface, so the only way to change these was the unsubscribe link at
+ * the foot of an email a family may well have deleted.
+ *
+ * Saving is per-switch and optimistic-free: one PUT, then the server's own
+ * answer becomes the cache. The card keeps rendering (and stays usable) even
+ * if the read fails, because a parent who cannot load their current settings
+ * still needs to be able to switch something off.
+ */
+function NotificationsCard() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const { data, isLoading, isError } = useQuery({
+    queryKey: queryKeys.parent.emailPreferences(),
+    queryFn: getParentEmailPreferences,
+  });
+
+  const saveMutation = useMutation({
+    mutationFn: (next: ParentEmailPreferences) => updateParentEmailPreferences(next),
+    onSuccess: (saved) => {
+      queryClient.setQueryData(queryKeys.parent.emailPreferences(), saved);
+      toast({ kind: "success", title: "Notification settings saved" });
+    },
+    onError: (err) => {
+      toast({
+        kind: "error",
+        title: errorMessage(err, "Could not save your notification settings."),
+      });
+    },
+  });
+
+  function onToggle(key: NotificationChannelKey, on: boolean) {
+    if (!data) return;
+    saveMutation.mutate(setChannel(data, key, on));
+  }
+
+  return (
+    <article
+      className="rounded-2xl border border-rally-line bg-white p-4 animate-fade-in-up"
+      data-testid="parent-notifications-card"
+    >
+      <h2 className="mb-3 font-bold text-rally-ink text-[15px]">Notifications</h2>
+
+      {isError ? (
+        <p className="text-sm text-status-red-600">Could not load your notification settings.</p>
+      ) : isLoading || !data ? (
+        <div className="space-y-2">
+          <Skeleton variant="line" width="10rem" />
+          <Skeleton variant="line" width="14rem" />
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {NOTIFICATION_CHANNELS.map((channel) => {
+            const inputId = `notify-${channel.key}`;
+            return (
+              <label
+                key={channel.key}
+                htmlFor={inputId}
+                className="flex items-start gap-3 rounded-lg border border-rally-line px-3 py-2"
+              >
+                <input
+                  id={inputId}
+                  type="checkbox"
+                  className="mt-1"
+                  checked={isChannelOn(data, channel.key)}
+                  disabled={saveMutation.isPending}
+                  onChange={(e) => onToggle(channel.key, e.target.checked)}
+                />
+                <span>
+                  <span className="block text-sm font-medium text-rally-ink">{channel.label}</span>
+                  <span className="block text-xs text-rally-muted">{channel.description}</span>
+                </span>
+              </label>
+            );
+          })}
+          <p className="rounded-lg bg-rally-paper px-3 py-2 text-xs text-rally-muted">
+            {ALWAYS_ON_NOTICE}
+          </p>
+        </div>
+      )}
     </article>
   );
 }

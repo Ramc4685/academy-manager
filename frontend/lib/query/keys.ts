@@ -154,6 +154,7 @@ export const queryKeys = {
     messages: () => ["parent", "messages"] as const,
     calendar: () => ["parent", "calendar"] as const,
     profile: () => ["parent", "profile"] as const,
+    emailPreferences: () => ["parent", "email-preferences"] as const,
   },
   platform: {
     all: ["platform"] as const,
