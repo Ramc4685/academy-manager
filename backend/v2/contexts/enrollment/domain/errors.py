@@ -78,6 +78,22 @@ class StudentParentInvalidRole(DomainError):
     status_code = 409
 
 
+class StudentParentChangeBlocked(DomainError):
+    """The child's live money cannot follow them to the new parent (#785).
+
+    Raised before anything is written, so a refusal never leaves the family
+    half-moved. The two blockers are the cases where rewriting ``parent_id`` in
+    Mongo would silently diverge from money already in flight under the old
+    parent's Stripe customer: an open invoice with a Stripe twin, and an
+    enrollment still on active autopay (the saved card belongs to the old
+    parent and must never be re-pointed at someone else). The admin settles or
+    stops those first; the message names the blocking ids.
+    """
+
+    code = "Enrollment.StudentParentChangeBlocked"
+    status_code = 409
+
+
 class CapacityExceeded(DomainError):
     code = "Enrollment.CapacityExceeded"
     status_code = 409

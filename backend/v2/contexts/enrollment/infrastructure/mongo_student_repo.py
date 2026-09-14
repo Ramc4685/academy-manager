@@ -28,6 +28,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_directory import
     full_name_key,
 )
 from backend.v2.contexts.enrollment.domain.errors import (
+    StudentParentChangeBlocked,
     StudentParentInactive,
     StudentParentInvalidRole,
     StudentParentNotFound,
@@ -75,6 +76,27 @@ _AT_RISK_LOOKBACK_DAYS: Final[int] = 120
 
 #: "No attendance in the last three scheduled dates" (#773 / audit §3).
 _AT_RISK_OCCURRENCES: Final[int] = 3
+
+# --- change-parent cascade (#785) -------------------------------------------
+# Money moves with the child only while it is still *live*. Settled history
+# stays with the parent who actually paid it, which is why each set below is an
+# allow-list of open states rather than "not terminal": a row in an unexpected
+# state is left where it is instead of being rehomed on a guess.
+
+#: Invoice statuses that still owe (or may yet owe) money.
+_OPEN_INVOICE_STATUSES: Final[frozenset[str]] = frozenset({"draft", "open", "partially_paid"})
+
+#: Credit statuses that still hold spendable balance. Mirrors
+#: ``billing.domain.models.CreditStatus``; copied rather than imported because
+#: enrollment may not depend on the billing context (import-linter contract).
+_SPENDABLE_CREDIT_STATUSES: Final[frozenset[str]] = frozenset({"PENDING", "APPROVED"})
+
+#: Waitlist statuses that are still a live request for a seat.
+_LIVE_WAITLIST_STATUSES: Final[frozenset[str]] = frozenset({"waiting", "offered"})
+
+#: ``student_billing_enrollments.autopay_enrollment_status`` meaning the dunning
+#: worker may charge a saved card. Mirrors ``AUTOPAY_ACTIVE_STATUS``.
+_AUTOPAY_ACTIVE_STATUS: Final[str] = "active"
 
 
 class MongoStudentRepository(TenantScopedRepository):
@@ -634,10 +656,14 @@ class MongoStudentRepository(TenantScopedRepository):
 
         new_parent_id = self._canonical_parent_id(parent)
         old_parent_id = str(before.get("parent_id") or before.get("parent_user_id") or "")
-        impact_counts = await self._parent_change_impact_counts(
+        student_key = self._summary_id(before)
+        old_parent_ids = self._parent_lookup_ids_from_student(before)
+        # Refuse BEFORE the first write: a half-moved family (student under the
+        # new parent, money under the old one) is worse than no move at all.
+        await self._refuse_unmovable_money(
             academy_id=academy_id,
-            student_id=self._summary_id(before),
-            old_parent_ids=self._parent_lookup_ids_from_student(before),
+            student_id=student_key,
+            old_parent_ids=old_parent_ids,
         )
         now = datetime.now(UTC)
         updated = await self.collection.find_one_and_update(
@@ -653,6 +679,26 @@ class MongoStudentRepository(TenantScopedRepository):
         )
         if updated is None:
             return None
+
+        rehomed_counts = await self._rehome_live_money(
+            academy_id=academy_id,
+            student_id=student_key,
+            old_parent_ids=old_parent_ids,
+            new_parent_id=new_parent_id,
+            now=now,
+        )
+        await self._mark_waivers_outdated_for_parent(
+            academy_id=academy_id,
+            student_id=student_key,
+            new_parent_id=new_parent_id,
+            now=now,
+        )
+        # Counted AFTER the cascade, so this is what genuinely stayed behind.
+        impact_counts = await self._parent_change_impact_counts(
+            academy_id=academy_id,
+            student_id=student_key,
+            old_parent_ids=old_parent_ids,
+        )
 
         await self._write_parent_change_audit(
             academy_id=academy_id,
@@ -675,9 +721,162 @@ class MongoStudentRepository(TenantScopedRepository):
                 phone=str(parent.get("phone")) if parent.get("phone") is not None else None,
             ),
             previous_parent_id=old_parent_id or None,
-            warnings=["Historical billing, waiver, credit, and waitlist rows were not rewritten."],
+            warnings=[
+                "Settled invoices, spent credit and past waivers stay with the parent "
+                "who paid or signed them.",
+                "The new parent must re-sign the waiver and set up autopay again.",
+            ],
             impact_counts=impact_counts,
+            rehomed_counts=rehomed_counts,
         )
+
+    async def _refuse_unmovable_money(
+        self,
+        *,
+        academy_id: str,
+        student_id: str,
+        old_parent_ids: list[str],
+    ) -> None:
+        """Raise when the child's live money cannot follow them (#785).
+
+        Two states make a Mongo-side ``parent_id`` rewrite a lie: an open
+        invoice with a Stripe twin (Stripe keeps collecting from the OLD
+        parent's customer), and an enrollment still on active autopay (the
+        saved card is the old parent's and must never be re-pointed at anyone
+        else). Both are read-only checks run before the first write.
+        """
+        if not old_parent_ids:
+            return
+        stripe_invoice_ids = [
+            str(doc.get("invoice_id") or doc.get("_id"))
+            async for doc in self._db["invoices"].find(
+                {
+                    "academy_id": academy_id,
+                    "student_id": student_id,
+                    "parent_id": {"$in": old_parent_ids},
+                    "status": {"$in": sorted(_OPEN_INVOICE_STATUSES)},
+                    "stripe_invoice_id": {"$nin": [None, ""]},
+                },
+                {"invoice_id": 1},
+            )
+        ]
+        if stripe_invoice_ids:
+            raise StudentParentChangeBlocked(
+                "Open invoices are still live in Stripe under the current parent: "
+                f"{', '.join(sorted(stripe_invoice_ids))}. Settle or void them first.",
+                invoice_ids=sorted(stripe_invoice_ids),
+            )
+        autopay_enrollment_ids = [
+            str(doc.get("enrollment_id") or doc.get("_id"))
+            async for doc in self._db["student_billing_enrollments"].find(
+                {
+                    "academy_id": academy_id,
+                    "student_id": student_id,
+                    "autopay_enrollment_status": _AUTOPAY_ACTIVE_STATUS,
+                },
+                {"enrollment_id": 1},
+            )
+        ]
+        if autopay_enrollment_ids:
+            raise StudentParentChangeBlocked(
+                "Autopay is still active on the current parent's saved card for "
+                f"{', '.join(sorted(autopay_enrollment_ids))}. Turn autopay off first.",
+                enrollment_ids=sorted(autopay_enrollment_ids),
+            )
+
+    async def _rehome_live_money(
+        self,
+        *,
+        academy_id: str,
+        student_id: str,
+        old_parent_ids: list[str],
+        new_parent_id: str,
+        now: datetime,
+    ) -> dict[str, int]:
+        """Point this child's still-open money at the new parent (#785).
+
+        Only rows scoped to THIS student move, and only while they are live —
+        a settled invoice or a spent credit records what the previous parent
+        actually paid and is never rewritten. Every query carries
+        ``academy_id``: a same-named student in another tenant must be
+        untouchable.
+        """
+        rehomed = {"invoices": 0, "credits": 0, "waitlist": 0, "autopay_enrollments": 0}
+        if not old_parent_ids:
+            return rehomed
+        base = {
+            "academy_id": academy_id,
+            "student_id": student_id,
+            "parent_id": {"$in": old_parent_ids},
+        }
+        stamp = {"parent_id": new_parent_id, "updated_at": now}
+
+        invoices = await self._db["invoices"].update_many(
+            {**base, "status": {"$in": sorted(_OPEN_INVOICE_STATUSES)}},
+            {"$set": stamp},
+        )
+        rehomed["invoices"] = int(invoices.modified_count)
+
+        credits = await self._db["account_credit_ledger"].update_many(
+            {
+                **base,
+                "status": {"$in": sorted(_SPENDABLE_CREDIT_STATUSES)},
+                "remaining_amount_cents": {"$gt": 0},
+            },
+            {"$set": stamp},
+        )
+        rehomed["credits"] = int(credits.modified_count)
+
+        waitlist = await self._db["waitlist"].update_many(
+            {
+                "academy_id": academy_id,
+                "student_id": student_id,
+                "status": {"$in": sorted(_LIVE_WAITLIST_STATUSES)},
+                "$or": [
+                    {"parent_id": {"$in": old_parent_ids}},
+                    {"parent_user_id": {"$in": old_parent_ids}},
+                ],
+            },
+            {"$set": {**stamp, "parent_user_id": new_parent_id}},
+        )
+        rehomed["waitlist"] = int(waitlist.modified_count)
+
+        # The per-enrollment autopay row is what the dunning worker charges
+        # from. Reached only once `_refuse_unmovable_money` has proved no row
+        # is on active autopay, so nothing here re-points a saved card.
+        billing_enrollments = await self._db["student_billing_enrollments"].update_many(
+            base, {"$set": stamp}
+        )
+        rehomed["autopay_enrollments"] = int(billing_enrollments.modified_count)
+        return rehomed
+
+    async def _mark_waivers_outdated_for_parent(
+        self,
+        *,
+        academy_id: str,
+        student_id: str,
+        new_parent_id: str,
+        now: datetime,
+    ) -> None:
+        """Flag consent the new guardian never gave (#785).
+
+        The signature stays on file — it is the legal record of what the
+        previous parent agreed to — but it no longer counts as this family's
+        waiver, so the parent waiver page asks the new guardian to re-sign.
+        """
+        stamp = {"$set": {"outdated_for_parent": True, "outdated_for_parent_at": now}}
+        for collection, parent_field in (
+            ("waiver_signatures", "parent_user_id"),
+            ("waiver_acceptances", "parent_user_id"),
+        ):
+            await self._db[collection].update_many(
+                {
+                    "academy_id": academy_id,
+                    "student_id": student_id,
+                    parent_field: {"$ne": new_parent_id},
+                },
+                stamp,
+            )
 
     async def list_admin_students(
         self,
