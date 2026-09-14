@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import {
   getParentAcademy,
+  getParentProfile,
   getRegistrationWaiver,
   listAvailableParentSessions,
   patchOnboarding,
@@ -14,6 +15,7 @@ import {
   type EnrollmentQuote,
   type OnboardingApplication,
   type ParentAvailableSession,
+  type ParentSelfChild,
   type RegistrationWaiver,
 } from "@/lib/api/parent";
 import type { ApiError } from "@/lib/api/client";
@@ -21,6 +23,14 @@ import {
   formatAcademyMoment,
   formatSessionOccurrence,
 } from "@/lib/format/session-display";
+import { queryKeys } from "@/lib/query/keys";
+import {
+  childProfileFromExistingChild,
+  initialChildSelection,
+  NEW_CHILD_SELECTION,
+  NO_MEDICAL_CONDITIONS_SENTINEL,
+  reEnrollChildId,
+} from "@/lib/parent/re-enroll";
 
 /**
  * Parent onboarding stepper.
@@ -69,6 +79,26 @@ export default function OnboardingStepperPage() {
     staleTime: 10 * 60 * 1000,
   });
   const academyTimezone = academyQuery.data?.timezone ?? null;
+  // #827: the children this parent already has. A returning family must not
+  // get a SECOND student record, and the binding the backend does is by name
+  // and date of birth — so the child step offers these to copy forward rather
+  // than asking the family to retype them and hoping they match.
+  //
+  // A first-time signup has none; the query 404s/empties harmlessly and the
+  // step renders exactly as it did before.
+  const profileQuery = useQuery({
+    queryKey: queryKeys.parent.profile(),
+    queryFn: getParentProfile,
+    staleTime: 60_000,
+    retry: false,
+  });
+  const existingChildren = profileQuery.data?.children ?? [];
+  // Read once, from the url the departed row linked to. `useSearchParams`
+  // would need its own Suspense boundary around this page; this needs no
+  // reactivity — the pin is a one-shot hint for the first render.
+  const [preselectedChildId] = useState<string | null>(() =>
+    typeof window === "undefined" ? null : reEnrollChildId(window.location.search),
+  );
   const selectedSessionId = app?.selected_session_id;
   const quoteQuery = useQuery({
     queryKey: ["parent", "enrollment-quote", selectedSessionId],
@@ -216,6 +246,8 @@ export default function OnboardingStepperPage() {
           <ChildStep
             app={app}
             saving={saving}
+            existingChildren={existingChildren}
+            preselectedStudentId={preselectedChildId}
             onSave={async (profile) => {
               if (await save({ child_profile: profile })) advance();
             }}
@@ -362,15 +394,50 @@ function ChildStep({
   app,
   onSave,
   saving,
+  existingChildren,
+  preselectedStudentId,
 }: {
   app: OnboardingApplication;
   onSave: (p: OnboardingApplication["child_profile"]) => void;
   saving: boolean;
+  /** #827: children this parent already has, from GET /parent/profile. */
+  existingChildren: ParentSelfChild[];
+  /** #827: the child the departed row pinned to the url, when there is one. */
+  preselectedStudentId: string | null;
 }) {
   const [v, setV] = useState(app.child_profile);
   const [noMedicalConditions, setNoMedicalConditions] = useState(
-    app.child_profile.medical_notes === "__none_declared__",
+    app.child_profile.medical_notes === NO_MEDICAL_CONDITIONS_SENTINEL,
   );
+  // #827: "somebody new" until the family says otherwise — a returning family
+  // is pre-selected once their children load (below), never before.
+  const [selection, setSelection] = useState<string>(NEW_CHILD_SELECTION);
+  const preselectApplied = useRef(false);
+
+  function chooseExistingChild(child: ParentSelfChild) {
+    setSelection(child.student_id);
+    setV((current) => childProfileFromExistingChild(child, current));
+    setNoMedicalConditions(child.no_medical_conditions);
+  }
+
+  function chooseNewChild() {
+    setSelection(NEW_CHILD_SELECTION);
+  }
+
+  // The children arrive from an async read, so the pin is applied when they
+  // land — once. After that the family owns the choice: a re-run must never
+  // yank their selection back to the pinned child.
+  useEffect(() => {
+    if (preselectApplied.current || existingChildren.length === 0) return;
+    preselectApplied.current = true;
+    const initial = initialChildSelection(existingChildren, preselectedStudentId);
+    if (initial === NEW_CHILD_SELECTION) return;
+    const child = existingChildren.find((c) => c.student_id === initial);
+    if (child) chooseExistingChild(child);
+  }, [existingChildren, preselectedStudentId]);
+
+  const existingSelected = selection !== NEW_CHILD_SELECTION;
+
   return (
     <form
       onSubmit={(e) => {
@@ -380,11 +447,86 @@ function ChildStep({
       className="space-y-3"
     >
       <StepHeading>Your child</StepHeading>
+      {/* #827: a returning family picks the child they already have. Retyping
+          the name is what used to produce a second student record — the
+          backend binds an application to an existing student by name and date
+          of birth, so a typo silently forked the child in two. */}
+      {existingChildren.length > 0 && (
+        <fieldset className="space-y-2" data-testid="onboarding-existing-child-picker">
+          <legend className="text-sm font-medium" style={{ color: "var(--rally-ink)" }}>
+            Who is this for?
+          </legend>
+          <div className="space-y-2 stagger-children" role="radiogroup" aria-label="Which child">
+            {existingChildren.map((child) => {
+              const selected = selection === child.student_id;
+              return (
+                <label
+                  key={child.student_id}
+                  data-testid={`onboarding-existing-child-${child.student_id}`}
+                  className="relative flex min-h-11 items-center rounded-xl border px-3 text-sm transition-colors"
+                  style={{
+                    borderColor: selected ? "#facc15" : "var(--rally-line)",
+                    background: selected ? "#fffbe9" : "white",
+                    color: selected ? "#854f0b" : "var(--rally-ink)",
+                    fontWeight: selected ? 600 : 400,
+                  }}
+                >
+                  <input
+                    type="radio"
+                    name="onboarding-child"
+                    value={child.student_id}
+                    checked={selected}
+                    onChange={() => chooseExistingChild(child)}
+                    className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                  />
+                  {child.full_name}
+                </label>
+              );
+            })}
+            <label
+              data-testid="onboarding-child-new"
+              className="relative flex min-h-11 items-center rounded-xl border px-3 text-sm transition-colors"
+              style={{
+                borderColor: existingSelected ? "var(--rally-line)" : "#facc15",
+                background: existingSelected ? "white" : "#fffbe9",
+                color: existingSelected ? "var(--rally-ink)" : "#854f0b",
+                fontWeight: existingSelected ? 400 : 600,
+              }}
+            >
+              <input
+                type="radio"
+                name="onboarding-child"
+                value={NEW_CHILD_SELECTION}
+                checked={!existingSelected}
+                onChange={chooseNewChild}
+                className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+              />
+              Add a new child
+            </label>
+          </div>
+          {existingSelected && (
+            <p className="text-xs" style={{ color: "var(--rally-muted)" }}>
+              Their name and date of birth stay as we have them, so this joins their existing
+              record instead of creating a second one.
+            </p>
+          )}
+        </fieldset>
+      )}
       <Field label="First name">
-        <input value={v.first_name} onChange={(e) => setV({ ...v, first_name: e.target.value })} required />
+        <input
+          value={v.first_name}
+          onChange={(e) => setV({ ...v, first_name: e.target.value })}
+          readOnly={existingSelected}
+          required
+        />
       </Field>
       <Field label="Last name">
-        <input value={v.last_name} onChange={(e) => setV({ ...v, last_name: e.target.value })} required />
+        <input
+          value={v.last_name}
+          onChange={(e) => setV({ ...v, last_name: e.target.value })}
+          readOnly={existingSelected}
+          required
+        />
       </Field>
       <Field label="Date of birth">
         <input
@@ -396,6 +538,7 @@ function ChildStep({
           maxLength={10}
           value={v.date_of_birth}
           onChange={(e) => setV({ ...v, date_of_birth: e.target.value })}
+          readOnly={existingSelected}
           required
         />
       </Field>
@@ -459,8 +602,9 @@ function ChildStep({
           checked={noMedicalConditions}
           onChange={(e) => {
             setNoMedicalConditions(e.target.checked);
-            if (e.target.checked) setV({ ...v, medical_notes: "__none_declared__" });
-            else if (v.medical_notes === "__none_declared__") setV({ ...v, medical_notes: "" });
+            if (e.target.checked) setV({ ...v, medical_notes: NO_MEDICAL_CONDITIONS_SENTINEL });
+            else if (v.medical_notes === NO_MEDICAL_CONDITIONS_SENTINEL)
+              setV({ ...v, medical_notes: "" });
           }}
         />
         No known conditions or allergies
