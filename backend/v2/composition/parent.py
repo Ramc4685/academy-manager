@@ -163,6 +163,11 @@ from backend.v2.contexts.enrollment.domain.lifecycle import (
     PersonLifecycleState,
     derive_lifecycle,
 )
+from backend.v2.contexts.enrollment.domain.models import (
+    DROPPED_SPELLINGS,
+    TERMINAL,
+    canonical_status,
+)
 from backend.v2.contexts.enrollment.infrastructure.mongo_absence_notice_repo import (
     MongoAbsenceNoticeRepository,
 )
@@ -1471,7 +1476,105 @@ def compose_parent(
                     "autopay_setup_status": autopay_setup_status,
                 }
             )
+        rows.extend(await _departed_enrollment_rows(academy_id, by_id))
         return rows
+
+    async def _departed_enrollment_rows(
+        academy_id: str, students_by_id: dict[str, dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Issue #775: the most recent departure per child, as history.
+
+        A family that left was a dead end: the read above filters to
+        active/paused/held, so a dropped child's card rendered empty — no
+        record that they ever came, and nothing to click to come back. These
+        rows exist to be *read*, never to be billed, so every autopay and
+        attempt field is pinned to ``None`` rather than joined from
+        ``student_billing_enrollments``: a stale declined attempt on a
+        long-dead enrollment must not arm the parent home's payment banner.
+
+        Capped at one row per student — the latest ending — because a
+        long-lived family with many past drops would otherwise turn the
+        children card into a changelog.
+        """
+        cursor = db["enrollments"].find(
+            {
+                "academy_id": academy_id,
+                "student_id": {"$in": list(students_by_id)},
+                "status": {"$in": sorted(TERMINAL)},
+                # Mirrors the admin past-enrollments reader (#674): a
+                # soft-deleted row is not a departure the family should see.
+                "is_deleted": {"$ne": True},
+            }
+        )
+        latest: dict[str, tuple[datetime | None, dict[str, Any]]] = {}
+        async for enrollment in cursor:
+            student_id = str(enrollment["student_id"])
+            status = canonical_status(str(enrollment.get("status") or ""))
+            # Issue #699: a withdrawal dates from withdrawal_date, a removal
+            # from cancelled_at; fall back across both so a legacy row that
+            # only stamped one of them still carries a date.
+            withdrawal_date = enrollment.get("withdrawal_date")
+            cancelled_at = enrollment.get("cancelled_at")
+            left_on = withdrawal_date if status in DROPPED_SPELLINGS else cancelled_at
+            left_on = left_on or cancelled_at or withdrawal_date
+            previous = latest.get(student_id)
+            if previous is not None:
+                previous_left_on = previous[0]
+                # An undated row never displaces a dated one; between two
+                # undated rows the first seen wins, deterministically.
+                if previous_left_on is not None and (
+                    left_on is None or left_on <= previous_left_on
+                ):
+                    continue
+                if previous_left_on is None and left_on is None:
+                    continue
+            latest[student_id] = (left_on, enrollment)
+
+        departed: list[dict[str, Any]] = []
+        for student_id, (left_on, enrollment) in latest.items():
+            session = await db["sessions"].find_one(
+                {"academy_id": academy_id, "session_id": enrollment["session_id"]}
+            )
+            departed.append(
+                {
+                    "enrollment_id": str(enrollment.get("enrollment_id") or enrollment["_id"]),
+                    "student_id": student_id,
+                    "student_name": str(
+                        students_by_id[student_id].get("full_name") or "Unnamed student"
+                    ),
+                    "session_id": str(enrollment["session_id"]),
+                    "session_title": str(session.get("title") if session else "Session"),
+                    "status": canonical_status(str(enrollment.get("status") or "")),
+                    #: The flag every reader keys off. Status alone is not
+                    #: enough: the live list already carries four spellings.
+                    "departed": True,
+                    "left_on": left_on,
+                    "departure_reason": (
+                        str(enrollment["cancellation_reason"])
+                        if enrollment.get("cancellation_reason")
+                        else None
+                    ),
+                    "pending_cancellation_at": None,
+                    "hold_return_on": None,
+                    "payment_mode": enrollment.get("payment_mode"),
+                    "subscription_status": None,
+                    "autopay_enrollment_status": None,
+                    "last_attempt_outcome": None,
+                    "last_attempt_at": None,
+                    "last_failure_code": None,
+                    "autopay_payment_method_type": None,
+                    "autopay_payment_method_label": None,
+                    "autopay_payment_method_last4": None,
+                    "autopay_setup_status": None,
+                }
+            )
+        departed.sort(
+            key=lambda row: (
+                -(row["left_on"].timestamp() if row["left_on"] else float("-inf")),
+                row["enrollment_id"],
+            )
+        )
+        return departed
 
     async def _resolve_coach_name(coach_id: str | None) -> str | None:
         if not coach_id:
@@ -2598,7 +2701,11 @@ def compose_parent(
         # Source 1: the autopay attempt projection. A declined attempt that
         # never minted a payment row exists ONLY here.
         payment_failed = any(
-            str(row.get("last_attempt_outcome") or "") in _FAILED_ATTEMPT_OUTCOMES
+            # Issue #775: the enrollment list now carries departed rows for
+            # history. They are billed by nobody, so they may not arm this
+            # banner — belt-and-braces next to the None-pinned fields above.
+            not row.get("departed")
+            and str(row.get("last_attempt_outcome") or "") in _FAILED_ATTEMPT_OUTCOMES
             for row in enrollments
         )
         if not payment_failed:
