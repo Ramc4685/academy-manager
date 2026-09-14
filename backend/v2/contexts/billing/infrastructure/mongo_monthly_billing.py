@@ -60,6 +60,66 @@ if TYPE_CHECKING:
     )
 
 
+# ``billing_invoice_keys.status`` values this module writes and reads back.
+# ``reviewed`` (#599) is terminal-until-the-invoice-changes: recovery cannot
+# repair some pre-PR-#494 invoices in place (their tuition line is written with
+# ``$setOnInsert``), so those keys would report ``repair_failed`` on every run
+# forever. Once an operator has judged one and recorded why, the generator
+# leaves it alone instead of re-reporting it.
+MONTHLY_KEY_STATUS_REPAIR_FAILED = "repair_failed"
+MONTHLY_KEY_STATUS_REVIEWED = "reviewed"
+
+
+def _as_utc(value: datetime) -> datetime:
+    """Compare a stored timestamp against an aware one.
+
+    Mongo hands back naive datetimes; comparing one to ``now`` raises (#706).
+    Stored billing timestamps are UTC, so read a naive one as UTC.
+    """
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+async def mark_monthly_invoice_key_reviewed(
+    db: Any,
+    *,
+    academy_id: str,
+    enrollment_id: str,
+    period: str,
+    reason: str,
+    reviewed_by: str,
+    now: datetime,
+) -> bool:
+    """Record that an operator judged a ``repair_failed`` key and accepted it.
+
+    Writes only ``billing_invoice_keys`` — never the invoice, its lines, or any
+    payment — so reviewing is a statement about money, not a change to it. The
+    filter pins ``status`` to ``repair_failed`` so a key that has since been
+    repaired (or never failed) cannot be silenced by mistake; ``False`` means
+    no such key was found. Called by
+    ``backend/scripts/monthly_invoice_key_repair_review.py``.
+    """
+    result = await db["billing_invoice_keys"].update_one(
+        {
+            "academy_id": academy_id,
+            "enrollment_id": enrollment_id,
+            "period": period,
+            "status": MONTHLY_KEY_STATUS_REPAIR_FAILED,
+        },
+        {
+            "$set": {
+                "status": MONTHLY_KEY_STATUS_REVIEWED,
+                "updated_at": now,
+                "reviewed": {
+                    "reason": reason,
+                    "reviewed_at": now,
+                    "reviewed_by": reviewed_by,
+                },
+            }
+        },
+    )
+    return int(getattr(result, "matched_count", 0) or 0) == 1
+
+
 class MongoMonthlyBillingGenerator:
     """Monthly payment/invoice generation over the legacy payment repository.
 
@@ -422,14 +482,49 @@ class MongoMonthlyBillingGenerator:
             update["repair_error"] = repair_error
         elif status == "complete":
             update["repair_error"] = None
+        # Any status this method writes supersedes an operator's review: the key
+        # has moved on from the state that was judged, so the recorded reason no
+        # longer describes it and must not silence the next run (#599).
         await self._db["billing_invoice_keys"].update_one(
             {
                 "academy_id": current_academy_id(),
                 "enrollment_id": enrollment_id,
                 "period": period,
             },
-            {"$set": update},
+            {"$set": update, "$unset": {"reviewed": ""}},
         )
+
+    async def _monthly_invoice_key_review_is_current(
+        self,
+        *,
+        invoice_key: dict[str, object] | None,
+        enrollment_id: str,
+        period: str,
+    ) -> bool:
+        """Has an operator reviewed this key, and does that review still hold?
+
+        A review is a judgement about the invoice as it stood when it was made,
+        so it lapses the moment that invoice changes: the comparison is against
+        the LEDGER invoice's ``updated_at``, never the key's own (the key is
+        stamped by the review itself). No invoice, no readable timestamp, or a
+        run without a ledger repo means nothing can have changed under the
+        review, so it stands.
+        """
+        if invoice_key is None:
+            return False
+        if str(invoice_key.get("status") or "") != MONTHLY_KEY_STATUS_REVIEWED:
+            return False
+        reviewed = invoice_key.get("reviewed")
+        reviewed_at = reviewed.get("reviewed_at") if isinstance(reviewed, dict) else None
+        if not isinstance(reviewed_at, datetime) or self._ledger_repo is None:
+            return True
+        invoice = await self._ledger_repo.get_invoice(
+            self._monthly_invoice_id(enrollment_id, period)
+        )
+        updated_at = getattr(invoice, "updated_at", None) if invoice is not None else None
+        if not isinstance(updated_at, datetime):
+            return True
+        return _as_utc(updated_at) <= _as_utc(reviewed_at)
 
     async def _monthly_invoice_is_complete(
         self,
@@ -658,6 +753,9 @@ class MongoMonthlyBillingGenerator:
                     "invoice_key_id": str(new_ulid()),
                     "created_at": now,
                 },
+                # The invoice is complete, so an operator's acceptance of an
+                # earlier failure no longer describes this key (#599).
+                "$unset": {"reviewed": ""},
             },
             upsert=True,
         )
@@ -926,6 +1024,7 @@ class MongoMonthlyBillingGenerator:
         repaired_orphan_keys = 0
         repaired_partial_invoices = 0
         failed_repair = 0
+        skipped_reviewed = 0
         async for enrollment in cursor:
             enrollment_id = str(enrollment.get("enrollment_id") or enrollment.get("_id"))
             session_id = str(enrollment.get("session_id") or "")
@@ -1081,6 +1180,16 @@ class MongoMonthlyBillingGenerator:
                         "period": period,
                     }
                 )
+                if await self._monthly_invoice_key_review_is_current(
+                    invoice_key=invoice_key,
+                    enrollment_id=enrollment_id,
+                    period=period,
+                ):
+                    # An operator already looked at this key and wrote down why
+                    # it is acceptable. Re-running recovery would re-derive the
+                    # same unrepairable outcome and re-report it (#599).
+                    skipped_reviewed += 1
+                    continue
                 recovered = await self._recover_orphan_monthly_invoice(
                     enrollment_id=enrollment_id,
                     parent_id=parent_id,
@@ -1147,6 +1256,7 @@ class MongoMonthlyBillingGenerator:
             repaired_orphan_keys=repaired_orphan_keys,
             repaired_partial_invoices=repaired_partial_invoices,
             failed_repair=failed_repair,
+            skipped_reviewed=skipped_reviewed,
             skipped_details=skipped_details,
         )
 
