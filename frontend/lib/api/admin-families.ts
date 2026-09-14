@@ -47,6 +47,14 @@ export interface FamilyRegistration {
   last_invited_at: string | null;
 }
 
+/** #778: what the provider knows about this family's address. */
+export interface FamilyEmailDelivery {
+  undeliverable: boolean;
+  since: string | null;
+  reason: "hard_bounce" | "complaint" | "manual" | string | null;
+  email: string | null;
+}
+
 export interface FamilyHeader {
   balance_cents: number;
   open_invoice_count: number;
@@ -54,6 +62,7 @@ export interface FamilyHeader {
   last_payment: FamilyLastPayment | null;
   autopay: FamilyAutopay;
   registration: FamilyRegistration;
+  email_delivery?: FamilyEmailDelivery;
   enrollment_counts: { active: number; paused: number; cancelled: number };
 }
 

@@ -6,7 +6,7 @@ import { Button, Card, Chip, Overline } from "@/components/ds";
 import type { AdminFamilyBillingView } from "@/lib/api/admin-families";
 import { formatCents, formatInstantDay } from "@/lib/money";
 
-import { autopayToggle, registrationChip } from "./family-view";
+import { autopayToggle, registrationChip, undeliverableChip } from "./family-view";
 
 export function FamilyHeader({
   view,
@@ -26,6 +26,7 @@ export function FamilyHeader({
   const { parent, header, actions } = view;
   const toggle = autopayToggle(header.autopay);
   const reg = registrationChip(header.registration.state);
+  const undeliverable = undeliverableChip(header.email_delivery);
   const studentCount = view.students.length;
   return (
     <Card p={20}>
@@ -43,6 +44,11 @@ export function FamilyHeader({
             <span data-testid="family-registration-chip">
               <Chip variant={reg.variant} label={reg.label} />
             </span>
+            {undeliverable && (
+              <span data-testid="family-undeliverable-chip">
+                <Chip variant={undeliverable.variant} label={undeliverable.label} />
+              </span>
+            )}
             {actions.includes("send_invite") && (
               <Button
                 size="sm"
@@ -61,6 +67,14 @@ export function FamilyHeader({
               Message
             </Link>
           </div>
+          {undeliverable && (
+            <p
+              className="mt-2 text-xs text-status-red-600"
+              data-testid="family-undeliverable-detail"
+            >
+              {undeliverable.detail}
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           {actions.includes("send_invoice") && (

@@ -34,6 +34,7 @@ from backend.v2.contexts.billing.application.family_billing import (
     CreditFacts,
     CustomerFacts,
     DunningFacts,
+    EmailDeliveryFacts,
     EnrollmentFacts,
     EventFacts,
     FamilyBillingUnavailable,
@@ -157,6 +158,7 @@ class MongoFamilyBillingReadModel:
         credits: Any,
         users: Any,
         audit: Any,
+        suppressions: Any = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._db = db
@@ -167,6 +169,11 @@ class MongoFamilyBillingReadModel:
         self._credits = credits
         self._users = users
         self._audit = audit
+        #: #778: the suppression list (#556) knows the address is dead. Optional
+        #: so the many test constructions of this read model keep working, and
+        #: read through ``_secondary`` so a lookup failure is a warning, never
+        #: a 503 on the whole family page.
+        self._suppressions = suppressions
         self._clock = clock
 
     # ------------------------------------------------------------------ entry
@@ -269,6 +276,7 @@ class MongoFamilyBillingReadModel:
             )
             for inv in invoice_docs
         )
+        email_delivery = await self._email_delivery(parent.email, warnings)
         facts = FamilyFacts(
             parent=parent,
             students=students,
@@ -306,6 +314,7 @@ class MongoFamilyBillingReadModel:
             available_credit_cents=_int(available_credit),
             connected_account_ready=connected_ready,
             warnings=tuple(dict.fromkeys(warnings)),
+            email_delivery=email_delivery,
         )
         if warnings:
             log.warning("family billing read model: %s for parent %s", warnings, parent_id)
@@ -371,6 +380,31 @@ class MongoFamilyBillingReadModel:
 
     # ------------------------------------------------------------------ queries
     # Every query carries ``academy_id`` except ``users`` (global, keyed by user id).
+
+    async def _email_delivery(
+        self, email: str | None, warnings: list[str]
+    ) -> EmailDeliveryFacts | None:
+        """Translate one suppression into billing's own flat shape (#778).
+
+        The billing context never imports communications, so the provider's
+        ``EmailSuppression`` is read here and only three plain fields cross.
+        """
+        if not email or self._suppressions is None:
+            return None
+        record = await self._secondary(
+            "email_delivery_unavailable",
+            warnings,
+            self._suppressions.get_active(email),
+            None,
+        )
+        if record is None:
+            return None
+        reason = getattr(record, "reason", None)
+        return EmailDeliveryFacts(
+            email=email,
+            reason=getattr(reason, "value", None) or (str(reason) if reason else None),
+            since=_to_datetime(getattr(record, "first_seen_at", None)),
+        )
 
     async def _secondary(
         self, warning: str, warnings: list[str], coro: Awaitable[Any], fallback: Any

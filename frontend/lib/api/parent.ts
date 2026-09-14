@@ -1,4 +1,5 @@
 import type { PersonLifecycle } from "@/lib/format/lifecycle-copy";
+import type { ParentEmailPreferences } from "@/lib/parent/notification-preferences";
 
 import { apiFetch } from "./client";
 import type { SkillStatus } from "./curriculum";
@@ -714,6 +715,28 @@ export function updateParentProfile(payload: {
 
 export function confirmParentEmail(): Promise<ParentSelfProfile> {
   return apiFetch("/parent/profile/confirm-email", { method: "POST" });
+}
+
+/**
+ * Email opt-outs for the signed-in parent (#778). The PUT body forbids
+ * unknown keys server-side, so send exactly the three flags back — never the
+ * whole response object.
+ */
+export function getParentEmailPreferences(): Promise<ParentEmailPreferences> {
+  return apiFetch("/parent/email-preferences", { method: "GET" });
+}
+
+export function updateParentEmailPreferences(
+  payload: ParentEmailPreferences,
+): Promise<ParentEmailPreferences> {
+  return apiFetch("/parent/email-preferences", {
+    method: "PUT",
+    body: JSON.stringify({
+      campaigns_opted_out: payload.campaigns_opted_out,
+      digests_opted_out: payload.digests_opted_out,
+      notifications_opted_out: payload.notifications_opted_out ?? false,
+    }),
+  });
 }
 
 export function updateParentChild(

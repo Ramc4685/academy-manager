@@ -13,6 +13,7 @@ import {
   shortDate,
   timelineTone,
   tuitionLineDescription,
+  undeliverableChip,
 } from "./family-view";
 import type { FamilyEnrollment, FamilyStudent } from "@/lib/api/admin-families";
 
@@ -168,5 +169,45 @@ describe("enrollment pricing", () => {
       },
     ];
     expect(enrollmentOptions(students)[0].label).toBe("Arjun · Class");
+  });
+});
+
+
+describe("undeliverableChip", () => {
+  it("is silent when the address is deliverable, missing or not reported", () => {
+    expect(undeliverableChip(undefined)).toBeNull();
+    expect(
+      undeliverableChip({ undeliverable: false, since: null, reason: null, email: "a@b.com" }),
+    ).toBeNull();
+    // Flagged but with no date: nothing honest to show, so show nothing.
+    expect(
+      undeliverableChip({ undeliverable: true, since: null, reason: "hard_bounce", email: null }),
+    ).toBeNull();
+  });
+
+  it("names the date the address went dead, so the chip is actionable", () => {
+    const chip = undeliverableChip({
+      undeliverable: true,
+      since: "2026-09-02T08:30:00+00:00",
+      reason: "hard_bounce",
+      email: "s@example.com",
+    });
+    expect(chip).toEqual({
+      label: "Email undeliverable since Sep 2",
+      variant: "failed",
+      detail: "Nothing we send reaches s@example.com. Ask for a new address.",
+    });
+  });
+
+  it("says what a spam complaint actually blocks, rather than overstating it", () => {
+    const chip = undeliverableChip({
+      undeliverable: true,
+      since: "2026-09-04T09:00:00+00:00",
+      reason: "complaint",
+      email: "s@example.com",
+    });
+    expect(chip?.label).toBe("Marked as spam on Sep 4");
+    expect(chip?.variant).toBe("pending");
+    expect(chip?.detail).toContain("Invoices still send");
   });
 });
