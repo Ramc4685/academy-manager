@@ -1,6 +1,6 @@
 # Stamp governance deletion requests on the subject
 
-PR: #0
+PR: #823
 
 ## What changed
 - Fixes #788 — Governance deletion requests were request-only: the review row recorded the soft-delete policy, but neither the academy nor the student document ever changed, so no roster or admin reader could tell an erasure request was pending.
