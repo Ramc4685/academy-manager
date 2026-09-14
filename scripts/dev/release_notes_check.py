@@ -89,6 +89,14 @@ def section_body(text: str, heading: str) -> str:
 def validate_note(path: Path) -> list[str]:
     text = path.read_text(encoding="utf-8")
     problems = []
+    # publish_release.py refuses a note with no H1; check it here so the PR
+    # gate fails instead of the post-deploy publish step (PRs #800, #816-#818).
+    title = next(
+        (line.removeprefix("# ").strip() for line in text.splitlines() if line.startswith("# ")),
+        "",
+    )
+    if not title or len(title) > 200:
+        problems.append("missing or invalid title: first line must be `# <title>`")
     for heading in REQUIRED_SECTIONS:
         if heading not in text:
             problems.append(f"missing section: {heading}")

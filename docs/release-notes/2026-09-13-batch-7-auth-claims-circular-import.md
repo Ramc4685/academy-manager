@@ -1,3 +1,5 @@
+# Batch 7: break the auth claims circular import
+
 ## What changed
 
 - Fixes #607 — broke the circular import between `backend.v2.shared.auth` and `backend.v2.shared.http` that made isolated test invocation of either module fail.
