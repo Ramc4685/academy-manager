@@ -39,6 +39,8 @@ class FakeGovernanceStore:
         self.support_access_grants: dict[str, dict[str, Any]] = {}
         self.support_impersonation_requests: dict[str, dict[str, Any]] = {}
         self.audit_logs: list[dict[str, Any]] = []
+        self.tenant_deletion_stamps: dict[str, dict[str, Any]] = {}
+        self.student_deletion_stamps: dict[tuple[str, str], dict[str, Any]] = {}
 
     async def create_tenant_export_request(self, request: dict[str, Any]) -> dict[str, Any]:
         self.tenant_exports[request["export_request_id"]] = dict(request)
@@ -67,6 +69,13 @@ class FakeGovernanceStore:
         self.tenant_deletions[request["deletion_request_id"]] = dict(request)
         return dict(request)
 
+    async def mark_tenant_deletion_requested(
+        self, academy_id: str, status: str, requested_at: datetime
+    ) -> None:
+        self.tenant_deletion_stamps.setdefault(
+            academy_id, {"status": status, "requested_at": requested_at}
+        )
+
     async def list_tenant_deletion_requests(
         self, academy_id: str | None = None
     ) -> list[dict[str, Any]]:
@@ -79,6 +88,13 @@ class FakeGovernanceStore:
     async def create_student_data_deletion_request(self, request: dict[str, Any]) -> dict[str, Any]:
         self.student_deletions[request["student_deletion_request_id"]] = dict(request)
         return dict(request)
+
+    async def mark_student_deletion_requested(
+        self, academy_id: str, student_id: str, status: str, requested_at: datetime
+    ) -> None:
+        self.student_deletion_stamps.setdefault(
+            (academy_id, student_id), {"status": status, "requested_at": requested_at}
+        )
 
     async def list_student_data_deletion_requests(
         self, academy_id: str | None = None
@@ -382,6 +398,66 @@ async def test_student_data_deletion_request_is_scoped_to_student_and_redaction_
         entity_type="student_data_deletion_request",
         entity_id="student_deletion_001",
     )
+
+
+@pytest.mark.asyncio
+async def test_student_data_deletion_request_stamps_deletion_requested_on_student() -> None:
+    """Issue #788. The request row alone left the student looking untouched, so no
+    roster or admin reader could tell an erasure request was pending."""
+    store = FakeGovernanceStore()
+    service = _service(store)
+
+    await service.request_student_data_deletion(
+        RequestStudentDataDeletionCommand(
+            academy_id="acad_001",
+            student_id="student_001",
+            actor=_academy_actor(),
+            reason="parent erasure request",
+        )
+    )
+
+    stamp = store.student_deletion_stamps[("acad_001", "student_001")]
+    assert stamp["status"] == SoftDeletePolicy().student_status_after_request
+    assert stamp["requested_at"] == datetime(2026, 5, 22, 15, 30, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_repeat_student_deletion_request_keeps_the_first_stamp() -> None:
+    store = FakeGovernanceStore()
+    service = _service(store)
+    command = RequestStudentDataDeletionCommand(
+        academy_id="acad_001",
+        student_id="student_001",
+        actor=_academy_actor(),
+        reason="parent erasure request",
+    )
+
+    await service.request_student_data_deletion(command)
+    await service.request_student_data_deletion(command)
+
+    assert len(store.student_deletion_stamps) == 1
+    assert store.student_deletion_stamps[("acad_001", "student_001")]["status"] == (
+        SoftDeletePolicy().student_status_after_request
+    )
+
+
+@pytest.mark.asyncio
+async def test_tenant_deletion_request_stamps_deletion_requested_on_tenant() -> None:
+    """Issue #788. Same orphan at tenant scope: the academy record carried no marker."""
+    store = FakeGovernanceStore()
+    service = _service(store)
+
+    await service.request_tenant_deletion(
+        RequestTenantDeletionCommand(
+            academy_id="acad_001",
+            actor=_academy_actor(),
+            reason="tenant owner requested account closure",
+        )
+    )
+
+    stamp = store.tenant_deletion_stamps["acad_001"]
+    assert stamp["status"] == SoftDeletePolicy().tenant_status_after_request
+    assert stamp["requested_at"] == datetime(2026, 5, 22, 15, 30, tzinfo=UTC)
 
 
 @pytest.mark.asyncio
