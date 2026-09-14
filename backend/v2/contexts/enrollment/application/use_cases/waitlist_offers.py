@@ -13,6 +13,12 @@ with a deadline. Exactly one of these two use cases then closes the offer:
 Both are idempotent on the entry's status: confirming an already-``promoted``
 offer returns the existing enrollment rather than creating a second one, and
 the sweep only ever reads rows still marked ``offered``.
+
+Scope: #828 was written with a second, unrelated half — the last-class,
+pause-ending, first-class and level-up notices — and NONE of it is implemented
+here or anywhere else in the tree. That half is carved out; see
+``docs/tickets/enrollment-lifecycle-notices-828-followup.md``. #828 is not
+satisfied by this module alone.
 """
 
 from __future__ import annotations

@@ -40,6 +40,13 @@ Outcomes per action:
   Mongo blip must heal itself, and a permanent failure must reach a human,
   because a stuck row leaves the family enrolled, seated and invoiced while
   ``_not_cancellable_reason`` refuses to let them cancel again.
+
+Not here yet: the "your last class is <date>" reminder #828 asks for. It cannot
+be another branch of ``_run_one`` — that runs AT ``run_at``, by which time the
+last class has already been and gone. It needs a pass over actions still
+pending some days ahead plus a per-action "reminded" marker, so the hourly tick
+sends it exactly once. Carved out with the rest of #828's notice half; see
+``docs/tickets/enrollment-lifecycle-notices-828-followup.md``.
 """
 
 from __future__ import annotations
