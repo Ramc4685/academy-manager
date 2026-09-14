@@ -93,6 +93,21 @@ const ENROLLMENTS = ["Ana", "Bo", "Cy", "Dee", "Eli", "Fay"].map((name, index) =
   pathway_program_id: "prog-1",
 }));
 
+// Issue #827: a student who already left this class. Lands on the Past tab.
+const DEPARTED_ENROLLMENT = {
+  enrollment_id: "enr-gone",
+  session_id: SESSION_ID,
+  student_id: "stu-gone",
+  parent_id: "parent-gone",
+  full_name: "Gus Gone",
+  status: "withdrawn",
+  enrolled_at: "2026-05-01T00:00:00Z",
+  dues_status: "current",
+  pathway_program_id: "prog-1",
+};
+
+const ALL_ENROLLMENTS = [...ENROLLMENTS, DEPARTED_ENROLLMENT];
+
 async function stubSessionDetail(page: Page) {
   await page.route("**/api/v2/admin/**", (route) => {
     const request = route.request();
@@ -118,7 +133,7 @@ async function stubSessionDetail(page: Page) {
       });
     }
     if (request.method() === "GET" && path === `/api/v2/admin/sessions/${SESSION_ID}/enrollments`) {
-      return fulfillJson(route, { enrollments: ENROLLMENTS });
+      return fulfillJson(route, { enrollments: ALL_ENROLLMENTS });
     }
     if (request.method() === "GET" && path === `/api/v2/admin/sessions/${SESSION_ID}/occurrences`) {
       return fulfillJson(route, { occurrences: OCCURRENCES });
@@ -131,6 +146,15 @@ async function stubSessionDetail(page: Page) {
     }
     if (request.method() === "GET" && path === "/api/v2/admin/users") {
       return fulfillJson(route, { users: [] });
+    }
+    if (request.method() === "GET" && path === "/api/v2/admin/students") {
+      return fulfillJson(route, {
+        students: ALL_ENROLLMENTS.map((row) => ({
+          student_id: row.student_id,
+          parent_id: row.parent_id,
+          full_name: row.full_name,
+        })),
+      });
     }
     if (request.method() === "GET") return fulfillJson(route, {});
     return route.fallback();
@@ -191,5 +215,30 @@ test.describe("admin roster row overflow menu (#713)", () => {
     await page.keyboard.press("Escape");
     await expect(page.getByRole("menu")).toHaveCount(0);
     await expect(trigger).toBeFocused();
+  });
+});
+
+test.describe("re-enrolling a departed roster row (#827)", () => {
+  test.beforeEach(async ({ page }) => {
+    await stubAdminShell(page);
+    await stubSessionDetail(page);
+    await page.goto(`/admin/sessions/${SESSION_ID}`);
+    await expect(page.getByTestId("enrollment-row-enr-1")).toBeVisible();
+  });
+
+  test("Past offers Re-enroll, which opens Add to roster on that student", async ({ page }) => {
+    // Active rows have a live seat; Re-enroll would be meaningless there.
+    await page.getByRole("button", { name: "More actions for Ana Roster" }).click();
+    await expect(page.getByRole("menuitem", { name: "Re-enroll" })).toHaveCount(0);
+    await page.keyboard.press("Escape");
+
+    await page.getByRole("tab", { name: /Past/ }).click();
+    await page.getByRole("button", { name: "More actions for Gus Gone" }).click();
+    await page.getByRole("menuitem", { name: "Re-enroll" }).click();
+
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toContainText("Add to roster");
+    // Pre-filled with the student who left, so the admin does not retype them.
+    await expect(dialog.getByRole("combobox")).toHaveValue("stu-gone");
   });
 });

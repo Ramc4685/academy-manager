@@ -1,6 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { autopayChip, familyBillingHref, pastEnrollmentRow } from "./session-rows";
+import {
+  autopayChip,
+  familyBillingHref,
+  pastEnrollmentRow,
+  sessionRosterHref,
+} from "./session-rows";
 
 describe("autopayChip", () => {
   it("uses the family billing page's wording for on / paused / off", () => {
@@ -132,5 +137,17 @@ describe("pastEnrollmentRow", () => {
     expect(row.statusLabel).toBe("some new status");
     expect(row.endedBy).toBe("billing-worker");
     expect(row.reason).toBe("—");
+  });
+});
+
+describe("re-enrolling a past row (#827)", () => {
+  it("carries the class the student left, so Past is no longer a dead end", () => {
+    const row = pastEnrollmentRow({ ...base, cancelled_at: "2026-09-01T00:00:00Z" });
+    expect(row.sessionId).toBe("sess-1");
+    expect(sessionRosterHref(row.sessionId)).toBe("/admin/sessions/sess-1");
+  });
+
+  it("encodes an id that would otherwise break the path", () => {
+    expect(sessionRosterHref("sess/1")).toBe("/admin/sessions/sess%2F1");
   });
 });

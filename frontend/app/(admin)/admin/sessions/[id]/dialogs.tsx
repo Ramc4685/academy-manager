@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
 
@@ -58,17 +58,38 @@ export function AddToRosterDialog({
   onOpenChange,
   sessionId,
   onAdded,
+  prefill,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   sessionId: string;
   onAdded: () => void;
+  /**
+   * Issue #827: seed the form with a student the admin already picked — the
+   * Re-enroll action on a departed roster row. The dialog is otherwise
+   * unchanged: the admin still sees and can change the student before the
+   * POST, and the quote still re-prices for whoever is selected.
+   */
+  prefill?: Omit<CreateEnrollmentRequest, "session_id"> | null;
 }) {
   const [form, setForm] = useState<Omit<CreateEnrollmentRequest, "session_id">>({
     student_id: "",
     parent_id: "",
     full_name: "",
   });
+  // Re-seed each time the dialog is opened for a (different) student, so a
+  // second Re-enroll never reopens on the first student's details.
+  const seededFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!open) {
+      seededFor.current = null;
+      return;
+    }
+    const key = prefill?.student_id ?? "";
+    if (seededFor.current === key) return;
+    seededFor.current = key;
+    setForm(prefill ?? { student_id: "", parent_id: "", full_name: "" });
+  }, [open, prefill]);
   const [error, setError] = useState<string | null>(null);
   const studentsQuery = useQuery({
     queryKey: queryKeys.admin.students(),

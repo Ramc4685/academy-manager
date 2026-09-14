@@ -67,6 +67,18 @@ const ROSTER_ACTIVE_STATUSES: ReadonlySet<EnrollmentStatus> = new Set<Enrollment
   "reclaim_pending",
 ]);
 
+// Issue #827: the statuses that mean the student has LEFT this class —
+// "cancelled"/"deleted" and "withdrawn"/"dropped" being the two spellings of
+// the same pair (see ENROLL_CHIP). Deliberately not the complement of
+// ROSTER_ACTIVE_STATUSES: "paused" is in neither, because a paused row is
+// still somebody's enrollment and already has Resume.
+const TERMINAL_STATUSES: ReadonlySet<EnrollmentStatus> = new Set<EnrollmentStatus>([
+  "cancelled",
+  "deleted",
+  "withdrawn",
+  "dropped",
+]);
+
 /** Splits a roster into the Active and Past tab contents (#712, #735). */
 export function partitionRoster<T extends Pick<AdminEnrollmentView, "status">>(
   enrollments: T[],
@@ -178,6 +190,7 @@ export function RosterTable({
   onTransfer,
   onWithdraw,
   onUndoScheduledDrop,
+  onReEnroll,
   academyTimezone,
 }: {
   enrollments: AdminEnrollmentView[];
@@ -197,6 +210,8 @@ export function RosterTable({
   onTransfer: (enrollment: AdminEnrollmentView) => void;
   onWithdraw: (enrollment: AdminEnrollmentView) => void;
   onUndoScheduledDrop: (enrollment: AdminEnrollmentView) => void;
+  /** #827: put a departed student back into this class (opens Add to roster). */
+  onReEnroll: (enrollment: AdminEnrollmentView) => void;
 }) {
   const isOwner = useIsOwner();
   // Issue #741: Delete is owner-only only when the academy's departure policy
@@ -329,6 +344,7 @@ export function RosterTable({
                         onTransfer,
                         onWithdraw,
                         onUndoScheduledDrop,
+                        onReEnroll,
                       })
                     }
                   />
@@ -365,6 +381,10 @@ export function rosterActionsFor(
   if (status === "paused") actions.push("resume");
   // #697's seat-safe pair, beside the transitional pause/resume group.
   actions.push(...holdActionsFor(status));
+  // Issue #827: a row that already ended has no seat to hold, pause or drop —
+  // the only thing left to offer is putting the student back. Additive: the
+  // rest of a departed row's menu is unchanged.
+  if (TERMINAL_STATUSES.has(status)) actions.push("re_enroll");
   actions.push("transfer");
   if (status === "active" || status === "paused" || status === "held") actions.push("drop");
   actions.push("delete");
@@ -384,6 +404,7 @@ function dispatchRosterAction(
     onTransfer: (enrollment: AdminEnrollmentView) => void;
     onWithdraw: (enrollment: AdminEnrollmentView) => void;
     onUndoScheduledDrop: (enrollment: AdminEnrollmentView) => void;
+    onReEnroll: (enrollment: AdminEnrollmentView) => void;
   },
 ): void {
   switch (action) {
@@ -410,6 +431,9 @@ function dispatchRosterAction(
       break;
     case "undo_scheduled_drop":
       handlers.onUndoScheduledDrop(enrollment);
+      break;
+    case "re_enroll":
+      handlers.onReEnroll(enrollment);
       break;
     default:
       // stop_all_classes is not offered on this roster row (#698); reaching

@@ -108,6 +108,9 @@ export default function AdminSessionDetailPage() {
   const sessionId = params.id as string;
   const queryClient = useQueryClient();
   const [addOpen, setAddOpen] = useState(false);
+  // #827: the departed row an admin chose to put back, pre-filling Add to
+  // roster. Cleared when the dialog closes so the next plain Add is blank.
+  const [reEnrollTarget, setReEnrollTarget] = useState<AdminEnrollmentView | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [pauseTarget, setPauseTarget] = useState<AdminEnrollmentView | null>(null);
   const [removeTarget, setRemoveTarget] = useState<AdminEnrollmentView | null>(null);
@@ -541,6 +544,10 @@ export default function AdminSessionDetailPage() {
               onUndoScheduledDrop={(enrollment) =>
                 undoScheduledDropMutation.mutate(enrollment.enrollment_id)
               }
+              onReEnroll={(enrollment) => {
+                setReEnrollTarget(enrollment);
+                setAddOpen(true);
+              }}
             />
           )}
         </Card>
@@ -596,10 +603,23 @@ export default function AdminSessionDetailPage() {
 
       <AddToRosterDialog
         open={addOpen}
-        onOpenChange={setAddOpen}
+        onOpenChange={(next) => {
+          setAddOpen(next);
+          if (!next) setReEnrollTarget(null);
+        }}
         sessionId={sessionId}
+        prefill={
+          reEnrollTarget
+            ? {
+                student_id: reEnrollTarget.student_id,
+                parent_id: reEnrollTarget.parent_id,
+                full_name: reEnrollTarget.full_name,
+              }
+            : null
+        }
         onAdded={() => {
           setAddOpen(false);
+          setReEnrollTarget(null);
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) });
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessionDetail(sessionId) });
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });

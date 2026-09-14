@@ -154,3 +154,24 @@ describe("holdActionsFor", () => {
     expect(holdActionsFor("")).toEqual([]);
   });
 });
+
+describe("re_enroll (#827)", () => {
+  it("is labelled Re-enroll and is not a destructive action", () => {
+    const [resolved] = resolveDepartureActions(["re_enroll"], {
+      isOwner: false,
+      layout: "menu",
+    });
+    expect(resolved.label).toBe("Re-enroll");
+    expect(resolved.danger).toBe(false);
+  });
+
+  it("stays open to admins — putting a student back needs no owner scope", () => {
+    const [resolved] = resolveDepartureActions(["re_enroll"], {
+      isOwner: false,
+      layout: "menu",
+      deleteRequiresOwner: true,
+    });
+    expect(resolved.disabled).toBe(false);
+    expect(resolved.ownerGated).toBe(false);
+  });
+});
