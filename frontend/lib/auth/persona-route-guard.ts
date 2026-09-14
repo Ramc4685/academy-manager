@@ -170,3 +170,36 @@ export function decidePersonaRedirect(
   if (!home) return null;
   return `${home}?access_denied=${persona}`;
 }
+
+/**
+ * Validate a `returnTo` value before navigating to it.
+ *
+ * The gate hands `/login?returnTo=<deep link>` so a bounced-but-still-signed-in
+ * visitor lands back where they asked to go (#451). The value round-trips
+ * through the URL, so it is attacker-controlled: only same-app absolute paths
+ * survive, and the auth routes themselves are rejected so the hand-off cannot
+ * loop back on itself.
+ */
+export function sanitizeReturnPath(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  if (!raw.startsWith("/")) return null;
+  // `//host` and `/\host` are protocol-relative; `://` smuggles an origin.
+  if (raw.startsWith("//") || raw.startsWith("/\\")) return null;
+  if (raw.includes("://") || raw.includes("\\")) return null;
+
+  let path: string;
+  try {
+    const url = new URL(raw, "https://academy.local");
+    if (url.origin !== "https://academy.local") return null;
+    path = url.pathname;
+  } catch {
+    return null;
+  }
+
+  const authRoutes = ["/login", "/post-login"];
+  for (const route of authRoutes) {
+    if (path === route || path.startsWith(`${route}/`)) return null;
+  }
+
+  return raw;
+}

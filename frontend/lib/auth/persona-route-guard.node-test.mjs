@@ -7,6 +7,7 @@ import {
   matchesPersonaPath,
   personaForPath,
   personaHintForRoles,
+  sanitizeReturnPath,
 } from "./persona-route-guard.ts";
 
 function decide(overrides = {}) {
@@ -133,4 +134,33 @@ test("never routes an owner-only hint into a guarded shell it does not hold", ()
     decide({ pathname: "/admin", personaHint: "coach,owner", hasIdentity: true }),
     "/coach/today?access_denied=admin",
   );
+});
+
+test("keeps a safe in-app deep link as the return path", () => {
+  assert.equal(sanitizeReturnPath("/admin/students/42"), "/admin/students/42");
+  assert.equal(
+    sanitizeReturnPath("/parent/payments?invoice=inv_1"),
+    "/parent/payments?invoice=inv_1",
+  );
+});
+
+test("rejects return paths that would leave the app", () => {
+  for (const raw of [
+    null,
+    undefined,
+    "",
+    "admin/students",
+    "//evil.example.com",
+    "/\\evil.example.com",
+    "https://evil.example.com/admin",
+    "/admin\\..\\x",
+  ]) {
+    assert.equal(sanitizeReturnPath(raw), null, `expected ${raw} to be rejected`);
+  }
+});
+
+test("rejects the auth routes so the hand-off cannot loop", () => {
+  assert.equal(sanitizeReturnPath("/login"), null);
+  assert.equal(sanitizeReturnPath("/login?returnTo=%2Fadmin"), null);
+  assert.equal(sanitizeReturnPath("/post-login"), null);
 });

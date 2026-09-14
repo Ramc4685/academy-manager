@@ -14,6 +14,7 @@ import {
   setPersonaHintCookie,
 } from "@/lib/auth/persona-hint-cookie";
 import { loginPathForError } from "@/lib/auth/login-error";
+import { sanitizeReturnPath } from "@/lib/auth/persona-route-guard";
 import { isAuthRejection, withTransientRetry } from "@/lib/auth/me-failure";
 
 export default function PostLoginPage() {
@@ -43,7 +44,12 @@ export default function PostLoginPage() {
               currentUser.roles,
               hasPlatformAccess(currentUser),
             );
-            replaceLocation(router, homeForRoles(currentUser.roles));
+            // The edge gate stashed the deep link the visitor actually asked
+            // for on /login?returnTo=... and the login page handed it on
+            // (#451); honour it when it is a safe in-app path, otherwise fall
+            // back to this persona's home.
+            const returnTo = sanitizeReturnPath(readReturnToParam());
+            replaceLocation(router, returnTo ?? homeForRoles(currentUser.roles));
           })
           .catch((err: unknown) => {
             if (isAuthRejection(err)) {
@@ -92,6 +98,16 @@ export default function PostLoginPage() {
       <p className="text-center text-neutral-500">Signing you in...</p>
     </main>
   );
+}
+
+/**
+ * Read `?returnTo=` straight off the URL rather than via `useSearchParams`,
+ * which would force this page behind a Suspense boundary. The effect only runs
+ * in the browser, so `window` is always there.
+ */
+function readReturnToParam(): string | null {
+  if (typeof window === "undefined") return null;
+  return new URLSearchParams(window.location.search).get("returnTo");
 }
 
 function replaceLocation(
