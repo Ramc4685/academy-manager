@@ -661,3 +661,10 @@ class ParentHomeResponse(BaseModel):
     balance: ParentHomeBalanceView
     month_label: str
     timezone: str
+
+
+class WaitlistOfferConfirmation(BaseModel):
+    """What the parent gets back after claiming a held seat (#828)."""
+
+    waitlist_id: str
+    enrollment_id: str

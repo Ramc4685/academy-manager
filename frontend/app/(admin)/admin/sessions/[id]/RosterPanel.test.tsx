@@ -5,6 +5,15 @@ import type { EnrollmentStatus } from "@/lib/api/admin";
 import { partitionRoster, rosterActionsFor, seatsHeldCount } from "./RosterPanel";
 
 describe("rosterActionsFor (#696, #711, #714 follow-up)", () => {
+  // Issue #820: a row whose drop is scheduled for the end of the period can be
+  // called off, and only such a row offers it.
+  it("offers Undo scheduled drop only when a drop is pending", () => {
+    expect(rosterActionsFor("active", { dropScheduled: true })).toContain("undo_scheduled_drop");
+    expect(rosterActionsFor("active")).not.toContain("undo_scheduled_drop");
+    // Still droppable today — an admin may want the student gone now.
+    expect(rosterActionsFor("active", { dropScheduled: true })).toContain("drop");
+  });
+
   it("offers drop only on the statuses WithdrawEnrollment accepts", () => {
     const expected: Record<EnrollmentStatus, boolean> = {
       active: true,
@@ -28,7 +37,18 @@ describe("rosterActionsFor (#696, #711, #714 follow-up)", () => {
     expect(rosterActionsFor("active")).toEqual(["pause", "hold", "transfer", "drop", "delete"]);
     expect(rosterActionsFor("paused")).toEqual(["resume", "transfer", "drop", "delete"]);
     expect(rosterActionsFor("held")).toEqual(["return", "transfer", "drop", "delete"]);
-    expect(rosterActionsFor("withdrawn")).toEqual(["transfer", "delete"]);
+    expect(rosterActionsFor("withdrawn")).toEqual(["re_enroll", "transfer", "delete"]);
+  });
+
+  // Issue #827: the Past tab was a dead end — a student who left this class
+  // could only be put back by an admin retyping them into "Add to roster".
+  it("offers Re-enroll on a departed row, and only there", () => {
+    for (const status of ["cancelled", "deleted", "withdrawn", "dropped"] as const) {
+      expect(rosterActionsFor(status), `re_enroll for ${status}`).toContain("re_enroll");
+    }
+    for (const status of ["active", "paused", "held", "reclaim_pending"] as const) {
+      expect(rosterActionsFor(status), `re_enroll for ${status}`).not.toContain("re_enroll");
+    }
   });
 
   it("makes Return reachable on a held row and Hold on an active one", () => {

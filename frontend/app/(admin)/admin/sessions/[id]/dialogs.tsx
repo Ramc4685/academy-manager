@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
 
@@ -30,6 +30,7 @@ import {
 import {
   buildWithdrawRequest,
   initialWithdrawalOutcome,
+  shouldDeferToPeriodEnd,
   withdrawErrorMessage,
   withdrawalOutcomeOptions,
   type WithdrawalOutcome,
@@ -57,17 +58,38 @@ export function AddToRosterDialog({
   onOpenChange,
   sessionId,
   onAdded,
+  prefill,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   sessionId: string;
   onAdded: () => void;
+  /**
+   * Issue #827: seed the form with a student the admin already picked — the
+   * Re-enroll action on a departed roster row. The dialog is otherwise
+   * unchanged: the admin still sees and can change the student before the
+   * POST, and the quote still re-prices for whoever is selected.
+   */
+  prefill?: Omit<CreateEnrollmentRequest, "session_id"> | null;
 }) {
   const [form, setForm] = useState<Omit<CreateEnrollmentRequest, "session_id">>({
     student_id: "",
     parent_id: "",
     full_name: "",
   });
+  // Re-seed each time the dialog is opened for a (different) student, so a
+  // second Re-enroll never reopens on the first student's details.
+  const seededFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!open) {
+      seededFor.current = null;
+      return;
+    }
+    const key = prefill?.student_id ?? "";
+    if (seededFor.current === key) return;
+    seededFor.current = key;
+    setForm(prefill ?? { student_id: "", parent_id: "", full_name: "" });
+  }, [open, prefill]);
   const [error, setError] = useState<string | null>(null);
   const studentsQuery = useQuery({
     queryKey: queryKeys.admin.students(),
@@ -559,6 +581,12 @@ export function WithdrawalCreditDialog({
   const outcome =
     chosenOutcome ??
     initialWithdrawalOutcome(departurePolicyQuery.data?.drop_default_outcome, isOwner);
+  // Issue #820: the TIMING half of the same policy value. `no_credit_end_of_period`
+  // schedules the drop for the academy-local month end rather than performing it
+  // on the date below, which the backend then ignores.
+  const deferToPeriodEnd = shouldDeferToPeriodEnd(
+    departurePolicyQuery.data?.drop_default_outcome,
+  );
   const [adminNote, setAdminNote] = useState("");
   // Issue #775: the structured half of the departure reason. Optional, and
   // opens on "not specified" — a pre-selected code would be recorded on
@@ -581,6 +609,7 @@ export function WithdrawalCreditDialog({
           outcome,
           adminNote,
           ...(reasonCode ? { reasonCode } : {}),
+          deferToPeriodEnd,
         }),
       ),
     onSuccess: () => {
@@ -651,18 +680,29 @@ export function WithdrawalCreditDialog({
                 {outcomeOptions.find((option) => option.disabledReason)?.disabledReason}
               </p>
             )}
-            <Field label="Drop date" required>
-              <input
-                type="date"
-                required
-                value={withdrawalDate}
-                onChange={(event) => {
-                  setWithdrawalDate(event.target.value);
-                  previewMutation.reset();
-                }}
-                className={inputClass}
-              />
-            </Field>
+            {deferToPeriodEnd ? (
+              <p
+                data-testid="withdraw-defer-notice"
+                className="rounded-md bg-neutral-50 p-3 text-sm text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300"
+              >
+                This academy drops at the end of the billing period. The student keeps
+                their place and their seat until the last day of this month, and the drop
+                is applied automatically then. You can call it off until it runs.
+              </p>
+            ) : (
+              <Field label="Drop date" required>
+                <input
+                  type="date"
+                  required
+                  value={withdrawalDate}
+                  onChange={(event) => {
+                    setWithdrawalDate(event.target.value);
+                    previewMutation.reset();
+                  }}
+                  className={inputClass}
+                />
+              </Field>
+            )}
             {outcome === "credit" && (
               <button
                 type="button"

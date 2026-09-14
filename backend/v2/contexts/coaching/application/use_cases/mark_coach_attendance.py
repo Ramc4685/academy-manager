@@ -8,6 +8,11 @@ correction — issue #787. The ``PayoutPeriodLock`` port answers "is that
 window frozen?" without Coaching importing Finance, and a frozen window
 refuses the write (``PayoutPeriodFrozen``, 409) instead of accepting an
 edit nobody will ever see.
+
+The freeze is a guardrail, not a dead end: an academy owner who states a
+reason can still push a correction through (issue #821). That override is
+always audited — reason included — because it moves money inside a period
+Finance has already signed off on.
 """
 
 from __future__ import annotations
@@ -42,6 +47,8 @@ class MarkCoachAttendanceCommand(BaseModel):
     source: CoachAttendanceSource
     rate_override_minor: int | None = Field(default=None, ge=0)
     note: str = ""
+    override_reason: str | None = None
+    """Owner-only justification for editing inside a frozen payout period (#821)."""
 
 
 class MarkCoachAttendance:
@@ -67,6 +74,7 @@ class MarkCoachAttendance:
         command: MarkCoachAttendanceCommand,
         *,
         actor_id: str,
+        actor_is_owner: bool = False,
     ) -> CoachAttendance:
         occurrence = await self._occurrence_lookup.get(command.occurrence_id)
         if occurrence is None:
@@ -81,9 +89,11 @@ class MarkCoachAttendance:
             if command.coach_id != actor_id or command.coach_id not in assigned:
                 raise PermissionError("Coach is not assigned to this occurrence")
 
-        await self._assert_payout_window_open(
+        overridden_status = await self._resolve_payout_window(
             coach_id=command.coach_id,
             at=occurrence.starts_at,
+            actor_is_owner=actor_is_owner,
+            override_reason=command.override_reason,
         )
 
         existing = await self._coach_attendance.find_for_occurrence_coach(
@@ -108,7 +118,10 @@ class MarkCoachAttendance:
         changed = existing is not None and (
             existing.status != row.status or existing.rate_override_minor != row.rate_override_minor
         )
-        if changed and existing is not None and self._coach_attendance_audit is not None:
+        # An owner override is audited unconditionally: it writes into a period
+        # Finance already approved, so even a first mark or a no-op resubmit
+        # must leave a trace with the stated reason (#821).
+        if (changed or overridden_status is not None) and self._coach_attendance_audit is not None:
             await self._coach_attendance_audit.append(
                 CoachAttendanceAuditEntry(
                     audit_id=new_ulid(),
@@ -117,21 +130,41 @@ class MarkCoachAttendance:
                     coach_id=command.coach_id,
                     actor_id=actor_id,
                     at=self._clock(),
-                    before_status=existing.status,
+                    before_status=existing.status if existing else None,
                     after_status=row.status,
-                    before_rate_override_minor=existing.rate_override_minor,
+                    before_rate_override_minor=existing.rate_override_minor if existing else None,
                     after_rate_override_minor=row.rate_override_minor,
+                    override_reason=(command.override_reason or "").strip() or None
+                    if overridden_status is not None
+                    else None,
                 )
             )
 
         return saved
 
-    async def _assert_payout_window_open(self, *, coach_id: str, at: datetime) -> None:
+    async def _resolve_payout_window(
+        self,
+        *,
+        coach_id: str,
+        at: datetime,
+        actor_is_owner: bool,
+        override_reason: str | None,
+    ) -> str | None:
+        """Return the frozen period status when an owner override lets the write
+        proceed anyway, ``None`` when the window is simply open — and raise
+        ``PayoutPeriodFrozen`` otherwise.
+
+        Owner *and* reason are both required: owner alone would make the freeze
+        meaningless for the person most likely to bypass it, and a reason from a
+        non-owner is not authority to move money Finance has signed off on.
+        """
         if self._payout_lock is None:
-            return
+            return None
         status = await self._payout_lock.locked_status_for(coach_id=coach_id, at=at)
         if status is None:
-            return
+            return None
+        if actor_is_owner and (override_reason or "").strip():
+            return status
         raise PayoutPeriodFrozen(
             "cannot change coach attendance after payout is approved or paid",
             coach_id=coach_id,

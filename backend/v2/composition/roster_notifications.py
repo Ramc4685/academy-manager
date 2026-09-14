@@ -382,6 +382,83 @@ def render_seat_opened_email(
     )
 
 
+def render_waitlist_offer_email(
+    *,
+    session: Session,
+    academy_name: str,
+    student_name: str,
+    portal_url: str | None,
+    offer_expires_at: datetime | None,
+    academy_timezone: str | None = None,
+) -> tuple[str, str]:
+    """The family's "a seat opened — claim it by <date>" mail, and the "it
+    went to the next family" mail when the window closes (#828).
+
+    One renderer for both because they are the same story told twice, and a
+    family that gets the second without ever seeing the first should still be
+    able to tell what happened.
+    """
+    safe_student = html.escape(student_name)
+    safe_session = html.escape(session.title)
+    if offer_expires_at is None:
+        parts = [
+            f"<h2 style='color: {_BRAND_HEADING}; font-size: 18px; margin: 0 0 12px;'>"
+            f"The seat in {safe_session} has been offered to another family</h2>",
+            _para(
+                f"We held a place in {safe_session} for {safe_student} for three days "
+                f"and did not hear back, so it has gone to the next family on the "
+                f"waitlist."
+            ),
+            _para(
+                f"{safe_student} is still on the waitlist — we will write again "
+                f"the next time a seat opens."
+            ),
+        ]
+        if portal_url:
+            parts.append(_branded_button(label="View the waitlist", url=portal_url))
+        return (
+            f"The seat in {session.title} went to the next family",
+            _branded_shell(academy_name=academy_name, inner_html="".join(parts)),
+        )
+
+    deadline = format_deadline(offer_expires_at, academy_timezone=academy_timezone)
+    parts = [
+        f"<h2 style='color: {_BRAND_HEADING}; font-size: 18px; margin: 0 0 12px;'>"
+        f"A seat opened in {safe_session} for {safe_student}</h2>",
+        _para(
+            f"{safe_student} is next on the waitlist. We are holding the seat until "
+            f"<strong>{html.escape(deadline)}</strong> — confirm by then and it is yours."
+        ),
+        _para(
+            f"<strong>When:</strong> "
+            f"{html.escape(format_session_schedule(session, academy_timezone=academy_timezone))}"
+        ),
+    ]
+    if session.location:
+        parts.append(_para(f"<strong>Where:</strong> {html.escape(session.location)}"))
+    parts.append(
+        _para("If we do not hear from you by then, the seat goes to the next family on the list.")
+    )
+    if portal_url:
+        parts.append(_branded_button(label="Confirm the seat", url=portal_url))
+    return (
+        f"A seat opened for {student_name} in {session.title} — confirm by {deadline}",
+        _branded_shell(academy_name=academy_name, inner_html="".join(parts)),
+    )
+
+
+def format_deadline(when: datetime, *, academy_timezone: str | None = None) -> str:
+    """The confirmation deadline in the academy's own zone — a family reading
+    "17 Sep, 12:00" must read it as their own clock, not UTC."""
+    local = when
+    if academy_timezone:
+        try:
+            local = when.astimezone(ZoneInfo(academy_timezone))
+        except Exception:  # pragma: no cover - defensive, bad tz on the academy
+            local = when
+    return local.strftime("%a %-d %b, %-I:%M %p")
+
+
 class RosterAlertAdapter:
     """Implements enrollment's ``RosterChangeNotifier``.
 
@@ -836,6 +913,100 @@ class RosterAlertAdapter:
             body=body,  # no unsubscribe footer: transactional
             category=EmailCategory.TRANSACTIONAL,
             context={"change": "promoted", "session_id": session.session_id},
+        )
+
+    # --- waitlist offer window (issue #828) -----------------------------
+
+    async def waitlist_offer_made(
+        self,
+        *,
+        waitlist_id: str,
+        session_id: str,
+        student_id: str,
+        parent_user_id: str,
+        offer_expires_at: datetime,
+    ) -> None:
+        """ "A seat opened — claim it by <date>". TRANSACTIONAL: the family has
+        three days and a digest opt-out must not cost them the seat."""
+        await self._send_offer_email(
+            waitlist_id=waitlist_id,
+            session_id=session_id,
+            student_id=student_id,
+            parent_user_id=parent_user_id,
+            offer_expires_at=offer_expires_at,
+        )
+
+    async def waitlist_offer_expired(
+        self,
+        *,
+        waitlist_id: str,
+        session_id: str,
+        student_id: str,
+        parent_user_id: str,
+    ) -> None:
+        """The window closed unanswered and the seat moved down the list."""
+        await self._send_offer_email(
+            waitlist_id=waitlist_id,
+            session_id=session_id,
+            student_id=student_id,
+            parent_user_id=parent_user_id,
+            offer_expires_at=None,
+        )
+
+    async def _send_offer_email(
+        self,
+        *,
+        waitlist_id: str,
+        session_id: str,
+        student_id: str,
+        parent_user_id: str,
+        offer_expires_at: datetime | None,
+    ) -> None:
+        session = await self._sessions.get(session_id)
+        if session is None:
+            logger.warning(
+                "enrollment.waitlist_offer_session_missing",
+                extra={"session_id": session_id, "waitlist_id": waitlist_id},
+            )
+            return
+        parent = await self._resolve_users([parent_user_id])
+        recipient = parent[0] if parent else None
+        if recipient is None or not recipient.email:
+            logger.warning(
+                "enrollment.waitlist_offer_no_recipient",
+                extra={"session_id": session_id, "parent_user_id": parent_user_id},
+            )
+            return
+        academy_id = current_academy_id()
+        academy_doc = await self._academies.find_by_id(academy_id) or {}
+        academy_name = str(academy_doc.get("display_name") or academy_doc.get("name") or "") or (
+            "Your academy"
+        )
+        academy_timezone = str(academy_doc.get("timezone") or "") or None
+        academy_slug = str(academy_doc.get("slug") or "") or None
+        # The academy's own subdomain (ADR-0007): a link on the deployment's
+        # generic frontend_url resolves to no tenant at all.
+        base = academy_frontend_url(
+            frontend_url=self._unsubscribe_links.frontend_url, academy_slug=academy_slug
+        )
+        subject, body = render_waitlist_offer_email(
+            session=session,
+            academy_name=academy_name,
+            student_name=await self._student_name(student_id) or "Your child",
+            portal_url=f"{base.rstrip('/')}/parent/requests" if base else None,
+            offer_expires_at=offer_expires_at,
+            academy_timezone=academy_timezone,
+        )
+        await self._send_one(
+            recipient=recipient,
+            subject=subject,
+            body=body,  # no unsubscribe footer: transactional
+            category=EmailCategory.TRANSACTIONAL,
+            context={
+                "change": "waitlist_offer" if offer_expires_at else "waitlist_offer_expired",
+                "session_id": session_id,
+                "waitlist_id": waitlist_id,
+            },
         )
 
     async def _send_one(

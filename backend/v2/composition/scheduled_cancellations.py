@@ -13,6 +13,7 @@ ends a still-deferred enrollment).
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 
 from backend.v2.contexts.enrollment.application.ports import (
@@ -20,6 +21,12 @@ from backend.v2.contexts.enrollment.application.ports import (
     EnrollmentEventRepository,
     OccurrenceRosterCleanup,
     RosterChangeNotifier,
+)
+from backend.v2.contexts.enrollment.application.use_cases.admin_period_end_drop import (
+    CancelScheduledAdminDrop,
+    ProcessScheduledAdminDropActions,
+    ScheduleAdminDropAtPeriodEnd,
+    WithdrawEnrollmentExecutor,
 )
 from backend.v2.contexts.enrollment.application.use_cases.billing_deferrals import (
     BillingDeferralRepository,
@@ -63,6 +70,47 @@ def compose_process_scheduled_cancellation_actions(
         occurrence_roster=occurrence_roster,
         billing_deferrals=billing_deferrals,
         roster_notifier=roster_notifier,
+    )
+
+
+@dataclass(frozen=True)
+class AdminPeriodEndDrops:
+    """The three halves of issue #820, composed together because they share
+    one repository pair and are always wired as a set."""
+
+    schedule: ScheduleAdminDropAtPeriodEnd
+    cancel: CancelScheduledAdminDrop
+    process: ProcessScheduledAdminDropActions
+
+
+def compose_admin_period_end_drops(
+    db: Any,
+    *,
+    scheduled_actions: ScheduledEnrollmentActionRepository,
+    withdraw_enrollment: WithdrawEnrollmentExecutor,
+    enrollment_events: EnrollmentEventRepository,
+    roster_notifier: RosterChangeNotifier | None,
+    academy_timezone: Callable[[], Awaitable[str | None]],
+    enrollments: MongoEnrollmentWriter | None = None,
+) -> AdminPeriodEndDrops:
+    """Issue #820. The processor replays the SAME ``withdraw_enrollment``
+    instance the immediate Drop route uses, so a deferred drop and an
+    immediate one can never diverge on money, seats or events."""
+    writer = enrollments or MongoEnrollmentWriter(db)
+    return AdminPeriodEndDrops(
+        schedule=ScheduleAdminDropAtPeriodEnd(
+            enrollments=writer,
+            scheduled_actions=scheduled_actions,
+            enrollment_events=enrollment_events,
+            roster_notifier=roster_notifier,
+            academy_timezone=academy_timezone,
+        ),
+        cancel=CancelScheduledAdminDrop(enrollments=writer, scheduled_actions=scheduled_actions),
+        process=ProcessScheduledAdminDropActions(
+            scheduled_actions=scheduled_actions,
+            enrollments=writer,
+            withdraw_enrollment=withdraw_enrollment,
+        ),
     )
 
 

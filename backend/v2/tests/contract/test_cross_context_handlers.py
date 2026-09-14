@@ -45,6 +45,9 @@ from backend.v2.contexts.enrollment.application.use_cases.confirm_enrollment imp
 from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist import (
     PromoteFromWaitlist,
 )
+from backend.v2.contexts.enrollment.application.use_cases.waitlist_offers import (
+    ConfirmWaitlistOffer,
+)
 from backend.v2.contexts.enrollment.domain.events import (
     EnrollmentCancelled,
     EnrollmentCancelledPayload,
@@ -74,6 +77,7 @@ from backend.v2.shared.events import MongoOutbox
 from backend.v2.shared.events.dispatcher import EventDispatcher
 from backend.v2.shared.idempotency.mongo_store import MongoIdempotencyStore
 from backend.v2.shared.ids import new_ulid
+from backend.v2.shared.tenancy.context import tenant_scope
 
 
 async def _wire(
@@ -382,12 +386,15 @@ async def test_on_enrollment_cancelled_promotes_oldest_waitlist_entry(db, acad) 
 
     older = await db["waitlist"].find_one({"waitlist_id": older_id})
     newer = await db["waitlist"].find_one({"waitlist_id": newer_id})
-    assert older["status"] == "promoted"
+    # #828: FIFO still decides who gets the seat — but the oldest entry is
+    # OFFERED it for three days rather than seated, and the WaitlistPromoted
+    # event waits for the family's confirmation.
+    assert older["status"] == "offered"
+    assert older["offer_expires_at"] is not None
     assert newer["status"] == "waiting"
 
-    # Outbox got the WaitlistPromoted event.
     events = [doc async for doc in db["outbox_events"].find({})]
-    assert any(e["name"] == "Enrollment.WaitlistPromoted" for e in events)
+    assert not any(e["name"] == "Enrollment.WaitlistPromoted" for e in events)
 
 
 def _pending_rec(rec_id: str, student_id: str) -> dict:
@@ -606,6 +613,23 @@ async def test_on_enrollment_cancelled_parent_cancel_reason_promotes_end_to_end(
         ),
     )
     await on_enrollment_cancelled(event)
+
+    entry = await db["waitlist"].find_one({"waitlist_id": waitlist_id})
+    assert entry["status"] == "offered"
+    # The seat is held for the family while the offer stands — nobody is
+    # enrolled yet (#828).
+    assert await db["enrollments"].find_one({"student_id": "st-waiting"}) is None
+    assert (await db["sessions"].find_one({"session_id": session_id}))["reserved_seats"] == 1
+
+    # The dispatcher runs the handler under the event's tenant; the confirm
+    # arrives on its own request, so scope it the same way.
+    with tenant_scope("acad"):
+        await ConfirmWaitlistOffer(
+            waitlist=MongoWaitlistRepository(db),
+            enrollments=MongoEnrollmentWriter(db),
+            outbox=MongoOutbox(db),
+            academy_id=lambda: "acad",
+        ).execute(waitlist_id, parent_id="p-waiting")
 
     entry = await db["waitlist"].find_one({"waitlist_id": waitlist_id})
     assert entry["status"] == "promoted"

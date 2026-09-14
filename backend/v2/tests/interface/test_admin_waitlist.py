@@ -90,27 +90,29 @@ def test_promote_picks_oldest_fifo(admin_client):
     r = admin_client.post("/api/v2/admin/sessions/sess-1/waitlist/promote")
     assert r.status_code == 200, r.text
     assert r.json()["promoted_waitlist_id"] == "older"
-    assert admin_client.seed["waitlist"].entries["older"].status == "promoted"
+    # #828: FIFO still picks the same entry — it is now OFFERED the seat for
+    # three days rather than seated on the spot.
+    assert admin_client.seed["waitlist"].entries["older"].status == "offered"
+    assert admin_client.seed["waitlist"].entries["older"].offer_expires_at is not None
 
 
-def test_promote_moves_oldest_waitlist_entry_to_roster(admin_client):
+def test_promote_holds_the_seat_for_the_oldest_entry_without_enrolling(admin_client):
+    """#828: "Promote" now opens a three-day offer. Nobody joins the roster
+    until the family confirms — which is the whole point: the old behaviour
+    enrolled (and invoiced) families who had long since moved on."""
     _add(admin_client.seed, "older", datetime(2026, 5, 16, 8, 0, tzinfo=UTC))
     _add(admin_client.seed, "newer", datetime(2026, 5, 16, 9, 0, tzinfo=UTC))
 
     r = admin_client.post("/api/v2/admin/sessions/sess-1/waitlist/promote")
 
     assert r.status_code == 200, r.text
-    enrollments = list(admin_client.seed["enrollments"].rows.values())
-    assert len(enrollments) == 1
-    assert enrollments[0].session_id == "sess-1"
-    assert enrollments[0].student_id == "st-older"
-    assert enrollments[0].status == "active"
+    assert list(admin_client.seed["enrollments"].rows.values()) == []
 
     roster = admin_client.get("/api/v2/admin/sessions/sess-1/enrollments").json()
-    assert [entry["student_id"] for entry in roster["enrollments"]] == ["st-older"]
+    assert roster["enrollments"] == []
 
-    waitlist = admin_client.get("/api/v2/admin/sessions/sess-1/waitlist").json()
-    assert [entry["waitlist_id"] for entry in waitlist["entries"]] == ["newer"]
+    assert admin_client.seed["waitlist"].entries["older"].status == "offered"
+    assert admin_client.seed["waitlist"].entries["newer"].status == "waiting"
 
 
 def test_promote_resumes_existing_paused_enrollment_without_duplicate(admin_client):

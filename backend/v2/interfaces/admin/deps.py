@@ -334,6 +334,11 @@ class AdminUseCases:
     process_scheduled_resume_actions: ProcessScheduledResumeActions | None = None
     # Issue #675: month-end parent self-cancels (hourly scheduler job).
     process_scheduled_cancellation_actions: object | None = None
+    # Issue #820: the admin twin — "drop at end of period" schedules a drop
+    # and the same hourly tick replays it through WithdrawEnrollment.
+    schedule_admin_drop_at_period_end: object | None = None
+    cancel_scheduled_admin_drop: object | None = None
+    process_scheduled_admin_drop_actions: object | None = None
     #: Scheduled enrollment actions that stopped moving on their own:
     #: ``blocked_capacity`` resumes and ``failed`` month-end cancels (#675).
     #: Issue #774: the automated due+N sweep the scheduler drives. Optional

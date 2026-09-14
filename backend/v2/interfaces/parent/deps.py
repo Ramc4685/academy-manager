@@ -36,6 +36,9 @@ from backend.v2.contexts.enrollment.application.use_cases.trial_requests import 
     ListParentTrialRequests,
     SubmitTrialRequest,
 )
+from backend.v2.contexts.enrollment.application.use_cases.waitlist_offers import (
+    ConfirmWaitlistOffer,
+)
 from backend.v2.contexts.onboarding.application.use_cases.manage_application import (
     GetApplicationStatus,
     PatchApplication,
@@ -107,6 +110,10 @@ class ParentUseCases:
     update_parent_profile: object | None = None  # callable
     confirm_parent_email: object | None = None  # callable
     update_parent_child: object | None = None  # callable
+    # Waitlist offer confirmation (#828). Defaulted so fixtures that predate
+    # the confirmation window keep constructing; real parent composition
+    # always sets it.
+    confirm_waitlist_offer: ConfirmWaitlistOffer | None = None
     # Home aggregate (kid-first Home, slice 4). Defaulted so fixtures that
     # predate it keep constructing; real parent composition always sets it.
     get_parent_home: object | None = None  # callable

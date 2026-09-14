@@ -279,3 +279,140 @@ async def test_unchanged_resubmit_writes_no_audit_entry() -> None:
     await use_case.execute(command, actor_id="admin-1")
 
     assert audit_repo.entries == []
+
+
+@pytest.mark.asyncio
+async def test_owner_override_with_reason_edits_inside_a_frozen_period() -> None:
+    """#821: the freeze is a guardrail, not a dead end — an owner who states a
+    reason can still push a payroll correction through, and the reason lands in
+    the #539 audit trail."""
+    repo = _FakeCoachAttendanceRepo()
+    audit_repo = _FakeCoachAttendanceAuditRepo()
+    lock = _FakePayoutPeriodLock("approved")
+    use_case = MarkCoachAttendance(
+        coach_attendance=repo,
+        coach_attendance_audit=audit_repo,
+        occurrence_lookup=_FakeOccurrenceLookup(),
+        academy_id="acad",
+        payout_lock=lock,
+        clock=lambda: _dt("2026-05-27T18:10:00"),
+    )
+
+    row = await use_case.execute(
+        MarkCoachAttendanceCommand(
+            occurrence_id="occ-1",
+            coach_id="coach-1",
+            status="absent",
+            source="admin",
+            override_reason="coach was marked present by mistake",
+        ),
+        actor_id="owner-1",
+        actor_is_owner=True,
+    )
+
+    assert row.status == "absent"
+    assert repo.rows[("occ-1", "coach-1")].status == "absent"
+    assert len(audit_repo.entries) == 1
+    entry = audit_repo.entries[0]
+    assert entry.actor_id == "owner-1"
+    assert entry.before_status is None
+    assert entry.after_status == "absent"
+    assert entry.override_reason == "coach was marked present by mistake"
+
+
+@pytest.mark.asyncio
+async def test_owner_override_audits_the_before_state_of_an_existing_mark() -> None:
+    repo = _FakeCoachAttendanceRepo()
+    audit_repo = _FakeCoachAttendanceAuditRepo()
+
+    def _use_case(lock_status: str | None) -> MarkCoachAttendance:
+        return MarkCoachAttendance(
+            coach_attendance=repo,
+            coach_attendance_audit=audit_repo,
+            occurrence_lookup=_FakeOccurrenceLookup(),
+            academy_id="acad",
+            payout_lock=_FakePayoutPeriodLock(lock_status),
+            clock=lambda: _dt("2026-05-27T18:05:00"),
+        )
+
+    await _use_case(None).execute(
+        MarkCoachAttendanceCommand(
+            occurrence_id="occ-1",
+            coach_id="coach-1",
+            status="present",
+            source="admin",
+        ),
+        actor_id="admin-1",
+    )
+
+    await _use_case("paid").execute(
+        MarkCoachAttendanceCommand(
+            occurrence_id="occ-1",
+            coach_id="coach-1",
+            status="absent",
+            source="admin",
+            override_reason="paid in error, clawing back",
+        ),
+        actor_id="owner-1",
+        actor_is_owner=True,
+    )
+
+    assert len(audit_repo.entries) == 1
+    entry = audit_repo.entries[0]
+    assert entry.before_status == "present"
+    assert entry.after_status == "absent"
+    assert entry.override_reason == "paid in error, clawing back"
+
+
+@pytest.mark.asyncio
+async def test_owner_without_a_reason_is_still_refused() -> None:
+    repo = _FakeCoachAttendanceRepo()
+    use_case = MarkCoachAttendance(
+        coach_attendance=repo,
+        occurrence_lookup=_FakeOccurrenceLookup(),
+        academy_id="acad",
+        payout_lock=_FakePayoutPeriodLock("approved"),
+        clock=lambda: _dt("2026-05-27T18:10:00"),
+    )
+
+    with pytest.raises(PayoutPeriodFrozen):
+        await use_case.execute(
+            MarkCoachAttendanceCommand(
+                occurrence_id="occ-1",
+                coach_id="coach-1",
+                status="absent",
+                source="admin",
+                override_reason="   ",
+            ),
+            actor_id="owner-1",
+            actor_is_owner=True,
+        )
+
+    assert repo.rows == {}
+
+
+@pytest.mark.asyncio
+async def test_non_owner_with_a_reason_is_still_refused() -> None:
+    repo = _FakeCoachAttendanceRepo()
+    use_case = MarkCoachAttendance(
+        coach_attendance=repo,
+        occurrence_lookup=_FakeOccurrenceLookup(),
+        academy_id="acad",
+        payout_lock=_FakePayoutPeriodLock("approved"),
+        clock=lambda: _dt("2026-05-27T18:10:00"),
+    )
+
+    with pytest.raises(PayoutPeriodFrozen):
+        await use_case.execute(
+            MarkCoachAttendanceCommand(
+                occurrence_id="occ-1",
+                coach_id="coach-1",
+                status="absent",
+                source="admin",
+                override_reason="I think this is wrong",
+            ),
+            actor_id="adm-ops",
+            actor_is_owner=False,
+        )
+
+    assert repo.rows == {}

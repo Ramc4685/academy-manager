@@ -30,6 +30,7 @@ from backend.v2.composition.registration_decision_email import (
     compose_registration_decision_notifier,
 )
 from backend.v2.composition.roster_notifications import compose_roster_notifier
+from backend.v2.composition.waitlist_offers import compose_confirm_waitlist_offer
 from backend.v2.contexts.billing.application.autopay_eligibility import (
     CHARGEABLE_INVOICE_STATUSES,
 )
@@ -156,6 +157,9 @@ from backend.v2.contexts.enrollment.application.use_cases.self_cancel import (
 from backend.v2.contexts.enrollment.application.use_cases.trial_requests import (
     ListParentTrialRequests,
     SubmitTrialRequest,
+)
+from backend.v2.contexts.enrollment.application.use_cases.waitlist_offers import (
+    ConfirmWaitlistOffer,
 )
 from backend.v2.contexts.enrollment.domain.errors import SessionNotFound
 from backend.v2.contexts.enrollment.domain.lifecycle import (
@@ -346,6 +350,8 @@ class ParentComposition:
     start_balance_payment_for_parent: object
     get_child_schedule: object
     get_parent_home: object  # callable
+    # #828: claiming a held seat inside the three-day offer window.
+    confirm_waitlist_offer: ConfirmWaitlistOffer
     enroll_child: object
     cancel_billing_enrollment: object
     get_parent_waiver_requirement: GetParentWaiverRequirement
@@ -1015,6 +1021,8 @@ def compose_parent(
         outbox=outbox,
         enrollment_events=enrollment_events,
         roster_notifier=roster_notifier,
+        # #828: the family's "a seat opened — confirm by <date>" mail.
+        offer_notifier=roster_notifier,
         resume=promote_resume,
         academy_id=request_academy_id,
     )
@@ -2848,6 +2856,8 @@ def compose_parent(
         start_balance_payment_for_parent=start_balance_payment_for_parent,
         get_child_schedule=get_child_schedule,
         get_parent_home=get_parent_home,
+        # #828: claiming a held seat inside the three-day window.
+        confirm_waitlist_offer=compose_confirm_waitlist_offer(db, settings),
         enroll_child=enroll_child_uc.execute,
         cancel_billing_enrollment=cancel_billing_enrollment_uc.execute,
         get_parent_waiver_requirement=get_waiver_req,

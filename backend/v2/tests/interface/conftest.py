@@ -50,7 +50,11 @@ from backend.v2.contexts.coaching.application.use_cases.void_attendance import (
     VoidAttendance,
 )
 from backend.v2.contexts.coaching.domain.errors import ConflictAttendanceExists
-from backend.v2.contexts.coaching.domain.models import Attendance, CoachAttendance
+from backend.v2.contexts.coaching.domain.models import (
+    Attendance,
+    CoachAttendance,
+    CoachAttendanceAuditEntry,
+)
 from backend.v2.contexts.enrollment.application.use_cases.coach_roster_writes import (
     CoachAddStudentToRoster,
     CoachRemoveStudentFromRoster,
@@ -1275,6 +1279,14 @@ class FakeAdminCoachAttendanceRepo:
 
 
 @dataclass
+class FakeCoachAttendanceAuditRepo:
+    entries: list[CoachAttendanceAuditEntry] = field(default_factory=list)
+
+    async def append(self, entry: CoachAttendanceAuditEntry) -> None:
+        self.entries.append(entry)
+
+
+@dataclass
 class FakeEnrollmentWriter:
     rows: dict[str, Any] = field(default_factory=dict)
     amounts: dict[str, int | None] = field(default_factory=dict)
@@ -1476,6 +1488,25 @@ class FakeWaitlistRepo:
         e = self.entries.get(waitlist_id)
         if e is not None:
             self.entries[waitlist_id] = e.model_copy(update={"status": status})
+
+    async def get(self, waitlist_id):
+        return self.entries.get(waitlist_id)
+
+    async def mark_offered(self, waitlist_id, *, offer_expires_at):
+        e = self.entries.get(waitlist_id)
+        if e is not None:
+            self.entries[waitlist_id] = e.model_copy(
+                update={"status": "offered", "offer_expires_at": offer_expires_at}
+            )
+
+    async def find_expired_offers(self, *, before):
+        return [
+            e
+            for e in self.entries.values()
+            if e.status == "offered"
+            and e.offer_expires_at is not None
+            and e.offer_expires_at <= before
+        ]
 
     async def find_waiting_for_session_student(self, session_id, student_id):
         return next(
@@ -1988,6 +2019,7 @@ def admin_seed():
     enrollments = FakeEnrollmentWriter()
     occurrences = FakeAdminOccurrenceRepo()
     coach_attendance = FakeAdminCoachAttendanceRepo()
+    coach_attendance_audit = FakeCoachAttendanceAuditRepo()
     sessions.sessions["sess-1"] = Session(
         session_id="sess-1",
         academy_id="acad",
@@ -2012,6 +2044,7 @@ def admin_seed():
         "sessions": sessions,
         "occurrences": occurrences,
         "coach_attendance": coach_attendance,
+        "coach_attendance_audit": coach_attendance_audit,
         "enrollments": enrollments,
         "enrollment_query": enrollments,
         "enrollment_events": FakeEnrollmentEvents(),
@@ -2285,10 +2318,21 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
                 template_session_id=occurrence.template_session_id,
             )
 
+    class _AdminPayoutPeriodLock:
+        """Finance-backed freeze lookup (#787). ``coach-frozen`` sits inside an
+        approved payout period so the owner-override path (#821) is reachable
+        from the route tests; every other coach's window is open."""
+
+        async def locked_status_for(self, *, coach_id: str, at: datetime) -> str | None:
+            return "approved" if coach_id == "coach-frozen" else None
+
+    _coach_attendance_audit = seed["coach_attendance_audit"]
     mark_coach_attendance = MarkCoachAttendance(
         coach_attendance=coach_attendance,
+        coach_attendance_audit=_coach_attendance_audit,
         occurrence_lookup=_AdminOccurrenceLookup(),
         academy_id="acad",
+        payout_lock=_AdminPayoutPeriodLock(),
         clock=lambda: datetime(2026, 5, 16, 10, 35, tzinfo=UTC),
     )
 

@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+from typing import cast
+
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 from backend.v2.shared.tenancy import TenantScopedRepository
+from backend.v2.shared.time.mongo import ensure_utc
 
 
 class MongoWaitlistRepository(TenantScopedRepository):
@@ -19,6 +23,13 @@ class MongoWaitlistRepository(TenantScopedRepository):
             parent_id=str(doc["parent_id"]),
             joined_at=doc["joined_at"],
             status=doc.get("status", "waiting"),
+            # Mongo hands back naive UTC (#706): compare a deadline with an
+            # aware `now` without this and the confirm route 500s.
+            offer_expires_at=(
+                ensure_utc(cast("datetime", raw_expires))
+                if (raw_expires := doc.get("offer_expires_at")) is not None
+                else None
+            ),
         )
 
     async def add(self, entry: WaitlistEntry) -> None:
@@ -51,3 +62,22 @@ class MongoWaitlistRepository(TenantScopedRepository):
             self._scoped({"session_id": session_id, "student_id": student_id, "status": "waiting"}),
             {"$set": {"status": "removed"}},
         )
+
+    # --- Offer window (issue #828) --------------------------------------
+
+    async def get(self, waitlist_id: str) -> WaitlistEntry | None:
+        doc = await self._find_one({"waitlist_id": waitlist_id})
+        return self._to_domain(doc) if doc else None
+
+    async def mark_offered(self, waitlist_id: str, *, offer_expires_at: datetime) -> None:
+        await self._update_one(
+            {"waitlist_id": waitlist_id},
+            {"$set": {"status": "offered", "offer_expires_at": offer_expires_at}},
+        )
+
+    async def find_expired_offers(self, *, before: datetime) -> list[WaitlistEntry]:
+        cursor = self._find_many(
+            {"status": "offered", "offer_expires_at": {"$lte": before}},
+            sort=[("offer_expires_at", 1)],
+        )
+        return [self._to_domain(doc) async for doc in cursor]

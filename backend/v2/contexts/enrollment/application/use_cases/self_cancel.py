@@ -100,12 +100,10 @@ timing is unchanged: status flips now, seat is released now.
 from __future__ import annotations
 
 import asyncio
-import calendar
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime, tzinfo
+from datetime import UTC, datetime
 from typing import Any, Literal, Protocol
-from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
 
@@ -124,6 +122,7 @@ from backend.v2.contexts.enrollment.domain.events import (
     EnrollmentLifecycleEvent,
 )
 from backend.v2.contexts.enrollment.domain.models import Enrollment, Student
+from backend.v2.contexts.enrollment.domain.scheduling import end_of_academy_month
 from backend.v2.contexts.enrollment.domain.self_service import (
     EnrollmentNotCancellable,
     ParentSelfServicePolicy,
@@ -139,27 +138,10 @@ Clock = Callable[[], datetime]
 AcademyTimezoneReader = Callable[[], Awaitable[str | None]]
 
 
-def _end_of_month(now: datetime, timezone_name: str | None) -> datetime:
-    """Last instant of ``now``'s calendar month on the academy's wall clock,
-    returned in UTC.
-
-    Issue #675: this is the ``pending_cancellation_at`` the scheduled cancel
-    runs at and the ``effective_at`` billing keys the payable period off, so
-    it must agree with billing's ``period_of`` (academy-local month). A
-    Chicago parent cancelling at 8pm on the 30th is still in THIS month
-    locally even though UTC has rolled over. Unknown / unset zones fall back
-    to UTC, exactly as ``period_of`` does.
-    """
-    zone: tzinfo = UTC
-    if timezone_name:
-        try:
-            zone = ZoneInfo(timezone_name)
-        except (KeyError, ValueError):
-            log.warning("self_cancel_bad_timezone", extra={"tz": timezone_name})
-    local_now = now.astimezone(zone)
-    last_day = calendar.monthrange(local_now.year, local_now.month)[1]
-    local_end = datetime(local_now.year, local_now.month, last_day, 23, 59, 59, 999999, tzinfo=zone)
-    return local_end.astimezone(UTC)
+#: Issue #820 moved the month-end maths to ``domain/scheduling`` so the admin
+#: "drop at end of period" computes the SAME instant. Kept aliased here
+#: because this module's tests and readers know it by this name.
+_end_of_month = end_of_academy_month
 
 
 def _cancel_effective_at(

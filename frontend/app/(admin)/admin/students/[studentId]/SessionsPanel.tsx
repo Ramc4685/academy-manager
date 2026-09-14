@@ -42,7 +42,12 @@ import {
   getErrorMessage,
   previewNetCents,
 } from "./format";
-import { autopayChip, familyBillingHref, pastEnrollmentRow } from "./session-rows";
+import {
+  autopayChip,
+  familyBillingHref,
+  pastEnrollmentRow,
+  sessionRosterHref,
+} from "./session-rows";
 import { StatusChip } from "./StatusChip";
 
 const DISCOUNT_CATEGORIES: { value: TuitionDiscountCategory; label: string }[] = [
@@ -831,7 +836,10 @@ function PastEnrollmentsPanel({ rows }: { rows: AdminStudentSessionSummary[] }) 
                 <th className="py-2 pr-4 font-medium">Status</th>
                 <th className="py-2 pr-4 font-medium">Ended</th>
                 <th className="py-2 pr-4 font-medium">Ended by</th>
-                <th className="py-2 font-medium">Reason</th>
+                <th className="py-2 pr-4 font-medium">Reason</th>
+                <th className="py-2 font-medium">
+                  <span className="sr-only">Actions</span>
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-100">
@@ -855,7 +863,20 @@ function PastEnrollmentsPanel({ rows }: { rows: AdminStudentSessionSummary[] }) 
                       {row.endedOn}
                     </td>
                     <td className="py-3 pr-4 align-top text-rally-muted">{row.endedBy}</td>
-                    <td className="py-3 align-top text-rally-muted">{row.reason}</td>
+                    <td className="py-3 pr-4 align-top text-rally-muted">{row.reason}</td>
+                    {/* #827: Past was read-only, so putting a student back
+                        meant finding the class by hand. The roster owns the
+                        Re-enroll action (and the seat check that goes with
+                        it); this is the way there. */}
+                    <td className="py-3 align-top text-right">
+                      <Link
+                        href={sessionRosterHref(row.sessionId) as Parameters<typeof Link>[0]["href"]}
+                        data-testid={`admin-student-re-enroll-${row.enrollmentId}`}
+                        className="text-xs font-medium text-rally-blue hover:underline"
+                      >
+                        Re-enroll
+                      </Link>
+                    </td>
                   </tr>
                 );
               })}

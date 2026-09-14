@@ -34,6 +34,31 @@ describe("next.config redirects", () => {
     expect(entry?.has).toBeUndefined();
   });
 
+  // #827: /admin/parents and /admin/coaches have been pure forwards into the
+  // Users directory for some time, but they forwarded by RENDERING the
+  // `(admin)` layout and throwing `redirect()` from it — the exact shape that
+  // served Cloudflare's Error 1102 instead of a redirect on the Dues paths.
+  // A static config redirect is matched before route resolution, so the
+  // authenticated layout never runs for a URL that only forwards.
+  it.each([
+    ["/admin/parents", "/admin/users?role=parent"],
+    ["/admin/coaches", "/admin/users?role=coach"],
+  ])("forwards the retired %s bookmark to %s", async (source, destination) => {
+    const entry = (await resolveRedirects()).find((redirect) => redirect.source === source);
+
+    expect(entry, `no redirect declared for ${source}`).toBeDefined();
+    expect(entry?.destination).toBe(destination);
+    expect(entry?.permanent).toBe(true);
+    expect(entry?.has).toBeUndefined();
+  });
+
+  // The Users directory itself is live and sets `?role=` as its own filter —
+  // redirecting it would break the page the two entries above point at.
+  it("leaves the live Users directory alone", async () => {
+    const sources = (await resolveRedirects()).map((entry) => entry.source);
+    expect(sources).not.toContain("/admin/users");
+  });
+
   it("keeps the canonical-host redirect", async () => {
     const hostRedirects = (await resolveRedirects()).filter((entry) => entry.has !== undefined);
 

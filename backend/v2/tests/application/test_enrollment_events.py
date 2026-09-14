@@ -21,6 +21,9 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
 from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist import (
     PromoteFromWaitlist,
 )
+from backend.v2.contexts.enrollment.application.use_cases.waitlist_offers import (
+    ConfirmWaitlistOffer,
+)
 from backend.v2.contexts.enrollment.domain.events import EnrollmentLifecycleEvent
 from backend.v2.contexts.enrollment.domain.models import Enrollment, Session, Student
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
@@ -105,6 +108,23 @@ class FakeWaitlist:
 
     async def update_status(self, waitlist_id: str, status: str) -> None:
         self.entries[waitlist_id] = self.entries[waitlist_id].model_copy(update={"status": status})
+
+    async def get(self, waitlist_id: str):
+        return self.entries.get(waitlist_id)
+
+    async def mark_offered(self, waitlist_id: str, *, offer_expires_at) -> None:
+        self.entries[waitlist_id] = self.entries[waitlist_id].model_copy(
+            update={"status": "offered", "offer_expires_at": offer_expires_at}
+        )
+
+    async def find_expired_offers(self, *, before) -> list:
+        return [
+            e
+            for e in self.entries.values()
+            if e.status == "offered"
+            and e.offer_expires_at is not None
+            and e.offer_expires_at <= before
+        ]
 
     async def find_waiting_for_session_student(
         self, session_id: str, student_id: str
@@ -296,11 +316,25 @@ async def test_waitlist_and_promotion_record_lifecycle_events() -> None:
         academy_id=lambda: "acad",
         clock=_clock,
     )
-    promoted_id = await promote.execute("sess-1", actor_id="admin-1")
+    offered_id = await promote.execute("sess-1", actor_id="admin-1")
 
-    assert promoted_id == entry.waitlist_id
-    assert [event.event_type for event in events.rows] == ["waitlisted", "promoted"]
+    # #828: offering a seat is not a promotion, and records no `promoted` row
+    # — the lifecycle event follows the family's confirmation.
+    assert offered_id == entry.waitlist_id
+    assert [event.event_type for event in events.rows] == ["waitlisted"]
     assert events.rows[0].waitlist_id == entry.waitlist_id
     assert events.rows[0].reason == "session_full"
+
+    confirm = ConfirmWaitlistOffer(
+        waitlist=waitlist,
+        enrollments=FakeEnrollments(rows={}),
+        outbox=FakeOutbox(),
+        enrollment_events=events,
+        academy_id=lambda: "acad",
+        clock=_clock,
+    )
+    await confirm.execute(entry.waitlist_id, parent_id="parent-1", actor_id="admin-1")
+
+    assert [event.event_type for event in events.rows] == ["waitlisted", "promoted"]
     assert events.rows[1].waitlist_id == entry.waitlist_id
     assert events.rows[1].actor_id == "admin-1"

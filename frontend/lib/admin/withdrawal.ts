@@ -47,15 +47,28 @@ export function defaultWithdrawalOutcome(isOwner: boolean): WithdrawalOutcome {
  * source of that mapping — `stop-all-classes-outcome.ts`'s `defaultOutcomeFor`
  * delegates here so the two drop paths can never drift apart.
  *
- * KNOWN GAP (issue #742): `no_credit_end_of_period` maps to `"adjustment"`,
- * i.e. attendance stops on the chosen date rather than at the period end.
- * No admin-side deferred drop exists yet — the only end-of-period mechanism
- * in the codebase is the parent self-cancel scheduled action — so the timing
- * half of that policy value is still not honoured anywhere. Tracked as the
- * follow-up on #742; this module only fixes the outcome half.
+ * This is the MONEY half only. `no_credit_end_of_period` also carries a
+ * timing instruction, which `shouldDeferToPeriodEnd` below answers.
  */
 export function policyWithdrawalOutcome(policyDefault: DropDefaultOutcome): WithdrawalOutcome {
   return policyDefault === "credit_mid_month" ? "credit" : "adjustment";
+}
+
+/**
+ * The TIMING half of the departure policy (issue #820, follow-up to #742).
+ *
+ * `no_credit_end_of_period` used to decide the money outcome and nothing
+ * else: the drop still took effect on the date in the dialog, so a child lost
+ * their place the day the admin clicked Drop even though the academy's policy
+ * said they keep the month they paid for. When this returns true the request
+ * carries `defer_to_period_end` and the backend SCHEDULES the drop for the
+ * academy-local month end instead of performing it.
+ *
+ * The other two policy values, and an unloaded/absent policy, keep the
+ * immediate path — the same fallback `initialWithdrawalOutcome` uses.
+ */
+export function shouldDeferToPeriodEnd(policyDefault: DropDefaultOutcome | undefined): boolean {
+  return policyDefault === "no_credit_end_of_period";
 }
 
 /**
@@ -90,12 +103,19 @@ export function initialWithdrawalOutcome(
  * and is left OFF the body when the admin did not pick one: the route models
  * it as `DepartureReasonCode | None`, which rejects `""`, and an omitted key
  * is what "not coded" has to look like on the wire.
+ *
+ * `deferToPeriodEnd` (issue #820) is likewise only sent when true, so every
+ * existing body on the wire is byte-identical to what it was. `effective_date`
+ * still rides along but the backend ignores it on the deferred path — the
+ * period end is computed from the academy's timezone, which the browser
+ * cannot be trusted to agree with.
  */
 export function buildWithdrawRequest(input: {
   withdrawalDate: string;
   outcome: WithdrawalOutcome;
   adminNote: string;
   reasonCode?: DepartureReasonCode;
+  deferToPeriodEnd?: boolean;
 }): WithdrawEnrollmentRequest {
   const note = input.adminNote.trim();
   return {
@@ -103,6 +123,7 @@ export function buildWithdrawRequest(input: {
     outcome: input.outcome,
     reason: note || `Withdrawal ${input.outcome}`,
     ...(input.reasonCode ? { reason_code: input.reasonCode } : {}),
+    ...(input.deferToPeriodEnd ? { defer_to_period_end: true } : {}),
   };
 }
 

@@ -49,8 +49,20 @@ export function familyBillingHref(parentId: string | null | undefined): string |
   return parentId ? `/admin/families/${encodeURIComponent(parentId)}` : null;
 }
 
+/**
+ * Issue #827: where an admin goes to put a departed student back — the class
+ * roster, whose Re-enroll action opens Add to roster pre-filled. The student
+ * profile has no session picker of its own, and inventing one here would be a
+ * second way to create an enrollment.
+ */
+export function sessionRosterHref(sessionId: string): string {
+  return `/admin/sessions/${encodeURIComponent(sessionId)}`;
+}
+
 export interface PastEnrollmentRow {
   enrollmentId: string;
+  /** #827: the class this row ended in, for the Re-enroll link. */
+  sessionId: string;
   sessionTitle: string;
   location: string | null;
   statusLabel: string;
@@ -104,6 +116,7 @@ export function pastEnrollmentRow(row: AdminStudentSessionSummary): PastEnrollme
   const actor = row.cancelled_by?.trim().toLowerCase() ?? "";
   return {
     enrollmentId: row.enrollment_id,
+    sessionId: row.session_id,
     sessionTitle: row.session_title,
     location: row.location ?? null,
     statusLabel: status.label,

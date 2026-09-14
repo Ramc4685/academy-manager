@@ -446,6 +446,9 @@ class UpdateOccurrenceCoachAttendanceRequest(BaseModel):
     role: Literal["lead", "assistant"] = "lead"
     rate_override_minor: int | None = Field(default=None, ge=0)
     note: str = ""
+    override_reason: str | None = None
+    """Force the edit through an approved or paid payout period (#821). Honoured
+    only for owners; the reason is written to the coach-attendance audit log."""
 
 
 class CorrectStudentAttendanceRequest(BaseModel):
@@ -667,6 +670,13 @@ class WithdrawEnrollmentRequest(BaseModel):
     #: Issue #775: the structured "why". Optional so an older client (or a
     #: script) can still drop a student with a note alone.
     reason_code: DepartureReasonCode | None = None
+    #: Issue #820: the academy's ``no_credit_end_of_period`` departure policy.
+    #: When true the drop is SCHEDULED for the end of the academy-local month
+    #: instead of taking effect now, and ``effective_date`` is ignored — the
+    #: period end is computed server-side so it can never disagree with the
+    #: month billing charges for. Default false keeps every existing client
+    #: (and the other two policy values) on the immediate path.
+    defer_to_period_end: bool = False
 
 
 class RemoveEnrollmentRequest(BaseModel):

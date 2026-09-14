@@ -284,6 +284,24 @@ class WaitlistRepository(Protocol):
         self, session_id: str, student_id: str
     ) -> None: ...
 
+    # --- Offer window (issue #828) --------------------------------------
+
+    async def get(self, waitlist_id: str) -> WaitlistEntry | None:
+        """One entry by id, whatever its status — the confirm route's read."""
+
+    async def mark_offered(self, waitlist_id: str, *, offer_expires_at: datetime) -> None:
+        """``waiting`` -> ``offered``, stamping the confirmation deadline.
+
+        The seat is already reserved when this is called: the entry's
+        ``offered`` status and the session's reserved-seat counter together
+        ARE the hold (``SeatAcquisition`` is an in-memory value, not a row),
+        so the sweep releases the counter when the window closes.
+        """
+
+    async def find_expired_offers(self, *, before: datetime) -> list[WaitlistEntry]:
+        """Every ``offered`` entry whose ``offer_expires_at`` is at or before
+        ``before`` — the sweep's work list."""
+
 
 class EnrollmentEventRepository(Protocol):
     async def record(self, event: EnrollmentLifecycleEvent) -> None: ...
@@ -596,6 +614,36 @@ class RosterChangeNotifier(Protocol):
         to_session_id: str | None = None,
         actor_id: str | None = None,
         parent_user_id: str | None = None,
+    ) -> None: ...
+
+
+class WaitlistOfferNotifier(Protocol):
+    """Tells one family that a seat is theirs to claim, or that it moved on.
+
+    A sibling of :class:`RosterChangeNotifier` rather than another ``change``
+    kind on it: these two mails are addressed to exactly one family and carry a
+    deadline, where ``roster_changed`` fans out to staff. Same contract as
+    every notifier port here — best-effort, and never allowed to fail the
+    write it follows (issue #828).
+    """
+
+    async def waitlist_offer_made(
+        self,
+        *,
+        waitlist_id: str,
+        session_id: str,
+        student_id: str,
+        parent_user_id: str,
+        offer_expires_at: datetime,
+    ) -> None: ...
+
+    async def waitlist_offer_expired(
+        self,
+        *,
+        waitlist_id: str,
+        session_id: str,
+        student_id: str,
+        parent_user_id: str,
     ) -> None: ...
 
 

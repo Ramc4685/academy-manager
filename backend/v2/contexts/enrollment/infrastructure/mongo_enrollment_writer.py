@@ -262,6 +262,71 @@ class MongoEnrollmentWriter(TenantScopedRepository):
         )
         return self._to_domain(doc) if doc else None
 
+    async def mark_pending_cancellation_by_admin(
+        self,
+        enrollment_id: str,
+        *,
+        cancellation_reason: str,
+        pending_cancellation_at: datetime,
+        requested_at: datetime,
+    ) -> Enrollment | None:
+        """Issue #820: an admin asked to drop this row at the end of the
+        period. Stamps the SAME ``pending_cancellation_at`` marker the parent
+        path uses — so every roster, profile and coach surface already reading
+        it shows "leaving at end of period" with no new read model — WITHOUT
+        flipping ``status`` and WITHOUT releasing the seat.
+
+        ``cancelled_by`` is deliberately NOT stamped here (unlike the parent
+        path, which has nothing else to record it): the real drop is performed
+        at month end by ``WithdrawEnrollment``, which stamps
+        ``cancelled_by="admin"`` itself along with the ``dropped`` lifecycle
+        row. Stamping it now would mark a live enrollment as cancelled-by
+        someone while it is still attending.
+
+        CAS on LIVE (active / paused / held — the same set
+        ``WithdrawEnrollment`` accepts) AND no pending cancellation, so a
+        double-submit, or a drop scheduled on top of a parent's self-cancel,
+        loses and the use case refuses instead of enqueueing twice.
+        """
+        doc = await self._find_one_and_update(
+            {
+                "enrollment_id": enrollment_id,
+                "status": {"$in": sorted(LIVE)},
+                "pending_cancellation_at": None,
+            },
+            {
+                "$set": {
+                    "cancellation_reason": cancellation_reason,
+                    "pending_cancellation_at": pending_cancellation_at,
+                    "pending_cancellation_requested_at": requested_at,
+                    "updated_at": datetime.now(UTC),
+                }
+            },
+        )
+        return self._to_domain(doc) if doc else None
+
+    async def clear_pending_cancellation(self, enrollment_id: str) -> Enrollment | None:
+        """Issue #820: drop the pending marker without ending anything.
+
+        Two callers: an admin cancelling a scheduled drop, and the month-end
+        worker after ``WithdrawEnrollment`` has ended the row (``
+        mark_withdrawn_if_open`` does not clear the marker, and a withdrawn
+        row still advertising "ends 30 Sep" reads as a drop that has not
+        happened yet). CAS on "a marker is actually set" so a second call is
+        a no-op rather than a phantom success.
+        """
+        doc = await self._find_one_and_update(
+            {"enrollment_id": enrollment_id, "pending_cancellation_at": {"$ne": None}},
+            {
+                "$set": {
+                    "pending_cancellation_at": None,
+                    "pending_cancellation_requested_at": None,
+                    "updated_at": datetime.now(UTC),
+                }
+            },
+        )
+        return self._to_domain(doc) if doc else None
+
     async def complete_pending_cancellation(
         self, enrollment_id: str, *, cancelled_at: datetime
     ) -> Enrollment | None:

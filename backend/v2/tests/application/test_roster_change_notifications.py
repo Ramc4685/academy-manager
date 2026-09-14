@@ -34,6 +34,9 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
 from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist import (
     PromoteFromWaitlist,
 )
+from backend.v2.contexts.enrollment.application.use_cases.waitlist_offers import (
+    ConfirmWaitlistOffer,
+)
 from backend.v2.contexts.enrollment.domain.models import Enrollment, Session, Student
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 
@@ -186,6 +189,31 @@ class FakeWaitlist:
 
     async def update_status(self, waitlist_id: str, status: str) -> None:
         self.statuses[waitlist_id] = status
+        self.entries = [
+            e.model_copy(update={"status": status}) if e.waitlist_id == waitlist_id else e
+            for e in self.entries
+        ]
+
+    async def get(self, waitlist_id: str) -> WaitlistEntry | None:
+        return next((e for e in self.entries if e.waitlist_id == waitlist_id), None)
+
+    async def mark_offered(self, waitlist_id: str, *, offer_expires_at) -> None:
+        self.statuses[waitlist_id] = "offered"
+        self.entries = [
+            e.model_copy(update={"status": "offered", "offer_expires_at": offer_expires_at})
+            if e.waitlist_id == waitlist_id
+            else e
+            for e in self.entries
+        ]
+
+    async def find_expired_offers(self, *, before) -> list[WaitlistEntry]:
+        return [
+            e
+            for e in self.entries
+            if e.status == "offered"
+            and e.offer_expires_at is not None
+            and e.offer_expires_at <= before
+        ]
 
 
 BOOM = RuntimeError("resend is down")
@@ -413,7 +441,12 @@ async def test_withdraw_survives_a_raising_notifier() -> None:
 # --- waitlist promotion -------------------------------------------------
 
 
-def _promote(notifier: RecordingNotifier) -> tuple[PromoteFromWaitlist, FakeWaitlist]:
+def _promote(
+    notifier: RecordingNotifier,
+) -> tuple[PromoteFromWaitlist, ConfirmWaitlistOffer, FakeWaitlist]:
+    """#828: a freed seat is offered, and the family's "a seat opened" email
+    plus the staff alert follow the CONFIRMATION, not the offer — so both
+    halves are built here over one set of fakes."""
     waitlist = FakeWaitlist(
         entries=[
             WaitlistEntry(
@@ -426,12 +459,21 @@ def _promote(notifier: RecordingNotifier) -> tuple[PromoteFromWaitlist, FakeWait
             )
         ]
     )
+    enrollments = FakeEnrollments()
+    outbox = FakeOutbox()
     return (
         PromoteFromWaitlist(
             waitlist=waitlist,  # type: ignore[arg-type]
             sessions=FakeSessions(sessions={"sess-1": _session()}),  # type: ignore[arg-type]
-            enrollments=FakeEnrollments(),  # type: ignore[arg-type]
-            outbox=FakeOutbox(),  # type: ignore[arg-type]
+            enrollments=enrollments,  # type: ignore[arg-type]
+            outbox=outbox,  # type: ignore[arg-type]
+            academy_id=lambda: ACADEMY,
+            roster_notifier=notifier,  # type: ignore[arg-type]
+        ),
+        ConfirmWaitlistOffer(
+            waitlist=waitlist,  # type: ignore[arg-type]
+            enrollments=enrollments,  # type: ignore[arg-type]
+            outbox=outbox,  # type: ignore[arg-type]
             academy_id=lambda: ACADEMY,
             roster_notifier=notifier,  # type: ignore[arg-type]
         ),
@@ -442,9 +484,12 @@ def _promote(notifier: RecordingNotifier) -> tuple[PromoteFromWaitlist, FakeWait
 @pytest.mark.asyncio
 async def test_promotion_notifies_with_the_parent_so_the_family_is_told() -> None:
     notifier = RecordingNotifier()
-    use_case, _ = _promote(notifier)
+    promote, confirm, _ = _promote(notifier)
 
-    await use_case.execute("sess-1", actor_id="admin-1")
+    await promote.execute("sess-1", actor_id="admin-1")
+    # The offer alone tells the roster nothing — the child is not on it yet.
+    assert notifier.calls == []
+    await confirm.execute("wl-1", parent_id="par-1", actor_id="admin-1")
 
     assert len(notifier.calls) == 1
     call = notifier.calls[0]
@@ -457,18 +502,20 @@ async def test_promotion_notifies_with_the_parent_so_the_family_is_told() -> Non
 @pytest.mark.asyncio
 async def test_promotion_survives_a_raising_notifier() -> None:
     notifier = RecordingNotifier(raises=BOOM)
-    use_case, waitlist = _promote(notifier)
+    promote, confirm, waitlist = _promote(notifier)
 
-    result = await use_case.execute("sess-1")
-
+    result = await promote.execute("sess-1")
     assert result == "wl-1"
+    assert waitlist.statuses["wl-1"] == "offered"
+
+    await confirm.execute("wl-1", parent_id="par-1")
     assert waitlist.statuses["wl-1"] == "promoted"
 
 
 @pytest.mark.asyncio
 async def test_an_empty_waitlist_notifies_nobody() -> None:
     notifier = RecordingNotifier()
-    use_case, _ = _promote(notifier)
+    use_case, _confirm, _ = _promote(notifier)
 
     assert await use_case.execute("sess-2") is None
     assert notifier.calls == []

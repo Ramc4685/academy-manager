@@ -35,6 +35,9 @@ from backend.v2.contexts.enrollment.application.use_cases.pause_requests import 
 from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist import (
     PromoteFromWaitlist,
 )
+from backend.v2.contexts.enrollment.application.use_cases.waitlist_offers import (
+    ConfirmWaitlistOffer,
+)
 from backend.v2.contexts.enrollment.domain.errors import SessionNotEnrollable
 from backend.v2.contexts.enrollment.domain.models import Enrollment, Session
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
@@ -726,7 +729,7 @@ async def test_pause_promotes_the_family_that_was_already_waiting_not_the_paused
     assert [e.student_id for e in waiting] == ["stu-9", "stu-1"]
 
     # What the on_enrollment_cancelled handler does with that signal:
-    promoted = await PromoteFromWaitlist(
+    offered = await PromoteFromWaitlist(
         waitlist=waitlist,
         sessions=sessions,
         enrollments=enrollments,
@@ -734,10 +737,21 @@ async def test_pause_promotes_the_family_that_was_already_waiting_not_the_paused
         academy_id=lambda: "acad",
         clock=_now,
     ).execute("sess-1")
-    assert promoted == "wl-other"
+    assert offered == "wl-other"
     assert enrollments.rows["enr-1"].status == "paused"
-    assert {e.student_id for e in enrollments.rows.values() if e.status == "active"} == {"stu-9"}
+    # #828: the seat is offered to the family that waited longest and held for
+    # them — the paused student is still behind them in the queue either way.
+    assert next(e for e in waitlist.entries if e.student_id == "stu-9").status == "offered"
     assert next(e for e in waitlist.entries if e.student_id == "stu-1").status == "waiting"
+
+    await ConfirmWaitlistOffer(
+        waitlist=waitlist,
+        enrollments=enrollments,
+        outbox=outbox,
+        academy_id=lambda: "acad",
+        clock=_now,
+    ).execute("wl-other", parent_id="parent-stu-9")
+    assert {e.student_id for e in enrollments.rows.values() if e.status == "active"} == {"stu-9"}
 
 
 @pytest.mark.asyncio

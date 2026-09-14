@@ -125,17 +125,19 @@ async def test_apply_corrects_counter_and_promotes_fifo_until_full(db) -> None:
 
     older = await db["waitlist"].find_one({"student_id": "st-older"})
     newer = await db["waitlist"].find_one({"student_id": "st-newer"})
-    assert older["status"] == "promoted"
+    # #828: the recovered seat is OFFERED to the oldest entry (and held for
+    # them — hence the re-reserved counter above), not seated on the spot.
+    assert older["status"] == "offered"
+    assert older["offer_expires_at"] is not None
     assert newer["status"] == "waiting"
 
-    promoted = await db["enrollments"].find_one(
-        {"session_id": session_id, "student_id": "st-older"}
+    assert (
+        await db["enrollments"].find_one({"session_id": session_id, "student_id": "st-older"})
+        is None
     )
-    assert promoted is not None
-    assert promoted["status"] == "active"
 
     events = [doc async for doc in db["outbox_events"].find({})]
-    assert any(e["name"] == "Enrollment.WaitlistPromoted" for e in events)
+    assert not any(e["name"] == "Enrollment.WaitlistPromoted" for e in events)
 
 
 @pytest.mark.asyncio
@@ -175,7 +177,7 @@ async def test_promotion_runs_even_when_counter_already_consistent(db) -> None:
     assert result["drifted"] == []
     assert result["promotions"] == {session_id: 1}
     entry = await db["waitlist"].find_one({"session_id": session_id})
-    assert entry["status"] == "promoted"
+    assert entry["status"] == "offered"  # #828: offered, then confirmed
     session = await db["sessions"].find_one({"session_id": session_id})
     assert session["reserved_seats"] == 1
 

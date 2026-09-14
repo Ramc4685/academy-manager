@@ -70,6 +70,7 @@ from backend.v2.composition.replacement_payout_snapshots import (
 )
 from backend.v2.composition.roster_notifications import compose_enrollment_notifiers
 from backend.v2.composition.scheduled_cancellations import (
+    compose_admin_period_end_drops,
     compose_list_stuck_scheduled_actions,
     compose_process_scheduled_cancellation_actions,
 )
@@ -830,6 +831,8 @@ def compose_admin(
         outbox=outbox,
         enrollment_events=enrollment_events,
         roster_notifier=notifiers.roster,
+        # #828: the family's "a seat opened — confirm by <date>" mail.
+        offer_notifier=notifiers.roster,
         # A paused student at the head of the queue resumes (#651), one path.
         resume=resume_enrollment,
         academy_id=request_academy_id,
@@ -997,6 +1000,23 @@ def compose_admin(
         scheduled_actions=scheduled_actions,
         # #782: and closes the pause/hold deferral it ended inside.
         billing_deferrals=billing_deferrals,
+    )
+    # Issue #820: "drop at end of period" — schedule, undo, and the worker
+    # that replays the drop above at the academy-local month end (the same
+    # boundary billing's ``period_of`` uses).
+    _drop_timezone_lookup = academy_timezone_lookup(db)
+
+    async def _admin_drop_academy_timezone() -> str | None:
+        return await _drop_timezone_lookup(current_academy_id())
+
+    admin_period_end_drops = compose_admin_period_end_drops(
+        db,
+        scheduled_actions=scheduled_actions,
+        withdraw_enrollment=withdraw_enrollment,
+        enrollment_events=enrollment_events,
+        roster_notifier=notifiers.roster,
+        academy_timezone=_admin_drop_academy_timezone,
+        enrollments=enrollments_w,
     )
 
     # Finance (# FINANCE)
@@ -4197,6 +4217,9 @@ def compose_admin(
         decline_pause_request=decline_pause_request,
         process_scheduled_resume_actions=process_scheduled_resume_actions,
         process_scheduled_cancellation_actions=process_scheduled_cancellation_actions,
+        schedule_admin_drop_at_period_end=admin_period_end_drops.schedule,
+        cancel_scheduled_admin_drop=admin_period_end_drops.cancel,
+        process_scheduled_admin_drop_actions=admin_period_end_drops.process,
         issue_refund=issue_refund,
         quote_enrollment=quote_enrollment,
         preview_withdrawal_credit=preview_withdrawal_credit,

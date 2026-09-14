@@ -21,6 +21,9 @@ from backend.v2.contexts.coaching.application.use_cases.mark_coach_attendance im
 from backend.v2.contexts.coaching.application.use_cases.void_attendance import (
     VoidAttendanceCommand,
 )
+from backend.v2.contexts.enrollment.application.use_cases.admin_period_end_drop import (
+    ScheduleAdminDropAtPeriodEndCommand,
+)
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     AcademyTimezoneUnset,
     CancelEnrollmentCommand,
@@ -431,8 +434,13 @@ async def update_occurrence_coach_attendance(
                 source="admin",
                 rate_override_minor=body.rate_override_minor,
                 note=body.note,
+                override_reason=body.override_reason,
             ),
             actor_id=claims.user_id,
+            # Ordinary admins must keep marking attendance, so the owner check
+            # is a condition on the frozen-period override (#821), not a gate on
+            # the route itself.
+            actor_is_owner="owner" in claims.roles,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -772,7 +780,28 @@ async def withdraw_enrollment(
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> None:
     # Issue #670: one withdraw path. The credit outcome is money governance.
+    # The gate runs BEFORE the deferred branch too: a scheduled drop replays
+    # this exact outcome at month end with nobody left to check it.
     ensure_owner_for_withdrawal_credit(claims, body.outcome)
+    if body.defer_to_period_end:
+        # Issue #820: the academy's `no_credit_end_of_period` policy. The row
+        # stays live and seated until the academy-local month ends; the hourly
+        # worker then replays WithdrawEnrollment with this same outcome and
+        # actor. `effective_date` is deliberately not forwarded — the period
+        # end is computed server-side from the academy's timezone.
+        schedule = use_cases.schedule_admin_drop_at_period_end
+        if schedule is None:  # pragma: no cover - wiring bug, never in prod
+            raise HTTPException(500, "Scheduled drops are not available")
+        await schedule.execute(  # type: ignore[attr-defined]
+            ScheduleAdminDropAtPeriodEndCommand(
+                enrollment_id=enrollment_id,
+                outcome=body.outcome,
+                actor_id=claims.user_id,
+                reason=body.reason,
+                reason_code=body.reason_code,
+            )
+        )
+        return
     await use_cases.withdraw_enrollment.execute(
         WithdrawEnrollmentCommand(
             enrollment_id=enrollment_id,
@@ -782,6 +811,28 @@ async def withdraw_enrollment(
             reason=body.reason,
             reason_code=body.reason_code,
         )
+    )
+
+
+@router.post(
+    "/enrollments/{enrollment_id}/cancel-scheduled-drop", status_code=204, response_model=None
+)
+async def cancel_scheduled_drop(
+    enrollment_id: str,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> None:
+    """Issue #820: call off a drop that has not fired yet.
+
+    No money side and no owner gate: nothing was charged, credited or refunded
+    when the drop was scheduled — the whole decision was deferred with it — so
+    undoing it is the same authority as scheduling it.
+    """
+    cancel = use_cases.cancel_scheduled_admin_drop
+    if cancel is None:  # pragma: no cover - wiring bug, never in prod
+        raise HTTPException(500, "Scheduled drops are not available")
+    await cancel.execute(  # type: ignore[attr-defined]
+        enrollment_id=enrollment_id, actor_id=claims.user_id
     )
 
 
