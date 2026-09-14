@@ -137,4 +137,25 @@ class ScheduledEnrollmentActionRepository(Protocol):
         reserve a seat in a cancelled class. Likewise an admin cancel /
         withdraw / session cancel must retire a pending
         ``cancel_at_period_end`` (issue #675). Returns the number cancelled.
+
+        Only for callers that are ENDING the enrollment — wiping every type is
+        correct there. A caller that leaves the enrollment live (undoing a
+        scheduled drop, issue #820) must use
+        ``cancel_pending_for_enrollment_and_type`` instead, or it silently
+        strands a paused family by retiring their ``resume_from_pause`` too.
+        """
+
+    async def cancel_pending_for_enrollment_and_type(
+        self,
+        enrollment_id: str,
+        *,
+        action_type: ScheduledActionType,
+        reason: str,
+    ) -> int:
+        """Cancel only the pending rows of ONE type for an enrollment (#820).
+
+        Undoing a scheduled admin drop keeps the enrollment live ('paused' and
+        'held' are both LIVE), so any unrelated pending ``resume_from_pause``
+        or ``cancel_at_period_end`` for the same enrollment must survive.
+        Returns the number cancelled.
         """

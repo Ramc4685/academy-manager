@@ -92,6 +92,7 @@ class _FakeScheduledActions:
         self.actions = actions or []
         self.statuses: list[tuple[str, str, str | None]] = []
         self.cancelled_for: list[str] = []
+        self.cancelled_types: list[str] = []
 
     async def add(self, action: ScheduledEnrollmentAction) -> None:
         self.added.append(action)
@@ -129,7 +130,28 @@ class _FakeScheduledActions:
 
     async def cancel_pending_for_enrollment(self, enrollment_id: str, *, reason: str) -> int:
         self.cancelled_for.append(enrollment_id)
-        return 1
+        return self._retire(enrollment_id, action_type=None)
+
+    async def cancel_pending_for_enrollment_and_type(
+        self, enrollment_id: str, *, action_type: str, reason: str
+    ) -> int:
+        self.cancelled_for.append(enrollment_id)
+        self.cancelled_types.append(action_type)
+        return self._retire(enrollment_id, action_type=action_type)
+
+    def _retire(self, enrollment_id: str, *, action_type: str | None) -> int:
+        """Mirrors the Mongo repo: cancelling retires the matching PENDING
+        rows in the store, so a test can see which rows survived."""
+        retired = 0
+        for index, action in enumerate(self.actions):
+            if (
+                action.enrollment_id == enrollment_id
+                and action.status == "pending"
+                and (action_type is None or action.action_type == action_type)
+            ):
+                self.actions[index] = action.model_copy(update={"status": "cancelled"})
+                retired += 1
+        return retired
 
 
 class _FakeEvents:
@@ -306,6 +328,33 @@ async def test_admin_can_cancel_a_scheduled_drop() -> None:
     assert enrollments.enrollment is not None
     assert enrollments.enrollment.pending_cancellation_at is None
     assert actions.cancelled_for == ["enr-1"]
+    assert actions.cancelled_types == ["admin_drop_at_period_end"]
+
+
+@pytest.mark.asyncio
+async def test_cancelling_a_drop_leaves_an_unrelated_resume_pending() -> None:
+    """Undoing a scheduled drop keeps the enrollment LIVE, so it must retire
+    ONLY its own action type. Retiring every pending row for the enrollment
+    would silently kill a paused family's ``resume_from_pause`` — no resume,
+    no error, no log distinguishing it from the intended retirement."""
+    enrollments = _FakeEnrollments(_enrollment("paused", pending=MONTH_END))
+    resume = _action(
+        action_id="action-resume",
+        action_type="resume_from_pause",
+        pause_request_id="pause-1",
+        outcome=None,
+        actor_id=None,
+        reason=None,
+        reason_code=None,
+    )
+    actions = _FakeScheduledActions([_action(), resume])
+
+    await CancelScheduledAdminDrop(enrollments=enrollments, scheduled_actions=actions).execute(
+        enrollment_id="enr-1", actor_id="admin-1"
+    )
+
+    survived = {a.action_id: a.status for a in actions.actions}
+    assert survived == {"action-1": "cancelled", "action-resume": "pending"}
 
 
 @pytest.mark.asyncio

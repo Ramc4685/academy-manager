@@ -182,6 +182,29 @@ class MongoScheduledEnrollmentActionRepository(TenantScopedRepository):
         )
         return int(result.modified_count or 0)
 
+    async def cancel_pending_for_enrollment_and_type(
+        self,
+        enrollment_id: str,
+        *,
+        action_type: ScheduledActionType,
+        reason: str,
+    ) -> int:
+        # Issue #820: undoing a scheduled admin drop leaves the enrollment
+        # LIVE, so it must retire ONLY its own action type — a paused family's
+        # pending resume for the same enrollment has to survive.
+        now = datetime.now(UTC)
+        result = await self.collection.update_many(
+            self._scoped(
+                {
+                    "enrollment_id": enrollment_id,
+                    "action_type": action_type,
+                    "status": "pending",
+                }
+            ),
+            {"$set": {"status": "cancelled", "last_error": reason, "updated_at": now}},
+        )
+        return int(result.modified_count or 0)
+
     async def _transition(
         self,
         action_id: str,

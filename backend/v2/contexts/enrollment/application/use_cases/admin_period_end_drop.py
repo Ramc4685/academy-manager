@@ -57,6 +57,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     _record_lifecycle_event,
 )
 from backend.v2.contexts.enrollment.application.use_cases.scheduled_actions import (
+    ScheduledActionType,
     ScheduledEnrollmentAction,
     ScheduledEnrollmentActionRepository,
 )
@@ -74,7 +75,7 @@ log = logging.getLogger(__name__)
 Clock = Callable[[], datetime]
 AcademyTimezoneReader = Callable[[], Awaitable[str | None]]
 
-ACTION_TYPE = "admin_drop_at_period_end"
+ACTION_TYPE: ScheduledActionType = "admin_drop_at_period_end"
 
 #: How many times a transient failure is retried before the row is parked as
 #: ``failed`` for a human — same budget and rationale as the parent worker
@@ -280,8 +281,14 @@ class CancelScheduledAdminDrop:
                 enrollment_id=enrollment_id,
                 status="unknown",
             )
-        await self._scheduled_actions.cancel_pending_for_enrollment(
-            enrollment_id, reason=f"admin_cancelled_scheduled_drop:{actor_id}"
+        # Type-scoped on purpose: the enrollment stays LIVE here ('paused' and
+        # 'held' are both in LIVE), so retiring EVERY pending action would
+        # silently kill an unrelated ``resume_from_pause`` and strand a paused
+        # family with no resume and no error.
+        await self._scheduled_actions.cancel_pending_for_enrollment_and_type(
+            enrollment_id,
+            action_type=ACTION_TYPE,
+            reason=f"admin_cancelled_scheduled_drop:{actor_id}",
         )
 
 
