@@ -15,6 +15,10 @@ import { isOwner as holdsOwnerScope } from "@/lib/auth/coach-supervisor";
 import { onAuthChange } from "@/lib/auth/firebase";
 import { loginPathForError } from "@/lib/auth/login-error";
 import { isAuthRejection, withTransientRetry } from "@/lib/auth/me-failure";
+import {
+  clearPersonaHintCookie,
+  setPersonaHintCookie,
+} from "@/lib/auth/persona-hint-cookie";
 import { setSentryUser } from "@/lib/observability/sentry";
 
 export type PersonaAuthState =
@@ -74,6 +78,7 @@ export function usePersonaAuth(
           // Drop the identity before the redirect: on a shared device the
           // previous user's id must not ride along on the next session (#750).
           setSentryUser(null);
+          clearPersonaHintCookie();
           setState({ checked: true, authorized: false, user: null });
           replaceLocation(router, "/login");
         }
@@ -83,6 +88,9 @@ export function usePersonaAuth(
       void withTransientRetry(getCurrentUser)
         .then((currentUser) => {
           if (cancelled) return;
+          // Re-stamp the edge gate's persona hint (#451) on every resolved
+          // /me so a drifted or missing hint heals itself.
+          setPersonaHintCookie(currentUser.roles, hasPlatformAccess(currentUser));
           if (allowedKey.split(",").some((role) => currentUser.roles.includes(role as UserRole))) {
             setState({ checked: true, authorized: true, user: currentUser });
             setSentryUser({
@@ -108,6 +116,7 @@ export function usePersonaAuth(
             // client session may still be present, so without this the dead
             // session's user would stay attached to later events (#750).
             setSentryUser(null);
+            clearPersonaHintCookie();
             setState({ checked: true, authorized: false, user: null });
             replaceLocation(router, loginPathForError(err));
             return;
@@ -196,6 +205,7 @@ export function usePlatformAuth(): PlatformAuthState & { retry: () => void } {
       if (!firebaseUser) {
         if (!cancelled) {
           setSentryUser(null);
+          clearPersonaHintCookie();
           setState({ checked: true, authorized: false, user: null, isAdmin: false });
           replaceLocation(router, "/login");
         }
@@ -205,6 +215,7 @@ export function usePlatformAuth(): PlatformAuthState & { retry: () => void } {
       void withTransientRetry(getCurrentUser)
         .then((currentUser) => {
           if (cancelled) return;
+          setPersonaHintCookie(currentUser.roles, hasPlatformAccess(currentUser));
           if (hasPlatformAccess(currentUser)) {
             setState({
               checked: true,
@@ -233,6 +244,7 @@ export function usePlatformAuth(): PlatformAuthState & { retry: () => void } {
             // Same as the persona hook: a rejected backend session must clear
             // the Sentry identity even though Firebase still has a user (#750).
             setSentryUser(null);
+            clearPersonaHintCookie();
             setState({
               checked: true,
               authorized: false,

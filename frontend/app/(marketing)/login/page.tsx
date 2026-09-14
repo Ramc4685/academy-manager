@@ -6,6 +6,7 @@ import { Suspense, useEffect, useState } from "react";
 
 import {
   completeGoogleRedirectSignIn,
+  onAuthChange,
   sendPasswordReset,
   signInWithEmail,
   signInWithGoogle,
@@ -19,6 +20,8 @@ import {
   consumePendingParentRegistration,
 } from "@/lib/auth/parent-registration-continuation";
 import { clearBffIdentityCookie } from "@/lib/api/auth-bridge-cookie";
+import { clearPersonaHintCookie } from "@/lib/auth/persona-hint-cookie";
+import { sanitizeReturnPath } from "@/lib/auth/persona-route-guard";
 import { brand } from "@/lib/brand";
 
 const HERO_IMAGE =
@@ -40,6 +43,27 @@ function LoginPageContent() {
     setHydrated(true);
     let cancelled = false;
     clearBffIdentityCookie();
+
+    // `returnTo` means the edge persona gate bounced us here (#451). The
+    // Firebase session outlives the hourly identity cookie, so a still
+    // signed-in visitor must not be asked to retype their password: hand
+    // them back to /post-login, which re-stamps the cookies and routes them.
+    // /post-login is outside the gate's matcher, so this cannot loop. The deep
+    // link rides along so post-login can land them on the page they asked for
+    // instead of their persona home.
+    const bouncedFrom = searchParams.get("returnTo");
+    let unsubscribeBounce: (() => void) | undefined;
+    if (bouncedFrom) {
+      const safeReturn = sanitizeReturnPath(bouncedFrom);
+      const handOff = safeReturn
+        ? `/post-login?returnTo=${encodeURIComponent(safeReturn)}`
+        : "/post-login";
+      unsubscribeBounce = onAuthChange((user) => {
+        if (!cancelled && user) {
+          router.replace(handOff as Parameters<typeof router.replace>[0]);
+        }
+      });
+    }
 
     const prefillEmail = searchParams.get("email");
     if (prefillEmail) {
@@ -67,6 +91,7 @@ function LoginPageContent() {
 
     return () => {
       cancelled = true;
+      unsubscribeBounce?.();
     };
   }, [router]);
 
@@ -77,6 +102,7 @@ function LoginPageContent() {
     setNotice(null);
     try {
       clearBffIdentityCookie();
+      clearPersonaHintCookie();
       const user = await signInWithEmail(email, password);
       if (consumePendingParentRegistration(user.email)) {
         if (!user.emailVerified) {
@@ -103,6 +129,7 @@ function LoginPageContent() {
     setNotice(null);
     try {
       clearBffIdentityCookie();
+      clearPersonaHintCookie();
       const user = await signInWithGoogle();
       if (user) router.push("/post-login");
     } catch (err) {

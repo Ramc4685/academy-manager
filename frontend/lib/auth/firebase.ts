@@ -29,6 +29,7 @@ import { resolveAuthDomain } from "@/lib/auth/auth-domain";
 import { shouldUseRedirectForGoogleSignIn } from "@/lib/auth/google-sign-in-mode";
 import { getReadyIdToken } from "@/lib/auth/token-readiness";
 import { clearBffIdentityCookie } from "@/lib/api/auth-bridge-cookie";
+import { clearPersonaHintCookie } from "@/lib/auth/persona-hint-cookie";
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -260,6 +261,8 @@ export async function confirmPasswordResetValue(
 
 export async function signOutCurrent(): Promise<void> {
   clearBffIdentityCookie();
+  // Leave no persona hint behind for the next user of a shared device (#451).
+  clearPersonaHintCookie();
   if (E2E_BYPASS) return;
   await signOut(auth());
 }
