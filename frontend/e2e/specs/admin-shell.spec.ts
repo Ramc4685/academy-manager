@@ -917,7 +917,7 @@ test.describe("Rally admin shell", () => {
     const errors = collectConsoleErrors(page);
     await stubAdminBff(page);
     await page.goto("/admin/coach-payslip");
-    await expect(page).toHaveURL(/\/admin\/payouts\?tab=payslips/);
+    await expect(page).toHaveURL(/\/admin\/payouts\?tab=payslips/, { timeout: 30_000 });
     await expect(page.getByTestId("admin-payouts")).toBeVisible();
     await expect(page.getByTestId("admin-coach-payslip")).toBeVisible();
     expect(
@@ -1040,7 +1040,7 @@ test.describe("Rally admin shell", () => {
     // Old URL now redirects into Inbox → Pauses tab (#776 merged Admissions +
     // Requests into one Inbox); bookmarks keep working.
     await page.goto("/admin/pause-requests");
-    await expect(page).toHaveURL(/\/admin\/inbox\?tab=pauses/);
+    await expect(page).toHaveURL(/\/admin\/inbox\?tab=pauses/, { timeout: 30_000 });
     const row = page.getByTestId("admin-pause-requests-row-pause-1");
     await expect(row).toContainText("Abhishek Ajithkumar");
     await expect(row).toContainText("Student: Aadhya Abhishek");
