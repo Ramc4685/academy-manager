@@ -1,3 +1,5 @@
+# Batch 6: scope coach lookup and identify Sentry users
+
 ## What changed
 - Fixes #521 — Admin session-detail page fetched the entire tenant user directory (all roles) just to label coach names in the replacement-coach table. Switched to `listAdminUsers("coach")` / `queryKeys.admin.users("coach")` so it fetches only coach-role users, matching the API's existing role filter support.
 - Fixes #750 — Frontend Sentry now identifies the signed-in user (`Sentry.setUser`), so "users affected" on Sentry issues stops reading 0.
