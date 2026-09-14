@@ -4,7 +4,15 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { onAuthChange } from "@/lib/auth/firebase";
 import { clearBffIdentityCookie } from "@/lib/api/auth-bridge-cookie";
-import { getCurrentUserWithToken, homeForRoles } from "@/lib/api/me";
+import {
+  getCurrentUserWithToken,
+  hasPlatformAccess,
+  homeForRoles,
+} from "@/lib/api/me";
+import {
+  clearPersonaHintCookie,
+  setPersonaHintCookie,
+} from "@/lib/auth/persona-hint-cookie";
 import { loginPathForError } from "@/lib/auth/login-error";
 import { isAuthRejection, withTransientRetry } from "@/lib/auth/me-failure";
 
@@ -18,6 +26,7 @@ export default function PostLoginPage() {
       onAuthChange((user) => {
         if (!user) {
           clearBffIdentityCookie();
+          clearPersonaHintCookie();
           router.replace("/login");
           return;
         }
@@ -27,6 +36,13 @@ export default function PostLoginPage() {
           user.getIdToken(true).then((idToken) => getCurrentUserWithToken(idToken)),
         )
           .then((currentUser) => {
+            // Persona hint for the edge gate (#451): written here, where the
+            // persona is first known, so the next visit to a shell is
+            // decided before anything paints.
+            setPersonaHintCookie(
+              currentUser.roles,
+              hasPlatformAccess(currentUser),
+            );
             replaceLocation(router, homeForRoles(currentUser.roles));
           })
           .catch((err: unknown) => {
@@ -34,6 +50,7 @@ export default function PostLoginPage() {
               // 401/403: the backend rejected this session — treat as a real
               // auth failure and bounce to /login with the reason code.
               clearBffIdentityCookie();
+              clearPersonaHintCookie();
               replaceLocation(router, loginPathForError(err));
               return;
             }
