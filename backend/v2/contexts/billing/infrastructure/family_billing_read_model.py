@@ -276,6 +276,7 @@ class MongoFamilyBillingReadModel:
             )
             for inv in invoice_docs
         )
+        email_delivery = await self._email_delivery(parent.email, warnings)
         facts = FamilyFacts(
             parent=parent,
             students=students,
@@ -313,7 +314,7 @@ class MongoFamilyBillingReadModel:
             available_credit_cents=_int(available_credit),
             connected_account_ready=connected_ready,
             warnings=tuple(dict.fromkeys(warnings)),
-            email_delivery=await self._email_delivery(parent.email, warnings),
+            email_delivery=email_delivery,
         )
         if warnings:
             log.warning("family billing read model: %s for parent %s", warnings, parent_id)

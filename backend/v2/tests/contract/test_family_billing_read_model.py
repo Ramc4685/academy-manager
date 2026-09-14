@@ -501,6 +501,28 @@ async def test_secondary_source_failure_becomes_a_warning(db, acad, monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_suppression_lookup_failure_reaches_the_view_warnings(db, acad) -> None:
+    """A failing suppression lookup must degrade to a *visible* warning (#778).
+
+    ``warnings`` is built while ``_email_delivery`` may still append to it, so
+    the tuple has to be frozen after that call, not before.
+    """
+
+    class BoomSuppressions:
+        async def get_active(self, _email: str):
+            raise RuntimeError("suppressions down")
+
+    await _seed_family(db, acad)
+    model = _read_model(db)
+    model._suppressions = BoomSuppressions()
+
+    view = await model.build("p-1")
+
+    assert view is not None
+    assert "email_delivery_unavailable" in view["warnings"]
+
+
+@pytest.mark.asyncio
 async def test_display_cap_never_drops_an_open_invoice_from_the_balance(db, acad) -> None:
     """The cap bounds the response, not the money. An old open invoice buried
     under 200 paid ones must still count toward the balance the admin collects on."""
