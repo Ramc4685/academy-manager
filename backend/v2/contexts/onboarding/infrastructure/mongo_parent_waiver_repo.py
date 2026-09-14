@@ -14,6 +14,7 @@ from backend.v2.contexts.onboarding.application.use_cases.parent_student_waivers
 )
 from backend.v2.contexts.onboarding.domain.models import WaiverSignature
 from backend.v2.contexts.onboarding.infrastructure.mongo_waiver_template_repo import (
+    LIVE_TEMPLATE_STATUSES,
     MongoWaiverTemplateRepository,
 )
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
@@ -64,7 +65,10 @@ class MongoParentWaiverRepository(TenantScopedRepository):
         cursor = self._db["waiver_templates"].find(
             {
                 "academy_id": academy_id,
-                "status": "active",
+                # Same status set the registration read uses (#785) — they
+                # disagreed, so a "published" row was required at registration
+                # and unsignable from the parent waiver page.
+                "status": {"$in": list(LIVE_TEMPLATE_STATUSES)},
                 "assigned_to_registration": True,
             },
             sort=[("assigned_at", -1), ("effective_from", -1)],
@@ -149,6 +153,8 @@ class MongoParentWaiverRepository(TenantScopedRepository):
                     student_id=student_id,
                     waiver_template_id=str(doc.get("waiver_template_id") or "") or None,
                     content_hash=str(doc.get("content_hash") or "") or None,
+                    parent_user_id=self._signing_parent_id(doc),
+                    outdated_for_parent=bool(doc.get("outdated_for_parent") or False),
                     signed_at=self._as_datetime(doc.get("signed_at")),
                 )
 
@@ -181,9 +187,23 @@ class MongoParentWaiverRepository(TenantScopedRepository):
                     waiver_version=str(doc.get("waiver_version") or "") or None,
                     content_hash=str(doc.get("content_hash") or doc.get("waiver_text_hash") or "")
                     or None,
+                    parent_user_id=self._signing_parent_id(doc),
+                    outdated_for_parent=bool(doc.get("outdated_for_parent") or False),
                     signed_at=self._as_datetime(doc.get("accepted_at")),
                 )
         return out
+
+    @staticmethod
+    def _signing_parent_id(doc: dict[str, Any]) -> str | None:
+        """Who actually gave this consent.
+
+        Carried through so a child moved to a new guardian (#785) stops reading
+        as "signed" off the previous parent's signature. Rows written before
+        the field existed return ``None``, which the use case treats as "signer
+        unknown" and leaves alone rather than nagging every existing family.
+        """
+        value = doc.get("parent_user_id") or doc.get("parent_id")
+        return str(value) if value else None
 
     async def save_signature(self, signature: WaiverSignature) -> None:
         artifact_id = signature.artifact_id or f"wa_{signature.waiver_signature_id}"

@@ -33,6 +33,11 @@ import {
   pendingCancellationLabel,
 } from "@/lib/format/cancellation-copy";
 import {
+  departureLabel,
+  departureReasonNote,
+  isDepartedEnrollment,
+} from "@/lib/format/departure-copy";
+import {
   holdReturnLabel,
   holdScheduleNote,
   isHeldEnrollment,
@@ -328,6 +333,10 @@ function EnrollmentRow({
   // #740: a held enrollment cannot be self-cancelled (the API allows it only
   // while active), so offering the button here would only produce an error.
   const held = isHeldEnrollment(enrollment);
+  // #775: a terminal row carried for history. It is not a seat and not money,
+  // so it gets a date and a reason — never a cancel button.
+  const departed = isDepartedEnrollment(enrollment);
+  const departureNote = departureReasonNote(enrollment.departure_reason);
 
   return (
     <li className="rounded-xl p-3 bg-rally-paper">
@@ -335,24 +344,39 @@ function EnrollmentRow({
         <div className="min-w-0">
           <p className="text-sm font-semibold truncate text-rally-ink">{enrollment.session_title}</p>
           <p className="text-xs mt-0.5 text-rally-muted">
-            {held
-              ? "Your child's place is being kept"
-              : pendingLabel
-                ? "Cancellation scheduled"
-                : "Active enrollment"}
+            {departed
+              ? "Your child has left this class"
+              : held
+                ? "Your child's place is being kept"
+                : pendingLabel
+                  ? "Cancellation scheduled"
+                  : "Active enrollment"}
           </p>
-          {held && (
+          {departed && (
+            <div className="mt-1" data-testid={`enrollment-departed-${enrollment.enrollment_id}`}>
+              <Chip
+                variant="expired"
+                label={departureLabel(enrollment.left_on, (iso) =>
+                  formatAcademyDate(iso, academyTimezone),
+                )}
+              />
+              {departureNote && (
+                <p className="text-[11px] mt-1 text-rally-muted">{departureNote}</p>
+              )}
+            </div>
+          )}
+          {!departed && held && (
             <div className="mt-1">
               <Chip variant="paused" label={holdReturnLabel(enrollment.hold_return_on)} />
             </div>
           )}
-          {!held && pendingLabel && (
+          {!departed && !held && pendingLabel && (
             <div className="mt-1">
               <Chip variant="pending" label={pendingLabel} />
             </div>
           )}
         </div>
-        {!held && !pendingLabel && (
+        {!departed && !held && !pendingLabel && (
           <Button variant="danger" size="sm" onClick={() => setConfirming(true)}>
             Cancel enrollment…
           </Button>

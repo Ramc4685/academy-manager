@@ -218,6 +218,7 @@ class AdminStudentParentChangeView(BaseModel):
     previous_parent_id: str | None = None
     warnings: list[str] = []
     impact_counts: dict[str, int] = {}
+    rehomed_counts: dict[str, int] = {}
 
 
 class UpdateAdminUserRequest(BaseModel):

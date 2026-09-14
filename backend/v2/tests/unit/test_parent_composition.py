@@ -142,6 +142,12 @@ def _matches(doc: dict[str, Any], query: dict[str, Any]) -> bool:
         elif isinstance(expected, dict) and "$in" in expected:
             if doc.get(key) not in expected["$in"]:
                 return False
+        elif isinstance(expected, dict) and "$ne" in expected:
+            # Mongo's $ne matches documents where the field is ABSENT too —
+            # a fake that only compared present values would silently drop
+            # every row a real query returns.
+            if doc.get(key) == expected["$ne"]:
+                return False
         elif doc.get(key) != expected:
             return False
     return True
@@ -3544,3 +3550,100 @@ async def _seed_home_schedule(db: Any, now: datetime) -> None:
             },
         ]
     )
+
+
+@pytest.mark.asyncio
+async def test_parent_enrollments_include_the_latest_terminal_row_per_student() -> None:
+    """Issue #775: a family that left was a dead end.
+
+    ``list_enrollments_for_parent`` filtered to active/paused/held, so a
+    dropped child's card rendered empty — no history, and nothing to click
+    to come back. The departed row rides alongside the live ones, tagged
+    ``departed`` so no live-money reader can mistake it for a seat.
+    """
+    from datetime import UTC, datetime
+
+    older = datetime(2026, 3, 1, 9, 0, tzinfo=UTC)
+    newer = datetime(2026, 6, 1, 9, 0, tzinfo=UTC)
+    db = _FakeDb(
+        {
+            "students": _FakeCollection(
+                [
+                    {
+                        "academy_id": "acad",
+                        "student_id": "student-1",
+                        "parent_id": "parent-1",
+                        "full_name": "Alice Smith",
+                    }
+                ]
+            ),
+            "enrollments": _FakeCollection(
+                [
+                    {
+                        "academy_id": "acad",
+                        "enrollment_id": "enr-old",
+                        "student_id": "student-1",
+                        "session_id": "sess-1",
+                        "status": "withdrawn",
+                        "cancelled_at": older,
+                        "cancellation_reason": "conflict",
+                        "created_at": older,
+                    },
+                    {
+                        "academy_id": "acad",
+                        "enrollment_id": "enr-new",
+                        "student_id": "student-1",
+                        "session_id": "sess-2",
+                        "status": "cancelled",
+                        "cancelled_at": newer,
+                        "cancellation_reason": "move out of town",
+                        "created_at": newer,
+                    },
+                ]
+            ),
+            "sessions": _FakeCollection(
+                [
+                    {"academy_id": "acad", "session_id": "sess-1", "title": "Morning Squad"},
+                    {"academy_id": "acad", "session_id": "sess-2", "title": "Evening Squad"},
+                ]
+            ),
+        }
+    )
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=_PortalStripe(),  # type: ignore[arg-type]
+        academy_id="acad",
+    )
+
+    with tenant_scope("acad"):
+        rows = await parent.list_enrollments_for_parent("parent-1")
+
+    # Only the most recent departure per student, so a long-lived family with
+    # many past drops cannot turn the children card into a changelog.
+    assert [row["enrollment_id"] for row in rows] == ["enr-new"]
+    departed = rows[0]
+    assert departed["departed"] is True
+    # Canonical (#699) spelling, so the card reads a legacy "cancelled" row
+    # and a freshly written "deleted" one identically.
+    assert departed["status"] == "deleted"
+    assert departed["session_title"] == "Evening Squad"
+    assert departed["left_on"] == newer
+    assert departed["departure_reason"] == "move out of town"
+    # A departed row carries no live money: nothing here may arm the parent
+    # home's "payment failed" banner or offer an autopay control.
+    assert departed["autopay_enrollment_status"] is None
+    assert departed["last_attempt_outcome"] is None
+
+    # The row has to survive SERIALIZATION, not just composition: the endpoint
+    # builds ParentEnrollmentView(**row), and pydantic's default
+    # extra="ignore" silently drops any key the model does not declare. Asserting
+    # on the raw dict alone would pass while the HTTP response carried no
+    # departure at all.
+    from backend.v2.interfaces.parent.views import ParentEnrollmentView
+
+    view = ParentEnrollmentView(**departed).model_dump()
+    assert view["departed"] is True
+    assert view["left_on"] == newer
+    assert view["departure_reason"] == "move out of town"

@@ -1390,7 +1390,10 @@ export interface AdminStudentParentChangeView {
   parent: AdminStudentParentSummaryView;
   previous_parent_id: string | null;
   warnings: string[];
+  /** Rows deliberately left with the previous parent (settled history). */
   impact_counts: Record<string, number>;
+  /** What the change moved to the new parent: issue #785. */
+  rehomed_counts: Record<string, number>;
 }
 
 export interface ListAdminStudentsParams {

@@ -31,6 +31,14 @@ class ParentWaiverSignature(BaseModel):
     waiver_template_id: str | None = None
     waiver_version: str | None = None
     content_hash: str | None = None
+    # Who signed. A child whose guardian changed keeps the old parent's
+    # signature row, and keying only by student made the new parent's page read
+    # "signed" off a stranger's consent (#785). ``None`` means the stored row
+    # predates the field: treated as "signer unknown", never as a mismatch.
+    parent_user_id: str | None = None
+    # Stamped by the admin change-parent write. Belt and braces for rows whose
+    # ``parent_user_id`` is unknown but which we know were inherited.
+    outdated_for_parent: bool = False
     signed_at: datetime | None = None
 
 
@@ -88,7 +96,7 @@ class GetParentWaiverRequirement:
         signatures = await self._waivers.latest_signatures_for_students(
             [student.student_id for student in students]
         )
-        return _requirement_view(template, students, signatures)
+        return _requirement_view(template, students, signatures, parent_id=parent_id)
 
 
 class AcceptParentWaiver:
@@ -137,7 +145,7 @@ class AcceptParentWaiver:
         academy_id = self._academy_id()
         for student in students:
             existing = signatures.get(student.student_id)
-            if existing and _is_current(existing, template):
+            if existing and _is_current(existing, template) and _signed_by(existing, parent_id):
                 continue
             signature = WaiverSignature(
                 waiver_signature_id=self._id_factory(),
@@ -157,13 +165,15 @@ class AcceptParentWaiver:
         signatures = await self._waivers.latest_signatures_for_students(
             [student.student_id for student in students]
         )
-        return _requirement_view(template, students, signatures)
+        return _requirement_view(template, students, signatures, parent_id=parent_id)
 
 
 def _requirement_view(
     template: AdminWaiverTemplateRecord,
     students: list[ParentWaiverStudent],
     signatures: dict[str, ParentWaiverSignature],
+    *,
+    parent_id: str,
 ) -> ParentWaiverRequirement:
     return ParentWaiverRequirement(
         required=True,
@@ -172,7 +182,12 @@ def _requirement_view(
         version=template.version,
         body=template.body,
         students=[
-            _student_status(student, template, signatures.get(student.student_id))
+            _student_status(
+                student,
+                template,
+                signatures.get(student.student_id),
+                parent_id=parent_id,
+            )
             for student in students
         ],
     )
@@ -182,10 +197,12 @@ def _student_status(
     student: ParentWaiverStudent,
     template: AdminWaiverTemplateRecord,
     signature: ParentWaiverSignature | None,
+    *,
+    parent_id: str,
 ) -> ParentWaiverStudentStatus:
     if signature is None:
         status: ParentWaiverStatus = "pending"
-    elif _is_current(signature, template):
+    elif _is_current(signature, template) and _signed_by(signature, parent_id):
         status = "signed"
     else:
         status = "outdated"
@@ -196,6 +213,24 @@ def _student_status(
         signed_at=signature.signed_at if signature else None,
         waiver_version=signature.waiver_version or template.version if signature else None,
     )
+
+
+def _signed_by(signature: ParentWaiverSignature, parent_id: str) -> bool:
+    """True when this signature is the *requesting* parent's own consent.
+
+    Issue #785: signatures are keyed by student, so an admin moving a child to
+    a new guardian left the new parent's page reading "signed" off the previous
+    parent's consent — and `AcceptParentWaiver` skipped the child, so the
+    academy held no waiver from the person who now has custody.
+
+    A row with no recorded signer predates the field and is left alone: a
+    blanket re-sign prompt for every legacy family is worse than the gap.
+    """
+    if signature.outdated_for_parent:
+        return False
+    if signature.parent_user_id is None:
+        return True
+    return signature.parent_user_id == parent_id
 
 
 def _is_current(

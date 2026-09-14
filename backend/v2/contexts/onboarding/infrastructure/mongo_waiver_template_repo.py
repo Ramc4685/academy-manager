@@ -19,6 +19,15 @@ from backend.v2.contexts.onboarding.application.use_cases.admin_waiver_templates
 from backend.v2.contexts.onboarding.domain.models import WaiverTemplate
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 
+#: The raw ``waiver_templates.status`` spellings that mean "this row can be the
+#: academy's live waiver". ``active`` is what :meth:`publish_draft` writes;
+#: ``published`` is the older production spelling that ``_template_status``
+#: normalises to ``active`` on read. Both readers — the registration lookup
+#: here and the parent prompt in ``mongo_parent_waiver_repo`` — share this set,
+#: because when they disagreed (issue #785) a ``published`` row was required at
+#: registration and invisible to the parent who had to sign it.
+LIVE_TEMPLATE_STATUSES: tuple[str, ...] = ("active", "published")
+
 
 class MongoWaiverTemplateRepository(TenantScopedRepository):
     collection_name = "waiver_templates"
@@ -133,7 +142,7 @@ class MongoWaiverTemplateRepository(TenantScopedRepository):
 
     async def get_registration_template(self) -> AdminWaiverTemplateRecord | None:
         cursor = self._find_many(
-            {"status": {"$in": ["active", "published"]}, "assigned_to_registration": True},
+            {"status": {"$in": list(LIVE_TEMPLATE_STATUSES)}, "assigned_to_registration": True},
             sort=[("assigned_at", -1), ("effective_from", -1)],
             limit=1,
         )
@@ -165,26 +174,48 @@ class MongoWaiverTemplateRepository(TenantScopedRepository):
         published_at: datetime,
     ) -> AdminWaiverTemplateRecord:
         academy_id = current_academy_id()
-        await self.collection.update_many(
-            {
-                "academy_id": academy_id,
-                "status": {"$in": ["active", "published"]},
-                "waiver_template_id": {"$ne": waiver_template_id},
-            },
-            {"$set": {"status": "superseded", "updated_at": published_at}},
+        superseded_filter = {
+            "academy_id": academy_id,
+            "status": {"$in": list(LIVE_TEMPLATE_STATUSES)},
+            "waiver_template_id": {"$ne": waiver_template_id},
+        }
+        # Issue #785: ``assigned_to_registration`` marks "the waiver this
+        # academy asks new families to sign" — a property of the academy, not
+        # of one version. Publishing superseded the row carrying the flag and
+        # left it there, so `get_registration_template` found nothing and
+        # registration silently stopped requiring a waiver at all. Carry the
+        # assignment onto the version being published and clear it on the rows
+        # it supersedes, so exactly one row ever claims the slot.
+        inherits_registration = (
+            await self.collection.find_one(
+                {**superseded_filter, "assigned_to_registration": True}, {"_id": 1}
+            )
+            is not None
         )
-        await self._update_one(
-            {**self._id_filter(waiver_template_id), "status": "draft"},
+        await self.collection.update_many(
+            superseded_filter,
             {
                 "$set": {
-                    "status": "active",
-                    "version": version,
-                    "content_hash": content_hash,
-                    "effective_from": published_at,
-                    "published_at": published_at,
+                    "status": "superseded",
+                    "assigned_to_registration": False,
                     "updated_at": published_at,
                 }
             },
+        )
+        published_fields: dict[str, Any] = {
+            "status": "active",
+            "version": version,
+            "content_hash": content_hash,
+            "effective_from": published_at,
+            "published_at": published_at,
+            "updated_at": published_at,
+        }
+        if inherits_registration:
+            published_fields["assigned_to_registration"] = True
+            published_fields["assigned_at"] = published_at
+        await self._update_one(
+            {**self._id_filter(waiver_template_id), "status": "draft"},
+            {"$set": published_fields},
         )
         published = await self.get_template(waiver_template_id)
         if published is None:
