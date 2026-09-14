@@ -125,6 +125,12 @@ export interface ParentEnrollment {
   pending_cancellation_at?: string | null;
   /** Issue #740: ISO calendar date a hold is expected to end; null unless status is "held". */
   hold_return_on?: string | null;
+  /** Issue #775: a terminal row kept for history — never a seat and never money. */
+  departed?: boolean;
+  /** Instant the enrollment ended; null when the row was never dated. */
+  left_on?: string | null;
+  /** Free-text reason recorded when the child left, when there is one. */
+  departure_reason?: string | null;
   payment_mode: string | null;
   /** @deprecated Not populated by the v2 BFF; autopay state lives in autopay_enrollment_status. Do not read. */
   subscription_status: string | null;

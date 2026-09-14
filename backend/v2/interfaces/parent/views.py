@@ -288,6 +288,16 @@ class ParentEnrollmentView(BaseModel):
     # Issue #740: ISO calendar date the hold is expected to end; None unless
     # the row is held. A date, not an instant — it must not shift by zone.
     hold_return_on: str | None = None
+    # Issue #775: a terminal row carried alongside the live ones so a departed
+    # child's card shows the class that ended instead of nothing. These three
+    # MUST stay declared: the model would otherwise drop them on the floor
+    # (pydantic's default extra="ignore") and the portal could never render
+    # the departed state the composition takes the trouble to build.
+    departed: bool = False
+    #: Instant the enrollment ended (withdrawal or removal); None when undated.
+    left_on: datetime | None = None
+    #: Free-text reason the family or the academy recorded, when there is one.
+    departure_reason: str | None = None
     payment_mode: str | None = None
     subscription_status: str | None = None
     autopay_enrollment_status: str | None = None

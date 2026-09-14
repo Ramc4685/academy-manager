@@ -3635,3 +3635,15 @@ async def test_parent_enrollments_include_the_latest_terminal_row_per_student() 
     # home's "payment failed" banner or offer an autopay control.
     assert departed["autopay_enrollment_status"] is None
     assert departed["last_attempt_outcome"] is None
+
+    # The row has to survive SERIALIZATION, not just composition: the endpoint
+    # builds ParentEnrollmentView(**row), and pydantic's default
+    # extra="ignore" silently drops any key the model does not declare. Asserting
+    # on the raw dict alone would pass while the HTTP response carried no
+    # departure at all.
+    from backend.v2.interfaces.parent.views import ParentEnrollmentView
+
+    view = ParentEnrollmentView(**departed).model_dump()
+    assert view["departed"] is True
+    assert view["left_on"] == newer
+    assert view["departure_reason"] == "move out of town"
