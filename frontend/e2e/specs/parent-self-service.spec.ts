@@ -457,3 +457,65 @@ test.describe("parent self-service — progress", () => {
     await expect(page.getByText("Great footwork this week.")).toBeVisible();
   });
 });
+
+test.describe("parent self-service — re-enrol a departed child (#827)", () => {
+  test("offers 'Enroll in a class' on the departed row, with the child pre-bound", async ({
+    page,
+  }) => {
+    await stubParentIdentity(page);
+    await stubAcademyAndChildren(page);
+
+    await page.route("**/api/v2/parent/attendance", async (route: Route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ records: [] }),
+      });
+    });
+    await page.route(`**/api/v2/parent/children/${STUDENT_ID}/schedule`, async (route: Route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ entries: [], total: 0, limit: 20, offset: 0 }),
+      });
+    });
+    // #826: the parent enrollments feed carries the latest departure per child.
+    await page.route("**/api/v2/parent/enrollments", async (route: Route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          enrollments: [
+            {
+              enrollment_id: ENROLLMENT_ID,
+              student_id: STUDENT_ID,
+              student_name: STUDENT_NAME,
+              session_id: "sess-1",
+              session_title: SESSION_TITLE,
+              status: "dropped",
+              departed: true,
+              left_on: "2026-06-01T12:00:00Z",
+              departure_reason: "Moved away",
+              payment_mode: null,
+              subscription_status: null,
+            },
+          ],
+        }),
+      });
+    });
+
+    await page.goto("/parent/children");
+    await expect(page.getByTestId("parent-children")).toBeVisible();
+    await expect(page.getByTestId(`enrollment-departed-${ENROLLMENT_ID}`)).toBeVisible();
+
+    // A departed row is history: it must never offer a cancel (money) control.
+    await expect(page.getByRole("button", { name: "Cancel enrollment…" })).toHaveCount(0);
+
+    const reEnroll = page.getByTestId(`enrollment-re-enroll-${ENROLLMENT_ID}`);
+    await expect(reEnroll).toBeVisible();
+    await expect(reEnroll).toHaveAttribute("href", `/parent/onboarding?child=${STUDENT_ID}`);
+  });
+});

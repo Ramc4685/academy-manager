@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Button } from "@/components/ds/button";
@@ -44,6 +45,7 @@ import {
   partitionByHold,
 } from "@/lib/format/hold-copy";
 import { lifecycleLabel } from "@/lib/format/lifecycle-copy";
+import { reEnrollHref } from "@/lib/parent/re-enroll";
 
 // Avatar gradients are shared with the kid-first Home cards so the same child
 // wears the same colour on both screens (lib/avatar-gradient.ts).
@@ -376,6 +378,18 @@ function EnrollmentRow({
             </div>
           )}
         </div>
+        {/* #827: the way back in. A departed row is still history — this is a
+            link into onboarding with the child pinned, never an action on the
+            dead enrollment, and never a payment control. */}
+        {departed && (
+          <Link
+            href={reEnrollHref(enrollment.student_id) as Parameters<typeof Link>[0]["href"]}
+            data-testid={`enrollment-re-enroll-${enrollment.enrollment_id}`}
+            className="inline-flex h-[30px] shrink-0 items-center justify-center rounded-lg border border-rally-line bg-white px-3 text-xs font-semibold text-rally-ink transition-colors hover:bg-rally-paper"
+          >
+            Enroll in a class
+          </Link>
+        )}
         {!departed && !held && !pendingLabel && (
           <Button variant="danger" size="sm" onClick={() => setConfirming(true)}>
             Cancel enrollment…
