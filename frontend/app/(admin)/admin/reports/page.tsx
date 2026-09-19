@@ -189,7 +189,7 @@ export default function AdminMonthClosePage() {
                 value={period}
                 onChange={(event) => setPeriod(event.target.value || currentPeriod())}
                 data-testid="month-close-period"
-                className="h-10 rounded-md border border-rally-line bg-white px-3 text-sm text-rally-ink shadow-sm focus:border-rally-accent focus:outline-none focus:ring-2 focus:ring-rally-accent/20 dark:bg-neutral-950"
+                className="h-10 rounded-md border border-rally-line bg-white px-3 text-sm text-rally-ink shadow-sm focus:border-rally-cobalt-600 focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/15 dark:bg-neutral-950"
               />
             </label>
             <Button
@@ -277,7 +277,7 @@ export default function AdminMonthClosePage() {
               <Link
                 href="/admin/payments"
                 data-testid="autopay-run-failed-link"
-                className="mt-4 inline-block text-sm font-medium text-rally-accent hover:underline"
+                className="mt-4 inline-block text-sm font-medium text-rally-cobalt-600 hover:underline"
               >
                 Work the Failed autopay bucket
               </Link>
@@ -322,7 +322,7 @@ export default function AdminMonthClosePage() {
                         <li key={`${item.kind}:${item.id}`} className="px-3 py-2 text-sm">
                           <Link
                             href={item.href as Route}
-                            className="font-medium text-rally-accent hover:underline"
+                            className="font-medium text-rally-cobalt-600 hover:underline"
                           >
                             {item.label}
                           </Link>
@@ -803,10 +803,10 @@ export default function AdminMonthClosePage() {
         <div className="grid gap-4 lg:grid-cols-3">
           {FINANCIAL_REPORTS.map((report) => (
             <Link key={report.href} href={report.href} className="block">
-              <Card p={20} className="flex h-full flex-col transition-colors hover:border-rally-accent">
+              <Card p={20} className="flex h-full flex-col transition-colors hover:border-rally-cobalt-600">
                 <h2 className="font-semibold text-lg">{report.title}</h2>
                 <p className="mt-1 min-h-[3rem] text-sm text-neutral-500 flex-1">{report.description}</p>
-                <span className="mt-4 text-sm font-medium text-rally-accent">Open report</span>
+                <span className="mt-4 text-sm font-medium text-rally-cobalt-600">Open report</span>
               </Card>
             </Link>
           ))}

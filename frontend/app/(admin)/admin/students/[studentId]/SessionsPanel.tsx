@@ -320,7 +320,7 @@ function SessionsPanel({
                     <td className="py-3 align-top">
                       <div className="flex items-center justify-end gap-3">
                         <button
-                          className="text-xs font-medium text-rally-blue hover:underline"
+                          className="text-xs font-medium text-rally-cobalt-600 hover:underline"
                           onClick={() => {
                             setBillingOverride(session);
                             setOverrideAmount(
@@ -333,7 +333,7 @@ function SessionsPanel({
                           Fee
                         </button>
                         <button
-                          className="text-xs font-medium text-rally-blue hover:underline"
+                          className="text-xs font-medium text-rally-cobalt-600 hover:underline"
                           onClick={() => {
                             setDiscounting(session);
                             const d = session.discount;
@@ -442,7 +442,7 @@ function SessionsPanel({
                   New session
                 </label>
                 <select
-                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-blue dark:bg-neutral-800"
+                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:border-rally-cobalt-600 focus:ring-rally-cobalt-600/15 dark:bg-neutral-800"
                   value={targetSessionId}
                   onChange={(e) => setTargetSessionId(e.target.value)}
                   disabled={sessionsQuery.isPending}
@@ -464,7 +464,7 @@ function SessionsPanel({
                 </label>
                 <input
                   type="date"
-                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-blue dark:bg-neutral-800"
+                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:border-rally-cobalt-600 focus:ring-rally-cobalt-600/15 dark:bg-neutral-800"
                   value={effectiveDate}
                   onChange={(e) => setEffectiveDate(e.target.value)}
                 />
@@ -475,7 +475,7 @@ function SessionsPanel({
                   Reason (optional)
                 </label>
                 <textarea
-                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-blue dark:bg-neutral-800"
+                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:border-rally-cobalt-600 focus:ring-rally-cobalt-600/15 dark:bg-neutral-800"
                   rows={2}
                   placeholder="e.g. schedule conflict"
                   value={reason}
@@ -537,7 +537,7 @@ function SessionsPanel({
                   Category
                 </label>
                 <select
-                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-blue dark:bg-neutral-800"
+                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:border-rally-cobalt-600 focus:ring-rally-cobalt-600/15 dark:bg-neutral-800"
                   value={discountCategory}
                   onChange={(e) =>
                     setDiscountCategory(e.target.value as TuitionDiscountCategory)
@@ -557,7 +557,7 @@ function SessionsPanel({
                     Custom label
                   </label>
                   <input
-                    className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-blue dark:bg-neutral-800"
+                    className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:border-rally-cobalt-600 focus:ring-rally-cobalt-600/15 dark:bg-neutral-800"
                     placeholder="e.g. Founding family rate"
                     value={discountLabel}
                     onChange={(e) => setDiscountLabel(e.target.value)}
@@ -570,7 +570,7 @@ function SessionsPanel({
                   Type
                 </label>
                 <select
-                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-blue dark:bg-neutral-800"
+                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:border-rally-cobalt-600 focus:ring-rally-cobalt-600/15 dark:bg-neutral-800"
                   value={discountKind}
                   onChange={(e) =>
                     setDiscountKind(e.target.value as TuitionDiscountKind)
@@ -596,7 +596,7 @@ function SessionsPanel({
                   <input
                     type="number"
                     min="0"
-                    className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-blue dark:bg-neutral-800"
+                    className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:border-rally-cobalt-600 focus:ring-rally-cobalt-600/15 dark:bg-neutral-800"
                     value={discountValue}
                     onChange={(e) => setDiscountValue(e.target.value)}
                   />
@@ -609,7 +609,7 @@ function SessionsPanel({
                 </label>
                 <input
                   type="date"
-                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-blue dark:bg-neutral-800"
+                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:border-rally-cobalt-600 focus:ring-rally-cobalt-600/15 dark:bg-neutral-800"
                   value={discountStart}
                   onChange={(e) => setDiscountStart(e.target.value)}
                 />
@@ -620,7 +620,7 @@ function SessionsPanel({
                   Private note (optional)
                 </label>
                 <textarea
-                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-blue dark:bg-neutral-800"
+                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:border-rally-cobalt-600 focus:ring-rally-cobalt-600/15 dark:bg-neutral-800"
                   rows={2}
                   value={discountNote}
                   onChange={(e) => setDiscountNote(e.target.value)}
@@ -726,7 +726,7 @@ function SessionsPanel({
                   type="number"
                   min="0"
                   step="0.01"
-                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-blue dark:bg-neutral-800"
+                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:border-rally-cobalt-600 focus:ring-rally-cobalt-600/15 dark:bg-neutral-800"
                   value={overrideAmount}
                   onChange={(event) => setOverrideAmount(event.target.value)}
                 />
@@ -799,7 +799,7 @@ function AutopayChipLink({
   return (
     <Link
       href={href as Route}
-      className="rounded-full focus:outline-none focus:ring-2 focus:ring-rally-blue"
+      className="rounded-full focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600"
       title="Manage autopay on the family billing page"
       data-testid={testId}
       data-autopay-status={status ?? "none"}
@@ -872,7 +872,7 @@ function PastEnrollmentsPanel({ rows }: { rows: AdminStudentSessionSummary[] }) 
                       <Link
                         href={sessionRosterHref(row.sessionId) as Parameters<typeof Link>[0]["href"]}
                         data-testid={`admin-student-re-enroll-${row.enrollmentId}`}
-                        className="text-xs font-medium text-rally-blue hover:underline"
+                        className="text-xs font-medium text-rally-cobalt-600 hover:underline"
                       >
                         Re-enroll
                       </Link>
