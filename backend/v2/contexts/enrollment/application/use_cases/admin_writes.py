@@ -940,6 +940,18 @@ class EditRosterAdd:
             await self._enrollments.create(enrollment)
         except DuplicateKeyError as exc:
             await self._release_quietly(cmd.session_id, acquisition)
+            # #836: the pre-check passed, so an E11000 here means an index the
+            # application rules do not expect (#835 was a prod-only one). Name
+            # it, or the 409 below is all anyone ever sees.
+            log.warning(
+                "enrollment.roster_add_duplicate_key",
+                extra={
+                    "session_id": cmd.session_id,
+                    "student_id": cmd.student_id,
+                    "key_pattern": (exc.details or {}).get("keyPattern"),
+                    "mongo_error": str(exc),
+                },
+            )
             raise StudentAlreadyOnRoster(
                 f"Could not add {cmd.full_name} — a conflicting record already "
                 f"exists for this student. If they are already on the roster, "
