@@ -212,7 +212,7 @@ function SkillCard({
             )}
           </div>
           {entry.skill_description && (
-            <p className="mt-0.5 text-xs text-neutral-400 line-clamp-2">{entry.skill_description}</p>
+            <p className="mt-0.5 text-xs text-rally-muted line-clamp-2">{entry.skill_description}</p>
           )}
         </div>
         <span
@@ -224,7 +224,7 @@ function SkillCard({
 
       {/* Test info */}
       {entry.test_attempt_count > 0 && (
-        <p className="mb-3 text-xs text-neutral-400">
+        <p className="mb-3 text-xs text-rally-muted">
           {entry.test_attempt_count} test attempt{entry.test_attempt_count !== 1 ? "s" : ""}
           {entry.last_tested_at && (
             <> · last{" "}
@@ -362,7 +362,7 @@ function FieldHint({
     <span
       tabIndex={0}
       aria-label={message}
-      className="group relative inline-flex text-neutral-400 focus:outline-none"
+      className="group relative inline-flex text-rally-muted focus:outline-none"
     >
       <CircleHelp className="size-3.5" aria-hidden="true" />
       <span

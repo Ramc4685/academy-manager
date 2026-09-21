@@ -159,7 +159,7 @@ export default function AdminStudentProgressPage() {
           <h1 className="text-2xl font-semibold">
             {student?.full_name ?? "Student Progress"}
           </h1>
-          <p className="mt-0.5 text-sm text-neutral-500">Skill pathway progress</p>
+          <p className="mt-0.5 text-sm text-rally-muted">Skill pathway progress</p>
         </div>
         <Button variant="primary" size="sm" onClick={() => setShowPlaceForm((v) => !v)}>
           {showPlaceForm ? "Cancel" : "Place in Level"}
@@ -224,7 +224,7 @@ export default function AdminStudentProgressPage() {
                 ))}
               </select>
               {placeProgramId && placeLevels.length === 0 && (
-                <p className="mt-1 text-xs text-neutral-500">
+                <p className="mt-1 text-xs text-rally-muted">
                   No levels found for this program.
                 </p>
               )}
@@ -251,7 +251,7 @@ export default function AdminStudentProgressPage() {
 
       {/* Progress summary */}
       {!selectedProgramId ? (
-        <p className="text-sm text-neutral-500">Select a program to view progress.</p>
+        <p className="text-sm text-rally-muted">Select a program to view progress.</p>
       ) : isError ? (
         <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
           Could not load progress.
@@ -264,7 +264,7 @@ export default function AdminStudentProgressPage() {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-lg font-semibold">{progress.program_name}</p>
-                <p className="text-sm text-neutral-500">
+                <p className="text-sm text-rally-muted">
                   Current level:{" "}
                   <span className="font-medium text-rally-base">
                     {progress.current_level_name ?? "Not placed"}
@@ -280,7 +280,7 @@ export default function AdminStudentProgressPage() {
 
             {/* Progress bar */}
             <div>
-              <div className="mb-1 flex justify-between text-xs text-neutral-500">
+              <div className="mb-1 flex justify-between text-xs text-rally-muted">
                 <span>Skills passed</span>
                 <span>
                   {progress.passed_skills} / {progress.total_skills} ({passedPct}%)
@@ -325,7 +325,7 @@ export default function AdminStudentProgressPage() {
       <div>
         <h2 className="mb-3 text-lg font-semibold">Certificates</h2>
         {certList.length === 0 ? (
-          <p className="text-sm text-neutral-500">No certificates yet.</p>
+          <p className="text-sm text-rally-muted">No certificates yet.</p>
         ) : (
           <div className="space-y-2">
             {certList.map((cert) => (
@@ -335,11 +335,11 @@ export default function AdminStudentProgressPage() {
               >
                 <div>
                   <p className="font-medium text-rally-base">{cert.level_name}</p>
-                  <p className="text-xs text-neutral-500">
+                  <p className="text-xs text-rally-muted">
                     {cert.program_name} · #{cert.cert_number}
                   </p>
                 </div>
-                <div className="text-right text-xs text-neutral-400">
+                <div className="text-right text-xs text-rally-muted">
                   <p>Completed {formatDate(cert.completed_at)}</p>
                   <p>Issued {formatDate(cert.issued_at)}</p>
                 </div>
@@ -379,7 +379,7 @@ function SkillPassportSection({
           ))}
         </div>
       ) : skills.length === 0 ? (
-        <p className="text-sm text-neutral-500">No skills found for this level.</p>
+        <p className="text-sm text-rally-muted">No skills found for this level.</p>
       ) : (
         <div className="space-y-3">
           {skills.map((entry) => (
@@ -456,10 +456,10 @@ function AdminSkillRow({
             )}
           </div>
           {entry.skill_description && (
-            <p className="mt-1 text-sm text-neutral-500">{entry.skill_description}</p>
+            <p className="mt-1 text-sm text-rally-muted">{entry.skill_description}</p>
           )}
           {entry.test_attempt_count > 0 && (
-            <p className="mt-2 text-xs text-neutral-500">
+            <p className="mt-2 text-xs text-rally-muted">
               {entry.test_attempt_count} test attempt
               {entry.test_attempt_count === 1 ? "" : "s"}
               {entry.last_tested_at
@@ -573,7 +573,7 @@ function FieldHint({
     <span
       tabIndex={0}
       aria-label={message}
-      className="group relative inline-flex text-neutral-400 focus:outline-none"
+      className="group relative inline-flex text-rally-muted focus:outline-none"
     >
       <CircleHelp className="size-3.5" aria-hidden="true" />
       <span
@@ -605,7 +605,7 @@ function StatTile({
       <p className="text-xl font-bold" style={{ color }}>
         {value}
       </p>
-      <p className="mt-0.5 text-[11px] font-medium text-neutral-500">{label}</p>
+      <p className="mt-0.5 text-[11px] font-medium text-rally-muted">{label}</p>
     </div>
   );
 }

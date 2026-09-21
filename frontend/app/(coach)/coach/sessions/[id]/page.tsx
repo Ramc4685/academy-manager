@@ -683,7 +683,7 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
               data-testid="mark-all-present"
               disabled={markAllPending || unmarkedStudentIds.length === 0}
               onClick={() => void handleMarkAll()}
-              className="min-h-[44px] rounded-md bg-green-600 px-3 py-1 text-xs font-semibold text-white transition-colors hover:bg-green-700 disabled:opacity-50"
+              className="min-h-[44px] rounded-md bg-status-green-800 px-3 py-1 text-xs font-semibold text-white transition-colors hover:opacity-90 disabled:opacity-50"
             >
               {markAllPending
                 ? "Marking all…"
@@ -774,8 +774,10 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   );
 }
 
+// border-2, not border: the 1px --rally-line hairline disappeared in outdoor
+// glare, which is exactly where coaches mark attendance (#844).
 const MARK_BUTTON_BASE =
-  "min-h-[44px] min-w-[44px] flex-1 rounded-md border px-3 py-1 text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none sm:min-w-[88px]";
+  "min-h-[44px] min-w-[44px] flex-1 rounded-md border-2 px-3 py-1 text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none sm:min-w-[88px]";
 const SECONDARY_BUTTON_BASE =
   "inline-flex min-h-[44px] flex-1 items-center justify-center rounded-md border px-3 py-1 text-xs font-medium transition-colors disabled:opacity-50 sm:flex-none";
 
@@ -930,13 +932,14 @@ function RosterRow({
               style={
                 marked === "present"
                   ? {
-                      background: "#16a34a",
-                      borderColor: "#16a34a",
+                      // status-green-800: 7.8:1 with white, where green-600 was 3.3:1.
+                      background: "#065f46",
+                      borderColor: "#065f46",
                       color: "#fff",
                       fontWeight: 700,
                     }
                   : {
-                      borderColor: "var(--rally-line)",
+                      borderColor: "var(--rally-muted)",
                       color: "var(--rally-muted)",
                     }
               }
@@ -959,13 +962,14 @@ function RosterRow({
               style={
                 marked === "absent"
                   ? {
+                      // red-600 on white is already 4.8:1 — left as shipped.
                       background: "#dc2626",
                       borderColor: "#dc2626",
                       color: "#fff",
                       fontWeight: 700,
                     }
                   : {
-                      borderColor: "var(--rally-line)",
+                      borderColor: "var(--rally-muted)",
                       color: "var(--rally-muted)",
                     }
               }

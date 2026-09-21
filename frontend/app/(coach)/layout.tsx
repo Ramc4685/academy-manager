@@ -210,7 +210,9 @@ function BottomTab({ href, label, active }: { href: string; label: string; activ
       href={href as Parameters<typeof Link>[0]["href"]}
       className="flex min-h-[var(--coach-bottom-nav-height)] flex-1 items-center justify-center text-sm font-medium transition-colors"
       style={{
-        color: active ? "#facc15" : "#64748b",
+        // rally.subtle-ink (#94a3b8) is the night-surface muted token: 7.5:1 on
+        // the #0a0f1c nav, where rally.muted (#64748b) was only 4.0:1 (#844).
+        color: active ? "#facc15" : "#94a3b8",
         borderTop: `2px solid ${active ? "#facc15" : "transparent"}`,
       }}
     >
