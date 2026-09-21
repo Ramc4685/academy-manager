@@ -573,9 +573,10 @@ async def _create_launch_specific_indexes(db) -> None:
         name="academy_settings_academy_unique",
     )
     await db["academy_settings"].create_index(
-        [("settings_id", 1)],
+        [("academy_id", 1), ("settings_id", 1)],
         unique=True,
-        name="academy_settings_id_unique",
+        partialFilterExpression={"settings_id": {"$gt": ""}},
+        name="academy_settings_id_per_academy_uq",
     )
     await db["invoices"].create_index(
         [("academy_id", 1), ("invoice_id", 1)],
