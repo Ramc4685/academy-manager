@@ -24,6 +24,7 @@ import { SessionDetailTabs } from "@/components/coach/SessionDetailTabs";
 import { Chip } from "@/components/ds/chip";
 import { formatCents } from "@/lib/money";
 import { queueMark, queuedMarksFor, type QueuedMark } from "@/lib/offline/attendance-queue";
+import { isBulkMarkEligible } from "@/lib/coach/bulk-eligibility";
 import { BulkMarkUndoWindow } from "@/lib/coach/bulk-mark-undo";
 import { markProgress } from "@/lib/coach/marking";
 import { onSync, syncNow } from "@/lib/offline/sync";
@@ -517,7 +518,13 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
         // Named ineligible by the last bulk attempt (#672): leave them out
         // of the retry; the row keeps its own explanation. Other rows' own
         // errors (a failed single tap) never shrink the retry.
-        !ineligibleIds.has(student.student_id),
+        !ineligibleIds.has(student.student_id) &&
+        // #866: and the two lifecycle facts the roster already shows — an
+        // ON HOLD seat, a parent's absence notice — so the count stops
+        // promising a number the server would refuse (or a parent already
+        // withdrew). The line above stays the authority for everything this
+        // cannot predict; nothing about the save path changes.
+        isBulkMarkEligible(student),
     )
     .map((student) => student.student_id);
   const queuedCount = Object.keys(queuedMarks).length;

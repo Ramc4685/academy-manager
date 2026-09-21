@@ -33,11 +33,20 @@ export interface MockState {
       roster: Array<{
         student_id: string;
         full_name: string;
-        enrollment_status: "active" | "paused" | "cancelled";
+        enrollment_status:
+          | "active"
+          | "paused"
+          | "held"
+          | "reclaim_pending"
+          | "cancelled";
         /** Seed a server-saved mark (hydrates the row as already marked). */
         attendance_status?: "present" | "absent" | "late" | null;
         /** "makeup" / "trial" renders the one-time chip (#672). */
         entry_source?: "enrollment" | "makeup" | "trial";
+        /** #773: the date a hold ends, rendered in the ON HOLD chip. */
+        hold_return_on?: string | null;
+        /** #866: a parent filed an absence notice for this occurrence. */
+        expected_absence?: boolean;
       }>;
     }>;
   };
