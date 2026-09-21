@@ -1,6 +1,6 @@
 # Batch 9: coach/admin a11y contrast fixes
 
-PR: #0
+PR: #851
 
 ## What changed
 - Fixes #844 — Swapped every contrast-failing colour named in #844 for the design-system token already calibrated for that surface: coach day-group headings, passport skill descriptions, and admin student-progress secondary text now use `text-rally-muted` instead of raw `text-neutral-400`/`text-neutral-500`.
