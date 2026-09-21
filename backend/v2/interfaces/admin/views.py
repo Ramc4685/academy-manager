@@ -1479,10 +1479,23 @@ class AdminMessageView(BaseModel):
     scope_label: str | None = None
     recipient_count: int | None = None
     delivery_status: str | None = None
+    #: The other party in a DM, from the reading admin's point of view (#864).
+    #: ``recipient_id`` is the admin on everything a family sends in, so it is
+    #: the wrong key to group a conversation by; this is the right one. ``None``
+    #: on an announcement, which has no counterparty.
+    counterparty_id: str | None = None
+    #: ``False`` only for a DM someone else sent this admin that they have not
+    #: opened yet. Broadcasts and the admin's own sends are never unread, so
+    #: the default is the safe one for any view that does not compute it.
+    is_read: bool = True
 
 
 class AdminMessageList(BaseModel):
     messages: list[AdminMessageView]
+
+
+class AdminMarkMessageReadResponse(BaseModel):
+    status: Literal["ok"] = "ok"
 
 
 AdminWaiverStatus = Literal["signed", "pending", "expiring", "outdated"]

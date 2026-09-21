@@ -1118,6 +1118,14 @@ export interface AdminMessageView {
   scope_label?: string | null;
   recipient_count?: number | null;
   delivery_status?: string | null;
+  /**
+   * #864: the family on the other side of a DM, from the reading admin's
+   * point of view. `recipient_id` is the admin themselves on everything a
+   * family sends in, so it is the wrong key to group a thread by.
+   */
+  counterparty_id?: string | null;
+  /** #864: false only for an incoming DM this admin has not opened yet. */
+  is_read?: boolean;
 }
 
 export interface AdminMessageList {
@@ -2889,6 +2897,14 @@ export function broadcastMessage(payload: BroadcastRequest): Promise<AdminMessag
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+/** #864: clear the unread marker on one incoming DM. Idempotent server-side. */
+export function markAdminMessageRead(messageId: string): Promise<{ status: string }> {
+  return apiFetch<{ status: string }>(
+    `/admin/messages/${encodeURIComponent(messageId)}/read`,
+    { method: "POST" },
+  );
 }
 
 export function sendDm(payload: DmRequest): Promise<AdminMessageView> {
