@@ -1,6 +1,6 @@
 # batch-10b: mobile polish for coach header, calendar, and parent screens
 
-PR: #0
+PR: #887
 
 ## What changed
 - Fixes #866 — Coach header no longer wraps at 400px: Calendar/Messages/Needs-review moved from the sticky header into the bottom nav, preserving existing data-testids.
