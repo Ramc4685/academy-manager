@@ -9,9 +9,14 @@ import {
   recomputeMonthlyPayroll,
   exportMonthlyPayrollXlsx,
 } from "@/lib/api/v2/payroll";
+import type { MonthlyPayrollStatus } from "@/lib/api/v2/payroll";
 import { generatePayoutPeriod } from "@/lib/api/v2/payouts";
 import { rowHasUnresolvedWarnings } from "@/lib/payroll-warnings";
+import { payslipChipFor } from "@/lib/payslip-chip";
+import { money } from "@/lib/format-money";
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { Chip } from "@/components/ds/chip";
+import { EmptyState } from "@/components/ds/empty-state";
 import { MonthPicker } from "./_components/MonthPicker";
 import { PayslipsPanel } from "./_components/PayslipsPanel";
 
@@ -64,7 +69,7 @@ function PayoutsContent() {
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [bulkConfirm, setBulkConfirm] = useState<BulkAction | null>(null);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["admin", "payroll", month],
     queryFn: () => listMonthlyPayroll(month),
   });
@@ -185,7 +190,15 @@ function PayoutsContent() {
               </button>
             </div>
 
-            {isLoading ? (
+            {isError ? (
+              <div role="alert">
+                <EmptyState
+                  data-testid="admin-payroll-error"
+                  title="Could not load payroll for this month."
+                  compact
+                />
+              </div>
+            ) : isLoading ? (
               <p className="text-sm text-muted-foreground">Loading…</p>
             ) : (
               <div className="overflow-x-auto">
@@ -208,27 +221,21 @@ function PayoutsContent() {
                         <td className="py-2 pr-4">{row.session_count}</td>
                         <td className="py-2 pr-4">
                           {row.unresolved_unpaid_count > 0 ? (
-                            <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
-                              {row.unresolved_unpaid_count} unresolved
-                            </span>
+                            <Chip variant="approval" label={`${row.unresolved_unpaid_count} unresolved`} />
                           ) : (
                             "0"
                           )}
                         </td>
-                        <td className="py-2 pr-4">
-                          {(row.total_amount_cents / 100).toFixed(2)} {row.currency}
-                        </td>
+                        <td className="py-2 pr-4">{money(row.total_amount_cents)}</td>
                         <td className="py-2 pr-4">
                           {row.warning_count > 0 ? (
-                            <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
-                              {row.warning_count} unresolved
-                            </span>
+                            <Chip variant="approval" label={`${row.warning_count} unresolved`} />
                           ) : (
-                            <span className="text-xs text-muted-foreground">Clear</span>
+                            <span className="text-xs text-rally-muted">Clear</span>
                           )}
                         </td>
                         <td className="py-2 pr-4">
-                          <StatusChip status={row.status} />
+                          <PayrollStatusChip status={row.status} />
                         </td>
                         <td className="py-2">
                           {row.period_id ? (
@@ -320,15 +327,7 @@ function PayoutsContent() {
   );
 }
 
-function StatusChip({ status }: { status: string }) {
-  const map: Record<string, { label: string; cls: string }> = {
-    not_generated: { label: "Not generated", cls: "bg-gray-100 text-gray-600" },
-    draft: { label: "Draft", cls: "bg-blue-100 text-blue-700" },
-    approved: { label: "Approved", cls: "bg-yellow-100 text-yellow-700" },
-    paid: { label: "Paid", cls: "bg-green-100 text-green-700" },
-  };
-  const { label, cls } = map[status] ?? { label: status, cls: "" };
-  return (
-    <span className={`rounded px-2 py-0.5 text-xs font-medium ${cls}`}>{label}</span>
-  );
+function PayrollStatusChip({ status }: { status: MonthlyPayrollStatus }) {
+  const chip = payslipChipFor(status, null);
+  return <Chip variant={chip.variant} label={chip.label} />;
 }
