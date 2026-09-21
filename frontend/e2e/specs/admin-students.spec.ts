@@ -72,7 +72,13 @@ async function stubAdminAcademy(page: Page) {
       address: null,
     });
   });
+  // Issue #842: AdminLayout now feeds the Inbox nav badge from this endpoint
+  // on every admin page, so every shell stub must cover it.
+  await page.route("**/api/v2/admin/inbox/counts", (route) =>
+    fulfillJson(route, { counts: {}, total: 0 }),
+  );
 }
+
 
 test.describe("admin students", () => {
   test("searches, filters, and loads the next cursor using BFF-rendered attendance and dues", async ({

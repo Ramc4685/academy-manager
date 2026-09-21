@@ -100,6 +100,11 @@ test.describe("SaaS v2 — waiver template versioning", () => {
     await stubMemberships(page, [
       { academy_id: ACADEMY_A, academy_name: "Aces Academy", role: "admin" },
     ]);
+    // Issue #842: AdminLayout now feeds the Inbox nav badge from this
+    // endpoint on every admin page, so every shell stub must cover it.
+    await page.route("**/api/v2/admin/inbox/counts", (route) =>
+      fulfillJson(route, { counts: {}, total: 0 }),
+    );
 
     const TEMPLATE_VERSION = "v4.2";
 

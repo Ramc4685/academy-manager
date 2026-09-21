@@ -416,6 +416,11 @@ test.describe("tuition discounts", () => {
       { academy_id: ACADEMY_A, academy_name: "Aces Academy", role: "admin" },
     ]);
     await stubAcademy(page, ACADEMY_A);
+    // Issue #842: AdminLayout now feeds the Inbox nav badge from this
+    // endpoint on every admin page, so every shell stub must cover it.
+    await page.route("**/api/v2/admin/inbox/counts", (route) =>
+      fulfillJson(route, { counts: {}, total: 0 }),
+    );
     await stubAdminStudentDiscounts(page, student);
     await page.route("**/api/v2/admin/enrollments/*/tuition-discount", (route) => {
       if (route.request().method() !== "PUT") return route.fallback();
