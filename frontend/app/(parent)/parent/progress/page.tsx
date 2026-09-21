@@ -29,7 +29,9 @@ const progressOverviewEnabled = process.env.NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW 
 // dynamic, so these stay as literal color stops (no single token pair
 // covers a rotating 6-way palette). Mirrors the per-child avatar gradient
 // exception in children/page.tsx.
-const ACCENTS = ["#2563eb", "#059669", "#7c3aed", "#d97706", "#0891b2", "#db2777"];
+// #843: the purple and pink stops were the only colours here with no token
+// behind them; the rotation is now Rally cobalt / slate plus DS status hues.
+const ACCENTS = ["#2563eb", "#059669", "#475569", "#d97706", "#0891b2", "#1e3a8a"];
 function noteAccent(id: string) {
   let h = 0;
   for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) & 0xffffffff;

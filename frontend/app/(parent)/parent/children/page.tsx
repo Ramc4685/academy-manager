@@ -11,6 +11,7 @@ import { FormField, fieldDescribedBy } from "@/components/ds/form-field";
 import { Chip } from "@/components/ds/chip";
 import { EmptyState } from "@/components/ds/empty-state";
 import { useToast } from "@/components/ds/toast";
+import { PauseEnrollmentForm } from "@/components/parent/pause-enrollment-form";
 import { queryKeys } from "@/lib/query/keys";
 import {
   getCancellationPreview,
@@ -331,6 +332,9 @@ function EnrollmentRow({
   academyTimezone: string | null;
 }) {
   const [confirming, setConfirming] = useState(false);
+  // #843: pausing moved here from the Payments page — it belongs with the
+  // class, next to cancel, not next to autopay setup.
+  const [pausing, setPausing] = useState(false);
   const pendingLabel = pendingCancellationLabel(enrollment.pending_cancellation_at, academyTimezone);
   // #740: a held enrollment cannot be self-cancelled (the API allows it only
   // while active), so offering the button here would only produce an error.
@@ -391,11 +395,28 @@ function EnrollmentRow({
           </Link>
         )}
         {!departed && !held && !pendingLabel && (
-          <Button variant="danger" size="sm" onClick={() => setConfirming(true)}>
-            Cancel enrollment…
-          </Button>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              data-testid={`enrollment-pause-${enrollment.enrollment_id}`}
+              aria-expanded={pausing}
+              onClick={() => setPausing((open) => !open)}
+            >
+              Pause enrollment
+            </Button>
+            <Button variant="danger" size="sm" onClick={() => setConfirming(true)}>
+              Cancel enrollment…
+            </Button>
+          </div>
         )}
       </div>
+      {pausing && (
+        <PauseEnrollmentForm
+          enrollmentId={enrollment.enrollment_id}
+          onCancel={() => setPausing(false)}
+        />
+      )}
       {confirming && (
         <CancelEnrollmentDialog
           enrollment={enrollment}

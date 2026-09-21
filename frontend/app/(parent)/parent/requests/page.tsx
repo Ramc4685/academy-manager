@@ -52,6 +52,8 @@ export default function ParentRequestsPage() {
         <p className="text-sm mt-0.5 text-rally-muted">Absences, makeups &amp; trial classes</p>
       </div>
 
+      {/* #843: the inactive tab label was rally-muted (#64748b) on the
+          rally-line track (#e2e8f0) — 3.86:1, under AA. slate-600 clears it. */}
       <div role="tablist" aria-label="Request type" className="flex gap-1 rounded-xl bg-rally-line p-1">
         {TABS.map((t) => (
           <button
@@ -63,7 +65,7 @@ export default function ParentRequestsPage() {
             className={`min-h-touch flex-1 rounded-lg text-sm font-semibold transition-all duration-150 ${
               tab === t.id
                 ? "bg-white text-rally-ink shadow-[0_1px_2px_rgba(0,0,0,0.06)]"
-                : "bg-transparent text-rally-muted"
+                : "bg-transparent text-status-slate-600"
             }`}
           >
             {t.label}
