@@ -1,6 +1,6 @@
 # batch-10: coach bulk attendance
 
-PR: #0
+PR: #868
 
 ## What changed
 - Fixes #866 — "Mark rest present (N)" on the coach session roster now pre-filters
