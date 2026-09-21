@@ -35,6 +35,7 @@ import { Avatar } from "@/components/ds/avatar";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
+import { ContactLinks } from "@/components/ds/contact-links";
 import { Overline } from "@/components/ds/typography";
 import { userLoginChip } from "@/lib/people-status";
 
@@ -436,22 +437,15 @@ function Header({ user }: { user: AdminUserDetail }) {
             </div>
           </div>
         </div>
-        <div className="text-sm text-rally-muted">
-          <a
-            href={`mailto:${user.email}`}
-            className="block hover:underline focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600 rounded"
-          >
-            {user.email}
-          </a>
-          {user.phone && (
-            <a
-              href={`tel:${user.phone}`}
-              className="block hover:underline focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600 rounded"
-            >
-              {user.phone}
-            </a>
-          )}
-        </div>
+        {/* #865: this page already had mailto:/tel:, but on its own; the
+            shared component adds WhatsApp and keeps it the same everywhere. */}
+        <ContactLinks
+          className="text-sm text-rally-muted"
+          data-testid="admin-user-contacts"
+          name={user.display_name}
+          email={user.email}
+          phone={user.phone}
+        />
       </div>
     </Card>
   );

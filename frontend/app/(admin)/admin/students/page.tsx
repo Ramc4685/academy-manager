@@ -342,6 +342,9 @@ function StudentsPhoneList({ students }: { students: AdminStudentView[] }) {
                 ]
               : []),
           ]}
+          // #865: the parent's address is already on line 2 — this makes
+          // reaching them a tap instead of a copy-paste.
+          contact={{ email: student.parent_email }}
           secondary={
             <>
               <div className="flex flex-wrap items-center gap-2">

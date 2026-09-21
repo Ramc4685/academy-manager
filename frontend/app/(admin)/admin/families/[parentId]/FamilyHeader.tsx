@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 
-import { Button, Card, Chip, Overline } from "@/components/ds";
+import { Button, Card, Chip, ContactLinks, Overline } from "@/components/ds";
 import type { AdminFamilyBillingView } from "@/lib/api/admin-families";
 import { formatCents, formatInstantDay } from "@/lib/money";
 
@@ -38,10 +38,19 @@ export function FamilyHeader({
             {parent.name ?? "Parent"}
           </h1>
           <p className="text-sm text-rally-muted">
-            {parent.email ?? "no email"} · {studentCount}{" "}
-            {studentCount === 1 ? "student" : "students"}
-            {parent.phone ? ` · ${parent.phone}` : ""}
+            {studentCount} {studentCount === 1 ? "student" : "students"}
           </p>
+          {/* #865: the email and the number were plain text here, so the one
+              thing an admin opens this page to do — reach the family about the
+              money on it — started with a copy-paste. */}
+          <ContactLinks
+            className="mt-0.5 text-sm text-rally-muted"
+            data-testid="family-contacts"
+            name={parent.name ?? undefined}
+            email={parent.email}
+            phone={parent.phone}
+            fallback="No contact details on file"
+          />
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <span data-testid="family-login-chip">
               <Chip variant={reg.login.variant} label={reg.login.label} />

@@ -45,6 +45,15 @@ export interface MenuItem {
   onSelect?: () => void;
   /** Renders the item as a link, so cmd/ctrl-click and open-in-new-tab work. */
   href?: MenuItemHref;
+  /**
+   * A non-route destination — `tel:`, `mailto:`, `https://wa.me/…` (#865).
+   *
+   * Separate from `href` on purpose. `href` is a typed `Route` under Next's
+   * typed-routes plugin, which rejects these strings, and handing a `tel:` to
+   * the client router is wrong anyway: it must be a plain `<a>` the platform
+   * hands to the dialer / mail client. Ignored when `href` is set.
+   */
+  externalHref?: string;
   disabled?: boolean;
   /**
    * One supporting line under the label (#859), for a menu whose verbs are not
@@ -61,6 +70,19 @@ export interface MenuItem {
   /** Rendered after the label, e.g. an OwnerOnlyHint for a disabled entry. */
   hint?: ReactNode;
   danger?: boolean;
+}
+
+/**
+ * Schemes a menu item may hand to the browser. An allowlist rather than a
+ * denylist: `externalHref` is a bare string built from stored, admin-entered
+ * contact details, and a `javascript:` or `data:` value reaching an anchor's
+ * href would run in the admin's own session.
+ */
+const EXTERNAL_HREF_SCHEMES = ["tel:", "mailto:", "https://"];
+
+function safeExternalHref(href: string | undefined): string | undefined {
+  if (!href) return undefined;
+  return EXTERNAL_HREF_SCHEMES.some((scheme) => href.startsWith(scheme)) ? href : undefined;
 }
 
 const MENU_MIN_WIDTH = 180;
@@ -295,6 +317,28 @@ export function OverflowMenu({
             >
               {body}
             </Link>
+          );
+        }
+        const external = item.disabled ? undefined : safeExternalHref(item.externalHref);
+        if (external) {
+          const newTab = external.startsWith("https:");
+          return (
+            <a
+              key={item.key}
+              ref={setItemRef}
+              href={external}
+              {...shared}
+              target={newTab ? "_blank" : undefined}
+              // Paired with target=_blank against reverse tabnabbing; harmless
+              // on the tel:/mailto: items, which stay in place.
+              rel="noopener noreferrer"
+              onClick={() => {
+                setOpen(false);
+                item.onSelect?.();
+              }}
+            >
+              {body}
+            </a>
           );
         }
         return (
