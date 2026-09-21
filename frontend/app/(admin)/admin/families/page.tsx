@@ -229,6 +229,12 @@ function FamiliesList({ rows }: { rows: BillingSetupRow[] }) {
  * fifth column of seven and never on screen, which is the one number that
  * decides whether this family needs chasing today.
  */
+/*
+ * #857: the actions trigger is `admin-families-actions-<id>`, deliberately NOT
+ * the row testid with `actions-` appended — an id that starts with the row's
+ * own `admin-families-row-` prefix is matched by every prefix selector that
+ * means to pick rows.
+ */
 function FamilyPhoneRow({ row }: { row: BillingSetupRow }) {
   const login = loginChip(loginStateFromRegistration(row.registration_state));
   const card = cardChip(cardStateFromRegistration(row.registration_state));
@@ -251,7 +257,7 @@ function FamilyPhoneRow({ row }: { row: BillingSetupRow }) {
         </span>
       }
       actionsLabel={`Actions for ${row.parent_name}`}
-      actionsTestId={`admin-families-row-actions-${row.parent_id}`}
+      actionsTestId={`admin-families-actions-${row.parent_id}`}
       actions={[{ key: "open", label: "Open family", href }]}
       secondary={
         <>

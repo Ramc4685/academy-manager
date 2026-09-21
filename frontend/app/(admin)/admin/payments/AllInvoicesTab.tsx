@@ -30,8 +30,10 @@ import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Field, Th } from "@/components/ds/dialog-chrome";
+import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { TableSkeleton } from "@/components/ds/skeleton";
 import { Overline } from "@/components/ds/typography";
+import { useIsPhone } from "@/lib/use-is-phone";
 
 import {
   formatCents,
@@ -52,6 +54,7 @@ import {
   InvoiceDialog,
   MarkPaidDialog,
   PaymentActions,
+  paymentMenuItems,
   RefundDialog,
   SyncStripeDialog,
   VoidPaymentDialog,
@@ -62,6 +65,7 @@ const STATUS_FILTER_WINDOW = 200;
 
 export function AllInvoicesTab() {
   const isOwner = useIsOwner();
+  const isPhone = useIsPhone();
   const [refundTarget, setRefundTarget] = useState<AdminPaymentView | null>(null);
   const [paidTarget, setPaidTarget] = useState<AdminPaymentView | null>(null);
   const [discountTarget, setDiscountTarget] = useState<AdminPaymentView | null>(null);
@@ -397,6 +401,84 @@ export function AllInvoicesTab() {
           <p className="p-8 text-center text-sm text-rally-subtle" data-testid="payments-filter-empty">
             No payments match these filters.
           </p>
+        ) : isPhone ? (
+          /* #857: ten columns over a 980px minimum. On a phone the amount, the
+             status and the money actions were all past the right edge — the
+             three things this list is read for. Same chips and the same
+             `formatCents` the table uses; the menu items call the same
+             handlers, so Void / Refund / Mark paid still open their #838
+             confirm dialogs. */
+          <PhoneList aria-label="Invoices" data-testid="admin-payments-phone-list">
+            {filteredPayments.map((p) => {
+              const chip = statusChip(p.status);
+              const method = methodChip(p);
+              const rowPaidCents = paidCents(p);
+              const reconciliation = reconciliationLabel(p);
+              const stripeSummary = stripeIdSummary(p);
+              const label = paymentDisplayLabel(p);
+              return (
+                <PhoneListRow
+                  key={p.payment_id}
+                  data-testid={`payment-row-${p.payment_id}`}
+                  title={p.student_name || "Unassigned"}
+                  primary={
+                    <span className="font-mono text-sm font-semibold tabular-nums text-rally-ink">
+                      {formatCents(p.amount_cents)}
+                    </span>
+                  }
+                  actionsLabel={`Actions for ${label}`}
+                  actionsTestId={`payment-actions-${p.payment_id}`}
+                  actions={paymentMenuItems({
+                    payment: p,
+                    canGovernMoney: isOwner,
+                    onDiscount: () => setDiscountTarget(p),
+                    onInvoice: () => setInvoiceTarget(p),
+                    onPaid: () => setPaidTarget(p),
+                    onRefund: () => setRefundTarget(p),
+                    onSync: () => {
+                      setSyncTarget(p);
+                      setSyncOpen(true);
+                    },
+                    onUndo: () => undoMutation.mutate(p.payment_id),
+                    onVoid: () => setVoidTarget(p),
+                    undoPending: undoMutation.isPending,
+                  })}
+                  secondary={
+                    <>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Chip variant={chip.variant} label={chip.label} />
+                        {method && <Chip variant={method.variant} label={method.label} />}
+                      </div>
+                      <div className="break-words">
+                        {label} · {p.parent_name || "Parent on file"}
+                      </div>
+                      <div>
+                        {p.period || "No period"} · paid{" "}
+                        {rowPaidCents === null ? "—" : formatCents(rowPaidCents)}
+                        {p.discount_cents ? ` · less ${formatCents(p.discount_cents)}` : ""}
+                      </div>
+                      {p.status === "voided" && (
+                        <div data-testid={`payment-void-note-${p.payment_id}`}>
+                          {p.void_reason || "Voided"}
+                          {p.voided_at ? ` · ${new Date(p.voided_at).toLocaleDateString()}` : ""}
+                        </div>
+                      )}
+                      {/* The Stripe ids and the reconciliation note are the
+                          evidence `billing-trust-recovery.spec.ts` reads off
+                          the row, so the phone layout carries them too — the
+                          trail must not depend on screen width. */}
+                      {stripeSummary && (
+                        <div className="break-all font-mono text-[11px]">{stripeSummary}</div>
+                      )}
+                      {reconciliation && (
+                        <div className="font-medium text-amber-700">{reconciliation}</div>
+                      )}
+                    </>
+                  }
+                />
+              );
+            })}
+          </PhoneList>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[980px] text-sm" data-testid="admin-payments-table">

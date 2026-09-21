@@ -38,6 +38,8 @@ import { formatPlainDateRange } from "@/lib/format/plain-date";
 import { Card } from "@/components/ds/card";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { Button } from "@/components/ds/button";
+import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
+import { useIsPhone } from "@/lib/use-is-phone";
 import { Modal } from "@/components/ds/modal";
 import { TableSkeleton } from "@/components/ds/skeleton";
 import { EmptyState } from "@/components/ds/empty-state";
@@ -164,7 +166,111 @@ export function MakeupsTab() {
       ) : makeups.length === 0 ? (
         <EmptyState title="No makeup requests." data-testid="admin-makeups-empty" compact />
       ) : (
-        <Card p={20}>
+        <MakeupsList makeups={makeups} onDeny={setDenyTarget} onApprove={setApproveTarget} />
+      )}
+
+      {approveTarget && (
+        <ApproveMakeupDialog
+          request={approveTarget}
+          pending={approveMutation.isPending}
+          error={approveMutation.isError ? approveMutation.error : null}
+          onCancel={() => setApproveTarget(null)}
+          onConfirm={(targetOccurrenceId) =>
+            approveMutation.mutate({ requestId: approveTarget.request_id, targetOccurrenceId })
+          }
+        />
+      )}
+
+      {denyTarget && (
+        <DenyDialog
+          title="Deny makeup request"
+          pending={denyMutation.isPending}
+          error={denyMutation.isError ? denyMutation.error : null}
+          onCancel={() => setDenyTarget(null)}
+          onConfirm={(reason) => denyMutation.mutate({ requestId: denyTarget.request_id, reason })}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * #857: six columns over a 760px minimum, with Approve/Deny in the sticky
+ * trailing cell — on a phone the two buttons this queue exists for were off
+ * screen. One layout at a time (`lib/use-is-phone.ts`); both reach the same
+ * approve/deny dialogs.
+ */
+function MakeupsList({
+  makeups,
+  onDeny,
+  onApprove,
+}: {
+  makeups: MakeupRequestAdminRow[];
+  onDeny: (row: MakeupRequestAdminRow) => void;
+  onApprove: (row: MakeupRequestAdminRow) => void;
+}) {
+  const isPhone = useIsPhone();
+  if (isPhone) {
+    return (
+      <PhoneList aria-label="Makeup requests" data-testid="admin-makeups-phone-list">
+        {makeups.map((m) => {
+          const name = m.student_full_name || m.student_id;
+          return (
+            <PhoneListRow
+              key={m.request_id}
+              data-testid={`admin-makeups-row-${m.request_id}`}
+              title={name}
+              primary={<Chip variant={statusChipVariant(m.status)} label={m.status.toUpperCase()} />}
+              actionsLabel={`Actions for ${name}`}
+              actionsTestId={`admin-makeups-actions-${m.request_id}`}
+              actions={
+                m.status === "pending"
+                  ? [
+                      { key: "deny", label: "Deny", onSelect: () => onDeny(m) },
+                      { key: "approve", label: "Approve", onSelect: () => onApprove(m) },
+                    ]
+                  : []
+              }
+              secondary={
+                <>
+                  <div>
+                    Missed:{" "}
+                    <ClassMoment
+                      title={m.missed_session_title}
+                      startAt={m.missed_start_at}
+                      fallbackId={m.missed_occurrence_id}
+                    />
+                  </div>
+                  <div>
+                    Target:{" "}
+                    {m.approved_target_occurrence_id ? (
+                      <ClassMoment
+                        title={m.approved_target_session_title}
+                        startAt={m.approved_target_start_at}
+                        fallbackId={m.approved_target_occurrence_id}
+                      />
+                    ) : m.requested_target_occurrence_id ? (
+                      <ClassMoment
+                        title={m.requested_target_session_title}
+                        startAt={m.requested_target_start_at}
+                        fallbackId={m.requested_target_occurrence_id}
+                      />
+                    ) : (
+                      <span className="text-rally-subtle">No date proposed</span>
+                    )}
+                  </div>
+                  <div>Expires {formatAcademyDateTime(m.expires_at, null)}</div>
+                  {m.status === "denied" && m.denial_reason && <div>{m.denial_reason}</div>}
+                </>
+              }
+            />
+          );
+        })}
+      </PhoneList>
+    );
+  }
+  return (
+    <Card p={20}>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[760px] text-sm">
               <thead>
@@ -221,10 +327,10 @@ export function MakeupsTab() {
                     <td className={`${actionCellClass} bg-white`}>
                       {m.status === "pending" ? (
                         <div className="flex justify-end gap-2">
-                          <Button variant="secondary" size="sm" onClick={() => setDenyTarget(m)}>
+                          <Button variant="secondary" size="sm" onClick={() => onDeny(m)}>
                             Deny
                           </Button>
-                          <Button variant="primary" size="sm" onClick={() => setApproveTarget(m)}>
+                          <Button variant="primary" size="sm" onClick={() => onApprove(m)}>
                             Approve
                           </Button>
                         </div>
@@ -236,30 +342,6 @@ export function MakeupsTab() {
             </table>
           </div>
         </Card>
-      )}
-
-      {approveTarget && (
-        <ApproveMakeupDialog
-          request={approveTarget}
-          pending={approveMutation.isPending}
-          error={approveMutation.isError ? approveMutation.error : null}
-          onCancel={() => setApproveTarget(null)}
-          onConfirm={(targetOccurrenceId) =>
-            approveMutation.mutate({ requestId: approveTarget.request_id, targetOccurrenceId })
-          }
-        />
-      )}
-
-      {denyTarget && (
-        <DenyDialog
-          title="Deny makeup request"
-          pending={denyMutation.isPending}
-          error={denyMutation.isError ? denyMutation.error : null}
-          onCancel={() => setDenyTarget(null)}
-          onConfirm={(reason) => denyMutation.mutate({ requestId: denyTarget.request_id, reason })}
-        />
-      )}
-    </div>
   );
 }
 
@@ -400,7 +482,92 @@ export function TrialsTab() {
       ) : trials.length === 0 ? (
         <EmptyState title="No trial requests." data-testid="admin-trials-empty" compact />
       ) : (
-        <Card p={20}>
+        <TrialsList trials={trials} onDeny={setDenyTarget} onApprove={setApproveTarget} />
+      )}
+
+      {approveTarget && (
+        <ApproveTrialDialog
+          request={approveTarget}
+          pending={approveMutation.isPending}
+          error={approveMutation.isError ? approveMutation.error : null}
+          onCancel={() => setApproveTarget(null)}
+          onConfirm={(occurrenceId) =>
+            approveMutation.mutate({ requestId: approveTarget.request_id, occurrenceId })
+          }
+        />
+      )}
+
+      {denyTarget && (
+        <DenyDialog
+          title="Deny trial request"
+          pending={denyMutation.isPending}
+          error={denyMutation.isError ? denyMutation.error : null}
+          onCancel={() => setDenyTarget(null)}
+          onConfirm={(reason) => denyMutation.mutate({ requestId: denyTarget.request_id, reason })}
+        />
+      )}
+    </div>
+  );
+}
+
+/** #857, same shape as the makeups queue. */
+function TrialsList({
+  trials,
+  onDeny,
+  onApprove,
+}: {
+  trials: TrialRequestAdminRow[];
+  onDeny: (row: TrialRequestAdminRow) => void;
+  onApprove: (row: TrialRequestAdminRow) => void;
+}) {
+  const isPhone = useIsPhone();
+  if (isPhone) {
+    return (
+      <PhoneList aria-label="Trial requests" data-testid="admin-trials-phone-list">
+        {trials.map((t) => {
+          const name = t.prospective_child_name || t.student_full_name || "Existing child";
+          return (
+            <PhoneListRow
+              key={t.request_id}
+              data-testid={`admin-trials-row-${t.request_id}`}
+              title={name}
+              primary={<Chip variant={statusChipVariant(t.status)} label={t.status.toUpperCase()} />}
+              actionsLabel={`Actions for ${name}`}
+              actionsTestId={`admin-trials-actions-${t.request_id}`}
+              actions={
+                t.status === "pending"
+                  ? [
+                      { key: "deny", label: "Deny", onSelect: () => onDeny(t) },
+                      { key: "approve", label: "Approve", onSelect: () => onApprove(t) },
+                    ]
+                  : []
+              }
+              secondary={
+                <>
+                  <div className="break-words">
+                    {t.requested_session_title || t.requested_session_id}
+                  </div>
+                  <div>
+                    Preferred {formatPlainDateRange(t.preferred_start, t.preferred_end)}
+                  </div>
+                  <div>
+                    {t.assigned_occurrence_start_at
+                      ? `Assigned ${formatAcademyDateTime(t.assigned_occurrence_start_at, null)}`
+                      : t.assigned_occurrence_id
+                        ? `Assigned ${t.assigned_occurrence_id}`
+                        : "Not scheduled"}
+                  </div>
+                  {t.status === "denied" && t.denial_reason && <div>{t.denial_reason}</div>}
+                </>
+              }
+            />
+          );
+        })}
+      </PhoneList>
+    );
+  }
+  return (
+    <Card p={20}>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[760px] text-sm">
               <thead>
@@ -445,10 +612,10 @@ export function TrialsTab() {
                     <td className={`${actionCellClass} bg-white`}>
                       {t.status === "pending" ? (
                         <div className="flex justify-end gap-2">
-                          <Button variant="secondary" size="sm" onClick={() => setDenyTarget(t)}>
+                          <Button variant="secondary" size="sm" onClick={() => onDeny(t)}>
                             Deny
                           </Button>
-                          <Button variant="primary" size="sm" onClick={() => setApproveTarget(t)}>
+                          <Button variant="primary" size="sm" onClick={() => onApprove(t)}>
                             Approve
                           </Button>
                         </div>
@@ -460,30 +627,6 @@ export function TrialsTab() {
             </table>
           </div>
         </Card>
-      )}
-
-      {approveTarget && (
-        <ApproveTrialDialog
-          request={approveTarget}
-          pending={approveMutation.isPending}
-          error={approveMutation.isError ? approveMutation.error : null}
-          onCancel={() => setApproveTarget(null)}
-          onConfirm={(occurrenceId) =>
-            approveMutation.mutate({ requestId: approveTarget.request_id, occurrenceId })
-          }
-        />
-      )}
-
-      {denyTarget && (
-        <DenyDialog
-          title="Deny trial request"
-          pending={denyMutation.isPending}
-          error={denyMutation.isError ? denyMutation.error : null}
-          onCancel={() => setDenyTarget(null)}
-          onConfirm={(reason) => denyMutation.mutate({ requestId: denyTarget.request_id, reason })}
-        />
-      )}
-    </div>
   );
 }
 
@@ -634,7 +777,43 @@ export function AbsencesTab() {
       {absences.length === 0 ? (
         <EmptyState title="No absence notices." data-testid="admin-absences-empty" compact />
       ) : (
-        <Card p={20}>
+        <AbsencesList absences={absences} />
+      )}
+      {dialog}
+    </div>
+  );
+}
+
+/** #857: a four-column 640px table on a 400px screen. Read-only, so no menu. */
+function AbsencesList({ absences }: { absences: AbsenceNoticeAdminRow[] }) {
+  const isPhone = useIsPhone();
+  if (isPhone) {
+    return (
+      <PhoneList aria-label="Absence notices" data-testid="admin-absences-phone-list">
+        {absences.map((a) => (
+          <PhoneListRow
+            key={a.notice_id}
+            data-testid={`admin-absences-row-${a.notice_id}`}
+            title={a.student_full_name || a.student_id}
+            primary={
+              <Chip
+                variant={a.notice_window_met ? "approved" : "pending"}
+                label={a.notice_window_met ? "ON TIME" : "LATE"}
+              />
+            }
+            secondary={
+              <>
+                <div>Submitted {formatAcademyDateTime(a.submitted_at, null)}</div>
+                <div>{a.recorded_by_admin ? "Recorded by admin" : "Parent"}</div>
+              </>
+            }
+          />
+        ))}
+      </PhoneList>
+    );
+  }
+  return (
+    <Card p={20}>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[640px] text-sm">
               <thead>
@@ -668,9 +847,6 @@ export function AbsencesTab() {
             </table>
           </div>
         </Card>
-      )}
-      {dialog}
-    </div>
   );
 }
 
@@ -836,7 +1012,28 @@ function RecordAbsenceDialog({
 
 // --- Cancellations (read-only audit) ---
 
+/**
+ * The cancellation fee is line 1's primary slot (#857): on a phone it was the
+ * fourth column of a 760px table, and it is the one number an admin is here
+ * for. Read from the same policy snapshot the table reads.
+ */
+function cancellationFee(c: SelfCancellationAdminRow): {
+  label: string;
+  billingError: string | null;
+} {
+  const snapshot = c.cancellation_policy_snapshot ?? {};
+  const feeBillingError =
+    typeof snapshot.fee_billing_error === "string" ? snapshot.fee_billing_error : null;
+  const feeCents =
+    typeof snapshot.cancellation_fee_cents === "number" ? snapshot.cancellation_fee_cents : null;
+  return {
+    label: feeCents !== null ? `$${(feeCents / 100).toFixed(2)}` : "—",
+    billingError: feeBillingError,
+  };
+}
+
 export function CancellationsTab() {
+  const isPhone = useIsPhone();
   const { data, isLoading, isError } = useQuery({
     queryKey: queryKeys.admin.selfServiceCancellations(),
     queryFn: listAdminCancellations,
@@ -847,6 +1044,42 @@ export function CancellationsTab() {
   if (isLoading) return <TableSkeleton rows={3} />;
   if (cancellations.length === 0)
     return <EmptyState title="No self-service cancellations." data-testid="admin-cancellations-empty" compact />;
+
+  if (isPhone) {
+    return (
+      <PhoneList aria-label="Cancellations" data-testid="admin-cancellations-phone-list">
+        {cancellations.map((c: SelfCancellationAdminRow) => {
+          const fee = cancellationFee(c);
+          return (
+            <PhoneListRow
+              key={c.enrollment_id}
+              data-testid={`admin-cancellations-row-${c.enrollment_id}`}
+              title={c.student_full_name || c.student_id}
+              primary={
+                <span className="font-mono text-sm font-semibold tabular-nums text-rally-base">
+                  {fee.label}
+                </span>
+              }
+              secondary={
+                <>
+                  <div className="break-words">{c.session_title || c.session_id}</div>
+                  <div>
+                    Cancelled{" "}
+                    {c.cancelled_at ? formatAcademyDateTime(c.cancelled_at, null) : "—"}
+                  </div>
+                  {fee.billingError && (
+                    <div title={fee.billingError}>
+                      <Chip variant="failed" label="FEE BILLING FAILED" />
+                    </div>
+                  )}
+                </>
+              }
+            />
+          );
+        })}
+      </PhoneList>
+    );
+  }
 
   return (
     <Card p={20}>
@@ -862,9 +1095,7 @@ export function CancellationsTab() {
           </thead>
           <tbody>
             {cancellations.map((c: SelfCancellationAdminRow) => {
-              const snapshot = c.cancellation_policy_snapshot ?? {};
-              const feeBillingError = typeof snapshot.fee_billing_error === "string" ? snapshot.fee_billing_error : null;
-              const feeCents = typeof snapshot.cancellation_fee_cents === "number" ? snapshot.cancellation_fee_cents : null;
+              const fee = cancellationFee(c);
               return (
                 <tr
                   key={c.enrollment_id}
@@ -880,11 +1111,9 @@ export function CancellationsTab() {
                   </td>
                   <td className="px-2 py-3">
                     <div className="flex items-center gap-2">
-                      <span className="text-rally-subtle">
-                        {feeCents !== null ? `$${(feeCents / 100).toFixed(2)}` : "—"}
-                      </span>
-                      {feeBillingError && (
-                        <span title={feeBillingError}>
+                      <span className="text-rally-subtle">{fee.label}</span>
+                      {fee.billingError && (
+                        <span title={fee.billingError}>
                           <Chip variant="failed" label="FEE BILLING FAILED" />
                         </span>
                       )}
