@@ -22,6 +22,8 @@ import { roleLabel } from "@/lib/admin/role-label";
 import { queryKeys } from "@/lib/query/keys";
 
 import { Button } from "@/components/ds/button";
+import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
+import { useIsPhone } from "@/lib/use-is-phone";
 import {
   DialogActions,
   DialogError,
@@ -104,8 +106,139 @@ export function ReplacementCoachTable({
   // timeZone renders the viewer's browser zone, which shows the wrong hour for
   // anyone outside the academy's zone.
   const { timeZone } = resolveAcademyTimeZone(timezone);
+  const isPhone = useIsPhone();
   const coachLabel = (coachId: string | null | undefined, fallback: string) =>
     coachId ? (userNameById.get(coachId) ?? fallback) : "-";
+
+  const dateLabel = (occurrence: AdminSessionOccurrenceView) =>
+    parseAcademyInstant(occurrence.start_at).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      timeZone,
+    });
+  const timeLabel = (occurrence: AdminSessionOccurrenceView) =>
+    `${parseAcademyInstant(occurrence.start_at).toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone,
+    })} - ${parseAcademyInstant(occurrence.end_at).toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone,
+    })}`;
+
+  function statusNode(occurrence: AdminSessionOccurrenceView) {
+    if (occurrence.status === "cancelled") {
+      return (
+        <span
+          data-testid="occurrence-cancelled-chip"
+          title={occurrence.cancellation_reason ?? undefined}
+          className="inline-flex items-center rounded-full bg-rally-line px-2 py-0.5 text-xs font-medium text-rally-muted"
+        >
+          Cancelled
+        </span>
+      );
+    }
+    if (occurrence.status === "completed") {
+      return <span className="text-xs text-rally-subtle">Completed</span>;
+    }
+    // A date that ran but was never marked completed still reads "scheduled"
+    // in the database; calling it Scheduled here is what made an admin try to
+    // cancel last week.
+    if (hasStarted(occurrence)) return <span className="text-xs text-rally-subtle">Past</span>;
+    return <span className="text-xs text-rally-subtle">Scheduled</span>;
+  }
+
+  /**
+   * #857: the three date actions stay DIRECT buttons on the phone row rather
+   * than moving into the row menu. `cancel-occurrence-<id>` and
+   * `attendance-occurrence-<id>` are clicked by id in
+   * `admin-cancel-class-date.spec.ts`, and a menu item carries no
+   * `data-testid` — behind a menu those specs would resolve nothing under
+   * chromium-mobile. Each is given the 44px the acceptance bar asks for
+   * instead, stacked full width.
+   */
+  function dateActions(occurrence: AdminSessionOccurrenceView, phone: boolean) {
+    const buttonClass = phone ? "min-h-touch w-full justify-center" : undefined;
+    return (
+      <div
+        className={
+          phone
+            ? "flex flex-col gap-2 pt-1"
+            : "flex max-w-[168px] flex-wrap justify-end gap-2 sm:max-w-none"
+        }
+      >
+        <Button
+          variant="secondary"
+          size="sm"
+          className={buttonClass}
+          onClick={() => onEdit(occurrence)}
+        >
+          Change replacement
+        </Button>
+        {onCancel && isCancellable(occurrence) && (
+          <Button
+            variant="secondary"
+            size="sm"
+            className={buttonClass}
+            data-testid={`cancel-occurrence-${occurrence.occurrence_id}`}
+            onClick={() => onCancel(occurrence)}
+          >
+            Cancel this date
+          </Button>
+        )}
+        {/* Issue #554: attendance can only be corrected or voided on a date
+            that was actually marked, so the action only appears where there is
+            something to act on. */}
+        {onViewAttendance && occurrence.attendance_marked_count > 0 && (
+          <Button
+            variant="secondary"
+            size="sm"
+            className={buttonClass}
+            data-testid={`attendance-occurrence-${occurrence.occurrence_id}`}
+            onClick={() => onViewAttendance(occurrence)}
+          >
+            Attendance
+          </Button>
+        )}
+      </div>
+    );
+  }
+
+  if (isPhone) {
+    /* #857: six columns over a 760px minimum with a `sticky right-0` action
+       cell — on a phone the sticky cell covered the dates it belonged to, and
+       each date's coaches and status were off-screen behind it. */
+    return (
+      <div>
+        <PhoneList aria-label="Class dates" data-testid="admin-class-dates-phone-list">
+          {occurrences.map((occurrence) => (
+            <PhoneListRow
+              key={occurrence.occurrence_id}
+              data-testid={`class-date-row-${occurrence.occurrence_id}`}
+              title={dateLabel(occurrence)}
+              primary={showStatus ? statusNode(occurrence) : undefined}
+              secondary={
+                <>
+                  <div className="font-mono">{timeLabel(occurrence)}</div>
+                  <div>
+                    {coachLabel(occurrence.scheduled_coach_id, "Scheduled coach")}
+                    {occurrence.actual_coach_id
+                      ? ` → ${coachLabel(occurrence.actual_coach_id, "Replacement coach")}`
+                      : ""}
+                  </div>
+                  {dateActions(occurrence, true)}
+                </>
+              }
+            />
+          ))}
+        </PhoneList>
+        {occurrences.length === 0 && emptyLabel && (
+          <p className="pt-2 text-sm text-rally-subtle">{emptyLabel}</p>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="overflow-x-auto">
@@ -124,38 +257,16 @@ export function ReplacementCoachTable({
           {occurrences.map((occurrence) => (
             <tr
               key={occurrence.occurrence_id}
+              // #857: the same id the phone row carries, so a spec can count
+              // class dates without knowing which layout is mounted.
+              data-testid={`class-date-row-${occurrence.occurrence_id}`}
               className="border-b border-rally-line/60"
             >
               <td className="py-3 pr-4">
-                <p className="font-medium text-rally-ink">
-                  {parseAcademyInstant(occurrence.start_at).toLocaleDateString(
-                    "en-US",
-                    {
-                      month: "short",
-                      day: "numeric",
-                      timeZone,
-                    },
-                  )}
-                </p>
+                <p className="font-medium text-rally-ink">{dateLabel(occurrence)}</p>
               </td>
               <td className="whitespace-nowrap py-3 pr-4 font-mono text-rally-muted">
-                {parseAcademyInstant(occurrence.start_at).toLocaleTimeString(
-                  "en-US",
-                  {
-                    hour: "numeric",
-                    minute: "2-digit",
-                    timeZone,
-                  },
-                )}
-                {" - "}
-                {parseAcademyInstant(occurrence.end_at).toLocaleTimeString(
-                  "en-US",
-                  {
-                    hour: "numeric",
-                    minute: "2-digit",
-                    timeZone,
-                  },
-                )}
+                {timeLabel(occurrence)}
               </td>
               <td className="py-3 pr-4 text-rally-muted">
                 {coachLabel(occurrence.scheduled_coach_id, "Scheduled coach")}
@@ -163,64 +274,12 @@ export function ReplacementCoachTable({
               <td className="py-3 pr-4 text-rally-muted">
                 {coachLabel(occurrence.actual_coach_id, "Replacement coach")}
               </td>
-              {showStatus && (
-                <td className="py-3 pr-4">
-                  {occurrence.status === "cancelled" ? (
-                    <span
-                      data-testid="occurrence-cancelled-chip"
-                      title={occurrence.cancellation_reason ?? undefined}
-                      className="inline-flex items-center rounded-full bg-rally-line px-2 py-0.5 text-xs font-medium text-rally-muted"
-                    >
-                      Cancelled
-                    </span>
-                  ) : occurrence.status === "completed" ? (
-                    <span className="text-xs text-rally-subtle">Completed</span>
-                  ) : hasStarted(occurrence) ? (
-                    // A date that ran but was never marked completed still
-                    // reads "scheduled" in the database; calling it Scheduled
-                    // here is what made an admin try to cancel last week.
-                    <span className="text-xs text-rally-subtle">Past</span>
-                  ) : (
-                    <span className="text-xs text-rally-subtle">Scheduled</span>
-                  )}
-                </td>
-              )}
+              {showStatus && <td className="py-3 pr-4">{statusNode(occurrence)}</td>}
               <td className={`${actionCellClass} bg-white`}>
-                {/* Both buttons side by side are ~300px wide — on a phone that
+                {/* Both buttons side by side are ~300px wide — on a tablet that
                     sticky cell covered the whole visible table. Capped so they
                     stack under 640px and sit in one row above it. */}
-                <div className="flex max-w-[168px] flex-wrap justify-end gap-2 sm:max-w-none">
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => onEdit(occurrence)}
-                  >
-                    Change replacement
-                  </Button>
-                  {onCancel && isCancellable(occurrence) && (
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      data-testid={`cancel-occurrence-${occurrence.occurrence_id}`}
-                      onClick={() => onCancel(occurrence)}
-                    >
-                      Cancel this date
-                    </Button>
-                  )}
-                  {/* Issue #554: attendance can only be corrected or voided
-                      on a date that was actually marked, so the action only
-                      appears where there is something to act on. */}
-                  {onViewAttendance && occurrence.attendance_marked_count > 0 && (
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      data-testid={`attendance-occurrence-${occurrence.occurrence_id}`}
-                      onClick={() => onViewAttendance(occurrence)}
-                    >
-                      Attendance
-                    </Button>
-                  )}
-                </div>
+                {dateActions(occurrence, false)}
               </td>
             </tr>
           ))}

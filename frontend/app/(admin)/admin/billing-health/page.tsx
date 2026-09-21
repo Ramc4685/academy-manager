@@ -42,7 +42,9 @@ import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Field } from "@/components/ds/dialog-chrome";
+import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { BigNum, Overline } from "@/components/ds/typography";
+import { useIsPhone } from "@/lib/use-is-phone";
 
 import { ReconciliationLookupPanel } from "./ReconciliationLookupPanel";
 
@@ -85,6 +87,7 @@ function runStatusDot(run: ReconciliationRun): string {
 
 export default function BillingHealthPage() {
   const queryClient = useQueryClient();
+  const isPhone = useIsPhone();
   const [replayState, setReplayState] = useState<Record<string, string>>({});
 
   const readinessQuery = useQuery({
@@ -264,10 +267,55 @@ export default function BillingHealthPage() {
             <Alert tone="green">No quarantined webhook events.</Alert>
           ) : (
             <>
-              <div className="overflow-x-auto">
+              {/* #857: the testid lives on the wrapper, not the <table>, so
+                  `billing-health.spec.ts` resolves it under chromium-mobile
+                  too, where the table is not mounted at all. */}
+              <div data-testid="quarantined-events-table">
+                {isPhone ? (
+                  <PhoneList aria-label="Quarantined webhook events">
+                    {quarantined.map((evt) => {
+                      const state = replayState[evt.event_id];
+                      return (
+                        <PhoneListRow
+                          key={evt.event_id}
+                          data-testid={`quarantined-row-${evt.event_id}`}
+                          title={<Chip variant="manual" label={evt.event_type} />}
+                          secondary={
+                            <>
+                              <div className="break-all font-mono text-[11px]">
+                                {evt.event_id}
+                              </div>
+                              <div className="break-words">{evt.error_message ?? "—"}</div>
+                              {/* Replay stays a direct 44px button rather than
+                                  a menu item: it is the row's only action, and
+                                  keeping the id on a button keeps the spec's
+                                  `replay-<id>` click working at both widths. */}
+                              <div className="pt-1">
+                                {state ? (
+                                  <span className="text-xs text-rally-muted">{state}</span>
+                                ) : (
+                                  <Button
+                                    variant="secondary"
+                                    size="sm"
+                                    className="min-h-touch"
+                                    onClick={() => replayMutation.mutate(evt.event_id)}
+                                    disabled={replayMutation.isPending}
+                                    data-testid={`replay-${evt.event_id}`}
+                                  >
+                                    Replay
+                                  </Button>
+                                )}
+                              </div>
+                            </>
+                          }
+                        />
+                      );
+                    })}
+                  </PhoneList>
+                ) : (
+                  <div className="overflow-x-auto">
                 <table
                   className="w-full min-w-[720px] text-sm"
-                  data-testid="quarantined-events-table"
                 >
                   <thead>
                     <tr className="border-b border-rally-line text-left">
@@ -321,6 +369,8 @@ export default function BillingHealthPage() {
                     })}
                   </tbody>
                 </table>
+                  </div>
+                )}
               </div>
               {truncationNotice && (
                 <p className="px-4 py-3 text-xs text-rally-muted" data-testid="webhook-truncation">

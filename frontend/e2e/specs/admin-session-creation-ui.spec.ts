@@ -358,7 +358,9 @@ test.describe("admin session creation and billing-rules settings UI", () => {
     await expect(page.getByRole("cell", { name: "Replacement Coach" })).toHaveCount(0);
 
     await page.getByRole("button", { name: "Add replacement" }).click();
-    await page.getByLabel("Date").fill(replacementDate);
+    // Exact: `getByLabel` matches a case-insensitive SUBSTRING, so a loose
+    // "Date" also matches the phone list's `aria-label="Class dates"` (#857).
+    await page.getByLabel("Date", { exact: true }).fill(replacementDate);
     // Same placeholder-input-then-<select> swap as the create dialog above; this
     // is the race that made this test flaky in CI (WebKit, PR #351).
     await expect(
@@ -373,7 +375,13 @@ test.describe("admin session creation and billing-rules settings UI", () => {
       reason: null,
     });
     // Issue #671 folded the replacement-coach table into the single "Class
-    // dates" card, so a replaced date is listed exactly ONCE.
-    await expect(page.getByRole("cell", { name: "Replacement Coach" })).toHaveCount(1);
+    // dates" card, so a replaced date is listed exactly ONCE. Counted by row
+    // rather than by table cell: below `md` the card renders phone rows and
+    // has no cells at all (#857).
+    await expect(
+      page
+        .locator('[data-testid^="class-date-row-"]')
+        .filter({ hasText: "Replacement Coach" }),
+    ).toHaveCount(1);
   });
 });

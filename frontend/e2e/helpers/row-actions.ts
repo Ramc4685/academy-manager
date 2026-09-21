@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 
 /**
  * #847: admin list rows below `md` render through `PhoneListRow`
@@ -80,4 +80,46 @@ export async function expectRowActionAvailable(
   await trigger.click();
   await expect(page.getByRole("menuitem", { name: menuItemLabel, exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
+}
+
+/**
+ * #857: the same branch, keyed by test id instead of by the row's visible
+ * name.
+ *
+ * Some queues render rows whose titles are not unique — the level-up fixtures
+ * are two "Unnamed student" rows — so those specs scope by
+ * `<list>-row-<id>` and cannot use `rowTitle`. `actionsTestId` is the phone
+ * row's trigger, deliberately `<list>-actions-<id>` and NOT the row id with
+ * `actions-` appended, so a prefix match for rows never picks it up.
+ *
+ * The menu is portalled to `document.body`, so the returned menu-item locator
+ * is page-scoped, not row-scoped. Callers get the element and assert or click
+ * it; repeat calls for the same row reuse the menu that is already open.
+ */
+export async function rowActionControl(
+  page: Page,
+  {
+    rowTestId,
+    actionsTestId,
+    label,
+  }: { rowTestId: string; actionsTestId: string; label: string },
+): Promise<Locator> {
+  const row = page.getByTestId(rowTestId);
+  const direct = row.getByRole("button", { name: label, exact: true });
+  const trigger = page.getByTestId(actionsTestId);
+  const surface = await Promise.race([
+    direct.waitFor({ state: "visible", timeout: 15_000 }).then((): "direct" => "direct"),
+    trigger.waitFor({ state: "visible", timeout: 15_000 }).then((): "menu" => "menu"),
+  ]);
+  if (surface === "direct") return direct;
+  // The trigger toggles, so a second lookup in the same row must NOT click it
+  // again — that would shut the menu the first lookup opened. `aria-expanded`
+  // is the state the component itself publishes. Opening a different row's
+  // trigger needs no cleanup: the menu closes itself on the outside mousedown
+  // that precedes the click.
+  if ((await trigger.getAttribute("aria-expanded")) !== "true") {
+    await trigger.click();
+    await expect(trigger).toHaveAttribute("aria-expanded", "true");
+  }
+  return page.getByRole("menuitem", { name: label, exact: true });
 }

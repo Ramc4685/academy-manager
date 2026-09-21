@@ -154,11 +154,14 @@ async function stubSessionDetail(page: Page) {
   });
 }
 
+/**
+ * #857: below `md` the Class dates table is replaced by phone rows, so an
+ * ancestor-of-a-`<table>` walk resolves nothing under chromium-mobile. Both
+ * layouts tag each date `class-date-row-<occurrenceId>`, which is also the
+ * document order the windowing assertions rely on.
+ */
 function classDateRows(page: Page) {
-  return page
-    .getByRole("heading", { name: "Class dates" })
-    .locator("xpath=ancestor::*[.//table][1]")
-    .locator("tbody tr");
+  return page.locator('[data-testid^="class-date-row-"]');
 }
 
 test.describe("admin session detail — class dates window and roster tabs (#711)", () => {

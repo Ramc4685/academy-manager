@@ -384,6 +384,11 @@ function Field({
 /**
  * #847: one list, two layouts, exactly one mounted — see
  * `lib/use-is-phone.ts`. The phone rows keep the table's `data-testid`s.
+ *
+ * #857: the actions trigger is `admin-users-actions-<id>`, deliberately NOT
+ * the row testid with `actions-` appended — an id that starts with the row's
+ * own `admin-users-row-` prefix is matched by every prefix selector that means
+ * to pick rows.
  */
 function UsersList({ users }: { users: AdminUserView[] }) {
   const isPhone = useIsPhone();
@@ -407,7 +412,7 @@ function UsersList({ users }: { users: AdminUserView[] }) {
                 />
               }
               actionsLabel={`Actions for ${user.display_name}`}
-              actionsTestId={`admin-users-row-actions-${user.user_id}`}
+              actionsTestId={`admin-users-actions-${user.user_id}`}
               actions={[{ key: "open", label: "Open user", href }]}
               secondary={
                 <>

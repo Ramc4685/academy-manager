@@ -12,6 +12,8 @@ import { BigNum } from "@/components/ds/typography";
 import { Chip } from "@/components/ds/chip";
 import { Skeleton } from "@/components/ds/skeleton";
 import { EmptyState } from "@/components/ds/empty-state";
+import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
+import { useIsPhone } from "@/lib/use-is-phone";
 
 /** All-coaches payslip overview, moved from the standalone `/admin/coach-payslip` page onto the Payslips tab of Payouts. */
 export function PayslipsPanel() {
@@ -85,7 +87,70 @@ export function PayslipsPanel() {
           compact
         />
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <PayslipRows rows={rows} />
+      )}
+    </section>
+  );
+}
+
+type PayslipRow = {
+  coach: { user_id: string; display_name: string; email: string };
+  payout: { rule_label?: string | null } | null;
+  sessions: number;
+  students: number;
+  expectedRevenueCents: number;
+  netEarningsCents: number;
+  chip: ReturnType<typeof payslipChipFor>;
+};
+
+/**
+ * #857: each payslip was a 10rem card in a three-up grid, so on a phone one
+ * coach filled most of the screen and scanning a dozen meant a dozen swipes.
+ * Below `md` the same numbers render as the shared two-line row — net earnings
+ * in line 1's primary slot, because that is the figure being checked.
+ */
+function PayslipRows({ rows }: { rows: PayslipRow[] }) {
+  const isPhone = useIsPhone();
+  if (isPhone) {
+    return (
+      <PhoneList aria-label="Coach payslips" data-testid="admin-coach-payslip-phone-list">
+        {rows.map((row) => {
+          const name = row.coach.display_name || row.coach.email;
+          return (
+            <PhoneListRow
+              key={row.coach.user_id}
+              data-testid={`admin-coach-payslip-row-${row.coach.user_id}`}
+              leading={<Avatar name={name || "Coach"} size={32} />}
+              title={name}
+              primary={
+                <span className="font-mono text-sm font-semibold tabular-nums text-rally-base">
+                  {money(row.netEarningsCents)}
+                </span>
+              }
+              secondary={
+                <>
+                  <div>
+                    <Chip variant={row.chip.variant} label={row.chip.label} />
+                  </div>
+                  <div className="break-words">{row.coach.email}</div>
+                  <div>
+                    {row.sessions} session{row.sessions === 1 ? "" : "s"} · {row.students} student
+                    {row.students === 1 ? "" : "s"}
+                  </div>
+                  <div>
+                    {row.payout?.rule_label ?? "No payout rule"} ·{" "}
+                    {money(row.expectedRevenueCents)} expected revenue
+                  </div>
+                </>
+              }
+            />
+          );
+        })}
+      </PhoneList>
+    );
+  }
+  return (
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {rows.map((row) => (
             <Card key={row.coach.user_id} p={20} className="flex flex-col gap-4">
               <div className="flex items-center justify-between">
@@ -125,8 +190,6 @@ export function PayslipsPanel() {
               </div>
             </Card>
           ))}
-        </div>
-      )}
-    </section>
+    </div>
   );
 }

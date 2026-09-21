@@ -25,6 +25,7 @@ import { queryKeys } from "@/lib/query/keys";
 
 import { OwnerOnlyHint } from "@/components/admin/owner-context";
 import { Button } from "@/components/ds/button";
+import type { MenuItem } from "@/components/ds/menu";
 import { RallyModal as RallyDialog, DialogActions, Field } from "@/components/ds/dialog-chrome";
 import { TableSkeleton } from "@/components/ds/skeleton";
 
@@ -38,6 +39,113 @@ import {
   paymentDisplayLabel,
   skipReasonLabel,
 } from "./format";
+
+/**
+ * Which row actions this invoice may take, derived once (#857).
+ *
+ * The desktop button strip and the phone row's overflow menu both read this,
+ * so an action can never be offered on one layout and withheld on the other —
+ * and neither layout gets its own idea of what "refundable" means.
+ */
+function paymentActionEligibility(payment: AdminPaymentView) {
+  const status = adminPaymentStatus(payment);
+  const invoiceRow = isLedgerInvoiceRow(payment);
+  const isPending = status === "pending" || status === "partially_paid";
+  const isPaid =
+    payment.status === "succeeded" ||
+    payment.status === "paid" ||
+    payment.status === "partially_refunded";
+  const isVoided = payment.status === "voided";
+  return {
+    status,
+    invoiceRow,
+    isPending,
+    isPaid,
+    isVoided,
+    // Refund eligibility: must be paid/partial AND have remaining balance
+    refundable: isPaid && payment.refunded_cents < finalCents(payment),
+    // Undo eligibility: only manual paid, not Stripe-linked
+    undoable: isPaid && !payment.stripe_linked,
+    // Void eligibility (#619): any ledger payment row that is not already
+    // void. Stripe money that actually settled has to go back through Refund,
+    // so the action is disabled there and says why — the backend refuses it
+    // too.
+    voidBlockedByStripe: isPaid && payment.stripe_linked,
+  };
+}
+
+/**
+ * The same actions as `PaymentActions`, as overflow-menu items for the phone
+ * row (#857). Every item calls the SAME handler the desktop button calls, so
+ * Void / Refund / Mark paid still open their #838 confirm dialogs — there is
+ * no second, shorter path to moving money.
+ *
+ * Owner-only actions are omitted rather than disabled for a non-owner: a menu
+ * has no room for the `OwnerOnlyHint` the button strip shows beside them, and
+ * the endpoints 404 for anyone else anyway.
+ *
+ * No item carries a `hint`: `hint` renders inside the menu button, so it joins
+ * the item's accessible name and an exact `getByRole("menuitem", { name:
+ * "Void" })` would stop resolving. The desktop strip keeps its explanations in
+ * `title`, which does not change a button's name either.
+ */
+export function paymentMenuItems({
+  payment,
+  canGovernMoney,
+  onDiscount,
+  onInvoice,
+  onPaid,
+  onRefund,
+  onSync,
+  onUndo,
+  onVoid,
+  undoPending,
+}: {
+  payment: AdminPaymentView;
+  canGovernMoney: boolean;
+  onDiscount: () => void;
+  onInvoice: () => void;
+  onPaid: () => void;
+  onRefund: () => void;
+  onSync: () => void;
+  onUndo: () => void;
+  onVoid: () => void;
+  undoPending: boolean;
+}): MenuItem[] {
+  const { invoiceRow, isPending, isPaid, isVoided, refundable, undoable, voidBlockedByStripe } =
+    paymentActionEligibility(payment);
+  const items: MenuItem[] = [{ key: "invoice", label: "Invoice", onSelect: onInvoice }];
+  if (isVoided) return items;
+  items.push({ key: "sync", label: "Sync", onSelect: onSync });
+  if (canGovernMoney && !invoiceRow) {
+    items.push({
+      key: "void",
+      label: "Void",
+      onSelect: onVoid,
+      disabled: voidBlockedByStripe,
+    });
+  }
+  if (isPending && !invoiceRow) {
+    if (canGovernMoney) items.push({ key: "discount", label: "Discount", onSelect: onDiscount });
+    items.push({ key: "paid", label: "Mark paid", onSelect: onPaid });
+  }
+  if (isPaid && !invoiceRow && canGovernMoney) {
+    items.push({
+      key: "refund",
+      label: "Refund",
+      onSelect: onRefund,
+      disabled: !refundable,
+      danger: true,
+    });
+    items.push({
+      key: "undo",
+      label: "Undo",
+      onSelect: onUndo,
+      disabled: !undoable || undoPending,
+    });
+  }
+  return items;
+}
 
 export function PaymentActions({
   payment,
@@ -67,22 +175,8 @@ export function PaymentActions({
   onVoid: () => void;
   undoPending: boolean;
 }) {
-  const status = adminPaymentStatus(payment);
-  const invoiceRow = isLedgerInvoiceRow(payment);
-  const isPending = status === "pending" || status === "partially_paid";
-  const isPaid =
-    payment.status === "succeeded" ||
-    payment.status === "paid" ||
-    payment.status === "partially_refunded";
-  const isVoided = payment.status === "voided";
-  // Refund eligibility: must be paid/partial AND have remaining balance
-  const refundable = isPaid && payment.refunded_cents < finalCents(payment);
-  // Undo eligibility: only manual paid, not Stripe-linked
-  const undoable = isPaid && !payment.stripe_linked;
-  // Void eligibility (#619): any ledger payment row that is not already void.
-  // Stripe money that actually settled has to go back through Refund, so the
-  // button is disabled there and says why — the backend refuses it too.
-  const voidBlockedByStripe = isPaid && payment.stripe_linked;
+  const { invoiceRow, isPending, isPaid, isVoided, refundable, undoable, voidBlockedByStripe } =
+    paymentActionEligibility(payment);
   if (isVoided) {
     return (
       <div className="flex justify-end gap-2">

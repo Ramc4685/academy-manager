@@ -1207,7 +1207,10 @@ test.describe("Rally admin shell", () => {
 
     await expect(page.getByTestId("payment-row-legacy-paid")).toBeVisible();
     await expect(
-      page.getByTestId("payment-row-legacy-paid").getByText("PAID"),
+      // Exact, like the VOID assertion below: `getByText` matches a
+      // case-insensitive SUBSTRING, so a loose "PAID" also matches the phone
+      // row's "· paid $120.00" line (#857).
+      page.getByTestId("payment-row-legacy-paid").getByText("PAID", { exact: true }),
     ).toBeVisible();
     await expect(page.getByTestId("payment-row-legacy-waived")).toBeVisible();
     await expect(

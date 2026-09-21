@@ -37,6 +37,128 @@ const CONVERTED: { name: string; src: () => string }[] = [
   { name: "Sessions", src: () => appSource("(admin)/admin/sessions/page.tsx") },
 ];
 
+/**
+ * Issue #857 finishes the rollout #856 started. The approval queues, the money
+ * lists and the two detail pages were still bare `<table>` inside
+ * `overflow-x-auto`, so every #847 symptom survived there: at 400px the
+ * status, the amount and Approve/Deny sat off-screen behind a sideways
+ * scroll.
+ */
+const CONVERTED_857: { name: string; src: () => string }[] = [
+  {
+    name: "Registrations queue",
+    src: () => source("components/admin/admissions/RegistrationsTab.tsx"),
+  },
+  { name: "Level-ups queue", src: () => source("components/admin/admissions/LevelUpsTab.tsx") },
+  { name: "Waitlist queue", src: () => source("components/admin/admissions/WaitlistTab.tsx") },
+  {
+    name: "Parent request queues",
+    src: () => source("components/admin/requests/request-queues.tsx"),
+  },
+  { name: "All invoices", src: () => appSource("(admin)/admin/payments/AllInvoicesTab.tsx") },
+  { name: "Payroll", src: () => appSource("(admin)/admin/payouts/page.tsx") },
+  {
+    name: "Payslips",
+    src: () => appSource("(admin)/admin/payouts/_components/PayslipsPanel.tsx"),
+  },
+  { name: "Expenses", src: () => appSource("(admin)/admin/expenses/page.tsx") },
+  { name: "Billing health webhooks", src: () => appSource("(admin)/admin/billing-health/page.tsx") },
+  { name: "Session roster", src: () => appSource("(admin)/admin/sessions/[id]/RosterPanel.tsx") },
+  {
+    // `ReplacementCoachTable` — the Class dates list the session detail page
+    // mounts.
+    name: "Session class dates",
+    src: () => appSource("(admin)/admin/sessions/[id]/SessionEditing.tsx"),
+  },
+  {
+    name: "Family students",
+    src: () => appSource("(admin)/admin/families/[parentId]/StudentsPanel.tsx"),
+  },
+  {
+    name: "Family invoices",
+    src: () => appSource("(admin)/admin/families/[parentId]/InvoicesPanel.tsx"),
+  },
+];
+
+/**
+ * #857, the lesson #856 left behind: `admin-users-row-actions-<id>` starts
+ * with the SAME string as the row's own `admin-users-row-<id>`. Any prefix
+ * match — a CSS `[data-testid^="admin-users-row-"]`, a `startsWith` helper,
+ * the string-prefix assertions in this very file — silently picks the actions
+ * trigger up as if it were a row. The safe shape is `<list>-actions-<id>`,
+ * which shares no prefix with `<list>-row-<id>`.
+ */
+describe("a row-actions testid never shares a prefix with its row testid (#857)", () => {
+  const FILES: { name: string; src: () => string }[] = [
+    { name: "Families", src: () => appSource("(admin)/admin/families/page.tsx") },
+    { name: "Users", src: () => source("components/admin/AdminUsersDirectory.tsx") },
+    ...CONVERTED_857,
+  ];
+
+  for (const file of FILES) {
+    it(`${file.name} has no \`-row-actions-\` testid`, () => {
+      expect(file.src()).not.toMatch(/-row-actions-/);
+    });
+  }
+
+  it("Families uses admin-families-actions-<parentId>", () => {
+    expect(appSource("(admin)/admin/families/page.tsx")).toContain(
+      "admin-families-actions-${row.parent_id}",
+    );
+  });
+
+  it("Users uses admin-users-actions-<userId>", () => {
+    expect(source("components/admin/AdminUsersDirectory.tsx")).toContain(
+      "admin-users-actions-${user.user_id}",
+    );
+  });
+});
+
+describe("#857 lists mount phone rows below md", () => {
+  for (const list of CONVERTED_857) {
+    it(`${list.name} swaps the table for PhoneListRow on a phone`, () => {
+      const src = list.src();
+      expect(src).toContain("useIsPhone");
+      expect(src).toContain("PhoneListRow");
+      // One layout at a time — see `lib/use-is-phone.ts`. A `md:hidden` twin
+      // leaves two nodes per row in the DOM and trips strict mode in every
+      // mobile spec that names a row.
+      expect(src).not.toContain("md:hidden");
+    });
+  }
+});
+
+/**
+ * The money lists keep the confirm step #838 gave them. A phone row that
+ * mutated money straight from a menu item would be a second, shorter path to
+ * a refund — so each layout hands off to the SAME dialog.
+ */
+describe("#857 money actions keep the #838 confirm dialogs", () => {
+  it("All invoices: the phone menu sets the same targets the buttons set", () => {
+    const src = appSource("(admin)/admin/payments/AllInvoicesTab.tsx");
+    // One dialog of each kind, mounted once for the tab, driven by a target.
+    for (const dialog of ["VoidPaymentDialog", "RefundDialog", "MarkPaidDialog"]) {
+      expect(src.match(new RegExp(`<${dialog}`, "g"))?.length).toBe(1);
+    }
+    // The menu is built from the shared action list, not a hand-rolled copy.
+    expect(src).toContain("paymentMenuItems");
+  });
+
+  it("All invoices: both layouts derive eligibility once", () => {
+    const src = appSource("(admin)/admin/payments/dialogs.tsx");
+    expect(src).toContain("function paymentActionEligibility");
+    // Refund/undo/void eligibility lives in the shared helper only.
+    expect(src.match(/payment\.refunded_cents < finalCents\(payment\)/g)?.length).toBe(1);
+  });
+
+  it("Level-ups: approve still routes through ConfirmActionDialog", () => {
+    const src = source("components/admin/admissions/LevelUpsTab.tsx");
+    expect(src).toContain("ConfirmActionDialog");
+    // One dialog per row, shared by the table cell and the phone menu item.
+    expect(src.match(/<ConfirmActionDialog/g)?.length).toBe(1);
+  });
+});
+
 describe("the shared phone row (#847)", () => {
   const row = () => source("components/ds/phone-row.tsx");
 

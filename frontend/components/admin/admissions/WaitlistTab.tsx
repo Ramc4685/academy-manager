@@ -13,6 +13,8 @@ import { BigNum, Overline } from "@/components/ds/typography";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { LaneHeader } from "@/components/ds/lane";
+import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
+import { useIsPhone } from "@/lib/use-is-phone";
 
 function formatDate(isoString: string): string {
   return new Date(isoString).toLocaleDateString([], { month: "short", day: "numeric" });
@@ -95,21 +97,62 @@ function SessionWaitlist({ session }: { session: AdminGlobalWaitlistSession }) {
         </div>
         <a
           href={`/admin/sessions/${session.session_id}`}
-          className="inline-flex h-[30px] items-center justify-center rounded-lg bg-rally-cobalt px-3 font-body text-[12px] font-semibold text-white"
+          className="inline-flex min-h-touch items-center justify-center rounded-lg bg-rally-cobalt px-3 font-body text-[12px] font-semibold text-white"
         >
           Manage session
         </a>
       </div>
-      <div>
-        {session.entries.map((entry, index) => (
-          <WaitlistRow
-            key={entry.waitlist_id}
-            entry={entry}
-            position={entry.position || index + 1}
-          />
-        ))}
-      </div>
+      <WaitlistEntries entries={session.entries} />
     </Card>
+  );
+}
+
+/**
+ * #857: the four-column grid already stacked on a phone, but it stacked into a
+ * 56px number block, a name, an "Joined queue" label and a chip — four
+ * full-width blocks per waiting student, so one screen held two people. The
+ * shared phone row says the same thing in two lines.
+ */
+function WaitlistEntries({ entries }: { entries: AdminWaitlistEntry[] }) {
+  const isPhone = useIsPhone();
+  if (isPhone) {
+    return (
+      <PhoneList aria-label="Waitlist" data-testid="admin-waitlist-phone-list">
+        {entries.map((entry, index) => {
+          const position = entry.position || index + 1;
+          return (
+            <PhoneListRow
+              key={entry.waitlist_id}
+              data-testid={`admin-waitlist-row-${entry.waitlist_id}`}
+              leading={
+                <span className="flex size-9 items-center justify-center rounded-md bg-rally-paper font-display text-sm font-bold text-rally-ink">
+                  #{position}
+                </span>
+              }
+              title={entry.full_name}
+              primary={<Chip variant="waitlist" label={entry.status.toUpperCase()} />}
+              secondary={
+                <>
+                  <div>Joined {formatDate(entry.added_at)}</div>
+                  <div className="break-all font-mono text-[11px]">{entry.parent_id}</div>
+                </>
+              }
+            />
+          );
+        })}
+      </PhoneList>
+    );
+  }
+  return (
+    <div>
+      {entries.map((entry, index) => (
+        <WaitlistRow
+          key={entry.waitlist_id}
+          entry={entry}
+          position={entry.position || index + 1}
+        />
+      ))}
+    </div>
   );
 }
 
