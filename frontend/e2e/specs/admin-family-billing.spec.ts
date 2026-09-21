@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 
+import { rowActionControl } from "../helpers/row-actions";
 import { collectConsoleErrors, installTenantGuard } from "../fixtures/tenant-isolation";
 import {
   ACADEMY_A,
@@ -391,9 +392,80 @@ test.describe("Family billing", () => {
     await expect(page.getByTestId("family-send-invite")).toBeVisible();
   });
 
+  // #890: void, refund, one-time discount and charge-card-now used to render
+  // BOTH as invoice-row buttons and inside "Fix something". The Fix panel is
+  // now their single home, so the row never offers them.
+  test("each money action has exactly one home", async ({ page }) => {
+    await setup(page, { owner: true });
+    for (const testId of [
+      "invoice-action-void-inv-sep",
+      "invoice-action-discount_once-inv-sep",
+      "invoice-action-charge_card-inv-sep",
+      "invoice-action-refund-inv-aug",
+    ]) {
+      await expect(page.getByTestId(testId)).toHaveCount(0);
+    }
+    for (const testId of [
+      "fix-void-inv-sep",
+      "fix-discount_once-inv-sep",
+      "fix-charge_card-inv-sep",
+      "fix-refund-inv-aug",
+    ]) {
+      await expect(page.getByTestId(testId)).toBeVisible();
+    }
+    // The two row-specific actions stay on the row.
+    await expect(page.getByTestId("invoice-action-record_payment-inv-sep")).toBeVisible();
+    await expect(page.getByTestId("invoice-action-send-inv-sep")).toBeVisible();
+  });
+
+  // #890: the autopay-failure card carried a second "Record payment" wired to
+  // the same handler as the header's, so the page offered it three times.
+  test("Record payment is offered once in the header and once per invoice", async ({ page }) => {
+    const view = {
+      ...FAMILY,
+      header: {
+        ...FAMILY.header,
+        autopay: {
+          ...FAMILY.header.autopay,
+          last_failure: { code: "card_declined", at: "2026-09-08T06:00:00Z" },
+        },
+      },
+    };
+    await setup(page, { owner: true, view });
+    await expect(page.getByTestId("family-autopay-failure")).toBeVisible();
+    await expect(page.getByTestId("family-failure-resend-invite")).toBeVisible();
+    await expect(page.getByTestId("family-failure-record-payment")).toHaveCount(0);
+    await expect(page.getByTestId("family-record-payment")).toBeVisible();
+    await expect(page.getByTestId("invoice-action-record_payment-inv-sep")).toBeVisible();
+  });
+
+  // #890: the Fix panel advertised two actions that do not exist yet.
+  test("Fix something has no coming-later placeholders", async ({ page }) => {
+    await setup(page, { owner: true });
+    await expect(page.getByTestId("family-fix")).toBeVisible();
+    await expect(page.getByTestId("family-fix")).not.toContainText("coming later");
+    await expect(page.getByTestId("family-fix")).not.toContainText("Account credit");
+    await expect(page.getByTestId("family-fix")).not.toContainText("Undo manual payment");
+  });
+
+  // #890: Add charge is row-specific, so it moves behind the row's More menu
+  // rather than sitting on the row as a third direct button.
+  test("Add charge lives behind the invoice row's More menu", async ({ page }) => {
+    const view = { ...FAMILY, invoices: [DRAFT_UNTIED, ...FAMILY.invoices] };
+    await setup(page, { owner: true, view });
+    await expect(page.getByTestId("invoice-add-charge-inv-draft")).toHaveCount(0);
+    const addCharge = await rowActionControl(page, {
+      rowTestId: "invoice-row-inv-draft",
+      actionsTestId: "invoice-more-inv-draft",
+      label: "Add charge",
+    });
+    await addCharge.click();
+    await expect(page.getByTestId("add-charge-dialog")).toBeVisible();
+  });
+
   test("void requires a reason and posts it; refund hidden for a plain admin", async ({ page }) => {
     const { posts } = await setup(page, { owner: true });
-    await page.getByTestId("invoice-action-void-inv-sep").click();
+    await page.getByTestId("fix-void-inv-sep").click();
     await expect(page.getByRole("button", { name: "Void invoice" }).last()).toBeDisabled();
     await page.getByTestId("reason-input").fill("duplicate invoice");
     await page.getByRole("button", { name: "Void invoice" }).last().click();
@@ -414,7 +486,12 @@ test.describe("Family billing", () => {
     await expect(page.getByTestId("invoice-action-void-inv-sep")).toHaveCount(0);
     await expect(page.getByTestId("invoice-action-refund-inv-aug")).toHaveCount(0);
     await expect(page.getByTestId("family-fix")).not.toContainText("Refund");
+    await expect(page.getByTestId("family-fix")).not.toContainText("Void invoice");
     await expect(page.getByTestId("family-fix")).toContainText("Charge card now");
+    // #890: the owner-only actions live only in the Fix panel now, so what a
+    // plain admin still gets on the row is the two row-specific actions.
+    await expect(page.getByTestId("invoice-action-record_payment-inv-sep")).toBeVisible();
+    await expect(page.getByTestId("invoice-action-send-inv-sep")).toBeVisible();
   });
 
   test("full audit calls the audit route", async ({ page }) => {
@@ -545,7 +622,13 @@ test.describe("Family billing", () => {
     const view = { ...FAMILY, invoices: [DRAFT_UNTIED, ...FAMILY.invoices] };
     const { posts } = await setup(page, { owner: true, view });
 
-    await page.getByTestId("invoice-add-charge-inv-draft").click();
+    // #890: reached through the row's More menu on both layouts.
+    const addCharge = await rowActionControl(page, {
+      rowTestId: "invoice-row-inv-draft",
+      actionsTestId: "invoice-more-inv-draft",
+      label: "Add charge",
+    });
+    await addCharge.click();
     await expect(page.getByTestId("add-charge-subject")).toHaveText("Sep 2026 · Arjun · $0.00");
     // No class behind this draft, so there is nothing to prefill and the
     // submit stays shut until the admin says what the charge is.
