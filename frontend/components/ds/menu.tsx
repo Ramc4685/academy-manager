@@ -60,11 +60,21 @@ export function OverflowMenu({
   items,
   align = "end",
   className = "",
+  triggerLabel,
+  triggerTestId,
 }: {
   trigger: ReactNode;
   items: MenuItem[];
   align?: "start" | "end";
   className?: string;
+  /**
+   * Accessible name for the trigger, e.g. "Actions for Amit Rao". An
+   * `aria-label` rather than an sr-only span on purpose (#847): sr-only text
+   * IS text content, so a per-row name would give every `getByText("Amit
+   * Rao")` in a spec a second match inside the same row.
+   */
+  triggerLabel?: string;
+  triggerTestId?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
@@ -295,6 +305,8 @@ export function OverflowMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
+        aria-label={triggerLabel}
+        data-testid={triggerTestId}
         onClick={() => {
           setOpen((wasOpen) => {
             const willOpen = !wasOpen;

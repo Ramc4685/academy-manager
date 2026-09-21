@@ -11,6 +11,7 @@
  */
 
 import dynamic from "next/dynamic";
+import type { Route } from "next";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
@@ -37,13 +38,17 @@ import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 import { queryKeys } from "@/lib/query/keys";
 import {
   formatAcademyTimeRange,
+  parseAcademyInstant,
   resolveAcademyTimeZone,
 } from "@/lib/format/academy-time";
+import { actionCellClass, actionHeaderClass } from "@/lib/sticky-action-column";
+import { useIsPhone } from "@/lib/use-is-phone";
 
 import { Avatar } from "@/components/ds/avatar";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
+import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { Icon } from "@/components/ds/icons";
 import { Overline } from "@/components/ds/typography";
 
@@ -124,6 +129,23 @@ function sessionDateLabel(session: AdminSessionView): string {
     month: "short",
     day: "numeric",
     year: "numeric",
+  });
+}
+
+/**
+ * #847: the list showed a time range and no day, at any width — so "6:00 PM"
+ * did not say whether it was the Tuesday class or the Saturday one. A
+ * recurring session says which days it repeats on; a one-off says the weekday
+ * of its own date, read in the session's timezone so it cannot drift by one
+ * day for an admin in another zone.
+ */
+function sessionDayLabel(session: AdminSessionView): string {
+  const days = session.days_of_week ?? [];
+  if (days.length > 0) return days.join(", ");
+  const { timeZone } = resolveAcademyTimeZone(session.timezone);
+  return parseAcademyInstant(session.start_at).toLocaleDateString(undefined, {
+    weekday: "short",
+    timeZone,
   });
 }
 
@@ -371,20 +393,43 @@ function SessionList({
   onDelete: (session: AdminSessionView) => void;
   pendingDeleteId: string | null;
 }) {
+  const isPhone = useIsPhone();
+
+  if (isPhone) {
+    return (
+      <Card p={0}>
+        {/* #847: the `admin-sessions-table` hook moves to the wrapper that
+            holds WHICHEVER layout is mounted, so specs that scope row lookups
+            to "the sessions list" keep working at phone width. */}
+        <div data-testid="admin-sessions-table">
+          <SessionPhoneList
+            sessions={sessions}
+            onEdit={onEdit}
+            onDelete={onDelete}
+            pendingDeleteId={pendingDeleteId}
+          />
+        </div>
+      </Card>
+    );
+  }
+
   return (
     <Card p={0}>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm" data-testid="admin-sessions-table">
+      <div className="overflow-x-auto" data-testid="admin-sessions-table">
+        <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-rally-line text-left">
               <Th>Session</Th>
               <Th>Location</Th>
+              <Th>Day</Th>
               <Th>Time</Th>
               <Th>Coach</Th>
               <Th align="right">Fee</Th>
               <Th align="right">Fill</Th>
               <Th align="right">Waitlist</Th>
-              <Th><span className="sr-only">Actions</span></Th>
+              {/* #847: a ninth column pushed Edit/Cancel past the fold at
+                  1280. Sticky keeps them on screen at every width. */}
+              <Th className={actionHeaderClass}><span className="sr-only">Actions</span></Th>
             </tr>
           </thead>
           <tbody>
@@ -405,6 +450,9 @@ function SessionList({
                     </a>
                   </td>
                   <td className="px-4 py-3 text-rally-muted">{s.location}</td>
+                  <td className="px-4 py-3 whitespace-nowrap text-rally-muted">
+                    {sessionDayLabel(s)}
+                  </td>
                   <td className="px-4 py-3 font-mono tabular-nums text-rally-muted">
                     {formatSessionTimeRange(s)}
                   </td>
@@ -430,7 +478,7 @@ function SessionList({
                   <td className="px-4 py-3 text-right font-mono tabular-nums text-rally-muted">
                     {s.waitlist_count}
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className={`${actionCellClass} bg-white text-right`}>
                     <div className="flex justify-end gap-2">
                       <Button
                         variant="secondary"
@@ -458,6 +506,78 @@ function SessionList({
         </table>
       </div>
     </Card>
+  );
+}
+
+/**
+ * #847: at 400px the table's Fill, Waitlist, Edit and Cancel all sat past the
+ * right edge — which is why `local-auth-sessions.spec.ts` had to be pinned to
+ * a desktop viewport. Every one of them is on screen here, and Edit/Cancel
+ * live behind a 44px menu trigger.
+ */
+function SessionPhoneList({
+  sessions,
+  onEdit,
+  onDelete,
+  pendingDeleteId,
+}: {
+  sessions: AdminSessionView[];
+  onEdit: (session: AdminSessionView) => void;
+  onDelete: (session: AdminSessionView) => void;
+  pendingDeleteId: string | null;
+}) {
+  return (
+    <PhoneList aria-label="Sessions">
+      {sessions.map((s) => {
+        const fill = fillChip(s.enrolled_count, s.capacity);
+        return (
+          <PhoneListRow
+            key={s.session_id}
+            data-testid={`session-row-${s.session_id}`}
+            title={s.title}
+            href={`/admin/sessions/${s.session_id}` as Route}
+            primary={
+              <span className="inline-flex items-center gap-2">
+                <span className="font-mono text-sm font-semibold tabular-nums text-rally-ink">
+                  {s.enrolled_count}/{s.capacity}
+                </span>
+                <Chip variant={fill.variant} label={fill.label} />
+              </span>
+            }
+            actionsLabel={`Actions for ${s.title}`}
+            actionsTestId={`session-row-actions-${s.session_id}`}
+            actions={[
+              {
+                key: "open",
+                label: "Open session",
+                href: `/admin/sessions/${s.session_id}` as Route,
+              },
+              { key: "edit", label: "Edit", onSelect: () => onEdit(s) },
+              {
+                key: "cancel",
+                label: pendingDeleteId === s.session_id ? "Cancelling…" : "Cancel session",
+                danger: true,
+                disabled: pendingDeleteId !== null,
+                onSelect: () => onDelete(s),
+              },
+            ]}
+            secondary={
+              <>
+                <div className="font-mono text-xs tabular-nums text-rally-base">
+                  {sessionDayLabel(s)} · {formatSessionTimeRange(s)}
+                </div>
+                <div className="break-words">
+                  {s.location} · {s.coach_name || "Coach assigned"}
+                </div>
+                <div className="font-mono text-xs tabular-nums">
+                  {formatCurrencyCents(s.amount_cents)} · {s.waitlist_count} on waitlist
+                </div>
+              </>
+            }
+          />
+        );
+      })}
+    </PhoneList>
   );
 }
 
@@ -653,15 +773,17 @@ function EditSessionDialog({
 function Th({
   children,
   align = "left",
+  className,
 }: {
   children: React.ReactNode;
   align?: "left" | "right";
+  className?: string;
 }) {
   return (
     <th
       className={`px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted ${
         align === "right" ? "text-right" : "text-left"
-      }`}
+      } ${className ?? ""}`}
     >
       {children}
     </th>

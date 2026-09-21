@@ -24,6 +24,7 @@ import {
 import { queryKeys } from "@/lib/query/keys";
 import { useIsOwner } from "@/components/admin/owner-context";
 import { matchesInvoiceStatusFilter, type InvoiceStatusFilter } from "@/lib/billing-status";
+import { actionCellClass, actionHeaderClass } from "@/lib/sticky-action-column";
 
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
@@ -410,7 +411,11 @@ export function AllInvoicesTab() {
                   <Th>Status</Th>
                   <Th>Method</Th>
                   <Th>Paid on</Th>
-                  <Th><span className="sr-only">Actions</span></Th>
+                  {/* #847: ten columns over a 980px minimum put the row menu
+                      past the right edge at 1280 inside the admin shell, so
+                      voiding or refunding an invoice needed a sideways scroll
+                      first. Same sticky column the approval queues use. */}
+                  <Th className={actionHeaderClass}><span className="sr-only">Actions</span></Th>
                 </tr>
               </thead>
               <tbody>
@@ -484,7 +489,7 @@ export function AllInvoicesTab() {
                       <td className="px-4 py-3 text-rally-muted">
                         {p.paid_at ? new Date(p.paid_at).toLocaleDateString() : "—"}
                       </td>
-                      <td className="px-4 py-3">
+                      <td className={`${actionCellClass} bg-white`}>
                         <PaymentActions
                           payment={p}
                           canGovernMoney={isOwner}

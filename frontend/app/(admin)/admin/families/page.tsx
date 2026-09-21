@@ -29,11 +29,13 @@ import {
   loginStateFromRegistration,
 } from "@/lib/people-status";
 import { UNKNOWN_TEXT, finiteText } from "@/lib/ui/load-state";
+import { useIsPhone } from "@/lib/use-is-phone";
 
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { ErrorNotice } from "@/components/ds/error-notice";
 import { Chip } from "@/components/ds/chip";
+import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { BigNum, Overline } from "@/components/ds/typography";
 
 function formatCents(cents: number): string {
@@ -133,7 +135,8 @@ export default function FamiliesPage() {
             <button
               key={f.value}
               onClick={() => setStatus(f.value)}
-              className={`rounded px-3 py-1.5 text-sm font-medium ${
+              // #847: 44px on a phone, unchanged on desktop.
+              className={`inline-flex min-h-touch items-center rounded px-3 py-1.5 text-sm font-medium md:min-h-0 ${
                 status === f.value ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
               }`}
             >
@@ -163,26 +166,7 @@ export default function FamiliesPage() {
         ) : rows.length === 0 ? (
           <div className="p-8 text-center text-sm text-slate-500">No families match this filter.</div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 text-xs uppercase text-slate-500">
-                  <th className="px-4 py-3">Parent</th>
-                  <th className="px-4 py-3">Login</th>
-                  <th className="px-4 py-3">Card</th>
-                  <th className="px-4 py-3">Autopay</th>
-                  <th className="px-4 py-3">Outstanding</th>
-                  <th className="px-4 py-3">Invited</th>
-                  <th className="px-4 py-3">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => (
-                  <FamilyTableRow key={row.parent_id} row={row} />
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <FamiliesList rows={rows} />
         )}
         {hasNextPage && (
           <div className="border-t border-rally-line p-4 text-center">
@@ -198,6 +182,110 @@ export default function FamiliesPage() {
         )}
       </Card>
     </div>
+  );
+}
+
+/**
+ * #847: one list, two layouts. Exactly one is mounted, so `family-link-<id>`
+ * is a single node at every width — see `lib/use-is-phone.ts`.
+ */
+function FamiliesList({ rows }: { rows: BillingSetupRow[] }) {
+  const isPhone = useIsPhone();
+  if (isPhone) {
+    return (
+      <PhoneList aria-label="Families" data-testid="admin-families-phone-list">
+        {rows.map((row) => (
+          <FamilyPhoneRow key={row.parent_id} row={row} />
+        ))}
+      </PhoneList>
+    );
+  }
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-left text-sm">
+        <thead>
+          <tr className="border-b border-slate-200 text-xs uppercase text-slate-500">
+            <th className="px-4 py-3">Parent</th>
+            <th className="px-4 py-3">Login</th>
+            <th className="px-4 py-3">Card</th>
+            <th className="px-4 py-3">Autopay</th>
+            <th className="px-4 py-3">Outstanding</th>
+            <th className="px-4 py-3">Invited</th>
+            <th className="px-4 py-3">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <FamilyTableRow key={row.parent_id} row={row} />
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/**
+ * The outstanding balance is line 1's primary slot: on a phone it was the
+ * fifth column of seven and never on screen, which is the one number that
+ * decides whether this family needs chasing today.
+ */
+function FamilyPhoneRow({ row }: { row: BillingSetupRow }) {
+  const login = loginChip(loginStateFromRegistration(row.registration_state));
+  const card = cardChip(cardStateFromRegistration(row.registration_state));
+  const href = familyHref(row.parent_id);
+  const outstanding = row.outstanding_balance_cents;
+
+  return (
+    <PhoneListRow
+      data-testid={`admin-families-row-${row.parent_id}`}
+      title={row.parent_name}
+      href={href}
+      titleTestId={`family-link-${row.parent_id}`}
+      primary={
+        <span
+          className={`font-mono text-sm font-semibold tabular-nums ${
+            outstanding > 0 ? "text-status-red-800" : "text-rally-muted"
+          }`}
+        >
+          {formatCents(outstanding)}
+        </span>
+      }
+      actionsLabel={`Actions for ${row.parent_name}`}
+      actionsTestId={`admin-families-row-actions-${row.parent_id}`}
+      actions={[{ key: "open", label: "Open family", href }]}
+      secondary={
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            <Chip variant={login.variant} label={login.label} />
+            <Chip variant={card.variant} label={card.label} />
+          </div>
+          <div className="break-words">{row.parent_email ?? "No email on file"}</div>
+          {row.card_label && (
+            <div>
+              {row.card_label} ···· {row.card_last4 ?? "????"}
+            </div>
+          )}
+          <div>
+            {row.autopay_active_count > 0 || row.autopay_eligible_count > 0
+              ? `${row.autopay_active_count} on autopay · ${row.autopay_eligible_count} eligible to resume`
+              : "No autopay"}
+            {row.last_invited_at ? ` · invited ${formatDate(row.last_invited_at)}` : ""}
+          </div>
+          {row.students.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {row.students.map((s) => (
+                <span
+                  key={s.student_id}
+                  className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600"
+                >
+                  {s.full_name}
+                </span>
+              ))}
+            </div>
+          )}
+        </>
+      }
+    />
   );
 }
 
