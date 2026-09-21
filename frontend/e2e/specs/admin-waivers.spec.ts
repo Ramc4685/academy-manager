@@ -75,6 +75,11 @@ async function stubAdminShell(page: Page) {
       brand_color: null,
     });
   });
+  // Issue #842: AdminLayout now feeds the Inbox nav badge from this endpoint
+  // on every admin page, so every shell stub must cover it.
+  await page.route("**/api/v2/admin/inbox/counts", (route) =>
+    fulfillJson(route, { counts: {}, total: 0 }),
+  );
 }
 
 async function stubWaiverTemplates(page: Page) {

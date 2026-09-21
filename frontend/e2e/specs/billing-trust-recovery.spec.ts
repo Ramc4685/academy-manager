@@ -198,6 +198,11 @@ test.describe("billing trust and recovery surfaces", () => {
       { academy_id: ACADEMY_A, academy_name: "Aces Academy", role: "admin" },
     ]);
     await stubAcademy(page, ACADEMY_A);
+    // Issue #842: AdminLayout now feeds the Inbox nav badge from this
+    // endpoint on every admin page, so every shell stub must cover it.
+    await page.route("**/api/v2/admin/inbox/counts", (route) =>
+      fulfillJson(route, { counts: {}, total: 0 }),
+    );
 
     await page.route("**/api/v2/admin/payments*", (route) => {
       if (route.request().method() !== "GET") return route.fallback();

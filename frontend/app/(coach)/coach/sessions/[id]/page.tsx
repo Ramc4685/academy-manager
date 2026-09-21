@@ -506,6 +506,10 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
         student_id,
         status,
         client_app_version: CLIENT_APP_VERSION,
+        // #841: the roster and the class title are on screen right now; the
+        // Needs-review tray has no way to look them up later, so capture them.
+        student_full_name: roster.find((s) => s.student_id === student_id)?.full_name,
+        session_title: session?.title,
       });
       setQueuedMarks((prev) => ({ ...prev, [student_id]: { status, mutation_id: m.mutation_id } }));
       setLocalMarks((m2) => {

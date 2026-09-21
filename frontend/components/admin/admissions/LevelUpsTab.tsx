@@ -9,6 +9,8 @@ import {
   rejectLevelUp,
   type LevelUpRecommendation,
 } from "@/lib/api/curriculum";
+import { listAdminUsers } from "@/lib/api/admin";
+import { queryKeys } from "@/lib/query/keys";
 import { Card } from "@/components/ds/card";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { Button } from "@/components/ds/button";
@@ -32,9 +34,37 @@ function levelUpChipVariant(status: LevelUpRecommendation["status"]): ChipVarian
 
 const QUEUE_KEY = ["admin", "level-up-queue"];
 
+/**
+ * Issue #841: the confirm dialog added in #838 read "st-204 · prog-3 · from
+ * lvl-1". The queue read now resolves those names, so it says who is moving
+ * and where to; an unresolved name falls back to its id rather than a blank.
+ */
+function levelUpSubject(rec: LevelUpRecommendation): string {
+  const student = rec.student_name || rec.student_id;
+  const program = rec.program_name || rec.program_id;
+  const from = rec.from_level_name || rec.from_level_id;
+  const to = rec.to_level_name || rec.to_level_id;
+  return `${student} · ${program} · ${from} → ${to}`;
+}
+
+/**
+ * Who recommended a level-up, by name (#841). The staff directory is already
+ * an admin-visible read, so this resolves client-side rather than widening the
+ * queue DTO. Falls back to the id if the directory has no such user.
+ */
+function useStaffNames(): (userId: string) => string {
+  const { data } = useQuery({
+    queryKey: queryKeys.admin.users("coach"),
+    queryFn: () => listAdminUsers("coach"),
+  });
+  const byId = new Map((data?.users ?? []).map((u) => [u.user_id, u.display_name]));
+  return (userId: string) => byId.get(userId) || userId;
+}
+
 export function LevelUpsTab() {
   const queryClient = useQueryClient();
   const [reviewError, setReviewError] = useState<string | null>(null);
+  const staffName = useStaffNames();
 
   const { data, isLoading, isError } = useQuery({
     queryKey: QUEUE_KEY,
@@ -141,6 +171,7 @@ export function LevelUpsTab() {
                   <QueueRow
                     key={rec.rec_id}
                     rec={rec}
+                    recommendedByName={staffName(rec.recommended_by)}
                     approvePending={approveMutation.isPending}
                     rejectPending={rejectMutation.isPending}
                     onApprove={() => approveMutation.mutate(rec.rec_id)}
@@ -158,12 +189,14 @@ export function LevelUpsTab() {
 
 function QueueRow({
   rec,
+  recommendedByName,
   approvePending,
   rejectPending,
   onApprove,
   onReject,
 }: {
   rec: LevelUpRecommendation;
+  recommendedByName: string;
   approvePending: boolean;
   rejectPending: boolean;
   onApprove: () => void;
@@ -194,7 +227,7 @@ function QueueRow({
     >
       <td className="px-4 py-3 font-medium text-rally-base">
         <div className="flex items-center gap-2">
-          <span>{rec.student_id}</span>
+          <span>{rec.student_name || "Unnamed student"}</span>
           {withdrawn && (
             <span data-testid={`level-up-withdrawn-${rec.rec_id}`} title={WITHDRAWN_APPROVE_HINT}>
               <Chip variant="expired" label="Withdrawn" />
@@ -202,9 +235,9 @@ function QueueRow({
           )}
         </div>
       </td>
-      <td className="px-4 py-3 text-rally-subtle">{rec.program_id}</td>
-      <td className="px-4 py-3 text-rally-subtle">{rec.from_level_id}</td>
-      <td className="px-4 py-3 text-rally-subtle">{rec.recommended_by}</td>
+      <td className="px-4 py-3 text-rally-subtle">{rec.program_name || rec.program_id}</td>
+      <td className="px-4 py-3 text-rally-subtle">{rec.from_level_name || rec.from_level_id}</td>
+      <td className="px-4 py-3 text-rally-subtle">{recommendedByName}</td>
       <td className="px-4 py-3 text-rally-subtle">
         {new Date(rec.recommended_at).toLocaleDateString(undefined, {
           month: "short",
@@ -278,7 +311,7 @@ function QueueRow({
           onOpenChange={setConfirmApprove}
           overline="Approve level-up"
           title="Move this student up a level?"
-          subject={`${rec.student_id} · ${rec.program_id} · from ${rec.from_level_id}`}
+          subject={levelUpSubject(rec)}
           consequence={
             <>
               <p>
@@ -287,7 +320,7 @@ function QueueRow({
                 progress view. No seat, invoice or autopay is touched.
               </p>
               <p>
-                Recommended by {rec.recommended_by}. Undoing this means placing the student back by
+                Recommended by {recommendedByName}. Undoing this means placing the student back by
                 hand.
               </p>
             </>

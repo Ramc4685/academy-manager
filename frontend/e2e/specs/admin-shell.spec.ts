@@ -741,6 +741,73 @@ test.describe("Rally admin shell", () => {
     ).toEqual([]);
   });
 
+  test("dashboard leads with Needs your attention, above the KPI strip", async ({
+    page,
+  }) => {
+    await stubAdminBff(page);
+    await page.goto("/admin");
+    await expect(page.getByTestId("admin-dashboard")).toBeVisible();
+    const attention = page.getByTestId("admin-dashboard-attention");
+    await expect(attention).toBeVisible();
+    const sessionsTile = page.getByTestId("dashboard-tile-sessions");
+    await expect(sessionsTile).toBeVisible();
+    const attentionBox = await attention.boundingBox();
+    const sessionsBox = await sessionsTile.boundingBox();
+    expect(attentionBox).not.toBeNull();
+    expect(sessionsBox).not.toBeNull();
+    // The attention card must sit above (smaller y) the KPI strip — today the
+    // KPI grid renders first, so this fails on unfixed code.
+    expect(attentionBox!.y).toBeLessThan(sessionsBox!.y);
+  });
+
+  test("Sessions today tile links to /admin/sessions", async ({ page }) => {
+    await stubAdminBff(page);
+    await page.goto("/admin");
+    await expect(page.getByTestId("admin-dashboard")).toBeVisible();
+    const link = page.locator('a[data-testid="dashboard-tile-sessions"]');
+    await expect(link).toHaveAttribute("href", "/admin/sessions");
+  });
+
+  test("Inbox nav row shows the pending count from the queue endpoint", async ({
+    page,
+  }) => {
+    await stubAdminBff(page);
+    await page.route("**/api/v2/admin/inbox/counts", (route) =>
+      fulfillJson(route, { counts: { registrations: 4, waitlist: 3 }, total: 7 }),
+    );
+    await page.goto("/admin");
+    await expect(page.getByTestId("admin-dashboard")).toBeVisible();
+    const nav = await openAdminNav(page);
+    await expect(nav.getByTestId("admin-nav-inbox")).toContainText("7");
+  });
+
+  test("Inbox nav row hides the badge when the queue is empty", async ({
+    page,
+  }) => {
+    await stubAdminBff(page);
+    await page.goto("/admin");
+    await expect(page.getByTestId("admin-dashboard")).toBeVisible();
+    const nav = await openAdminNav(page);
+    await expect(nav.getByTestId("admin-nav-inbox")).not.toContainText("0");
+  });
+
+  test("all nav groups are visible at 1280x900 without scrolling the sidebar", async ({
+    page,
+  }) => {
+    await stubAdminBff(page);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto("/admin");
+    await expect(page.getByTestId("admin-dashboard")).toBeVisible();
+    const lastRow = page.getByTestId("admin-nav-audit-logs");
+    await expect(lastRow).toBeVisible();
+    const box = await lastRow.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.y + box!.height).toBeLessThanOrEqual(900);
+    const nav = page.locator('aside[aria-label="Admin navigation"] nav').first();
+    const overflow = await nav.evaluate((el) => el.scrollHeight - el.clientHeight);
+    expect(overflow).toBeLessThanOrEqual(1);
+  });
+
   for (const route of ADMIN_ROUTES) {
     test(`route ${route.href} mounts`, async ({ page }) => {
       // Even with a 15s budget these mounts intermittently blow their deadline

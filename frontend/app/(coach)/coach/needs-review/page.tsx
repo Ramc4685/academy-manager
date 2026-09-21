@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { listAudit, recordAudit, toCsv } from "@/lib/offline/audit";
+import { describeQueuedMutation } from "@/lib/offline/mutation-label";
 import { dropById, listNeedsReview, type QueuedMutation } from "@/lib/offline/queue";
 
 /**
@@ -84,7 +85,7 @@ export default function NeedsReviewPage() {
             data-testid={`tray-${m.mutation_id}`}
             className="rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950"
           >
-            <p className="font-medium">{describe(m)}</p>
+            <p className="font-medium">{describeQueuedMutation(m)}</p>
             <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
               {reviewReason(m)}
             </p>
@@ -101,11 +102,6 @@ export default function NeedsReviewPage() {
       </ul>
     </section>
   );
-}
-
-function describe(m: QueuedMutation): string {
-  const p = m.payload as { student_id?: string; status?: string; session_id?: string };
-  return `Mark ${p.status ?? "?"} for ${p.student_id ?? "?"} in ${p.session_id ?? "?"}`;
 }
 
 // Plain-language reasons keyed by the queue's internal error code. The raw code

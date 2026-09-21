@@ -190,6 +190,14 @@ export interface LevelUpRecommendation {
    * sets it; the coach recommend response leaves it undefined.
    */
   enrollment_active?: boolean;
+  /**
+   * Issue #841: resolved display names for the ids above. Only the admin queue
+   * read sets them; null when a lookup failed, which the UI falls back from.
+   */
+  student_name?: string | null;
+  program_name?: string | null;
+  from_level_name?: string | null;
+  to_level_name?: string | null;
 }
 
 export interface SkillCertificate {

@@ -10,6 +10,7 @@ import { COACH_SURFACE_ROLES, canSuperviseCoaching, isAssistantCoach } from "@/l
 import { useOnline } from "@/lib/pwa/online";
 import { useServiceWorkerUpdate } from "@/lib/pwa/update-flow";
 import { startAutoSync } from "@/lib/offline/sync";
+import { useNeedsReviewCount } from "@/lib/offline/use-needs-review-count";
 import { CoachInstallCard } from "@/components/coach/install-card";
 import { CoachSurfaceProvider } from "@/components/coach/coach-surface-context";
 import { ToastProvider } from "@/components/ds/toast";
@@ -53,6 +54,10 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
     refetchInterval: 30_000,
   });
   const unreadCount = (messagesData?.messages ?? []).filter((m) => !m.read).length;
+  // #841: marks that failed and are waiting in the tray. The entry only
+  // appears when there is something to resolve — an always-on "Needs review"
+  // link reads as a standing chore on a shell this small.
+  const needsReviewCount = useNeedsReviewCount(auth.authorized);
 
   useEffect(() => startAutoSync(), []);
 
@@ -134,6 +139,23 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
                   style={{ background: "#facc15" }}
                 />
               )}
+            </Link>
+          )}
+          {needsReviewCount > 0 && (
+            <Link
+              href="/coach/needs-review"
+              data-testid="nav-needs-review"
+              aria-label={`Needs review: ${needsReviewCount} ${needsReviewCount === 1 ? "mark" : "marks"}`}
+              className="min-h-touch flex items-center gap-1.5 rounded-md px-2 text-[13px] font-medium text-amber-200 hover:bg-white/10"
+            >
+              Needs review
+              <span
+                data-testid="needs-review-count"
+                className="flex h-5 min-w-[20px] items-center justify-center rounded-full px-1.5 text-[11px] font-bold"
+                style={{ background: "#facc15", color: "#0a0f1c" }}
+              >
+                {needsReviewCount}
+              </span>
             </Link>
           )}
           <PersonaSwitcher current="coach" variant="dark" />

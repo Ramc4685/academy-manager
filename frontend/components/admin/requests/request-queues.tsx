@@ -34,6 +34,7 @@ import {
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
 import { formatAcademyDateTime } from "@/lib/format/academy-time";
+import { formatPlainDateRange } from "@/lib/format/plain-date";
 import { Card } from "@/components/ds/card";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { Button } from "@/components/ds/button";
@@ -46,6 +47,34 @@ type StatusFilter = "all" | "pending" | "approved" | "denied" | "expired" | "con
 
 const MAKEUP_STATUS_FILTERS: StatusFilter[] = ["all", "pending", "approved", "denied", "expired"];
 const TRIAL_STATUS_FILTERS: StatusFilter[] = ["all", "pending", "approved", "denied", "converted"];
+
+/**
+ * One dated class, as an admin reads it (issue #841): "U10 Tuesday" over
+ * "Thu, Jul 2 · 6:00 PM CDT". Falls back to the occurrence id only when the
+ * backend could not resolve it — a deleted class, not the normal path — so a
+ * broken join still leaves something to search for rather than a blank cell.
+ */
+function ClassMoment({
+  title,
+  startAt,
+  fallbackId,
+}: {
+  title: string | null | undefined;
+  startAt: string | null | undefined;
+  fallbackId: string | null | undefined;
+}) {
+  if (!startAt && !title) {
+    return <span className="text-rally-subtle">{fallbackId || "—"}</span>;
+  }
+  return (
+    <span className="block">
+      {title && <span className="block text-rally-base">{title}</span>}
+      {startAt && (
+        <span className="block text-rally-subtle">{formatAcademyDateTime(startAt, null)}</span>
+      )}
+    </span>
+  );
+}
 
 function statusChipVariant(status: string): ChipVariant {
   switch (status) {
@@ -158,9 +187,29 @@ export function MakeupsTab() {
                     <td className="px-2 py-3 font-medium text-rally-base">
                       {m.student_full_name || m.student_id}
                     </td>
-                    <td className="px-2 py-3 text-rally-subtle">{m.missed_occurrence_id}</td>
-                    <td className="px-2 py-3 text-rally-subtle">
-                      {m.approved_target_occurrence_id ?? m.requested_target_occurrence_id ?? "—"}
+                    <td className="px-2 py-3 text-sm">
+                      <ClassMoment
+                        title={m.missed_session_title}
+                        startAt={m.missed_start_at}
+                        fallbackId={m.missed_occurrence_id}
+                      />
+                    </td>
+                    <td className="px-2 py-3 text-sm">
+                      {m.approved_target_occurrence_id ? (
+                        <ClassMoment
+                          title={m.approved_target_session_title}
+                          startAt={m.approved_target_start_at}
+                          fallbackId={m.approved_target_occurrence_id}
+                        />
+                      ) : m.requested_target_occurrence_id ? (
+                        <ClassMoment
+                          title={m.requested_target_session_title}
+                          startAt={m.requested_target_start_at}
+                          fallbackId={m.requested_target_occurrence_id}
+                        />
+                      ) : (
+                        <span className="text-rally-subtle">No date proposed</span>
+                      )}
                     </td>
                     <td className="px-2 py-3 text-rally-subtle">{formatAcademyDateTime(m.expires_at, null)}</td>
                     <td className="px-2 py-3">
@@ -215,11 +264,16 @@ export function MakeupsTab() {
 }
 
 /**
- * Approve dialog for makeups. `MakeupRequestAdminRow` carries no
- * `session_id` (only `missed_occurrence_id`), so there is no admin
- * sessions/occurrences endpoint we can key off of here without adding a
- * new backend lookup. Falls back to a labeled text input for the target
- * occurrence id, per plan Task 11 guidance.
+ * Approve dialog for makeups (issue #841).
+ *
+ * This used to ask the admin to paste an occurrence id copied from another
+ * screen. The list read now resolves the session behind each occurrence, so
+ * the dialog can offer the same real picker the trials dialog uses: the class
+ * dates of the makeup's own session, by date.
+ *
+ * The session it picks from is the one the parent proposed a target in, or —
+ * when they proposed nothing — the session they missed, which is where a
+ * makeup normally lands.
  */
 function ApproveMakeupDialog({
   request,
@@ -234,29 +288,57 @@ function ApproveMakeupDialog({
   onCancel: () => void;
   onConfirm: (targetOccurrenceId: string) => void;
 }) {
+  const sessionId =
+    request.approved_target_session_id ??
+    request.requested_target_session_id ??
+    request.missed_session_id ??
+    "";
   const [occurrenceId, setOccurrenceId] = useState(request.requested_target_occurrence_id ?? "");
+  const occurrencesQuery = useQuery({
+    queryKey: queryKeys.admin.sessionOccurrences(sessionId),
+    queryFn: () => listSessionOccurrences(sessionId),
+    enabled: sessionId !== "",
+  });
+  const occurrences = (occurrencesQuery.data?.occurrences ?? []).filter(
+    (o: AdminSessionOccurrenceView) => o.status !== "cancelled",
+  );
 
   return (
     <DialogShell title="Approve makeup request" onCancel={onCancel}>
       <p className="text-sm text-rally-subtle">
-        Student: {request.student_full_name || request.student_id}
+        {request.student_full_name || request.student_id} missed{" "}
+        {request.missed_session_title ?? "a class"}
+        {request.missed_start_at ? ` on ${formatAcademyDateTime(request.missed_start_at, null)}` : ""}.
       </p>
       <label className="block text-xs font-semibold text-rally-muted">
-        Target occurrence id
-        <input
-          type="text"
+        Class date to attend instead
+        <select
           className="mt-1 min-h-touch w-full rounded-lg border px-3 text-sm"
           style={{ borderColor: "var(--rally-line)" }}
           value={occurrenceId}
           onChange={(e) => setOccurrenceId(e.target.value)}
-          placeholder="occ_..."
-          data-testid="approve-makeup-occurrence-input"
-        />
+          disabled={sessionId === "" || occurrencesQuery.isLoading}
+          data-testid="approve-makeup-occurrence-select"
+        >
+          <option value="">
+            {sessionId === ""
+              ? "No class found for this request"
+              : occurrencesQuery.isLoading
+                ? "Loading dates…"
+                : occurrences.length === 0
+                  ? "No dates found"
+                  : "Select a date"}
+          </option>
+          {occurrences.map((o: AdminSessionOccurrenceView) => (
+            <option key={o.occurrence_id} value={o.occurrence_id}>
+              {formatAcademyDateTime(o.start_at, null)}
+            </option>
+          ))}
+        </select>
       </label>
-      <p className="text-xs text-rally-subtle">
-        No occurrence picker is available for makeups yet — copy the occurrence id from the
-        session&apos;s schedule (Admin → Sessions → occurrences) and paste it here.
-      </p>
+      {occurrencesQuery.isError && (
+        <p className="text-xs text-red-700">Could not load the class dates for this request.</p>
+      )}
       {error && <p role="alert" className="text-sm text-red-700">{error.message}</p>}
       <div className="flex justify-end gap-2 pt-2">
         <Button variant="secondary" size="sm" onClick={onCancel} disabled={pending}>
@@ -265,8 +347,8 @@ function ApproveMakeupDialog({
         <Button
           variant="primary"
           size="sm"
-          disabled={pending || !occurrenceId.trim()}
-          onClick={() => onConfirm(occurrenceId.trim())}
+          disabled={pending || !occurrenceId}
+          onClick={() => onConfirm(occurrenceId)}
         >
           {pending ? "Approving…" : "Approve"}
         </Button>
@@ -324,8 +406,9 @@ export function TrialsTab() {
               <thead>
                 <tr className="border-b border-neutral-200 text-left dark:border-neutral-800">
                   <Th>Student</Th>
+                  <Th>Class</Th>
                   <Th>Preferred window</Th>
-                  <Th>Assigned occurrence</Th>
+                  <Th>Assigned date</Th>
                   <Th>Status</Th>
                   <Th className={actionHeaderClass}>Actions</Th>
                 </tr>
@@ -338,12 +421,21 @@ export function TrialsTab() {
                     className="border-b border-neutral-100 last:border-0 dark:border-neutral-800"
                   >
                     <td className="px-2 py-3 font-medium text-rally-base">
-                      {t.prospective_child_name || t.student_id || "Existing child"}
+                      {t.prospective_child_name || t.student_full_name || "Existing child"}
                     </td>
                     <td className="px-2 py-3 text-rally-subtle">
-                      {t.preferred_start} – {t.preferred_end}
+                      {t.requested_session_title || t.requested_session_id}
                     </td>
-                    <td className="px-2 py-3 text-rally-subtle">{t.assigned_occurrence_id ?? "—"}</td>
+                    <td className="px-2 py-3 text-rally-subtle">
+                      {formatPlainDateRange(t.preferred_start, t.preferred_end)}
+                    </td>
+                    <td className="px-2 py-3 text-rally-subtle">
+                      {t.assigned_occurrence_start_at
+                        ? formatAcademyDateTime(t.assigned_occurrence_start_at, null)
+                        : t.assigned_occurrence_id
+                          ? t.assigned_occurrence_id
+                          : "Not scheduled"}
+                    </td>
                     <td className="px-2 py-3">
                       <Chip variant={statusChipVariant(t.status)} label={t.status.toUpperCase()} />
                       {t.status === "denied" && t.denial_reason && (
@@ -425,11 +517,12 @@ function ApproveTrialDialog({
   return (
     <DialogShell title="Approve trial request" onCancel={onCancel}>
       <p className="text-sm text-rally-subtle">
-        {request.prospective_child_name || request.student_id || "Existing child"} · preferred{" "}
-        {request.preferred_start} – {request.preferred_end}
+        {request.prospective_child_name || request.student_full_name || "Existing child"} ·{" "}
+        {request.requested_session_title || request.requested_session_id} · preferred{" "}
+        {formatPlainDateRange(request.preferred_start, request.preferred_end)}
       </p>
       <label className="block text-xs font-semibold text-rally-muted">
-        Occurrence
+        Class date
         <select
           className="mt-1 min-h-touch w-full rounded-lg border px-3 text-sm"
           style={{ borderColor: "var(--rally-line)" }}
@@ -440,10 +533,10 @@ function ApproveTrialDialog({
         >
           <option value="">
             {occurrencesQuery.isLoading
-              ? "Loading occurrences…"
+              ? "Loading dates…"
               : occurrences.length === 0
-                ? "No occurrences found"
-                : "Select an occurrence"}
+                ? "No dates found"
+                : "Select a date"}
           </option>
           {occurrences.map((o: AdminSessionOccurrenceView) => (
             <option key={o.occurrence_id} value={o.occurrence_id}>
