@@ -33,14 +33,31 @@ export interface SkillBoardActions {
   }) => Promise<unknown>;
 }
 
-const STATUS_DOT: Record<SkillStatus, string> = {
-  NOT_STARTED: "border-2 border-neutral-300 bg-transparent",
-  INTRODUCED: "bg-neutral-400",
-  LEARNING: "bg-amber-400",
-  PRACTICING: "bg-amber-500",
-  TEST_READY: "bg-blue-500",
-  PASSED: "bg-green-500",
-  NEEDS_REVIEW: "bg-red-500",
+/**
+ * Seven progress states used to be seven bare colour dots, which left
+ * colour-blind coaches with nothing to read (WCAG 1.4.1) and put amber-400
+ * next to amber-500 for everyone else. Each state now carries a glyph and a
+ * DS-token swatch whose fill/ink pair clears AA, and the board renders a
+ * legend so the glyphs are learnable on the spot.
+ */
+const STATUS_MARK: Record<SkillStatus, string> = {
+  NOT_STARTED: "border-2 border-rally-muted bg-white text-rally-muted",
+  INTRODUCED: "border-2 border-rally-muted bg-rally-line text-rally-ink",
+  LEARNING: "border-2 border-status-amber-500 bg-status-amber-50 text-status-amber-800",
+  PRACTICING: "border-2 border-status-amber-800 bg-status-amber-50 text-status-amber-800",
+  TEST_READY: "border-2 border-status-blue-800 bg-status-blue-50 text-status-blue-800",
+  PASSED: "border-2 border-status-green-800 bg-status-green-50 text-status-green-800",
+  NEEDS_REVIEW: "border-2 border-status-red-800 bg-status-red-50 text-status-red-800",
+};
+
+const STATUS_GLYPH: Record<SkillStatus, string> = {
+  NOT_STARTED: "·",
+  INTRODUCED: "i",
+  LEARNING: "L",
+  PRACTICING: "P",
+  TEST_READY: "T",
+  PASSED: "✓",
+  NEEDS_REVIEW: "!",
 };
 
 const STATUS_SHORT: Record<SkillStatus, string> = {
@@ -52,6 +69,57 @@ const STATUS_SHORT: Record<SkillStatus, string> = {
   PASSED: "Passed",
   NEEDS_REVIEW: "Needs review",
 };
+
+const STATUS_ORDER: SkillStatus[] = [
+  "NOT_STARTED",
+  "INTRODUCED",
+  "LEARNING",
+  "PRACTICING",
+  "TEST_READY",
+  "PASSED",
+  "NEEDS_REVIEW",
+];
+
+/**
+ * The status swatch. Decorative on its own — every call site already names
+ * the status in an aria-label or adjacent text, so the glyph is hidden from
+ * assistive tech rather than read out twice.
+ */
+function StatusMark({
+  status,
+  size = "md",
+}: {
+  status: SkillStatus;
+  size?: "sm" | "md";
+}) {
+  return (
+    <span
+      aria-hidden="true"
+      className={`inline-flex shrink-0 items-center justify-center rounded-full font-bold leading-none ${
+        size === "sm" ? "h-5 w-5 text-[9px]" : "h-6 w-6 text-[10px]"
+      } ${STATUS_MARK[status]}`}
+    >
+      {STATUS_GLYPH[status]}
+    </span>
+  );
+}
+
+function SkillStatusLegend() {
+  return (
+    <div
+      data-testid="skill-board-legend"
+      className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-neutral-200 bg-white p-3 text-[11px] font-medium text-rally-muted dark:border-neutral-800 dark:bg-neutral-900"
+    >
+      <span className="font-semibold text-rally-ink dark:text-neutral-100">Key</span>
+      {STATUS_ORDER.map((status) => (
+        <span key={status} className="inline-flex items-center gap-1.5">
+          <StatusMark status={status} size="sm" />
+          {STATUS_SHORT[status]}
+        </span>
+      ))}
+    </div>
+  );
+}
 
 export function SkillBoardView({
   board,
@@ -87,6 +155,8 @@ export function SkillBoardView({
       {board.groups.length === 0 && board.unplaced.length === 0 && (
         <p className="text-sm text-neutral-500">No students on this roster.</p>
       )}
+
+      {board.groups.length > 0 && <SkillStatusLegend />}
 
       {board.groups.map((group) => (
         <LevelGroupSection
@@ -191,7 +261,9 @@ function LevelGroupSection({
               {group.skills.map((skill) => (
                 <th key={skill.skill_id} className="px-1 py-2 text-center font-medium">
                   <span title={skill.name}>{skill.name}</span>
-                  {skill.is_required && <span className="text-red-500"> *</span>}
+                  {skill.is_required && (
+                    <span className="text-status-red-800 dark:text-status-red-500"> *</span>
+                  )}
                 </th>
               ))}
               <th className="px-2 py-2 text-center font-medium">Done</th>
@@ -221,7 +293,7 @@ function LevelGroupSection({
                         onClick={() => onCellTap(student, skill)}
                         className="inline-flex h-9 w-9 items-center justify-center rounded-md hover:bg-neutral-100 dark:hover:bg-neutral-800"
                       >
-                        <span className={`h-3.5 w-3.5 rounded-full ${STATUS_DOT[status]}`} />
+                        <StatusMark status={status} />
                       </button>
                     </td>
                   );
@@ -274,9 +346,10 @@ function LevelGroupSection({
                       <button
                         key={skill.skill_id}
                         onClick={() => onCellTap(student, skill)}
+                        aria-label={`${skill.name}: ${STATUS_SHORT[status]}`}
                         className="flex min-h-[44px] items-center gap-1.5 rounded-full border border-neutral-200 px-3 text-[11px] font-medium dark:border-neutral-700"
                       >
-                        <span className={`h-2.5 w-2.5 rounded-full ${STATUS_DOT[status]}`} />
+                        <StatusMark status={status} size="sm" />
                         {skill.name}
                       </button>
                     );
@@ -313,8 +386,8 @@ function LevelGroupSection({
                         className="flex min-h-[52px] w-full items-center justify-between rounded-xl border border-neutral-200 bg-white px-4 dark:border-neutral-800 dark:bg-neutral-900"
                       >
                         <span className="text-sm font-semibold">{student.student_name}</span>
-                        <span className="flex items-center gap-2 text-xs text-neutral-500">
-                          <span className={`h-3 w-3 rounded-full ${STATUS_DOT[status]}`} />
+                        <span className="flex items-center gap-2 text-xs text-rally-muted">
+                          <StatusMark status={status} size="sm" />
                           {STATUS_SHORT[status]}
                         </span>
                       </button>
