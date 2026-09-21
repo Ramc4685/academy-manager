@@ -1,6 +1,6 @@
 # batch-10b: deterministic occurrence-orphan tests
 
-PR: #TBD
+PR: #884
 
 ## What changed
 - Fixes #872 — `backend/v2/tests/contract/test_session_edit_occurrence_orphans.py`
