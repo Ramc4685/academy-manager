@@ -5,6 +5,7 @@ import { useMutation } from "@tanstack/react-query";
 
 import { holdEnrollment, returnFromHold } from "@/lib/api/admin";
 
+import { DEPARTURE_ACTION_DESCRIPTION } from "@/components/admin/enrollment/departure-actions";
 import { Button } from "@/components/ds/button";
 import { DialogActions, DialogError, Field, RallyModal as RallyDialog } from "@/components/ds/dialog-chrome";
 
@@ -88,6 +89,7 @@ export function HoldEnrollmentDialog({
           A hold keeps the seat — unlike pausing, which releases it — and the child is expected back
           on the return date.
         </p>
+        <p className="text-xs text-rally-subtle">{DEPARTURE_ACTION_DESCRIPTION.hold}</p>
         <DialogActions>
           <Button variant="secondary" size="sm" type="button" onClick={onClose}>
             Cancel
@@ -151,6 +153,7 @@ export function ReturnFromHoldDialog({
         <p className="text-xs text-rally-subtle">
           The seat they were holding becomes active again and billing resumes.
         </p>
+        <p className="text-xs text-rally-subtle">{DEPARTURE_ACTION_DESCRIPTION.return}</p>
         <DialogActions>
           <Button variant="secondary" size="sm" type="button" onClick={onClose}>
             Cancel

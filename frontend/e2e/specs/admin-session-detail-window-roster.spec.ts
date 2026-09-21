@@ -314,6 +314,30 @@ test.describe("admin session detail — class dates window and roster tabs (#711
     await expect(classDateRows(page)).toHaveCount(6);
   });
 
+  // #859 remainder: collapsing a section used to reset on every navigation
+  // back to the page — `useState(true)` with nothing behind it. It is now
+  // remembered per device via localStorage (see `lib/use-persisted-open.ts`).
+  test("a collapsed section stays collapsed after a reload", async ({ page }) => {
+    const toggle = page.getByTestId("session-staff-toggle");
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+    await page.reload();
+
+    await expect(page.getByTestId("session-staff-toggle")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    // Only the toggled section's preference persists — the others are
+    // untouched and still default open.
+    await expect(page.getByTestId("session-dates-toggle")).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+  });
+
   // #521: the page only needs coach names (for the replacement-coach table),
   // but used to fetch the entire tenant user directory on every load.
   test("fetches only coach-role users, not the full tenant directory", async ({ page }) => {

@@ -183,6 +183,7 @@ export function RosterTable({
   sessionId,
   pathwayLevels,
   updatingPlacementStudentId,
+  pendingPlacement,
   onPathwayLevelChange,
   onDelete,
   onHold,
@@ -203,6 +204,11 @@ export function RosterTable({
   academyTimezone: string | null;
   pathwayLevels: Level[];
   updatingPlacementStudentId: string | null;
+  /** #859: a pathway-level change waiting out its undo window. Overrides the
+   * displayed value for that one student's row so the select shows the pick
+   * the admin just made instead of snapping back to the server value while
+   * the change is held (see `lib/admin/pathway-placement-undo.ts`). */
+  pendingPlacement?: { studentId: string; levelId: string } | null;
   onPathwayLevelChange: (enrollment: AdminEnrollmentView, levelId: string) => void;
   onDelete: (enrollment: AdminEnrollmentView) => void;
   onHold: (enrollment: AdminEnrollmentView) => void;
@@ -309,7 +315,11 @@ export function RosterTable({
                     )}
                   </div>
                   <LevelSelect
-                    value={e.pathway_level_id ?? ""}
+                    value={
+                      pendingPlacement && pendingPlacement.studentId === e.student_id
+                        ? pendingPlacement.levelId
+                        : (e.pathway_level_id ?? "")
+                    }
                     levels={pathwayLevels}
                     disabled={
                       updatingPlacementStudentId === e.student_id ||
@@ -387,7 +397,11 @@ export function RosterTable({
                 </td>
                 <td className="px-4 py-3">
                   <LevelSelect
-                    value={e.pathway_level_id ?? ""}
+                    value={
+                      pendingPlacement && pendingPlacement.studentId === e.student_id
+                        ? pendingPlacement.levelId
+                        : (e.pathway_level_id ?? "")
+                    }
                     levels={pathwayLevels}
                     disabled={
                       updatingPlacementStudentId === e.student_id ||
