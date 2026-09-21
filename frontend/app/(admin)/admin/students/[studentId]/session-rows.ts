@@ -6,6 +6,12 @@
  * fact is worded.
  */
 
+import {
+  DEPARTURE_ACTION_DESCRIPTION,
+  DEPARTURE_ACTION_LABEL,
+  holdActionsFor,
+  type DepartureAction,
+} from "@/components/admin/enrollment/departure-actions.logic";
 import type { ChipVariant } from "@/components/ds/chip";
 import type { AdminStudentSessionSummary } from "@/lib/api/v2/students";
 
@@ -125,4 +131,50 @@ export function pastEnrollmentRow(row: AdminStudentSessionSummary): PastEnrollme
     endedBy: actor ? (ACTOR_LABELS[actor] ?? row.cancelled_by!.trim()) : "—",
     reason: row.reason?.trim() || "—",
   };
+}
+
+/**
+ * Issue #865: what an admin can do to one enrolled session, in the order the
+ * Sessions tab offers it.
+ *
+ * ONE derivation for both layouts. The desktop table renders these as its
+ * inline Fee / Discount buttons plus `DepartureActions`; the phone row
+ * renders the same list inside `PhoneListRow`'s 44px menu. If each layout
+ * decided for itself which actions a status allows, the two would eventually
+ * disagree about the same enrollment — a "second LAYOUT, never a second
+ * derivation" (see `components/ds/phone-row.tsx`).
+ *
+ * Hold/Return comes from `holdActionsFor`, the helper the class roster
+ * already shares, so both surfaces answer "can this row be held?" the same
+ * way. Fee and Discount are this page's own: they edit the enrollment's
+ * money, which the roster does not.
+ */
+export type EnrolledSessionActionKey = "hold" | "return" | "transfer" | "fee" | "discount";
+
+export interface EnrolledSessionAction {
+  key: EnrolledSessionActionKey;
+  label: string;
+  /** Seat / billing / family-email line for the departure actions (#859). */
+  description?: string;
+}
+
+export function enrolledSessionActions(session: {
+  status: string;
+  discount?: { label?: string } | null;
+}): EnrolledSessionAction[] {
+  const departures: DepartureAction[] = [...holdActionsFor(session.status), "transfer"];
+  return [
+    ...departures.map((action) => ({
+      key: action as EnrolledSessionActionKey,
+      label: DEPARTURE_ACTION_LABEL[action],
+      description: DEPARTURE_ACTION_DESCRIPTION[action],
+    })),
+    { key: "fee" as const, label: "Fee" },
+    {
+      key: "discount" as const,
+      // Same words the table's button uses, so the phone menu is not a second
+      // vocabulary for the same editor.
+      label: session.discount ? "Edit discount" : "Discount",
+    },
+  ];
 }
