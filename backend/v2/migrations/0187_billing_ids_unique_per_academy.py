@@ -5,7 +5,7 @@ Migrations 0030, 0111 and 0126 built single-field unique indexes on the BARE
 ``subscriptions.stripe_subscription_id`` and
 ``student_billing_enrollments.enrollment_id``. Each is globally unique across
 every academy, while every reader and writer filters tenant-scoped — the #610
-trap that 0162 fixed for ``students`` and 0187 for the enrollment core. The
+trap that 0162 fixed for ``students`` and 0186 for the enrollment core. The
 Stripe webhook is no exception: it resolves the academy at ingest and looks
 subscriptions up under ``tenant_scope``, so ``(academy_id,
 stripe_subscription_id)`` serves it directly and no single-field index needs
