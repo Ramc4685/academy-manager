@@ -62,6 +62,23 @@ async def _occurrence_ids(db) -> set[str]:
     }
 
 
+async def _future_occurrence_ids(db) -> set[str]:
+    """Occurrences the cascade may still touch: ``start_at`` from now on.
+
+    The fixture materialises from today, so on the schedule's own weekday,
+    once the 09:00 class has started, today's row is already history — the
+    cascade leaves it alone by design, exactly as
+    ``test_schedule_edit_leaves_past_occurrences_alone`` pins. Asserting
+    re-key behaviour on it made this suite fail every Monday (#869).
+    """
+    return {
+        str(doc["occurrence_id"])
+        async for doc in db["session_occurrences"].find(
+            {"academy_id": "test-academy", "start_at": {"$gte": datetime.now(UTC)}}
+        )
+    }
+
+
 #: Every collection that pins an ``occurrence_id``, with the field it pins it
 #: in. ``makeup_requests`` and ``trial_requests`` do not spell the field
 #: ``occurrence_id`` — which is exactly why the original check missed them.
@@ -84,8 +101,8 @@ async def test_schedule_edit_never_deletes_an_occurrence_with_a_live_dependent(
     maintain = _cascade(db)
 
     await maintain(_session(["Mon"]))
-    monday_ids = await _occurrence_ids(db)
-    assert monday_ids, "the fixture must materialise at least one Monday occurrence"
+    monday_ids = await _future_occurrence_ids(db)
+    assert monday_ids, "the fixture must materialise at least one future Monday occurrence"
     pinned = sorted(monday_ids)[0]
 
     await db[collection].insert_one(
@@ -157,7 +174,7 @@ async def test_schedule_edit_still_clears_occurrences_nobody_depends_on(db, acad
     maintain = _cascade(db)
 
     await maintain(_session(["Mon"]))
-    monday_ids = await _occurrence_ids(db)
+    monday_ids = await _future_occurrence_ids(db)
     assert monday_ids
 
     await maintain(_session(["Tue"]))
