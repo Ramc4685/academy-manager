@@ -1,12 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Users } from "lucide-react";
+import { Plus, Search, Users } from "lucide-react";
 
 import {
   createAdminUser,
@@ -14,6 +14,9 @@ import {
   type AdminUserRole,
   type AdminUserView,
 } from "@/lib/api/admin";
+import { assignableRoles } from "@/lib/auth/assignable-roles";
+import { filterUsersBySearch } from "@/lib/admin/user-search";
+import { useIsOwner } from "@/components/admin/owner-context";
 import { queryKeys } from "@/lib/query/keys";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
@@ -33,8 +36,8 @@ const roles: Array<{ label: string; value: AdminUserRole | undefined }> = [
   { label: "Admins", value: "admin" },
 ];
 
-/** Roles the directory's create form may mint: the operations roles. */
-type CreatableRole = Extract<AdminUserRole, "coach" | "assistant_coach" | "parent">;
+/** How long a keystroke waits before it narrows the table. */
+const SEARCH_DEBOUNCE_MS = 150;
 
 function parseRoleParam(value: string | null): AdminUserRole | undefined {
   return value === "coach" ||
@@ -53,11 +56,30 @@ export function AdminUsersDirectory({
   const queryClient = useQueryClient();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [createOpen, setCreateOpen] = useState(false);
+  // #839: `/admin/users/new` was a second add-user form. It now forwards here
+  // with `?add=1`, so there is one form and the old bookmark still works.
+  const [createOpen, setCreateOpen] = useState(() => searchParams.get("add") === "1");
   const [bulkOpen, setBulkOpen] = useState(false);
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    const timer = setTimeout(() => setSearch(searchInput), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
 
   // URL is the single source of truth for the active role tab.
   const role = fixedRole ?? parseRoleParam(searchParams.get("role"));
+
+  function setCreateDialogOpen(open: boolean) {
+    setCreateOpen(open);
+    if (!open && searchParams.get("add")) {
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("add");
+      const query = params.toString();
+      router.replace(query ? `?${query}` : "?", { scroll: false });
+    }
+  }
 
   function selectRole(next: AdminUserRole | undefined) {
     const params = new URLSearchParams(searchParams.toString());
@@ -72,7 +94,9 @@ export function AdminUsersDirectory({
     queryFn: () => listAdminUsers(role),
   });
 
-  const users = data?.users ?? [];
+  const allUsers = useMemo(() => data?.users ?? [], [data]);
+  // `listAdminUsers` takes only a role, so the search narrows what is loaded.
+  const users = useMemo(() => filterUsersBySearch(allUsers, search), [allUsers, search]);
   const createLabel = fixedRole === "coach" ? "Add coach" : fixedRole === "parent" ? "Add parent" : "Add user";
   // The bulk endpoint mints parents only (role is hardcoded server-side), so
   // the action is offered on the parent tab and on the unfiltered directory.
@@ -101,6 +125,24 @@ export function AdminUsersDirectory({
         ) : (
           <div />
         )}
+        {/* #839: role tabs were the only way to narrow the directory, so
+            finding one person meant scrolling. Same control as Students. */}
+        <div className="relative min-w-0 sm:w-[280px]">
+          <label htmlFor="admin-users-search" className="sr-only">
+            Search users
+          </label>
+          <Search
+            aria-hidden="true"
+            className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-rally-muted"
+          />
+          <input
+            id="admin-users-search"
+            value={searchInput}
+            onChange={(event) => setSearchInput(event.target.value)}
+            placeholder="Search name, email or phone"
+            className="h-10 w-full rounded-md border border-neutral-200 bg-white pl-9 pr-3 font-body text-sm text-rally-base outline-none transition placeholder:text-rally-subtle focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
+          />
+        </div>
         <div className="flex flex-wrap gap-2">
           {canBulkInvite && (
             <Button
@@ -130,10 +172,10 @@ export function AdminUsersDirectory({
 
       <CreateUserDialog
         open={createOpen}
-        onOpenChange={setCreateOpen}
+        onOpenChange={setCreateDialogOpen}
         fixedRole={fixedRole}
         onCreated={() => {
-          setCreateOpen(false);
+          setCreateDialogOpen(false);
           void queryClient.invalidateQueries({ queryKey: ["admin", "users"] });
         }}
       />
@@ -158,7 +200,7 @@ export function AdminUsersDirectory({
         <Skeleton />
       ) : users.length === 0 ? (
         <p className="text-sm text-rally-subtle" data-testid="admin-users-empty">
-          No users found.
+          {search ? `No users match “${search}”.` : "No users found."}
         </p>
       ) : (
         <Card p={20}>
@@ -180,7 +222,11 @@ function CreateUserDialog({
   fixedRole?: Extract<AdminUserRole, "coach" | "parent">;
   onCreated: () => void;
 }) {
-  const [role, setRole] = useState<CreatableRole>(fixedRole ?? "parent");
+  // #839: this dialog is now the only add-user form, so it offers exactly the
+  // roles the current user may grant — the standalone page's rule, which the
+  // BFF enforces anyway (`ensure_can_assign_role`).
+  const roleOptions = assignableRoles(useIsOwner());
+  const [role, setRole] = useState<AdminUserRole>(fixedRole ?? "parent");
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
@@ -217,6 +263,14 @@ function CreateUserDialog({
           <Dialog.Title className="font-display text-xl font-bold text-rally-ink">
             {fixedRole === "coach" ? "Add coach" : fixedRole === "parent" ? "Add parent" : "Add user"}
           </Dialog.Title>
+          {(fixedRole ?? role) === "parent" && (
+            // Carried over from the retired /admin/users/new page (#839): this
+            // is the one fact about adding a parent that is not obvious.
+            <Dialog.Description className="mt-2 text-sm text-rally-muted">
+              Parents get a “set your password” email automatically, so they can
+              log in with any email address — no Google account needed.
+            </Dialog.Description>
+          )}
           <form
             className="mt-4 space-y-4"
             onSubmit={(event) => {
@@ -229,19 +283,23 @@ function CreateUserDialog({
               <Field label="Role" htmlFor="create-user-role">
                 <select
                   id="create-user-role"
+                  data-testid="new-user-role"
                   value={role}
-                  onChange={(event) => setRole(event.target.value as CreatableRole)}
+                  onChange={(event) => setRole(event.target.value as AdminUserRole)}
                   className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
                 >
-                  <option value="parent">Parent</option>
-                  <option value="coach">Coach</option>
-                  <option value="assistant_coach">Assistant coach</option>
+                  {roleOptions.map((option) => (
+                    <option key={option} value={option}>
+                      {roleLabel(option)}
+                    </option>
+                  ))}
                 </select>
               </Field>
             )}
             <Field label="Name" htmlFor="create-user-name">
               <input
                 id="create-user-name"
+                data-testid="new-user-name"
                 value={displayName}
                 onChange={(event) => setDisplayName(event.target.value)}
                 className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
@@ -252,6 +310,7 @@ function CreateUserDialog({
             <Field label="Email" htmlFor="create-user-email">
               <input
                 id="create-user-email"
+                data-testid="new-user-email"
                 type="email"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}

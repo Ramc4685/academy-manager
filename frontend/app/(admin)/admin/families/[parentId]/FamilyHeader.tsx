@@ -71,6 +71,16 @@ export function FamilyHeader({
             >
               Message
             </Link>
+            {/* #839: the family page owned the money but had no way through to
+                the login account behind it — the chips above name its state,
+                and this is where you go to do something about it. */}
+            <Link
+              href={`/admin/users/${encodeURIComponent(parent.parent_id)}`}
+              className="rounded text-sm text-rally-cobalt-700 hover:underline focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600"
+              data-testid="family-account-link"
+            >
+              Account &amp; login
+            </Link>
           </div>
           {undeliverable && (
             <p

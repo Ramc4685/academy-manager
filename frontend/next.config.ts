@@ -68,6 +68,9 @@ const RETIRED_ROUTE_REDIRECTS = [
   // resolution anyway, and so the route-manifest equality test still passes.
   { source: "/admin/parents", destination: "/admin/users?role=parent", permanent: true },
   { source: "/admin/coaches", destination: "/admin/users?role=coach", permanent: true },
+  // #839: the orphan add-user page. One form now — the directory's dialog,
+  // which `?add=1` opens.
+  { source: "/admin/users/new", destination: "/admin/users?add=1", permanent: true },
 ];
 
 const config: NextConfig = {

@@ -328,7 +328,22 @@ function StudentsTable({ students }: { students: AdminStudentView[] }) {
                 </Link>
               </td>
               <td className="px-3 py-4">
-                <div className="text-rally-base">{student.parent_name || student.parent_email || "Parent on file"}</div>
+                {/* #839: the parent cell was plain text, so the family — and
+                    all of this student's money — was only reachable by
+                    remembering the name and searching Families for it. */}
+                {student.parent_id ? (
+                  <Link
+                    href={`/admin/families/${encodeURIComponent(student.parent_id)}`}
+                    className="block rounded text-rally-base hover:underline focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600"
+                    data-testid={`admin-students-family-link-${student.student_id}`}
+                  >
+                    {student.parent_name || student.parent_email || "Parent on file"}
+                  </Link>
+                ) : (
+                  <div className="text-rally-base">
+                    {student.parent_name || student.parent_email || "Parent on file"}
+                  </div>
+                )}
                 <div className="text-xs text-rally-subtle">
                   {student.parent_email ?? "No email on file"}
                 </div>

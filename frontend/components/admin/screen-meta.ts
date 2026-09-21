@@ -7,7 +7,7 @@
  */
 
 export type AdminNavIconKey =
-  | "home" | "calendar" | "user" | "list" | "check"
+  | "home" | "calendar" | "user" | "users" | "family" | "list" | "check"
   | "pay" | "card" | "bell" | "whistle" | "chart"
   | "msg" | "cog" | "trophy" | "signal" | "filter";
 
@@ -54,7 +54,9 @@ export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
       { href: "/admin/sessions", label: "Sessions", icon: "calendar", match: startsWith("/admin/sessions") },
       { href: "/admin/students", label: "Students", icon: "user", match: startsWith("/admin/students") },
       { href: "/admin/pathway", label: "Pathway", icon: "trophy", match: startsWith("/admin/pathway") },
-      { href: "/admin/users", label: "Users", icon: "user", match: startsWith("/admin/users") },
+      // #839: Students, Users and Families were three `user` glyphs. One
+      // person, a group of people, a household.
+      { href: "/admin/users", label: "Users", icon: "users", match: startsWith("/admin/users") },
       { href: "/admin/inbox", label: "Inbox", icon: "check", match: startsWith("/admin/inbox") },
     ],
   },
@@ -69,7 +71,7 @@ export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
         icon: "pay",
         match: startsWith("/admin/payments"),
       },
-      { href: "/admin/families", label: "Families", icon: "user", match: startsWith("/admin/families") },
+      { href: "/admin/families", label: "Families", icon: "family", match: startsWith("/admin/families") },
       { href: "/admin/reports", label: "Month close", icon: "chart", match: startsWith("/admin/reports"), ownerOnly: true },
       { href: "/admin/billing-health", label: "Billing Health", icon: "signal", match: startsWith("/admin/billing-health"), ownerOnly: true },
       {

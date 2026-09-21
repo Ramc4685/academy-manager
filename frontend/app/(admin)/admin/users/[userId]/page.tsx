@@ -97,6 +97,7 @@ export default function AdminUserDetailPage() {
           <RolesPanel user={user} onSaved={invalidate} />
         </Card>
       </div>
+      <FamilyPanel user={user} />
       <LoginInvitePanel user={user} onSaved={invalidate} />
       {isCoach && <CoachPayRatePanel coachId={user.user_id} />}
       {isCoach && <CoachSessionsPanel user={user} onAssigned={invalidate} />}
@@ -451,6 +452,34 @@ function Header({ user }: { user: AdminUserDetail }) {
           )}
         </div>
       </div>
+    </Card>
+  );
+}
+
+/**
+ * #839: a parent's user page said nothing about the family it belongs to, so
+ * the trail from a login account back to the children and the money ran out
+ * here. Only parents have a family page — anyone else would be sent to a 404.
+ */
+function FamilyPanel({ user }: { user: AdminUserDetail }) {
+  if (!user.roles.includes("parent")) return null;
+  const count = user.linked_student_count;
+  return (
+    <Card p={20} data-testid="admin-user-family">
+      <Overline>Family</Overline>
+      <p className="mt-1 text-sm text-rally-muted">
+        {count} {count === 1 ? "student" : "students"} on this account. Enrollments, invoices and
+        autopay live on the family page.
+      </p>
+      <Link
+        href={`/admin/families/${encodeURIComponent(user.user_id)}`}
+        className="mt-3 inline-block"
+        data-testid="admin-user-family-link"
+      >
+        <Button size="sm" variant="secondary">
+          Open family
+        </Button>
+      </Link>
     </Card>
   );
 }
