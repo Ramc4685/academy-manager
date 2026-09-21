@@ -2,7 +2,11 @@ import { test, expect, type Page, type Route } from "@playwright/test";
 
 import { billingRulesFixture } from "../fixtures/billing-rules";
 import { openAdminNav } from "../helpers/nav";
-import { clickRowAction, expectRowActionAvailable } from "../helpers/row-actions";
+import {
+  clickRowAction,
+  expectRowActionAvailable,
+  rowActionControl,
+} from "../helpers/row-actions";
 import {
   stubCoachMessages,
   stubParentMessages,
@@ -1139,10 +1143,98 @@ test.describe("Rally admin shell", () => {
     await expect(row).toContainText("Court 2");
     await expect(row).toContainText("Resume Jul 15, 2026");
     await expect(row).toContainText("Summer travel");
+    // #860: every decision fact is on the row — and the enrollment id is not.
+    // On a phone the sticky action cell used to cover the session, dates and
+    // reason; Decline/Approve now live behind the row's 44px actions menu,
+    // which `rowActionControl` finds on either layout.
+    await expect(row).not.toContainText("enr-1");
+    const approve = await rowActionControl(page, {
+      rowTestId: "admin-pause-requests-row-pause-1",
+      actionsTestId: "admin-pause-requests-actions-pause-1",
+      label: "Approve",
+    });
+    await expect(approve).toBeVisible();
     expect(
       errors,
       `App console errors on pause requests details: ${errors.join("\n")}`,
     ).toEqual([]);
+  });
+
+  test("waitlist rows name the parent instead of printing a parent id", async ({
+    page,
+  }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    await page.route("**/api/v2/admin/waitlist", (route) =>
+      fulfillJson(route, {
+        total_waitlisted: 1,
+        sessions: [
+          {
+            session_id: "session-1",
+            title: "Junior Foundations",
+            location: "Court 2",
+            start_at: "2026-06-04T23:00:00Z",
+            capacity: 8,
+            enrolled_count: 8,
+            waitlist_count: 1,
+            entries: [
+              {
+                waitlist_id: "wait-1",
+                session_id: "session-1",
+                student_id: "student-1",
+                parent_id: "68b0f2c1a0b1c2d3e4f50011",
+                parent_name: "Abhishek Ajithkumar",
+                full_name: "Aadhya Abhishek",
+                status: "waiting",
+                position: 1,
+                joined_at: "2026-06-01T10:00:00Z",
+                added_at: "2026-06-01T10:00:00Z",
+              },
+            ],
+          },
+        ],
+      }),
+    );
+
+    await page.goto("/admin/inbox?tab=waitlist");
+    const row = page.getByTestId("admin-waitlist-row-wait-1");
+    await expect(row).toContainText("Aadhya Abhishek");
+    await expect(row).toContainText("Abhishek Ajithkumar");
+    // #860: the raw Mongo id an admin can do nothing with.
+    await expect(row).not.toContainText("68b0f2c1a0b1c2d3e4f50011");
+    expect(errors, `App console errors on waitlist: ${errors.join("\n")}`).toEqual([]);
+  });
+
+  test("absence rows say which class and date was missed", async ({ page }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    await page.route("**/api/v2/admin/self-service/absences*", (route) =>
+      fulfillJson(route, {
+        absences: [
+          {
+            notice_id: "notice-1",
+            student_id: "student-1",
+            occurrence_id: "occ-7f3a9c",
+            session_id: "session-1",
+            submitted_by: "parent-1",
+            submitted_at: "2026-06-01T10:00:00Z",
+            notice_window_met: true,
+            student_full_name: "Aadhya Abhishek",
+            recorded_by_admin: false,
+            occurrence_session_title: "Junior Foundations",
+            occurrence_start_at: "2026-06-04T23:00:00Z",
+          },
+        ],
+      }),
+    );
+
+    await page.goto("/admin/inbox?tab=absences");
+    const row = page.getByTestId("admin-absences-row-notice-1");
+    await expect(row).toContainText("Aadhya Abhishek");
+    // #860: the row carried only an occurrence id before, so it showed neither.
+    await expect(row).toContainText("Junior Foundations");
+    await expect(row).not.toContainText("occ-7f3a9c");
+    expect(errors, `App console errors on absences: ${errors.join("\n")}`).toEqual([]);
   });
 
   test("payments renders legacy paid and waived statuses without crashing", async ({

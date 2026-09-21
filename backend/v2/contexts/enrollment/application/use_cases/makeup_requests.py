@@ -382,6 +382,12 @@ class AbsenceNoticeAdminView(BaseModel):
     notice_window_met: bool
     student_full_name: str | None = None
     recorded_by_admin: bool = False
+    # Issue #860: the queue used to carry only an occurrence id, so an admin
+    # reading an absence notice could not tell WHICH class on WHICH date was
+    # missed. Optional — an occurrence that no longer resolves leaves them
+    # null rather than failing the whole queue.
+    occurrence_session_title: str | None = None
+    occurrence_start_at: datetime | None = None
 
 
 def _student_names(students: list[Student]) -> dict[str, str]:
@@ -470,22 +476,46 @@ class ListMakeupRequestsForAdmin:
 
 
 class ListAbsencesForAdmin:
-    """Lists absence notices for admin visibility, newest first, enriched
-    with the student's full name."""
+    """Lists absence notices for admin visibility, newest first, enriched with
+    the student's full name and (issue #860) the missed class's title and
+    start time.
+
+    The occurrence -> session join is the same batched two-query shape
+    ``ListMakeupRequestsForAdmin`` uses: two extra queries per page regardless
+    of row count.
+    """
 
     def __init__(
         self,
         *,
         notices: AdminAbsenceNoticeQuery,
         students: AdminStudentQuery,
+        occurrences: AdminMakeupOccurrenceQuery,
+        sessions: AdminMakeupSessionQuery,
     ) -> None:
         self._notices = notices
         self._students = students
+        self._occurrences = occurrences
+        self._sessions = sessions
 
     async def execute(self) -> list[AbsenceNoticeAdminView]:
         notices = await self._notices.list_all()
         student_ids = list({n.student_id for n in notices})
         names = _student_names(await self._students.by_ids(student_ids))
+
+        occurrence_ids = [oid for oid in {n.occurrence_id for n in notices} if oid]
+        occurrences = (
+            {o.occurrence_id: o for o in await self._occurrences.get_many(occurrence_ids)}
+            if occurrence_ids
+            else {}
+        )
+        session_ids = list({o.session_id for o in occurrences.values()})
+        titles = (
+            {s.session_id: s.title for s in await self._sessions.get_many(session_ids)}
+            if session_ids
+            else {}
+        )
+
         return [
             AbsenceNoticeAdminView(
                 notice_id=n.notice_id,
@@ -497,6 +527,16 @@ class ListAbsencesForAdmin:
                 notice_window_met=n.notice_window_met,
                 student_full_name=names.get(n.student_id),
                 recorded_by_admin=bool(getattr(n, "recorded_by_admin", False)),
+                occurrence_session_title=(
+                    titles.get(occurrences[n.occurrence_id].session_id)
+                    if n.occurrence_id in occurrences
+                    else None
+                ),
+                occurrence_start_at=(
+                    occurrences[n.occurrence_id].start_at
+                    if n.occurrence_id in occurrences
+                    else None
+                ),
             )
             for n in notices
         ]

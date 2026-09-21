@@ -623,7 +623,12 @@ async def test_list_absences_for_admin_enriches_with_student_name_newest_first()
             _student(student_id="student-2", full_name="Bob"),
         ]
     )
-    use_case = ListAbsencesForAdmin(notices=notices, students=students)
+    use_case = ListAbsencesForAdmin(
+        notices=notices,
+        students=students,
+        occurrences=_FakeOccurrences(),
+        sessions=_FakeSessions(),
+    )
 
     rows = await use_case.execute()
 
@@ -645,12 +650,73 @@ async def test_list_absences_for_admin_missing_student_falls_back_gracefully() -
         notice_window_met=True,
     )
     use_case = ListAbsencesForAdmin(
-        notices=_FakeAbsenceNotices([notice]), students=_FakeStudents([])
+        notices=_FakeAbsenceNotices([notice]),
+        students=_FakeStudents([]),
+        occurrences=_FakeOccurrences(),
+        sessions=_FakeSessions(),
     )
 
     rows = await use_case.execute()
 
     assert rows[0].student_full_name is None
+
+
+@pytest.mark.asyncio
+async def test_list_absences_for_admin_resolves_missed_class_title_and_date() -> None:
+    """#860: an absence row has to say WHICH class on WHICH date was missed.
+
+    Before this, the row carried only ``occurrence_id``/``session_id``, so the
+    admin queue had nothing but ids to render — and rendered neither. The
+    occurrence -> session join is the same batched one
+    ``ListMakeupRequestsForAdmin`` already does (#841).
+    """
+    notice = AbsenceNotice(
+        notice_id="n1",
+        academy_id="acad",
+        student_id="student-1",
+        occurrence_id="occ-missed",
+        session_id="session-missed",
+        submitted_by="parent-1",
+        submitted_at=_now(),
+        notice_window_met=True,
+    )
+    use_case = ListAbsencesForAdmin(
+        notices=_FakeAbsenceNotices([notice]),
+        students=_FakeStudents([_student()]),
+        occurrences=_FakeOccurrences([_missed_occurrence()]),
+        sessions=_FakeSessions([_session(session_id="session-missed", title="U10 Tuesday")]),
+    )
+
+    [row] = await use_case.execute()
+
+    assert row.occurrence_session_title == "U10 Tuesday"
+    assert row.occurrence_start_at == _missed_occurrence().start_at
+
+
+@pytest.mark.asyncio
+async def test_list_absences_for_admin_tolerates_unresolvable_occurrence() -> None:
+    """A deleted occurrence must leave the enrichment null, not 500 the queue."""
+    notice = AbsenceNotice(
+        notice_id="n1",
+        academy_id="acad",
+        student_id="student-1",
+        occurrence_id="occ-gone",
+        session_id="session-gone",
+        submitted_by="parent-1",
+        submitted_at=_now(),
+        notice_window_met=True,
+    )
+    use_case = ListAbsencesForAdmin(
+        notices=_FakeAbsenceNotices([notice]),
+        students=_FakeStudents([_student()]),
+        occurrences=_FakeOccurrences(),
+        sessions=_FakeSessions(),
+    )
+
+    [row] = await use_case.execute()
+
+    assert row.occurrence_session_title is None
+    assert row.occurrence_start_at is None
 
 
 @pytest.mark.asyncio

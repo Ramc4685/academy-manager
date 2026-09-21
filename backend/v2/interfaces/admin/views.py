@@ -692,6 +692,9 @@ class AdminWaitlistEntry(BaseModel):
     session_id: str
     student_id: str
     parent_id: str
+    # #860: the queue rendered `parent_id` verbatim. The read joins the
+    # parent's display name; null when the user doc no longer resolves.
+    parent_name: str | None = None
     joined_at: datetime
     full_name: str = "(unknown)"
     position: int = 0

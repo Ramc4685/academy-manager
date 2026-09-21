@@ -302,6 +302,8 @@ export interface AdminWaitlistEntry {
   session_id: string;
   student_id: string;
   parent_id: string;
+  /** #860: the parent's display name, so the row never prints `parent_id`. */
+  parent_name?: string | null;
   full_name: string;
   status: WaitlistStatus;
   position: number;
@@ -3075,6 +3077,9 @@ export interface AbsenceNoticeAdminRow {
   student_full_name: string | null;
   /** True when an admin recorded the notice on the parent's behalf (#616). */
   recorded_by_admin?: boolean;
+  /** #860: which class on which date was missed. Null if it no longer resolves. */
+  occurrence_session_title?: string | null;
+  occurrence_start_at?: string | null;
 }
 
 export interface AbsencesAdminResponse {

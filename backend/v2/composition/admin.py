@@ -904,6 +904,10 @@ def compose_admin(
     list_absences_for_admin = ListAbsencesForAdmin(
         notices=absence_notices_repo,
         students=students_r,
+        # #860: same tenant-scoped occurrence/session ports the makeup queue
+        # already uses, so an absence row names the class and date.
+        occurrences=occurrences_r,
+        sessions=sessions_r,
     )
     record_absence_notice_for_student = RecordAbsenceNoticeForStudent(
         students=students_r,
@@ -3135,7 +3139,9 @@ def compose_admin(
                     "full_name": student.full_name if student else "(unknown)",
                 }
             )
-        return rows
+        # #860: the waitlist row printed the raw parent id. Same batched,
+        # tenant-scoped join the dunning reads already use.
+        return await _enrich_parent_names(rows)
 
     async def list_payments_recent(fetch_cap: int = 200, *, include_voided: bool = False):
         from backend.v2.shared.tenancy import current_academy_id
