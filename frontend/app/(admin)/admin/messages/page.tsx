@@ -11,7 +11,7 @@
  * them exists yet.
  */
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
@@ -21,6 +21,7 @@ import {
   listAdminUsers,
   getAdminAcademy,
   broadcastMessage,
+  markAdminMessageRead,
   sendDm,
   sendEmailCampaign,
   type AdminMessageView,
@@ -54,9 +55,9 @@ function AdminMessagesContent() {
     queryFn: () => listAdminMessages(),
   });
 
-  const messages = data?.messages ?? [];
+  const messages = useMemo(() => data?.messages ?? [], [data]);
   const broadcasts = messages.filter((m) => m.is_broadcast);
-  const dms = messages.filter((m) => !m.is_broadcast);
+  const dms = useMemo(() => messages.filter((m) => !m.is_broadcast), [messages]);
 
   // #841: every thread used to be titled "Direct conversation". The parent
   // directory is already an admin-visible read, so the family's name comes
@@ -67,14 +68,44 @@ function AdminMessagesContent() {
   const nameFor = (userId: string | null): string =>
     (userId && parentNameById.get(userId)) || "Parent";
 
-  const dmThreads = Array.from(new Map(dms.map((m) => [m.recipient_id, m])).values());
+  const dmThreads = useMemo(() => buildDmThreads(dms), [dms]);
 
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: queryKeys.admin.messages() });
 
   const threadMessages = dmRecipientId
-    ? dms.filter((m) => m.recipient_id === dmRecipientId)
+    ? dms.filter((m) => counterpartyOf(m) === dmRecipientId)
     : [];
+
+  // #864: opening a thread is what clears its unread marker, the same
+  // mark-on-open the coach and parent inboxes already do. Only the messages
+  // that are actually unread are sent, so re-opening a read thread is silent.
+  const markRead = useMutation({
+    mutationFn: async (messageIds: string[]) => {
+      await Promise.all(messageIds.map((id) => markAdminMessageRead(id)));
+    },
+    onSuccess: invalidate,
+  });
+
+  const openThread = (counterpartyId: string) => setDmRecipientId(counterpartyId);
+
+  // Marking read is driven by which thread is OPEN, not by the click that
+  // opened it: `/admin/messages?dm=<parent_id>` (the Payments buckets
+  // "Message" action) seeds the open thread without any click, and on desktop
+  // the list stays beside it — so an unmarked thread would keep its dot while
+  // the admin reads it. `markedRef` keeps this to one call per message id
+  // while the refetch that clears `is_read` is still in flight.
+  const markReadMutate = markRead.mutate;
+  const markedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!dmRecipientId) return;
+    const unread =
+      dmThreads.find((t) => t.counterpartyId === dmRecipientId)?.unreadIds ?? [];
+    const fresh = unread.filter((id) => !markedRef.current.has(id));
+    if (fresh.length === 0) return;
+    for (const id of fresh) markedRef.current.add(id);
+    markReadMutate(fresh);
+  }, [dmRecipientId, dmThreads, markReadMutate]);
 
   return (
     <section data-testid="admin-messages" className="space-y-5">
@@ -89,78 +120,67 @@ function AdminMessagesContent() {
         </Card>
       )}
 
+      {/* #864: Direct messages leads. A parent's unread reply is the thing an
+          admin comes to this page for, and it used to sit below the whole
+          broadcast composer and history — a long scroll away on a phone. */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         <Card p={20}>
-          <LaneHeader index="01" title="Broadcast" />
-          <BroadcastComposer onSent={invalidate} />
-          <div className="mt-6">
-            <h3 className="mb-2 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
-              Recent broadcasts
-            </h3>
-            {isLoading ? (
-              <MessageSkeleton />
-            ) : broadcasts.length === 0 ? (
-              <p className="text-sm text-rally-subtle">No broadcasts sent yet.</p>
-            ) : (
-              <ul className="space-y-2" data-testid="broadcast-list">
-                {broadcasts
-                  .slice()
-                  .sort((a, b) => new Date(b.sent_at).getTime() - new Date(a.sent_at).getTime())
-                  .slice(0, 10)
-                  .map((m) => (
-                    <MessageBubble key={m.message_id} message={m} />
-                  ))}
-              </ul>
-            )}
-          </div>
-        </Card>
-
-        <Card p={20}>
-          <LaneHeader index="02" title="Direct messages" />
+          <LaneHeader index="01" title="Direct messages" />
 
           {isLoading ? (
             <MessageSkeleton />
           ) : (
-            <>
-              {dmThreads.length === 0 && !dmRecipientId && (
-                <p className="text-sm text-rally-subtle mb-4">No DM threads yet.</p>
-              )}
-              <ul className="mb-4 space-y-1" data-testid="dm-thread-list">
-                {dmThreads.map((m) => {
-                  const active = m.recipient_id === dmRecipientId;
-                  return (
-                    <li key={m.recipient_id}>
-                      <button
-                        onClick={() =>
-                          setDmRecipientId(active ? null : m.recipient_id)
-                        }
-                        className="w-full min-h-touch px-3 py-2 rounded-md text-left text-sm transition-colors"
-                        style={{
-                          background: active ? "var(--rally-cobalt-soft)" : "transparent",
-                          color: active ? "var(--rally-cobalt)" : "var(--rally-ink)",
-                        }}
-                      >
-                        <div className="flex items-center gap-2">
-                          <Avatar name={nameFor(m.recipient_id)} size={26} />
-                          <div className="flex-1 min-w-0">
-                            <div className="text-sm font-semibold truncate">
-                              {nameFor(m.recipient_id)}
-                            </div>
-                            <div className="truncate text-[12px] text-rally-subtle">
-                              {formatAcademyDate(m.sent_at, null)}
-                            </div>
-                          </div>
-                        </div>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
+            <div
+              className={
+                dmRecipientId ? "lg:grid lg:grid-cols-2 lg:gap-4 lg:items-start" : undefined
+              }
+            >
+              {/* List panel. On a phone an open thread replaces it; from `lg`
+                  the two sit side by side. */}
+              <div
+                data-testid="dm-list-panel"
+                className={dmRecipientId ? "hidden lg:block" : undefined}
+              >
+                {dmThreads.length === 0 && !dmRecipientId && (
+                  <p className="text-sm text-rally-subtle mb-4">No DM threads yet.</p>
+                )}
+                <ul className="mb-4 space-y-1" data-testid="dm-thread-list">
+                  {dmThreads.map((thread) => (
+                    <DmThreadRow
+                      key={thread.counterpartyId}
+                      thread={thread}
+                      name={nameFor(thread.counterpartyId)}
+                      active={thread.counterpartyId === dmRecipientId}
+                      onOpen={() => openThread(thread.counterpartyId)}
+                      onClose={() => setDmRecipientId(null)}
+                    />
+                  ))}
+                </ul>
+                {!dmRecipientId && <NewConversationPicker onPick={openThread} />}
+              </div>
 
               {dmRecipientId && (
-                <>
+                <div data-testid="dm-thread-panel">
+                  <div className="mb-3 flex items-center gap-2">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      data-testid="dm-back"
+                      className="lg:hidden"
+                      onClick={() => setDmRecipientId(null)}
+                    >
+                      ← Back
+                    </Button>
+                    <h3 className="truncate text-sm font-semibold text-rally-ink">
+                      {nameFor(dmRecipientId)}
+                    </h3>
+                  </div>
+
                   {threadMessages.length === 0 && (
-                    <p className="mb-2 text-sm text-rally-subtle" data-testid="dm-new-conversation">
+                    <p
+                      className="mb-2 text-sm text-rally-subtle"
+                      data-testid="dm-new-conversation"
+                    >
                       New conversation — no messages with {nameFor(dmRecipientId)} yet.
                     </p>
                   )}
@@ -187,12 +207,35 @@ function AdminMessagesContent() {
                     onSent={invalidate}
                     key={dmRecipientId}
                   />
-                </>
+                </div>
               )}
-
-              {!dmRecipientId && <NewConversationPicker onPick={setDmRecipientId} />}
-            </>
+            </div>
           )}
+        </Card>
+
+        <Card p={20}>
+          <LaneHeader index="02" title="Broadcast" />
+          <BroadcastComposer onSent={invalidate} />
+          <div className="mt-6">
+            <h3 className="mb-2 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
+              Recent broadcasts
+            </h3>
+            {isLoading ? (
+              <MessageSkeleton />
+            ) : broadcasts.length === 0 ? (
+              <p className="text-sm text-rally-subtle">No broadcasts sent yet.</p>
+            ) : (
+              <ul className="space-y-2" data-testid="broadcast-list">
+                {broadcasts
+                  .slice()
+                  .sort((a, b) => new Date(b.sent_at).getTime() - new Date(a.sent_at).getTime())
+                  .slice(0, 10)
+                  .map((m) => (
+                    <MessageBubble key={m.message_id} message={m} />
+                  ))}
+              </ul>
+            )}
+          </div>
         </Card>
       </div>
 
@@ -201,6 +244,137 @@ function AdminMessagesContent() {
         <EmailCampaignComposer />
       </Card>
     </section>
+  );
+}
+
+/**
+ * One conversation as the thread list renders it (#864).
+ *
+ * `latest` is what the row previews. `unreadIds` is what opening the row
+ * marks read — the ids rather than a count, because the mark-read call is
+ * per message.
+ */
+interface DmThread {
+  counterpartyId: string;
+  latest: AdminMessageView;
+  unreadIds: string[];
+}
+
+/** The family a DM belongs to, whichever direction it travelled. */
+function counterpartyOf(m: AdminMessageView): string | null {
+  return m.counterparty_id ?? m.recipient_id;
+}
+
+function sentAtMs(m: AdminMessageView): number {
+  return new Date(m.sent_at).getTime();
+}
+
+/**
+ * Group DMs into conversations, newest conversation first.
+ *
+ * The previous one-liner (`new Map(dms.map((m) => [m.recipient_id, m]))`)
+ * had two bugs behind it. A `Map` keeps the LAST write for a repeated key
+ * and the API returns messages newest-first, so it kept each thread's
+ * OLDEST message — which was only a slightly stale date until #864 put the
+ * last message's text in the row, where it would have been plainly wrong.
+ * And `recipient_id` is the admin on every message a family sends in, so
+ * every inbound reply collapsed into one bogus thread.
+ */
+function buildDmThreads(dms: AdminMessageView[]): DmThread[] {
+  const threads = new Map<string, DmThread>();
+  for (const m of dms) {
+    const counterpartyId = counterpartyOf(m);
+    if (!counterpartyId) continue;
+    const unread = m.is_read === false;
+    const existing = threads.get(counterpartyId);
+    if (!existing) {
+      threads.set(counterpartyId, {
+        counterpartyId,
+        latest: m,
+        unreadIds: unread ? [m.message_id] : [],
+      });
+      continue;
+    }
+    if (sentAtMs(m) > sentAtMs(existing.latest)) existing.latest = m;
+    if (unread) existing.unreadIds.push(m.message_id);
+  }
+  return Array.from(threads.values()).sort(
+    (a, b) => sentAtMs(b.latest) - sentAtMs(a.latest),
+  );
+}
+
+/**
+ * One row of the thread list: who, whether they are waiting on a reply, the
+ * last thing said and when. Unread is never colour alone — the dot is
+ * paired with a bolder name and text for a screen reader.
+ */
+function DmThreadRow({
+  thread,
+  name,
+  active,
+  onOpen,
+  onClose,
+}: {
+  thread: DmThread;
+  name: string;
+  active: boolean;
+  onOpen: () => void;
+  onClose: () => void;
+}) {
+  const unreadCount = thread.unreadIds.length;
+  return (
+    <li>
+      <button
+        type="button"
+        data-testid="dm-thread-row"
+        aria-current={active ? "true" : undefined}
+        onClick={active ? onClose : onOpen}
+        className="w-full min-h-touch px-3 py-2 rounded-md text-left text-sm transition-colors"
+        style={{
+          background: active ? "var(--rally-cobalt-soft)" : "transparent",
+          color: active ? "var(--rally-cobalt)" : "var(--rally-ink)",
+        }}
+      >
+        <div className="flex items-center gap-2">
+          <Avatar name={name} size={26} />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <span
+                className={`min-w-0 truncate text-sm ${
+                  unreadCount > 0 ? "font-bold" : "font-semibold"
+                }`}
+              >
+                {name}
+              </span>
+              {unreadCount > 0 && (
+                <>
+                  <span
+                    data-testid="unread-dot"
+                    aria-hidden="true"
+                    className="h-2 w-2 shrink-0 rounded-full"
+                    style={{ background: "var(--rally-cobalt)" }}
+                  />
+                  <span className="sr-only">
+                    {unreadCount === 1 ? "1 unread message" : `${unreadCount} unread messages`}
+                  </span>
+                </>
+              )}
+              <span className="ml-auto shrink-0 font-mono text-[10px] text-rally-subtle">
+                {formatAcademyDate(thread.latest.sent_at, null)}
+              </span>
+            </div>
+            <div
+              data-testid="dm-thread-preview"
+              className={`truncate text-[12px] ${
+                unreadCount > 0 ? "text-rally-ink" : "text-rally-subtle"
+              }`}
+            >
+              {thread.latest.body}
+            </div>
+          </div>
+        </div>
+      </button>
+    </li>
   );
 }
 

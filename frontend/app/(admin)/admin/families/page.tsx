@@ -29,6 +29,7 @@ import {
   loginStateFromRegistration,
 } from "@/lib/people-status";
 import { UNKNOWN_TEXT, finiteText } from "@/lib/ui/load-state";
+import { visibleFamilyRows, type FamilySort } from "@/lib/admin/family-rows";
 import { useIsPhone } from "@/lib/use-is-phone";
 
 import { Button } from "@/components/ds/button";
@@ -70,6 +71,10 @@ export default function FamiliesPage() {
   const [status, setStatus] = useState<"all" | BillingSetupRegistrationState>("all");
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
+  // #865: both run over the rows already loaded — see `lib/admin/family-rows`
+  // for why they are deliberately not a backend filter.
+  const [owesOnly, setOwesOnly] = useState(false);
+  const [sort, setSort] = useState<FamilySort>("default");
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedQ(q.trim()), 300);
@@ -98,7 +103,15 @@ export default function FamiliesPage() {
   });
 
   const summary = data?.pages[0]?.summary;
-  const rows = data?.pages.flatMap((page) => page.rows) ?? [];
+  const loadedRows = useMemo(
+    () => data?.pages.flatMap((page) => page.rows) ?? [],
+    [data],
+  );
+  const rows = useMemo(
+    () => visibleFamilyRows(loadedRows, { owesOnly, sort }),
+    [loadedRows, owesOnly, sort],
+  );
+  const hiddenByOwesFilter = owesOnly && loadedRows.length > 0 && rows.length === 0;
 
   return (
     <div className="flex flex-col gap-6" data-testid="admin-families">
@@ -144,6 +157,36 @@ export default function FamiliesPage() {
             </button>
           ))}
         </div>
+        {/* #865: chasing money was the one thing this list could not be asked
+            for, though every row already carried the balance. */}
+        <button
+          type="button"
+          aria-pressed={owesOnly}
+          data-testid="admin-families-owes-filter"
+          onClick={() => setOwesOnly((on) => !on)}
+          className={`inline-flex min-h-touch items-center rounded-md border px-3 py-1.5 text-sm font-medium md:min-h-0 ${
+            owesOnly
+              ? "border-status-red-800 bg-status-red-50 text-status-red-800"
+              : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+          }`}
+        >
+          Owes money
+        </button>
+        <div className="flex items-center gap-2">
+          <label htmlFor="admin-families-sort" className="text-sm text-rally-muted">
+            Sort
+          </label>
+          <select
+            id="admin-families-sort"
+            data-testid="admin-families-sort"
+            value={sort}
+            onChange={(e) => setSort(e.target.value as FamilySort)}
+            className="min-h-touch rounded-md border border-slate-200 bg-white px-2 text-sm md:min-h-0 md:py-1.5"
+          >
+            <option value="default">Default</option>
+            <option value="outstanding_desc">Owed, highest first</option>
+          </select>
+        </div>
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
@@ -164,7 +207,11 @@ export default function FamiliesPage() {
             retrying={isFetching}
           />
         ) : rows.length === 0 ? (
-          <div className="p-8 text-center text-sm text-slate-500">No families match this filter.</div>
+          <div className="p-8 text-center text-sm text-slate-500">
+            {hiddenByOwesFilter
+              ? "No family loaded so far owes anything. Load more families to keep looking."
+              : "No families match this filter."}
+          </div>
         ) : (
           <FamiliesList rows={rows} />
         )}

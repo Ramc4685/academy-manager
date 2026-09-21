@@ -121,6 +121,10 @@ export const queryKeys = {
     billingSetupAll: () => ["admin", "billing", "setup"] as const,
     billingSetup: (params?: { status?: string; q?: string }) =>
       [...queryKeys.admin.billingSetupAll(), params?.status ?? "all", params?.q ?? ""] as const,
+    // #865: the shell's people search reads the same families endpoint with a
+    // much smaller `limit`, so it must NOT share `billingSetup`'s key — the
+    // Families page would otherwise render whichever of the two answered last.
+    peopleSearchFamilies: (q: string) => ["admin", "people-search", "families", q] as const,
     selfServicePolicy: () => ["admin", "self-service", "policy"] as const,
     departurePolicy: () => ["admin", "enrollment", "departure-policy"] as const,
     selfServiceAbsences: () => ["admin", "self-service", "absences"] as const,

@@ -13,6 +13,8 @@ import { queryKeys } from "@/lib/query/keys";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
+import { useReportSettingsDirty } from "@/components/admin/settings/settings-dirty-context";
+import { SavedNote, savedAtNow } from "@/components/admin/settings/saved-note";
 
 interface BrandingForm {
   logo_url: string;
@@ -39,7 +41,7 @@ function changedPayload(original: BrandingForm, form: BrandingForm): UpdateAdmin
 export function BrandingPanel() {
   const queryClient = useQueryClient();
   const [form, setForm] = useState<BrandingForm>(() => normalize(null));
-  const [saved, setSaved] = useState(false);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
   const query = useQuery({
     queryKey: queryKeys.admin.academy(),
     queryFn: getAdminAcademy,
@@ -52,12 +54,12 @@ export function BrandingPanel() {
 
   const payload = changedPayload(original, form);
   const dirty = Object.keys(payload).length > 0;
+  useReportSettingsDirty("branding", dirty);
   const mutation = useMutation({
     mutationFn: () => updateAdminAcademy(payload),
     onSuccess: () => {
-      setSaved(true);
+      setSavedAt(savedAtNow());
       void queryClient.invalidateQueries({ queryKey: queryKeys.admin.academy() });
-      window.setTimeout(() => setSaved(false), 2000);
     },
   });
 
@@ -116,7 +118,7 @@ export function BrandingPanel() {
           >
             {mutation.isPending ? "Saving..." : "Save branding"}
           </Button>
-          {saved && <p className="text-sm font-medium text-emerald-700">Saved.</p>}
+          <SavedNote at={savedAt} />
           {(query.isError || mutation.isError) && (
             <p role="alert" className="text-sm font-medium text-red-700">
               {(mutation.error ?? query.error)?.message}

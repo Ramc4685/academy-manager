@@ -14,6 +14,8 @@ import { queryKeys } from "@/lib/query/keys";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
+import { useReportSettingsDirty } from "@/components/admin/settings/settings-dirty-context";
+import { SavedNote, savedAtNow } from "@/components/admin/settings/saved-note";
 
 interface AcademyForm {
   display_name: string;
@@ -53,7 +55,7 @@ function changedPayload(original: AcademyForm, form: AcademyForm): UpdateAdminAc
 export function AcademyPanel() {
   const queryClient = useQueryClient();
   const [form, setForm] = useState<AcademyForm>(() => normalize(null));
-  const [saved, setSaved] = useState(false);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
 
   const query = useQuery({
     queryKey: queryKeys.admin.academy(),
@@ -67,13 +69,13 @@ export function AcademyPanel() {
 
   const payload = changedPayload(original, form);
   const dirty = Object.keys(payload).length > 0;
+  useReportSettingsDirty("academy", dirty);
 
   const mutation = useMutation({
     mutationFn: () => updateAdminAcademy(payload),
     onSuccess: () => {
-      setSaved(true);
+      setSavedAt(savedAtNow());
       void queryClient.invalidateQueries({ queryKey: queryKeys.admin.academy() });
-      window.setTimeout(() => setSaved(false), 2000);
     },
   });
 
@@ -120,7 +122,7 @@ export function AcademyPanel() {
         <PanelFooter
           dirty={dirty}
           pending={mutation.isPending}
-          saved={saved}
+          savedAt={savedAt}
           error={query.isError || mutation.isError ? mutation.error ?? query.error : null}
           onSave={() => mutation.mutate()}
         />
@@ -242,13 +244,13 @@ function Field({
 function PanelFooter({
   dirty,
   pending,
-  saved,
+  savedAt,
   error,
   onSave,
 }: {
   dirty: boolean;
   pending: boolean;
-  saved: boolean;
+  savedAt: string | null;
   error: Error | null;
   onSave: () => void;
 }) {
@@ -262,7 +264,7 @@ function PanelFooter({
       >
         {pending ? "Saving..." : "Save changes"}
       </Button>
-      {saved && <p className="text-sm font-medium text-emerald-700">Saved.</p>}
+      <SavedNote at={savedAt} />
       {error && <p className="text-sm font-medium text-red-700">{error.message}</p>}
     </div>
   );

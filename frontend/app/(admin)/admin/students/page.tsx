@@ -180,8 +180,15 @@ function SummaryCards({
   ).length;
   const stat = (value: () => number) => statText(state, () => String(value()));
 
+  // #865: five full-width cards stacked vertically took the whole of a
+  // 400x860 screen before the first student appeared. Below `md:` they become
+  // one horizontally-scrollable strip — the same five numbers, one screenful
+  // higher. Desktop keeps the five-column grid.
   return (
-    <div className="grid gap-4 md:grid-cols-5">
+    <div
+      data-testid="admin-students-kpis"
+      className="flex gap-3 overflow-x-auto pb-1 md:grid md:grid-cols-5 md:gap-4 md:overflow-visible md:pb-0 [&>*]:w-40 [&>*]:shrink-0 md:[&>*]:w-auto"
+    >
       <Card p={20} accent="#2563eb">
         <Overline>Students</Overline>
         <BigNum size={32}>{stat(() => total)}</BigNum>
@@ -232,7 +239,10 @@ function StudentsToolbar({
         role="tablist"
         aria-label="People by lifecycle"
         data-testid="admin-students-tabs"
-        className="flex flex-wrap items-center gap-2"
+        // #865: ten chips wrapped onto three lines on a phone and pushed the
+        // first student below the fold. One scrolling row below `md:`; the
+        // desktop wrap is unchanged.
+        className="-mx-1 flex items-center gap-2 overflow-x-auto px-1 md:mx-0 md:flex-wrap md:overflow-visible md:px-0"
       >
         {LIFECYCLE_FILTERS.map((filter) => {
           const active = filterId === filter.id;
@@ -250,7 +260,7 @@ function StudentsToolbar({
               onClick={() => onFilterChange(filter.id)}
               // #847: 32px tall was under the 44px touch minimum on the one
               // control an admin taps most on a phone. Desktop keeps 32.
-              className={`inline-flex min-h-touch items-center gap-2 rounded-md px-3 font-body text-[13px] font-semibold transition md:h-8 md:min-h-0 ${
+              className={`inline-flex min-h-touch items-center gap-2 rounded-md px-3 font-body text-[13px] font-semibold shrink-0 whitespace-nowrap transition md:h-8 md:min-h-0 ${
                 active
                   ? "bg-rally-ink text-white"
                   : "bg-transparent text-rally-muted hover:bg-neutral-100"

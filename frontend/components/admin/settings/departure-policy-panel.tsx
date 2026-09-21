@@ -15,6 +15,8 @@ import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
 import { OwnerOnlyHint, useIsOwner } from "@/components/admin/owner-context";
+import { useReportSettingsDirty } from "@/components/admin/settings/settings-dirty-context";
+import { SavedNote, savedAtNow } from "@/components/admin/settings/saved-note";
 
 // Structurally mirrors self-service-panel.tsx (PolicyForm -> normalize() ->
 // isDirty() -> mutation payload -> inputs), but is its OWN card with its OWN
@@ -45,7 +47,7 @@ export function DeparturePolicyPanel() {
   const isOwner = useIsOwner();
   const queryClient = useQueryClient();
   const [form, setForm] = useState<PolicyForm>(() => normalize(null));
-  const [saved, setSaved] = useState(false);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
   const query = useQuery({
     queryKey: queryKeys.admin.departurePolicy(),
     queryFn: getDeparturePolicy,
@@ -57,6 +59,7 @@ export function DeparturePolicyPanel() {
   }, [query.data]);
 
   const dirty = isDirty(original, form);
+  useReportSettingsDirty("departure-policy", dirty);
   const mutation = useMutation({
     mutationFn: () =>
       updateDeparturePolicy({
@@ -66,9 +69,8 @@ export function DeparturePolicyPanel() {
         delete_enrollment_requires_owner: form.delete_enrollment_requires_owner,
       }),
     onSuccess: () => {
-      setSaved(true);
+      setSavedAt(savedAtNow());
       void queryClient.invalidateQueries({ queryKey: queryKeys.admin.departurePolicy() });
-      window.setTimeout(() => setSaved(false), 2000);
     },
   });
 
@@ -158,7 +160,7 @@ export function DeparturePolicyPanel() {
             >
               {mutation.isPending ? "Saving..." : "Save changes"}
             </Button>
-            {saved && <p className="text-sm font-medium text-emerald-700">Saved.</p>}
+            <SavedNote at={savedAt} />
             {mutation.isError && (
               <p className="text-sm font-medium text-red-700">{mutation.error.message}</p>
             )}

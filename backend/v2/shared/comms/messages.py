@@ -158,17 +158,27 @@ class MongoMessageRepository(TenantScopedRepository):
         return [self._to_domain(d) async for d in cursor]
 
     async def for_admin(self, user_id: str) -> list[Message]:
-        """Admin's inbox: their DMs plus every announcement in the academy.
+        """Admin's inbox: their DM threads plus every announcement in the academy.
 
         Admin may post to any session, so admin may read every session's
         announcements. Named differently from :meth:`for_recipient` so that
         "see everything" is always an explicit choice at the call site rather
         than something a missing argument can fall back into.
+
+        Both directions of a DM are returned (#864). Matching only on
+        ``recipient_id`` returned half a conversation — everything a family
+        sent in, and nothing the admin sent back — so a thread could never
+        show what was replied, and a DM the admin had just sent vanished from
+        the page the moment it was refetched.
         """
         cursor = self._find_many(
             {
                 "deleted_at": None,
-                "$or": [{"recipient_id": user_id}, {"kind": "announcement"}],
+                "$or": [
+                    {"recipient_id": user_id},
+                    {"kind": "dm", "sender_id": user_id},
+                    {"kind": "announcement"},
+                ],
             },
             sort=[("created_at", -1)],
             limit=_READ_LIMIT,
@@ -345,3 +355,15 @@ class CommsService:
     async def list_for(self, user_id: str) -> list[Message]:
         """Admin's inbox. Admin composition is the only caller."""
         return await self.messages.for_admin(user_id)
+
+    async def mark_read_for_admin(self, message_id: str, user_id: str) -> None:
+        """Record that an admin has read one message (#864).
+
+        Deliberately the same :meth:`MongoMessageRepository.mark_read` the
+        parent and coach surfaces call, with no visible sessions: an admin's
+        unread items are DMs addressed to them, which the first branch of
+        :func:`_visibility_filter` matches on its own. Passing ``[]`` rather
+        than "everything" keeps the fail-closed default — an admin cannot
+        stamp a read receipt onto a message that is not theirs to read.
+        """
+        await self.messages.mark_read(message_id, user_id, visible_session_ids=[])

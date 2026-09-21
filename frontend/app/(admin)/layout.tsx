@@ -32,6 +32,7 @@ import {
   AdminActionSlotOutlet,
   AdminActionSlotProvider,
 } from "@/components/admin/admin-action-slot";
+import { PeopleSearch } from "@/components/admin/PeopleSearch";
 import { TenantSwitcher } from "@/components/admin/tenant-switcher";
 import { PersonaSwitcher } from "@/components/persona/persona-switcher";
 import { AccessDeniedNotice } from "@/components/persona/access-denied-notice";
@@ -490,6 +491,9 @@ function RallyTopbar({
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          {/* #865: one search for students, families and staff, at every
+              width. It is a dialog, not a route — see PeopleSearch.tsx. */}
+          <PeopleSearch />
           <AdminActionSlotOutlet />
           {!online && (
             <span

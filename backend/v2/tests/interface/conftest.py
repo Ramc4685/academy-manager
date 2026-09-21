@@ -1905,11 +1905,17 @@ class FakeMessageRepo:
         )
 
     async def for_admin(self, user_id):
+        """Mirrors MongoMessageRepository.for_admin — both DM directions (#864)."""
         return sorted(
             (
                 m
                 for m in self.rows.values()
-                if m.deleted_at is None and (m.recipient_id == user_id or m.kind == "announcement")
+                if m.deleted_at is None
+                and (
+                    m.recipient_id == user_id
+                    or (m.kind == "dm" and m.sender_id == user_id)
+                    or m.kind == "announcement"
+                )
             ),
             key=lambda m: m.created_at,
             reverse=True,

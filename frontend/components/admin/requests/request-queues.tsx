@@ -421,6 +421,15 @@ function ApproveMakeupDialog({
       {occurrencesQuery.isError && (
         <p className="text-xs text-red-700">Could not load the class dates for this request.</p>
       )}
+      {/* #860: the pause and registration dialogs say what the family is told,
+          so this one must too — and the honest answer today is "nothing is
+          sent". `ApproveMakeupRequest` takes no notifier (it is billing- and
+          notification-free by design), so the decision only shows up when the
+          parent next opens their account. An admin who assumes an email went
+          out would never follow up. */}
+      <p className="text-xs text-rally-muted" data-testid="approve-makeup-notice">
+        No email is sent. The family sees the new date in their parent account.
+      </p>
       {error && <p role="alert" className="text-sm text-red-700">{error.message}</p>}
       <div className="flex justify-end gap-2 pt-2">
         <Button variant="secondary" size="sm" onClick={onCancel} disabled={pending}>
@@ -691,6 +700,11 @@ function ApproveTrialDialog({
       {occurrencesQuery.isError && (
         <p className="text-xs text-red-700">Could not load occurrences for this session.</p>
       )}
+      {/* #860, same as the makeup dialog: `ApproveTrialRequest` has no
+          notifier either, so say so rather than let the admin assume. */}
+      <p className="text-xs text-rally-muted" data-testid="approve-trial-notice">
+        No email is sent. The family sees the trial date in their parent account.
+      </p>
       {error && <p role="alert" className="text-sm text-red-700">{error.message}</p>}
       <div className="flex justify-end gap-2 pt-2">
         <Button variant="secondary" size="sm" onClick={onCancel} disabled={pending}>
@@ -803,6 +817,14 @@ function AbsencesList({ absences }: { absences: AbsenceNoticeAdminRow[] }) {
             }
             secondary={
               <>
+                <div>
+                  Missing:{" "}
+                  <ClassMoment
+                    title={a.occurrence_session_title}
+                    startAt={a.occurrence_start_at}
+                    fallbackId="Class unavailable"
+                  />
+                </div>
                 <div>Submitted {formatAcademyDateTime(a.submitted_at, null)}</div>
                 <div>{a.recorded_by_admin ? "Recorded by admin" : "Parent"}</div>
               </>
@@ -815,10 +837,11 @@ function AbsencesList({ absences }: { absences: AbsenceNoticeAdminRow[] }) {
   return (
     <Card p={20}>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px] text-sm">
+            <table className="w-full min-w-[760px] text-sm">
               <thead>
                 <tr className="border-b border-neutral-200 text-left dark:border-neutral-800">
                   <Th>Student</Th>
+                  <Th>Class missed</Th>
                   <Th>Submitted</Th>
                   <Th>Source</Th>
                   <Th>Notice window</Th>
@@ -833,6 +856,13 @@ function AbsencesList({ absences }: { absences: AbsenceNoticeAdminRow[] }) {
                   >
                     <td className="px-2 py-3 font-medium text-rally-base">
                       {a.student_full_name || a.student_id}
+                    </td>
+                    <td className="px-2 py-3">
+                      <ClassMoment
+                        title={a.occurrence_session_title}
+                        startAt={a.occurrence_start_at}
+                        fallbackId="Class unavailable"
+                      />
                     </td>
                     <td className="px-2 py-3 text-rally-subtle">{formatAcademyDateTime(a.submitted_at, null)}</td>
                     <td className="px-2 py-3 text-rally-subtle">
@@ -1184,6 +1214,11 @@ function DenyDialog({
           data-testid="deny-reason-textarea"
         />
       </FormField>
+      {/* #860: both callers are makeup/trial denials, neither of which
+          notifies. The reason is stored and shown in the parent's account. */}
+      <p className="text-xs text-rally-muted" data-testid="deny-notice">
+        No email is sent. The family sees this reason in their parent account.
+      </p>
       <div className="flex justify-end gap-2 pt-2">
         <Button variant="secondary" size="sm" onClick={onCancel} disabled={pending}>
           Cancel

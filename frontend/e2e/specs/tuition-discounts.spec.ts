@@ -5,6 +5,7 @@ import {
   installTenantGuard,
 } from "../fixtures/tenant-isolation";
 import { openMonthCloseSection } from "../helpers/month-close-sections";
+import { rowActionControl } from "../helpers/row-actions";
 import {
   ACADEMY_A,
   ADMIN_USER_A,
@@ -462,22 +463,27 @@ test.describe("tuition discounts", () => {
 
     await page.goto("/admin/students/student-discounts");
     await page.getByRole("tab", { name: "Sessions" }).click();
-    const sessions = page.getByTestId("admin-student-enrolled-sessions");
-    const scholarshipRow = sessions
-      .locator("tbody tr")
-      .filter({ hasText: "Scholarship Singles" });
-    const coachChildRow = sessions
-      .locator("tbody tr")
-      .filter({ hasText: "Coach Kids Doubles" });
+    await expect(page.getByTestId("admin-student-enrolled-sessions")).toBeVisible();
+    // #865: the Sessions tab is a table on desktop and PhoneListRows below
+    // `md:`, so rows are named by id and the action is reached through the
+    // shared helper rather than a `tbody tr` that only exists at one width.
+    const scholarshipRow = page.getByTestId("admin-student-enrollment-enr-scholarship");
+    const coachChildRow = page.getByTestId("admin-student-enrollment-enr-coach-child");
+    const discountControl = (enrollmentId: string, label: string) =>
+      rowActionControl(page, {
+        rowTestId: `admin-student-enrollment-${enrollmentId}`,
+        actionsTestId: `admin-student-enrollment-actions-${enrollmentId}`,
+        label,
+      });
 
-    await scholarshipRow.getByRole("button", { name: "Discount" }).click();
+    await (await discountControl("enr-scholarship", "Discount")).click();
     await expect(page.getByRole("dialog", { name: "Tuition discount" })).toBeVisible();
     await page.getByRole("button", { name: "Save discount" }).click();
     await expect(page.getByRole("dialog", { name: "Tuition discount" })).toHaveCount(0);
     await expect(scholarshipRow).toContainText("Scholarship");
     await expect(scholarshipRow).toContainText("$0");
 
-    await coachChildRow.getByRole("button", { name: "Discount", exact: true }).click();
+    await (await discountControl("enr-coach-child", "Discount")).click();
     const dialog = page.getByRole("dialog", { name: "Tuition discount" });
     await dialog.locator("select").nth(0).selectOption("coach_child");
     await dialog.locator("select").nth(1).selectOption("percent");

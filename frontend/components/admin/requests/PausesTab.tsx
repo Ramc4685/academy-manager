@@ -13,6 +13,8 @@ import { Card } from "@/components/ds/card";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { Button } from "@/components/ds/button";
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
+import { useIsPhone } from "@/lib/use-is-phone";
 import { actionCellClass, actionHeaderClass } from "@/lib/sticky-action-column";
 
 /** #838: approving or declining a pause is one click away from the family's bill. */
@@ -49,33 +51,12 @@ export function PausesTab() {
           No pending pause requests.
         </p>
       ) : (
-        <Card p={20}>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[840px] text-sm">
-              <thead>
-                <tr className="border-b border-neutral-200 text-left dark:border-neutral-800">
-                  <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Who</th>
-                  <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Session</th>
-                  <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Pause</th>
-                  <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Reason</th>
-                  <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Status</th>
-                  <th className={`px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted ${actionHeaderClass}`}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {requests.map((request) => (
-                  <PauseRow
-                    key={request.pause_request_id}
-                    request={request}
-                    disabled={approveMutation.isPending || declineMutation.isPending}
-                    onApprove={() => setConfirming({ request, decision: "approve" })}
-                    onDecline={() => setConfirming({ request, decision: "decline" })}
-                  />
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
+        <PausesList
+          requests={requests}
+          disabled={approveMutation.isPending || declineMutation.isPending}
+          onApprove={(request) => setConfirming({ request, decision: "approve" })}
+          onDecline={(request) => setConfirming({ request, decision: "decline" })}
+        />
       )}
 
       {confirming && (
@@ -134,6 +115,102 @@ export function PausesTab() {
         />
       )}
     </div>
+  );
+}
+
+/**
+ * #860: on a phone the sticky Decline/Approve cell sat on top of the session,
+ * the pause dates and the reason — the admin was deciding blind. The shared
+ * phone row (#847) puts every one of those facts above a 44px actions menu, so
+ * the decision is made from what the family actually asked for.
+ *
+ * Both layouts call the same `onApprove`/`onDecline` the table already used:
+ * one confirm dialog, one derivation of the labels, two layouts.
+ */
+function PausesList({
+  requests,
+  disabled,
+  onApprove,
+  onDecline,
+}: {
+  requests: AdminPauseRequestView[];
+  disabled: boolean;
+  onApprove: (request: AdminPauseRequestView) => void;
+  onDecline: (request: AdminPauseRequestView) => void;
+}) {
+  const isPhone = useIsPhone();
+  if (isPhone) {
+    return (
+      <Card p={0}>
+        <PhoneList aria-label="Pause requests" data-testid="admin-pause-requests-phone-list">
+          {requests.map((request) => {
+            const who = request.parent_name || request.parent_email || "Parent";
+            return (
+              <PhoneListRow
+                key={request.pause_request_id}
+                data-testid={`admin-pause-requests-row-${request.pause_request_id}`}
+                title={who}
+                primary={
+                  <Chip variant={mapStatus(request.status)} label={request.status.toUpperCase()} />
+                }
+                actionsLabel={`Actions for ${who}`}
+                actionsTestId={`admin-pause-requests-actions-${request.pause_request_id}`}
+                actions={
+                  request.status === "pending" && !disabled
+                    ? [
+                        { key: "decline", label: "Decline", onSelect: () => onDecline(request) },
+                        { key: "approve", label: "Approve", onSelect: () => onApprove(request) },
+                      ]
+                    : []
+                }
+                secondary={
+                  <>
+                    <div>Student: {request.student_name || request.student_id || "Unknown"}</div>
+                    <div className="text-rally-base">
+                      {request.session_title || request.session_id || "Session pending"}
+                    </div>
+                    <div>{sessionDetail(request)}</div>
+                    <div className="text-rally-base">{pauseLabel(request)}</div>
+                    <div>{billingImpactLabel(request)}</div>
+                    <div>Requested {formatDateTime(request.created_at)}</div>
+                    <div>{request.reason || "No reason given"}</div>
+                  </>
+                }
+              />
+            );
+          })}
+        </PhoneList>
+      </Card>
+    );
+  }
+  return (
+    <Card p={20}>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[840px] text-sm">
+              <thead>
+                <tr className="border-b border-neutral-200 text-left dark:border-neutral-800">
+                  <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Who</th>
+                  <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Session</th>
+                  <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Pause</th>
+                  <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Reason</th>
+                  <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Status</th>
+                  <th className={`px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted ${actionHeaderClass}`}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {requests.map((request) => (
+                  <PauseRow
+                    key={request.pause_request_id}
+                    request={request}
+                    disabled={disabled}
+                    onApprove={() => onApprove(request)}
+                    onDecline={() => onDecline(request)}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
   );
 }
 
@@ -240,10 +317,12 @@ function formatDateTime(value: string): string {
 }
 
 function sessionDetail(request: AdminPauseRequestView): string {
+  // #860: the enrollment id used to be appended here. Location and start time
+  // already identify the class; the id was an internal handle an admin has no
+  // way to act on.
   const parts = [
     request.session_location,
     request.session_start_at ? formatDateTime(request.session_start_at) : null,
-    request.enrollment_id ? `Enrollment ${request.enrollment_id}` : null,
   ].filter(Boolean);
   return parts.join(" · ") || "No session details";
 }

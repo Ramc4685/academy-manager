@@ -20,6 +20,7 @@ import { queryKeys } from "@/lib/query/keys";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
+import { useReportSettingsDirty } from "@/components/admin/settings/settings-dirty-context";
 
 /**
  * Settings → Billing rules (spec 2026-09-07-billing-rules-design).
@@ -54,6 +55,12 @@ export function BillingRulesPanel() {
   });
 
   const errors = { ...diff.errors, ...parseServerErrors(mutation.error) };
+  // Edits that are typed but not yet valid still count as unsaved work:
+  // the tab strip must warn before it throws them away (#863).
+  useReportSettingsDirty(
+    "billing-rules",
+    diff.changed.length > 0 || Object.keys(diff.errors).length > 0
+  );
 
   return (
     <section data-testid="admin-settings-billing-rules" className="space-y-4">

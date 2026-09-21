@@ -93,9 +93,11 @@ export default defineConfig({
       },
       // month-close joins the list for #862: its collapsible groups default
       // open on desktop and closed on a phone, so the default only gets
-      // exercised by running the spec under both viewports.
+      // exercised by running the spec under both viewports. messages joins
+      // for #864, where a phone replaces the thread list with the open
+      // thread and a desktop shows both at once.
       testMatch:
-        /admin-(shell|students|registrations|level-ups-lifecycle|month-close)\.spec\.ts/,
+        /admin-(shell|students|registrations|level-ups-lifecycle|month-close|messages)\.spec\.ts/,
     },
   ],
 });
