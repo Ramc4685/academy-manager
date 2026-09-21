@@ -25,21 +25,24 @@ import {
   sendDuesReminders,
 } from "@/lib/api/admin";
 import { formatCents, formatDateOnly } from "@/lib/money";
-import { NO_DATA_TEXT, finiteText, statText } from "@/lib/ui/load-state";
+import { NO_DATA_TEXT, finiteText, isSettled, statText } from "@/lib/ui/load-state";
 import { invoiceStatusChip } from "@/lib/billing-status";
 import {
   autopayRunBox,
   formatCollectionRate,
   monthCloseTiles,
+  monthCloseVerdict,
   normalizeMonthClose,
   oddRows,
   warningLine,
 } from "@/lib/month-close-view";
+import type { MonthCloseTile } from "@/lib/month-close-view";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Button } from "@/components/ds/button";
 import { ErrorNotice } from "@/components/ds/error-notice";
 import { BigNum, Overline } from "@/components/ds/typography";
+import { CollapsibleSection } from "@/components/admin/reports/collapsible-section";
 import { FunnelPanel } from "@/components/admin/reports/funnel-panel";
 import { AttendanceTrendsPanel } from "@/components/admin/reports/attendance-trends-panel";
 import { CoachUtilizationPanel } from "@/components/admin/reports/coach-utilization-panel";
@@ -137,6 +140,12 @@ export default function AdminMonthClosePage() {
     [monthCloseQuery.data, period],
   );
   const tiles = monthCloseTiles(close);
+  // #862: the page leads with a verdict and the three money figures; the
+  // invoice-run counts move into the Invoices group.
+  const verdict = monthCloseVerdict(close);
+  const closeSettled = isSettled(monthCloseQuery);
+  const headlineTiles = tiles.filter((tile) => tile.cents != null);
+  const invoiceTiles = tiles.filter((tile) => tile.cents == null);
   const runBox = autopayRunBox(close);
   const odd = oddRows(close);
   const warning = warningLine(close);
@@ -171,6 +180,33 @@ export default function AdminMonthClosePage() {
   const expenseCategories = expenses?.by_category ?? [];
   const projected = projectedIncomeQuery.data;
   const projectedSessions = projected?.by_session ?? [];
+
+  // One tile renderer for both grids: the money tiles that lead the page and
+  // the invoice-run counts inside the Invoices group. #837's rule holds in
+  // both — a query that is loading or failed prints a dash, never a zero.
+  const tileGrid = (list: MonthCloseTile[], testId: string) => (
+    <div data-testid={testId} className="grid gap-4 sm:grid-cols-3">
+      {list.map((tile) => (
+        <Card key={tile.key} p={20} className="flex flex-col">
+          <div data-testid={`month-close-tile-${tile.key}`}>
+            <Overline>{tile.label}</Overline>
+            <BigNum size={28}>
+              <span data-testid={`month-close-tile-${tile.key}-value`}>
+                {closeLoading
+                  ? "Loading"
+                  : // #837: `normalizeMonthClose` zero-fills a payload that
+                    // never arrived; a dash says so.
+                    statText(monthCloseQuery, () =>
+                      tile.cents != null ? formatMoney(tile.cents) : (tile.value ?? NO_DATA_TEXT),
+                    )}
+              </span>
+            </BigNum>
+            <p className="mt-2 text-[12px] text-rally-muted">{tile.hint}</p>
+          </div>
+        </Card>
+      ))}
+    </div>
+  );
 
   return (
     <section data-testid="admin-month-close" className="space-y-5">
@@ -234,64 +270,67 @@ export default function AdminMonthClosePage() {
           </p>
         )}
 
-        <div data-testid="month-close-tiles" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {tiles.map((tile) => (
-            <Card key={tile.key} p={20} className="flex flex-col">
-              <div data-testid={`month-close-tile-${tile.key}`}>
-                <Overline>{tile.label}</Overline>
-                <BigNum size={28}>
-                  <span data-testid={`month-close-tile-${tile.key}-value`}>
-                    {closeLoading
-                      ? "Loading"
-                      : // #837: `normalizeMonthClose` zero-fills a payload that
-                        // never arrived; a dash says so.
-                        statText(monthCloseQuery, () =>
-                          tile.cents != null ? formatMoney(tile.cents) : (tile.value ?? NO_DATA_TEXT),
-                        )}
-                  </span>
-                </BigNum>
-                <p className="mt-2 text-[12px] text-rally-muted">{tile.hint}</p>
-              </div>
-            </Card>
-          ))}
-        </div>
-
-        <div className="grid gap-4 lg:grid-cols-2">
-          <Card p={24} data-testid="autopay-run-box">
-            <Overline>Autopay run</Overline>
-            <p className="mt-1 text-sm text-rally-subtle" data-testid="autopay-run-headline">
-              {runBox.state === "none"
-                ? "No autopay invoices this month."
-                : `${runBox.hasRun ? "Ran" : "Runs on"} ${formatDateOnly(runBox.chargeOn)}${
-                    runBox.chargeOnVaries ? " and later" : ""
-                  }.`}
-            </p>
-            <dl className="mt-4 space-y-2">
-              {runBox.rows.map((row) => (
-                <div
-                  key={row.key}
-                  className="flex items-baseline justify-between gap-3 text-sm"
-                  data-testid={`autopay-run-${row.key}`}
-                >
-                  <dt className="text-rally-muted">{row.label}</dt>
-                  <dd className="font-mono tabular-nums font-semibold text-rally-ink">
-                    {row.countLabel} · {formatMoney(row.cents)}
-                  </dd>
-                </div>
+        {/*
+          * #862: the answer first. Everything below is the evidence for this
+          * one sentence, so it leads — and on a phone it is the whole first
+          * screen, with the money figures right under it.
+          */}
+        <Card
+          p={20}
+          data-testid="month-close-verdict"
+          className={`border-l-4 ${
+            !closeSettled
+              ? "border-l-rally-line"
+              : verdict.ok
+                ? "border-l-status-green-500"
+                : "border-l-status-amber-500"
+          }`}
+        >
+          <Overline>Verdict</Overline>
+          <h2
+            className="mt-1 font-display text-[24px] font-bold leading-tight tracking-[-0.02em] text-rally-ink"
+            data-testid="month-close-verdict-headline"
+          >
+            {closeLoading
+              ? "Checking this month…"
+              : // #837 again: an unread payload normalizes to zeros, and zero
+                // issues would read as "ready to close". A dash says we do
+                // not know; the error notice above says why.
+                statText(monthCloseQuery, () =>
+                  verdict.ok
+                    ? `${formatMonth(period)} is ready to close`
+                    : `${verdict.issueCount} thing${verdict.issueCount === 1 ? "" : "s"} need${
+                        verdict.issueCount === 1 ? "s" : ""
+                      } attention`,
+                )}
+          </h2>
+          {closeSettled && verdict.issues.length > 0 ? (
+            <ul
+              className="mt-3 space-y-1 text-sm text-rally-subtle"
+              data-testid="month-close-verdict-issues"
+            >
+              {verdict.issues.map((line) => (
+                <li key={line}>{line}</li>
               ))}
-            </dl>
-            {runBox.hasRun && close.autopay_run.failed.count > 0 ? (
-              <Link
-                href="/admin/payments"
-                data-testid="autopay-run-failed-link"
-                className="mt-4 inline-block text-sm font-medium text-rally-cobalt-600 hover:underline"
-              >
-                Work the Failed autopay bucket
-              </Link>
-            ) : null}
-          </Card>
+            </ul>
+          ) : null}
+          {closeSettled ? (
+            <p className="mt-3 text-[12px] text-rally-muted">
+              {verdict.ok
+                ? "The four checks came back clean, every invoice went out, and no autopay charge failed."
+                : "Anything odd, below, links to each row."}
+            </p>
+          ) : null}
+        </Card>
 
-          <Card p={24} data-testid="anything-odd-box">
+        {tileGrid(headlineTiles, "month-close-tiles")}
+
+        {/*
+          * Always visible, never grouped: these four checks are the evidence
+          * behind a non-ok verdict, so hiding them behind a click would make
+          * the headline unanswerable.
+          */}
+        <Card p={24} data-testid="anything-odd-box">
             <Overline>Anything odd</Overline>
             <p className="mt-1 text-sm text-rally-subtle">
               Four checks over this month&apos;s invoices. A zero is the answer you want.
@@ -343,10 +382,16 @@ export default function AdminMonthClosePage() {
                 </li>
               ))}
             </ul>
-          </Card>
-        </div>
+        </Card>
 
-        {close.invoices.void_reasons.length > 0 ? (
+        <CollapsibleSection
+          id="invoices"
+          title="Invoices"
+          summary="What the invoice run generated, emailed and voided."
+        >
+          {tileGrid(invoiceTiles, "month-close-invoice-tiles")}
+
+          {close.invoices.void_reasons.length > 0 ? (
           <Card p={20} data-testid="void-reasons">
             <div className="flex items-center gap-3">
               <Overline>Why invoices were voided</Overline>
@@ -363,8 +408,54 @@ export default function AdminMonthClosePage() {
               {formatMoney(close.invoices.voided_cents)} voided in total.
             </p>
           </Card>
-        ) : null}
+          ) : null}
+        </CollapsibleSection>
 
+        <CollapsibleSection
+          id="autopay-run"
+          title="Autopay run"
+          summary="What the autopay worker charged this month, or is about to."
+        >
+          <Card p={24} data-testid="autopay-run-box">
+            <Overline>Autopay run</Overline>
+            <p className="mt-1 text-sm text-rally-subtle" data-testid="autopay-run-headline">
+              {runBox.state === "none"
+                ? "No autopay invoices this month."
+                : `${runBox.hasRun ? "Ran" : "Runs on"} ${formatDateOnly(runBox.chargeOn)}${
+                    runBox.chargeOnVaries ? " and later" : ""
+                  }.`}
+            </p>
+            <dl className="mt-4 space-y-2">
+              {runBox.rows.map((row) => (
+                <div
+                  key={row.key}
+                  className="flex items-baseline justify-between gap-3 text-sm"
+                  data-testid={`autopay-run-${row.key}`}
+                >
+                  <dt className="text-rally-muted">{row.label}</dt>
+                  <dd className="font-mono tabular-nums font-semibold text-rally-ink">
+                    {row.countLabel} · {formatMoney(row.cents)}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+            {runBox.hasRun && close.autopay_run.failed.count > 0 ? (
+              <Link
+                href="/admin/payments"
+                data-testid="autopay-run-failed-link"
+                className="mt-4 inline-block text-sm font-medium text-rally-cobalt-600 hover:underline"
+              >
+                Work the Failed autopay bucket
+              </Link>
+            ) : null}
+          </Card>
+        </CollapsibleSection>
+
+        <CollapsibleSection
+          id="discounts"
+          title="Discounts"
+          summary="Gross tuition against the discounts granted this month."
+        >
         <Card p={24} data-testid="tuition-discounts-section" className="space-y-4">
           <div>
             <Overline>Tuition discounts</Overline>
@@ -431,7 +522,13 @@ export default function AdminMonthClosePage() {
             </>
           )}
         </Card>
+        </CollapsibleSection>
 
+        <CollapsibleSection
+          id="analytics"
+          title="Analytics"
+          summary="Attendance, capacity, profit and loss, payroll and the trailing trends."
+        >
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <KpiCard
             label="Attendance rate"
@@ -787,29 +884,19 @@ export default function AdminMonthClosePage() {
             </p>
           )}
         </Card>
-      </div>
 
-      <div className="space-y-3">
-        <div>
-          <Overline>Analytics</Overline>
-          <p className="mt-1 text-sm text-neutral-500">
-            Enrollment, attendance, and coach utilization over the trailing three months.
-          </p>
-        </div>
         <div className="grid gap-4">
           <FunnelPanel period={period} />
           <AttendanceTrendsPanel periods={trailingPeriods} />
           <CoachUtilizationPanel periods={trailingPeriods} />
         </div>
-      </div>
+        </CollapsibleSection>
 
-      <div className="space-y-3">
-        <div>
-          <Overline>Financial reports</Overline>
-          <p className="mt-1 text-sm text-neutral-500">
-            Monthly reports over the billing ledger.
-          </p>
-        </div>
+        <CollapsibleSection
+          id="report-links"
+          title="Report links"
+          summary="Session economics, refunds, revenue by category, deposit slip and leaving."
+        >
         <div className="grid gap-4 lg:grid-cols-3">
           {FINANCIAL_REPORTS.map((report) => (
             <Link key={report.href} href={report.href} className="block">
@@ -821,6 +908,7 @@ export default function AdminMonthClosePage() {
             </Link>
           ))}
         </div>
+        </CollapsibleSection>
       </div>
     </section>
   );

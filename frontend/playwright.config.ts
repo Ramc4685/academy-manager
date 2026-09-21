@@ -91,7 +91,11 @@ export default defineConfig({
         ...devices["Desktop Chrome"],
         viewport: { width: 1280, height: 800 },
       },
-      testMatch: /admin-(shell|students|registrations|level-ups-lifecycle)\.spec\.ts/,
+      // month-close joins the list for #862: its collapsible groups default
+      // open on desktop and closed on a phone, so the default only gets
+      // exercised by running the spec under both viewports.
+      testMatch:
+        /admin-(shell|students|registrations|level-ups-lifecycle|month-close)\.spec\.ts/,
     },
   ],
 });
