@@ -88,7 +88,8 @@ class MongoStudentWriter(TenantScopedRepository):
           an already-linked student is a no-op (`modified_count == 0`)
           rather than silently overwriting the existing link.
         * **user side** — the unique partial index
-          `student_user_id_unique_per_academy` (migration 0150) makes the
+          `student_user_id_per_academy_uq` (migration 0150, re-shaped by
+          0188) makes the
           write fail with `DuplicateKeyError` if another student in this
           academy already holds this `user_id`. Without this, two siblings
           invited with the same family email would both link to one user
