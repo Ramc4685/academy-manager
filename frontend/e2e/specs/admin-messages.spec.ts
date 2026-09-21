@@ -197,6 +197,27 @@ test.describe("admin direct messages (#864)", () => {
     await expect(page.getByTestId("dm-thread-panel")).toHaveCount(0);
   });
 
+  test("the ?dm= deep link marks the thread read too, not just a row click", async ({
+    page,
+  }) => {
+    // The Payments buckets "Message" action lands here with the thread already
+    // open and no click to hang a mark-read off. On desktop the list stays
+    // beside the open thread, so an unmarked thread would show an unread dot
+    // next to a conversation the admin is reading.
+    await page.setViewportSize(DESKTOP);
+    const { readCalls } = await stubMessagesPage(page);
+
+    await page.goto(`/admin/messages?dm=${PARENT_ID}`);
+
+    await expect(page.getByTestId("dm-thread-panel")).toBeVisible();
+    await expect.poll(() => readCalls).toEqual(["m-new"]);
+    await expect(page.getByTestId("unread-dot")).toHaveCount(0);
+
+    // And it stays at one call — no loop from the refetch that follows.
+    await page.waitForTimeout(500);
+    expect(readCalls).toEqual(["m-new"]);
+  });
+
   test("on desktop an open thread sits beside the list", async ({ page }) => {
     await page.setViewportSize(DESKTOP);
     await stubMessagesPage(page);

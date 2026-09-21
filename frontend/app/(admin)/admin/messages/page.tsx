@@ -11,7 +11,7 @@
  * them exists yet.
  */
 
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
@@ -55,9 +55,9 @@ function AdminMessagesContent() {
     queryFn: () => listAdminMessages(),
   });
 
-  const messages = data?.messages ?? [];
+  const messages = useMemo(() => data?.messages ?? [], [data]);
   const broadcasts = messages.filter((m) => m.is_broadcast);
-  const dms = messages.filter((m) => !m.is_broadcast);
+  const dms = useMemo(() => messages.filter((m) => !m.is_broadcast), [messages]);
 
   // #841: every thread used to be titled "Direct conversation". The parent
   // directory is already an admin-visible read, so the family's name comes
@@ -87,12 +87,25 @@ function AdminMessagesContent() {
     onSuccess: invalidate,
   });
 
-  const openThread = (counterpartyId: string) => {
-    setDmRecipientId(counterpartyId);
+  const openThread = (counterpartyId: string) => setDmRecipientId(counterpartyId);
+
+  // Marking read is driven by which thread is OPEN, not by the click that
+  // opened it: `/admin/messages?dm=<parent_id>` (the Payments buckets
+  // "Message" action) seeds the open thread without any click, and on desktop
+  // the list stays beside it — so an unmarked thread would keep its dot while
+  // the admin reads it. `markedRef` keeps this to one call per message id
+  // while the refetch that clears `is_read` is still in flight.
+  const markReadMutate = markRead.mutate;
+  const markedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!dmRecipientId) return;
     const unread =
-      dmThreads.find((t) => t.counterpartyId === counterpartyId)?.unreadIds ?? [];
-    if (unread.length > 0) markRead.mutate(unread);
-  };
+      dmThreads.find((t) => t.counterpartyId === dmRecipientId)?.unreadIds ?? [];
+    const fresh = unread.filter((id) => !markedRef.current.has(id));
+    if (fresh.length === 0) return;
+    for (const id of fresh) markedRef.current.add(id);
+    markReadMutate(fresh);
+  }, [dmRecipientId, dmThreads, markReadMutate]);
 
   return (
     <section data-testid="admin-messages" className="space-y-5">
