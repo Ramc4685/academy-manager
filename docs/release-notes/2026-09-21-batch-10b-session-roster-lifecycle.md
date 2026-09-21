@@ -1,6 +1,6 @@
 # batch-10b: session roster lifecycle polish
 
-PR: #0
+PR: #875
 
 ## What changed
 - Fixes #859 — pathway-level placement on the session roster now goes through a 5s undo window (`PathwayPlacementUndoWindow`) instead of firing the mutation directly from the select's `onChange`, with an inline "Moved X to Y — Undo" bar.
