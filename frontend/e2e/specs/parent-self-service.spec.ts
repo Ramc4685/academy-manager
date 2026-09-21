@@ -174,6 +174,63 @@ test.describe("parent self-service — absences", () => {
     await expect(page.getByRole("status")).toContainText("Absence notice submitted.");
   });
 
+  test("shows the child's name on an absence notice row", async ({ page }) => {
+    const CHILD_B_ID = "st-2";
+    const CHILD_B_NAME = "Priya Nair";
+    await page.route("**/api/v2/parent/children", async (route: Route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          children: [
+            {
+              student_id: STUDENT_ID,
+              full_name: STUDENT_NAME,
+              lifecycle: "active",
+              active_session_count: 1,
+              attended_count: 5,
+              absent_count: 1,
+            },
+            {
+              student_id: CHILD_B_ID,
+              full_name: CHILD_B_NAME,
+              lifecycle: "active",
+              active_session_count: 1,
+              attended_count: 3,
+              absent_count: 0,
+            },
+          ],
+        }),
+      });
+    });
+    await page.route("**/api/v2/parent/absences", async (route: Route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          notices: [
+            {
+              notice_id: "notice-2",
+              student_id: CHILD_B_ID,
+              occurrence_id: "occ-051",
+              session_id: "sess-2",
+              submitted_by: "parent-1",
+              submitted_at: "2026-07-11T12:00:00Z",
+              notice_window_met: true,
+            },
+          ],
+        }),
+      });
+    });
+
+    await page.goto("/parent/requests");
+    await expect(page.getByText("My absence notices")).toBeVisible();
+    const noticeRow = page.locator("ul li").first();
+    await expect(noticeRow).toContainText(CHILD_B_NAME);
+  });
+
   test("submitting an absence inside the notice window shows a warning banner", async ({
     page,
   }) => {
@@ -307,6 +364,7 @@ test.describe("parent self-service — makeups", () => {
 
     const makeupsList = page.locator("ul").filter({ hasText: "Requested" });
     await expect(makeupsList.getByText("PENDING")).toBeVisible();
+    await expect(makeupsList).toContainText(STUDENT_NAME);
   });
 });
 

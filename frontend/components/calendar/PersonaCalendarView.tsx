@@ -14,6 +14,8 @@
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 
+import styles from "./persona-calendar-view.module.css";
+
 export interface CalendarViewEvent {
   id: string;
   title: string;
@@ -36,7 +38,7 @@ export default function PersonaCalendarView({ events, onEventClick }: Props) {
   return (
     <div
       data-testid="calendar-grid"
-      className="rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4"
+      className={`${styles.wrap} rounded-lg border border-rally-line bg-white p-4`}
     >
       <FullCalendar
         plugins={[dayGridPlugin]}

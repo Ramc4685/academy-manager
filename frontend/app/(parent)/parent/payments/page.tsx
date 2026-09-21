@@ -527,6 +527,9 @@ export default function ParentPaymentsPage() {
           >
             {balancePaymentMutation.isPending ? "Starting…" : `Pay balance · ${money(currentBalance)}`}
           </Button>
+          <p className="mt-2 text-xs text-rally-subtle" data-testid="pay-balance-reassurance">
+            Secure checkout via Stripe
+          </p>
           {showAutopayOptinForBalance(invoices, enrollments) && (
             <label
               data-testid="balance-autopay-optin"
@@ -625,6 +628,12 @@ export default function ParentPaymentsPage() {
                           {selectedInvoiceId === invoice.invoice_id ? "Close" : "View"}
                         </Button>
                       </div>
+                      <p
+                        className="mt-2 text-xs text-rally-subtle"
+                        data-testid={`pay-invoice-${invoice.invoice_id}-reassurance`}
+                      >
+                        Secure checkout via Stripe
+                      </p>
                       {showAutopayOptinForInvoice(invoice, enrollments) && (
                         <label
                           data-testid={`invoice-autopay-optin-${invoice.invoice_id}`}

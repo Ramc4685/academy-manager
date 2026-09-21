@@ -42,6 +42,29 @@ test.describe("Coach Today", () => {
     await expect(page.getByTestId("session-s-today-1")).toContainText("Junior A");
   });
 
+  test("keeps the header to one row at 400px by moving calendar/messages off it", async ({
+    page,
+    mock,
+  }) => {
+    void mock;
+    await page.setViewportSize({ width: 400, height: 800 });
+    await page.goto("/coach/today");
+    await expect(page.getByTestId("coach-today")).toBeVisible();
+    const header = page.locator("header").first();
+    // #866: Calendar and Messages are thumb-reach destinations, not header
+    // clutter — they belong in the bottom nav (or a "More" sheet), not the
+    // sticky top row that wraps at 400px once Needs review shows too.
+    await expect(header.getByTestId("nav-calendar")).toHaveCount(0);
+    await expect(header.getByTestId("nav-messages")).toHaveCount(0);
+    await expect(page.getByTestId("nav-calendar")).toBeVisible();
+    await expect(page.getByTestId("nav-messages")).toBeVisible();
+    const headerBox = await header.boundingBox();
+    expect(headerBox, "header has a layout box").not.toBeNull();
+    // One row at 400px: well under the height a wrapped two-row header
+    // would need (icon buttons + persona switcher pushed to a second line).
+    expect(headerBox!.height).toBeLessThan(80);
+  });
+
   test("mark-attendance happy path", async ({ page, mock }) => {
     await page.goto("/coach/sessions/s-today-1");
     await page.getByTestId("mark-st1-present").click();
