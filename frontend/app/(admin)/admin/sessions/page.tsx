@@ -545,7 +545,11 @@ function SessionPhoneList({
               </span>
             }
             actionsLabel={`Actions for ${s.title}`}
-            actionsTestId={`session-row-actions-${s.session_id}`}
+            // Not `session-row-actions-*`: saas-tenant-isolation.spec.ts scopes
+            // a leak check to `[data-testid^="session-row-"]`, and that prefix
+            // would otherwise match this trigger too, double-counting every
+            // row.
+            actionsTestId={`session-actions-${s.session_id}`}
             actions={[
               {
                 key: "open",

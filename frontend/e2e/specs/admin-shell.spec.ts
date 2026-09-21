@@ -2,6 +2,7 @@ import { test, expect, type Page, type Route } from "@playwright/test";
 
 import { billingRulesFixture } from "../fixtures/billing-rules";
 import { openAdminNav } from "../helpers/nav";
+import { clickRowAction, expectRowActionAvailable } from "../helpers/row-actions";
 import {
   stubCoachMessages,
   stubParentMessages,
@@ -1678,8 +1679,13 @@ test.describe("Rally admin shell", () => {
     await page.goto("/admin/sessions");
     await expect(page.getByTestId("admin-sessions")).toBeVisible();
     // #838: the native confirm is gone; the Rally dialog's confirm is what
-    // actually fires the DELETE.
-    await page.getByRole("button", { name: "Cancel session Cancelable Session" }).click();
+    // actually fires the DELETE. #847: on phone this button lives behind the
+    // row's actions menu, so `clickRowAction` opens that first.
+    await clickRowAction(page, {
+      rowTitle: "Cancelable Session",
+      directLabel: "Cancel session Cancelable Session",
+      menuItemLabel: "Cancel session",
+    });
     await page.getByTestId("confirm-action-submit").click();
 
     const banner = page.getByTestId("admin-sessions-cancel-error");
@@ -1694,15 +1700,21 @@ test.describe("Rally admin shell", () => {
     // The cancel FAILED, so the row must still be there. Without this, a future
     // optimistic update that removed the row and showed the error would pass.
     await expect(page.getByText("Cancelable Session")).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: "Cancel session Cancelable Session" }),
-    ).toBeVisible();
+    await expectRowActionAvailable(page, {
+      rowTitle: "Cancelable Session",
+      directLabel: "Cancel session Cancelable Session",
+      menuItemLabel: "Cancel session",
+    });
 
     // Blank-message failure: exactly one "Could not cancel session".
     await banner.getByRole("button", { name: "Dismiss" }).click();
     await expect(banner).toBeHidden();
     failureMode = "blank";
-    await page.getByRole("button", { name: "Cancel session Cancelable Session" }).click();
+    await clickRowAction(page, {
+      rowTitle: "Cancelable Session",
+      directLabel: "Cancel session Cancelable Session",
+      menuItemLabel: "Cancel session",
+    });
     await page.getByTestId("confirm-action-submit").click();
     await expect(banner.locator("p")).toHaveText("Could not cancel session.");
   });
@@ -1784,7 +1796,12 @@ test.describe("Rally admin shell", () => {
 
     await page.goto("/admin/sessions");
     await expect(page.getByTestId("admin-sessions")).toBeVisible();
-    await page.getByRole("button", { name: "Edit session Legacy No Days" }).click();
+    // #847: on phone Edit lives behind the row's actions menu.
+    await clickRowAction(page, {
+      rowTitle: "Legacy No Days",
+      directLabel: "Edit session Legacy No Days",
+      menuItemLabel: "Edit",
+    });
 
     await expect(page.getByRole("dialog")).toBeVisible();
     await expect(page.getByRole("dialog").getByText("Edit session")).toBeVisible();
