@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 
+import { rowActionControl } from "../helpers/row-actions";
 import { collectConsoleErrors, installTenantGuard } from "../fixtures/tenant-isolation";
 import {
   ACADEMY_A,
@@ -376,7 +377,15 @@ test.describe("admin payments buckets", () => {
 
     await page.goto("/admin/payments");
 
-    await page.getByTestId("action-send_reminder-parent-past-due").click();
+    // #861: below `md` only the row's primary action (Record payment) stays a
+    // button; Send reminder moves into the row menu.
+    const reminder = await rowActionControl(page, {
+      rowTestId: "family-row-parent-past-due",
+      actionsTestId: "family-actions-parent-past-due",
+      directTestId: "action-send_reminder-parent-past-due",
+      label: "Send reminder",
+    });
+    await reminder.click();
 
     await expect.poll(() => reminderBodies.length).toBe(1);
     expect(reminderBodies[0]).toMatchObject({ parent_ids: ["parent-past-due"] });
@@ -393,8 +402,15 @@ test.describe("admin payments buckets", () => {
 
     await page.goto("/admin/payments");
 
-    // Past due: a link (not a button), pointing at the pre-filled wa.me chat.
-    const link = page.getByTestId("action-whatsapp-parent-past-due");
+    // Past due: a link (not a button), pointing at the pre-filled wa.me chat —
+    // as a row button on md+, as a menu item on a phone (#861). Either way it
+    // must stay an anchor the platform hands to WhatsApp.
+    const link = await rowActionControl(page, {
+      rowTestId: "family-row-parent-past-due",
+      actionsTestId: "family-actions-parent-past-due",
+      directTestId: "action-whatsapp-parent-past-due",
+      label: "WhatsApp",
+    });
     await expect(link).toBeVisible();
     await expect(link).toHaveAttribute("href", /^https:\/\/wa\.me\/15550100100\?text=/);
     await expect(link).toHaveAttribute("target", "_blank");
