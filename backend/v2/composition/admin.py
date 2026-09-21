@@ -48,7 +48,10 @@ from backend.v2.composition.email_adapters import (
     LoginInviteEmailAdapter,
 )
 from backend.v2.composition.event_handlers import install_dunning_notifier
-from backend.v2.composition.invoice_naming import build_invoice_naming_resolver
+from backend.v2.composition.invoice_naming import (
+    build_invoice_naming_resolver,
+    invoice_id_or_number_filter,
+)
 from backend.v2.composition.lifecycle_billing import (
     build_autopay_status_gateway,
     build_void_billing_invoice,
@@ -3962,10 +3965,7 @@ def compose_admin(
 
         request_academy_id = current_academy_id()
         invoice = await db["invoices"].find_one(
-            {
-                "academy_id": request_academy_id,
-                "$or": [{"invoice_id": invoice_id}, {"invoice_number": invoice_id}],
-            }
+            invoice_id_or_number_filter(request_academy_id, invoice_id)
         )
         if invoice is not None:
             inv_id = str(invoice.get("invoice_id") or invoice_id)
@@ -4074,10 +4074,7 @@ def compose_admin(
 
         request_academy_id = current_academy_id()
         owned_invoice = await db["invoices"].find_one(
-            {
-                "academy_id": request_academy_id,
-                "$or": [{"invoice_id": invoice_id}, {"invoice_number": invoice_id}],
-            },
+            invoice_id_or_number_filter(request_academy_id, invoice_id),
             {"_id": 1},
         )
         owned_payment = await db["payments"].find_one(
@@ -4104,10 +4101,7 @@ def compose_admin(
         )
         field = "receipt_artifact_id" if artifact_type == "receipt" else "invoice_pdf_artifact_id"
         await db["invoices"].update_one(
-            {
-                "academy_id": request_academy_id,
-                "$or": [{"invoice_id": invoice_id}, {"invoice_number": invoice_id}],
-            },
+            invoice_id_or_number_filter(request_academy_id, invoice_id),
             {"$set": {field: artifact_id, "updated_at": now}},
         )
         await db["payments"].update_one(
