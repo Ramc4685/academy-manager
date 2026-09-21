@@ -1,6 +1,6 @@
 # fix-or-lookups-sequential-equality
 
-PR: #TBD
+PR: #886
 
 ## What changed
 
