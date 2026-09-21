@@ -235,9 +235,9 @@ function BalanceBanner({ balance }: { balance: ParentHomeBalance }) {
     ? "border-status-red-500/30 bg-status-red-50 text-status-red-800"
     : "border-status-amber-500/30 bg-status-amber-50 text-status-amber-800";
   const iconTone = failed ? "bg-status-red-500/15" : "bg-status-amber-500/15";
-  const payTone = failed
-    ? "bg-status-red-600 text-white"
-    : "bg-status-amber-800 text-white";
+  // #843: the card keeps its alert tone, but the action is the one pay style
+  // the whole app uses — the DS primary cobalt.
+  const payTone = "bg-rally-cobalt-600 text-white hover:bg-rally-cobalt-700";
 
   return (
     <div

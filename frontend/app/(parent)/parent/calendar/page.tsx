@@ -18,7 +18,9 @@ const PersonaCalendarView = dynamic(
   { ssr: false },
 );
 
-const CHILD_COLORS = ["#2563eb", "#059669", "#d97706", "#7c3aed", "#db2777"];
+// #843: same Rally-only rotation as the avatar gradients, so a child keeps a
+// system colour here too (purple/pink had no token behind them).
+const CHILD_COLORS = ["#2563eb", "#059669", "#d97706", "#475569", "#0891b2"];
 
 export default function ParentCalendarPage() {
   const {

@@ -299,6 +299,13 @@ function listPhrase(items: string[]): string {
   return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
 }
 
+/**
+ * #843: a pending step is `--rally-muted` (#64748b) on the `--rally-line`
+ * (#e2e8f0) circle — 3.86:1, under WCAG AA. slate-600 clears it at 6.6:1.
+ * Active and done steps keep their volt/amber treatment.
+ */
+const PENDING_STEP_COLOR = "#475569";
+
 function Progress({ step, onStepClick }: { step: Step; onStepClick: (s: Step) => void }) {
   const i = ORDER.indexOf(step);
   return (
@@ -312,7 +319,7 @@ function Progress({ step, onStepClick }: { step: Step; onStepClick: (s: Step) =>
               type="button"
               onClick={() => onStepClick(s)}
               className="flex items-center gap-1.5 rounded transition-colors"
-              style={{ color: active ? "#0a0f1c" : done ? "#854f0b" : "var(--rally-muted)" }}
+              style={{ color: active ? "#0a0f1c" : done ? "#854f0b" : PENDING_STEP_COLOR }}
             >
               <span
                 className="flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold"
@@ -322,7 +329,7 @@ function Progress({ step, onStepClick }: { step: Step; onStepClick: (s: Step) =>
                     : done
                       ? "#faeeda"
                       : "var(--rally-line)",
-                  color: active ? "#0a0f1c" : done ? "#854f0b" : "var(--rally-muted)",
+                  color: active ? "#0a0f1c" : done ? "#854f0b" : PENDING_STEP_COLOR,
                 }}
               >
                 {done ? "✓" : idx + 1}
