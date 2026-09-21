@@ -1,6 +1,6 @@
 # batch-10b: admin inbox lists
 
-PR: #0
+PR: #883
 
 ## What changed
 - Fixes #863 — Admin settings no longer drops unsaved edits when switching tabs: every editable panel publishes its existing dirty flag through a new settings-scoped React context, and the tab strip confirms ("You have unsaved changes on this tab. Leave without saving?") before navigating. Dismiss keeps the panel and the typed value; accept navigates.
