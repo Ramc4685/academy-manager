@@ -1,4 +1,4 @@
-"""Migration 0189 — ``$type``-filtered partial indexes move to ``$gt: ""`` (#878).
+"""Migration 0190 — ``$type``-filtered partial indexes move to ``$gt: ""`` (#878).
 
 A ``$type: "string"`` partial index enforces uniqueness but the planner never
 uses it for an equality lookup. mongomock evaluates neither partial filters nor
@@ -16,21 +16,15 @@ import mongomock_motor
 
 from backend.scripts.index_drift_audit import expected_indexes
 
-_MODULE = "backend.v2.migrations.0189_type_partial_indexes_planner_usable"
+_MODULE = "backend.v2.migrations.0190_type_partial_indexes_planner_usable"
 
-#: ``$type`` indexes keyed on a bare id. #849 re-keys them per academy (and
-#: fixes the filter in the same swap), so 0189 leaves them alone. An entry
-#: leaves this list when #849 reaches it; nothing new may join it.
+#: The one ``$type`` index left on purpose. #849 re-keyed every other bare-id
+#: index per academy (0186/0187/0189, all on ``$gt: ""``).
+#: ``provider_message_id`` is issued by the email provider, is global by
+#: construction, and nothing reads it, so it stays as 0101 built it. Nothing
+#: new may join this list.
 LEFT_TO_849 = {
-    "academy_settings.academy_settings_id_unique",
-    "expenses.expense_id_unique",
     "message_deliveries.message_deliveries_provider_message_id_unique",
-    "messages.message_id_unique",
-    "onboarding_applications.application_id_unique",
-    "payouts.payout_id_unique",
-    "waitlist.waitlist_id_unique",
-    "waiver_signatures.waiver_signature_id_unique",
-    "waiver_templates.waiver_template_id_unique",
 }
 
 

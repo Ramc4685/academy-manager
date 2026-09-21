@@ -45,7 +45,7 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-version = "0189_type_partial_indexes_planner_usable"
+version = "0190_type_partial_indexes_planner_usable"
 
 log = logging.getLogger(__name__)
 
@@ -278,7 +278,7 @@ async def _swap(
         if name in info:
             await coll.drop_index(name)
         await coll.create_index(key, unique=unique, partialFilterExpression=wanted, name=name)
-        log.info("0189: rebuilt %s.%s with a planner-usable filter", collection, name)
+        log.info("0190: rebuilt %s.%s with a planner-usable filter", collection, name)
     if swap in await coll.index_information():
         await coll.drop_index(swap)
 
