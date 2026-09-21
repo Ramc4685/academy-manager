@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import Link from "next/link";
+import type { Route } from "next";
 import { useRouter, useSearchParams } from "next/navigation";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -25,6 +26,8 @@ import { roleLabel } from "@/lib/admin/role-label";
 import { Avatar } from "@/components/ds/avatar";
 import { Button } from "@/components/ds/button";
 import { ErrorNotice } from "@/components/ds/error-notice";
+import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
+import { useIsPhone } from "@/lib/use-is-phone";
 import { CoachEngagementStatsStrip } from "@/components/admin/CoachEngagementStatsStrip";
 import { BulkInviteDialog } from "@/components/admin/bulk-invite-dialog";
 
@@ -106,13 +109,14 @@ export function AdminUsersDirectory({
     <section data-testid="admin-users" className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         {!fixedRole ? (
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             {roles.map((r) => (
               <button
                 key={r.label}
                 type="button"
                 onClick={() => selectRole(r.value)}
-                className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                // #847: 44px on a phone, unchanged on desktop.
+                className={`inline-flex min-h-touch items-center rounded-full px-3 py-1.5 text-xs font-medium transition-colors md:min-h-0 ${
                   role === r.value
                     ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
                     : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200 dark:bg-neutral-800 dark:text-neutral-400 dark:hover:bg-neutral-700"
@@ -203,8 +207,8 @@ export function AdminUsersDirectory({
           {search ? `No users match “${search}”.` : "No users found."}
         </p>
       ) : (
-        <Card p={20}>
-          <UsersTable users={users} />
+        <Card p={0}>
+          <UsersList users={users} />
         </Card>
       )}
     </section>
@@ -374,6 +378,59 @@ function Field({
       </span>
       {children}
     </label>
+  );
+}
+
+/**
+ * #847: one list, two layouts, exactly one mounted — see
+ * `lib/use-is-phone.ts`. The phone rows keep the table's `data-testid`s.
+ */
+function UsersList({ users }: { users: AdminUserView[] }) {
+  const isPhone = useIsPhone();
+  if (isPhone) {
+    return (
+      <PhoneList aria-label="Users" data-testid="admin-users-phone-list">
+        {users.map((user) => {
+          const href = `/admin/users/${encodeURIComponent(user.user_id)}` as Route;
+          return (
+            <PhoneListRow
+              key={user.user_id}
+              data-testid={`admin-users-row-${user.user_id}`}
+              leading={<Avatar name={user.display_name} size={32} />}
+              title={user.display_name}
+              href={href}
+              titleTestId={`admin-users-link-${user.user_id}`}
+              primary={
+                <Chip
+                  variant={user.status === "active" ? "enrolled" : "expired"}
+                  label={user.status.toUpperCase()}
+                />
+              }
+              actionsLabel={`Actions for ${user.display_name}`}
+              actionsTestId={`admin-users-row-actions-${user.user_id}`}
+              actions={[{ key: "open", label: "Open user", href }]}
+              secondary={
+                <>
+                  <div>
+                    <Chip
+                      variant={roleToChipVariant(user.role)}
+                      label={roleLabel(user.role).toUpperCase()}
+                    />
+                  </div>
+                  <div className="break-words">{user.email}</div>
+                  <div>{user.phone || "No phone on file"}</div>
+                </>
+              }
+            />
+          );
+        })}
+      </PhoneList>
+    );
+  }
+  return (
+    <div className="p-5">
+      <UsersTable users={users} />
+    </div>
   );
 }
 

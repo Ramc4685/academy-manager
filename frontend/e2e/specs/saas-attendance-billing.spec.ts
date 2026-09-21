@@ -257,6 +257,14 @@ test.describe("SaaS v2 — admin billing ledger idempotency", () => {
       if (route.request().method() !== "GET") return route.fallback();
       return fulfillJson(route, { events: [] });
     });
+    // Issue #842: AdminLayout feeds the Inbox nav badge from this endpoint on
+    // every admin page. Unstubbed, its background poll intermittently fires
+    // before the assertions below run, reaches the (absent) real backend,
+    // and fails the clean-console check with an unrelated 500 — flaky only
+    // under load, since the poll's timing decides whether it fires in time.
+    await page.route("**/api/v2/admin/inbox/counts", (route) =>
+      fulfillJson(route, { counts: {}, total: 0 }),
+    );
 
     await page.goto("/admin/payments");
     await expect(page.getByTestId("admin-payments")).toBeVisible();

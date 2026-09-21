@@ -2,16 +2,19 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import type { Route } from "next";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { RefreshCw, Search } from "lucide-react";
 
 import { listAdminStudents, type AdminStudentView } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
 import { statText } from "@/lib/ui/load-state";
+import { useIsPhone } from "@/lib/use-is-phone";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Avatar } from "@/components/ds/avatar";
 import { Button } from "@/components/ds/button";
+import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { EmptyState } from "@/components/ds/empty-state";
 import { ErrorNotice } from "@/components/ds/error-notice";
 import { BigNum, Overline } from "@/components/ds/typography";
@@ -144,7 +147,7 @@ export default function AdminStudentsPage() {
           />
         ) : (
           <>
-            <StudentsTable students={students} />
+            <StudentsList students={students} />
             <StudentsFooter
               loadedCount={students.length}
               hasNextPage={studentsQuery.hasNextPage}
@@ -245,7 +248,9 @@ function StudentsToolbar({
               aria-selected={active}
               data-testid={`admin-students-filter-${filter.id}`}
               onClick={() => onFilterChange(filter.id)}
-              className={`inline-flex h-8 items-center gap-2 rounded-md px-3 font-body text-[13px] font-semibold transition ${
+              // #847: 32px tall was under the 44px touch minimum on the one
+              // control an admin taps most on a phone. Desktop keeps 32.
+              className={`inline-flex min-h-touch items-center gap-2 rounded-md px-3 font-body text-[13px] font-semibold transition md:h-8 md:min-h-0 ${
                 active
                   ? "bg-rally-ink text-white"
                   : "bg-transparent text-rally-muted hover:bg-neutral-100"
@@ -293,10 +298,114 @@ function StudentsToolbar({
   );
 }
 
+/**
+ * #847: one list, two layouts. The phone rows carry the same `data-testid`s
+ * as the table rows and exactly one of the two is mounted, so a row is never
+ * two nodes — see `lib/use-is-phone.ts`.
+ */
+function StudentsList({ students }: { students: AdminStudentView[] }) {
+  const isPhone = useIsPhone();
+  return isPhone ? (
+    <StudentsPhoneList students={students} />
+  ) : (
+    <StudentsTable students={students} />
+  );
+}
+
+function StudentsPhoneList({ students }: { students: AdminStudentView[] }) {
+  return (
+    <PhoneList aria-label="Students" data-testid="admin-students-phone-list">
+      {students.map((student) => (
+        <PhoneListRow
+          key={student.student_id}
+          data-testid={`admin-students-row-${student.student_id}`}
+          leading={<Avatar name={student.full_name} size={34} />}
+          title={student.full_name}
+          href={`/admin/students/${student.student_id}` as Route}
+          titleTestId={`admin-students-link-${student.student_id}`}
+          primary={<DuesChip status={student.dues_status} />}
+          actionsLabel={`Actions for ${student.full_name}`}
+          actionsTestId={`admin-students-row-actions-${student.student_id}`}
+          actions={[
+            {
+              key: "student",
+              label: "Open student",
+              href: `/admin/students/${student.student_id}` as Route,
+            },
+            ...(student.parent_id
+              ? [
+                  {
+                    key: "family",
+                    label: "Open family",
+                    href: `/admin/families/${encodeURIComponent(student.parent_id)}` as Route,
+                  },
+                ]
+              : []),
+          ]}
+          secondary={
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                <LifecycleChip
+                  state={student.lifecycle}
+                  asOf={student.lifecycle_as_of}
+                />
+                <AttendanceText rate={student.attendance_rate} />
+              </div>
+              <div className="break-words">
+                {student.parent_name || student.parent_email || "Parent on file"}
+                {student.parent_email ? ` · ${student.parent_email}` : ""}
+              </div>
+              <div className="break-words">
+                <SessionsSummaryText
+                  count={student.active_session_count}
+                  total={student.active_session_total}
+                  names={student.active_session_names}
+                />
+              </div>
+            </>
+          }
+        />
+      ))}
+    </PhoneList>
+  );
+}
+
+/** The table's attendance bar, as the one line a phone has room for. */
+function AttendanceText({ rate }: { rate: number | null }) {
+  if (rate === null) {
+    return <span className="font-mono text-xs text-rally-subtle">— attendance</span>;
+  }
+  const pct = Math.round(Math.max(0, Math.min(rate, 1)) * 100);
+  return (
+    <span className="font-mono text-xs font-bold tabular-nums text-rally-base">
+      {pct}% <span className="font-semibold text-rally-subtle">30d</span>
+    </span>
+  );
+}
+
+function SessionsSummaryText({
+  count,
+  total,
+  names,
+}: {
+  count: number;
+  total?: number;
+  names?: string[];
+}) {
+  const listed = names ?? [];
+  const sessionTotal = total ?? count;
+  if (sessionTotal <= 0) return <>No active session</>;
+  if (listed.length === 0) {
+    return <>{`${sessionTotal} ${sessionTotal === 1 ? "session" : "sessions"}`}</>;
+  }
+  const unlisted = Math.max(sessionTotal - listed.length, 0);
+  return <>{listed.join(", ") + (unlisted > 0 ? `, +${unlisted} more` : "")}</>;
+}
+
 function StudentsTable({ students }: { students: AdminStudentView[] }) {
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[860px] text-sm">
+      <table className="w-full min-w-[760px] text-sm">
         <thead>
           <tr className="border-b border-neutral-200 bg-neutral-50 text-left dark:border-neutral-800">
             <th className="px-5 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Student</th>
@@ -304,8 +413,7 @@ function StudentsTable({ students }: { students: AdminStudentView[] }) {
             <th className="px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Sessions</th>
             <th className="px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Attendance</th>
             <th className="px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Dues</th>
-            <th className="px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Last attendance</th>
-            <th className="px-5 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Lifecycle</th>
+            <th className="px-5 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Last attendance</th>
           </tr>
         </thead>
         <tbody>
@@ -326,6 +434,16 @@ function StudentsTable({ students }: { students: AdminStudentView[] }) {
                     <div className="font-semibold text-rally-base group-hover:underline">{student.full_name}</div>
                   </div>
                 </Link>
+                {/* #847: Lifecycle was the last column of a 7-column table and
+                    was the first thing clipped at 1280. It is the answer to
+                    "is this person still ours?", so it belongs against the
+                    name, not past the fold. */}
+                <div className="mt-1.5">
+                  <LifecycleChip
+                    state={student.lifecycle}
+                    asOf={student.lifecycle_as_of}
+                  />
+                </div>
               </td>
               <td className="px-3 py-4">
                 {/* #839: the parent cell was plain text, so the family — and
@@ -361,14 +479,8 @@ function StudentsTable({ students }: { students: AdminStudentView[] }) {
               <td className="px-3 py-4">
                 <DuesChip status={student.dues_status} />
               </td>
-              <td className="px-3 py-4 font-mono text-[11px] text-rally-subtle">
+              <td className="px-5 py-4 font-mono text-[11px] text-rally-subtle">
                 {student.last_seen_at ? new Date(student.last_seen_at).toLocaleDateString() : "—"}
-              </td>
-              <td className="px-5 py-4">
-                <LifecycleChip
-                  state={student.lifecycle}
-                  asOf={student.lifecycle_as_of}
-                />
               </td>
             </tr>
           ))}
