@@ -203,6 +203,35 @@ test.describe("admin roster row overflow menu (#713)", () => {
     expect(url.searchParams.get("return_label")).toBe("Back to session");
   });
 
+  /**
+   * #859: the menu used to read Pause, Hold, Drop, Delete — four bare verbs
+   * with no way to tell which keeps the seat, which stops the invoice, or
+   * which reaches the family. Each item now carries its own line.
+   */
+  test("every lifecycle item explains the seat, the billing and the family email", async ({
+    page,
+  }) => {
+    await page.getByRole("button", { name: "More actions for Ana Roster" }).click();
+
+    const pause = page.getByRole("menuitem", { name: "Pause" });
+    await expect(pause).toContainText(/seat/i);
+    await expect(pause).toContainText(/billing/i);
+    await expect(pause).toContainText(/family is not emailed/i);
+
+    // Drop reaches the family; Delete does not. The difference is the whole
+    // reason the two are easy to confuse.
+    await expect(page.getByRole("menuitem", { name: "Drop" })).toContainText(
+      /family is emailed/i,
+    );
+    await expect(page.getByRole("menuitem", { name: "Delete" })).toContainText(
+      /family is not emailed/i,
+    );
+
+    // Still one item per action: the added line must not make a label ambiguous.
+    await expect(pause).toHaveCount(1);
+    await expect(page.getByRole("menuitem", { name: "Transfer" })).toHaveCount(1);
+  });
+
   test("keyboard opens the menu, and Escape closes it and returns focus to the trigger", async ({
     page,
   }) => {

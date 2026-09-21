@@ -46,6 +46,18 @@ export interface MenuItem {
   /** Renders the item as a link, so cmd/ctrl-click and open-in-new-tab work. */
   href?: MenuItemHref;
   disabled?: boolean;
+  /**
+   * One supporting line under the label (#859), for a menu whose verbs are not
+   * self-explanatory — the roster's Pause / Hold / Drop / Delete, where the
+   * difference is what happens to the seat, to billing and to the family.
+   *
+   * Deliberately inside the item's own text, not a `title` or an
+   * `aria-describedby`: it then belongs to the item's accessible name, so a
+   * screen-reader user hears the same explanation a sighted one reads. That
+   * makes it part of what a role locator matches, so a description must not
+   * contain another item's label.
+   */
+  description?: ReactNode;
   /** Rendered after the label, e.g. an OwnerOnlyHint for a disabled entry. */
   hint?: ReactNode;
   danger?: boolean;
@@ -217,7 +229,7 @@ export function OverflowMenu({
   };
 
   const itemClass = (item: MenuItem) =>
-    `flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm ${
+    `flex w-full items-start justify-between gap-2 px-3 py-2 text-left text-sm ${
       item.disabled
         ? "cursor-not-allowed text-rally-muted opacity-60"
         : item.danger
@@ -243,7 +255,9 @@ export function OverflowMenu({
       aria-orientation="vertical"
       onKeyDown={onMenuKeyDown}
       style={menuStyle}
-      className="z-50 min-w-[180px] rounded-md border border-rally-line bg-white py-1 shadow-lg"
+      // Capped so a described item (#859) wraps instead of stretching the menu
+      // off a 400px screen; `updatePosition` measures the clamped width.
+      className="z-50 min-w-[180px] max-w-[min(19rem,calc(100vw-1rem))] rounded-md border border-rally-line bg-white py-1 shadow-lg"
     >
       {items.map((item, index) => {
         const setItemRef = (el: HTMLElement | null) => {
@@ -256,7 +270,14 @@ export function OverflowMenu({
         };
         const body = (
           <>
-            <span>{item.label}</span>
+            <span className="flex min-w-0 flex-col">
+              <span>{item.label}</span>
+              {item.description && (
+                <span className="mt-0.5 whitespace-normal text-xs font-normal leading-snug text-rally-muted">
+                  {item.description}
+                </span>
+              )}
+            </span>
             {item.hint}
           </>
         );

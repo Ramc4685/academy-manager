@@ -39,6 +39,50 @@ export const DEPARTURE_ACTION_LABEL: Record<DepartureAction, string> = {
 };
 
 /**
+ * One line per action, shown under its label in the row's overflow menu
+ * (#859). Before this, the roster kebab listed Pause, Hold, Drop and Delete as
+ * bare words and an admin had to already know which of them keeps the seat,
+ * which stops the invoice and which reaches the family.
+ *
+ * Each line answers the same three questions in the same order — seat,
+ * billing, family email — so the items can be compared by scanning down the
+ * column rather than by reading each one.
+ *
+ * The email clauses are read off the backend, NOT guessed:
+ * - `WithdrawEnrollment` (Drop, and `StopAllClasses`, which composes over it),
+ *   `StartHold` and `ReturnFromHold` call `HoldNotifier`, documented in
+ *   `enrollment/application/ports.py` as the *family* email.
+ * - `CancelEnrollment` (Delete), `TransferEnrollment`, `PauseEnrollment` and
+ *   `ResumeEnrollment` call only `RosterChangeNotifier`, which tells the
+ *   people who run the session, not the family.
+ * Change the backend's notifications and these lines must move with them.
+ *
+ * No line may contain another action's label: the description is part of the
+ * menu item's accessible name, and Playwright matches that name by substring,
+ * so a stray "Pause" inside Resume's line would make every
+ * `getByRole("menuitem", { name: "Pause" })` ambiguous. A unit test pins this.
+ */
+export const DEPARTURE_ACTION_DESCRIPTION: Record<DepartureAction, string> = {
+  transfer:
+    "Moves the student to another class; the seat and the invoice go with them. The family is not emailed.",
+  hold: "Keeps the seat and stops billing until the agreed date. The family is emailed.",
+  return: "Puts the student back in class and starts billing again. The family is emailed.",
+  drop: "Ends the enrollment, frees the seat and stops billing. The family is emailed.",
+  delete:
+    "Takes the row off this roster and frees the seat, for one added in error. The family is not emailed.",
+  pause:
+    "Frees the seat and stops billing while the student is away; they join the waitlist. The family is not emailed.",
+  resume:
+    "Takes a seat back when one is free and starts billing again. The family is not emailed.",
+  stop_all_classes:
+    "Ends every enrollment this student has, across all their classes. The family is emailed.",
+  undo_scheduled_drop:
+    "Calls off the departure booked for the end of the period; seat and billing carry on. The family is not emailed.",
+  re_enroll:
+    "Opens the add-to-roster form with this student filled in; nothing changes, and the family is not emailed, until you confirm it.",
+};
+
+/**
  * Actions whose owner requirement is settable by the academy owner — today
  * only Delete, governed by `EnrollmentDeparturePolicy
  * .delete_enrollment_requires_owner` and passed in as `deleteRequiresOwner`
@@ -62,6 +106,8 @@ const DANGER_ACTIONS = new Set<DepartureAction>(["drop", "delete", "stop_all_cla
 export interface ResolvedDepartureAction {
   action: DepartureAction;
   label: string;
+  /** One-line explanation of seat, billing and family email (#859). */
+  description: string;
   disabled: boolean;
   /** True when disabled because the action needs the owner scope. */
   ownerGated: boolean;
@@ -97,6 +143,7 @@ export function resolveDepartureActions(
     return {
       action,
       label: DEPARTURE_ACTION_LABEL[action],
+      description: DEPARTURE_ACTION_DESCRIPTION[action],
       disabled: ownerGated,
       ownerGated,
       inOverflow: layout === "menu" || ALWAYS_OVERFLOW_ACTIONS.has(action),

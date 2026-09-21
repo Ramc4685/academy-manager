@@ -8,7 +8,7 @@
  * cancel session.
  */
 
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -34,6 +34,7 @@ import {
 import { getFullPathway, placeStudentInLevel } from "@/lib/api/curriculum";
 import { parseAcademyInstant } from "@/lib/format/academy-time";
 import { queryKeys } from "@/lib/query/keys";
+import { useIsPhone } from "@/lib/use-is-phone";
 
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
@@ -100,6 +101,67 @@ function windowedOccurrences(
   ];
 }
 
+/**
+ * One of the three context cards that frame the roster — coaching staff, class
+ * dates, communication pack (#859).
+ *
+ * Collapsible because a phone screen is 5,100px of page and the roster is what
+ * the admin came for; open by default on every screen because an admin who
+ * came for a class date should not have to find it behind a disclosure, and
+ * because a section that starts closed is a section the existing specs — and
+ * real readers — would have to learn to open.
+ *
+ * Collapsing unmounts the body rather than hiding it with CSS, the same choice
+ * `use-is-phone.ts` documents for the phone/table split: a hidden twin would
+ * leave a second node per row in the DOM for every locator to trip over.
+ */
+function SessionSectionCard({
+  index,
+  title,
+  testId,
+  action,
+  open,
+  onToggle,
+  children,
+}: {
+  index: string;
+  title: string;
+  testId: string;
+  action?: ReactNode;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  const bodyId = `${testId}-body`;
+  return (
+    <Card p={20} className="min-w-0">
+      <LaneHeader
+        index={index}
+        title={title}
+        action={
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {action}
+            <Button
+              variant="secondary"
+              size="sm"
+              data-testid={`${testId}-toggle`}
+              aria-expanded={open}
+              aria-controls={open ? bodyId : undefined}
+              // Three toggles on one page: "Hide" alone would name all three
+              // the same thing for a screen reader and for a role locator.
+              aria-label={`${open ? "Hide" : "Show"} ${title}`}
+              onClick={onToggle}
+            >
+              {open ? "Hide" : "Show"}
+            </Button>
+          </div>
+        }
+      />
+      {open && <div id={bodyId}>{children}</div>}
+    </Card>
+  );
+}
+
 function cancelErrorMessage(err: unknown): string {
   const reason = err instanceof Error ? err.message.trim() : "";
   return reason ? `Could not cancel session: ${reason}` : CANCEL_FAILED_FALLBACK;
@@ -129,6 +191,11 @@ export default function AdminSessionDetailPage() {
     null,
   );
   const [assistantsOpen, setAssistantsOpen] = useState(false);
+  // #859: the three context cards. Open on first paint everywhere — see
+  // `SessionSectionCard`.
+  const [staffOpen, setStaffOpen] = useState(true);
+  const [datesOpen, setDatesOpen] = useState(true);
+  const [commsOpen, setCommsOpen] = useState(true);
   const [activeTab, setActiveTab] = useState<DetailTab>("roster");
   const [rosterView, setRosterView] = useState<RosterView>("active");
   const [showAllDates, setShowAllDates] = useState(false);
@@ -137,6 +204,11 @@ export default function AdminSessionDetailPage() {
   // now ask a second time and say who is affected.
   const [cancelSessionOpen, setCancelSessionOpen] = useState(false);
   const [waitlistRemoveTarget, setWaitlistRemoveTarget] = useState<AdminWaitlistEntry | null>(null);
+
+  // #859: below `md:` the roster is hoisted above the three context cards.
+  // `false` until the client store is read (see `use-is-phone.ts`), so the
+  // first paint is the desktop order and nothing flips for a desktop reader.
+  const isPhone = useIsPhone();
 
   const sessionsQuery = useQuery({
     queryKey: queryKeys.admin.sessionDetail(sessionId),
@@ -295,6 +367,110 @@ export default function AdminSessionDetailPage() {
     },
   });
 
+  /**
+   * Coaching staff, class dates and the communication pack (#859). One value
+   * rendered in one of two places — above the tab strip on a desktop, after
+   * the roster on a phone — so the DOM order and the tab order always match
+   * what is on screen, which a CSS-only reorder could not promise.
+   */
+  const contextCards = (
+    <>
+      {/* Coaching staff: the lead coach plus per-session assistant coaches */}
+      <SessionSectionCard
+        index="01"
+        title="Coaching staff"
+        testId="session-staff"
+        open={staffOpen}
+        onToggle={() => setStaffOpen((current) => !current)}
+        action={
+          session && (
+            <Button
+              variant="secondary"
+              size="sm"
+              data-testid="edit-assistants"
+              onClick={() => setAssistantsOpen(true)}
+            >
+              Edit assistants
+            </Button>
+          )
+        }
+      >
+        {session ? <CoachingStaffCard session={session} /> : <TableSkeleton />}
+      </SessionSectionCard>
+
+      {/* Class dates (#671) — one table. It already carries the replacement
+          column, the replacement action and the cancel action, so a separate
+          "Replacement coaches" card would list every replaced date twice with
+          two identical buttons (ambiguous for the admin and for locators). */}
+      <SessionSectionCard
+        index="02"
+        title="Class dates"
+        testId="session-dates"
+        open={datesOpen}
+        onToggle={() => setDatesOpen((current) => !current)}
+        action={
+          <Button
+            variant="primary"
+            size="sm"
+            icon={Icon.plus(14, "currentColor")}
+            onClick={() => setReplacementOpen(true)}
+          >
+            Add replacement
+          </Button>
+        }
+      >
+        {occurrencesQuery.isLoading ? (
+          <TableSkeleton />
+        ) : (
+          <>
+            <ReplacementCoachTable
+              occurrences={visibleOccurrences}
+              userNameById={userNameById}
+              timezone={session?.timezone ?? null}
+              onEdit={setOccurrenceTarget}
+              onCancel={setCancelTarget}
+              onViewAttendance={setAttendanceTarget}
+              showStatus
+              emptyLabel="No dates scheduled yet."
+            />
+            {canWindowDates && (
+              <div className="pt-3">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  data-testid="class-dates-show-all"
+                  aria-expanded={showAllDates}
+                  onClick={() => setShowAllDates((current) => !current)}
+                >
+                  {showAllDates ? "Show fewer" : `Show all ${occurrences.length} dates`}
+                </Button>
+              </div>
+            )}
+          </>
+        )}
+      </SessionSectionCard>
+
+      {/* Communication pack (#613) */}
+      <SessionSectionCard
+        index="03"
+        title="Communication pack"
+        testId="session-comms"
+        open={commsOpen}
+        onToggle={() => setCommsOpen((current) => !current)}
+        action={
+          // Distinct accessible name from the header's "Edit session": both
+          // open the same dialog, but two identically-named buttons on one
+          // page are ambiguous for screen readers and for role locators (#630).
+          <Button variant="secondary" size="sm" onClick={() => setEditOpen(true)}>
+            Edit communication pack
+          </Button>
+        }
+      >
+        {session ? <CommunicationPackCard session={session} /> : <TableSkeleton />}
+      </SessionSectionCard>
+    </>
+  );
+
   return (
     <section data-testid="admin-session-detail" className="space-y-6">
       {/* Header */}
@@ -361,93 +537,7 @@ export default function AdminSessionDetailPage() {
         </Card>
       )}
 
-      {/* Coaching staff: the lead coach plus per-session assistant coaches */}
-      <Card p={20} className="min-w-0">
-        <LaneHeader
-          index="01"
-          title="Coaching staff"
-          action={
-            session && (
-              <Button
-                variant="secondary"
-                size="sm"
-                data-testid="edit-assistants"
-                onClick={() => setAssistantsOpen(true)}
-              >
-                Edit assistants
-              </Button>
-            )
-          }
-        />
-        {session ? <CoachingStaffCard session={session} /> : <TableSkeleton />}
-      </Card>
-
-      {/* Class dates (#671) — one table. It already carries the replacement
-          column, the replacement action and the cancel action, so a separate
-          "Replacement coaches" card would list every replaced date twice with
-          two identical buttons (ambiguous for the admin and for locators). */}
-      <Card p={20} className="min-w-0">
-        <LaneHeader
-          index="02"
-          title="Class dates"
-          action={
-            <Button
-              variant="primary"
-              size="sm"
-              icon={Icon.plus(14, "currentColor")}
-              onClick={() => setReplacementOpen(true)}
-            >
-              Add replacement
-            </Button>
-          }
-        />
-        {occurrencesQuery.isLoading ? (
-          <TableSkeleton />
-        ) : (
-          <>
-            <ReplacementCoachTable
-              occurrences={visibleOccurrences}
-              userNameById={userNameById}
-              timezone={session?.timezone ?? null}
-              onEdit={setOccurrenceTarget}
-              onCancel={setCancelTarget}
-              onViewAttendance={setAttendanceTarget}
-              showStatus
-              emptyLabel="No dates scheduled yet."
-            />
-            {canWindowDates && (
-              <div className="pt-3">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  data-testid="class-dates-show-all"
-                  aria-expanded={showAllDates}
-                  onClick={() => setShowAllDates((current) => !current)}
-                >
-                  {showAllDates ? "Show fewer" : `Show all ${occurrences.length} dates`}
-                </Button>
-              </div>
-            )}
-          </>
-        )}
-      </Card>
-
-      {/* Communication pack (#613) */}
-      <Card p={20} className="min-w-0">
-        <LaneHeader
-          index="03"
-          title="Communication pack"
-          action={
-            // Distinct accessible name from the header's "Edit session": both
-            // open the same dialog, but two identically-named buttons on one
-            // page are ambiguous for screen readers and for role locators (#630).
-            <Button variant="secondary" size="sm" onClick={() => setEditOpen(true)}>
-              Edit communication pack
-            </Button>
-          }
-        />
-        {session ? <CommunicationPackCard session={session} /> : <TableSkeleton />}
-      </Card>
+      {!isPhone && contextCards}
 
       <div className="flex flex-wrap gap-2 border-b border-rally-line">
         {DETAIL_TABS.map((tab) => (
@@ -600,6 +690,8 @@ export default function AdminSessionDetailPage() {
           <AdminTeachingPlan sessionId={sessionId} programId={rosterProgramId || null} />
         </Card>
       )}
+
+      {isPhone && contextCards}
 
       <ConfirmActionDialog
         open={cancelSessionOpen}
