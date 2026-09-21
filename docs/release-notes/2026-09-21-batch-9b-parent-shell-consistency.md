@@ -1,6 +1,6 @@
 # Batch 9b: parent shell consistency
 
-PR: #0
+PR: #853
 
 ## What changed
 - Fixes #843 — Parent bottom nav now carries a fifth tab, Requests, and the header carries a 44px Profile link, so makeup requests and profile edits are reachable from the shell instead of a card low on Home.
