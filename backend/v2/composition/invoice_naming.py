@@ -44,21 +44,27 @@ log = logging.getLogger(__name__)
 LAST_CHARGE_WINDOW = timedelta(days=45)
 
 
-def invoice_id_or_number_filter(academy_id: str, value: str) -> dict[str, Any]:
-    """Match an invoice by ``invoice_id`` or by its display ``invoice_number``.
+async def find_invoice_by_id_or_number(
+    db: Any,
+    academy_id: str,
+    value: str,
+    projection: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Find an invoice by ``invoice_id``, else by its display ``invoice_number``.
 
-    ``academy_id`` is repeated inside each branch on purpose. With it only at
-    the top level the planner cannot match a branch to the partial
-    ``(academy_id, invoice_number)`` index and scans the academy's invoices
-    instead (#878, verified with ``explain()`` on MongoDB 7).
+    Two equality lookups, not one ``$or``: each is served by its partial
+    ``(academy_id, <field>)`` index. Production's planner scans the academy's
+    invoices for the ``$or`` form whenever ``academy_id`` is also a top-level
+    predicate, even with it repeated inside each branch (#878, read-only
+    ``explain()`` on production 2026-09-21).
     """
-    return {
-        "academy_id": academy_id,
-        "$or": [
-            {"academy_id": academy_id, "invoice_id": value},
-            {"academy_id": academy_id, "invoice_number": value},
-        ],
-    }
+    for field in ("invoice_id", "invoice_number"):
+        doc: dict[str, Any] | None = await db["invoices"].find_one(
+            {"academy_id": academy_id, field: value}, projection
+        )
+        if doc is not None:
+            return doc
+    return None
 
 
 def build_invoice_naming_resolver(

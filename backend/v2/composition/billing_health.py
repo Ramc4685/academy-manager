@@ -352,19 +352,17 @@ def compose_admin_billing_health(db: Any, stripe: StripeGateway) -> AdminBilling
                     if duplicate_obligation_invoice is not None:
                         local_invoice = duplicate_obligation_invoice
 
-        ledger_payment_query: dict[str, Any] = {"academy_id": request_academy_id}
-        if stripe_invoice_id and payment_intent_id:
-            # academy_id inside each branch lets the planner use the partial
-            # (academy_id, <field>) indexes; top-level only, it scans (#878).
-            ledger_payment_query["$or"] = [
-                {"academy_id": request_academy_id, "stripe_invoice_id": stripe_invoice_id},
-                {"academy_id": request_academy_id, "stripe_payment_intent_id": payment_intent_id},
-            ]
-        elif stripe_invoice_id:
-            ledger_payment_query["stripe_invoice_id"] = stripe_invoice_id
-        elif payment_intent_id:
-            ledger_payment_query["stripe_payment_intent_id"] = payment_intent_id
-        ledger_payment = await db["ledger_payments"].find_one(ledger_payment_query)
+        # One equality lookup per id, not a single ``$or``: production's planner
+        # scans the academy's ledger payments for the ``$or`` form (#878).
+        ledger_payment = None
+        for field, value in (
+            ("stripe_invoice_id", stripe_invoice_id),
+            ("stripe_payment_intent_id", payment_intent_id),
+        ):
+            if value and ledger_payment is None:
+                ledger_payment = await db["ledger_payments"].find_one(
+                    {"academy_id": request_academy_id, field: value}
+                )
 
         allocation = None
         if ledger_payment is not None:
