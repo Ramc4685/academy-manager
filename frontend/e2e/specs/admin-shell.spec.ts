@@ -1292,6 +1292,56 @@ test.describe("Rally admin shell", () => {
     ).toEqual([]);
   });
 
+  test("settings warns before a tab switch discards an in-progress role edit", async ({
+    page,
+  }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    // The list stub's glob stops at the segment boundary, so the per-user
+    // detail read needs its own route or it falls through to the catch-all.
+    await page.route("**/api/v2/admin/users/coach-e2e", (route) =>
+      fulfillJson(route, {
+        user_id: "coach-e2e",
+        email: "coach@example.com",
+        display_name: "Coach E2E",
+        role: "coach",
+        status: "active",
+        roles: ["coach"],
+      }),
+    );
+    await page.goto("/admin/settings?panel=roles");
+    await expect(page.getByTestId("admin-settings-roles")).toBeVisible();
+
+    await page.getByRole("button", { name: "Edit roles" }).click();
+    const parent = page.getByTestId("admin-settings-role-checkbox-coach-e2e-parent");
+    await expect(parent).toBeVisible();
+    await parent.check();
+
+    let dialogs = 0;
+    let accepting = false;
+    page.on("dialog", async (dialog) => {
+      dialogs += 1;
+      if (accepting) await dialog.accept();
+      else await dialog.dismiss();
+    });
+
+    const notifyTab = page.getByRole("link", { name: "Notify", exact: true });
+    await notifyTab.click();
+    // Dismissed: the editor stays open with the tick still applied.
+    await expect.poll(() => dialogs).toBe(1);
+    await expect(page).toHaveURL(/panel=roles/);
+    await expect(parent).toBeChecked();
+
+    accepting = true;
+    await Promise.all([page.waitForURL(/panel=notify/), notifyTab.click()]);
+    await expect(page.getByTestId("admin-settings-notify")).toBeVisible();
+    expect(dialogs).toBe(2);
+    expect(
+      errors,
+      `App console errors on the roles dirty guard: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
   test("settings tabs keep 44px targets and the active tab in view at 400px", async ({
     page,
   }) => {
