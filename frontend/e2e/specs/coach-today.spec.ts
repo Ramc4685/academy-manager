@@ -18,6 +18,13 @@ import type { Locator } from "@playwright/test";
 
 import { test, expect } from "../fixtures/mock-api";
 
+/**
+ * #846: "Mark rest present" holds its batch for ~5s behind an Undo bar, so
+ * anything downstream of that tap needs more than the 5s expect default.
+ * The window itself is covered by coach-mark-all-undo.spec.ts.
+ */
+const PAST_UNDO_WINDOW = { timeout: 15_000 };
+
 /** Phone tap target: at least 44px tall and wide (Apple HIG / WCAG 2.5.5). */
 async function expectTouchTarget(locator: Locator): Promise<void> {
   await expect(locator).toBeVisible();
@@ -47,6 +54,7 @@ test.describe("Coach Today", () => {
   });
 
   test("mark all present bulk-marks only unmarked students", async ({ page, mock }) => {
+    test.slow(); // the batch waits out its undo window (#846)
     await page.goto("/coach/sessions/s-today-1");
 
     // Mark st1 absent individually first; bulk should then only cover st2.
@@ -58,10 +66,10 @@ test.describe("Coach Today", () => {
     );
 
     const bulkButton = page.getByTestId("mark-all-present");
-    await expect(bulkButton).toContainText("Mark all present (1)");
+    await expect(bulkButton).toContainText("Mark rest present (1)");
     await bulkButton.click();
 
-    await expect.poll(() => mock.bulkAttendanceCalls.length).toBe(1);
+    await expect.poll(() => mock.bulkAttendanceCalls.length, PAST_UNDO_WINDOW).toBe(1);
     expect(mock.bulkAttendanceCalls[0]).toMatchObject({
       session_id: "s-today-1",
       entries: [{ student_id: "st2", status: "present" }],
@@ -157,6 +165,7 @@ test.describe("Coach Today", () => {
     page,
     mock,
   }) => {
+    test.slow(); // the batch waits out its undo window (#846)
     mock.today.sessions[0].roster[1].attendance_status = "present";
     await page.goto("/coach/sessions/s-today-1");
     await expect(page.getByTestId("mark-st2-present")).toHaveAttribute("aria-pressed", "true");
@@ -168,9 +177,10 @@ test.describe("Coach Today", () => {
     await expect(page.getByTestId("mark-st2-present")).toBeDisabled();
 
     const bulkButton = page.getByTestId("mark-all-present");
-    await expect(bulkButton).toContainText("Mark all present (1)");
+    await expect(bulkButton).toContainText("Mark rest present (1)");
     await bulkButton.click();
-    await expect(page.getByTestId("mark-queued-st1")).toBeVisible();
+    // Queued only once the undo window closes — see coach-mark-all-undo.spec.ts.
+    await expect(page.getByTestId("mark-queued-st1")).toBeVisible(PAST_UNDO_WINDOW);
     await expect(page.getByTestId("mark-st1-present")).toHaveAttribute("aria-pressed", "true");
     await expect(bulkButton).toContainText("All marked");
     expect(mock.attendanceCalls).toHaveLength(0);
