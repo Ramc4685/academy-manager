@@ -92,7 +92,10 @@ jobs:
       github.event_name == 'push'
     services:
       mongo:
-        image: mongo:7
+        # Same major version as production (8.0). The 7.0 and 8.0 query
+        # planners differ, so a plan that is index-served here must be one
+        # production would also pick (#878, #894).
+        image: mongo:8
         ports:
           - 27017:27017
         options: >-
@@ -460,10 +463,10 @@ jobs:
         # scripts/local_test_stack.sh start/detect it itself, exactly as it
         # does on a real dev machine (no separate "start mongo" step needed).
         run: |
-          curl -fsSL https://pgp.mongodb.com/server-7.0.asc | sudo gpg --dearmor -o /usr/share/keyrings/mongodb-server-7.0.gpg
-          # MongoDB 7.0 has no official `noble` (24.04) apt repo yet; `jammy`
-          # packages install and run fine on noble runners.
-          echo "deb [signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-7.0.list
+          # 8.0 matches production (#894). Unlike 7.0 it has an official
+          # `noble` (24.04) apt repo, which is what ubuntu-latest runs.
+          curl -fsSL https://pgp.mongodb.com/server-8.0.asc | sudo gpg --dearmor -o /usr/share/keyrings/mongodb-server-8.0.gpg
+          echo "deb [signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg] https://repo.mongodb.org/apt/ubuntu noble/mongodb-org/8.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-8.0.list
           sudo apt-get update
           sudo apt-get install -y mongodb-org-server mongodb-mongosh
 
