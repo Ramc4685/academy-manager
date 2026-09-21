@@ -29,6 +29,7 @@ import {
   type AdminSessionList,
   type AdminSessionOccurrenceView,
   type AdminSessionView,
+  type AdminWaitlistEntry,
 } from "@/lib/api/admin";
 import { getFullPathway, placeStudentInLevel } from "@/lib/api/curriculum";
 import { parseAcademyInstant } from "@/lib/format/academy-time";
@@ -43,6 +44,7 @@ import { AdminTeachingPlan } from "@/components/teaching/admin-teaching-plan";
 import { AnnouncementsPanel } from "@/components/announcements/AnnouncementsPanel";
 
 import { HoldEnrollmentDialog, ReturnFromHoldDialog } from "@/components/admin/enrollment/hold-dialogs";
+import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 
 import { AddToRosterDialog, PauseEnrollmentDialog, RemoveEnrollmentDialog, TransferEnrollmentDialog, WithdrawalCreditDialog } from "./dialogs";
 import {
@@ -131,6 +133,10 @@ export default function AdminSessionDetailPage() {
   const [rosterView, setRosterView] = useState<RosterView>("active");
   const [showAllDates, setShowAllDates] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
+  // #838: cancelling the whole session, and dropping someone off the waitlist,
+  // now ask a second time and say who is affected.
+  const [cancelSessionOpen, setCancelSessionOpen] = useState(false);
+  const [waitlistRemoveTarget, setWaitlistRemoveTarget] = useState<AdminWaitlistEntry | null>(null);
 
   const sessionsQuery = useQuery({
     queryKey: queryKeys.admin.sessionDetail(sessionId),
@@ -336,11 +342,7 @@ export default function AdminSessionDetailPage() {
           <Button
             variant="danger"
             size="sm"
-            onClick={() => {
-              if (confirm("Cancel this session? This cannot be undone.")) {
-                cancelSessionMutation.mutate();
-              }
-            }}
+            onClick={() => setCancelSessionOpen(true)}
             disabled={cancelSessionMutation.isPending}
           >
             {cancelSessionMutation.isPending ? "Cancelling…" : "Cancel session"}
@@ -584,11 +586,9 @@ export default function AdminSessionDetailPage() {
             <WaitlistTable
               entries={waitlist}
               onSkip={(id) => skipWaitlistMutation.mutate(id)}
-              onRemove={(id) => {
-                if (confirm("Remove from waitlist?")) {
-                  removeWaitlistMutation.mutate(id);
-                }
-              }}
+              onRemove={(id) =>
+                setWaitlistRemoveTarget(waitlist.find((w) => w.waitlist_id === id) ?? null)
+              }
             />
           )}
         </Card>
@@ -599,6 +599,59 @@ export default function AdminSessionDetailPage() {
           <LaneHeader index="07" title="Teaching plan" />
           <AdminTeachingPlan sessionId={sessionId} programId={rosterProgramId || null} />
         </Card>
+      )}
+
+      <ConfirmActionDialog
+        open={cancelSessionOpen}
+        onOpenChange={setCancelSessionOpen}
+        overline="Cancel session"
+        title="Cancel this session for everyone?"
+        subject={session ? `${session.title} · ${session.location}` : "This session"}
+        consequence={
+          <>
+            <p>
+              {activeEnrollments.length === 1
+                ? "1 family loses its seat"
+                : `${activeEnrollments.length} families lose their seats`}
+              , and {waitlist.length === 1 ? "1 entry" : `${waitlist.length} entries`} on the
+              waitlist {waitlist.length === 1 ? "is" : "are"} dropped. Billing for the session
+              stops; invoices already raised stay and must be voided or credited by hand.
+            </p>
+            <p>Every enrolled family is emailed that the session was cancelled.</p>
+            <p className="font-semibold text-rally-ink">This cannot be undone.</p>
+          </>
+        }
+        confirmLabel="Cancel session"
+        pending={cancelSessionMutation.isPending}
+        onConfirm={() => {
+          cancelSessionMutation.mutate();
+          setCancelSessionOpen(false);
+        }}
+      />
+
+      {waitlistRemoveTarget && (
+        <ConfirmActionDialog
+          open
+          onOpenChange={(open) => !open && setWaitlistRemoveTarget(null)}
+          overline="Remove from waitlist"
+          title="Drop this student off the waitlist?"
+          subject={`${waitlistRemoveTarget.full_name} · position ${waitlistRemoveTarget.position}`}
+          consequence={
+            <>
+              <p>
+                They lose their place in the queue and will not be offered a seat when one opens.
+                Nothing is invoiced either way — a waitlisted student is never billed.
+              </p>
+              <p>Re-adding them later puts them at the back of the queue.</p>
+            </>
+          }
+          confirmLabel="Remove from waitlist"
+          pending={removeWaitlistMutation.isPending}
+          onConfirm={() => {
+            removeWaitlistMutation.mutate(waitlistRemoveTarget.waitlist_id);
+            setWaitlistRemoveTarget(null);
+          }}
+        />
       )}
 
       <AddToRosterDialog

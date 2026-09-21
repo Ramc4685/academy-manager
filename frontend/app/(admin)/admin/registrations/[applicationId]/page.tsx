@@ -14,6 +14,10 @@ import {
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
 import { Card, Chip, LaneHeader, Overline } from "@/components/ds";
+import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+
+/** The three decisions, and the second look each one now needs (#838). */
+type Decision = "approve" | "waitlist" | "reject";
 
 export default function AdminRegistrationDetailPage() {
   const params = useParams<{ applicationId: string }>();
@@ -24,6 +28,7 @@ export default function AdminRegistrationDetailPage() {
   const [waitlistReason, setWaitlistReason] = useState("");
   const [rejectReason, setRejectReason] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<Decision | null>(null);
 
   const query = useQuery({
     queryKey: queryKeys.admin.registrationDetail(applicationId),
@@ -58,16 +63,29 @@ export default function AdminRegistrationDetailPage() {
     onError: (err: Error) => setError(err.message),
   });
   const rejectMutation = useMutation({
-    mutationFn: () =>
-      rejectAdminRegistration(applicationId, {
-        reason: rejectReason.trim() || "Registration rejected by admin",
-      }),
+    // #838: a blank reason used to be swapped for a canned one, so the family
+    // was declined with a sentence nobody wrote. The dialog now refuses to
+    // submit without one.
+    mutationFn: () => rejectAdminRegistration(applicationId, { reason: rejectReason.trim() }),
     onSuccess: () => {
       refresh();
       router.push("/admin/inbox?tab=registrations");
     },
     onError: (err: Error) => setError(err.message),
   });
+
+  const studentName = query.data?.student_name || "this student";
+  const familyLabel = query.data?.parent_name || query.data?.parent_email || "the family";
+  const sessionLabel =
+    query.data?.session_title || query.data?.selected_session_id || "the requested session";
+
+  const runDecision = (decision: Decision) => {
+    setError(null);
+    setConfirming(null);
+    if (decision === "approve") approveMutation.mutate();
+    if (decision === "waitlist") waitlistMutation.mutate();
+    if (decision === "reject") rejectMutation.mutate();
+  };
 
   return (
     <section data-testid="admin-registration-detail" className="space-y-6">
@@ -129,7 +147,7 @@ export default function AdminRegistrationDetailPage() {
                 }
                 onClick={() => {
                   setError(null);
-                  approveMutation.mutate();
+                  setConfirming("approve");
                 }}
               />
               <ActionPanel
@@ -145,7 +163,7 @@ export default function AdminRegistrationDetailPage() {
                 }
                 onClick={() => {
                   setError(null);
-                  waitlistMutation.mutate();
+                  setConfirming("waitlist");
                 }}
               />
               <ActionPanel
@@ -157,16 +175,91 @@ export default function AdminRegistrationDetailPage() {
                 buttonLabel={rejectMutation.isPending ? "Rejecting..." : "Reject"}
                 disabled={
                   rejectMutation.isPending ||
+                  !rejectReason.trim() ||
                   !["PENDING_APPROVAL", "DECLINING"].includes(query.data.status)
+                }
+                hint={
+                  rejectReason.trim()
+                    ? undefined
+                    : "Type a reason above — a rejection is never sent without one."
                 }
                 onClick={() => {
                   setError(null);
-                  rejectMutation.mutate();
+                  setConfirming("reject");
                 }}
               />
             </div>
             {error && <p role="alert" className="mt-4 text-sm text-red-700">{error}</p>}
           </Card>
+
+          <ConfirmActionDialog
+            open={confirming === "approve"}
+            onOpenChange={(open) => !open && setConfirming(null)}
+            overline="Confirm approval"
+            title="Approve this registration?"
+            subject={`${studentName} — ${familyLabel}`}
+            consequence={
+              <>
+                <p>
+                  Creates the student record and takes a seat in {sessionLabel}. Enrollment goes
+                  active, so the family starts being invoiced for it.
+                </p>
+                <p>{familyLabel} is emailed a confirmation with the session details.</p>
+              </>
+            }
+            confirmLabel="Approve registration"
+            confirmVariant="primary"
+            pending={approveMutation.isPending}
+            onConfirm={() => runDecision("approve")}
+          />
+
+          <ConfirmActionDialog
+            open={confirming === "waitlist"}
+            onOpenChange={(open) => !open && setConfirming(null)}
+            overline="Confirm waitlist"
+            title="Move this registration to the waitlist?"
+            subject={`${studentName} — ${familyLabel}`}
+            consequence={
+              <>
+                <p>
+                  Creates the student record but takes no seat in {sessionLabel}. Nothing is
+                  invoiced while the registration waits.
+                </p>
+                <p>{familyLabel} is emailed that they are on the waitlist.</p>
+              </>
+            }
+            confirmLabel="Move to waitlist"
+            confirmVariant="primary"
+            pending={waitlistMutation.isPending}
+            onConfirm={() => runDecision("waitlist")}
+          />
+
+          <ConfirmActionDialog
+            open={confirming === "reject"}
+            onOpenChange={(open) => !open && setConfirming(null)}
+            overline="Confirm rejection"
+            title="Reject this registration?"
+            subject={`${studentName} — ${familyLabel}`}
+            consequence={
+              <>
+                <p>
+                  No student record, no seat in {sessionLabel} and no invoice. The application
+                  closes and cannot be approved afterwards — the family would have to re-apply.
+                </p>
+                <p>{familyLabel} is emailed that the registration was declined.</p>
+              </>
+            }
+            reason={{
+              label: "Reason for rejecting",
+              value: rejectReason,
+              onChange: setRejectReason,
+              required: true,
+              placeholder: "Recorded on the application.",
+            }}
+            confirmLabel="Reject registration"
+            pending={rejectMutation.isPending}
+            onConfirm={() => runDecision("reject")}
+          />
         </>
       )}
     </section>
@@ -221,6 +314,7 @@ function ActionPanel({
   onTextareaChange,
   buttonLabel,
   disabled,
+  hint,
   onClick,
 }: {
   title: string;
@@ -230,6 +324,7 @@ function ActionPanel({
   onTextareaChange: (value: string) => void;
   buttonLabel: string;
   disabled: boolean;
+  hint?: string;
   onClick: () => void;
 }) {
   return (
@@ -252,6 +347,7 @@ function ActionPanel({
       >
         {buttonLabel}
       </button>
+      {hint && <p className="mt-2 text-[12px] leading-5 text-rally-muted">{hint}</p>}
     </div>
   );
 }

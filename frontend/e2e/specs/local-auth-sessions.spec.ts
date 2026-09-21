@@ -66,8 +66,10 @@ test.describe("local authenticated admin session fixes", () => {
     const before = await countSessionRows(page);
     expect(before).toBeGreaterThan(0);
 
-    page.once("dialog", (d) => void d.accept());
+    // #838: the native confirm is gone — cancelling now goes through the Rally
+    // dialog, which names the session and counts who loses a seat.
     await cancelButton.click();
+    await page.getByTestId("confirm-action-submit").click();
 
     // Before the fix the row stayed put: the backend soft-cancelled but the
     // listing had no status predicate, so the refetch re-emitted the cancelled

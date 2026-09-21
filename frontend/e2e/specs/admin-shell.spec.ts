@@ -1608,11 +1608,12 @@ test.describe("Rally admin shell", () => {
             },
       );
     });
-    page.on("dialog", (dialog) => void dialog.accept());
-
     await page.goto("/admin/sessions");
     await expect(page.getByTestId("admin-sessions")).toBeVisible();
+    // #838: the native confirm is gone; the Rally dialog's confirm is what
+    // actually fires the DELETE.
     await page.getByRole("button", { name: "Cancel session Cancelable Session" }).click();
+    await page.getByTestId("confirm-action-submit").click();
 
     const banner = page.getByTestId("admin-sessions-cancel-error");
     await expect(banner).toBeVisible();
@@ -1635,6 +1636,7 @@ test.describe("Rally admin shell", () => {
     await expect(banner).toBeHidden();
     failureMode = "blank";
     await page.getByRole("button", { name: "Cancel session Cancelable Session" }).click();
+    await page.getByTestId("confirm-action-submit").click();
     await expect(banner.locator("p")).toHaveText("Could not cancel session.");
   });
 
@@ -1662,11 +1664,12 @@ test.describe("Rally admin shell", () => {
             },
       );
     });
-    page.on("dialog", (dialog) => void dialog.accept());
-
     await page.goto("/admin/sessions/some-session-id");
     await expect(page.getByTestId("admin-session-detail")).toBeVisible();
+    // #838: the page button opens the dialog; its confirm fires the DELETE.
+    // The dialog's confirm shares the label, so it is reached by test id.
     await page.getByRole("button", { name: "Cancel session" }).click();
+    await page.getByTestId("confirm-action-submit").click();
 
     const banner = page.getByTestId("admin-session-cancel-error");
     await expect(banner).toBeVisible();
@@ -1680,6 +1683,7 @@ test.describe("Rally admin shell", () => {
     await expect(banner).toBeHidden();
     failureMode = "blank";
     await page.getByRole("button", { name: "Cancel session" }).click();
+    await page.getByTestId("confirm-action-submit").click();
     await expect(banner.locator("p")).toHaveText("Could not cancel session.");
   });
 

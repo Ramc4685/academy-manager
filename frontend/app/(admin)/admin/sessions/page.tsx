@@ -33,6 +33,7 @@ import {
 // optional-chaining guard, so a payload without `days_of_week` crashed this page
 // to the error boundary. One implementation now, so the two cannot drift again.
 import { buildEditSessionForm, hasRecurringSchedule } from "./[id]/format";
+import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 import { queryKeys } from "@/lib/query/keys";
 import {
   formatAcademyTimeRange,
@@ -146,6 +147,9 @@ export default function AdminSessionsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editSession, setEditSession] = useState<AdminSessionView | null>(null);
   const [cancelError, setCancelError] = useState<string | null>(null);
+  // #838: cancelling a session is irreversible and mails every family, so the
+  // row button now opens a dialog that names it and counts who is affected.
+  const [cancelTarget, setCancelTarget] = useState<AdminSessionView | null>(null);
   const queryClient = useQueryClient();
 
   const { data, isLoading, isError, refetch } = useQuery({
@@ -234,12 +238,38 @@ export default function AdminSessionsPage() {
         <SessionList
           sessions={sessions}
           onEdit={setEditSession}
-          onDelete={(id) => {
-            if (confirm("Cancel this session? This cannot be undone.")) {
-              deleteMutation.mutate(id);
-            }
-          }}
+          onDelete={setCancelTarget}
           pendingDeleteId={deleteMutation.isPending ? (deleteMutation.variables ?? null) : null}
+        />
+      )}
+
+      {cancelTarget && (
+        <ConfirmActionDialog
+          open
+          onOpenChange={(open) => !open && setCancelTarget(null)}
+          overline="Cancel session"
+          title="Cancel this session for everyone?"
+          subject={`${cancelTarget.title} · ${cancelTarget.location}`}
+          consequence={
+            <>
+              <p>
+                {cancelTarget.enrolled_count === 1 ? "1 family" : `${cancelTarget.enrolled_count} families`}{" "}
+                {cancelTarget.enrolled_count === 1 ? "loses its" : "lose their"} seat, and{" "}
+                {cancelTarget.waitlist_count === 1 ? "1 family" : `${cancelTarget.waitlist_count} families`} on
+                the waitlist {cancelTarget.waitlist_count === 1 ? "is" : "are"} dropped. Billing for
+                the session stops; invoices already raised stay and must be voided or credited by
+                hand.
+              </p>
+              <p>Every enrolled family is emailed that the session was cancelled.</p>
+              <p className="font-semibold text-rally-ink">This cannot be undone.</p>
+            </>
+          }
+          confirmLabel="Cancel session"
+          pending={deleteMutation.isPending}
+          onConfirm={() => {
+            deleteMutation.mutate(cancelTarget.session_id);
+            setCancelTarget(null);
+          }}
         />
       )}
 
@@ -338,7 +368,7 @@ function SessionList({
 }: {
   sessions: AdminSessionView[];
   onEdit: (session: AdminSessionView) => void;
-  onDelete: (id: string) => void;
+  onDelete: (session: AdminSessionView) => void;
   pendingDeleteId: string | null;
 }) {
   return (
@@ -413,7 +443,7 @@ function SessionList({
                       <Button
                         variant="danger"
                         size="sm"
-                        onClick={() => onDelete(s.session_id)}
+                        onClick={() => onDelete(s)}
                         disabled={pendingDeleteId !== null}
                         aria-label={`Cancel session ${s.title}`}
                       >

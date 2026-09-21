@@ -28,6 +28,7 @@ import { formatCents } from "@/lib/money";
 import { queryKeys } from "@/lib/query/keys";
 import { statHint, statText } from "@/lib/ui/load-state";
 import { useIsOwner } from "@/components/admin/owner-context";
+import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
@@ -67,6 +68,16 @@ type DialogState = {
   parentId: string | null;
 } | null;
 
+/** #838: the void this tab's "Skip this month" performs, held for a second look. */
+type SkipTarget = {
+  parentId: string;
+  invoiceId: string;
+  invoiceLabel: string;
+  familyLabel: string;
+  balanceCents: number;
+  period: string;
+} | null;
+
 function invoiceOption(
   family: AdminCollectionsFamily,
   invoice: AdminCollectionsFamily["invoices"][number],
@@ -91,6 +102,7 @@ export function CollectionsTab() {
   const [rowStatus, setRowStatus] = useState<Record<string, RowStatus>>({});
   const [dialog, setDialog] = useState<DialogState>(null);
   const [dialogNonce, setDialogNonce] = useState(0);
+  const [skipTarget, setSkipTarget] = useState<SkipTarget>(null);
   const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: queryKeys.admin.collections(period || "current"),
@@ -189,14 +201,14 @@ export function CollectionsTab() {
       case "skip_month": {
         const invoice = actionInvoice(family);
         if (!invoice) return;
-        const label = invoice.invoice_number ?? invoice.invoice_id;
-        if (
-          window.confirm(
-            `Void ${label} for ${familyName(family)}? The family will not be charged this month.`,
-          )
-        ) {
-          skipMutation.mutate({ parentId: family.parent_id, invoiceId: invoice.invoice_id });
-        }
+        setSkipTarget({
+          parentId: family.parent_id,
+          invoiceId: invoice.invoice_id,
+          invoiceLabel: invoice.invoice_number ?? invoice.invoice_id,
+          familyLabel: familyName(family),
+          balanceCents: invoice.balance_due_cents,
+          period: invoice.period,
+        });
         return;
       }
       case "resume":
@@ -341,6 +353,35 @@ export function CollectionsTab() {
             setDialog(null);
             invalidate();
             void queryClient.invalidateQueries({ queryKey: queryKeys.admin.payments() });
+          }}
+        />
+      )}
+
+      {skipTarget && (
+        <ConfirmActionDialog
+          open
+          onOpenChange={(open) => !open && setSkipTarget(null)}
+          overline="Void invoice"
+          title="Skip this month for this family?"
+          subject={`${skipTarget.invoiceLabel} · ${skipTarget.familyLabel} · ${skipTarget.period}`}
+          consequence={
+            <>
+              <p>
+                Voids the invoice, so the {formatCents(skipTarget.balanceCents)} owed is cancelled
+                and no autopay is attempted for {skipTarget.period}. The seat is untouched — the
+                student stays enrolled and next month invoices as usual.
+              </p>
+              <p>Voiding cannot be undone; a new invoice would have to be raised by hand.</p>
+            </>
+          }
+          confirmLabel="Void and skip"
+          pending={skipMutation.isPending}
+          onConfirm={() => {
+            skipMutation.mutate({
+              parentId: skipTarget.parentId,
+              invoiceId: skipTarget.invoiceId,
+            });
+            setSkipTarget(null);
           }}
         />
       )}
