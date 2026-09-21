@@ -1,6 +1,6 @@
 # batch-10c: four verified UI quick wins from the design critique
 
-PR: #0
+PR: #889
 
 ## What changed
 - Fixes #888 — `rally-cobalt` now has a default shade, so the ~23 places that used it without a number finally render: the Waitlist "Manage session" link is visible, and cobalt hover and focus borders appear (keyboard focus was invisible there).
