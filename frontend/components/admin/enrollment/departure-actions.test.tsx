@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DEPARTURE_ACTION_DESCRIPTION,
   DEPARTURE_ACTION_LABEL,
   holdActionsFor,
   resolveDepartureActions,
@@ -118,6 +119,73 @@ describe("resolveDepartureActions", () => {
       });
       expect(resolved.every((entry) => !entry.danger)).toBe(true);
     });
+  });
+});
+
+describe("action descriptions (#859)", () => {
+  const ALL_ACTIONS = Object.keys(DEPARTURE_ACTION_LABEL) as DepartureAction[];
+
+  it("gives every action a one-line description that is not just the label", () => {
+    for (const action of ALL_ACTIONS) {
+      const description = DEPARTURE_ACTION_DESCRIPTION[action];
+      expect(description.length).toBeGreaterThan(0);
+      expect(description).not.toBe(DEPARTURE_ACTION_LABEL[action]);
+    }
+  });
+
+  it("carries the description through resolveDepartureActions", () => {
+    const resolved = resolveDepartureActions(["pause", "drop", "delete"], {
+      isOwner: true,
+      layout: "menu",
+    });
+    for (const entry of resolved) {
+      expect(entry.description).toBe(DEPARTURE_ACTION_DESCRIPTION[entry.action]);
+      expect(entry.description).not.toBe(entry.label);
+    }
+  });
+
+  it("says whether the family is emailed, for every action", () => {
+    for (const action of ALL_ACTIONS) {
+      expect(DEPARTURE_ACTION_DESCRIPTION[action]).toMatch(/email/i);
+    }
+  });
+
+  it("matches the notifications the backend actually sends", () => {
+    // Family email: WithdrawEnrollment -> HoldNotifier.enrollment_dropped,
+    // StartHold -> hold_started, ReturnFromHold -> enrollment_returned.
+    for (const action of ["drop", "hold", "return", "stop_all_classes"] as DepartureAction[]) {
+      expect(DEPARTURE_ACTION_DESCRIPTION[action]).toMatch(/the family is emailed/i);
+    }
+    // Coaches only (RosterChangeNotifier) — no family email on these paths.
+    for (const action of [
+      "delete",
+      "transfer",
+      "pause",
+      "resume",
+      "undo_scheduled_drop",
+    ] as DepartureAction[]) {
+      expect(DEPARTURE_ACTION_DESCRIPTION[action]).toMatch(/the family is not emailed/i);
+    }
+  });
+
+  it("says what happens to the seat and to billing", () => {
+    for (const action of ["hold", "drop", "pause", "resume", "delete"] as DepartureAction[]) {
+      expect(DEPARTURE_ACTION_DESCRIPTION[action]).toMatch(/seat|billing/i);
+    }
+  });
+
+  it("never reuses another action's label, which would make two menu items ambiguous", () => {
+    // Playwright matches a menuitem's accessible name by substring, and the
+    // description is part of that name: a description containing "Pause" would
+    // make `getByRole("menuitem", { name: "Pause" })` strict-mode-fail against
+    // a sibling item.
+    for (const action of ALL_ACTIONS) {
+      const description = DEPARTURE_ACTION_DESCRIPTION[action].toLowerCase();
+      for (const other of ALL_ACTIONS) {
+        if (other === action) continue;
+        expect(description).not.toContain(DEPARTURE_ACTION_LABEL[other].toLowerCase());
+      }
+    }
   });
 });
 

@@ -34,6 +34,7 @@ import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
 import { StopAllClassesDialog } from "@/components/admin/enrollment/stop-all-classes-dialog";
 import { Chip } from "@/components/ds/chip";
+import { ContactLinks } from "@/components/ds/contact-links";
 import { lifecycleLabel, lifecycleVariant } from "@/lib/format/lifecycle-copy";
 import {
   STUDENT_TABS,
@@ -680,22 +681,14 @@ function Header({
                 {student.parent_name ?? student.parent_email ?? "Parent on file"}
               </div>
             )}
-            {student.parent_email && (
-              <a
-                href={`mailto:${student.parent_email}`}
-                className="block hover:underline focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600 rounded"
-              >
-                {student.parent_email}
-              </a>
-            )}
-            {student.parent_phone && (
-              <a
-                href={`tel:${student.parent_phone}`}
-                className="block hover:underline focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600 rounded"
-              >
-                {student.parent_phone}
-              </a>
-            )}
+            {/* #865: the one place that already had a `tel:`, now through the
+                shared component — so it gains WhatsApp with everywhere else. */}
+            <ContactLinks
+              data-testid="admin-student-parent-contacts"
+              name={student.parent_name ?? undefined}
+              email={student.parent_email}
+              phone={student.parent_phone}
+            />
           </div>
         </div>
       </div>

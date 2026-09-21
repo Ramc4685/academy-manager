@@ -26,6 +26,7 @@ import { roleLabel } from "@/lib/admin/role-label";
 import { Avatar } from "@/components/ds/avatar";
 import { Button } from "@/components/ds/button";
 import { ErrorNotice } from "@/components/ds/error-notice";
+import { ContactLinks } from "@/components/ds/contact-links";
 import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { useIsPhone } from "@/lib/use-is-phone";
 import { CoachEngagementStatsStrip } from "@/components/admin/CoachEngagementStatsStrip";
@@ -414,6 +415,7 @@ function UsersList({ users }: { users: AdminUserView[] }) {
               actionsLabel={`Actions for ${user.display_name}`}
               actionsTestId={`admin-users-actions-${user.user_id}`}
               actions={[{ key: "open", label: "Open user", href }]}
+              contact={{ phone: user.phone, email: user.email }}
               secondary={
                 <>
                   <div>
@@ -422,8 +424,14 @@ function UsersList({ users }: { users: AdminUserView[] }) {
                       label={roleLabel(user.role).toUpperCase()}
                     />
                   </div>
-                  <div className="break-words">{user.email}</div>
-                  <div>{user.phone || "No phone on file"}</div>
+                  {/* #865: the same ContactLinks the desktop cell uses, so the
+                      two layouts cannot disagree about what is tappable. */}
+                  <ContactLinks
+                    name={user.display_name}
+                    email={user.email}
+                    phone={user.phone}
+                    fallback="No phone on file"
+                  />
                 </>
               }
             />
@@ -467,8 +475,14 @@ function UsersTable({ users }: { users: AdminUserView[] }) {
                   </div>
                 </Link>
               </td>
-              <td className="px-2 py-3 text-rally-base">{user.email}</td>
-              <td className="px-2 py-3 text-rally-muted">{user.phone || "-"}</td>
+              {/* #865: both cells were plain text, so reaching a coach or a
+                  parent from the directory meant copying the number out. */}
+              <td className="px-2 py-3 text-rally-base">
+                <ContactLinks name={user.display_name} email={user.email} />
+              </td>
+              <td className="px-2 py-3 text-rally-muted">
+                <ContactLinks name={user.display_name} phone={user.phone} fallback="-" />
+              </td>
               <td className="px-2 py-3">
                 <Chip variant={roleToChipVariant(user.role)} label={roleLabel(user.role).toUpperCase()} />
               </td>

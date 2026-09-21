@@ -259,6 +259,8 @@ function FamilyPhoneRow({ row }: { row: BillingSetupRow }) {
       actionsLabel={`Actions for ${row.parent_name}`}
       actionsTestId={`admin-families-actions-${row.parent_id}`}
       actions={[{ key: "open", label: "Open family", href }]}
+      // #865: chasing a balance starts with reaching the family.
+      contact={{ email: row.parent_email }}
       secondary={
         <>
           <div className="flex flex-wrap items-center gap-2">
