@@ -20,9 +20,11 @@ import {
   type BillingSetupRow,
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
+import { UNKNOWN_TEXT, finiteText } from "@/lib/ui/load-state";
 
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
+import { ErrorNotice } from "@/components/ds/error-notice";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { BigNum, Overline } from "@/components/ds/typography";
 
@@ -73,6 +75,8 @@ export default function FamiliesPage() {
     data,
     isLoading,
     isError,
+    isFetching,
+    refetch,
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
@@ -108,7 +112,11 @@ export default function FamiliesPage() {
         </Card>
         <Card p={20}>
           <Overline>Outstanding</Overline>
-          <BigNum size={28}>{formatCents(summary?.outstanding_total_cents ?? 0)}</BigNum>
+          {/* #837: "$0.00" for a payload that never arrived reads as "nobody
+              owes anything"; the sibling tiles already dash out. */}
+          <BigNum size={28}>
+            {finiteText(summary?.outstanding_total_cents, formatCents, UNKNOWN_TEXT)}
+          </BigNum>
         </Card>
       </div>
 
@@ -138,7 +146,13 @@ export default function FamiliesPage() {
         {isLoading ? (
           <div className="p-8 text-center text-sm text-slate-500">Loading…</div>
         ) : isError ? (
-          <div className="p-8 text-center text-sm text-red-600">Failed to load Billing Setup.</div>
+          <ErrorNotice
+            testId="admin-families-error"
+            className="m-5"
+            message="Could not load Billing Setup. The counts above are unknown, not zero."
+            onRetry={() => void refetch()}
+            retrying={isFetching}
+          />
         ) : rows.length === 0 ? (
           <div className="p-8 text-center text-sm text-slate-500">No families match this filter.</div>
         ) : (

@@ -28,8 +28,11 @@ import { queryKeys } from "@/lib/query/keys";
 import { paymentMethodLabel, statusChip } from "@/app/(admin)/admin/payments/format";
 import { normalizeCollections } from "@/app/(admin)/admin/payments/buckets/bucket-view";
 
+import { statHint, statText } from "@/lib/ui/load-state";
+
 import { useIsOwner } from "@/components/admin/owner-context";
 import { Card } from "@/components/ds/card";
+import { ErrorNotice } from "@/components/ds/error-notice";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { LaneHeader } from "@/components/ds/lane";
 import { BigNum, Overline } from "@/components/ds/typography";
@@ -99,6 +102,12 @@ export default function AdminDashboardPage() {
   // sprinkling optional chains throughout the JSX.
   // `normalizeCollections` also absorbs e2e stubs that answer every
   // `/admin/payments*` URL with `{ payments: [] }` — the tiles render zeros.
+  //
+  // Issue #837: that zero-fill is only safe for a response that ARRIVED. When
+  // the collections request 500s, `query.data` is undefined and the normalizer
+  // hands back the same zeros, so "Owed this month $0.00 / Needs action 0" read
+  // as "all caught up". Every collections tile below therefore goes through
+  // `statText`, which shows a dash until the data is really there.
   const sessions = sessionsQuery.data?.sessions ?? [];
   const collectionsTotals = normalizeCollections(collectionsQuery.data).totals;
   const revenueByMonth = revenueQuery.data?.by_month ?? {};
@@ -119,19 +128,19 @@ export default function AdminDashboardPage() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         <KpiCard
           label="Sessions today"
-          value={sessionsQuery.isLoading ? "—" : String(todayCount)}
+          value={statText(sessionsQuery, () => String(todayCount))}
           loading={sessionsQuery.isLoading}
         />
         {isOwner && (
           <KpiCard
             label="Revenue (month to date)"
-            value={revenueQuery.isLoading ? "—" : formatCents(monthRevenue, { whole: true })}
+            value={statText(revenueQuery, () => formatCents(monthRevenue, { whole: true }))}
             loading={revenueQuery.isLoading}
-            hint={
-              revenueQuery.isLoading
-                ? undefined
-                : `Last month ${formatCents(revenueByMonth[prevMonthKey()] ?? 0, { whole: true })}`
-            }
+            hint={statHint(
+              revenueQuery,
+              () =>
+                `Last month ${formatCents(revenueByMonth[prevMonthKey()] ?? 0, { whole: true })}`,
+            )}
             testId="admin-dashboard-revenue"
           />
         )}
@@ -142,7 +151,7 @@ export default function AdminDashboardPage() {
         >
           <KpiCard
             label="Owed this month"
-            value={collectionsQuery.isLoading ? "—" : formatCents(collectionsTotals.owed_cents)}
+            value={statText(collectionsQuery, () => formatCents(collectionsTotals.owed_cents))}
             loading={collectionsQuery.isLoading}
           />
         </Link>
@@ -153,19 +162,17 @@ export default function AdminDashboardPage() {
         >
           <KpiCard
             label="Autopay scheduled"
-            value={
-              collectionsQuery.isLoading
-                ? "—"
-                : formatCents(collectionsTotals.autopay_scheduled_cents)
-            }
+            value={statText(collectionsQuery, () =>
+              formatCents(collectionsTotals.autopay_scheduled_cents),
+            )}
             loading={collectionsQuery.isLoading}
-            hint={
-              collectionsQuery.isLoading
-                ? undefined
-                : `${collectionsTotals.autopay_scheduled_count} ${
-                    collectionsTotals.autopay_scheduled_count === 1 ? "family" : "families"
-                  }`
-            }
+            hint={statHint(
+              collectionsQuery,
+              () =>
+                `${collectionsTotals.autopay_scheduled_count} ${
+                  collectionsTotals.autopay_scheduled_count === 1 ? "family" : "families"
+                }`,
+            )}
           />
         </Link>
         <Link
@@ -175,21 +182,33 @@ export default function AdminDashboardPage() {
         >
           <KpiCard
             label="Needs action"
-            value={
-              collectionsQuery.isLoading ? "—" : String(collectionsTotals.needs_action_count)
-            }
+            value={statText(collectionsQuery, () => String(collectionsTotals.needs_action_count))}
             loading={collectionsQuery.isLoading}
-            hint={collectionsQuery.isLoading ? undefined : "failed autopay · past due"}
+            hint={statHint(collectionsQuery, () => "failed autopay · past due")}
           />
         </Link>
       </div>
+
+      {collectionsQuery.isError && (
+        <ErrorNotice
+          testId="admin-dashboard-collections-error"
+          message="Could not load the money tiles. The figures above are unknown, not zero."
+          onRetry={() => void collectionsQuery.refetch()}
+          retrying={collectionsQuery.isFetching}
+        />
+      )}
 
       <Card p={20}>
         <LaneHeader index="00" title="Needs your attention" />
         {attentionQuery.isLoading ? (
           <TableSkeleton rows={3} />
         ) : attentionQuery.isError ? (
-          <EmptyState message="Attention signals are unavailable right now." />
+          <ErrorNotice
+            testId="admin-dashboard-attention-error"
+            message="Attention signals are unavailable right now — this is not an empty list."
+            onRetry={() => void attentionQuery.refetch()}
+            retrying={attentionQuery.isFetching}
+          />
         ) : (attentionQuery.data?.items ?? []).length > 0 ? (
           <div className="grid gap-3 lg:grid-cols-2" data-testid="admin-dashboard-attention">
             {(attentionQuery.data?.items ?? []).map((item) => (
@@ -237,6 +256,15 @@ export default function AdminDashboardPage() {
         <LaneHeader index={isOwner ? "02" : "01"} title="Recent payments" />
         {paymentFeedQuery.isLoading ? (
           <TableSkeleton rows={3} />
+        ) : paymentFeedQuery.isError ? (
+          // "No payments received yet." under a failed request would read as a
+          // quiet month rather than a broken screen (#837).
+          <ErrorNotice
+            testId="admin-dashboard-payments-error"
+            message="Could not load recent payments."
+            onRetry={() => void paymentFeedQuery.refetch()}
+            retrying={paymentFeedQuery.isFetching}
+          />
         ) : recentPayments.length === 0 ? (
           <EmptyState message="No payments received yet." />
         ) : (

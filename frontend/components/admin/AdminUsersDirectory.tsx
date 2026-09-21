@@ -21,6 +21,7 @@ import { roleToChipVariant } from "@/lib/admin/role-chip";
 import { roleLabel } from "@/lib/admin/role-label";
 import { Avatar } from "@/components/ds/avatar";
 import { Button } from "@/components/ds/button";
+import { ErrorNotice } from "@/components/ds/error-notice";
 import { CoachEngagementStatsStrip } from "@/components/admin/CoachEngagementStatsStrip";
 import { BulkInviteDialog } from "@/components/admin/bulk-invite-dialog";
 
@@ -66,7 +67,7 @@ export function AdminUsersDirectory({
     router.replace(query ? `?${query}` : "?", { scroll: false });
   }
 
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError, isFetching, refetch } = useQuery({
     queryKey: queryKeys.admin.users(role),
     queryFn: () => listAdminUsers(role),
   });
@@ -146,9 +147,13 @@ export function AdminUsersDirectory({
       />
 
       {isError ? (
-        <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
-          Could not load users.
-        </p>
+        // #837: a dead end. The directory now offers the request again.
+        <ErrorNotice
+          testId="admin-users-error"
+          message="Could not load users."
+          onRetry={() => void refetch()}
+          retrying={isFetching}
+        />
       ) : isLoading ? (
         <Skeleton />
       ) : users.length === 0 ? (

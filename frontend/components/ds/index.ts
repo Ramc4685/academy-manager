@@ -21,6 +21,7 @@ export { Sparkline, MiniBars, Ring } from "./charts";
 export { FormField, fieldDescribedBy } from "./form-field";
 export { Skeleton, TableSkeleton } from "./skeleton";
 export { EmptyState } from "./empty-state";
+export { ErrorNotice } from "./error-notice";
 export { Modal } from "./modal";
 export { RallyModal, DialogActions, DialogError, Field, Th } from "./dialog-chrome";
 export { ToastProvider, useToast } from "./toast";

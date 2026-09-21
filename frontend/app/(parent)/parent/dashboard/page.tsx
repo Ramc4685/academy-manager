@@ -51,6 +51,7 @@ import {
   type ParentHomeAction,
   type ParentHomeActivity,
 } from "@/lib/parent-home";
+import { ErrorNotice } from "@/components/ds/error-notice";
 
 const progressOverviewEnabled =
   process.env.NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW === "1";
@@ -178,12 +179,15 @@ export default function ParentDashboardPage() {
       {coreLoading ? (
         <DashboardSkeleton />
       ) : homeQuery.isError ? (
-        <p
-          data-testid="parent-home-error"
-          className="rounded-xl border border-status-red-500/30 bg-status-red-50 px-4 py-3 text-sm font-semibold text-status-red-800"
-        >
-          We couldn&apos;t load your children right now. Pull down to refresh, or try again in a moment.
-        </p>
+        // #837: "pull down to refresh" is not an instruction a desktop or
+        // keyboard user can follow — give the retry a button.
+        <ErrorNotice
+          testId="parent-home-error"
+          className="rounded-xl font-semibold"
+          message="We couldn't load your children right now."
+          onRetry={() => void homeQuery.refetch()}
+          retrying={homeQuery.isFetching}
+        />
       ) : (
         <>
           {showBanner && balance && <BalanceBanner balance={balance} />}

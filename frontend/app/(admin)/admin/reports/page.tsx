@@ -25,6 +25,7 @@ import {
   sendDuesReminders,
 } from "@/lib/api/admin";
 import { formatCents, formatDateOnly } from "@/lib/money";
+import { NO_DATA_TEXT, finiteText, statText } from "@/lib/ui/load-state";
 import { invoiceStatusChip } from "@/lib/billing-status";
 import {
   autopayRunBox,
@@ -37,6 +38,7 @@ import {
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Button } from "@/components/ds/button";
+import { ErrorNotice } from "@/components/ds/error-notice";
 import { BigNum, Overline } from "@/components/ds/typography";
 import { FunnelPanel } from "@/components/admin/reports/funnel-panel";
 import { AttendanceTrendsPanel } from "@/components/admin/reports/attendance-trends-panel";
@@ -218,9 +220,12 @@ export default function AdminMonthClosePage() {
         )}
 
         {monthCloseQuery.isError && (
-          <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
-            Could not load month close.
-          </p>
+          <ErrorNotice
+            testId="admin-reports-month-close-error"
+            message="Could not load month close. The tiles above are unknown, not zero."
+            onRetry={() => void monthCloseQuery.refetch()}
+            retrying={monthCloseQuery.isFetching}
+          />
         )}
 
         {warning && (
@@ -238,9 +243,11 @@ export default function AdminMonthClosePage() {
                   <span data-testid={`month-close-tile-${tile.key}-value`}>
                     {closeLoading
                       ? "Loading"
-                      : tile.cents != null
-                        ? formatCents(tile.cents)
-                        : tile.value}
+                      : // #837: `normalizeMonthClose` zero-fills a payload that
+                        // never arrived; a dash says so.
+                        statText(monthCloseQuery, () =>
+                          tile.cents != null ? formatMoney(tile.cents) : (tile.value ?? NO_DATA_TEXT),
+                        )}
                   </span>
                 </BigNum>
                 <p className="mt-2 text-[12px] text-rally-muted">{tile.hint}</p>
@@ -268,7 +275,7 @@ export default function AdminMonthClosePage() {
                 >
                   <dt className="text-rally-muted">{row.label}</dt>
                   <dd className="font-mono tabular-nums font-semibold text-rally-ink">
-                    {row.countLabel} · {formatCents(row.cents)}
+                    {row.countLabel} · {formatMoney(row.cents)}
                   </dd>
                 </div>
               ))}
@@ -353,7 +360,7 @@ export default function AdminMonthClosePage() {
               ))}
             </ul>
             <p className="mt-2 text-xs text-rally-muted">
-              {formatCents(close.invoices.voided_cents)} voided in total.
+              {formatMoney(close.invoices.voided_cents)} voided in total.
             </p>
           </Card>
         ) : null}
@@ -372,12 +379,12 @@ export default function AdminMonthClosePage() {
           ) : (
             <>
               <div className="grid gap-3 sm:grid-cols-3">
-                <DashboardTerm label="Gross tuition" value={formatCents(discounts.gross_cents)} />
+                <DashboardTerm label="Gross tuition" value={formatMoney(discounts.gross_cents)} />
                 <DashboardTerm
                   label="Total discounts"
-                  value={formatCents(discounts.discount_cents)}
+                  value={formatMoney(discounts.discount_cents)}
                 />
-                <DashboardTerm label="Net tuition" value={formatCents(discounts.net_cents)} />
+                <DashboardTerm label="Net tuition" value={formatMoney(discounts.net_cents)} />
               </div>
               {discounts.by_category.length === 0 ? (
                 <p data-testid="tuition-discounts-empty" className="text-sm text-neutral-500">
@@ -408,7 +415,7 @@ export default function AdminMonthClosePage() {
                         >
                           <td className="px-4 py-3 font-medium">{row.category}</td>
                           <td className="px-4 py-3 text-right font-mono tabular-nums">
-                            {formatCents(row.amount_cents)}
+                            {formatMoney(row.amount_cents)}
                           </td>
                           <td className="px-4 py-3 text-right font-mono tabular-nums">
                             {discounts.gross_cents > 0
@@ -455,7 +462,7 @@ export default function AdminMonthClosePage() {
           />
           <KpiCard
             label="Expenses"
-            value={expenses ? formatCents(expenses.total_cents) : dashboardQuery.isLoading ? "Loading" : "No data"}
+            value={expenses ? formatMoney(expenses.total_cents) : dashboardQuery.isLoading ? "Loading" : "No data"}
             description="Recorded rent, equipment, salary, marketing, and other spend."
           />
           <KpiCard
@@ -471,9 +478,12 @@ export default function AdminMonthClosePage() {
         </div>
 
         {dashboardQuery.isError && (
-          <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
-            Could not load the reports dashboard.
-          </p>
+          <ErrorNotice
+            testId="admin-reports-dashboard-error"
+            message="Could not load the reports dashboard. The figures above are unknown, not zero."
+            onRetry={() => void dashboardQuery.refetch()}
+            retrying={dashboardQuery.isFetching}
+          />
         )}
 
         {dashboardEmptyStates.length ? (
@@ -519,10 +529,10 @@ export default function AdminMonthClosePage() {
           <Card p={24}>
             <Overline>Profit and loss</Overline>
             <dl className="mt-4 grid gap-3 sm:grid-cols-2">
-              <DashboardTerm label="Revenue" value={profitAndLoss ? formatCents(profitAndLoss.revenue_cents) : "No data"} />
+              <DashboardTerm label="Revenue" value={profitAndLoss ? formatMoney(profitAndLoss.revenue_cents) : "No data"} />
               <DashboardTerm label="Coach payroll" value={profitAndLoss ? formatNullableCurrency(profitAndLoss.coach_payroll_cents) : "No data"} />
-              <DashboardTerm label="Rent" value={profitAndLoss ? formatCents(profitAndLoss.rent_cents) : "No data"} />
-              <DashboardTerm label="Misc expenses" value={profitAndLoss ? formatCents(profitAndLoss.misc_expenses_cents) : "No data"} />
+              <DashboardTerm label="Rent" value={profitAndLoss ? formatMoney(profitAndLoss.rent_cents) : "No data"} />
+              <DashboardTerm label="Misc expenses" value={profitAndLoss ? formatMoney(profitAndLoss.misc_expenses_cents) : "No data"} />
               <DashboardTerm label="Net profit" value={profitAndLoss ? formatNullableCurrency(profitAndLoss.net_profit_cents) : "No data"} />
               <DashboardTerm label="Margin" value={profitAndLoss ? formatNullablePercent(profitAndLoss.profit_margin) : "No data"} />
             </dl>
@@ -540,7 +550,7 @@ export default function AdminMonthClosePage() {
             <Overline>Collections risk</Overline>
             <dl className="mt-4 grid gap-3 sm:grid-cols-2">
               <DashboardTerm label="Families due" value={collectionsRisk ? formatInteger(collectionsRisk.overdue_family_count) : "No data"} />
-              <DashboardTerm label="Amount due" value={collectionsRisk ? formatCents(collectionsRisk.overdue_cents) : "No data"} />
+              <DashboardTerm label="Amount due" value={collectionsRisk ? formatMoney(collectionsRisk.overdue_cents) : "No data"} />
               <DashboardTerm label="Failed payments" value={collectionsRisk ? formatInteger(collectionsRisk.failed_payment_count) : "No data"} />
               <DashboardTerm label="Partial payments" value={collectionsRisk ? formatInteger(collectionsRisk.partial_payment_count) : "No data"} />
             </dl>
@@ -559,7 +569,7 @@ export default function AdminMonthClosePage() {
                     >
                       <span className="font-medium text-rally-ink">{bucket.label}</span>
                       <span className="text-rally-muted">
-                        {formatCents(bucket.amount_cents)} · {formatInteger(bucket.family_count)}{" "}
+                        {formatMoney(bucket.amount_cents)} · {formatInteger(bucket.family_count)}{" "}
                         {bucket.family_count === 1 ? "family" : "families"}
                         {bucket.family_count > 0 ? (
                           <span className="ml-2 text-xs">
@@ -580,7 +590,7 @@ export default function AdminMonthClosePage() {
                                 {family.family_name || family.family_id}
                               </span>
                               <span className="ml-2 text-rally-muted">
-                                {formatCents(family.amount_cents)}
+                                {formatMoney(family.amount_cents)}
                               </span>
                               {actionNote && actionNote.key === `notify:${family.family_id}` ? (
                                 <p
@@ -628,7 +638,7 @@ export default function AdminMonthClosePage() {
                     {expenseCategories.map((category) => (
                       <tr key={category.category}>
                         <td className="px-2 py-2 font-medium text-rally-ink">{category.category}</td>
-                        <td className="px-2 py-2 text-rally-muted">{formatCents(category.amount_cents)}</td>
+                        <td className="px-2 py-2 text-rally-muted">{formatMoney(category.amount_cents)}</td>
                         <td className="px-2 py-2 text-rally-muted">{formatInteger(category.count)}</td>
                       </tr>
                     ))}
@@ -661,7 +671,7 @@ export default function AdminMonthClosePage() {
           <div className="mt-2">
             <BigNum size={32}>
               {projected
-                ? formatCents(projected.total_cents)
+                ? formatMoney(projected.total_cents)
                 : projectedIncomeQuery.isLoading
                   ? "Loading"
                   : "No data"}
@@ -694,11 +704,11 @@ export default function AdminMonthClosePage() {
                 <dl className="mt-3 grid gap-3 sm:grid-cols-2">
                   <DashboardTerm
                     label={`Autopay (${formatInteger(projected.autopay_enrollment_count)})`}
-                    value={formatCents(projected.autopay_cents)}
+                    value={formatMoney(projected.autopay_cents)}
                   />
                   <DashboardTerm
                     label={`Manual (${formatInteger(projected.manual_enrollment_count)})`}
-                    value={formatCents(projected.manual_cents)}
+                    value={formatMoney(projected.manual_cents)}
                   />
                 </dl>
               </div>
@@ -717,8 +727,8 @@ export default function AdminMonthClosePage() {
                       <tr key={row.session_id}>
                         <td className="px-2 py-2 font-medium text-rally-ink">{row.title || row.session_id}</td>
                         <td className="px-2 py-2 text-rally-muted">{formatInteger(row.enrollment_count)}</td>
-                        <td className="px-2 py-2 text-rally-muted">{formatCents(row.monthly_fee_cents)}</td>
-                        <td className="px-2 py-2 text-rally-muted">{formatCents(row.expected_cents)}</td>
+                        <td className="px-2 py-2 text-rally-muted">{formatMoney(row.monthly_fee_cents)}</td>
+                        <td className="px-2 py-2 text-rally-muted">{formatMoney(row.expected_cents)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -754,7 +764,7 @@ export default function AdminMonthClosePage() {
                     fontSize={12}
                     width={56}
                   />
-                  <Tooltip formatter={(value) => formatCents(Number(value ?? 0) * 100)} />
+                  <Tooltip formatter={(value) => formatMoney(Number(value ?? 0) * 100)} />
                   <Legend />
                   <Bar
                     dataKey="prior"
@@ -843,17 +853,30 @@ function DashboardTerm({ label, value }: { label: string; value: string }) {
   );
 }
 
-function formatInteger(value: number): string {
-  return new Intl.NumberFormat("en-US").format(value);
+/*
+ * Issue #837: these panels read fields straight off the analytics payload, and
+ * an endpoint that answers with an incomplete body (or `{}`) used to reach
+ * `Intl.NumberFormat` with `undefined` — the panels printed "$NaN" and "NaN%"
+ * at families and owners. Every formatter below refuses a non-finite number
+ * and says "No data" instead.
+ */
+
+/** Money from a payload that may be missing the field entirely. */
+function formatMoney(cents: number | null | undefined, opts?: { whole?: boolean }): string {
+  return finiteText(cents, (value) => formatCents(value, opts));
+}
+
+function formatInteger(value: number | null | undefined): string {
+  return finiteText(value, (n) => new Intl.NumberFormat("en-US").format(n));
 }
 
 /** A share the backend already computed; `null` means "no records", not 0%. */
-function formatNullablePercent(value: number | null): string {
-  return value == null ? "No records" : formatCollectionRate(value);
+function formatNullablePercent(value: number | null | undefined): string {
+  return value == null ? "No records" : finiteText(value, formatCollectionRate);
 }
 
-function formatNullableCurrency(cents: number | null) {
-  return cents == null ? "Not available" : formatCents(cents);
+function formatNullableCurrency(cents: number | null | undefined) {
+  return cents == null ? "Not available" : finiteText(cents, formatCents);
 }
 
 function formatMonth(value: string) {
