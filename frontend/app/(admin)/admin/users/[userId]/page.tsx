@@ -35,6 +35,7 @@ import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Overline } from "@/components/ds/typography";
+import { userLoginChip } from "@/lib/people-status";
 
 const editableStatuses = ["active", "inactive", "disabled"] as const;
 
@@ -411,6 +412,7 @@ function BackLink() {
 }
 
 function Header({ user }: { user: AdminUserDetail }) {
+  const loginState = userLoginChip(user.status);
   return (
     <Card p={20}>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -425,10 +427,10 @@ function Header({ user }: { user: AdminUserDetail }) {
                 variant={roleVariant(user.role)}
                 label={roleLabel(user.role).toUpperCase()}
               />
-              <Chip
-                variant={user.status === "active" ? "enrolled" : "expired"}
-                label={user.status.toUpperCase()}
-              />
+              {/* #840: "ACTIVE" here borrowed the billing chip's shout and
+                  collided with the Students page's "ACTIVE" (attending). This
+                  is the Login fact, in the shared People wording. */}
+              <Chip variant={loginState.variant} label={loginState.label} />
             </div>
           </div>
         </div>

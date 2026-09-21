@@ -6,7 +6,9 @@ import { Button, Card, Chip, Overline } from "@/components/ds";
 import type { AdminFamilyBillingView } from "@/lib/api/admin-families";
 import { formatCents, formatInstantDay } from "@/lib/money";
 
-import { autopayToggle, registrationChip, undeliverableChip } from "./family-view";
+import { describeCardDeclineCode } from "@/lib/people-status";
+
+import { autopayToggle, registrationChips, undeliverableChip } from "./family-view";
 
 export function FamilyHeader({
   view,
@@ -25,7 +27,7 @@ export function FamilyHeader({
 }) {
   const { parent, header, actions } = view;
   const toggle = autopayToggle(header.autopay);
-  const reg = registrationChip(header.registration.state);
+  const reg = registrationChips(header.registration.state);
   const undeliverable = undeliverableChip(header.email_delivery);
   const studentCount = view.students.length;
   return (
@@ -41,8 +43,11 @@ export function FamilyHeader({
             {parent.phone ? ` · ${parent.phone}` : ""}
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-2">
+            <span data-testid="family-login-chip">
+              <Chip variant={reg.login.variant} label={reg.login.label} />
+            </span>
             <span data-testid="family-registration-chip">
-              <Chip variant={reg.variant} label={reg.label} />
+              <Chip variant={reg.card.variant} label={reg.card.label} />
             </span>
             {undeliverable && (
               <span data-testid="family-undeliverable-chip">
@@ -134,10 +139,35 @@ export function FamilyHeader({
           <p className="mt-1 text-xs text-rally-muted" data-testid="family-autopay-hint">
             {toggle.hint}
           </p>
-          {header.autopay.last_failure?.code && (
-            <p className="mt-1 text-xs text-status-red-600">
-              Last failure: {header.autopay.last_failure.code}
-            </p>
+          {/* #840: "Last failure: card_declined" was a Stripe developer string
+              with nothing to do about it. Say what happened, then offer the two
+              ways out right here rather than only in the header's action row. */}
+          {header.autopay.last_failure && (
+            <div className="mt-1" data-testid="family-autopay-failure">
+              <p className="text-xs text-status-red-600">
+                {describeCardDeclineCode(header.autopay.last_failure.code)}
+              </p>
+              <div className="mt-1.5 flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  data-testid="family-failure-resend-invite"
+                  onClick={onSendInvite}
+                  disabled={busy}
+                >
+                  Resend card invite
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  data-testid="family-failure-record-payment"
+                  onClick={onRecordPayment}
+                  disabled={busy}
+                >
+                  Record payment
+                </Button>
+              </div>
+            </div>
           )}
         </div>
         <Tile
