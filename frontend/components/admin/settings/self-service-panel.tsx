@@ -12,6 +12,8 @@ import { queryKeys } from "@/lib/query/keys";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
+import { useReportSettingsDirty } from "@/components/admin/settings/settings-dirty-context";
+import { SavedNote, savedAtNow } from "@/components/admin/settings/saved-note";
 
 type PolicyForm = {
   absence_notice_min_hours: string;
@@ -50,7 +52,7 @@ function isDirty(original: PolicyForm, form: PolicyForm): boolean {
 export function SelfServicePanel() {
   const queryClient = useQueryClient();
   const [form, setForm] = useState<PolicyForm>(() => normalize(null));
-  const [saved, setSaved] = useState(false);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
   const query = useQuery({
     queryKey: queryKeys.admin.selfServicePolicy(),
     queryFn: getSelfServicePolicy,
@@ -62,6 +64,7 @@ export function SelfServicePanel() {
   }, [query.data]);
 
   const dirty = isDirty(original, form);
+  useReportSettingsDirty("self-service", dirty);
   const mutation = useMutation({
     mutationFn: () =>
       updateSelfServicePolicy({
@@ -73,9 +76,8 @@ export function SelfServicePanel() {
         cancellation_effective_timing: form.cancellation_effective_timing,
       }),
     onSuccess: () => {
-      setSaved(true);
+      setSavedAt(savedAtNow());
       void queryClient.invalidateQueries({ queryKey: queryKeys.admin.selfServicePolicy() });
-      window.setTimeout(() => setSaved(false), 2000);
     },
   });
 
@@ -93,22 +95,30 @@ export function SelfServicePanel() {
           <div className="mt-5 grid gap-4 md:grid-cols-2">
             <NumberField
               label="Minimum absence notice (hours)"
+              hint="A notice filed at least this long before the class starts counts as on time."
               value={form.absence_notice_min_hours}
               onChange={(value) => setForm((prev) => ({ ...prev, absence_notice_min_hours: value }))}
             />
             <NumberField
               label="Makeup expiry (days)"
+              hint="A makeup must be requested within this many days of the missed class."
               value={form.makeup_expiry_days}
               onChange={(value) => setForm((prev) => ({ ...prev, makeup_expiry_days: value }))}
             />
           </div>
-          <label className="mt-4 flex items-center gap-2 text-sm font-medium text-rally-ink">
+          <label className="mt-4 flex items-start gap-2 text-sm font-medium text-rally-ink">
             <input
               type="checkbox"
+              className="mt-1"
               checked={form.makeup_requires_notice}
               onChange={(e) => setForm((prev) => ({ ...prev, makeup_requires_notice: e.target.checked }))}
             />
-            Makeup requests require an on-time absence notice
+            <span>
+              Makeup requests require an on-time absence notice
+              <span className="mt-1 block text-xs font-normal text-rally-muted">
+                On: a late or missing notice earns no makeup credit.
+              </span>
+            </span>
           </label>
 
           <div className="mt-8">
@@ -117,11 +127,13 @@ export function SelfServicePanel() {
           <div className="mt-5 grid gap-4 md:grid-cols-2">
             <NumberField
               label="Minimum cancellation notice (days)"
+              hint="Cancelling with less notice than this is charged the fee below."
               value={form.cancellation_minimum_notice_days}
               onChange={(value) => setForm((prev) => ({ ...prev, cancellation_minimum_notice_days: value }))}
             />
             <NumberField
               label="Cancellation fee ($)"
+              hint="Flat charge to the parent when notice is short. Zero never charges."
               value={form.cancellation_fee_dollars}
               step="0.01"
               onChange={(value) => setForm((prev) => ({ ...prev, cancellation_fee_dollars: value }))}
@@ -142,12 +154,16 @@ export function SelfServicePanel() {
               <option value="immediate">Immediate</option>
               <option value="end_of_period">End of billing period</option>
             </select>
+            <span className="text-xs font-normal text-rally-muted">
+              Immediate stops the seat and the billing now; end of period keeps both until the
+              current billing period closes.
+            </span>
           </label>
 
           <Footer
             dirty={dirty}
             pending={mutation.isPending}
-            saved={saved}
+            savedAt={savedAt}
             error={mutation.isError ? mutation.error : null}
             onSave={() => mutation.mutate()}
           />
@@ -160,11 +176,14 @@ export function SelfServicePanel() {
 function NumberField({
   label,
   value,
+  hint,
   step = "1",
   onChange,
 }: {
   label: string;
   value: string;
+  /** One line on what the number changes for parents — these fields move money. */
+  hint?: string;
   step?: string;
   onChange: (value: string) => void;
 }) {
@@ -180,6 +199,7 @@ function NumberField({
         onChange={(event) => onChange(event.target.value)}
         className="h-10 rounded-md border border-rally-line bg-white px-3 font-mono text-sm tabular-nums outline-none focus:border-blue-500"
       />
+      {hint && <span className="text-xs font-normal text-rally-muted">{hint}</span>}
     </label>
   );
 }
@@ -187,13 +207,13 @@ function NumberField({
 function Footer({
   dirty,
   pending,
-  saved,
+  savedAt,
   error,
   onSave,
 }: {
   dirty: boolean;
   pending: boolean;
-  saved: boolean;
+  savedAt: string | null;
   error: Error | null;
   onSave: () => void;
 }) {
@@ -202,7 +222,7 @@ function Footer({
       <Button variant={dirty ? "volt" : "secondary"} size="sm" disabled={!dirty || pending} onClick={onSave}>
         {pending ? "Saving..." : "Save changes"}
       </Button>
-      {saved && <p className="text-sm font-medium text-emerald-700">Saved.</p>}
+      <SavedNote at={savedAt} />
       {error && <p className="text-sm font-medium text-red-700">{error.message}</p>}
     </div>
   );

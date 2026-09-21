@@ -24,6 +24,16 @@ function formatTime(isoString: string): string {
   return new Date(isoString).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
+/**
+ * #860: the row used to print `entry.parent_id` — a Mongo object id an admin
+ * can do nothing with. The read now joins the parent's display name; "Not on
+ * file" is the honest answer when that join comes back empty, which is still
+ * more use than an id nobody can look up.
+ */
+function parentLabel(entry: AdminWaitlistEntry): string {
+  return entry.parent_name?.trim() || "Not on file";
+}
+
 export function WaitlistTab() {
   const query = useQuery({
     queryKey: queryKeys.admin.globalWaitlist(),
@@ -134,7 +144,7 @@ function WaitlistEntries({ entries }: { entries: AdminWaitlistEntry[] }) {
               secondary={
                 <>
                   <div>Joined {formatDate(entry.added_at)}</div>
-                  <div className="break-all font-mono text-[11px]">{entry.parent_id}</div>
+                  <div>Parent: {parentLabel(entry)}</div>
                 </>
               }
             />
@@ -175,7 +185,9 @@ function WaitlistRow({
         <Avatar name={entry.full_name} size={34} />
         <div className="min-w-0">
           <div className="truncate font-semibold text-rally-ink">{entry.full_name}</div>
-          <div className="font-mono text-[10px] text-rally-subtle">{entry.parent_id}</div>
+          <div className="truncate text-[12px] text-rally-subtle">
+            Parent: {parentLabel(entry)}
+          </div>
         </div>
       </div>
       <div>

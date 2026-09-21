@@ -44,6 +44,23 @@ log = logging.getLogger(__name__)
 LAST_CHARGE_WINDOW = timedelta(days=45)
 
 
+def invoice_id_or_number_filter(academy_id: str, value: str) -> dict[str, Any]:
+    """Match an invoice by ``invoice_id`` or by its display ``invoice_number``.
+
+    ``academy_id`` is repeated inside each branch on purpose. With it only at
+    the top level the planner cannot match a branch to the partial
+    ``(academy_id, invoice_number)`` index and scans the academy's invoices
+    instead (#878, verified with ``explain()`` on MongoDB 7).
+    """
+    return {
+        "academy_id": academy_id,
+        "$or": [
+            {"academy_id": academy_id, "invoice_id": value},
+            {"academy_id": academy_id, "invoice_number": value},
+        ],
+    }
+
+
 def build_invoice_naming_resolver(
     *,
     ledger: Any,

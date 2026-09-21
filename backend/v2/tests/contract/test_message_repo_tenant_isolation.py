@@ -212,6 +212,44 @@ async def test_mark_read_cannot_stamp_an_unseen_session_announcement(db) -> None
 
 
 @pytest.mark.asyncio
+async def test_for_admin_returns_both_directions_of_a_dm_within_the_tenant(db) -> None:
+    """#864: a thread is a conversation, and it still stops at the tenant line.
+
+    `for_admin` used to match only `recipient_id`, so the admin's own replies
+    were missing from their own thread. Widening it must not widen the tenant
+    scope: the other academy's identically-shaped DM stays invisible.
+    """
+    await db["messages"].insert_many(
+        [
+            _message_doc("in-a", "academy-a", sender_id="par-1", recipient_id="adm"),
+            _message_doc("out-a", "academy-a", sender_id="adm", recipient_id="par-1"),
+            _message_doc("out-b", "academy-b", sender_id="adm", recipient_id="par-1"),
+        ]
+    )
+    repo = MongoMessageRepository(db)
+
+    with tenant_scope("academy-a"):
+        rows = await repo.for_admin("adm")
+
+    assert {m.message_id for m in rows} == {"in-a", "out-a"}
+
+
+@pytest.mark.asyncio
+async def test_admin_mark_read_does_not_cross_tenants(db) -> None:
+    """The admin mark-read write is the same scoped write the parents use."""
+    await db["messages"].insert_one(
+        _message_doc("b-in", "academy-b", sender_id="par-1", recipient_id="adm")
+    )
+    repo = MongoMessageRepository(db)
+
+    with tenant_scope("academy-a"):
+        await repo.mark_read("b-in", "adm", visible_session_ids=[])
+
+    doc = await db["messages"].find_one({"message_id": "b-in"})
+    assert doc["read_by"] == []
+
+
+@pytest.mark.asyncio
 async def test_soft_deleted_messages_are_invisible_to_everyone(db) -> None:
     await db["messages"].insert_one(
         _message_doc("gone", "academy-a", kind="announcement", recipient_id=None)

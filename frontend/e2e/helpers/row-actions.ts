@@ -95,6 +95,12 @@ export async function expectRowActionAvailable(
  * The menu is portalled to `document.body`, so the returned menu-item locator
  * is page-scoped, not row-scoped. Callers get the element and assert or click
  * it; repeat calls for the same row reuse the menu that is already open.
+ *
+ * `directTestId` (#861) is for rows whose desktop action is not a button at
+ * all — the Collections tab's WhatsApp and Message actions are anchors, which
+ * `getByRole("button")` can never match — and for rows that already stamp a
+ * per-action test id worth keeping. The menu half is unchanged: menu items are
+ * found by their label, exactly as the trigger-based branch does.
  */
 export async function rowActionControl(
   page: Page,
@@ -102,10 +108,13 @@ export async function rowActionControl(
     rowTestId,
     actionsTestId,
     label,
-  }: { rowTestId: string; actionsTestId: string; label: string },
+    directTestId,
+  }: { rowTestId: string; actionsTestId: string; label: string; directTestId?: string },
 ): Promise<Locator> {
   const row = page.getByTestId(rowTestId);
-  const direct = row.getByRole("button", { name: label, exact: true });
+  const direct = directTestId
+    ? page.getByTestId(directTestId)
+    : row.getByRole("button", { name: label, exact: true });
   const trigger = page.getByTestId(actionsTestId);
   const surface = await Promise.race([
     direct.waitFor({ state: "visible", timeout: 15_000 }).then((): "direct" => "direct"),

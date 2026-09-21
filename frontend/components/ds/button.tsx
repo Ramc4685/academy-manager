@@ -59,10 +59,13 @@ export function Button({
     fontSize: sz.fontSize,
     ...style,
   };
+  // A disabled button used to look identical to an enabled one — the settings
+  // Save buttons in particular read as clickable while inert (#863), so the
+  // disabled: utilities below dim it and drop the pointer affordances.
   return (
     <button
       type={type}
-      className={`inline-flex items-center justify-center gap-2 rounded-lg border font-body font-semibold tracking-[-0.005em] transition-[transform,filter,background-color] duration-100 active:scale-[0.985] cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rally-cobalt-600 ${VARIANT_CLASSES[variant]} ${className ?? ""}`}
+      className={`inline-flex items-center justify-center gap-2 rounded-lg border font-body font-semibold tracking-[-0.005em] transition-[transform,filter,background-color] duration-100 active:scale-[0.985] cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rally-cobalt-600 disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100 ${VARIANT_CLASSES[variant]} ${className ?? ""}`}
       style={inline}
       {...rest}
     >

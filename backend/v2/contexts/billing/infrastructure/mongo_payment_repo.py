@@ -241,8 +241,15 @@ class MongoPaymentRepository(TenantScopedRepository):
         return self._to_domain(doc) if doc else None
 
     async def get_by_stripe_pi(self, stripe_pi: str) -> Payment | None:
+        # academy_id is repeated inside each branch on purpose: with it only at
+        # the top level the planner cannot match a branch to the partial
+        # (academy_id, <field>) indexes and scans the academy instead (#878).
+        academy_id = current_academy_id()
         pi_query: dict[str, Any] = {
-            "$or": [{"stripe_payment_intent_id": stripe_pi}, {"stripe_payment_intent": stripe_pi}]
+            "$or": [
+                {"academy_id": academy_id, "stripe_payment_intent_id": stripe_pi},
+                {"academy_id": academy_id, "stripe_payment_intent": stripe_pi},
+            ]
         }
         doc = await self._find_one(pi_query)
         if doc is None:

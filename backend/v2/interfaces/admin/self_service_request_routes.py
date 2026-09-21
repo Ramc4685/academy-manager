@@ -72,6 +72,10 @@ class AbsenceNoticeAdminRow(BaseModel):
     notice_window_met: bool
     student_full_name: str | None
     recorded_by_admin: bool = False
+    # #860: which class on which date was missed, so the queue never has to
+    # fall back to the occurrence id.
+    occurrence_session_title: str | None = None
+    occurrence_start_at: datetime | None = None
 
 
 class AbsencesAdminResponse(BaseModel):

@@ -62,17 +62,17 @@ async def test_an_allowlist_entry_whose_index_is_gone_is_called_out(expected) ->
 
 async def test_a_missing_migration_index_fails(expected) -> None:  # type: ignore[no-untyped-def]
     live = copy.deepcopy(expected)
-    del live["students"]["student_id_unique_per_academy"]
+    del live["students"]["student_id_per_academy_uq"]
 
     report = diff_indexes(live, expected, {})
 
-    assert report.missing == ["students.student_id_unique_per_academy"]
+    assert report.missing == ["students.student_id_per_academy_uq"]
     assert not report.ok
 
 
 async def test_the_same_definition_under_another_name_is_not_missing(expected) -> None:  # type: ignore[no-untyped-def]
     live = copy.deepcopy(expected)
-    live["students"]["renamed_by_hand"] = live["students"].pop("student_id_unique_per_academy")
+    live["students"]["renamed_by_hand"] = live["students"].pop("student_id_per_academy_uq")
 
     assert diff_indexes(live, expected, {}).ok
 

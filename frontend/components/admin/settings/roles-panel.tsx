@@ -20,7 +20,11 @@ import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Overline } from "@/components/ds/typography";
+import { useReportSettingsDirty } from "@/components/admin/settings/settings-dirty-context";
 import { ComingNextCard } from "./coming-next-card";
+
+/** Pre-filled audit reason; typing over it counts as an unsaved edit (#863). */
+const DEFAULT_ROLE_REASON = "Admin role change";
 
 export function RolesPanel() {
   const queryClient = useQueryClient();
@@ -141,7 +145,7 @@ function RoleEditor({ user, onSaved }: { user: AdminUserView; onSaved: () => voi
   const currentRoles = detailQuery.data?.roles?.length ? detailQuery.data.roles : [user.role];
 
   const [selected, setSelected] = useState<AdminUserRole[]>(currentRoles);
-  const [reason, setReason] = useState("Admin role change");
+  const [reason, setReason] = useState(DEFAULT_ROLE_REASON);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -177,6 +181,14 @@ function RoleEditor({ user, onSaved }: { user: AdminUserView; onSaved: () => voi
   const toggle = (role: AdminUserRole) => {
     setSelected((prev) => (prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role]));
   };
+
+  // Roles are the one panel whose draft lives in a row editor rather than the
+  // panel body, so it needs the same tab-switch guard as the others (#863):
+  // without this, ticking a role and tapping another tab dropped the change.
+  const rolesChanged =
+    selected.length !== currentRoles.length ||
+    [...selected].sort().join("|") !== [...currentRoles].sort().join("|");
+  useReportSettingsDirty("roles", rolesChanged || reason !== DEFAULT_ROLE_REASON);
 
   if (detailQuery.isLoading) {
     return <div className="h-10 animate-pulse rounded-md bg-neutral-100" />;
