@@ -133,7 +133,10 @@ export function ReplacementCoachTable({
         <span
           data-testid="occurrence-cancelled-chip"
           title={occurrence.cancellation_reason ?? undefined}
-          className="inline-flex items-center rounded-full bg-rally-line px-2 py-0.5 text-xs font-medium text-rally-muted"
+          // #859: `text-rally-muted` (#64748b) on `bg-rally-line` (#e2e8f0)
+          // measured 3.86:1 — under AA for this 12px label. `text-rally-ink`
+          // on the same chip is 12.9:1 and keeps the chip itself quiet.
+          className="inline-flex items-center rounded-full bg-rally-line px-2 py-0.5 text-xs font-medium text-rally-ink"
         >
           Cancelled
         </span>

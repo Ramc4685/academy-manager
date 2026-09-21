@@ -4,6 +4,7 @@ import {
   collectConsoleErrors,
   installTenantGuard,
 } from "../fixtures/tenant-isolation";
+import { openMonthCloseSection } from "../helpers/month-close-sections";
 import {
   ACADEMY_A,
   ADMIN_USER_A,
@@ -566,6 +567,8 @@ test.describe("tuition discounts", () => {
     );
 
     await page.goto("/admin/reports");
+    // The discount card sits in a collapsed group on a phone viewport (#862).
+    await openMonthCloseSection(page, "discounts");
     const card = page.getByTestId("tuition-discounts-section");
     await expect(card).toBeVisible({ timeout: 45_000 });
     await expect(card).toContainText("$220.00");

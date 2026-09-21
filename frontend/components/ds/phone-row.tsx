@@ -24,6 +24,7 @@ import type { Route } from "next";
 import { MoreVertical } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { contactMenuItems, type ContactPoints } from "./contact-links";
 import { OverflowMenu, type MenuItem } from "./menu";
 
 // Typed routes: callers build these from an id, so they cast with `as Route`
@@ -67,6 +68,13 @@ export interface PhoneListRowProps {
   leading?: ReactNode;
   /** Row actions, behind a 44px menu trigger. Empty or omitted renders none. */
   actions?: MenuItem[];
+  /**
+   * The person's phone/email (#865). Call / WhatsApp / Email are appended to
+   * the same menu, so the commonest thing an admin does with a list row —
+   * reach the person in it — is one tap instead of a copy-paste. Whichever of
+   * the two values is missing simply contributes no item.
+   */
+  contact?: ContactPoints;
   /** Accessible name for the actions trigger, e.g. "Actions for Amit Rao". */
   actionsLabel?: string;
   actionsTestId?: string;
@@ -81,10 +89,16 @@ export function PhoneListRow({
   secondary,
   leading,
   actions,
+  contact,
   actionsLabel = "Row actions",
   actionsTestId,
   ...rest
 }: PhoneListRowProps) {
+  const menuItems: MenuItem[] = [
+    ...(actions ?? []),
+    ...(contact ? contactMenuItems(contact) : []),
+  ];
+
   const titleNode = href ? (
     <Link
       href={href}
@@ -116,10 +130,10 @@ export function PhoneListRow({
           </div>
         ) : null}
       </div>
-      {actions && actions.length > 0 ? (
+      {menuItems.length > 0 ? (
         <OverflowMenu
           className="shrink-0"
-          items={actions}
+          items={menuItems}
           triggerLabel={actionsLabel}
           triggerTestId={actionsTestId}
           trigger={

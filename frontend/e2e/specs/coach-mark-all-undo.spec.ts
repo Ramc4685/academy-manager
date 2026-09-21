@@ -156,4 +156,67 @@ test.describe("Coach mark-rest-present undo window", () => {
     await expect.poll(() => mock.attendanceCalls.length, PAST_WINDOW).toBe(2);
     expect(mock.bulkAttendanceCalls).toHaveLength(0);
   });
+
+  /**
+   * Issue #866: the count is a promise about what the tap will mark. A held
+   * seat is one the bulk endpoint refuses outright (#672), and an expected
+   * absence is the parent saying the student isn't coming — neither belongs
+   * in "mark rest present", and neither should have to be discovered by a
+   * rejected batch.
+   */
+  test("held and expected-absence rows are out of the count and the batch", async ({
+    page,
+    mock,
+  }) => {
+    mock.today.sessions[0].roster.push(
+      {
+        student_id: "st-held",
+        full_name: "Carla",
+        enrollment_status: "held",
+        hold_return_on: "2026-10-15",
+      },
+      {
+        student_id: "st-away",
+        full_name: "Dev",
+        enrollment_status: "active",
+        expected_absence: true,
+      },
+    );
+
+    await page.goto("/coach/sessions/s-today-1");
+    // Both rows are on the roster and tappable one at a time — only the
+    // bulk batch skips them.
+    await expect(page.getByTestId("roster-st-held")).toBeVisible();
+    await expect(page.getByTestId("roster-st-away")).toBeVisible();
+
+    const bulkButton = page.getByTestId("mark-all-present");
+    await expect(bulkButton).toContainText("Mark rest present (2)");
+    await bulkButton.click();
+    await expect(page.getByTestId("mark-all-undo-bar")).toContainText("Marked 2 present");
+
+    await expect.poll(() => mock.bulkAttendanceCalls.length, PAST_WINDOW).toBe(1);
+    expect(mock.bulkAttendanceCalls[0]).toMatchObject({
+      session_id: "s-today-1",
+      entries: [
+        { student_id: "st1", status: "present" },
+        { student_id: "st2", status: "present" },
+      ],
+    });
+    // The count was the truth: nothing was rejected, and the two skipped
+    // rows are still unmarked rather than silently marked present.
+    await expect(page.getByTestId("bulk-attendance-error")).toHaveCount(0);
+    await expect(page.getByTestId("mark-st-held-present")).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    await expect(page.getByTestId("mark-st-away-present")).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    // Nothing is left for a BATCH — the two skipped rows take an individual
+    // tap if they turn up — which is the same disabled state #672 leaves
+    // behind for a row the server named ineligible.
+    await expect(bulkButton).toContainText("All marked");
+    await expect(bulkButton).toBeDisabled();
+  });
 });

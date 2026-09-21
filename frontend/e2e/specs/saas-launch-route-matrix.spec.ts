@@ -11,6 +11,7 @@ import {
   collectConsoleErrors,
   installTenantGuard,
 } from "../fixtures/tenant-isolation";
+import { openMonthCloseSection } from "../helpers/month-close-sections";
 import {
   ACADEMY_A,
   fulfillJson,
@@ -397,7 +398,11 @@ test.describe("Wave 12 SaaS launch route matrix scaffold", () => {
       if (route.label === "reports") {
         // Wait for the async report feeds as well as the initial page shell so
         // malformed stubs cannot crash just after the mount assertion passes.
+        // Both feeds now live inside collapsed groups (#862), so the groups
+        // have to be opened for the render to happen at all.
+        await openMonthCloseSection(page, "autopay-run");
         await expect(page.getByTestId("autopay-run-box")).toBeVisible();
+        await openMonthCloseSection(page, "analytics");
         await expect(
           page.getByText("No active enrollments with a monthly fee yet.")
         ).toBeVisible();

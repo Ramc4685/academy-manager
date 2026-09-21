@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 
 import { collectConsoleErrors, installTenantGuard } from "../fixtures/tenant-isolation";
+import { openMonthCloseSection } from "../helpers/month-close-sections";
 import {
   ACADEMY_A,
   ADMIN_USER_A,
@@ -210,6 +211,8 @@ test.describe("admin month close", () => {
     await page.goto("/admin/reports");
     await expect(page.getByTestId("admin-month-close")).toBeVisible({ timeout: 45_000 });
 
+    // #862: the money figures lead; the invoice-run counts live in Invoices.
+    await openMonthCloseSection(page, "invoices");
     await expect(page.getByTestId("month-close-tile-generated-value")).toHaveText("42");
     // The sum is the true sent count; the split is in the hint.
     await expect(page.getByTestId("month-close-tile-emailed-value")).toHaveText("40");
@@ -226,6 +229,7 @@ test.describe("admin month close", () => {
     await expect(page.getByTestId("void-reasons")).toContainText("duplicate invoice");
 
     // The tuition discount card moved off Dues.
+    await openMonthCloseSection(page, "discounts");
     await expect(page.getByTestId("tuition-discounts-section")).toContainText("$6,000.00");
     await expect(page.getByTestId("tuition-discounts-row-scholarship")).toContainText("$1,000.00");
 
@@ -246,6 +250,7 @@ test.describe("admin month close", () => {
     await page.route(MONTH_CLOSE_URL, (route) => fulfillJson(route, monthClose()));
 
     await page.goto("/admin/reports");
+    await openMonthCloseSection(page, "autopay-run");
     await expect(page.getByTestId("autopay-run-box")).toBeVisible({ timeout: 45_000 });
     await expect(page.getByTestId("autopay-run-headline")).toContainText("Ran Sep 8, 2026");
     await expect(page.getByTestId("autopay-run-succeeded")).toContainText("8 charges");
@@ -279,6 +284,7 @@ test.describe("admin month close", () => {
     );
 
     await page.goto("/admin/reports");
+    await openMonthCloseSection(page, "autopay-run");
     await expect(page.getByTestId("autopay-run-headline")).toContainText(
       "Runs on Sep 8, 2026 and later",
       { timeout: 45_000 },
@@ -352,10 +358,140 @@ test.describe("admin month close", () => {
       "— of what was billed",
       { timeout: 45_000 },
     );
+    await openMonthCloseSection(page, "invoices");
     await expect(page.getByTestId("month-close-tile-voided")).toContainText("nothing voided");
     await expect(page.getByTestId("void-reasons")).toHaveCount(0);
     // All four checks still render at zero.
     await expect(page.getByTestId("odd-autopay_on_dead_enrollment-count")).toHaveText("0");
+
+    expect(errors, `Console errors: ${errors.join("\n")}`).toEqual([]);
+  });
+
+  // ------------------------------------------------------- verdict (#862)
+
+  test("the page leads with a verdict that counts the month's real problems", async ({
+    page,
+  }) => {
+    const errors = collectConsoleErrors(page);
+    await stubMonthCloseShell(page);
+    // The fixture carries 2 autopay-no-card families, 2 failed charges and 2
+    // invoices never sent.
+    await page.route(MONTH_CLOSE_URL, (route) => fulfillJson(route, monthClose()));
+
+    await page.goto("/admin/reports");
+    const verdict = page.getByTestId("month-close-verdict");
+    await expect(verdict).toBeVisible({ timeout: 45_000 });
+    await expect(page.getByTestId("month-close-verdict-headline")).toHaveText(
+      "6 things need attention",
+    );
+    const issues = page.getByTestId("month-close-verdict-issues");
+    await expect(issues).toContainText("Autopay on with no card on file: 2");
+    await expect(issues).toContainText("Failed autopay charges: 2");
+    await expect(issues).toContainText("Invoices not sent: 2");
+
+    expect(errors, `Console errors: ${errors.join("\n")}`).toEqual([]);
+  });
+
+  test("a clean month says so, in one line", async ({ page }) => {
+    const errors = collectConsoleErrors(page);
+    await stubMonthCloseShell(page);
+    await page.route(MONTH_CLOSE_URL, (route) =>
+      fulfillJson(
+        route,
+        monthClose({
+          invoices: {
+            generated: 42,
+            emailed: 42,
+            autopay_notices: 0,
+            not_sent: 0,
+            voided: 0,
+            voided_cents: 0,
+            void_reasons: [],
+          },
+          autopay_run: {
+            charge_on: "2026-09-08",
+            charge_on_varies: false,
+            has_run: true,
+            scheduled: { count: 10, cents: 120_000 },
+            succeeded: { count: 10, cents: 120_000 },
+            failed: { count: 0, cents: 0 },
+            pending: { count: 0, cents: 0 },
+          },
+          odd: [],
+        }),
+      ),
+    );
+
+    await page.goto("/admin/reports");
+    await expect(page.getByTestId("month-close-verdict-headline")).toHaveText(
+      "Sep 2026 is ready to close",
+      { timeout: 45_000 },
+    );
+    await expect(page.getByTestId("month-close-verdict-issues")).toHaveCount(0);
+
+    expect(errors, `Console errors: ${errors.join("\n")}`).toEqual([]);
+  });
+
+  test("a failed month-close load never reads as ready to close (#837)", async ({ page }) => {
+    await stubMonthCloseShell(page);
+    await page.route(MONTH_CLOSE_URL, (route) =>
+      route.fulfill({ status: 500, contentType: "application/json", body: "{}" }),
+    );
+
+    await page.goto("/admin/reports");
+    await expect(page.getByTestId("admin-reports-month-close-error")).toBeVisible({
+      timeout: 45_000,
+    });
+    // The normalizer zero-fills an absent payload; zero issues must not become
+    // a clean bill of health.
+    await expect(page.getByTestId("month-close-verdict-headline")).toHaveText("—");
+    await expect(page.getByTestId("month-close-verdict-issues")).toHaveCount(0);
+  });
+
+  test("the card wall collapses on a phone and opens on a desktop", async ({ page }) => {
+    const errors = collectConsoleErrors(page);
+    await stubMonthCloseShell(page);
+    await page.route(MONTH_CLOSE_URL, (route) => fulfillJson(route, monthClose()));
+
+    // 400px is the width the design critique measured the 8,950px wall at.
+    await page.setViewportSize({ width: 400, height: 800 });
+    await page.goto("/admin/reports");
+    await expect(page.getByTestId("month-close-verdict")).toBeVisible({ timeout: 45_000 });
+
+    const groups = ["invoices", "autopay-run", "discounts", "analytics", "report-links"];
+    for (const id of groups) {
+      await expect(page.getByTestId(`month-close-section-${id}-toggle`)).toHaveAttribute(
+        "aria-expanded",
+        "false",
+      );
+      await expect(page.getByTestId(`month-close-section-${id}-body`)).not.toBeVisible();
+    }
+
+    // The verdict and the three money figures are the first screen.
+    const verdictBox = await page.getByTestId("month-close-verdict").boundingBox();
+    expect(verdictBox?.y ?? Number.POSITIVE_INFINITY).toBeLessThan(800);
+    await expect(page.getByTestId("month-close-tile-billed-value")).toBeVisible();
+    await expect(page.getByTestId("month-close-tile-outstanding-value")).toBeVisible();
+
+    // Acceptance: at least half the 8,950px wall is gone with groups closed.
+    const collapsedHeight = await page.evaluate(() => document.body.scrollHeight);
+    expect(collapsedHeight).toBeLessThan(4_475);
+
+    // Opening a group is what brings its cards back.
+    await openMonthCloseSection(page, "discounts");
+    await expect(page.getByTestId("tuition-discounts-section")).toBeVisible();
+
+    // The same page on a desktop viewport opens every group by default.
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.reload();
+    await expect(page.getByTestId("month-close-verdict")).toBeVisible({ timeout: 45_000 });
+    for (const id of groups) {
+      await expect(page.getByTestId(`month-close-section-${id}-toggle`)).toHaveAttribute(
+        "aria-expanded",
+        "true",
+      );
+    }
+    await expect(page.getByTestId("autopay-run-box")).toBeVisible();
 
     expect(errors, `Console errors: ${errors.join("\n")}`).toEqual([]);
   });
@@ -381,6 +517,7 @@ test.describe("admin month close", () => {
     });
 
     await page.goto("/admin/reports");
+    await openMonthCloseSection(page, "discounts");
     await expect(page.getByTestId("tuition-discounts-section")).toContainText("$6,000.00", {
       timeout: 45_000,
     });

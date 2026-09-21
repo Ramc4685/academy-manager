@@ -5,6 +5,7 @@ import {
   autopayRunBox,
   formatCollectionRate,
   monthCloseTiles,
+  monthCloseVerdict,
   normalizeMonthClose,
   oddRows,
   warningLine,
@@ -242,6 +243,101 @@ test("a truncated odd list says how many it is showing", () => {
   const paused = rows.find((r) => r.code === "paused_family_invoiced");
   assert.equal(paused.truncatedNote, null);
   assert.equal(paused.items[0].kind, "invoice");
+});
+
+// ---------------------------------------------------------------- verdict
+
+test("a clean month gets a ready-to-close verdict", () => {
+  const verdict = monthCloseVerdict(
+    view({
+      invoices: {
+        generated: 42,
+        emailed: 42,
+        autopay_notices: 0,
+        not_sent: 0,
+        voided: 0,
+        voided_cents: 0,
+        void_reasons: [],
+      },
+      autopay_run: {
+        charge_on: "2026-09-08",
+        charge_on_varies: false,
+        has_run: true,
+        scheduled: { count: 10, cents: 120000 },
+        succeeded: { count: 10, cents: 120000 },
+        failed: { count: 0, cents: 0 },
+        pending: { count: 0, cents: 0 },
+      },
+      odd: [],
+    }),
+  );
+  assert.equal(verdict.ok, true);
+  assert.equal(verdict.issueCount, 0);
+  assert.deepEqual(verdict.issues, []);
+});
+
+test("the verdict counts odd items, failed autopay and unsent invoices", () => {
+  const verdict = monthCloseVerdict(
+    view({
+      // 2 not sent (from the shared fixture) + 2 failed charges + 3 odd items.
+      odd: [
+        { code: "autopay_no_card", label: "Autopay on with no card on file", count: 2, items: [] },
+        {
+          code: "paused_family_invoiced",
+          label: "Paused family still invoiced",
+          count: 1,
+          items: [],
+        },
+      ],
+    }),
+  );
+  assert.equal(verdict.ok, false);
+  assert.equal(verdict.issueCount, 2 + 1 + 2 + 2);
+  // One line per source, so the headline number is always explainable.
+  assert.deepEqual(verdict.issues, [
+    "Paused family still invoiced: 1",
+    "Autopay on with no card on file: 2",
+    "Failed autopay charges: 2",
+    "Invoices not sent: 2",
+  ]);
+});
+
+test("a month that has not charged yet is not blamed for pending autopay", () => {
+  // `pending` before the charge date is the worker's queue, not a problem;
+  // only `failed` counts against the month (issue #862 re-verification).
+  const verdict = monthCloseVerdict(
+    view({
+      invoices: {
+        generated: 10,
+        emailed: 10,
+        autopay_notices: 0,
+        not_sent: 0,
+        voided: 0,
+        voided_cents: 0,
+        void_reasons: [],
+      },
+      autopay_run: {
+        charge_on: "2026-09-08",
+        charge_on_varies: false,
+        has_run: false,
+        scheduled: { count: 10, cents: 120000 },
+        succeeded: { count: 0, cents: 0 },
+        failed: { count: 0, cents: 0 },
+        pending: { count: 10, cents: 120000 },
+      },
+      odd: [],
+    }),
+  );
+  assert.equal(verdict.ok, true);
+  assert.equal(verdict.issueCount, 0);
+});
+
+test("a payload that never arrived reads as zero issues, not a clean bill", () => {
+  // The page gates the sentence on the query state (#837); the pure helper
+  // only reports what the normalized view holds.
+  const verdict = monthCloseVerdict(normalizeMonthClose(undefined, "2026-09"));
+  assert.equal(verdict.issueCount, 0);
+  assert.deepEqual(verdict.issues, []);
 });
 
 // ------------------------------------------------------------- degradation

@@ -25,6 +25,8 @@ export { ErrorNotice } from "./error-notice";
 export { Modal } from "./modal";
 export { OverflowMenu } from "./menu";
 export type { MenuItem } from "./menu";
+export { ContactLinks, contactMenuItems } from "./contact-links";
+export type { ContactPoints } from "./contact-links";
 export { PhoneList, PhoneListRow } from "./phone-row";
 export type { PhoneListRowProps } from "./phone-row";
 export { RallyModal, DialogActions, DialogError, Field, Th } from "./dialog-chrome";

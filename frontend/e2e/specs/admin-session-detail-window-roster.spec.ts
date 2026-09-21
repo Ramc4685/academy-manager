@@ -244,6 +244,76 @@ test.describe("admin session detail — class dates window and roster tabs (#711
     await expect(page.getByTestId("enrollment-row-enr-paused")).toBeVisible();
   });
 
+  /**
+   * #859: most visits to this page are roster visits, but the roster sat below
+   * Coaching staff, Class dates and the Communication pack — on a phone that
+   * put the first student roughly 2,000px down. The three header cards now
+   * follow the roster below `md:` and keep their place above it on a desktop,
+   * where they cost no scroll worth speaking of.
+   */
+  async function documentTop(page: Page, name: string): Promise<number> {
+    return page
+      .getByRole("heading", { name, exact: true })
+      .evaluate((el) => el.getBoundingClientRect().top + window.scrollY);
+  }
+
+  // The viewport is set per test rather than left to the project: the layout
+  // branch this covers is the whole point of the fix, and `chromium-desktop`
+  // is scoped by `testMatch` to four other specs (see playwright.config.ts).
+  const PHONE = { width: 400, height: 800 };
+  const DESKTOP = { width: 1280, height: 800 };
+
+  test("at 400px the roster comes first and its first row is within two screens", async ({
+    page,
+  }) => {
+    await page.setViewportSize(PHONE);
+    await expect(page.getByTestId("enrollment-row-enr-active-1")).toBeVisible();
+
+    const rosterTop = await documentTop(page, "Roster");
+    expect(rosterTop).toBeLessThan(await documentTop(page, "Coaching staff"));
+    expect(rosterTop).toBeLessThan(await documentTop(page, "Class dates"));
+    expect(rosterTop).toBeLessThan(await documentTop(page, "Communication pack"));
+
+    const firstRowTop = await page
+      .getByTestId("enrollment-row-enr-active-1")
+      .evaluate((el) => el.getBoundingClientRect().top + window.scrollY);
+    expect(firstRowTop).toBeLessThan(2 * PHONE.height);
+  });
+
+  test("on a desktop the header cards stay above the roster, in their own order", async ({
+    page,
+  }) => {
+    await page.setViewportSize(DESKTOP);
+    await expect(page.getByTestId("enrollment-row-enr-active-1")).toBeVisible();
+
+    const staffTop = await documentTop(page, "Coaching staff");
+    const datesTop = await documentTop(page, "Class dates");
+    const commsTop = await documentTop(page, "Communication pack");
+    const rosterTop = await documentTop(page, "Roster");
+
+    expect(staffTop).toBeLessThan(datesTop);
+    expect(datesTop).toBeLessThan(commsTop);
+    expect(commsTop).toBeLessThan(rosterTop);
+  });
+
+  test("the header cards collapse and come back, and start open on every screen", async ({
+    page,
+  }) => {
+    const toggle = page.getByTestId("session-dates-toggle");
+    // Open by default: an admin who came for a date should not have to hunt.
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(classDateRows(page).first()).toBeVisible();
+
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(classDateRows(page)).toHaveCount(0);
+    // Collapsing one section leaves the others alone.
+    await expect(page.getByTestId("session-staff-toggle")).toHaveAttribute("aria-expanded", "true");
+
+    await toggle.click();
+    await expect(classDateRows(page)).toHaveCount(6);
+  });
+
   // #521: the page only needs coach names (for the replacement-coach table),
   // but used to fetch the entire tenant user directory on every load.
   test("fetches only coach-role users, not the full tenant directory", async ({ page }) => {

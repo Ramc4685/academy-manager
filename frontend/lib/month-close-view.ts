@@ -320,6 +320,58 @@ export function oddRows(view: AdminMonthCloseView): MonthCloseOddRow[] {
   });
 }
 
+export interface MonthCloseVerdict {
+  /** True when nothing on this month needs a human. */
+  ok: boolean;
+  /** Total things needing attention — the number the headline says. */
+  issueCount: number;
+  /** One `label: count` line per source, in reading order. */
+  issues: string[];
+}
+
+/**
+ * The one-line answer the month-close page leads with (issue #862).
+ *
+ * Reduces the payload the page already has to "ready to close" or "N things
+ * need attention", so the owner does not have to read twenty cards to find
+ * out. Three sources count, and only these three:
+ *
+ *  - the four "Anything odd" checks, which are the evidence for a non-ok
+ *    verdict and stay visible on the page beside the sentence;
+ *  - autopay charges that FAILED — `pending` is the worker's queue before the
+ *    charge date, not a problem, so it is deliberately excluded;
+ *  - invoices generated but never sent, which no other card counts.
+ *
+ * Counts, not categories: "3 things need attention" should survive the owner
+ * opening the odd box and counting rows. No formatting happens here — the
+ * page composes the sentence around `issueCount`.
+ */
+export function monthCloseVerdict(view: AdminMonthCloseView): MonthCloseVerdict {
+  const issues: string[] = [];
+  let issueCount = 0;
+
+  for (const row of oddRows(view)) {
+    if (row.count > 0) {
+      issueCount += row.count;
+      issues.push(`${row.label}: ${row.count}`);
+    }
+  }
+
+  const failed = view.autopay_run.failed.count;
+  if (failed > 0) {
+    issueCount += failed;
+    issues.push(`Failed autopay charges: ${failed}`);
+  }
+
+  const notSent = view.invoices.not_sent;
+  if (notSent > 0) {
+    issueCount += notSent;
+    issues.push(`Invoices not sent: ${notSent}`);
+  }
+
+  return { ok: issueCount === 0, issueCount, issues };
+}
+
 /** One muted line naming every source that could not be read, or null. */
 export function warningLine(view: AdminMonthCloseView): string | null {
   if (view.warnings.length === 0) return null;
