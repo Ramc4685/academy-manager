@@ -124,13 +124,61 @@ export default function AdminDashboardPage() {
 
   return (
     <section data-testid="admin-dashboard" className="space-y-6">
+      {/* Issue #842: attention leads the dashboard, above the KPI strip — the
+          items that need a decision matter more than the tiles that just
+          report a number. */}
+      <Card p={20}>
+        <LaneHeader index="00" title="Needs your attention" />
+        {attentionQuery.isLoading ? (
+          <TableSkeleton rows={3} />
+        ) : attentionQuery.isError ? (
+          <ErrorNotice
+            testId="admin-dashboard-attention-error"
+            message="Attention signals are unavailable right now — this is not an empty list."
+            onRetry={() => void attentionQuery.refetch()}
+            retrying={attentionQuery.isFetching}
+          />
+        ) : (attentionQuery.data?.items ?? []).length > 0 ? (
+          <div className="grid gap-3 lg:grid-cols-2" data-testid="admin-dashboard-attention">
+            {(attentionQuery.data?.items ?? []).map((item) => (
+              <a
+                key={item.attention_id}
+                href={item.href}
+                className="group rounded-lg border border-rally-line bg-white p-4 transition hover:border-rally-cobalt hover:bg-rally-paper"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <Chip variant={attentionChip(item.severity)} label={item.severity.toUpperCase()} />
+                    <h3 className="mt-3 font-display text-[17px] font-semibold text-rally-ink">
+                      {item.title}
+                    </h3>
+                    <p className="mt-1 text-sm leading-5 text-rally-muted">{item.detail}</p>
+                  </div>
+                  <span className="font-mono text-[24px] font-bold tabular-nums text-rally-ink">
+                    {item.count}
+                  </span>
+                </div>
+              </a>
+            ))}
+          </div>
+        ) : (
+          <EmptyState message="No attention items right now." />
+        )}
+      </Card>
+
       {/* KPI strip */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-        <KpiCard
-          label="Sessions today"
-          value={statText(sessionsQuery, () => String(todayCount))}
-          loading={sessionsQuery.isLoading}
-        />
+        <Link
+          href="/admin/sessions"
+          className="block rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-rally-cobalt"
+          data-testid="dashboard-tile-sessions"
+        >
+          <KpiCard
+            label="Sessions today"
+            value={statText(sessionsQuery, () => String(todayCount))}
+            loading={sessionsQuery.isLoading}
+          />
+        </Link>
         {isOwner && (
           <KpiCard
             label="Revenue (month to date)"
@@ -197,45 +245,6 @@ export default function AdminDashboardPage() {
           retrying={collectionsQuery.isFetching}
         />
       )}
-
-      <Card p={20}>
-        <LaneHeader index="00" title="Needs your attention" />
-        {attentionQuery.isLoading ? (
-          <TableSkeleton rows={3} />
-        ) : attentionQuery.isError ? (
-          <ErrorNotice
-            testId="admin-dashboard-attention-error"
-            message="Attention signals are unavailable right now — this is not an empty list."
-            onRetry={() => void attentionQuery.refetch()}
-            retrying={attentionQuery.isFetching}
-          />
-        ) : (attentionQuery.data?.items ?? []).length > 0 ? (
-          <div className="grid gap-3 lg:grid-cols-2" data-testid="admin-dashboard-attention">
-            {(attentionQuery.data?.items ?? []).map((item) => (
-              <a
-                key={item.attention_id}
-                href={item.href}
-                className="group rounded-lg border border-rally-line bg-white p-4 transition hover:border-rally-cobalt hover:bg-rally-paper"
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <Chip variant={attentionChip(item.severity)} label={item.severity.toUpperCase()} />
-                    <h3 className="mt-3 font-display text-[17px] font-semibold text-rally-ink">
-                      {item.title}
-                    </h3>
-                    <p className="mt-1 text-sm leading-5 text-rally-muted">{item.detail}</p>
-                  </div>
-                  <span className="font-mono text-[24px] font-bold tabular-nums text-rally-ink">
-                    {item.count}
-                  </span>
-                </div>
-              </a>
-            ))}
-          </div>
-        ) : (
-          <EmptyState message="No attention items right now." />
-        )}
-      </Card>
 
       {/* Revenue chart (owner only) */}
       {isOwner && (
