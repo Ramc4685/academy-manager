@@ -14,12 +14,16 @@ import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Overline } from "@/components/ds/typography";
 import { PlatformFallbackCard } from "@/components/admin/settings/platform-fallback-card";
+import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 
 export function GatewayPanel() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const [connectError, setConnectError] = useState<string | null>(null);
+  // Disconnecting stops card payments and autopay for every family, so it
+  // gets the same second look as other high-impact admin actions (#838).
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
 
   const stripeParam = searchParams.get("stripe");
   const justConnected = stripeParam === "connected";
@@ -44,12 +48,14 @@ export function GatewayPanel() {
   const disconnectMutation = useMutation({
     mutationFn: disconnectStripe,
     onSuccess: () => {
+      setConfirmDisconnect(false);
       queryClient.invalidateQueries({ queryKey: queryKeys.admin.gateway() });
       const params = new URLSearchParams(searchParams.toString());
       params.delete("stripe");
       router.replace(`?${params.toString()}`);
     },
     onError: () => {
+      setConfirmDisconnect(false);
       setConnectError("Could not disconnect the account. Please try again.");
     },
   });
@@ -102,7 +108,7 @@ export function GatewayPanel() {
 
             {gateway?.stripe_connected ? (
               <button
-                onClick={() => disconnectMutation.mutate()}
+                onClick={() => setConfirmDisconnect(true)}
                 disabled={disconnectMutation.isPending}
                 className="rounded-md border border-red-200 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
               >
@@ -136,6 +142,16 @@ export function GatewayPanel() {
       </Card>
 
       <PlatformFallbackCard />
+      <ConfirmActionDialog
+        open={confirmDisconnect}
+        onOpenChange={setConfirmDisconnect}
+        overline="Payment gateway"
+        title="Disconnect Stripe?"
+        consequence="Families will not be able to pay by card and autopay charges will stop until a Stripe account is connected again. Existing invoices and payment history are kept."
+        confirmLabel="Disconnect Stripe"
+        pending={disconnectMutation.isPending}
+        onConfirm={() => disconnectMutation.mutate()}
+      />
     </section>
   );
 }

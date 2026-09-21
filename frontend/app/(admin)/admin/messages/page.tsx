@@ -520,9 +520,13 @@ function DmComposer({
         if (!body.trim()) return;
         mutation.mutate();
       }}
-      className="flex gap-2"
+      className="flex flex-wrap gap-2"
     >
-      {error && <p role="alert" className="sr-only">{error}</p>}
+      {error && (
+        <p role="alert" className="basis-full text-sm font-medium text-status-red-800">
+          {error}
+        </p>
+      )}
       <input
         type="text"
         value={body}
