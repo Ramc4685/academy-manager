@@ -1,9 +1,9 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 
 import { listAdminUsers, listPayouts } from "@/lib/api/admin";
-import { listMonthlyPayroll } from "@/lib/api/v2/payroll";
+import { listMonthlyPayroll, type AdminMonthlyPayrollRow } from "@/lib/api/v2/payroll";
 import { payslipChipFor } from "@/lib/payslip-chip";
 import { money } from "@/lib/format-money";
 import { Card } from "@/components/ds/card";
@@ -15,8 +15,6 @@ import { EmptyState } from "@/components/ds/empty-state";
 
 /** All-coaches payslip overview, moved from the standalone `/admin/coach-payslip` page onto the Payslips tab of Payouts. */
 export function PayslipsPanel() {
-  const month = new Date().toISOString().slice(0, 7);
-
   const coachesQuery = useQuery({
     queryKey: ["admin", "users", "coach"],
     queryFn: () => listAdminUsers("coach"),
@@ -25,18 +23,34 @@ export function PayslipsPanel() {
     queryKey: ["admin", "finance", "payouts", "coach-payslip"],
     queryFn: listPayouts,
   });
+
+  const payouts = payoutsQuery.data?.payouts ?? [];
+
   // #845: paid_at alone can't tell an approved-but-unpaid payslip from a draft
-  // one, so also pull this month's payroll status per coach.
-  const payrollQuery = useQuery({
-    queryKey: ["admin", "payroll", month, "coach-payslip"],
-    queryFn: () => listMonthlyPayroll(month),
+  // one, so also pull the payroll status per coach for the *same period* as
+  // each coach's most recent payout — not always the current calendar month,
+  // since that payout is very commonly for the previous month.
+  const payoutMonths = Array.from(
+    new Set(payouts.map((payout) => payout.period_start.slice(0, 7))),
+  );
+  const payrollQueries = useQueries({
+    queries: payoutMonths.map((month) => ({
+      queryKey: ["admin", "payroll", month, "coach-payslip"],
+      queryFn: () => listMonthlyPayroll(month),
+    })),
   });
+  const payrollRowsByMonth = new Map<string, AdminMonthlyPayrollRow[]>();
+  payoutMonths.forEach((month, index) => {
+    payrollRowsByMonth.set(month, payrollQueries[index]?.data?.rows ?? []);
+  });
+  const payrollLoading = payrollQueries.some((query) => query.isLoading);
+  const payrollError = payrollQueries.some((query) => query.isError);
 
   const coaches = coachesQuery.data?.users ?? [];
-  const payouts = payoutsQuery.data?.payouts ?? [];
-  const payrollRows = payrollQuery.data?.rows ?? [];
   const rows = coaches.map((coach) => {
     const payout = payouts.find((row) => row.coach_id === coach.user_id) ?? null;
+    const payoutMonth = payout?.period_start.slice(0, 7) ?? null;
+    const payrollRows = payoutMonth ? payrollRowsByMonth.get(payoutMonth) ?? [] : [];
     const payrollRow = payrollRows.find((row) => row.coach_id === coach.user_id) ?? null;
     return {
       coach,
@@ -49,8 +63,8 @@ export function PayslipsPanel() {
     };
   });
 
-  const loading = coachesQuery.isLoading || payoutsQuery.isLoading || payrollQuery.isLoading;
-  const error = coachesQuery.isError || payoutsQuery.isError || payrollQuery.isError;
+  const loading = coachesQuery.isLoading || payoutsQuery.isLoading || payrollLoading;
+  const error = coachesQuery.isError || payoutsQuery.isError || payrollError;
 
   return (
     <section data-testid="admin-coach-payslip" className="space-y-5">
