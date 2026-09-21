@@ -20,9 +20,54 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+import backend.v2.composition.admin as admin_composition
 from backend.v2.contexts.enrollment.domain.models import Session
 
-NOW = datetime.now(UTC)
+# Frozen at a fixed, real Monday so this suite's outcome never depends on
+# the day or time it happens to run (#872): `maintain_session_occurrences`
+# and its helpers read the wall clock live, and on the schedule's own
+# weekday, at or after its 09:00 start, today's occurrence is already
+# "started" and the #589/#593 rule leaves it untouched — which used to flip
+# 8 assertions in this file depending on when the suite ran. 2026-01-05
+# 12:00 UTC is 06:00 America/Chicago (standard time, no DST in January):
+# before the session's 09:00 start, so every "future Monday" assertion below
+# exercises the not-yet-started path on any real-world date.
+NOW = datetime(2026, 1, 5, 12, 0, tzinfo=UTC)
+
+
+class _FrozenClock(datetime):
+    """A ``datetime`` subclass whose ``.now()`` always returns a fixed instant.
+
+    Monkeypatched onto ``backend.v2.composition.admin.datetime`` — the same
+    technique ``test_admin_sessions.py`` uses — because
+    ``maintain_session_occurrences`` and the helpers it calls
+    (``_series_occurrence_candidates``, ``_is_unsettled_future_occurrence``,
+    etc.) all read ``datetime.now(UTC)`` off that module's imported name.
+    freezegun is not a dependency here, so this file uses no new one.
+    """
+
+    _frozen: datetime = NOW
+
+    @classmethod
+    def now(cls, tz=None):
+        if tz is None:
+            return cls._frozen.replace(tzinfo=None)
+        return cls._frozen.astimezone(tz)
+
+
+def _freeze(monkeypatch: pytest.MonkeyPatch, instant: datetime) -> None:
+    frozen = type("_FrozenClock", (_FrozenClock,), {"_frozen": instant})
+    monkeypatch.setattr(admin_composition, "datetime", frozen)
+
+
+@pytest.fixture(autouse=True)
+def _frozen_admin_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every test in this file sees the fixed Monday 06:00 Chicago instant
+    above by default — before the 09:00 class starts — so
+    ``maintain_session_occurrences`` always treats today's occurrence as
+    not-yet-started, regardless of the real date this suite runs on.
+    """
+    _freeze(monkeypatch, NOW)
 
 
 def _session(days: list[str]) -> Session:
@@ -63,18 +108,18 @@ async def _occurrence_ids(db) -> set[str]:
 
 
 async def _future_occurrence_ids(db) -> set[str]:
-    """Occurrences the cascade may still touch: ``start_at`` from now on.
-
-    The fixture materialises from today, so on the schedule's own weekday,
-    once the 09:00 class has started, today's row is already history — the
-    cascade leaves it alone by design, exactly as
-    ``test_schedule_edit_leaves_past_occurrences_alone`` pins. Asserting
-    re-key behaviour on it made this suite fail every Monday (#869).
+    """Occurrences the cascade may still touch: ``start_at`` from the frozen
+    ``NOW`` on. Compares against the same fixed instant the production code
+    sees (via ``_frozen_admin_clock``) rather than the real wall clock, so
+    the result is deterministic regardless of when this suite actually runs
+    (#872). ``NOW`` sits before today's 09:00 Chicago start, so today's own
+    occurrence still counts as "future" here, matching the cascade's own
+    not-yet-started view of it.
     """
     return {
         str(doc["occurrence_id"])
         async for doc in db["session_occurrences"].find(
-            {"academy_id": "test-academy", "start_at": {"$gte": datetime.now(UTC)}}
+            {"academy_id": "test-academy", "start_at": {"$gte": NOW}}
         )
     }
 
@@ -182,3 +227,56 @@ async def test_schedule_edit_still_clears_occurrences_nobody_depends_on(db, acad
     surviving = await _occurrence_ids(db)
     assert not (surviving & monday_ids)
     assert surviving
+
+
+@pytest.mark.asyncio
+async def test_schedule_edit_keeps_todays_started_class_but_rekeys_later_weeks(
+    db, acad, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pins the exact edge case #869/#872 are about, instead of leaving it
+    accidental: once today's own class has started, a schedule edit must
+    never touch it (#589/#593) — but a LATER Monday, which has not started,
+    is still re-keyed/cleared like any other future occurrence in the
+    series.
+    """
+    maintain = _cascade(db)
+    today_id = "sess-783:2026-01-05:09:00"
+    next_monday_id = "sess-783:2026-01-12:09:00"
+
+    # 06:00 Chicago: before today's class starts. Materialise the Monday
+    # series, including today's own occurrence.
+    _freeze(monkeypatch, NOW)
+    await maintain(_session(["Mon"]))
+    materialised = await _occurrence_ids(db)
+    assert {today_id, next_monday_id} <= materialised
+    today_before = await db["session_occurrences"].find_one(
+        {"academy_id": "test-academy", "occurrence_id": today_id}
+    )
+    assert today_before is not None
+    assert today_before["status"] == "scheduled"
+
+    # The admin edits the schedule to Tuesday at 10:00 Chicago (16:00
+    # UTC) — AFTER today's 09:00 class has already started.
+    _freeze(monkeypatch, NOW + timedelta(hours=4))
+    await maintain(_session(["Tue"]))
+
+    surviving = await _occurrence_ids(db)
+
+    # Today's class already started: the #589/#593 rule means the edit
+    # never reaches it at all. Same status, same occurrence_id, still
+    # resolvable — not soft-cancelled, not deleted.
+    today_after = await db["session_occurrences"].find_one(
+        {"academy_id": "test-academy", "occurrence_id": today_id}
+    )
+    assert today_after is not None
+    assert today_after["status"] == "scheduled"
+    assert "cancellation_reason" not in today_after
+    assert today_id in surviving
+
+    # Next Monday has NOT started yet and nothing depends on it, so it is
+    # still cleared like any other clean future occurrence (matching
+    # test_schedule_edit_still_clears_occurrences_nobody_depends_on).
+    assert next_monday_id not in surviving
+
+    # ...and the new Tuesday schedule was still materialised.
+    assert surviving - {today_id}
