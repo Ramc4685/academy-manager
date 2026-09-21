@@ -1,6 +1,6 @@
 # fix-type-partial-indexes-serve-lookups
 
-PR: #TBD
+PR: #879
 
 ## What changed
 
