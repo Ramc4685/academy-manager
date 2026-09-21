@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, date, datetime
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, model_validator
@@ -40,6 +40,11 @@ from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
 from backend.v2.shared.ids import new_ulid
+
+if TYPE_CHECKING:
+    from backend.v2.contexts.student_progress.application.use_cases.get_level_up_queue import (
+        LevelUpQueueEntry,
+    )
 
 router = APIRouter(tags=["admin-progress"])
 _PATHWAY_PROGRESS_PAGE_SIZE = 200
@@ -433,7 +438,9 @@ async def get_level_up_queue(
     return {"queue": await _with_display_names(queue, use_cases)}
 
 
-async def _with_display_names(queue: list, use_cases: AdminUseCases) -> list[dict[str, object]]:
+async def _with_display_names(
+    queue: list[LevelUpQueueEntry], use_cases: AdminUseCases
+) -> list[dict[str, object]]:
     """Add read-only ``*_name`` fields to each level-up row (issue #841).
 
     The admin queue is read by a person, so it must show the student, the
