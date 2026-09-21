@@ -1353,6 +1353,9 @@ test.describe("Rally admin shell", () => {
     await expect(page.getByTestId("admin-settings-academy")).toBeVisible();
 
     const displayName = page.getByLabel("Display name");
+    // Wait for the loaded value first: filling before the academy read
+    // resolves races the panel's seed and leaves a merged value (flaked in CI).
+    await expect(displayName).toHaveValue("Academy E2E");
     await displayName.fill("Rally Academy Edited");
 
     let dialogs = 0;
