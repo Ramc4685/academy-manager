@@ -62,13 +62,33 @@ describe("PathwayPlacementUndoWindow", () => {
     expect(commit).toHaveBeenCalledTimes(1);
   });
 
-  it("a second select flushes the first rather than dropping it", () => {
+  it("a second select for the same student replaces the first without flushing it", () => {
     const first = vi.fn();
     const second = vi.fn();
     const held = new PathwayPlacementUndoWindow();
 
     held.schedule({ studentId: "st1", levelId: "lvl1" }, first);
     held.schedule({ studentId: "st1", levelId: "lvl2" }, second);
+
+    // The misclick-and-correct flow: the first (now-superseded) pick must
+    // never be sent, silently or otherwise.
+    expect(first).not.toHaveBeenCalled();
+    expect(second).not.toHaveBeenCalled();
+    expect(held.pending).toEqual({ studentId: "st1", levelId: "lvl2" });
+
+    vi.advanceTimersByTime(PATHWAY_PLACEMENT_UNDO_WINDOW_MS);
+    expect(first).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledTimes(1);
+    expect(second).toHaveBeenCalledWith({ studentId: "st1", levelId: "lvl2" });
+  });
+
+  it("a select for a different student flushes the first rather than dropping it", () => {
+    const first = vi.fn();
+    const second = vi.fn();
+    const held = new PathwayPlacementUndoWindow();
+
+    held.schedule({ studentId: "st1", levelId: "lvl1" }, first);
+    held.schedule({ studentId: "st2", levelId: "lvl2" }, second);
 
     expect(first).toHaveBeenCalledTimes(1);
     expect(first).toHaveBeenCalledWith({ studentId: "st1", levelId: "lvl1" });

@@ -47,12 +47,21 @@ export class PathwayPlacementUndoWindow {
   /**
    * Hold a placement change for the undo window.
    *
-   * An already-held change is flushed, not discarded: a second select before
-   * the first window elapses is a further edit, never a cancellation of the
-   * first — the same "never lose marks" rule `BulkMarkUndoWindow` follows.
+   * A re-pick for the SAME student replaces the held change outright — this
+   * is a single-valued field, so a same-student re-pick supersedes the prior
+   * pick rather than confirming it. Flushing here (as an earlier version
+   * did) would silently commit the now-superseded first pick with no
+   * confirm/undo, defeating #859's "no silent save" requirement for the
+   * realistic misclick-then-correct flow. A pick for a DIFFERENT student is
+   * unrelated and flushes the old one, following `BulkMarkUndoWindow`'s
+   * "never lose marks" rule for its accumulating marks.
    */
   schedule(change: PathwayPlacementChange, commit: PathwayPlacementCommit): void {
-    this.flush();
+    if (this.held && this.held.change.studentId === change.studentId) {
+      this.cancel();
+    } else {
+      this.flush();
+    }
     this.held = { change: { ...change }, commit };
     this.timer = setTimeout(() => {
       this.timer = null;
