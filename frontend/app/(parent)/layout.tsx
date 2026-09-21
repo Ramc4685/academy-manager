@@ -201,7 +201,8 @@ function BottomTab({
       href={href as Parameters<typeof Link>[0]["href"]}
       data-testid={testId}
       className="relative flex flex-1 min-h-touch flex-col items-center justify-center gap-0.5 transition-all duration-200"
-      style={{ color: active ? "#facc15" : "#475569" }}
+      // #94a3b8 on the night bar is 7.5:1; the old #475569 was 2.5:1 (WCAG AA fail).
+      style={{ color: active ? "#facc15" : "#94a3b8" }}
     >
       {active && (
         <span
