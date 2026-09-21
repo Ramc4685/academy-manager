@@ -8,7 +8,7 @@
  * cancel session.
  */
 
-import { Fragment, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -33,8 +33,10 @@ import {
 } from "@/lib/api/admin";
 import { getFullPathway, placeStudentInLevel } from "@/lib/api/curriculum";
 import { parseAcademyInstant } from "@/lib/format/academy-time";
+import { PathwayPlacementUndoWindow } from "@/lib/admin/pathway-placement-undo";
 import { queryKeys } from "@/lib/query/keys";
 import { useIsPhone } from "@/lib/use-is-phone";
+import { usePersistedOpen } from "@/lib/use-persisted-open";
 
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
@@ -192,10 +194,12 @@ export default function AdminSessionDetailPage() {
   );
   const [assistantsOpen, setAssistantsOpen] = useState(false);
   // #859: the three context cards. Open on first paint everywhere — see
-  // `SessionSectionCard`.
-  const [staffOpen, setStaffOpen] = useState(true);
-  const [datesOpen, setDatesOpen] = useState(true);
-  const [commsOpen, setCommsOpen] = useState(true);
+  // `SessionSectionCard`. Remembered per device, not per session: an admin
+  // who keeps one closed wants that everywhere they open a session detail
+  // page, so the keys below are fixed strings, not sessionId-scoped.
+  const [staffOpen, setStaffOpen] = usePersistedOpen("admin.session-detail.staffOpen");
+  const [datesOpen, setDatesOpen] = usePersistedOpen("admin.session-detail.datesOpen");
+  const [commsOpen, setCommsOpen] = usePersistedOpen("admin.session-detail.commsOpen");
   const [activeTab, setActiveTab] = useState<DetailTab>("roster");
   const [rosterView, setRosterView] = useState<RosterView>("active");
   const [showAllDates, setShowAllDates] = useState(false);
@@ -366,6 +370,68 @@ export default function AdminSessionDetailPage() {
       });
     },
   });
+
+  /**
+   * #859 remainder: a pathway-level pick from the roster's dropdown used to
+   * fire `placementMutation` straight from `onChange` — a misclick silently
+   * committed a new placement with no way back. It is now HELD for a few
+   * seconds behind `PathwayPlacementUndoWindow` (same DELAYED SAVE shape as
+   * `BulkMarkUndoWindow`, #846) while a bar offers Undo; only the window
+   * elapsing, another select, or leaving the page actually sends it.
+   */
+  const [pendingPlacement, setPendingPlacement] = useState<{
+    studentId: string;
+    studentName: string;
+    levelId: string;
+    levelName: string;
+  } | null>(null);
+  const placementUndoRef = useRef<PathwayPlacementUndoWindow | null>(null);
+  const placementUndoWindow = (): PathwayPlacementUndoWindow =>
+    (placementUndoRef.current ??= new PathwayPlacementUndoWindow());
+  // Re-pointed after every render so a change that leaves late still calls
+  // the latest mutation instance, matching the coach page's `commitBulkRef`.
+  const commitPlacementRef = useRef<
+    (change: { studentId: string; programId?: string | null; levelId: string }) => void
+  >(() => undefined);
+  useEffect(() => {
+    commitPlacementRef.current = (change) => placementMutation.mutate(change);
+  });
+  // Never lose a held placement change: leaving this route unmounts the page
+  // and must flush whatever is still waiting, the same rule #846 applies to
+  // a held attendance batch.
+  useEffect(() => {
+    return () => {
+      placementUndoRef.current?.flush();
+    };
+  }, []);
+
+  function handlePathwayLevelChange(enrollment: AdminEnrollmentView, levelId: string): void {
+    const level = pathwayLevels.find((l) => l.level_id === levelId);
+    setPendingPlacement({
+      studentId: enrollment.student_id,
+      studentName: enrollment.full_name,
+      levelId,
+      levelName: level?.name ?? "",
+    });
+    placementUndoWindow().schedule(
+      { studentId: enrollment.student_id, programId: enrollment.pathway_program_id, levelId },
+      (change) => {
+        commitPlacementRef.current(change);
+        setPendingPlacement((current) =>
+          current?.studentId === change.studentId && current.levelId === change.levelId
+            ? null
+            : current,
+        );
+      },
+    );
+  }
+
+  function handleUndoPathwayPlacement(): void {
+    // cancel() returns null once the change has gone out, so a tap a beat
+    // too late is a no-op rather than a half-undone placement.
+    placementUndoWindow().cancel();
+    setPendingPlacement(null);
+  }
 
   /**
    * Coaching staff, class dates and the communication pack (#859). One value
@@ -602,6 +668,27 @@ export default function AdminSessionDetailPage() {
               );
             })}
           </div>
+          {pendingPlacement && (
+            <div
+              data-testid="pathway-placement-undo-bar"
+              role="status"
+              className="mb-3 flex items-center gap-2 rounded-md border p-2"
+              style={{ borderColor: "var(--rally-line)", background: "var(--rally-paper)" }}
+            >
+              <p className="min-w-0 flex-1 text-sm text-rally-ink">
+                Moved {pendingPlacement.studentName} to{" "}
+                {pendingPlacement.levelName || "the selected level"}
+              </p>
+              <Button
+                variant="secondary"
+                size="sm"
+                data-testid="pathway-placement-undo"
+                onClick={handleUndoPathwayPlacement}
+              >
+                Undo
+              </Button>
+            </div>
+          )}
           {enrollmentsQuery.isLoading ? (
             <TableSkeleton />
           ) : rosterRows.length === 0 ? (
@@ -619,13 +706,8 @@ export default function AdminSessionDetailPage() {
               updatingPlacementStudentId={
                 placementMutation.isPending ? placementMutation.variables?.studentId : null
               }
-              onPathwayLevelChange={(enrollment, levelId) =>
-                placementMutation.mutate({
-                  studentId: enrollment.student_id,
-                  programId: enrollment.pathway_program_id,
-                  levelId,
-                })
-              }
+              pendingPlacement={pendingPlacement}
+              onPathwayLevelChange={handlePathwayLevelChange}
               onDelete={(enrollment) => setRemoveTarget(enrollment)}
               onHold={(enrollment) => setHoldTarget(enrollment)}
               onPause={(enrollment) => setPauseTarget(enrollment)}

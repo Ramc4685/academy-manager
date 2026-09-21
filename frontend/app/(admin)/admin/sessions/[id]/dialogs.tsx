@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import * as Dialog from "@radix-ui/react-dialog";
 
 import {
   createEnrollment,
@@ -38,6 +37,7 @@ import {
 import type { ApiError } from "@/lib/api/client";
 
 import { useIsOwner } from "@/components/admin/owner-context";
+import { DEPARTURE_ACTION_DESCRIPTION } from "@/components/admin/enrollment/departure-actions";
 import { Button } from "@/components/ds/button";
 import { DialogActions, DialogError, Field, RallyModal as RallyDialog } from "@/components/ds/dialog-chrome";
 
@@ -310,6 +310,7 @@ export function PauseEnrollmentDialog({
           Pausing releases the seat and creates a billing deferral that stays visible until the
           review or resume rule is handled.
         </p>
+        <p className="text-xs text-rally-subtle">{DEPARTURE_ACTION_DESCRIPTION.pause}</p>
         <Field label="Reason">
           <textarea
             value={reason}
@@ -452,6 +453,7 @@ export function TransferEnrollmentDialog({
           Billing follows the new class&apos;s price from the effective date — the current
           period&apos;s invoice is adjusted, it is not charged again.
         </p>
+        <p className="text-xs text-rally-subtle">{DEPARTURE_ACTION_DESCRIPTION.transfer}</p>
         <DialogActions>
           <Button variant="secondary" size="sm" type="button" onClick={onClose}>
             Cancel
@@ -623,7 +625,7 @@ export function WithdrawalCreditDialog({
   });
   const preview = previewMutation.data;
   return (
-    <Dialog.Root
+    <RallyDialog
       open={enrollment !== null}
       onOpenChange={(open) => {
         if (open) return;
@@ -632,149 +634,136 @@ export function WithdrawalCreditDialog({
         setChosenOutcome(null);
         onClose();
       }}
+      // Title/labels use the "Drop" vocabulary to match the launcher (the
+      // shared DepartureActions menu) — one word for one action across the
+      // interface. e2e/specs/admin-enrollment-withdraw.spec.ts asserts on
+      // this dialog's accessible name; keep the two in sync.
+      title="Drop enrollment"
+      description={
+        enrollment
+          ? `Drop ${enrollment.full_name} — releases the seat, stops autopay, and settles unused-class credit per the outcome below.`
+          : ""
+      }
+      overline="Lifecycle"
     >
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40" />
-        <Dialog.Content
-          className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl bg-white p-6 shadow-xl focus:outline-none dark:bg-neutral-900"
-          aria-describedby="withdrawal-credit-desc"
-        >
-          {/* Title/labels use the "Drop" vocabulary to match the launcher
-              (the shared DepartureActions menu) — one word for one action
-              across the interface. e2e/specs/admin-enrollment-withdraw.spec.ts
-              asserts on this dialog's accessible name; keep the two in sync. */}
-          <Dialog.Title className="mb-1 text-lg font-semibold">Drop enrollment</Dialog.Title>
-          <Dialog.Description id="withdrawal-credit-desc" className="mb-4 text-sm text-neutral-500">
-            {enrollment
-              ? `Drop ${enrollment.full_name} — releases the seat, stops autopay, and settles unused-class credit per the outcome below.`
-              : ""}
-          </Dialog.Description>
-          {error && (
-            <p role="alert" className="mb-3 rounded-md bg-red-50 p-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
-              {error}
+      {error && <DialogError message={error} />}
+      <div className="space-y-3">
+        <Field label="Outcome" required>
+          <select
+            value={outcome}
+            onChange={(event) => {
+              setChosenOutcome(event.target.value as WithdrawalOutcome);
+              previewMutation.reset();
+            }}
+            className={inputClass}
+          >
+            {outcomeOptions.map((option) => (
+              <option
+                key={option.value}
+                value={option.value}
+                disabled={option.disabledReason !== undefined}
+              >
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+        {outcomeOptions.some((option) => option.disabledReason) && (
+          <p className="text-xs text-neutral-500">
+            {outcomeOptions.find((option) => option.disabledReason)?.disabledReason}
+          </p>
+        )}
+        {deferToPeriodEnd ? (
+          <p
+            data-testid="withdraw-defer-notice"
+            className="rounded-md bg-neutral-50 p-3 text-sm text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300"
+          >
+            This academy drops at the end of the billing period. The student keeps
+            their place and their seat until the last day of this month, and the drop
+            is applied automatically then. You can call it off until it runs.
+          </p>
+        ) : (
+          <Field label="Drop date" required>
+            <input
+              type="date"
+              required
+              value={withdrawalDate}
+              onChange={(event) => {
+                setWithdrawalDate(event.target.value);
+                previewMutation.reset();
+              }}
+              className={inputClass}
+            />
+          </Field>
+        )}
+        {outcome === "credit" && (
+          <button
+            type="button"
+            disabled={!withdrawalDate || previewMutation.isPending}
+            onClick={() => previewMutation.mutate()}
+            className="min-h-touch rounded-md border border-blue-300 px-3 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-60 dark:border-blue-700 dark:text-blue-300"
+          >
+            {previewMutation.isPending ? "Previewing..." : "Preview credit"}
+          </button>
+        )}
+        {preview && (
+          <div className="rounded-md bg-neutral-50 p-3 text-sm dark:bg-neutral-800">
+            <p className="font-medium">Credit: {preview.display_amount}</p>
+            <p className="mt-1 text-neutral-500">
+              {preview.unused_classes} of {preview.total_classes} unused classes.
             </p>
-          )}
-          <div className="space-y-3">
-            <Field label="Outcome" required>
-              <select
-                value={outcome}
-                onChange={(event) => {
-                  setChosenOutcome(event.target.value as WithdrawalOutcome);
-                  previewMutation.reset();
-                }}
-                className={inputClass}
-              >
-                {outcomeOptions.map((option) => (
-                  <option
-                    key={option.value}
-                    value={option.value}
-                    disabled={option.disabledReason !== undefined}
-                  >
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            {outcomeOptions.some((option) => option.disabledReason) && (
-              <p className="text-xs text-neutral-500">
-                {outcomeOptions.find((option) => option.disabledReason)?.disabledReason}
-              </p>
-            )}
-            {deferToPeriodEnd ? (
-              <p
-                data-testid="withdraw-defer-notice"
-                className="rounded-md bg-neutral-50 p-3 text-sm text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300"
-              >
-                This academy drops at the end of the billing period. The student keeps
-                their place and their seat until the last day of this month, and the drop
-                is applied automatically then. You can call it off until it runs.
-              </p>
-            ) : (
-              <Field label="Drop date" required>
-                <input
-                  type="date"
-                  required
-                  value={withdrawalDate}
-                  onChange={(event) => {
-                    setWithdrawalDate(event.target.value);
-                    previewMutation.reset();
-                  }}
-                  className={inputClass}
-                />
-              </Field>
-            )}
-            {outcome === "credit" && (
-              <button
-                type="button"
-                disabled={!withdrawalDate || previewMutation.isPending}
-                onClick={() => previewMutation.mutate()}
-                className="min-h-touch rounded-md border border-blue-300 px-3 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-60 dark:border-blue-700 dark:text-blue-300"
-              >
-                {previewMutation.isPending ? "Previewing..." : "Preview credit"}
-              </button>
-            )}
-            {preview && (
-              <div className="rounded-md bg-neutral-50 p-3 text-sm dark:bg-neutral-800">
-                <p className="font-medium">Credit: {preview.display_amount}</p>
-                <p className="mt-1 text-neutral-500">
-                  {preview.unused_classes} of {preview.total_classes} unused classes.
-                </p>
-                <p className="mt-1 text-xs text-neutral-500">{preview.message}</p>
-              </div>
-            )}
-            <Field label="Reason code">
-              <select
-                value={reasonCode}
-                data-testid="withdraw-reason-code"
-                onChange={(event) =>
-                  setReasonCode(event.target.value as DepartureReasonCode | "")
-                }
-                className={inputClass}
-              >
-                <option value="">Not specified</option>
-                {DEPARTURE_REASON_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <p className="mt-1 text-xs text-neutral-500">
-                Groups this departure in the leaving report. The note still says the rest.
-              </p>
-            </Field>
-            <Field label="Admin note">
-              <textarea
-                value={adminNote}
-                onChange={(event) => setAdminNote(event.target.value)}
-                rows={3}
-                className={inputClass}
-              />
-            </Field>
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                type="button"
-                onClick={onClose}
-                className="min-h-touch rounded-md border border-neutral-300 px-4 text-sm dark:border-neutral-700"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={
-                  !withdrawalDate ||
-                  approveMutation.isPending ||
-                  (outcome === "credit" && !preview)
-                }
-                onClick={() => approveMutation.mutate()}
-                className="min-h-touch rounded-md bg-orange-600 px-4 text-sm font-medium text-white hover:bg-orange-700 disabled:opacity-60"
-              >
-                {approveMutation.isPending ? "Saving..." : "Drop"}
-              </button>
-            </div>
+            <p className="mt-1 text-xs text-neutral-500">{preview.message}</p>
           </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+        )}
+        <Field label="Reason code">
+          <select
+            value={reasonCode}
+            data-testid="withdraw-reason-code"
+            onChange={(event) =>
+              setReasonCode(event.target.value as DepartureReasonCode | "")
+            }
+            className={inputClass}
+          >
+            <option value="">Not specified</option>
+            {DEPARTURE_REASON_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs text-neutral-500">
+            Groups this departure in the leaving report. The note still says the rest.
+          </p>
+        </Field>
+        <Field label="Admin note">
+          <textarea
+            value={adminNote}
+            onChange={(event) => setAdminNote(event.target.value)}
+            rows={3}
+            className={inputClass}
+          />
+        </Field>
+        <p className="text-xs text-rally-subtle">{DEPARTURE_ACTION_DESCRIPTION.drop}</p>
+        <DialogActions>
+          <Button variant="secondary" size="sm" type="button" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="danger"
+            size="sm"
+            type="button"
+            disabled={
+              !withdrawalDate ||
+              approveMutation.isPending ||
+              (outcome === "credit" && !preview)
+            }
+            onClick={() => approveMutation.mutate()}
+          >
+            {approveMutation.isPending ? "Saving..." : "Drop"}
+          </Button>
+        </DialogActions>
+      </div>
+    </RallyDialog>
   );
 }
 
@@ -844,6 +833,7 @@ export function RemoveEnrollmentDialog({
           one, voids future unpaid invoices and turns off autopay for this enrollment. No credit
           is issued — there is no outcome choice here, unlike Drop.
         </p>
+        <p className="text-xs text-rally-subtle">{DEPARTURE_ACTION_DESCRIPTION.delete}</p>
         <DialogActions>
           <Button variant="secondary" size="sm" type="button" onClick={onClose}>
             Cancel
