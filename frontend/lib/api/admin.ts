@@ -3111,6 +3111,7 @@ export interface MakeupRequestAdminRow {
   missed_session_id?: string | null;
   missed_session_title?: string | null;
   missed_start_at?: string | null;
+  requested_target_session_id?: string | null;
   requested_target_session_title?: string | null;
   requested_target_start_at?: string | null;
   approved_target_session_id?: string | null;

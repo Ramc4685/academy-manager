@@ -564,6 +564,11 @@ async def test_list_makeup_requests_for_admin_resolves_class_name_and_dates() ->
     assert row.missed_session_id == "session-missed"
     assert row.missed_session_title == "U10 Tuesday"
     assert row.missed_start_at == _missed_occurrence().start_at
+    # The requested target can live in a different session than the missed
+    # class. The admin approve picker fetches dates by session id, so the row
+    # must carry the requested target's own session id — not just its title —
+    # or the picker would offer dates from the wrong class.
+    assert row.requested_target_session_id == "session-target"
     assert row.requested_target_session_title == "U10 Thursday"
     assert row.requested_target_start_at == _occurrence().start_at
 

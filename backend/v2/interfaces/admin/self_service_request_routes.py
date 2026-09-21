@@ -50,6 +50,7 @@ class MakeupRequestAdminRow(BaseModel):
     missed_session_id: str | None = None
     missed_session_title: str | None = None
     missed_start_at: datetime | None = None
+    requested_target_session_id: str | None = None
     requested_target_session_title: str | None = None
     requested_target_start_at: datetime | None = None
     approved_target_session_id: str | None = None

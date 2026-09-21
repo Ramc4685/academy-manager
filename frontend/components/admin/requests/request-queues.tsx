@@ -288,7 +288,11 @@ function ApproveMakeupDialog({
   onCancel: () => void;
   onConfirm: (targetOccurrenceId: string) => void;
 }) {
-  const sessionId = request.approved_target_session_id ?? request.missed_session_id ?? "";
+  const sessionId =
+    request.approved_target_session_id ??
+    request.requested_target_session_id ??
+    request.missed_session_id ??
+    "";
   const [occurrenceId, setOccurrenceId] = useState(request.requested_target_occurrence_id ?? "");
   const occurrencesQuery = useQuery({
     queryKey: queryKeys.admin.sessionOccurrences(sessionId),

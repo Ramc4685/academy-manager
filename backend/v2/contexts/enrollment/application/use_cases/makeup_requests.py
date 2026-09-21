@@ -362,6 +362,7 @@ class MakeupRequestAdminView(BaseModel):
     missed_session_id: str | None = None
     missed_session_title: str | None = None
     missed_start_at: datetime | None = None
+    requested_target_session_id: str | None = None
     requested_target_session_title: str | None = None
     requested_target_start_at: datetime | None = None
     approved_target_session_id: str | None = None
@@ -457,6 +458,7 @@ class ListMakeupRequestsForAdmin:
                 missed_session_id=session_of(r.missed_occurrence_id),
                 missed_session_title=title_of(r.missed_occurrence_id),
                 missed_start_at=start_of(r.missed_occurrence_id),
+                requested_target_session_id=session_of(r.requested_target_occurrence_id),
                 requested_target_session_title=title_of(r.requested_target_occurrence_id),
                 requested_target_start_at=start_of(r.requested_target_occurrence_id),
                 approved_target_session_id=session_of(r.approved_target_occurrence_id),
