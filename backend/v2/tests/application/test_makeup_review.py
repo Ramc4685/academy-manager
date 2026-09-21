@@ -140,6 +140,9 @@ class _FakeOccurrences:
     async def get(self, occurrence_id: str) -> SessionOccurrence | None:
         return self._occurrences.get(occurrence_id)
 
+    async def get_many(self, occurrence_ids: list[str]) -> list[SessionOccurrence]:
+        return [self._occurrences[oid] for oid in occurrence_ids if oid in self._occurrences]
+
 
 class _FakeEnrollments:
     def __init__(self, enrollments: list[Enrollment] | None = None) -> None:
@@ -205,14 +208,14 @@ class _FakeAbsenceNotices:
         return sorted(self._notices, key=lambda n: n.submitted_at, reverse=True)
 
 
-def _session(session_id: str = "session-target", capacity: int = 2):
+def _session(session_id: str = "session-target", capacity: int = 2, title: str = "Target session"):
     from backend.v2.contexts.enrollment.domain.models import Session
 
     return Session(
         session_id=session_id,
         academy_id="acad",
         coach_id="coach-1",
-        title="Target session",
+        title=title,
         location="Court 1",
         start_at=_now() + timedelta(days=1),
         end_at=_now() + timedelta(days=1, hours=1),
@@ -495,7 +498,12 @@ async def test_list_makeup_requests_for_admin_enriches_with_student_name() -> No
             _student(student_id="student-2", full_name="Bob"),
         ]
     )
-    use_case = ListMakeupRequestsForAdmin(makeups=makeups, students=students)
+    use_case = ListMakeupRequestsForAdmin(
+        makeups=makeups,
+        students=students,
+        occurrences=_FakeOccurrences(),
+        sessions=_FakeSessions(),
+    )
 
     rows = await use_case.execute(status=None)
 
@@ -516,11 +524,66 @@ async def test_list_makeup_requests_for_admin_filters_by_status() -> None:
             _pending_request(request_id="req-denied", status="denied"),
         ]
     )
-    use_case = ListMakeupRequestsForAdmin(makeups=makeups, students=_FakeStudents([_student()]))
+    use_case = ListMakeupRequestsForAdmin(
+        makeups=makeups,
+        students=_FakeStudents([_student()]),
+        occurrences=_FakeOccurrences(),
+        sessions=_FakeSessions(),
+    )
 
     rows = await use_case.execute(status="pending")
 
     assert [r.request_id for r in rows] == ["req-pending"]
+
+
+@pytest.mark.asyncio
+async def test_list_makeup_requests_for_admin_resolves_class_name_and_dates() -> None:
+    """Issue #841: the admin queue must never print occurrence ids. Each row
+    carries the missed class's title/start and the proposed target's start, so
+    the table can render names and academy-local dates."""
+    request = _pending_request(request_id="req-1").model_copy(
+        update={"requested_target_occurrence_id": "occ-target"}
+    )
+    makeups = _FakeMakeups([request])
+    occurrences = _FakeOccurrences([_missed_occurrence(), _occurrence()])
+    sessions = _FakeSessions(
+        [
+            _session(session_id="session-missed", title="U10 Tuesday"),
+            _session(session_id="session-target", title="U10 Thursday"),
+        ]
+    )
+
+    use_case = ListMakeupRequestsForAdmin(
+        makeups=makeups,
+        students=_FakeStudents([_student()]),
+        occurrences=occurrences,
+        sessions=sessions,
+    )
+    [row] = await use_case.execute(status=None)
+
+    assert row.missed_session_id == "session-missed"
+    assert row.missed_session_title == "U10 Tuesday"
+    assert row.missed_start_at == _missed_occurrence().start_at
+    assert row.requested_target_session_title == "U10 Thursday"
+    assert row.requested_target_start_at == _occurrence().start_at
+
+
+@pytest.mark.asyncio
+async def test_list_makeup_requests_for_admin_tolerates_missing_occurrence() -> None:
+    """A deleted/unknown occurrence must not 500 the queue — the row just
+    renders without the enriched fields."""
+    makeups = _FakeMakeups([_pending_request(request_id="req-1")])
+
+    use_case = ListMakeupRequestsForAdmin(
+        makeups=makeups,
+        students=_FakeStudents([_student()]),
+        occurrences=_FakeOccurrences(),
+        sessions=_FakeSessions(),
+    )
+    [row] = await use_case.execute(status=None)
+
+    assert row.missed_session_title is None
+    assert row.missed_start_at is None
 
 
 # --- ListAbsencesForAdmin -----------------------------------------------------

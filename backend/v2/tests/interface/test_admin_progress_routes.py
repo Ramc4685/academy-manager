@@ -703,6 +703,11 @@ def test_full_levelup_and_certificate_flow(env):
     # Recommendation appears in the admin level-up queue.
     queue = env.client.get("/api/v2/admin/level-up-queue").json()["queue"]
     assert any(item["rec_id"] == rec.rec_id for item in queue)
+    # Issue #841: the queue is read by a human, so it carries names, not ids.
+    row = next(item for item in queue if item["rec_id"] == rec.rec_id)
+    assert row["student_name"] == "Alice Flow"
+    assert row["program_name"] == "Badminton Skill Pathway"
+    assert row["from_level_name"] == env.level1.name
 
     # 8. Admin approves level-up.
     approve = env.client.post(f"/api/v2/admin/level-up/{rec.rec_id}/approve")

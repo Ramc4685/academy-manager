@@ -28,6 +28,7 @@ import {
   type AdminAcademyView,
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
+import { formatAcademyDate, formatAcademyDateTime } from "@/lib/format/academy-time";
 
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 import { Avatar } from "@/components/ds/avatar";
@@ -56,6 +57,15 @@ function AdminMessagesContent() {
   const messages = data?.messages ?? [];
   const broadcasts = messages.filter((m) => m.is_broadcast);
   const dms = messages.filter((m) => !m.is_broadcast);
+
+  // #841: every thread used to be titled "Direct conversation". The parent
+  // directory is already an admin-visible read, so the family's name comes
+  // from there rather than from a widened message DTO.
+  const parentsQuery = useParents();
+  const parents = parentsQuery.data?.users ?? [];
+  const parentNameById = new Map(parents.map((u) => [u.user_id, u.display_name]));
+  const nameFor = (userId: string | null): string =>
+    (userId && parentNameById.get(userId)) || "Parent";
 
   const dmThreads = Array.from(new Map(dms.map((m) => [m.recipient_id, m])).values());
 
@@ -131,13 +141,13 @@ function AdminMessagesContent() {
                         }}
                       >
                         <div className="flex items-center gap-2">
-                          <Avatar name="Direct conversation" size={26} />
+                          <Avatar name={nameFor(m.recipient_id)} size={26} />
                           <div className="flex-1 min-w-0">
                             <div className="text-sm font-semibold truncate">
-                              Direct conversation
+                              {nameFor(m.recipient_id)}
                             </div>
-                            <div className="text-[12px] text-rally-subtle">
-                              {new Date(m.sent_at).toLocaleDateString()}
+                            <div className="truncate text-[12px] text-rally-subtle">
+                              {formatAcademyDate(m.sent_at, null)}
                             </div>
                           </div>
                         </div>
@@ -151,7 +161,7 @@ function AdminMessagesContent() {
                 <>
                   {threadMessages.length === 0 && (
                     <p className="mb-2 text-sm text-rally-subtle" data-testid="dm-new-conversation">
-                      New conversation — no messages with this family yet.
+                      New conversation — no messages with {nameFor(dmRecipientId)} yet.
                     </p>
                   )}
                   <ul
@@ -164,7 +174,12 @@ function AdminMessagesContent() {
                         (a, b) => new Date(a.sent_at).getTime() - new Date(b.sent_at).getTime()
                       )
                       .map((m) => (
-                        <MessageBubble key={m.message_id} message={m} />
+                        <MessageBubble
+                          key={m.message_id}
+                          message={m}
+                          threadParentId={dmRecipientId}
+                          parentName={nameFor(dmRecipientId)}
+                        />
                       ))}
                   </ul>
                   <DmComposer
@@ -175,7 +190,7 @@ function AdminMessagesContent() {
                 </>
               )}
 
-              {!dmRecipientId && <NewConversationUnavailable />}
+              {!dmRecipientId && <NewConversationPicker onPick={setDmRecipientId} />}
             </>
           )}
         </Card>
@@ -189,15 +204,21 @@ function AdminMessagesContent() {
   );
 }
 
+/** The academy's parents. One query, shared by the audience counts, the DM
+ * thread titles and the new-conversation picker. */
+function useParents() {
+  return useQuery({
+    queryKey: queryKeys.admin.users("parent"),
+    queryFn: () => listAdminUsers("parent"),
+  });
+}
+
 /**
  * #838: both mass sends state who they reach before they go. The parent roster
  * is the audience for a whole-academy send, so its size is the recipient count.
  */
 function useParentRecipientCount(): number | null {
-  const query = useQuery({
-    queryKey: queryKeys.admin.users("parent"),
-    queryFn: () => listAdminUsers("parent"),
-  });
+  const query = useParents();
   return query.data ? query.data.users.length : null;
 }
 
@@ -348,39 +369,113 @@ function DmComposer({
   );
 }
 
-function NewConversationUnavailable() {
+/**
+ * #841: this used to show admins an engineering note ("the current admin API
+ * only accepts internal recipient references"). The parent directory was
+ * always available to this page — it is what the broadcast audience count is
+ * read from — so the picker is simply a search over it.
+ */
+function NewConversationPicker({ onPick }: { onPick: (parentId: string) => void }) {
+  const [query, setQuery] = useState("");
+  const { data, isLoading, isError } = useParents();
+  const parents = data?.users ?? [];
+  const needle = query.trim().toLowerCase();
+  const matches = needle
+    ? parents.filter(
+        (u) =>
+          u.display_name.toLowerCase().includes(needle) ||
+          u.email.toLowerCase().includes(needle),
+      )
+    : parents;
+
   return (
     <div className="space-y-3 border-t border-rally-line/60 pt-4">
       <p className="font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
         New conversation
       </p>
-      <div className="rounded-md border border-dashed border-rally-line bg-rally-paper px-3 py-4">
-        <p className="text-sm font-medium text-rally-ink">Recipient picker unavailable</p>
-        <p className="mt-1 text-[12px] leading-5 text-rally-subtle">
-          Starting a direct conversation requires a user-facing recipient picker. The
-          current admin API only accepts internal recipient references, so new direct
-          messages are disabled here until search or contact endpoints are available.
+      <input
+        type="search"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Search families by name or email…"
+        aria-label="Search families"
+        data-testid="dm-recipient-search"
+        className="w-full rounded-md border border-rally-line bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30"
+      />
+      {isError ? (
+        <p className="text-[12px] text-rally-subtle">
+          Could not load families. Try again, or message a family from their profile.
         </p>
-        <div className="mt-3">
-          <Button type="button" variant="secondary" size="sm" disabled>
-            Choose recipient
-          </Button>
-        </div>
-      </div>
+      ) : isLoading ? (
+        <p className="text-[12px] text-rally-subtle">Loading families…</p>
+      ) : matches.length === 0 ? (
+        <p className="text-[12px] text-rally-subtle" data-testid="dm-recipient-empty">
+          No family matches “{query.trim()}”.
+        </p>
+      ) : (
+        <ul className="max-h-48 space-y-1 overflow-y-auto" data-testid="dm-recipient-list">
+          {matches.slice(0, 25).map((u) => (
+            <li key={u.user_id}>
+              <button
+                type="button"
+                onClick={() => onPick(u.user_id)}
+                className="flex w-full min-h-touch items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-rally-paper"
+              >
+                <Avatar name={u.display_name} size={24} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium text-rally-ink">
+                    {u.display_name}
+                  </span>
+                  <span className="block truncate text-[12px] text-rally-subtle">{u.email}</span>
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
 
-function MessageBubble({ message }: { message: AdminMessageView }) {
+/**
+ * #841: sent and received used to look identical. Inside a thread with parent
+ * `threadParentId`, anything that parent did not send is ours — no extra auth
+ * lookup needed — so ours sits right on a tinted ground and theirs sits left
+ * on paper. `threadParentId` is undefined in the broadcast list, where every
+ * row is ours and the alignment would be noise.
+ */
+function MessageBubble({
+  message,
+  threadParentId,
+  parentName,
+}: {
+  message: AdminMessageView;
+  threadParentId?: string | null;
+  parentName?: string;
+}) {
+  const fromParent = Boolean(threadParentId) && message.sender_id === threadParentId;
+  const outbound = Boolean(threadParentId) && !fromParent;
+  const who = message.is_broadcast
+    ? `${message.scope_label ?? "Whole academy announcement"} · ${message.delivery_status ?? "recorded"}`
+    : fromParent
+      ? (parentName ?? "Parent")
+      : "You";
+
   return (
-    <li className="rounded-md bg-rally-paper px-3 py-2">
-      <p className="text-sm text-rally-ink">{message.body}</p>
-      <p className="mt-1 font-mono text-[10px] text-rally-subtle">
-        {message.is_broadcast
-          ? `${message.scope_label ?? "Whole academy announcement"} · ${message.delivery_status ?? "recorded"}`
-          : "Direct conversation"}{" "}
-        · {new Date(message.sent_at).toLocaleString()}
-      </p>
+    <li className={outbound ? "flex justify-end" : "flex justify-start"}>
+      <div
+        className="max-w-[85%] rounded-md px-3 py-2"
+        style={
+          outbound
+            ? { background: "var(--rally-cobalt-soft)", color: "var(--rally-ink)" }
+            : { background: "var(--rally-paper)" }
+        }
+      >
+        <p className="text-sm text-rally-ink">{message.body}</p>
+        <p className="mt-1 font-mono text-[10px] text-rally-subtle">
+          {who} · {formatAcademyDateTime(message.sent_at, null)}
+        </p>
+      </div>
     </li>
   );
 }

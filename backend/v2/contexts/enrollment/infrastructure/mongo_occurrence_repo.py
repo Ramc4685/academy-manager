@@ -41,6 +41,18 @@ class MongoSessionOccurrenceRepository(TenantScopedRepository):
         doc = await self._find_one({"occurrence_id": occurrence_id})
         return self._to_domain(doc) if doc else None
 
+    async def get_many(self, occurrence_ids: list[str]) -> list[SessionOccurrence]:
+        """Batch counterpart of ``get`` (issue #841).
+
+        The admin makeup queue needs the class + start time behind several
+        occurrence ids at once; one ``$in`` read keeps that at a single
+        tenant-scoped query instead of one per row.
+        """
+        if not occurrence_ids:
+            return []
+        cursor = self._find_many({"occurrence_id": {"$in": list(occurrence_ids)}})
+        return [self._to_domain(doc) async for doc in cursor]
+
     async def list_for_session(self, session_id: str) -> list[SessionOccurrence]:
         cursor = self._find_many(
             {

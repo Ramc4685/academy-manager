@@ -430,7 +430,57 @@ async def get_level_up_queue(
     queue = await use_cases.student_progress.get_level_up_queue.execute(
         GetLevelUpQueueCommand(program_id=program_id)
     )
-    return {"queue": [rec.model_dump() for rec in queue]}
+    return {"queue": await _with_display_names(queue, use_cases)}
+
+
+async def _with_display_names(queue: list, use_cases: AdminUseCases) -> list[dict[str, object]]:
+    """Add read-only ``*_name`` fields to each level-up row (issue #841).
+
+    The admin queue is read by a person, so it must show the student, the
+    program and the level by name rather than ``st-…`` / ``prog-…``. Names
+    come from the same admin/curriculum use cases the approve route already
+    uses, resolved once per distinct id (not once per row) and through the
+    tenant-scoped composition, so no new port or query is introduced.
+
+    Cosmetic by contract: any lookup that fails leaves the name ``None`` and
+    the queue still renders — an unreadable directory must not blank the
+    admin's work list.
+    """
+    rows = [rec.model_dump() for rec in queue]
+    if not rows:
+        return rows
+
+    student_names: dict[str, str | None] = {}
+    if use_cases.get_admin_student is not None:
+        for student_id in {str(r["student_id"]) for r in rows}:
+            try:
+                student = await use_cases.get_admin_student.execute(student_id)
+            except Exception:
+                student = None
+            student_names[student_id] = getattr(student, "full_name", None) or None
+
+    program_names: dict[str, str | None] = {}
+    level_names: dict[tuple[str, str], str | None] = {}
+    curriculum = use_cases.curriculum
+    if curriculum is not None:
+        for program_id_ in {str(r["program_id"]) for r in rows}:
+            try:
+                program = await curriculum.get_program.execute(program_id_)
+                program_names[program_id_] = getattr(program, "name", None) or None
+                levels = await curriculum.list_levels.execute(program_id_)
+            except Exception:
+                program_names.setdefault(program_id_, None)
+                continue
+            for level in levels:
+                level_names[(program_id_, level.level_id)] = level.name
+
+    for row in rows:
+        program_id_ = str(row["program_id"])
+        row["student_name"] = student_names.get(str(row["student_id"]))
+        row["program_name"] = program_names.get(program_id_)
+        row["from_level_name"] = level_names.get((program_id_, str(row["from_level_id"])))
+        row["to_level_name"] = level_names.get((program_id_, str(row["to_level_id"])))
+    return rows
 
 
 @router.post("/level-up/{rec_id}/approve")

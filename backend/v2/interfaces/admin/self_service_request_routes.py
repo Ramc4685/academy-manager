@@ -45,6 +45,16 @@ class MakeupRequestAdminRow(BaseModel):
     approved_target_occurrence_id: str | None
     created_at: datetime
     student_full_name: str | None
+    # Issue #841: read-only display fields — class name + start instant behind
+    # each occurrence id, so the queue never prints an id at an admin.
+    missed_session_id: str | None = None
+    missed_session_title: str | None = None
+    missed_start_at: datetime | None = None
+    requested_target_session_title: str | None = None
+    requested_target_start_at: datetime | None = None
+    approved_target_session_id: str | None = None
+    approved_target_session_title: str | None = None
+    approved_target_start_at: datetime | None = None
 
 
 class MakeupRequestsAdminResponse(BaseModel):
@@ -98,6 +108,10 @@ class TrialRequestAdminRow(BaseModel):
     decided_by: str | None
     decided_at: datetime | None
     created_at: datetime
+    # Issue #841: read-only display fields (see MakeupRequestAdminRow).
+    requested_session_title: str | None = None
+    assigned_occurrence_start_at: datetime | None = None
+    student_full_name: str | None = None
 
 
 class TrialRequestsAdminResponse(BaseModel):

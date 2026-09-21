@@ -885,6 +885,8 @@ def compose_admin(
     list_makeup_requests_for_admin = ListMakeupRequestsForAdmin(
         makeups=makeup_requests_repo,
         students=students_r,
+        occurrences=occurrences_r,
+        sessions=sessions_r,
     )
     approve_makeup_request = ApproveMakeupRequest(
         makeups=makeup_requests_repo,
@@ -912,7 +914,12 @@ def compose_admin(
     )
     expire_makeup_requests = ExpireMakeupRequests(makeups=makeup_requests_repo)
     trial_requests_repo = MongoTrialRequestRepository(db)
-    list_trial_requests_for_admin = ListTrialRequestsForAdmin(trials=trial_requests_repo)
+    list_trial_requests_for_admin = ListTrialRequestsForAdmin(
+        trials=trial_requests_repo,
+        sessions=sessions_r,
+        occurrences=occurrences_r,
+        students=students_r,
+    )
     approve_trial_request = ApproveTrialRequest(
         trials=trial_requests_repo,
         occurrences=occurrences_r,

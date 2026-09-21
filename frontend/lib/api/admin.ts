@@ -3103,6 +3103,19 @@ export interface MakeupRequestAdminRow {
   approved_target_occurrence_id: string | null;
   created_at: string;
   student_full_name: string | null;
+  /**
+   * Issue #841: the class name and start instant behind each occurrence id, so
+   * the queue renders words and academy-local dates. Null when the occurrence
+   * no longer resolves — the UI then falls back to the id rather than a blank.
+   */
+  missed_session_id?: string | null;
+  missed_session_title?: string | null;
+  missed_start_at?: string | null;
+  requested_target_session_title?: string | null;
+  requested_target_start_at?: string | null;
+  approved_target_session_id?: string | null;
+  approved_target_session_title?: string | null;
+  approved_target_start_at?: string | null;
 }
 
 export interface MakeupRequestsAdminResponse {
@@ -3133,6 +3146,11 @@ export interface TrialRequestAdminRow {
   decided_by: string | null;
   decided_at: string | null;
   created_at: string;
+  /** Issue #841: see MakeupRequestAdminRow — names and instants, not ids. */
+  requested_session_title?: string | null;
+  assigned_occurrence_start_at?: string | null;
+  /** Null for a prospective child, who has `prospective_child_name` instead. */
+  student_full_name?: string | null;
 }
 
 export interface TrialRequestsAdminResponse {

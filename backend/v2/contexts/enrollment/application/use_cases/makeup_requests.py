@@ -314,6 +314,20 @@ class AdminStudentQuery(Protocol):
     async def by_ids(self, student_ids: list[str]) -> list[Student]: ...
 
 
+class AdminMakeupOccurrenceQuery(Protocol):
+    """Batch occurrence read for the admin queue (issue #841).
+
+    Mirrors ``SelfCancellationSessionQuery.get_many``: one tenant-scoped
+    query covering every occurrence on the page, never one per row.
+    """
+
+    async def get_many(self, occurrence_ids: list[str]) -> list[SessionOccurrence]: ...
+
+
+class AdminMakeupSessionQuery(Protocol):
+    async def get_many(self, session_ids: list[str]) -> list[Session]: ...
+
+
 class AdminAbsenceNoticeQuery(Protocol):
     async def list_all(self) -> list: ...
 
@@ -341,6 +355,18 @@ class MakeupRequestAdminView(BaseModel):
     approved_target_occurrence_id: str | None = None
     created_at: datetime
     student_full_name: str | None = None
+    # Issue #841: read-only display fields so the admin queue can show a class
+    # name and an academy-local date instead of an occurrence id. All optional
+    # — an occurrence that no longer resolves leaves them null rather than
+    # failing the whole queue.
+    missed_session_id: str | None = None
+    missed_session_title: str | None = None
+    missed_start_at: datetime | None = None
+    requested_target_session_title: str | None = None
+    requested_target_start_at: datetime | None = None
+    approved_target_session_id: str | None = None
+    approved_target_session_title: str | None = None
+    approved_target_start_at: datetime | None = None
 
 
 class AbsenceNoticeAdminView(BaseModel):
@@ -363,25 +389,79 @@ def _student_names(students: list[Student]) -> dict[str, str]:
 
 class ListMakeupRequestsForAdmin:
     """Lists makeup requests for admin review, newest first, optionally
-    filtered by status. Enriches each row with the student's full name."""
+    filtered by status.
+
+    Enriches each row with the student's full name and (issue #841) the class
+    name + start time behind every occurrence id the row references, so the
+    admin queue renders "U10 Tuesday · Thu, Jul 2 · 6:00 PM" instead of
+    ``occ_01J...``. Both lookups are batched: two extra queries per page
+    regardless of row count.
+    """
 
     def __init__(
         self,
         *,
         makeups: AdminMakeupRequestRepository,
         students: AdminStudentQuery,
+        occurrences: AdminMakeupOccurrenceQuery,
+        sessions: AdminMakeupSessionQuery,
     ) -> None:
         self._makeups = makeups
         self._students = students
+        self._occurrences = occurrences
+        self._sessions = sessions
 
     async def execute(self, status: str | None = None) -> list[MakeupRequestAdminView]:
         requests = await self._makeups.list_by_status(status)
         student_ids = list({r.student_id for r in requests})
         names = _student_names(await self._students.by_ids(student_ids))
+
+        occurrence_ids = {
+            oid
+            for r in requests
+            for oid in (
+                r.missed_occurrence_id,
+                r.requested_target_occurrence_id,
+                r.approved_target_occurrence_id,
+            )
+            if oid
+        }
+        occurrences = (
+            {o.occurrence_id: o for o in await self._occurrences.get_many(list(occurrence_ids))}
+            if occurrence_ids
+            else {}
+        )
+        session_ids = {o.session_id for o in occurrences.values()}
+        titles = (
+            {s.session_id: s.title for s in await self._sessions.get_many(list(session_ids))}
+            if session_ids
+            else {}
+        )
+
+        def title_of(occurrence_id: str | None) -> str | None:
+            occurrence = occurrences.get(occurrence_id or "")
+            return None if occurrence is None else titles.get(occurrence.session_id)
+
+        def start_of(occurrence_id: str | None) -> datetime | None:
+            occurrence = occurrences.get(occurrence_id or "")
+            return None if occurrence is None else occurrence.start_at
+
+        def session_of(occurrence_id: str | None) -> str | None:
+            occurrence = occurrences.get(occurrence_id or "")
+            return None if occurrence is None else occurrence.session_id
+
         return [
             MakeupRequestAdminView(
                 **r.model_dump(exclude={"academy_id", "parent_id"}),
                 student_full_name=names.get(r.student_id),
+                missed_session_id=session_of(r.missed_occurrence_id),
+                missed_session_title=title_of(r.missed_occurrence_id),
+                missed_start_at=start_of(r.missed_occurrence_id),
+                requested_target_session_title=title_of(r.requested_target_occurrence_id),
+                requested_target_start_at=start_of(r.requested_target_occurrence_id),
+                approved_target_session_id=session_of(r.approved_target_occurrence_id),
+                approved_target_session_title=title_of(r.approved_target_occurrence_id),
+                approved_target_start_at=start_of(r.approved_target_occurrence_id),
             )
             for r in requests
         ]

@@ -171,15 +171,102 @@ class AdminTrialRequestRepository(Protocol):
     ) -> TrialRequest | None: ...
 
 
+class AdminTrialOccurrenceQuery(Protocol):
+    async def get_many(self, occurrence_ids: list[str]) -> list[SessionOccurrence]: ...
+
+
+class AdminTrialStudentQuery(Protocol):
+    async def by_ids(self, student_ids: list[str]) -> list[Student]: ...
+
+
+class TrialRequestAdminView(BaseModel):
+    """A trial request shaped for the admin queue (issue #841).
+
+    Everything on ``TrialRequest`` minus the tenant/parent ids, plus the
+    read-only display fields the queue needs so it can print a class name and
+    an academy-local date instead of ``session-…`` / ``occ-…``.
+    """
+
+    model_config = {"frozen": True}
+
+    request_id: str
+    student_ref: str
+    student_id: str | None = None
+    prospective_child_name: str | None = None
+    prospective_child_dob: str | None = None
+    requested_session_id: str
+    preferred_start: str
+    preferred_end: str
+    status: str
+    assigned_occurrence_id: str | None = None
+    linked_application_id: str | None = None
+    denial_reason: str | None = None
+    decided_by: str | None = None
+    decided_at: datetime | None = None
+    created_at: datetime
+    requested_session_title: str | None = None
+    assigned_occurrence_start_at: datetime | None = None
+    student_full_name: str | None = None
+
+
 class ListTrialRequestsForAdmin:
     """Lists trial requests for admin review, newest first, optionally
-    filtered by status."""
+    filtered by status.
 
-    def __init__(self, *, trials: AdminTrialRequestRepository) -> None:
+    Issue #841: the queue is read by a person, so it carries the student's
+    name, the requested class's title and the assigned date as an instant,
+    never the underlying ids. Every enrichment is batched (one query each,
+    whatever the row count), matching ``ListSelfCancellationsForAdmin``'s
+    ``get_many`` join. Prospective-child trials have no ``student_id`` and
+    keep the name the parent typed.
+    """
+
+    def __init__(
+        self,
+        *,
+        trials: AdminTrialRequestRepository,
+        sessions: SessionRepository,
+        occurrences: AdminTrialOccurrenceQuery,
+        students: AdminTrialStudentQuery,
+    ) -> None:
         self._trials = trials
+        self._sessions = sessions
+        self._occurrences = occurrences
+        self._students = students
 
-    async def execute(self, status: str | None = None) -> list[TrialRequest]:
-        return await self._trials.list_by_status(status)
+    async def execute(self, status: str | None = None) -> list[TrialRequestAdminView]:
+        requests = await self._trials.list_by_status(status)
+
+        session_ids = list({r.requested_session_id for r in requests if r.requested_session_id})
+        titles = (
+            {s.session_id: s.title for s in await self._sessions.get_many(session_ids)}
+            if session_ids
+            else {}
+        )
+        occurrence_ids = list(
+            {r.assigned_occurrence_id for r in requests if r.assigned_occurrence_id}
+        )
+        starts = (
+            {o.occurrence_id: o.start_at for o in await self._occurrences.get_many(occurrence_ids)}
+            if occurrence_ids
+            else {}
+        )
+        student_ids = list({r.student_id for r in requests if r.student_id})
+        names = (
+            {s.student_id: s.full_name for s in await self._students.by_ids(student_ids)}
+            if student_ids
+            else {}
+        )
+
+        return [
+            TrialRequestAdminView(
+                **r.model_dump(exclude={"academy_id", "parent_user_id"}),
+                requested_session_title=titles.get(r.requested_session_id),
+                assigned_occurrence_start_at=starts.get(r.assigned_occurrence_id or ""),
+                student_full_name=names.get(r.student_id or ""),
+            )
+            for r in requests
+        ]
 
 
 class SessionOccurrenceRepository(Protocol):
