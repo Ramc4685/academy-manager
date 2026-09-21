@@ -11,6 +11,8 @@
  */
 
 import Link from "next/link";
+import type { Route } from "next";
+import { MoreVertical } from "lucide-react";
 import { type ReactNode, useDeferredValue, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -27,6 +29,7 @@ import {
 import { formatCents } from "@/lib/money";
 import { queryKeys } from "@/lib/query/keys";
 import { statHint, statText } from "@/lib/ui/load-state";
+import { useIsPhone } from "@/lib/use-is-phone";
 import { useIsOwner } from "@/components/admin/owner-context";
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 
@@ -35,6 +38,7 @@ import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { ErrorNotice } from "@/components/ds/error-notice";
 import { Field } from "@/components/ds/dialog-chrome";
+import { OverflowMenu } from "@/components/ds/menu";
 import { TableSkeleton } from "@/components/ds/skeleton";
 import { BigNum, Overline } from "@/components/ds/typography";
 
@@ -541,6 +545,24 @@ function amountFor(bucket: CollectionsBucketKey, family: AdminCollectionsFamily)
   }
 }
 
+/**
+ * #861: the action an admin came to this row to take — take the money, or put
+ * the family back on the books — leads. Everything else is follow-up, and on a
+ * phone it moves into the row menu so the row keeps ONE 44px button instead of
+ * four 30px ones wrapped over two lines.
+ */
+const PRIMARY_ACTIONS: CollectionsAction[] = ["record_payment", "resume"];
+
+function isPrimaryAction(action: CollectionsAction): boolean {
+  return PRIMARY_ACTIONS.includes(action);
+}
+
+function primaryFirst(actions: CollectionsAction[]): CollectionsAction[] {
+  return [...actions].sort(
+    (a, b) => Number(isPrimaryAction(b)) - Number(isPrimaryAction(a)),
+  );
+}
+
 function FamilyRow({
   bucket,
   family,
@@ -558,10 +580,22 @@ function FamilyRow({
   canGovernMoney: boolean;
   onAction: (action: CollectionsAction, family: AdminCollectionsFamily) => void;
 }) {
+  const isPhone = useIsPhone();
   const chip = familyChip(bucket, family, today);
   const line = secondaryLine(bucket, family, today);
   const name = familyName(family);
   const amount = amountFor(bucket, family);
+  const actions = primaryFirst(
+    family.actions
+      .filter((action) => action !== "skip_month" || canGovernMoney)
+      // WhatsApp is only real when the backend built the family a wa.me URL
+      // (month close spec §7); without it there is nothing to link to.
+      .filter((action) => action !== "whatsapp" || Boolean(family.whatsapp_url)),
+  );
+  // On a phone the leading action stays a button and the rest become menu
+  // items; on md+ the row has the width for all of them side by side.
+  const inline = isPhone ? actions.slice(0, 1) : actions;
+  const menu = isPhone ? actions.slice(1) : [];
 
   return (
     <li className="py-3" data-testid={`family-row-${family.parent_id}`}>
@@ -599,18 +633,45 @@ function FamilyRow({
         <div className="font-mono text-base font-semibold tabular-nums text-rally-ink md:text-right">
           {formatCents(amount)}
         </div>
-        <div className="flex flex-wrap gap-2 md:justify-end">
-          {family.actions
-            .filter((action) => action !== "skip_month" || canGovernMoney)
-            .map((action) => (
+        <div className="flex flex-wrap items-center gap-2 md:justify-end">
+          {inline.map((action) => (
             <ActionControl
               key={action}
               action={action}
               family={family}
               busy={busy}
+              phone={isPhone}
               onAction={onAction}
             />
           ))}
+          {menu.length > 0 && (
+            <OverflowMenu
+              className="shrink-0"
+              items={menu.map((action) => ({
+                key: action,
+                label: ACTION_LABEL[action],
+                disabled: busy && action !== "message" && action !== "whatsapp",
+                externalHref: action === "whatsapp" ? family.whatsapp_url ?? undefined : undefined,
+                href:
+                  action === "message"
+                    ? (`/admin/messages?dm=${encodeURIComponent(family.parent_id)}` as Route)
+                    : undefined,
+                onSelect:
+                  action === "message" || action === "whatsapp"
+                    ? undefined
+                    : () => onAction(action, family),
+              }))}
+              triggerLabel={`More actions for ${name}`}
+              // Not `family-row-…`: a row-id prefix match must never pick the
+              // trigger up (#857).
+              triggerTestId={`family-actions-${family.parent_id}`}
+              trigger={
+                <span className="flex min-h-touch min-w-touch items-center justify-center rounded-md text-rally-muted hover:bg-rally-paper">
+                  <MoreVertical className="size-5" aria-hidden="true" />
+                </span>
+              }
+            />
+          )}
         </div>
       </div>
     </li>
@@ -621,15 +682,21 @@ function ActionControl({
   action,
   family,
   busy,
+  phone,
   onAction,
 }: {
   action: CollectionsAction;
   family: AdminCollectionsFamily;
   busy: boolean;
+  /** #861: a thumb needs 44px; a mouse on md+ is fine with the 30px row size. */
+  phone: boolean;
   onAction: (action: CollectionsAction, family: AdminCollectionsFamily) => void;
 }): ReactNode {
   const label = ACTION_LABEL[action];
   const testId = `action-${action}-${family.parent_id}`;
+  const linkClass = `inline-flex items-center rounded-md border border-rally-line bg-white px-3 text-xs font-semibold hover:bg-rally-paper ${
+    phone ? "min-h-touch" : "h-[30px]"
+  }`;
   if (action === "whatsapp") {
     // A link, not a mutation: the backend only lists this action when it built
     // a wa.me URL for the family (month close spec §7).
@@ -639,7 +706,7 @@ function ActionControl({
         href={family.whatsapp_url}
         target="_blank"
         rel="noopener noreferrer"
-        className="inline-flex h-[30px] items-center rounded-md border border-rally-line bg-white px-3 text-xs font-semibold text-emerald-700 hover:bg-rally-paper dark:text-emerald-400"
+        className={`${linkClass} text-emerald-700 dark:text-emerald-400`}
         data-testid={testId}
       >
         {label}
@@ -650,21 +717,23 @@ function ActionControl({
     return (
       <Link
         href={`/admin/messages?dm=${encodeURIComponent(family.parent_id)}`}
-        className="inline-flex h-[30px] items-center rounded-md border border-rally-line bg-white px-3 text-xs font-semibold text-rally-ink hover:bg-rally-paper"
+        className={`${linkClass} text-rally-ink`}
         data-testid={testId}
       >
         {label}
       </Link>
     );
   }
-  const primary = action === "record_payment" || action === "resume";
   return (
     <Button
-      variant={primary ? "primary" : "secondary"}
+      variant={isPrimaryAction(action) ? "primary" : "secondary"}
       size="sm"
       disabled={busy}
       onClick={() => onAction(action, family)}
       data-testid={testId}
+      // Button sizes its own height inline, so the phone override has to be
+      // inline too; `style` is spread last, after SIZE_MAP.
+      style={phone ? { height: 44, minHeight: 44 } : undefined}
     >
       {label}
     </Button>

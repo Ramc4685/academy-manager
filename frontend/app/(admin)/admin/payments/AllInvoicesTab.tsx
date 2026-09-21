@@ -481,7 +481,12 @@ export function AllInvoicesTab() {
           </PhoneList>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[980px] text-sm" data-testid="admin-payments-table">
+            {/* #861: the floor used to be 980px, which on its own was wider
+                than the ~944px the admin shell leaves for the table at 1280 —
+                before the five-button action column added another ~200. The
+                columns still set their own natural widths; this only stops the
+                table demanding room the screen does not have. */}
+            <table className="w-full min-w-[720px] text-sm" data-testid="admin-payments-table">
               <thead>
                 <tr className="border-b border-rally-line text-left">
                   <Th>Payment</Th>
@@ -496,8 +501,13 @@ export function AllInvoicesTab() {
                   {/* #847: ten columns over a 980px minimum put the row menu
                       past the right edge at 1280 inside the admin shell, so
                       voiding or refunding an invoice needed a sideways scroll
-                      first. Same sticky column the approval queues use. */}
-                  <Th className={actionHeaderClass}><span className="sr-only">Actions</span></Th>
+                      first. Same sticky column the approval queues use.
+                      #861: capped, because an uncapped `justify-end` strip of
+                      up to five buttons was what pushed Status / Method /
+                      Paid-on off the screen in the first place. */}
+                  <Th className={`${actionHeaderClass} w-[232px]`}>
+                    <span className="sr-only">Actions</span>
+                  </Th>
                 </tr>
               </thead>
               <tbody>
@@ -571,7 +581,7 @@ export function AllInvoicesTab() {
                       <td className="px-4 py-3 text-rally-muted">
                         {p.paid_at ? new Date(p.paid_at).toLocaleDateString() : "—"}
                       </td>
-                      <td className={`${actionCellClass} bg-white`}>
+                      <td className={`${actionCellClass} w-[232px] bg-white`}>
                         <PaymentActions
                           payment={p}
                           canGovernMoney={isOwner}
