@@ -1,0 +1,32 @@
+/*
+ * #866: FullCalendar's default toolbar is a single flex row with no
+ * wrap/shrink rule, so the month/year title overlaps the prev/next/today
+ * and view-switch buttons under ~420px. Scoped to `.wrap` (this
+ * component's own container) so it never leaks into AdminCalendarView,
+ * which renders the same library independently.
+ */
+.wrap :global(.fc-toolbar) {
+  flex-wrap: wrap;
+  row-gap: 0.5rem;
+}
+
+.wrap :global(.fc-toolbar-title) {
+  font-size: 1rem;
+}
+
+/* One Rally accent instead of FullCalendar's stock blue, so the screen
+   keeps a single primary color (#866 item 3). */
+.wrap :global(.fc-button-primary) {
+  background-color: var(--rally-cobalt, #2563eb);
+  border-color: var(--rally-cobalt, #2563eb);
+}
+
+.wrap :global(.fc-button-primary:not(:disabled).fc-button-active),
+.wrap :global(.fc-button-primary:not(:disabled):active) {
+  background-color: var(--rally-cobalt, #2563eb);
+  border-color: var(--rally-cobalt, #2563eb);
+}
+
+.wrap :global(.fc-day-today) {
+  background-color: color-mix(in srgb, var(--rally-cobalt, #2563eb) 10%, transparent);
+}

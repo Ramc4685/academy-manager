@@ -166,7 +166,7 @@ export default function ParentWaiversPage() {
             onClick={() => acceptMutation.mutate()}
             disabled={acceptMutation.isPending}
             full
-            variant="volt"
+            variant="primary"
             className="mt-4 disabled:opacity-60"
           >
             {acceptMutation.isPending ? "Accepting..." : "Accept waiver"}

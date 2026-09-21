@@ -116,6 +116,7 @@ function AbsencesPanel() {
   });
 
   const children = childrenQuery.data?.children ?? [];
+  const nameById = new Map(children.map((c: ParentChild) => [c.student_id, c.full_name]));
   const academyTimezone = academyQuery.data?.timezone ?? null;
   // A cancelled class cannot be missed, so it must not be offered as the
   // subject of an absence notice (#671).
@@ -229,6 +230,9 @@ function AbsencesPanel() {
                 <Card p={12}>
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
+                      <p className="text-xs font-semibold text-rally-subtle">
+                        {nameById.get(n.student_id) ?? "Your child"}
+                      </p>
                       <p className="text-sm font-semibold text-rally-ink">
                         {formatAcademyDateTime(n.submitted_at, academyTimezone)}
                       </p>
@@ -261,6 +265,10 @@ function MakeupsPanel() {
     queryKey: ["parent", "academy"],
     queryFn: getParentAcademy,
   });
+  const childrenQuery = useQuery({
+    queryKey: ["parent", "children"],
+    queryFn: listParentChildren,
+  });
   const absencesQuery = useQuery({
     queryKey: queryKeys.parent.absences(),
     queryFn: listParentAbsences,
@@ -291,6 +299,8 @@ function MakeupsPanel() {
   });
 
   const academyTimezone = academyQuery.data?.timezone ?? null;
+  const children = childrenQuery.data?.children ?? [];
+  const nameById = new Map(children.map((c: ParentChild) => [c.student_id, c.full_name]));
   const absences = absencesQuery.data?.notices ?? [];
   const makeups = makeupsQuery.data?.makeups ?? [];
   const targets = targetsQuery.data?.targets ?? [];
@@ -398,6 +408,9 @@ function MakeupsPanel() {
                 <Card p={12}>
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
+                      <p className="text-xs font-semibold text-rally-subtle">
+                        {nameById.get(m.student_id) ?? "Your child"}
+                      </p>
                       <p className="text-sm font-semibold text-rally-ink">
                         Requested {formatAcademyDate(m.created_at, academyTimezone)}
                       </p>

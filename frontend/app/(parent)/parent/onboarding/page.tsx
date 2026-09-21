@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
+import { Button } from "@/components/ds/button";
+
 import {
   getParentAcademy,
   getParentProfile,
@@ -390,9 +392,9 @@ function ParentStep({
           required
         />
       </Field>
-      <button type="submit" disabled={saving} className="primary">
+      <Button type="submit" disabled={saving} variant="primary" full>
         Next
-      </button>
+      </Button>
     </form>
   );
 }
@@ -616,9 +618,9 @@ function ChildStep({
         />
         No known conditions or allergies
       </label>
-      <button type="submit" disabled={saving} className="primary">
+      <Button type="submit" disabled={saving} variant="primary" full>
         Next
-      </button>
+      </Button>
     </form>
   );
 }
@@ -657,9 +659,9 @@ function WaiverStep({
         >
           Could not load the waiver. Please try again.
         </div>
-        <button type="button" onClick={() => void waiverQuery.refetch()} className="secondary">
+        <Button type="button" onClick={() => void waiverQuery.refetch()} variant="secondary">
           Retry
-        </button>
+        </Button>
       </div>
     );
   }
@@ -689,9 +691,9 @@ function WaiverStep({
       >
         <p className="whitespace-pre-wrap">{waiver.body}</p>
       </div>
-      <button onClick={onAccept} disabled={saving} className="primary">
+      <Button onClick={onAccept} disabled={saving} variant="primary" full>
         {accepted ? "Continue →" : "I Accept"}
-      </button>
+      </Button>
     </div>
   );
 }
@@ -845,23 +847,24 @@ function ReviewStep({
         <li>Waiver: {app.waiver_accepted ? "Accepted" : "Not accepted"}</li>
       </ul>
       <div className="flex gap-2">
-        <button onClick={onBack} className="secondary">
+        <Button onClick={onBack} variant="secondary">
           Edit
-        </button>
+        </Button>
         {/*
           Paying while the price still reads "Calculating…" is the one way back
           into #731: with no displayed snapshot to send, checkout falls back to
           quoting at click time, so the parent commits to a figure this screen
           never showed them.
         */}
-        <button
+        <Button
           onClick={onCheckout}
           disabled={saving || quoteLoading || !app.waiver_accepted || !app.selected_session_id}
-          className="primary"
+          variant="primary"
+          full
           data-testid="checkout-button"
         >
           {saving ? "Starting checkout…" : "Continue to checkout"}
-        </button>
+        </Button>
       </div>
     </div>
   );
