@@ -99,6 +99,8 @@ test("successful approval stays successful without a redundant detail refetch", 
   await page.goto("/admin/registrations/app-1");
   await expect(page.getByTestId("admin-registration-detail")).toBeVisible();
   await page.getByRole("button", { name: "Approve", exact: true }).click();
+  // #838: the decision now goes through a confirm dialog naming the student.
+  await page.getByTestId("confirm-action-submit").click();
 
   await expect(page.getByText("APPROVED")).toBeVisible();
   await expect(page.getByText("Could not load registration.")).toHaveCount(0);

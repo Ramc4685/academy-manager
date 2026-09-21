@@ -141,6 +141,8 @@ test("approve refused by the backend after a withdrawal shows the lifecycle mess
   await page.goto("/admin/inbox?tab=level-ups");
   const live = page.getByTestId("level-up-row-rec-live");
   await live.getByRole("button", { name: "Approve", exact: true }).click();
+  // #838: approving a level-up now confirms first.
+  await page.getByTestId("confirm-action-submit").click();
 
   const alert = page.getByTestId("level-up-review-error");
   await expect(alert).toBeVisible();

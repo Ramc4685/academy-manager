@@ -30,11 +30,13 @@ import { rateTimelineIssueLabel } from "@/lib/payroll-warnings";
 import { queryKeys } from "@/lib/query/keys";
 import { useIsOwner } from "@/components/admin/owner-context";
 import { OwnerOnlyHint } from "@/components/admin/owner-context";
+import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 import { Avatar } from "@/components/ds/avatar";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Overline } from "@/components/ds/typography";
+import { userLoginChip } from "@/lib/people-status";
 
 const editableStatuses = ["active", "inactive", "disabled"] as const;
 
@@ -96,6 +98,7 @@ export default function AdminUserDetailPage() {
           <RolesPanel user={user} onSaved={invalidate} />
         </Card>
       </div>
+      <FamilyPanel user={user} />
       <LoginInvitePanel user={user} onSaved={invalidate} />
       {isCoach && <CoachPayRatePanel coachId={user.user_id} />}
       {isCoach && <CoachSessionsPanel user={user} onAssigned={invalidate} />}
@@ -411,6 +414,7 @@ function BackLink() {
 }
 
 function Header({ user }: { user: AdminUserDetail }) {
+  const loginState = userLoginChip(user.status);
   return (
     <Card p={20}>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -425,10 +429,10 @@ function Header({ user }: { user: AdminUserDetail }) {
                 variant={roleVariant(user.role)}
                 label={roleLabel(user.role).toUpperCase()}
               />
-              <Chip
-                variant={user.status === "active" ? "enrolled" : "expired"}
-                label={user.status.toUpperCase()}
-              />
+              {/* #840: "ACTIVE" here borrowed the billing chip's shout and
+                  collided with the Students page's "ACTIVE" (attending). This
+                  is the Login fact, in the shared People wording. */}
+              <Chip variant={loginState.variant} label={loginState.label} />
             </div>
           </div>
         </div>
@@ -453,6 +457,34 @@ function Header({ user }: { user: AdminUserDetail }) {
   );
 }
 
+/**
+ * #839: a parent's user page said nothing about the family it belongs to, so
+ * the trail from a login account back to the children and the money ran out
+ * here. Only parents have a family page — anyone else would be sent to a 404.
+ */
+function FamilyPanel({ user }: { user: AdminUserDetail }) {
+  if (!user.roles.includes("parent")) return null;
+  const count = user.linked_student_count;
+  return (
+    <Card p={20} data-testid="admin-user-family">
+      <Overline>Family</Overline>
+      <p className="mt-1 text-sm text-rally-muted">
+        {count} {count === 1 ? "student" : "students"} on this account. Enrollments, invoices and
+        autopay live on the family page.
+      </p>
+      <Link
+        href={`/admin/families/${encodeURIComponent(user.user_id)}`}
+        className="mt-3 inline-block"
+        data-testid="admin-user-family-link"
+      >
+        <Button size="sm" variant="secondary">
+          Open family
+        </Button>
+      </Link>
+    </Card>
+  );
+}
+
 function UserEditForm({
   user,
   onSaved,
@@ -470,6 +502,7 @@ function UserEditForm({
   const [inviteOutcome, setInviteOutcome] = useState<LoginInviteOutcome | null>(
     null,
   );
+  const [confirmDeactivate, setConfirmDeactivate] = useState(false);
 
   useEffect(() => {
     setEmail(user.email);
@@ -515,6 +548,9 @@ function UserEditForm({
     phone !== (user.phone ?? "") ||
     status !== user.status;
 
+  // Anything other than "active" locks the person out of the app (#838).
+  const losesAccess = status !== user.status && status !== "active";
+
   return (
     <form
       className="mt-3 space-y-4"
@@ -523,6 +559,12 @@ function UserEditForm({
         event.preventDefault();
         setSubmitOk(false);
         setSubmitError(null);
+        // #838: losing access is not a save like any other — it signs the
+        // person out of the app, so it gets its own second look.
+        if (losesAccess) {
+          setConfirmDeactivate(true);
+          return;
+        }
         mutation.mutate();
       }}
     >
@@ -655,6 +697,40 @@ function UserEditForm({
           </Button>
         )}
       </div>
+
+      <ConfirmActionDialog
+        open={confirmDeactivate}
+        onOpenChange={setConfirmDeactivate}
+        overline="Change account status"
+        title={`Set this account to ${status}?`}
+        subject={`${user.display_name || user.email} · ${user.email}`}
+        consequence={
+          <>
+            <p>
+              They are signed out and cannot log in again until the account is set back to active.
+              Enrollments, invoices and autopay are untouched — a paused login does not pause
+              billing.
+            </p>
+            <p>
+              Anything that emails this person (digests, reminders, invoices) keeps trying to reach
+              them; only the app is closed.
+            </p>
+          </>
+        }
+        reason={{
+          label: "Reason",
+          value: reason,
+          onChange: setReason,
+          required: true,
+          placeholder: "Recorded on the user's audit trail.",
+        }}
+        confirmLabel={`Set to ${status}`}
+        pending={mutation.isPending}
+        onConfirm={() => {
+          mutation.mutate();
+          setConfirmDeactivate(false);
+        }}
+      />
     </form>
   );
 }
@@ -675,6 +751,7 @@ function RolesPanel({
   const [reason, setReason] = useState("Admin role change");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitOk, setSubmitOk] = useState(false);
+  const [confirmOwner, setConfirmOwner] = useState(false);
 
   useEffect(() => {
     setSelected(user.roles.length > 0 ? user.roles : [user.role]);
@@ -713,6 +790,11 @@ function RolesPanel({
     );
   };
 
+  const hadOwner = initialRoles.includes("owner");
+  const willHaveOwner = selected.includes("owner");
+  const ownerChange: "grant" | "revoke" | null =
+    hadOwner === willHaveOwner ? null : willHaveOwner ? "grant" : "revoke";
+
   return (
     <form
       className="mt-3 space-y-4"
@@ -723,6 +805,12 @@ function RolesPanel({
         setSubmitError(null);
         if (selected.length === 0) {
           setSubmitError("User must keep at least one role.");
+          return;
+        }
+        // #838: owner is the role that can move money and change other
+        // people's roles, so granting or revoking it asks first.
+        if (ownerChange) {
+          setConfirmOwner(true);
           return;
         }
         mutation.mutate();
@@ -779,6 +867,50 @@ function RolesPanel({
       >
         {mutation.isPending ? "Saving..." : "Save roles"}
       </Button>
+
+      <ConfirmActionDialog
+        open={confirmOwner}
+        onOpenChange={setConfirmOwner}
+        overline={ownerChange === "revoke" ? "Revoke owner" : "Grant owner"}
+        title={
+          ownerChange === "revoke"
+            ? "Take the owner role away?"
+            : "Give this person the owner role?"
+        }
+        subject={`${user.display_name || user.email} · ${user.email}`}
+        consequence={
+          ownerChange === "revoke" ? (
+            <>
+              <p>
+                They immediately lose refunds, discounts, voiding invoices and payout approval, and
+                can no longer change anyone&apos;s roles. Their other roles stay.
+              </p>
+              <p>Make sure at least one other owner remains, or nobody can govern money.</p>
+            </>
+          ) : (
+            <>
+              <p>
+                Owner can refund, discount, void invoices and approve payouts, and can grant or
+                revoke anyone&apos;s roles — including taking owner from you.
+              </p>
+              <p>They get it as soon as this saves. Nobody is emailed.</p>
+            </>
+          )
+        }
+        reason={{
+          label: "Reason",
+          value: reason,
+          onChange: setReason,
+          required: true,
+          placeholder: "Recorded on the user's audit trail.",
+        }}
+        confirmLabel={ownerChange === "revoke" ? "Revoke owner" : "Grant owner"}
+        pending={mutation.isPending}
+        onConfirm={() => {
+          mutation.mutate();
+          setConfirmOwner(false);
+        }}
+      />
     </form>
   );
 }

@@ -26,11 +26,14 @@ import {
 } from "@/lib/api/admin";
 import { formatCents } from "@/lib/money";
 import { queryKeys } from "@/lib/query/keys";
+import { statHint, statText } from "@/lib/ui/load-state";
 import { useIsOwner } from "@/components/admin/owner-context";
+import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
+import { ErrorNotice } from "@/components/ds/error-notice";
 import { Field } from "@/components/ds/dialog-chrome";
 import { TableSkeleton } from "@/components/ds/skeleton";
 import { BigNum, Overline } from "@/components/ds/typography";
@@ -65,6 +68,16 @@ type DialogState = {
   parentId: string | null;
 } | null;
 
+/** #838: the void this tab's "Skip this month" performs, held for a second look. */
+type SkipTarget = {
+  parentId: string;
+  invoiceId: string;
+  invoiceLabel: string;
+  familyLabel: string;
+  balanceCents: number;
+  period: string;
+} | null;
+
 function invoiceOption(
   family: AdminCollectionsFamily,
   invoice: AdminCollectionsFamily["invoices"][number],
@@ -89,6 +102,7 @@ export function CollectionsTab() {
   const [rowStatus, setRowStatus] = useState<Record<string, RowStatus>>({});
   const [dialog, setDialog] = useState<DialogState>(null);
   const [dialogNonce, setDialogNonce] = useState(0);
+  const [skipTarget, setSkipTarget] = useState<SkipTarget>(null);
   const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: queryKeys.admin.collections(period || "current"),
@@ -187,14 +201,14 @@ export function CollectionsTab() {
       case "skip_month": {
         const invoice = actionInvoice(family);
         if (!invoice) return;
-        const label = invoice.invoice_number ?? invoice.invoice_id;
-        if (
-          window.confirm(
-            `Void ${label} for ${familyName(family)}? The family will not be charged this month.`,
-          )
-        ) {
-          skipMutation.mutate({ parentId: family.parent_id, invoiceId: invoice.invoice_id });
-        }
+        setSkipTarget({
+          parentId: family.parent_id,
+          invoiceId: invoice.invoice_id,
+          invoiceLabel: invoice.invoice_number ?? invoice.invoice_id,
+          familyLabel: familyName(family),
+          balanceCents: invoice.balance_due_cents,
+          period: invoice.period,
+        });
         return;
       }
       case "resume":
@@ -260,26 +274,37 @@ export function CollectionsTab() {
         </Button>
       </div>
 
+      {/*
+        Issue #837: `normalizeCollections` zero-fills an absent payload, so a
+        500 used to paint "$0.00 owed · 0 needs action" over six "nothing here"
+        buckets — a screen that says the money is collected. The tiles now show
+        a dash until the data really arrived, and the bucket list is withheld
+        entirely rather than asserting six empty buckets.
+      */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Tile
           testKey="owed"
           label="Owed this month"
-          value={formatCents(view.totals.owed_cents)}
-          hint="past due + awaiting + failed autopay"
+          value={statText(query, () => formatCents(view.totals.owed_cents))}
+          hint={statHint(query, () => "past due + awaiting + failed autopay")}
           loading={query.isLoading}
         />
         <Tile
           testKey="autopay"
           label="Autopay scheduled"
-          value={formatCents(view.totals.autopay_scheduled_cents)}
-          hint={`${view.totals.autopay_scheduled_count} ${view.totals.autopay_scheduled_count === 1 ? "family" : "families"}`}
+          value={statText(query, () => formatCents(view.totals.autopay_scheduled_cents))}
+          hint={statHint(
+            query,
+            () =>
+              `${view.totals.autopay_scheduled_count} ${view.totals.autopay_scheduled_count === 1 ? "family" : "families"}`,
+          )}
           loading={query.isLoading}
         />
         <Tile
           testKey="needs-action"
           label="Needs action"
-          value={String(view.totals.needs_action_count)}
-          hint="failed autopay · past due"
+          value={statText(query, () => String(view.totals.needs_action_count))}
+          hint={statHint(query, () => "failed autopay · past due")}
           loading={query.isLoading}
         />
         <Tile
@@ -287,40 +312,34 @@ export function CollectionsTab() {
           // Not "collected this month": this sums allocations against THIS
           // month's invoices whenever the money arrived (month close spec §3.2).
           label="Paid toward this month's invoices"
-          value={formatCents(view.totals.collected_cents)}
-          hint="allocated to this month's invoices"
+          value={statText(query, () => formatCents(view.totals.collected_cents))}
+          hint={statHint(query, () => "allocated to this month's invoices")}
           loading={query.isLoading}
         />
       </div>
 
-      {query.isError && (
-        <Card p={16} style={{ borderColor: "#fecaca", background: "#fef2f2" }}>
-          <div
-            role="alert"
-            data-testid="collections-error"
-            className="flex items-center justify-between gap-3"
-          >
-            <p className="text-sm text-red-800">Could not load the collections list.</p>
-            <Button variant="secondary" size="sm" onClick={() => void query.refetch()}>
-              Retry
-            </Button>
-          </div>
-        </Card>
-      )}
-
-      {view.buckets.map((bucket) => (
-        <BucketSection
-          key={bucket.key}
-          bucket={bucket}
-          loading={query.isLoading}
-          search={deferredSearch}
-          today={today}
-          rowStatus={rowStatus}
-          busyParent={busyParent}
-          canGovernMoney={isOwner}
-          onAction={handleAction}
+      {query.isError ? (
+        <ErrorNotice
+          testId="collections-error"
+          message="Could not load the collections list. The tiles above are unknown, not zero."
+          onRetry={() => void query.refetch()}
+          retrying={query.isFetching}
         />
-      ))}
+      ) : (
+        view.buckets.map((bucket) => (
+          <BucketSection
+            key={bucket.key}
+            bucket={bucket}
+            loading={query.isLoading}
+            search={deferredSearch}
+            today={today}
+            rowStatus={rowStatus}
+            busyParent={busyParent}
+            canGovernMoney={isOwner}
+            onAction={handleAction}
+          />
+        ))
+      )}
 
       {dialog && (
         <RecordPaymentDialog
@@ -334,6 +353,35 @@ export function CollectionsTab() {
             setDialog(null);
             invalidate();
             void queryClient.invalidateQueries({ queryKey: queryKeys.admin.payments() });
+          }}
+        />
+      )}
+
+      {skipTarget && (
+        <ConfirmActionDialog
+          open
+          onOpenChange={(open) => !open && setSkipTarget(null)}
+          overline="Void invoice"
+          title="Skip this month for this family?"
+          subject={`${skipTarget.invoiceLabel} · ${skipTarget.familyLabel} · ${skipTarget.period}`}
+          consequence={
+            <>
+              <p>
+                Voids the invoice, so the {formatCents(skipTarget.balanceCents)} owed is cancelled
+                and no autopay is attempted for {skipTarget.period}. The seat is untouched — the
+                student stays enrolled and next month invoices as usual.
+              </p>
+              <p>Voiding cannot be undone; a new invoice would have to be raised by hand.</p>
+            </>
+          }
+          confirmLabel="Void and skip"
+          pending={skipMutation.isPending}
+          onConfirm={() => {
+            skipMutation.mutate({
+              parentId: skipTarget.parentId,
+              invoiceId: skipTarget.invoiceId,
+            });
+            setSkipTarget(null);
           }}
         />
       )}
@@ -351,7 +399,8 @@ function Tile({
   testKey: string;
   label: string;
   value: string;
-  hint: string;
+  /** Absent while the figure is unknown — a hint under a dash asserts a fact. */
+  hint?: string;
   loading: boolean;
 }) {
   return (
@@ -365,7 +414,7 @@ function Tile({
             <BigNum size={28}>
               <span data-testid={`collections-tile-${testKey}-value`}>{value}</span>
             </BigNum>
-            <p className="mt-1 text-xs text-rally-muted">{hint}</p>
+            {hint && <p className="mt-1 text-xs text-rally-muted">{hint}</p>}
           </div>
         )}
       </Card>

@@ -20,10 +20,20 @@ import {
   type BillingSetupRow,
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
+import {
+  CARD_LABELS,
+  LOGIN_LABELS,
+  cardChip,
+  cardStateFromRegistration,
+  loginChip,
+  loginStateFromRegistration,
+} from "@/lib/people-status";
+import { UNKNOWN_TEXT, finiteText } from "@/lib/ui/load-state";
 
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
-import { Chip, type ChipVariant } from "@/components/ds/chip";
+import { ErrorNotice } from "@/components/ds/error-notice";
+import { Chip } from "@/components/ds/chip";
 import { BigNum, Overline } from "@/components/ds/typography";
 
 function formatCents(cents: number): string {
@@ -39,17 +49,16 @@ function formatDate(iso: string | null): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-function stateChip(state: BillingSetupRegistrationState): { variant: ChipVariant; label: string } {
-  if (state === "card_on_file") return { variant: "paid", label: "REGISTERED" };
-  if (state === "account_no_card") return { variant: "pending", label: "NO CARD" };
-  return { variant: "nocharge", label: "NOT INVITED" };
-}
-
+/**
+ * #840: the filter used to say "Chargeable" for the state the chip beside it
+ * called "REGISTERED" and the family page called "Card on file". All three now
+ * read the one map in `lib/people-status`.
+ */
 const FILTERS: { value: "all" | BillingSetupRegistrationState; label: string }[] = [
   { value: "all", label: "All" },
-  { value: "no_account", label: "Not invited" },
-  { value: "account_no_card", label: "No card" },
-  { value: "card_on_file", label: "Chargeable" },
+  { value: "no_account", label: LOGIN_LABELS.not_invited },
+  { value: "account_no_card", label: CARD_LABELS.no_card },
+  { value: "card_on_file", label: CARD_LABELS.on_file },
 ];
 
 const familyHref = (parentId: string) =>
@@ -73,6 +82,8 @@ export default function FamiliesPage() {
     data,
     isLoading,
     isError,
+    isFetching,
+    refetch,
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
@@ -99,16 +110,20 @@ export default function FamiliesPage() {
           <BigNum>{summary?.families_total ?? "—"}</BigNum>
         </Card>
         <Card p={20}>
-          <Overline>Registered</Overline>
+          <Overline>{CARD_LABELS.on_file}</Overline>
           <BigNum className="text-rally-cobalt-700">{summary?.families_registered ?? "—"}</BigNum>
         </Card>
         <Card p={20}>
-          <Overline>Missing a card</Overline>
+          <Overline>{CARD_LABELS.no_card}</Overline>
           <BigNum className="text-rally-volt-700">{summary?.families_no_card ?? "—"}</BigNum>
         </Card>
         <Card p={20}>
           <Overline>Outstanding</Overline>
-          <BigNum size={28}>{formatCents(summary?.outstanding_total_cents ?? 0)}</BigNum>
+          {/* #837: "$0.00" for a payload that never arrived reads as "nobody
+              owes anything"; the sibling tiles already dash out. */}
+          <BigNum size={28}>
+            {finiteText(summary?.outstanding_total_cents, formatCents, UNKNOWN_TEXT)}
+          </BigNum>
         </Card>
       </div>
 
@@ -138,7 +153,13 @@ export default function FamiliesPage() {
         {isLoading ? (
           <div className="p-8 text-center text-sm text-slate-500">Loading…</div>
         ) : isError ? (
-          <div className="p-8 text-center text-sm text-red-600">Failed to load Billing Setup.</div>
+          <ErrorNotice
+            testId="admin-families-error"
+            className="m-5"
+            message="Could not load Billing Setup. The counts above are unknown, not zero."
+            onRetry={() => void refetch()}
+            retrying={isFetching}
+          />
         ) : rows.length === 0 ? (
           <div className="p-8 text-center text-sm text-slate-500">No families match this filter.</div>
         ) : (
@@ -147,7 +168,7 @@ export default function FamiliesPage() {
               <thead>
                 <tr className="border-b border-slate-200 text-xs uppercase text-slate-500">
                   <th className="px-4 py-3">Parent</th>
-                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3">Login</th>
                   <th className="px-4 py-3">Card</th>
                   <th className="px-4 py-3">Autopay</th>
                   <th className="px-4 py-3">Outstanding</th>
@@ -181,7 +202,8 @@ export default function FamiliesPage() {
 }
 
 function FamilyTableRow({ row }: { row: BillingSetupRow }) {
-  const chip = stateChip(row.registration_state);
+  const login = loginChip(loginStateFromRegistration(row.registration_state));
+  const card = cardChip(cardStateFromRegistration(row.registration_state));
   const href = familyHref(row.parent_id);
 
   return (
@@ -207,14 +229,21 @@ function FamilyTableRow({ row }: { row: BillingSetupRow }) {
         </div>
       </td>
       <td className="px-4 py-3">
-        <Chip variant={chip.variant} label={chip.label} />
+        <Chip variant={login.variant} label={login.label} />
       </td>
       <td className="px-4 py-3 text-slate-700">
-        {row.card_label ? `${row.card_label} ···· ${row.card_last4 ?? "????"}` : "—"}
+        <Chip variant={card.variant} label={card.label} />
+        {row.card_label && (
+          <div className="mt-1 text-xs text-slate-500">
+            {row.card_label} ···· {row.card_last4 ?? "????"}
+          </div>
+        )}
       </td>
       <td className="px-4 py-3 text-slate-700">
+        {/* #840: "resumable" was the autopay-eligibility predicate's own name
+            leaking into the page; say what an admin would say. */}
         {row.autopay_active_count > 0 || row.autopay_eligible_count > 0
-          ? `${row.autopay_active_count} active · ${row.autopay_eligible_count} resumable`
+          ? `${row.autopay_active_count} on autopay · ${row.autopay_eligible_count} eligible to resume`
           : "—"}
       </td>
       <td className="px-4 py-3 text-slate-700">{formatCents(row.outstanding_balance_cents)}</td>

@@ -13,6 +13,7 @@ import {
 import { getActiveAcademyId } from "@/lib/api/client";
 import { Card } from "@/components/ds/card";
 import { Button } from "@/components/ds/button";
+import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 
 const progressOverviewEnabled = process.env.NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW === "1";
 
@@ -31,6 +32,7 @@ export default function AdminPathwayPage() {
   const [formName, setFormName] = useState("");
   const [formSport, setFormSport] = useState("");
   const [formDescription, setFormDescription] = useState("");
+  const [seedConfirmOpen, setSeedConfirmOpen] = useState(false);
 
   const createMutation = useMutation({
     mutationFn: () =>
@@ -165,19 +167,34 @@ export default function AdminPathwayPage() {
               variant="primary"
               size="sm"
               disabled={seedMutation.isPending}
-              onClick={() => {
-                if (
-                  window.confirm(
-                    "Seed the badminton skill pathway? This creates curriculum content (levels, skills, and reference metadata) for this academy.",
-                  )
-                ) {
-                  seedMutation.mutate();
-                }
-              }}
+              onClick={() => setSeedConfirmOpen(true)}
             >
               {seedMutation.isPending ? "Seeding..." : "Seed badminton pathway"}
             </Button>
           </div>
+          <ConfirmActionDialog
+            open={seedConfirmOpen}
+            onOpenChange={setSeedConfirmOpen}
+            overline="Seed curriculum"
+            title="Seed the badminton skill pathway?"
+            subject="Badminton pathway — levels, skills and reference metadata"
+            consequence={
+              <>
+                <p>
+                  Creates the full curriculum for this academy. Coaches see the new levels and
+                  skills immediately; no student is placed or moved, and nobody is emailed.
+                </p>
+                <p>Seeding is idempotent — running it again adds nothing new.</p>
+              </>
+            }
+            confirmLabel="Seed pathway"
+            confirmVariant="primary"
+            pending={seedMutation.isPending}
+            onConfirm={() => {
+              seedMutation.mutate();
+              setSeedConfirmOpen(false);
+            }}
+          />
         </Card>
       ) : (
         <div className="space-y-3">

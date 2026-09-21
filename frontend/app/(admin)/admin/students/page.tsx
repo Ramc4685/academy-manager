@@ -7,10 +7,13 @@ import { RefreshCw, Search } from "lucide-react";
 
 import { listAdminStudents, type AdminStudentView } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
+import { statText } from "@/lib/ui/load-state";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Avatar } from "@/components/ds/avatar";
 import { Button } from "@/components/ds/button";
+import { EmptyState } from "@/components/ds/empty-state";
+import { ErrorNotice } from "@/components/ds/error-notice";
 import { BigNum, Overline } from "@/components/ds/typography";
 import {
   ALL_LIFECYCLES,
@@ -94,7 +97,7 @@ export default function AdminStudentsPage() {
 
   return (
     <section data-testid="admin-students" className="space-y-6">
-      <SummaryCards counts={counts} students={students} />
+      <SummaryCards counts={counts} students={students} state={studentsQuery} />
 
       <Card p={0}>
         <StudentsToolbar
@@ -107,21 +110,38 @@ export default function AdminStudentsPage() {
         />
 
         {studentsQuery.isError ? (
-          <div
-            role="alert"
-            data-testid="admin-students-error"
-            className="m-5 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700"
-          >
-            Could not load students.
-          </div>
+          <ErrorNotice
+            testId="admin-students-error"
+            className="m-5"
+            message="Could not load students. The counts above are unknown, not zero."
+            onRetry={() => void studentsQuery.refetch()}
+            retrying={studentsQuery.isFetching}
+          />
         ) : studentsQuery.isPending ? (
           <div className="p-5">
             <Skeleton />
           </div>
         ) : students.length === 0 ? (
-          <p className="p-5 text-sm text-rally-subtle" data-testid="admin-students-empty">
-            {hasFilters ? "No students match those filters." : "No students registered yet."}
-          </p>
+          <EmptyState
+            data-testid="admin-students-empty"
+            className="p-5"
+            title={hasFilters ? "No students match those filters." : "No students registered yet."}
+            action={
+              hasFilters ? (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  data-testid="admin-students-clear-filters"
+                  onClick={() => {
+                    setSearchInput("");
+                    setFilterId("all");
+                  }}
+                >
+                  Clear filters
+                </Button>
+              ) : undefined
+            }
+          />
         ) : (
           <>
             <StudentsTable students={students} />
@@ -138,43 +158,50 @@ export default function AdminStudentsPage() {
   );
 }
 
+// Issue #837: these five numbers are derived from `?? {}` / `?? []` defaults,
+// so a failed directory load used to render five confident zeros above the
+// words "Could not load students." Until the page has rows, each card shows a
+// dash — the count is unknown, not nil.
 function SummaryCards({
   counts,
   students,
+  state,
 }: {
   counts: Record<string, number>;
   students: AdminStudentView[];
+  state: { isPending: boolean; isError: boolean };
 }) {
   const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
   const paymentRisk = students.filter(
     (student) => student.dues_status === "due" || student.dues_status === "overdue",
   ).length;
+  const stat = (value: () => number) => statText(state, () => String(value()));
 
   return (
     <div className="grid gap-4 md:grid-cols-5">
       <Card p={20} accent="#2563eb">
         <Overline>Students</Overline>
-        <BigNum size={32}>{total}</BigNum>
+        <BigNum size={32}>{stat(() => total)}</BigNum>
         <p className="mt-1 text-[11px] text-rally-subtle">Everyone on record</p>
       </Card>
       <Card p={20} accent="#10b981">
         <Overline>Active</Overline>
-        <BigNum size={32}>{counts.active ?? 0}</BigNum>
+        <BigNum size={32}>{stat(() => counts.active ?? 0)}</BigNum>
         <p className="mt-1 text-[11px] text-rally-subtle">Attending now</p>
       </Card>
       <Card p={20} accent="#f59e0b">
         <Overline>At risk</Overline>
-        <BigNum size={32}>{counts.at_risk ?? 0}</BigNum>
+        <BigNum size={32}>{stat(() => counts.at_risk ?? 0)}</BigNum>
         <p className="mt-1 text-[11px] text-rally-subtle">Missed last 3 classes</p>
       </Card>
       <Card p={20} accent="var(--rally-subtle-ink)">
         <Overline>Paused / hold</Overline>
-        <BigNum size={32}>{(counts.paused ?? 0) + (counts.on_hold ?? 0)}</BigNum>
+        <BigNum size={32}>{stat(() => (counts.paused ?? 0) + (counts.on_hold ?? 0))}</BigNum>
         <p className="mt-1 text-[11px] text-rally-subtle">Coming back</p>
       </Card>
       <Card p={20} accent="#ef4444">
         <Overline>Payment risk</Overline>
-        <BigNum size={32}>{paymentRisk}</BigNum>
+        <BigNum size={32}>{stat(() => paymentRisk)}</BigNum>
         <p className="mt-1 text-[11px] text-rally-subtle">Due or overdue (loaded rows)</p>
       </Card>
     </div>
@@ -301,7 +328,22 @@ function StudentsTable({ students }: { students: AdminStudentView[] }) {
                 </Link>
               </td>
               <td className="px-3 py-4">
-                <div className="text-rally-base">{student.parent_name || student.parent_email || "Parent on file"}</div>
+                {/* #839: the parent cell was plain text, so the family — and
+                    all of this student's money — was only reachable by
+                    remembering the name and searching Families for it. */}
+                {student.parent_id ? (
+                  <Link
+                    href={`/admin/families/${encodeURIComponent(student.parent_id)}`}
+                    className="block rounded text-rally-base hover:underline focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600"
+                    data-testid={`admin-students-family-link-${student.student_id}`}
+                  >
+                    {student.parent_name || student.parent_email || "Parent on file"}
+                  </Link>
+                ) : (
+                  <div className="text-rally-base">
+                    {student.parent_name || student.parent_email || "Parent on file"}
+                  </div>
+                )}
                 <div className="text-xs text-rally-subtle">
                   {student.parent_email ?? "No email on file"}
                 </div>

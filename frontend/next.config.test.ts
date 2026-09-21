@@ -52,6 +52,20 @@ describe("next.config redirects", () => {
     expect(entry?.has).toBeUndefined();
   });
 
+  // #839: /admin/users/new was a second, differently-shaped add-user form
+  // sitting beside the directory's own Add user dialog. One form now, and the
+  // old URL forwards to it with the dialog open.
+  it("forwards the retired add-user page to the directory's dialog", async () => {
+    const entry = (await resolveRedirects()).find(
+      (redirect) => redirect.source === "/admin/users/new",
+    );
+
+    expect(entry, "no redirect declared for /admin/users/new").toBeDefined();
+    expect(entry?.destination).toBe("/admin/users?add=1");
+    expect(entry?.permanent).toBe(true);
+    expect(entry?.has).toBeUndefined();
+  });
+
   // The Users directory itself is live and sets `?role=` as its own filter —
   // redirecting it would break the page the two entries above point at.
   it("leaves the live Users directory alone", async () => {

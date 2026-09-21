@@ -12,6 +12,7 @@ import {
 import { Card } from "@/components/ds/card";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { Button } from "@/components/ds/button";
+import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 import { actionCellClass, actionHeaderClass } from "@/lib/sticky-action-column";
 
 import { isWithdrawn, reviewErrorMessage, WITHDRAWN_APPROVE_HINT } from "./level-up-review";
@@ -170,6 +171,8 @@ function QueueRow({
 }) {
   const [showReject, setShowReject] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
+  // #838: approving moves the student's level for real, so it asks first.
+  const [confirmApprove, setConfirmApprove] = useState(false);
   const isPending = rec.status === "RECOMMENDED";
   const disabled = approvePending || rejectPending;
   // Issue #673: a withdrawn student stays listed so the admin can reject the
@@ -232,7 +235,7 @@ function QueueRow({
                     disabled={disabled || withdrawn}
                     aria-disabled={withdrawn || undefined}
                     title={withdrawn ? WITHDRAWN_APPROVE_HINT : undefined}
-                    onClick={onApprove}
+                    onClick={() => setConfirmApprove(true)}
                   >
                     {approvePending ? "..." : "Approve"}
                   </Button>
@@ -270,6 +273,33 @@ function QueueRow({
             )}
           </div>
         )}
+        <ConfirmActionDialog
+          open={confirmApprove}
+          onOpenChange={setConfirmApprove}
+          overline="Approve level-up"
+          title="Move this student up a level?"
+          subject={`${rec.student_id} · ${rec.program_id} · from ${rec.from_level_id}`}
+          consequence={
+            <>
+              <p>
+                The student&apos;s pathway level changes for real: coaches mark them against the
+                new level&apos;s skills from now on, and the change shows on the family&apos;s
+                progress view. No seat, invoice or autopay is touched.
+              </p>
+              <p>
+                Recommended by {rec.recommended_by}. Undoing this means placing the student back by
+                hand.
+              </p>
+            </>
+          }
+          confirmLabel="Approve level-up"
+          confirmVariant="primary"
+          pending={approvePending}
+          onConfirm={() => {
+            onApprove();
+            setConfirmApprove(false);
+          }}
+        />
       </td>
     </tr>
   );

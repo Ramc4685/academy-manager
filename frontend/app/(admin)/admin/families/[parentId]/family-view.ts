@@ -9,6 +9,13 @@ import type {
   RegistrationState,
   TimelineKind,
 } from "@/lib/api/admin-families";
+import {
+  cardChip,
+  cardStateFromRegistration,
+  loginChip,
+  loginStateFromRegistration,
+  type PeopleChip,
+} from "@/lib/people-status";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -72,16 +79,21 @@ export function invoiceActionLabel(action: InvoiceAction): string {
   return INVOICE_ACTION_LABELS[action];
 }
 
-export interface RegistrationChip {
-  label: string;
-  variant: ChipVariant;
+export interface RegistrationChips {
+  login: PeopleChip;
+  card: PeopleChip;
 }
 
-/** Maps registration state onto the DS Chip's real variants (paid=green, pending=amber, manual=slate). */
-export function registrationChip(state: RegistrationState): RegistrationChip {
-  if (state === "registered") return { label: "Card on file", variant: "paid" };
-  if (state === "invited") return { label: "Invited", variant: "pending" };
-  return { label: "Not invited", variant: "manual" };
+/**
+ * Registration is really two facts — can they log in, and can we charge them.
+ * #840: both take their wording from `lib/people-status`, the one map the
+ * families list and the Users page read too, so the pages cannot drift.
+ */
+export function registrationChips(state: RegistrationState): RegistrationChips {
+  return {
+    login: loginChip(loginStateFromRegistration(state)),
+    card: cardChip(cardStateFromRegistration(state)),
+  };
 }
 
 export interface UndeliverableChip {

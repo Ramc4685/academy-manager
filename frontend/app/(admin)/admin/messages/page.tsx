@@ -18,6 +18,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   listAdminMessages,
   listAdminSessions,
+  listAdminUsers,
   getAdminAcademy,
   broadcastMessage,
   sendDm,
@@ -28,6 +29,7 @@ import {
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
 
+import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 import { Avatar } from "@/components/ds/avatar";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
@@ -187,9 +189,28 @@ function AdminMessagesContent() {
   );
 }
 
+/**
+ * #838: both mass sends state who they reach before they go. The parent roster
+ * is the audience for a whole-academy send, so its size is the recipient count.
+ */
+function useParentRecipientCount(): number | null {
+  const query = useQuery({
+    queryKey: queryKeys.admin.users("parent"),
+    queryFn: () => listAdminUsers("parent"),
+  });
+  return query.data ? query.data.users.length : null;
+}
+
+function recipientLabel(count: number | null): string {
+  if (count === null) return "every parent in the academy";
+  return count === 1 ? "1 parent" : `${count} parents`;
+}
+
 function BroadcastComposer({ onSent }: { onSent: () => void }) {
   const [body, setBody] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const recipientCount = useParentRecipientCount();
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -213,7 +234,7 @@ function BroadcastComposer({ onSent }: { onSent: () => void }) {
       onSubmit={(e) => {
         e.preventDefault();
         if (!body.trim()) return;
-        mutation.mutate();
+        setConfirmOpen(true);
       }}
       className="space-y-2"
     >
@@ -233,7 +254,7 @@ function BroadcastComposer({ onSent }: { onSent: () => void }) {
       />
       <div className="flex justify-end gap-3">
         <p className="mr-auto self-center text-[12px] text-rally-subtle">
-          Audience: whole academy announcement.
+          Audience: whole academy announcement — {recipientLabel(recipientCount)}.
         </p>
         <Button
           type="submit"
@@ -244,6 +265,33 @@ function BroadcastComposer({ onSent }: { onSent: () => void }) {
           {mutation.isPending ? "Sending..." : "Send broadcast"}
         </Button>
       </div>
+
+      <ConfirmActionDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        overline="Send broadcast"
+        title={`Send this to ${recipientLabel(recipientCount)}?`}
+        subject="Whole academy announcement"
+        consequence={
+          <>
+            <p>
+              Every parent in the academy sees it in their app inbox. It cannot be recalled or
+              edited once sent.
+            </p>
+            <p className="font-semibold text-rally-ink">Preview</p>
+            <p className="whitespace-pre-wrap rounded-md border border-rally-line bg-rally-paper px-3 py-2 text-rally-ink">
+              {body.trim()}
+            </p>
+          </>
+        }
+        confirmLabel="Send broadcast"
+        confirmVariant="primary"
+        pending={mutation.isPending}
+        onConfirm={() => {
+          mutation.mutate();
+          setConfirmOpen(false);
+        }}
+      />
     </form>
   );
 }
@@ -386,6 +434,8 @@ function EmailCampaignComposer() {
   const [body, setBody] = useState("");
   const [result, setResult] = useState<{ sent: number; failed: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const parentCount = useParentRecipientCount();
 
   const { data: academyData } = useQuery({
     queryKey: queryKeys.admin.academy(),
@@ -428,6 +478,16 @@ function EmailCampaignComposer() {
     subject.trim().length > 0 &&
     body.trim().length > 0 &&
     (audienceType === "academy" || sessionId.length > 0);
+
+  // #838: say who this reaches before it goes. A session send reaches the
+  // families on that roster; an academy send reaches every parent.
+  const selectedSession = sessions.find((s) => s.session_id === sessionId);
+  const audienceLabel =
+    audienceType === "session"
+      ? selectedSession
+        ? `${selectedSession.enrolled_count === 1 ? "1 family" : `${selectedSession.enrolled_count} families`} on ${selectedSession.title}`
+        : "the selected session"
+      : recipientLabel(parentCount);
 
   if (result) {
     return (
@@ -548,17 +608,47 @@ function EmailCampaignComposer() {
         </p>
       )}
 
-      <div className="flex justify-end">
+      <div className="flex items-center justify-end gap-3">
+        <p className="mr-auto text-[12px] text-rally-subtle">
+          Audience: {audienceLabel}.
+        </p>
         <Button
           type="button"
           variant="primary"
           size="sm"
           disabled={!canSend}
-          onClick={() => mutation.mutate()}
+          onClick={() => setConfirmOpen(true)}
         >
           {mutation.isPending ? "Sending…" : "Send email"}
         </Button>
       </div>
+
+      <ConfirmActionDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        overline="Send email campaign"
+        title={`Email ${audienceLabel}?`}
+        subject={subject.trim()}
+        consequence={
+          <>
+            <p>
+              A real email leaves the academy&apos;s address for every recipient. It cannot be
+              recalled, edited or unsent, and bounces do not roll back the send.
+            </p>
+            <p className="font-semibold text-rally-ink">Preview</p>
+            <p className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-md border border-rally-line bg-rally-paper px-3 py-2 text-rally-ink">
+              {body.trim()}
+            </p>
+          </>
+        }
+        confirmLabel="Send email"
+        confirmVariant="primary"
+        pending={mutation.isPending}
+        onConfirm={() => {
+          mutation.mutate();
+          setConfirmOpen(false);
+        }}
+      />
     </div>
   );
 }

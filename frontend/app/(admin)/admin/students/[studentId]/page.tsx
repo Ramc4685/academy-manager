@@ -7,9 +7,9 @@
  * fields. No raw internal ids are rendered in normal UI.
  */
 
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
@@ -35,6 +35,12 @@ import { Overline } from "@/components/ds/typography";
 import { StopAllClassesDialog } from "@/components/admin/enrollment/stop-all-classes-dialog";
 import { Chip } from "@/components/ds/chip";
 import { lifecycleLabel, lifecycleVariant } from "@/lib/format/lifecycle-copy";
+import {
+  STUDENT_TABS,
+  resolveStudentTab,
+  studentDocumentTitle,
+  type StudentTab,
+} from "@/lib/admin/student-tabs";
 
 import { BillingEnrollmentsPanel } from "./BillingEnrollmentsPanel";
 import { DetailList } from "./DetailList";
@@ -44,22 +50,24 @@ import { SessionsPanel } from "./SessionsPanel";
 import { OPEN_BILLING_STATUSES, StatusChip } from "./StatusChip";
 import { ChangeParentPanel, StudentEditForm } from "./StudentEditForm";
 
-type StudentTab = "overview" | "training" | "sessions" | "billing" | "family";
-
-const STUDENT_TABS: Array<{ id: StudentTab; label: string }> = [
-  { id: "overview", label: "Overview" },
-  { id: "training", label: "Training" },
-  { id: "sessions", label: "Sessions" },
-  { id: "billing", label: "Billing" },
-  { id: "family", label: "Family & Compliance" },
-];
-
 export default function AdminStudentDetailPage() {
   const params = useParams<{ studentId: string }>();
   const studentId = params?.studentId ?? "";
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<StudentTab>("overview");
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  // #839: the tab is in the URL, so a link to a student's Billing is a link
+  // to their Billing and a reload does not drop back to Overview.
+  const activeTab = resolveStudentTab(searchParams.get("tab"));
   const [stopAllClassesOpen, setStopAllClassesOpen] = useState(false);
+
+  function setActiveTab(next: StudentTab) {
+    const nextParams = new URLSearchParams(searchParams.toString());
+    if (next === "overview") nextParams.delete("tab");
+    else nextParams.set("tab", next);
+    const query = nextParams.toString();
+    router.replace(query ? `?${query}` : "?", { scroll: false });
+  }
 
   const departurePolicyQuery = useQuery({
     queryKey: queryKeys.admin.departurePolicy(),
@@ -77,6 +85,17 @@ export default function AdminStudentDetailPage() {
     queryFn: () => listAdminUsers("parent"),
     enabled: Boolean(studentId),
   });
+
+  // #839: every open student tab said "Students", so a row of them was
+  // unreadable. The shell title is static, so the page names itself.
+  const studentName = studentQuery.data?.full_name ?? null;
+  useEffect(() => {
+    const previous = document.title;
+    document.title = studentDocumentTitle(studentName);
+    return () => {
+      document.title = previous;
+    };
+  }, [studentName]);
 
   if (!studentId) {
     return (
@@ -646,9 +665,21 @@ function Header({
             Stop all classes
           </Button>
           <div className="text-sm text-rally-muted">
-            <div className="font-medium text-rally-ink">
-              {student.parent_name ?? student.parent_email ?? "Parent on file"}
-            </div>
+            {/* #839: the parent was plain text here, so the family — and every
+                invoice on it — was two clicks away via the Billing tab. */}
+            {student.parent_id ? (
+              <Link
+                href={`/admin/families/${encodeURIComponent(student.parent_id)}`}
+                className="block rounded font-medium text-rally-ink hover:underline focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600"
+                data-testid="admin-student-parent-link"
+              >
+                {student.parent_name ?? student.parent_email ?? "Parent on file"}
+              </Link>
+            ) : (
+              <div className="font-medium text-rally-ink">
+                {student.parent_name ?? student.parent_email ?? "Parent on file"}
+              </div>
+            )}
             {student.parent_email && (
               <a
                 href={`mailto:${student.parent_email}`}

@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -11,10 +12,15 @@ import {
 import { Card } from "@/components/ds/card";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { Button } from "@/components/ds/button";
+import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 import { actionCellClass, actionHeaderClass } from "@/lib/sticky-action-column";
+
+/** #838: approving or declining a pause is one click away from the family's bill. */
+type PauseDecision = { request: AdminPauseRequestView; decision: "approve" | "decline" };
 
 export function PausesTab() {
   const queryClient = useQueryClient();
+  const [confirming, setConfirming] = useState<PauseDecision | null>(null);
   const { data, isLoading, isError } = useQuery({
     queryKey: ["admin", "pause-requests"],
     queryFn: listAdminPauseRequests,
@@ -62,14 +68,70 @@ export function PausesTab() {
                     key={request.pause_request_id}
                     request={request}
                     disabled={approveMutation.isPending || declineMutation.isPending}
-                    onApprove={() => approveMutation.mutate(request.pause_request_id)}
-                    onDecline={() => declineMutation.mutate(request.pause_request_id)}
+                    onApprove={() => setConfirming({ request, decision: "approve" })}
+                    onDecline={() => setConfirming({ request, decision: "decline" })}
                   />
                 ))}
               </tbody>
             </table>
           </div>
         </Card>
+      )}
+
+      {confirming && (
+        <ConfirmActionDialog
+          open
+          onOpenChange={(open) => !open && setConfirming(null)}
+          overline={confirming.decision === "approve" ? "Approve pause" : "Decline pause"}
+          title={
+            confirming.decision === "approve"
+              ? "Approve this pause request?"
+              : "Decline this pause request?"
+          }
+          subject={`${confirming.request.student_name || confirming.request.student_id || "Student"} · ${
+            confirming.request.session_title || confirming.request.session_id || "session pending"
+          } · ${pauseLabel(confirming.request)}`}
+          consequence={
+            confirming.decision === "approve" ? (
+              <>
+                <p>
+                  The seat is released for the pause, so the student stops attending.{" "}
+                  {billingImpactLabel(confirming.request)}.
+                </p>
+                <p>
+                  {confirming.request.parent_name ||
+                    confirming.request.parent_email ||
+                    "The family"}{" "}
+                  is emailed that the pause was approved.
+                </p>
+              </>
+            ) : (
+              <>
+                <p>
+                  Nothing changes: the seat stays, attendance continues and the family keeps being
+                  invoiced as usual.
+                </p>
+                <p>
+                  {confirming.request.parent_name ||
+                    confirming.request.parent_email ||
+                    "The family"}{" "}
+                  is emailed that the request was declined.
+                </p>
+              </>
+            )
+          }
+          confirmLabel={confirming.decision === "approve" ? "Approve pause" : "Decline pause"}
+          confirmVariant={confirming.decision === "approve" ? "primary" : "danger"}
+          pending={approveMutation.isPending || declineMutation.isPending}
+          onConfirm={() => {
+            if (confirming.decision === "approve") {
+              approveMutation.mutate(confirming.request.pause_request_id);
+            } else {
+              declineMutation.mutate(confirming.request.pause_request_id);
+            }
+            setConfirming(null);
+          }}
+        />
       )}
     </div>
   );

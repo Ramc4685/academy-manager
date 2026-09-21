@@ -11,8 +11,12 @@ import {
 } from "@/lib/api/v2/payroll";
 import { generatePayoutPeriod } from "@/lib/api/v2/payouts";
 import { rowHasUnresolvedWarnings } from "@/lib/payroll-warnings";
+import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 import { MonthPicker } from "./_components/MonthPicker";
 import { PayslipsPanel } from "./_components/PayslipsPanel";
+
+/** #838: the two batch payroll actions that used to run on a single click. */
+type BulkAction = "generate" | "recompute";
 
 type PayoutsTab = "payroll" | "payslips";
 
@@ -58,6 +62,7 @@ function PayoutsContent() {
   }
 
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [bulkConfirm, setBulkConfirm] = useState<BulkAction | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ["admin", "payroll", month],
@@ -160,14 +165,14 @@ function PayoutsContent() {
               <button
                 className="rounded border px-3 py-1.5 text-sm disabled:opacity-50"
                 disabled={bulkGenerate.isPending}
-                onClick={() => bulkGenerate.mutate()}
+                onClick={() => setBulkConfirm("generate")}
               >
                 Generate all
               </button>
               <button
                 className="rounded border px-3 py-1.5 text-sm disabled:opacity-50"
                 disabled={bulkRecompute.isPending}
-                onClick={() => bulkRecompute.mutate()}
+                onClick={() => setBulkConfirm("recompute")}
               >
                 Recompute all
               </button>
@@ -258,6 +263,59 @@ function PayoutsContent() {
           </>
         )}
       </div>
+
+      <ConfirmActionDialog
+        open={bulkConfirm === "generate"}
+        onOpenChange={(open) => !open && setBulkConfirm(null)}
+        overline="Generate payroll"
+        title="Generate payslips for every coach?"
+        subject={`${month} · ${rows.length === 1 ? "1 coach" : `${rows.length} coaches`}`}
+        consequence={
+          <>
+            <p>
+              Creates a draft payslip for each coach who does not already have one this month.
+              Coaches are not paid and are not emailed — drafts still need approval.
+            </p>
+            {warningRows.length > 0 && (
+              <p>
+                {warningRows.length === 1 ? "1 coach has" : `${warningRows.length} coaches have`}{" "}
+                unresolved payroll warnings. Generating now bakes the current, possibly wrong,
+                session fee or coach rate into the draft.
+              </p>
+            )}
+          </>
+        }
+        confirmLabel="Generate all"
+        confirmVariant="primary"
+        pending={bulkGenerate.isPending}
+        onConfirm={() => {
+          bulkGenerate.mutate();
+          setBulkConfirm(null);
+        }}
+      />
+
+      <ConfirmActionDialog
+        open={bulkConfirm === "recompute"}
+        onOpenChange={(open) => !open && setBulkConfirm(null)}
+        overline="Recompute payroll"
+        title="Recompute every draft payslip?"
+        subject={`${month} · ${rows.length === 1 ? "1 coach" : `${rows.length} coaches`}`}
+        consequence={
+          <>
+            <p>
+              Rebuilds each draft from the current session fees, coach rates and attendance, so
+              amounts already reviewed this month can change. Approved and paid payslips are left
+              alone; nobody is paid and nobody is emailed.
+            </p>
+          </>
+        }
+        confirmLabel="Recompute all"
+        pending={bulkRecompute.isPending}
+        onConfirm={() => {
+          bulkRecompute.mutate();
+          setBulkConfirm(null);
+        }}
+      />
     </div>
   );
 }

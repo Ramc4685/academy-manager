@@ -32,6 +32,21 @@ describe("navForRoles", () => {
     expect(visible).not.toContain("/admin/billing-setup");
   });
 
+  // #839: Students, Users and Families all shipped `icon: "user"`, so the
+  // three People destinations were indistinguishable in the sidebar.
+  it("gives Students, Users and Families three distinct icons", () => {
+    const items = ADMIN_NAV.flatMap((group) => group.items);
+    const iconFor = (href: string) => items.find((item) => item.href === href)?.icon;
+    const icons = [
+      iconFor("/admin/students"),
+      iconFor("/admin/users"),
+      iconFor("/admin/families"),
+    ];
+
+    expect(icons.every(Boolean)).toBe(true);
+    expect(new Set(icons).size).toBe(3);
+  });
+
   it("removes a group whose every item was owner-only", () => {
     const nav: AdminNavGroup[] = [
       {
