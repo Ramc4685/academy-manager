@@ -34,6 +34,7 @@ import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { TableSkeleton } from "@/components/ds/skeleton";
 import { Overline } from "@/components/ds/typography";
 import { useIsPhone } from "@/lib/use-is-phone";
+import { webhookEventLabel } from "@/lib/billing-health";
 
 import {
   formatCents,
@@ -211,7 +212,12 @@ export function AllInvoicesTab() {
                 <div key={event.event_id} className="grid gap-2 py-3 text-sm sm:grid-cols-[1fr_auto]">
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium text-rally-ink">{event.event_type}</span>
+                      {/* #892: Stripe's own event name is a key, not a sentence.
+                          The queue says what happened; the raw type and ids stay
+                          one disclosure away for support. */}
+                      <span className="font-medium text-rally-ink" title={event.event_type}>
+                        {webhookEventLabel(event.event_type)}
+                      </span>
                       <Chip
                         variant={event.status === "quarantined" ? "failed" : "pending"}
                         label={event.status.toUpperCase()}
@@ -221,9 +227,15 @@ export function AllInvoicesTab() {
                       {event.error_message || "No error detail recorded."}
                     </p>
                   </div>
-                  <div className="font-mono text-xs text-rally-subtle sm:text-right">
-                    <div>{event.event_id}</div>
-                    {event.object_id && <div>{event.object_id}</div>}
+                  <div className="text-xs text-rally-subtle sm:text-right">
+                    <details data-testid={`webhook-ids-${event.event_id}`}>
+                      <summary className="cursor-pointer">Stripe details</summary>
+                      <div className="mt-1 break-all font-mono">
+                        <div>{event.event_type}</div>
+                        <div>{event.event_id}</div>
+                        {event.object_id && <div>{event.object_id}</div>}
+                      </div>
+                    </details>
                   </div>
                 </div>
               ))}
