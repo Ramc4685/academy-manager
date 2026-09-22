@@ -136,6 +136,18 @@ class _QuarantineStripeEvent(Exception):
     """Stored event is valid Stripe input but unsafe to project into Mongo."""
 
 
+# Storage bucket for events that carry no tenant marker at all in multi-academy
+# mode. It is not a real academy: no per-academy drain ever calls ``claim_next``
+# with it, so an event stored here can never be processed, and it never inflates
+# a real academy's billing-health quarantine counts.
+UNATTRIBUTED_QUARANTINE_ACADEMY = "__unattributed__"
+
+# ``quarantine_reason`` recorded for those events (kept distinct from the
+# store's ``rejected_by_guard`` / ``retry_limit_exceeded`` so an ops sweep can
+# select exactly "nobody could tell whose event this was").
+QUARANTINE_UNATTRIBUTED = "unattributed_no_tenant_marker"
+
+
 class AccountAcademyResolver(Protocol):
     """Resolves a Stripe Connect account id to its owning academy id.
 
@@ -181,6 +193,7 @@ class HandleWebhookEvent:
         invoice_processing: StripeInvoiceProcessingRepository | None = None,
         connected_accounts: AccountAcademyResolver | None = None,
         expected_livemode: bool | None = None,
+        tenancy_mode: str = "single_academy",
         clock=lambda: datetime.now(UTC),
     ) -> None:
         self._stripe = stripe
@@ -199,6 +212,7 @@ class HandleWebhookEvent:
         self._invoice_processing = invoice_processing
         self._connected_accounts = connected_accounts
         self._expected_livemode = expected_livemode
+        self._tenancy_mode = tenancy_mode
         self._outbox = outbox
         self._academy_id = academy_id
         self._now = clock
@@ -224,54 +238,104 @@ class HandleWebhookEvent:
         event = self._verify(payload, signature)
         event_id, event_type = self._event_identity(event)
 
-        academy_id = await self._ingest_academy_id(event)
+        academy_id, quarantine_reason = await self._ingest_academy_id(event)
         with tenant_scope(academy_id):
             stored = await self._dedup.store_received(
                 event,
                 raw_payload=payload,
                 academy_id=academy_id,
             )
-        if not stored:
-            log.info("stripe_webhook_already_stored event_id=%s", event_id)
-        return {"received": True, "stored": stored, "type": event_type}
+            if not stored:
+                # Also covers a Stripe retry of an event we already quarantined:
+                # the insert-first store is the dedup, so there is no second
+                # row, no second quarantine mark and no second alert.
+                log.info("stripe_webhook_already_stored event_id=%s", event_id)
+                return {"received": True, "stored": False, "type": event_type}
+            if quarantine_reason is None:
+                return {"received": True, "stored": True, "type": event_type}
+            await self._dedup.mark_quarantined(
+                event_id, quarantine_reason, reason_code=QUARANTINE_UNATTRIBUTED
+            )
+        log.warning(
+            "stripe_webhook_event_unattributed",
+            extra={
+                "event_id": event_id,
+                "event_type": event_type,
+                "tenancy_mode": self._tenancy_mode,
+            },
+        )
+        self._alert_quarantined(
+            event_id=event_id,
+            event_type=event_type,
+            reason=QUARANTINE_UNATTRIBUTED,
+            error=quarantine_reason,
+        )
+        # 200 on purpose: the event is persisted and needs a human, not a retry.
+        return {
+            "received": True,
+            "stored": True,
+            "type": event_type,
+            "status": "quarantined",
+        }
 
-    async def _ingest_academy_id(self, event: dict[str, Any]) -> str:
-        """Best-effort tenant attribution at INGEST time (issue #532).
+    async def _ingest_academy_id(self, event: dict[str, Any]) -> tuple[str, str | None]:
+        """Tenant attribution at INGEST time (issues #532 and the unattributed
+        follow-up).
 
         The /webhooks/stripe endpoint is served by the boot-academy handler,
         but the drain claims stored events per academy — an event stamped with
         the wrong academy would be claimed by the wrong per-academy processor
         and quarantined by its cross-academy guard instead of reaching its own.
 
+        Returns ``(academy_id_to_store_under, quarantine_reason)``; the reason
+        is ``None`` whenever the event may be processed normally.
+
         Resolution order:
         1. ``metadata.academy_id`` — stamped by our own checkout/subscription
            creation, delivered back inside the signature-verified payload.
         2. Top-level ``account`` (Connect events) resolved via the
-           connected-account repo.
-        3. This handler's academy — platform events with neither marker.
+           connected-account repo. An account that does not resolve is still
+           stored under this handler's academy: the processing-side guard
+           (``resolve_academy_for_event``) already quarantines and alerts on it,
+           so ingest does not duplicate that machinery.
+        3. Neither marker:
+           - ``single_academy`` mode: this handler's academy. There is exactly
+             one tenant (``primary_academy_id``) by construction, so a platform
+             event with no marker cannot belong to anyone else; every event
+             type the platform account emits is safe to attribute here.
+           - ``multi_academy`` mode: nobody. One endpoint ingests every
+             academy's traffic, so attributing to the boot academy would credit
+             a tenant at random. The event is stored under
+             ``UNATTRIBUTED_QUARANTINE_ACADEMY`` and quarantined by ``accept``.
 
-        Never raises past signature verification: a resolution failure falls
-        back to this handler's academy, and the processing-side guards
-        (``_validate_event_guards_async``) remain the authority — they
-        quarantine, with alerting, anything stored under the wrong tenant.
+        Never raises past signature verification: a resolver failure is logged
+        and treated as "did not resolve".
         """
         metadata_academy = self._event_metadata(event).get("academy_id")
         if metadata_academy:
-            return metadata_academy
+            return metadata_academy, None
         account_id = str(event.get("account") or "")
-        if account_id and self._connected_accounts is not None:
-            try:
-                resolved = await self._connected_accounts.academy_id_for_account(account_id)
-            except Exception as exc:
-                log.warning(
-                    "stripe_webhook_ingest_account_resolution_failed account=%s err=%s",
-                    account_id,
-                    exc,
-                )
-                resolved = None
-            if resolved:
-                return resolved
-        return self._academy_id
+        if account_id:
+            if self._connected_accounts is not None:
+                try:
+                    resolved = await self._connected_accounts.academy_id_for_account(account_id)
+                except Exception as exc:
+                    log.warning(
+                        "stripe_webhook_ingest_account_resolution_failed account=%s err=%s",
+                        account_id,
+                        exc,
+                    )
+                    resolved = None
+                if resolved:
+                    return resolved, None
+            return self._academy_id, None
+        if self._tenancy_mode == "single_academy":
+            return self._academy_id, None
+        return (
+            UNATTRIBUTED_QUARANTINE_ACADEMY,
+            "no metadata.academy_id and no Connect account on the event; "
+            f"refusing to attribute to boot academy {self._academy_id} in multi_academy mode",
+        )
 
     async def process_next(
         self,

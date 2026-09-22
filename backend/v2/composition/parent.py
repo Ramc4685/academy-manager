@@ -637,6 +637,7 @@ def compose_parent_webhook_handler(
         else False
         if settings.env == "test"
         else None,
+        tenancy_mode=settings.tenancy_mode,
     )
 
 
@@ -797,6 +798,7 @@ def compose_parent(
         else False
         if settings.env == "test"
         else None,
+        tenancy_mode=settings.tenancy_mode,
     )
     quote_enrollment_uc = QuoteEnrollment(
         sessions=payments_repo,
