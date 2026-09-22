@@ -24,6 +24,7 @@ import {
   type CoachPayBillingUnit,
   type LoginInviteOutcome,
 } from "@/lib/api/admin";
+import { hasCoachRole } from "@/lib/admin/coach-roles";
 import { roleLabel } from "@/lib/admin/role-label";
 import { assignableRoles } from "@/lib/auth/assignable-roles";
 import { rateTimelineIssueLabel } from "@/lib/payroll-warnings";
@@ -76,7 +77,9 @@ export default function AdminUserDetailPage() {
   }
 
   const user = userQuery.data;
-  const isCoach = user.role === "coach";
+  // Any coaching role on the user, not only the primary one: a parent who
+  // also coaches, or an assistant coach, still needs pay rates and sessions.
+  const isCoach = hasCoachRole(user);
 
   const invalidate = () => {
     void queryClient.invalidateQueries({
