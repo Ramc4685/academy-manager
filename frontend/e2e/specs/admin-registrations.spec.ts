@@ -57,6 +57,14 @@ async function stubAdminShell(page: Page) {
       active_academy_id: "academy-e2e",
     }),
   );
+  // The admin shell feeds the Inbox nav badge from this endpoint on every
+  // admin page, and polls its message list, so every shell stub covers both.
+  await page.route("**/api/v2/admin/inbox/counts", (route) =>
+    fulfillJson(route, { counts: {}, total: 0 }),
+  );
+  await page.route("**/api/v2/admin/messages*", (route) =>
+    fulfillJson(route, { messages: [] }),
+  );
   await page.route("**/api/v2/admin/academy", (route) =>
     fulfillJson(route, {
       academy_id: "academy-e2e",
@@ -71,6 +79,66 @@ async function stubAdminShell(page: Page) {
     }),
   );
 }
+
+const PENDING_QUEUE_ROW = {
+  application_id: "app-1",
+  status: "PENDING_APPROVAL",
+  parent_email: "parent@example.com",
+  parent_name: "Pat Parent",
+  student_name: "Sam Student",
+  selected_session_id: "session-1",
+  session_title: "Wednesday Beginner",
+  waiver_required: true,
+  waiver_satisfied: true,
+  zero_quote_period: null,
+  family_notified_at: null,
+  updated_at: "2026-07-14T12:00:00Z",
+};
+
+const STUCK_QUEUE_ROW = {
+  ...PENDING_QUEUE_ROW,
+  application_id: "app-2",
+  status: "MANUAL_REVIEW",
+  parent_name: "Alex Ambiguous",
+  student_name: "Ada Ambiguous",
+  selected_session_id: "session-2",
+  session_title: "Thursday Intermediate",
+  updated_at: "2026-07-13T12:00:00Z",
+};
+
+/**
+ * Issue #891: the queue exists to answer "who is asking for which class", and
+ * the answer was only inside the application. The class now rides on the list
+ * row in BOTH layouts (table on chromium-desktop, PhoneListRow on
+ * chromium-mobile), and the rows an admin can actually decide today come
+ * first no matter what order the backend hands back.
+ */
+test("registration rows name the requested class and pending comes first", async ({ page }) => {
+  await stubAdminShell(page);
+  // Deliberately backwards: the ordering under test is the UI's, not the
+  // backend's.
+  await page.route("**/api/v2/admin/registrations", (route) =>
+    fulfillJson(route, { registrations: [STUCK_QUEUE_ROW, PENDING_QUEUE_ROW] }),
+  );
+
+  await page.goto("/admin/inbox?tab=registrations");
+
+  const pendingRow = page.getByTestId("admin-registration-row-app-1");
+  const stuckRow = page.getByTestId("admin-registration-row-app-2");
+  await expect(pendingRow.getByText("Wednesday Beginner")).toBeVisible();
+  await expect(stuckRow.getByText("Thursday Intermediate")).toBeVisible();
+
+  const order = await page
+    .locator('[data-testid^="admin-registration-row-"]')
+    .evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-testid")));
+  expect(order).toEqual(["admin-registration-row-app-1", "admin-registration-row-app-2"]);
+
+  await expect(page.getByTestId("admin-registrations-needs-another-look")).toBeVisible();
+
+  // Review is one tap from the row in either layout: the desktop Review
+  // button and the phone row's title are the same link.
+  await expect(pendingRow.locator('a[href="/admin/registrations/app-1"]').first()).toBeVisible();
+});
 
 test("successful approval stays successful without a redundant detail refetch", async ({ page }) => {
   await stubAdminShell(page);

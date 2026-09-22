@@ -19,6 +19,7 @@ def _row() -> AdminRegistrationRow:
         parent_name="Pat Parent",
         student_name="Sam Student",
         selected_session_id="sess-1",
+        session_title="Junior A",
         waiver_required=True,
         waiver_satisfied=True,
         updated_at=datetime(2026, 5, 24, tzinfo=UTC),
@@ -33,7 +34,6 @@ def _detail(status: str = "PENDING_APPROVAL") -> AdminRegistrationDetail:
         child_last_name="Student",
         child_skill_level="beginner",
         payment_id="pay-1",
-        session_title="Junior A",
         session_capacity=8,
         waiver_template_id="tmpl-1",
         waiver_title="Standard waiver",
@@ -55,6 +55,7 @@ def test_admin_lists_pending_registrations(admin_client) -> None:
             "parent_name": "Pat Parent",
             "student_name": "Sam Student",
             "selected_session_id": "sess-1",
+            "session_title": "Junior A",
             "waiver_required": True,
             "waiver_satisfied": True,
             "zero_quote_period": None,
@@ -62,6 +63,22 @@ def test_admin_lists_pending_registrations(admin_client) -> None:
             "updated_at": "2026-05-24T00:00:00Z",
         }
     ]
+
+
+def test_admin_registration_list_names_the_requested_class(admin_client) -> None:
+    """Issue #891: the queue row says which class the family asked for.
+
+    Without it an admin has to open every application just to learn what is
+    being requested, which is the one fact that ranks the queue.
+    """
+    admin_client.use_cases.admin_registration_review.list_pending = AsyncMock(
+        return_value=[_row().model_copy(update={"session_title": "Wednesday Beginner"})]
+    )
+
+    response = admin_client.get("/api/v2/admin/registrations")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["registrations"][0]["session_title"] == "Wednesday Beginner"
 
 
 def test_admin_registration_list_exposes_zero_quote_period(admin_client) -> None:

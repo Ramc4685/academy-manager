@@ -1593,6 +1593,8 @@ class AdminRegistrationRowView(BaseModel):
     parent_name: str | None = None
     student_name: str | None = None
     selected_session_id: str | None = None
+    # Issue #891: the class the family asked for, on the list row itself.
+    session_title: str | None = None
     waiver_required: bool = False
     waiver_satisfied: bool = False
     zero_quote_period: str | None = None
@@ -1614,7 +1616,6 @@ class AdminRegistrationDetailView(AdminRegistrationRowView):
     student_id: str | None = None
     enrollment_id: str | None = None
     waitlist_id: str | None = None
-    session_title: str | None = None
     session_capacity: int | None = None
     waiver_template_id: str | None = None
     waiver_title: str | None = None
