@@ -2450,8 +2450,12 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         return f"name\n{report_name}\n"
 
     class _ListAdminUsers:
-        async def execute(self, role=None, academy_id=None):
-            _ = academy_id
+        async def execute(self, role=None, academy_id=None, *, exclude_role=None, roles=None):
+            # Tenant scoping: the fake only knows academy "acad" (the admin
+            # claims' academy); any other tenant sees nothing, mirroring the
+            # real repo's academy_id clause.
+            if academy_id not in (None, "acad"):
+                return []
             users = [
                 AdminUserSummary(
                     user_id="coach-1",
@@ -2459,6 +2463,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
                     display_name="Coach One",
                     role="coach",
                     status="active",
+                    roles=("coach",),
                 ),
                 AdminUserSummary(
                     user_id="p-1",
@@ -2466,6 +2471,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
                     display_name="Parent One",
                     role="parent",
                     status="active",
+                    roles=("parent",),
                 ),
                 AdminUserSummary(
                     user_id="adm",
@@ -2473,9 +2479,42 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
                     display_name="Admin One",
                     role="admin",
                     status="active",
+                    roles=("admin",),
+                ),
+                # A parent who also coaches: primary role is parent, so a
+                # client-side "hide parents" filter would wrongly drop them.
+                AdminUserSummary(
+                    user_id="pc-1",
+                    email="parent-coach@example.com",
+                    display_name="Parent Coach",
+                    role="parent",
+                    status="active",
+                    roles=("parent", "coach"),
+                ),
+                # A former student who later self-registered as a parent:
+                # ``ensure_parent_user`` merges roles, so the doc carries
+                # ``student`` next to ``parent``. The list view must render
+                # it rather than 500 on a role an admin cannot assign.
+                AdminUserSummary(
+                    user_id="ps-1",
+                    email="parent-student@example.com",
+                    display_name="Parent Student",
+                    role="parent",
+                    status="active",
+                    roles=("parent", "student"),
                 ),
             ]
-            return [u for u in users if role is None or u.role == role]
+            out = []
+            for u in users:
+                held = set(u.roles) or {"parent"}
+                if role is not None and u.role != role:
+                    continue
+                if roles and not held & set(roles):
+                    continue
+                if exclude_role and not (held - {exclude_role}):
+                    continue
+                out.append(u)
+            return out
 
     class _ListAdminStudents:
         async def execute(self, search=None, lifecycle=(), limit=50, cursor=None, missing=()):

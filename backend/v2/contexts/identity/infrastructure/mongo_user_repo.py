@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any, cast
 
@@ -283,6 +284,7 @@ class MongoUserRepository:
             role=primary_role,
             status=status,
             phone=str(doc.get("phone")) if doc.get("phone") is not None else None,
+            roles=user.roles,
         )
 
     def _to_admin_detail(
@@ -293,11 +295,9 @@ class MongoUserRepository:
         session_count: int = 0,
         login_invite_sent_at: datetime | None = None,
     ) -> AdminUserDetail:
-        user = self._to_domain(doc)
         summary = self._to_admin_summary(doc)
         return AdminUserDetail(
             **summary.model_dump(),
-            roles=user.roles,
             linked_student_count=linked_student_count,
             session_count=session_count,
             # Passed in from the tenant's `academy_memberships` row, never read
@@ -323,12 +323,53 @@ class MongoUserRepository:
             ]
         }
 
+    @staticmethod
+    def _roles_any_filter(roles: Sequence[Role]) -> dict[str, object]:
+        """Docs holding any of ``roles``, on either the v2 array or the legacy scalar."""
+        wanted = list(dict.fromkeys(roles))
+        return {"$or": [{"roles": {"$in": wanted}}, {"role": {"$in": wanted}}]}
+
+    @staticmethod
+    def _exclude_role_filter(excluded: Role) -> dict[str, object]:
+        """Keep only docs that hold some role other than ``excluded``.
+
+        Mirrors ``_to_domain``: the ``roles`` array (or scalar string) wins
+        when present, else the legacy scalar ``role``; a doc with neither, a
+        null in both, or an empty array is treated as a plain parent, so it
+        survives only when the excluded role is not ``parent``. ``{"roles":
+        None}`` matches a missing *or* null field, which is exactly the case
+        where ``_to_domain`` falls back to ``role``. The branches are disjoint
+        on the shape of ``roles``, so this is one clause of the outer ``$and``,
+        never a second ``$or`` folded into ``_role_filter``.
+        """
+        branches: list[dict[str, object]] = [
+            {"roles": {"$elemMatch": {"$ne": excluded}}},
+            {"roles": {"$type": "string", "$ne": excluded}},
+            {"roles": None, "role": {"$nin": [None, excluded]}},
+        ]
+        if excluded != "parent":
+            branches.append({"roles": None, "role": None})
+            branches.append({"roles": {"$size": 0}})
+        return {"$or": branches}
+
     async def list_users(
-        self, role: Role | None = None, academy_id: str | None = None
+        self,
+        role: Role | None = None,
+        academy_id: str | None = None,
+        *,
+        exclude_role: Role | None = None,
+        roles: Sequence[Role] | None = None,
     ) -> list[AdminUserSummary]:
-        query: dict[str, object] = {"academy_id": academy_id or self._default_academy_id}
+        # Tenant scope first, then each optional filter as its own ``$and``
+        # clause so the planner can still lead with ``academy_id``.
+        clauses: list[dict[str, object]] = [{"academy_id": academy_id or self._default_academy_id}]
         if role:
-            query = {"$and": [query, self._role_filter(role)]}
+            clauses.append(self._role_filter(role))
+        if roles:
+            clauses.append(self._roles_any_filter(roles))
+        if exclude_role:
+            clauses.append(self._exclude_role_filter(exclude_role))
+        query: dict[str, object] = clauses[0] if len(clauses) == 1 else {"$and": clauses}
         cursor = self.collection.find(query).sort([("role", 1), ("display_name", 1), ("email", 1)])
         return [self._to_admin_summary(doc) async for doc in cursor]
 

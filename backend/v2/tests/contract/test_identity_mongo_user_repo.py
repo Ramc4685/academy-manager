@@ -88,6 +88,182 @@ async def test_admin_user_listing_is_scoped_to_academy(db) -> None:
     assert [u.user_id for u in users] == ["u-a"]
 
 
+async def _seed_role_shapes(db, academy_id: str = "academy-a") -> None:
+    """Every document shape ``_to_domain`` understands, plus one other tenant.
+
+    Names are invented fixtures, never real people.
+    """
+    await db["users"].insert_many(
+        [
+            {
+                "user_id": "parent-only",
+                "email": "parent-only@example.com",
+                "display_name": "Parent Only",
+                "roles": ["parent"],
+                "role": "parent",
+                "status": "active",
+                "academy_id": academy_id,
+            },
+            {
+                "user_id": "parent-coach",
+                "email": "parent-coach@example.com",
+                "display_name": "Parent Coach",
+                "roles": ["parent", "coach"],
+                "role": "parent",
+                "status": "active",
+                "academy_id": academy_id,
+            },
+            {
+                # Legacy shape: scalar ``role`` and no ``roles`` array.
+                "user_id": "legacy-coach",
+                "email": "legacy-coach@example.com",
+                "display_name": "Legacy Coach",
+                "role": "coach",
+                "status": "active",
+                "academy_id": academy_id,
+            },
+            {
+                # Null array with a scalar: ``_to_domain`` falls back to ``role``.
+                "user_id": "null-roles-coach",
+                "email": "null-roles-coach@example.com",
+                "display_name": "Null Roles Coach",
+                "roles": None,
+                "role": "coach",
+                "status": "active",
+                "academy_id": academy_id,
+            },
+            {
+                "user_id": "legacy-parent",
+                "email": "legacy-parent@example.com",
+                "display_name": "Legacy Parent",
+                "role": "parent",
+                "status": "active",
+                "academy_id": academy_id,
+            },
+            {
+                # Neither field: ``_to_admin_summary`` reports this as a parent.
+                "user_id": "roleless",
+                "email": "roleless@example.com",
+                "display_name": "Roleless",
+                "status": "active",
+                "academy_id": academy_id,
+            },
+            {
+                "user_id": "admin-a",
+                "email": "admin-a@example.com",
+                "display_name": "Admin A",
+                "roles": ["admin", "owner"],
+                "role": "admin",
+                "status": "active",
+                "academy_id": academy_id,
+            },
+            {
+                # Other tenant, would match every filter below if scope leaked.
+                "user_id": "coach-b",
+                "email": "coach-b@example.com",
+                "display_name": "Coach B",
+                "roles": ["coach"],
+                "role": "coach",
+                "status": "active",
+                "academy_id": "academy-b",
+            },
+        ]
+    )
+
+
+def _ids(users) -> set[str]:
+    return {u.user_id for u in users}
+
+
+@pytest.mark.asyncio
+async def test_list_users_exclude_role_parent_drops_parent_only_keeps_parent_coach(db) -> None:
+    await _seed_role_shapes(db)
+    repo = MongoUserRepository(db, default_academy_id="academy-a")
+
+    users = await repo.list_users(academy_id="academy-a", exclude_role="parent")
+
+    assert _ids(users) == {"parent-coach", "legacy-coach", "null-roles-coach", "admin-a"}
+
+
+@pytest.mark.asyncio
+async def test_list_users_exclude_role_treats_legacy_and_roleless_docs_like_to_domain(db) -> None:
+    await _seed_role_shapes(db)
+    repo = MongoUserRepository(db, default_academy_id="academy-a")
+
+    excluded = await repo.list_users(academy_id="academy-a", exclude_role="parent")
+    everyone = await repo.list_users(academy_id="academy-a")
+
+    # Legacy scalar ``role`` counts; a doc with neither field is a parent.
+    assert "legacy-coach" in _ids(excluded)
+    assert "null-roles-coach" in _ids(excluded)
+    assert "legacy-parent" not in _ids(excluded)
+    assert "roleless" not in _ids(excluded)
+    assert {u.user_id: u.role for u in everyone}["roleless"] == "parent"
+
+
+@pytest.mark.asyncio
+async def test_list_users_role_combined_with_exclude_role(db) -> None:
+    await _seed_role_shapes(db)
+    repo = MongoUserRepository(db, default_academy_id="academy-a")
+
+    coaches = await repo.list_users(role="coach", academy_id="academy-a", exclude_role="parent")
+
+    # ``role=coach`` alone lists parent-coach (secondary role); the exclusion
+    # keeps them because they hold a non-parent role. Nothing parent-only.
+    assert _ids(coaches) == {"parent-coach", "legacy-coach", "null-roles-coach"}
+
+
+@pytest.mark.asyncio
+async def test_list_users_roles_is_a_union_over_array_and_legacy_scalar(db) -> None:
+    await _seed_role_shapes(db)
+    repo = MongoUserRepository(db, default_academy_id="academy-a")
+
+    users = await repo.list_users(academy_id="academy-a", roles=["coach", "owner"])
+
+    assert _ids(users) == {"parent-coach", "legacy-coach", "null-roles-coach", "admin-a"}
+
+
+@pytest.mark.asyncio
+async def test_list_users_roles_with_exclude_role(db) -> None:
+    await _seed_role_shapes(db)
+    repo = MongoUserRepository(db, default_academy_id="academy-a")
+
+    users = await repo.list_users(academy_id="academy-a", roles=["parent"], exclude_role="parent")
+
+    assert _ids(users) == {"parent-coach"}
+
+
+@pytest.mark.asyncio
+async def test_list_users_new_filters_never_cross_the_tenant_boundary(db) -> None:
+    await _seed_role_shapes(db)
+    repo = MongoUserRepository(db, default_academy_id="academy-a")
+
+    for kwargs in (
+        {"exclude_role": "parent"},
+        {"roles": ["coach"]},
+        {"role": "coach", "exclude_role": "parent", "roles": ["coach"]},
+    ):
+        users = await repo.list_users(academy_id="academy-a", **kwargs)
+        assert "coach-b" not in _ids(users), kwargs
+
+    other = await repo.list_users(academy_id="academy-b", exclude_role="parent", roles=["coach"])
+    assert _ids(other) == {"coach-b"}
+
+
+@pytest.mark.asyncio
+async def test_list_users_summary_carries_every_held_role(db) -> None:
+    await _seed_role_shapes(db)
+    repo = MongoUserRepository(db, default_academy_id="academy-a")
+
+    by_id = {u.user_id: u for u in await repo.list_users(academy_id="academy-a")}
+
+    assert by_id["parent-coach"].role == "parent"
+    assert by_id["parent-coach"].roles == ("parent", "coach")
+    assert by_id["legacy-coach"].roles == ("coach",)
+    assert by_id["null-roles-coach"].roles == ("coach",)
+    assert by_id["roleless"].roles == ()
+
+
 @pytest.mark.asyncio
 async def test_user_repo_bootstraps_new_public_parent(db) -> None:
     repo = MongoUserRepository(db, default_academy_id="academy-a")

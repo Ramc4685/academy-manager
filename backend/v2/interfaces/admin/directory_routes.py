@@ -77,15 +77,30 @@ async def _attach_tuition_discounts(data: dict, use_cases: AdminUseCases) -> Non
     await attach_tuition_discount_badges(data.get("enrolled_sessions") or [], discounts_repo)
 
 
+AdminRole = Literal["admin", "coach", "assistant_coach", "parent", "owner"]
+
+
 @router.get("/users", response_model=AdminUserList)
 async def list_users(
-    role: Literal["admin", "coach", "assistant_coach", "parent", "owner"] | None = Query(
-        default=None
+    role: AdminRole | None = Query(default=None),
+    exclude_role: Literal["parent"] | None = Query(
+        default=None,
+        description="Drop users who hold no role other than this one. "
+        "A parent who is also a coach is kept.",
+    ),
+    roles: list[AdminRole] | None = Query(
+        default=None,
+        description="Repeatable. Users holding any of these roles.",
     ),
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminUserList:
-    users = await use_cases.list_admin_users.execute(role, academy_id=_claims.academy_id)
+    users = await use_cases.list_admin_users.execute(
+        role,
+        academy_id=_claims.academy_id,
+        exclude_role=exclude_role,
+        roles=roles or None,
+    )
     return AdminUserList(users=[AdminUserView(**u.model_dump()) for u in users])
 
 
