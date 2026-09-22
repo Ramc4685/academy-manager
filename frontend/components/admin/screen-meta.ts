@@ -7,11 +7,17 @@
  */
 
 export type AdminNavIconKey =
-  | "home" | "calendar" | "user" | "users" | "family" | "list" | "check"
-  | "pay" | "card" | "bell" | "whistle" | "chart"
+  | "home" | "calendar" | "user" | "users" | "family" | "badge" | "list" | "check"
+  | "attend" | "pay" | "card" | "bell" | "whistle" | "chart"
   | "msg" | "cog" | "trophy" | "signal" | "filter";
 
 export interface AdminNavItem {
+  /**
+   * Stable identifier, unique across the nav. It is the `admin-nav-<id>`
+   * testid, so it must not change when a label is reworded or an item moves
+   * to another group (sidebar regroup spec §2.3).
+   */
+  id: string;
   /** Route URL. */
   href: string;
   /** Label shown in sidebar. */
@@ -42,54 +48,63 @@ const startsWith = (prefix: string) => (p: string) => p.startsWith(prefix);
 const eq = (route: string) => (p: string) => p === route;
 
 /**
- * Rally admin nav, grouped per `assets/admin-screens.jsx:10-30`.
- * Existing admin routes (users, audit-logs, pause-requests, coach-payslip,
- * finance) are preserved as part of the group they fit in.
+ * Rally admin nav in six groups (sidebar regroup spec §2): the day's start
+ * point, the curriculum, the people, outbound comms, the money, and the
+ * academy's own configuration. Every item carries an explicit `id` so the
+ * testid survives a label change; "Users" keeps its id when it becomes Staff.
  */
 export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
   {
-    group: "WORK",
+    group: "TODAY",
     items: [
-      { href: "/admin", label: "Dashboard", icon: "home", match: eq("/admin") },
-      { href: "/admin/sessions", label: "Sessions", icon: "calendar", match: startsWith("/admin/sessions") },
-      { href: "/admin/students", label: "Students", icon: "user", match: startsWith("/admin/students") },
-      { href: "/admin/pathway", label: "Pathway", icon: "trophy", match: startsWith("/admin/pathway") },
-      // #839: Students, Users and Families were three `user` glyphs. One
-      // person, a group of people, a household.
-      { href: "/admin/users", label: "Users", icon: "users", match: startsWith("/admin/users") },
-      { href: "/admin/inbox", label: "Inbox", icon: "check", match: startsWith("/admin/inbox") },
+      { id: "dashboard", href: "/admin", label: "Dashboard", icon: "home", match: eq("/admin") },
+      // Inbox is the second thing an admin opens each day; it sits under
+      // Dashboard rather than sixth in a work list.
+      { id: "inbox", href: "/admin/inbox", label: "Inbox", icon: "check", match: startsWith("/admin/inbox") },
+    ],
+  },
+  {
+    group: "CLASSES",
+    items: [
+      { id: "sessions", href: "/admin/sessions", label: "Sessions", icon: "calendar", match: startsWith("/admin/sessions") },
+      { id: "pathway", href: "/admin/pathway", label: "Pathway", icon: "trophy", match: startsWith("/admin/pathway") },
+    ],
+  },
+  {
+    group: "PEOPLE",
+    items: [
+      // #839: one person, a household, and (badge) the staff who wear a
+      // lanyard. Three People destinations, three glyphs.
+      { id: "students", href: "/admin/students", label: "Students", icon: "user", match: startsWith("/admin/students") },
+      { id: "families", href: "/admin/families", label: "Families", icon: "family", match: startsWith("/admin/families") },
+      { id: "users", href: "/admin/users", label: "Users", icon: "badge", match: startsWith("/admin/users") },
+    ],
+  },
+  {
+    group: "REACH",
+    items: [
+      { id: "messages", href: "/admin/messages", label: "Messages", icon: "msg", match: startsWith("/admin/messages") },
     ],
   },
   {
     group: "MONEY",
     items: [
-      // Ordered by how often the job is done: work the money list, check a
-      // family, close the month, then the plumbing and the outgoings.
-      {
-        href: "/admin/payments",
-        label: "Payments",
-        icon: "pay",
-        match: startsWith("/admin/payments"),
-      },
-      { href: "/admin/families", label: "Families", icon: "family", match: startsWith("/admin/families") },
-      { href: "/admin/reports", label: "Month close", icon: "chart", match: startsWith("/admin/reports"), ownerOnly: true },
-      { href: "/admin/billing-health", label: "Billing Health", icon: "signal", match: startsWith("/admin/billing-health"), ownerOnly: true },
-      {
-        href: "/admin/expenses",
-        label: "Expenses",
-        icon: "card",
-        match: startsWith("/admin/expenses"),
-      },
-      { href: "/admin/payouts", label: "Coach payouts", icon: "whistle", match: startsWith("/admin/payouts"), ownerOnly: true },
+      // Ordered by how often the job is done: work the money list, close the
+      // month, then the plumbing and the outgoings.
+      { id: "payments", href: "/admin/payments", label: "Payments", icon: "pay", match: startsWith("/admin/payments") },
+      { id: "month-close", href: "/admin/reports", label: "Month close", icon: "chart", match: startsWith("/admin/reports"), ownerOnly: true },
+      { id: "billing-health", href: "/admin/billing-health", label: "Billing Health", icon: "signal", match: startsWith("/admin/billing-health"), ownerOnly: true },
+      { id: "expenses", href: "/admin/expenses", label: "Expenses", icon: "card", match: startsWith("/admin/expenses") },
+      { id: "coach-payouts", href: "/admin/payouts", label: "Coach payouts", icon: "whistle", match: startsWith("/admin/payouts"), ownerOnly: true },
     ],
   },
   {
-    group: "COMMS · OPS",
+    group: "ACADEMY",
     items: [
-      { href: "/admin/messages", label: "Messages", icon: "msg", match: startsWith("/admin/messages") },
-      { href: "/admin/waivers", label: "Waivers", icon: "check", match: startsWith("/admin/waivers") },
-      { href: "/admin/settings", label: "Settings", icon: "cog", match: startsWith("/admin/settings") },
-      { href: "/admin/audit-logs", label: "Audit logs", icon: "filter", match: startsWith("/admin/audit-logs"), ownerOnly: true },
+      // Waivers shared Inbox's `check` glyph; `attend` is the signed sheet.
+      { id: "waivers", href: "/admin/waivers", label: "Waivers", icon: "attend", match: startsWith("/admin/waivers") },
+      { id: "settings", href: "/admin/settings", label: "Settings", icon: "cog", match: startsWith("/admin/settings") },
+      { id: "audit-logs", href: "/admin/audit-logs", label: "Audit logs", icon: "filter", match: startsWith("/admin/audit-logs"), ownerOnly: true },
     ],
   },
 ];
@@ -174,9 +189,9 @@ export const SCREEN_META: Record<string, AdminScreenMeta> = {
   "/admin": { title: "Dashboard", subtitle: "Daily overview", breadcrumbs: ["Admin", "Dashboard"] },
   "/admin/dashboard": { title: "Dashboard", subtitle: "Daily overview", breadcrumbs: ["Admin", "Dashboard"] },
   "/admin/sessions": { title: "Sessions", subtitle: "Schedule and rosters", breadcrumbs: ["Admin", "Sessions"] },
-  "/admin/students": { title: "Students", subtitle: "Roster and enrollment", breadcrumbs: ["Admin", "Students"] },
+  "/admin/students": { title: "Students", subtitle: "Every child: classes, attendance, status", breadcrumbs: ["Admin", "People", "Students"] },
   "/admin/pathway": { title: "Skill Pathways", subtitle: "Curriculum levels and skills", breadcrumbs: ["Admin", "Pathway"] },
-  "/admin/users": { title: "Users", subtitle: "Coaches, parents, and admins", breadcrumbs: ["Admin", "Users"] },
+  "/admin/users": { title: "Users", subtitle: "Coaches, parents, and admins", breadcrumbs: ["Admin", "People", "Users"] },
   "/admin/inbox": { title: "Inbox", subtitle: "Registrations, waitlist, level-ups, and parent requests", breadcrumbs: ["Admin", "Inbox"] },
   // The registration detail page is the one route left under /admin/registrations
   // now that the list redirects to the Inbox (#776); without its own key it would
@@ -184,8 +199,8 @@ export const SCREEN_META: Record<string, AdminScreenMeta> = {
   "/admin/registrations/[applicationId]": { title: "Registration", subtitle: "Review and decide", breadcrumbs: ["Admin", "Inbox", "Registration"] },
   "/admin/payments": { title: "Payments", subtitle: "Who owes, who is charged, who paid", breadcrumbs: ["Admin", "Money", "Payments"] },
   "/admin/billing-health": { title: "Billing Health", subtitle: "Connect readiness, webhooks, reconciliation", breadcrumbs: ["Admin", "Money", "Billing Health"] },
-  "/admin/families": { title: "Families", subtitle: "Every parent: balance, card on file, autopay", breadcrumbs: ["Admin", "Money", "Families"] },
-  "/admin/families/[parentId]": { title: "Family billing", subtitle: "Balance, autopay, invoices and what the system did", breadcrumbs: ["Admin", "Money", "Families", "Family"] },
+  "/admin/families": { title: "Families", subtitle: "Each family: children, balance, card, autopay", breadcrumbs: ["Admin", "People", "Families"] },
+  "/admin/families/[parentId]": { title: "Family", subtitle: "Balance, autopay, invoices and what the system did", breadcrumbs: ["Admin", "People", "Families", "Family"] },
   "/admin/expenses": { title: "Expenses", subtitle: "Categorised academy spend", breadcrumbs: ["Admin", "Money", "Expenses"] },
   "/admin/payouts": { title: "Payroll & payouts", subtitle: "Payout cycles and coach payslips", breadcrumbs: ["Admin", "Money", "Payouts"] },
   "/admin/reports": { title: "Month close", subtitle: "The month's two runs, its money, and anything odd", breadcrumbs: ["Admin", "Money", "Month close"] },
@@ -193,8 +208,8 @@ export const SCREEN_META: Record<string, AdminScreenMeta> = {
   "/admin/reports/refunds": { title: "Refunds & credits", subtitle: "Money returned and account credits by month", breadcrumbs: ["Admin", "Money", "Month close", "Refunds & credits"] },
   "/admin/reports/revenue-by-category": { title: "Revenue by category", subtitle: "Collected revenue split by program and fee category", breadcrumbs: ["Admin", "Money", "Month close", "Revenue by category"] },
   "/admin/reports/deposit-slip": { title: "Deposit slip", subtitle: "Payments received by day and method for bank reconciliation", breadcrumbs: ["Admin", "Money", "Month close", "Deposit slip"] },
-  "/admin/messages": { title: "Messages", subtitle: "Inbox and broadcasts", breadcrumbs: ["Admin", "Comms", "Messages"] },
-  "/admin/waivers": { title: "Waivers", subtitle: "Student signatures and expiry", breadcrumbs: ["Admin", "Comms", "Waivers"] },
+  "/admin/messages": { title: "Messages", subtitle: "Broadcasts, direct messages, email campaigns", breadcrumbs: ["Admin", "Reach", "Messages"] },
+  "/admin/waivers": { title: "Waivers", subtitle: "Student signatures and expiry", breadcrumbs: ["Admin", "Academy", "Waivers"] },
   "/admin/settings": { title: "Settings", subtitle: "Academy preferences", breadcrumbs: ["Admin", "Settings"] },
   "/admin/audit-logs": { title: "Audit logs", subtitle: "Recent admin actions", breadcrumbs: ["Admin", "Audit logs"] },
 };

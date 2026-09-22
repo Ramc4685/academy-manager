@@ -295,7 +295,7 @@ function NavRow({ item, active }: { item: AdminNavItem; active: boolean }) {
   return (
     <Link
       href={item.href as Parameters<typeof Link>[0]["href"]}
-      data-testid={`admin-nav-${slug(item.label)}`}
+      data-testid={`admin-nav-${item.id}`}
       // Issue #842: py-1.5 (was py-[9px]) is part of closing the ~99px fold
       // gap at a 1280x900 viewport once the account block below was
       // compacted — the row still clears the icon's own 16px box plus 13px
@@ -348,10 +348,6 @@ function renderNavIcon(key: AdminNavIconKey, size: number, color: string) {
   const fn = Icon[key];
   if (typeof fn === "function") return fn(size, color);
   return Icon.home(size, color);
-}
-
-function slug(label: string): string {
-  return label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
 /**

@@ -714,11 +714,10 @@ test.describe("Rally admin shell", () => {
     await page.goto("/admin");
     await expect(page.getByTestId("admin-dashboard")).toBeVisible();
     const nav = await openAdminNav(page);
-    await expect(nav.getByText("WORK", { exact: true })).toBeVisible();
-    await expect(nav.getByText("MONEY", { exact: true })).toBeVisible();
-    await expect(
-      nav.getByText("COMMS · OPS", { exact: true }),
-    ).toBeVisible();
+    // Six groups (sidebar regroup spec §2.1), in sidebar order.
+    for (const group of ["TODAY", "CLASSES", "PEOPLE", "REACH", "MONEY", "ACADEMY"]) {
+      await expect(nav.getByText(group, { exact: true })).toBeVisible();
+    }
     await expect(nav.getByRole("link", { name: /waivers/i })).toBeVisible();
     // Only the mobile drawer has a close affordance — the desktop sidebar
     // is always visible and has nothing to close.

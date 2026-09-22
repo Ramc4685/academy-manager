@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { Icon } from "../ds/icons";
 import {
   ADMIN_NAV,
   OWNER_ONLY_ROUTE_EXCEPTIONS,
@@ -52,12 +53,12 @@ describe("navForRoles", () => {
       {
         group: "MONEY",
         items: [
-          { href: "/admin/reports", label: "Reports", icon: "chart", match: () => false, ownerOnly: true },
+          { id: "reports", href: "/admin/reports", label: "Reports", icon: "chart", match: () => false, ownerOnly: true },
         ],
       },
       {
         group: "WORK",
-        items: [{ href: "/admin", label: "Dashboard", icon: "home", match: () => false }],
+        items: [{ id: "dashboard", href: "/admin", label: "Dashboard", icon: "home", match: () => false }],
       },
     ];
     expect(navForRoles(nav, false).map((group) => group.group)).toEqual(["WORK"]);
@@ -76,6 +77,77 @@ describe("navForRoles", () => {
       "/admin/payouts",
       "/admin/reports",
     ]);
+  });
+});
+
+// Sidebar regroup spec §2 / §6 PR 1.
+describe("ADMIN_NAV shape", () => {
+  const items = ADMIN_NAV.flatMap((group) => group.items);
+
+  it("has the six groups in sidebar order", () => {
+    expect(ADMIN_NAV.map((group) => group.group)).toEqual([
+      "TODAY",
+      "CLASSES",
+      "PEOPLE",
+      "REACH",
+      "MONEY",
+      "ACADEMY",
+    ]);
+  });
+
+  it("gives every item a unique, testid-safe id", () => {
+    const ids = items.map((item) => item.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const id of ids) expect(id).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/);
+  });
+
+  it("keeps the ids the e2e specs address as admin-nav-<id>", () => {
+    // These were once derived from the label; they are pinned here so a
+    // relabel (Users -> Staff in PR 3) cannot move a testid.
+    const byHref = Object.fromEntries(items.map((item) => [item.href, item.id]));
+    expect(byHref).toMatchObject({
+      "/admin/students": "students",
+      "/admin/inbox": "inbox",
+      "/admin/users": "users",
+      "/admin/payments": "payments",
+      "/admin/expenses": "expenses",
+      "/admin/reports": "month-close",
+      "/admin/payouts": "coach-payouts",
+      "/admin/billing-health": "billing-health",
+      "/admin/audit-logs": "audit-logs",
+    });
+  });
+
+  it("uses only icon keys the Rally Icon set implements", () => {
+    // renderNavIcon falls back to `home` for an unknown key, so a typo would
+    // silently show a house; pin it here instead.
+    for (const item of items) {
+      expect(typeof Icon[item.icon], `${item.href} -> ${item.icon}`).toBe("function");
+    }
+  });
+
+  it("gives Waivers its own glyph rather than sharing Inbox's", () => {
+    const iconFor = (href: string) => items.find((item) => item.href === href)?.icon;
+    expect(iconFor("/admin/waivers")).toBe("attend");
+    expect(iconFor("/admin/waivers")).not.toBe(iconFor("/admin/inbox"));
+    expect(iconFor("/admin/users")).toBe("badge");
+  });
+
+  it("places the people lists together and Inbox under Dashboard", () => {
+    const groupOf = (href: string) =>
+      ADMIN_NAV.find((group) => group.items.some((item) => item.href === href))?.group;
+    expect(groupOf("/admin/inbox")).toBe("TODAY");
+    expect(groupOf("/admin/students")).toBe("PEOPLE");
+    expect(groupOf("/admin/families")).toBe("PEOPLE");
+    expect(groupOf("/admin/users")).toBe("PEOPLE");
+    expect(groupOf("/admin/messages")).toBe("REACH");
+    expect(groupOf("/admin/waivers")).toBe("ACADEMY");
+  });
+
+  it("still shows all six groups to a non-owner", () => {
+    expect(navForRoles(ADMIN_NAV, false).map((group) => group.group)).toEqual(
+      ADMIN_NAV.map((group) => group.group),
+    );
   });
 });
 
@@ -133,13 +205,14 @@ describe("metaForPath", () => {
       "Month close",
       "Deposit slip",
     ]);
-    expect(metaForPath("/admin/families").breadcrumbs).toEqual(["Admin", "Money", "Families"]);
+    // Families moved from MONEY to PEOPLE (sidebar regroup spec §2.2 row 6).
+    expect(metaForPath("/admin/families").breadcrumbs).toEqual(["Admin", "People", "Families"]);
   });
 
   it("resolves the dynamic family billing route by its [parentId] key", () => {
     const meta = metaForPath("/admin/families/par_1");
-    expect(meta.title).toBe("Family billing");
-    expect(meta.breadcrumbs).toEqual(["Admin", "Money", "Families", "Family"]);
+    expect(meta.title).toBe("Family");
+    expect(meta.breadcrumbs).toEqual(["Admin", "People", "Families", "Family"]);
   });
 
   it("still appends Detail for routes without a dynamic key", () => {
