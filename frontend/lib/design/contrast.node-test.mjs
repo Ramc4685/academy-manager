@@ -31,6 +31,12 @@ const GREEN_800 = "#065f46"; // status.green.800
 const RED_800 = "#991b1b"; // status.red.800
 const MUTED = "#64748b"; // rally.muted / rally.subtle
 const SUBTLE_INK = "#94a3b8"; // rally.subtle-ink — night surfaces only
+const INK = "#0f172a"; // rally.ink
+const LINE = "#e2e8f0"; // rally.line — the roster tab count fill
+const NIGHT_LINE = "#1e293b"; // rally.night-line — the sidebar badge fill
+const BRIGHT = "#cbd5e1"; // rally.bright — sidebar badge text
+const RED_50 = "#fef2f2"; // status.red.50
+const RED_600 = "#dc2626"; // status.red.600
 
 test("contrast helper matches the WCAG reference values", () => {
   assert.equal(Math.round(contrastRatio("#ffffff", "#000000")), 21);
@@ -100,6 +106,25 @@ test("coach bottom nav inactive label uses the night-surface token", () => {
   assert.ok(inactive, "BottomTab still sets an active/inactive colour pair");
   assert.equal(inactive[1], SUBTLE_INK, "inactive tab uses rally.subtle-ink, not rally.muted");
   assert.notEqual(inactive[1], MUTED);
+});
+
+test("#896 — the two badge pairs the critique measured really do fail AA", () => {
+  // Session-detail roster tab count: text-rally-muted on bg-rally-line.
+  assert.ok(contrastRatio(MUTED, LINE) < AA_TEXT);
+  assert.equal(Math.round(contrastRatio(MUTED, LINE) * 100) / 100, 3.86);
+  // Progress page "Required" flag: status-red-600 on status-red-50.
+  assert.ok(contrastRatio(RED_600, RED_50) < AA_TEXT);
+});
+
+test("#896 — the replacements clear AA on the same fills", () => {
+  assert.ok(contrastRatio(INK, LINE) >= AA_TEXT, "ink on rally-line");
+  assert.ok(contrastRatio(RED_800, RED_50) >= AA_TEXT, "red-800 on red-50");
+  // Sidebar count badge. The old fill was rgba(255,255,255,0.08) — an alpha
+  // overlay has no ratio of its own, which is exactly why the critique's
+  // checker read it against white (1.48:1). night-line is opaque, so the
+  // pair is measurable and passes under any compositing assumption.
+  assert.ok(contrastRatio(BRIGHT, NIGHT_LINE) >= AA_TEXT, "bright on night-line");
+  assert.ok(contrastRatio(BRIGHT, WHITE) < AA_TEXT, "…and it is not white behind it");
 });
 
 test("skill board is readable without colour", () => {

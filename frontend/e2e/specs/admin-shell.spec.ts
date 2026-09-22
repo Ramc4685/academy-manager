@@ -2121,6 +2121,47 @@ test.describe("Rally admin shell", () => {
     await expect(page.getByTestId("shell-back-button")).toHaveCount(0);
   });
 
+  /**
+   * Issue #896: `NavRow` is the row of BOTH nav surfaces, so the fix
+   * (`min-h-touch lg:min-h-0`) has to be measured on both — a phone drawer
+   * row must clear the 44px touch minimum, and the desktop sidebar must keep
+   * the denser row #842 introduced to fit 17 rows above the 1280x900 fold.
+   * The spec branches on which surface is actually on screen, exactly as
+   * `openAdminNav` does, so it asserts the right thing in either project.
+   */
+  test("nav rows are touch-sized in the phone drawer and dense on desktop", async ({
+    page,
+  }) => {
+    await stubAdminBff(page);
+    await page.goto("/admin");
+    await expect(page.getByTestId("admin-dashboard")).toBeVisible();
+
+    const onPhone = await page.getByTestId("admin-open-drawer").isVisible();
+    const nav = await openAdminNav(page);
+    const rows = nav.locator('[data-testid^="admin-nav-"]');
+    await expect(rows.first()).toBeVisible();
+    const count = await rows.count();
+    expect(count).toBeGreaterThan(0);
+
+    // Counts are stubbed empty, so no badge arrives later to change a row's
+    // height; still settle on the first row's measured height before the
+    // loop rather than measuring mid-layout.
+    await expect
+      .poll(async () => (await rows.first().boundingBox())?.height ?? 0)
+      .toBeGreaterThan(0);
+
+    for (let index = 0; index < count; index += 1) {
+      const box = await rows.nth(index).boundingBox();
+      expect(box, `nav row ${index} has no box`).not.toBeNull();
+      const height = box?.height ?? 0;
+      if (onPhone) {
+        expect(height, `drawer row ${index} is under the 44px minimum`).toBeGreaterThanOrEqual(44);
+      } else {
+        expect(height, `sidebar row ${index} lost #842's density`).toBeLessThan(44);
+      }
+    }
+  });
+
   test("admin, coach, and parent shells expose logout", async ({ context }) => {
     // One page per persona. The persona auth hook's `replaceLocation` arms a
     // 1s hard `window.location.replace("/login")` fallback; on WebKit that

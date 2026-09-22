@@ -661,7 +661,9 @@ export default function AdminSessionDetailPage() {
                   }`}
                 >
                   {view.label}
-                  <span className="rounded-full bg-rally-line px-1.5 font-mono text-[11px] tabular-nums text-rally-muted">
+                  {/* #896: rally-muted is AA on white/paper only — on the
+                      rally-line fill it measured 3.86:1. Ink is 14.5:1. */}
+                  <span className="rounded-full bg-rally-line px-1.5 font-mono text-[11px] tabular-nums text-rally-ink">
                     {count}
                   </span>
                 </button>

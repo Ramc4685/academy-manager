@@ -9,6 +9,7 @@ import type {
   SkillBoardStudentRow,
   SkillStatus,
 } from "@/lib/api/curriculum";
+import { Chip } from "@/components/ds/chip";
 import { SkillCellEditor, type SkillCellTarget } from "./skill-cell-editor";
 
 export interface SkillBoardActions {
@@ -279,8 +280,11 @@ function LevelGroupSection({
                   {student.student_name}
                   {student.required_passed === student.required_total &&
                     student.required_total > 0 && (
-                      <span className="ml-2 rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-semibold text-green-700">
-                        Ready
+                      // #896: the shared DS chip, not a hand-rolled pill. This
+                      // flags "every required skill passed", not a per-skill
+                      // state — the STATUS_* swatches above are #895's.
+                      <span className="ml-2 inline-flex align-middle">
+                        <Chip variant="approved" label="READY" />
                       </span>
                     )}
                 </td>

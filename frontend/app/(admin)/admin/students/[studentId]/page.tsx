@@ -384,7 +384,9 @@ function SummaryMetric({
           {label}
         </span>
       </div>
-      <div className="mt-3 font-mono text-2xl font-semibold tabular-nums text-rally-ink">
+      {/* #896: the figure is a display numeral (Outfit), not a code token —
+          only the label above it stays mono, as an Overline caption. */}
+      <div className="mt-3 font-display text-2xl font-semibold tabular-nums text-rally-ink">
         {value}
       </div>
       <div className="mt-1 truncate text-xs text-rally-muted">{detail}</div>
