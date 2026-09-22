@@ -103,12 +103,18 @@ class MongoWaiverTemplateRepository(TenantScopedRepository):
             return "active"
         return status
 
-    @staticmethod
-    def _id_filter(waiver_template_id: str) -> dict[str, Any]:
-        filters: list[dict[str, Any]] = [{"waiver_template_id": waiver_template_id}]
-        if BsonObjectId.is_valid(waiver_template_id):
-            filters.append({"_id": BsonObjectId(waiver_template_id)})
-        return {"$or": filters}
+    async def _find_by_id(self, waiver_template_id: str) -> dict[str, Any] | None:
+        """The template by ``waiver_template_id``, else by legacy ``_id``.
+
+        Two equality lookups, not one ``$or``: the first is served by the
+        per-academy id index, while MongoDB 8.0 (production) scans the
+        academy's templates for the ``$or`` form (#878, #894). Only ids that
+        are valid ObjectId hex get the second, legacy, lookup.
+        """
+        doc = await self._find_one({"waiver_template_id": waiver_template_id})
+        if doc is None and BsonObjectId.is_valid(waiver_template_id):
+            doc = await self._find_one({"_id": BsonObjectId(waiver_template_id)})
+        return doc
 
     @staticmethod
     def _to_draft_document(template: AdminWaiverTemplateRecord) -> dict[str, Any]:
@@ -127,7 +133,7 @@ class MongoWaiverTemplateRepository(TenantScopedRepository):
         }
 
     async def get(self, waiver_template_id: str) -> WaiverTemplate | None:
-        doc = await self._find_one(self._id_filter(waiver_template_id))
+        doc = await self._find_by_id(waiver_template_id)
         return self._to_domain(doc) if doc else None
 
     async def get_active(self) -> WaiverTemplate | None:
@@ -162,7 +168,7 @@ class MongoWaiverTemplateRepository(TenantScopedRepository):
         return stored
 
     async def get_template(self, waiver_template_id: str) -> AdminWaiverTemplateRecord | None:
-        doc = await self._find_one(self._id_filter(waiver_template_id))
+        doc = await self._find_by_id(waiver_template_id)
         return self._to_record(doc) if doc else None
 
     async def publish_draft(
@@ -213,10 +219,12 @@ class MongoWaiverTemplateRepository(TenantScopedRepository):
         if inherits_registration:
             published_fields["assigned_to_registration"] = True
             published_fields["assigned_at"] = published_at
-        await self._update_one(
-            {**self._id_filter(waiver_template_id), "status": "draft"},
-            {"$set": published_fields},
-        )
+        draft = await self._find_by_id(waiver_template_id)
+        if draft is not None:
+            await self._update_one(
+                {"_id": draft["_id"], "status": "draft"},
+                {"$set": published_fields},
+            )
         published = await self.get_template(waiver_template_id)
         if published is None:
             raise RuntimeError("Failed to publish waiver template draft")
@@ -243,9 +251,10 @@ class MongoWaiverTemplateRepository(TenantScopedRepository):
                 }
             },
         )
+        template = await self._find_by_id(waiver_template_id)
         await self._update_one(
             {
-                **self._id_filter(waiver_template_id),
+                "_id": template["_id"] if template is not None else None,
                 "status": {"$in": ["active", "published"]},
             },
             {

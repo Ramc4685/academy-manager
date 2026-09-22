@@ -242,12 +242,19 @@ class MongoParentWaiverRepository(TenantScopedRepository):
         )
 
     async def _template_doc(self, waiver_template_id: str) -> dict[str, Any] | None:
-        filters: list[dict[str, Any]] = [{"waiver_template_id": waiver_template_id}]
-        if BsonObjectId.is_valid(waiver_template_id):
-            filters.append({"_id": BsonObjectId(waiver_template_id)})
-        return await self._db["waiver_templates"].find_one(
-            {"academy_id": current_academy_id(), "$or": filters}
+        # Two equality lookups, not one ``$or``: the first is served by the
+        # per-academy id index, while MongoDB 8.0 (production) scans the
+        # academy's templates for the ``$or`` form (#878, #894).
+        academy_id = current_academy_id()
+        templates = self._db["waiver_templates"]
+        doc = await templates.find_one(
+            {"academy_id": academy_id, "waiver_template_id": waiver_template_id}
         )
+        if doc is None and BsonObjectId.is_valid(waiver_template_id):
+            doc = await templates.find_one(
+                {"academy_id": academy_id, "_id": BsonObjectId(waiver_template_id)}
+            )
+        return doc
 
     async def _store_artifact(
         self,
