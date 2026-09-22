@@ -2129,3 +2129,60 @@ async def test_marks_without_a_matching_occurrence_are_left_out_of_the_window(db
 
     assert row.attendance_rate is None
     assert row.last_seen_at is None
+
+
+@pytest.mark.asyncio
+async def test_same_occurrence_id_in_another_academy_never_reaches_the_summary(db, acad) -> None:
+    """Occurrence ids are unique per academy (0186), not globally, and the
+    summary's ``$lookup`` joins on ``occurrence_id`` alone. A second tenant
+    that reuses the id must not lend its class date to this tenant's mark:
+    neither pulling an out-of-window mark into the window nor double-counting
+    an in-window one."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    other = "other-academy"
+    await _seed_student(db, acad, "st-shared-id")
+    # This tenant: one absent mark in the window, one present mark 45 days out.
+    await _seed_mark(
+        db,
+        acad,
+        student_id="st-shared-id",
+        occurrence_id="occ-in-window",
+        start_at=now - timedelta(days=5),
+        marked_at=now - timedelta(days=5),
+        status="absent",
+    )
+    await _seed_mark(
+        db,
+        acad,
+        student_id="st-shared-id",
+        occurrence_id="occ-out-of-window",
+        start_at=now - timedelta(days=45),
+        marked_at=now - timedelta(days=45),
+        status="present",
+    )
+    # The other tenant reuses both ids for classes that ran this week.
+    await db["session_occurrences"].insert_many(
+        [
+            {
+                "academy_id": other,
+                "occurrence_id": "occ-in-window",
+                "session_id": "sess-other",
+                "start_at": now - timedelta(days=3),
+                "status": "scheduled",
+            },
+            {
+                "academy_id": other,
+                "occurrence_id": "occ-out-of-window",
+                "session_id": "sess-other",
+                "start_at": now - timedelta(days=2),
+                "status": "scheduled",
+            },
+        ]
+    )
+
+    row = await _summary(db, "st-shared-id")
+
+    # Only the in-window absence counts: 0 of 1, never seen. Joining the
+    # other tenant's rows would give 1 of 2 (or 1 of 3) and a last_seen_at.
+    assert row.attendance_rate == pytest.approx(0.0)
+    assert row.last_seen_at is None

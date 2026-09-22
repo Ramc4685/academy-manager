@@ -1015,9 +1015,9 @@ class MongoStudentRepository(TenantScopedRepository):
         # --- Issue #773: derive BEFORE paginating. ---
         # `attendance` is one aggregation over a 30-day occurrence-date window
         # however many students are passed, and `_lifecycle_states` is three
-        # queries, so
-        # widening them from "the page" to "everyone who matched the search"
-        # costs a constant number of round trips, not one per student.
+        # queries, so widening them from "the page" to "everyone who matched
+        # the search" costs a constant number of round trips, not one per
+        # student.
         candidate_ids = [str(row["student_id"]) for row in rows]
         attendance = await self._attendance_summaries(academy_id, candidate_ids)
         lifecycles = await self._lifecycle_states(
@@ -2172,8 +2172,10 @@ class MongoStudentRepository(TenantScopedRepository):
                 {"$unwind": "$occurrence"},
                 {
                     # Re-assert the tenant on the joined side: occurrence ids
-                    # are expected to be unique, but a cross-tenant match must
-                    # never leak into a student's rate (#849).
+                    # are only unique per academy (migration 0186), so the
+                    # $lookup above can join another tenant's occurrence that
+                    # shares the id. That row must never reach a student's
+                    # rate (#849).
                     "$match": {
                         "occurrence.academy_id": academy_id,
                         "occurrence.start_at": {"$gte": since},
