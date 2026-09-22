@@ -77,6 +77,23 @@ _AT_RISK_LOOKBACK_DAYS: Final[int] = 120
 #: "No attendance in the last three scheduled dates" (#773 / audit §3).
 _AT_RISK_OCCURRENCES: Final[int] = 3
 
+#: How far back ``attendance_rate`` / ``last_seen_at`` look, measured on the
+#: date the class ran (``session_occurrences.start_at``), not on when the mark
+#: was tapped. The admin student page labels this figure "Last 30 days"
+#: (frontend/app/(admin)/admin/students/[studentId]/page.tsx), so the label
+#: and this constant must move together.
+_ATTENDANCE_SUMMARY_WINDOW_DAYS: Final[int] = 30
+
+#: Marks that mean the student was in the room. Mirrors
+#: ``coaching.domain.models.RecordedAttendanceStatus`` minus ``absent``; copied
+#: rather than imported because enrollment may not depend on coaching
+#: (import-linter contract).
+_ATTENDED_STATUSES: Final[tuple[str, ...]] = ("present", "late")
+
+#: A voided mark (#554) is an admin annulment: the row stays for its audit
+#: trail but counts as unmarked everywhere downstream.
+_VOIDED_ATTENDANCE_STATUS: Final[str] = "voided"
+
 # --- change-parent cascade (#785) -------------------------------------------
 # Money moves with the child only while it is still *live*. Settled history
 # stays with the parent who actually paid it, which is why each set below is an
@@ -996,10 +1013,11 @@ class MongoStudentRepository(TenantScopedRepository):
         rows.sort(key=lambda row: (str(row["full_name_key"]), str(row["student_id"])))
 
         # --- Issue #773: derive BEFORE paginating. ---
-        # `attendance` is one aggregation over a 90-day window however many
-        # students are passed, and `_lifecycle_states` is three queries, so
-        # widening them from "the page" to "everyone who matched the search"
-        # costs a constant number of round trips, not one per student.
+        # `attendance` is one aggregation over a 30-day occurrence-date window
+        # however many students are passed, and `_lifecycle_states` is three
+        # queries, so widening them from "the page" to "everyone who matched
+        # the search" costs a constant number of round trips, not one per
+        # student.
         candidate_ids = [str(row["student_id"]) for row in rows]
         attendance = await self._attendance_summaries(academy_id, candidate_ids)
         lifecycles = await self._lifecycle_states(
@@ -1541,6 +1559,7 @@ class MongoStudentRepository(TenantScopedRepository):
                     "academy_id": academy_id,
                     "student_id": student_id,
                     "is_deleted": {"$ne": True},
+                    "status": {"$ne": _VOIDED_ATTENDANCE_STATUS},
                 }
             )
             .sort([("marked_at", -1), ("date", -1), ("_id", -1)])
@@ -2118,32 +2137,58 @@ class MongoStudentRepository(TenantScopedRepository):
         academy_id: str,
         student_ids: list[str],
     ) -> dict[str, dict[str, object]]:
+        """``attendance_rate`` and ``last_seen_at`` per student over the last
+        ``_ATTENDANCE_SUMMARY_WINDOW_DAYS`` of *class dates*.
+
+        Attendance rows carry no date of their own (only ``marked_at``, which
+        is when the coach tapped), so the window is applied to the joined
+        occurrence's ``start_at``. A row whose occurrence no longer exists has
+        no class date to window on and is left out rather than guessed at
+        from ``marked_at``. Voided marks (#554) are annulled and never count.
+        ``last_seen_at`` is the latest mark that put the student in the room
+        (present/late): an absent-only student has none.
+        """
         if not student_ids:
             return {}
-        since = datetime.now(UTC) - timedelta(days=90)
+        since = datetime.now(UTC) - timedelta(days=_ATTENDANCE_SUMMARY_WINDOW_DAYS)
+        attended = {"$in": ["$status", list(_ATTENDED_STATUSES)]}
         cursor = self._db["attendance"].aggregate(
             [
                 {
                     "$match": {
                         "academy_id": academy_id,
                         "student_id": {"$in": student_ids},
-                        "marked_at": {"$gte": since},
+                        "status": {"$ne": _VOIDED_ATTENDANCE_STATUS},
+                    }
+                },
+                {
+                    "$lookup": {
+                        "from": "session_occurrences",
+                        "localField": "occurrence_id",
+                        "foreignField": "occurrence_id",
+                        "as": "occurrence",
+                    }
+                },
+                {"$unwind": "$occurrence"},
+                {
+                    # Re-assert the tenant on the joined side: occurrence ids
+                    # are only unique per academy (migration 0186), so the
+                    # $lookup above can join another tenant's occurrence that
+                    # shares the id. That row must never reach a student's
+                    # rate (#849).
+                    "$match": {
+                        "occurrence.academy_id": academy_id,
+                        "occurrence.start_at": {"$gte": since},
                     }
                 },
                 {
                     "$group": {
                         "_id": "$student_id",
                         "total": {"$sum": 1},
-                        "attended": {
-                            "$sum": {
-                                "$cond": [
-                                    {"$in": ["$status", ["present", "late"]]},
-                                    1,
-                                    0,
-                                ]
-                            }
-                        },
-                        "last_seen_at": {"$max": "$marked_at"},
+                        "attended": {"$sum": {"$cond": [attended, 1, 0]}},
+                        # $max ignores nulls, so an absent-only student
+                        # resolves to null rather than to their absence.
+                        "last_seen_at": {"$max": {"$cond": [attended, "$marked_at", None]}},
                     }
                 },
             ]
@@ -2151,9 +2196,9 @@ class MongoStudentRepository(TenantScopedRepository):
         out: dict[str, dict[str, object]] = {}
         async for row in cursor:
             total = int(row.get("total") or 0)
-            attended = int(row.get("attended") or 0)
+            attended_count = int(row.get("attended") or 0)
             out[str(row["_id"])] = {
-                "attendance_rate": attended / total if total else None,
+                "attendance_rate": attended_count / total if total else None,
                 "last_seen_at": self._as_utc(row["last_seen_at"])
                 if isinstance(row.get("last_seen_at"), datetime)
                 else row.get("last_seen_at"),
