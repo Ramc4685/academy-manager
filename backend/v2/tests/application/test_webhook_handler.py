@@ -5092,7 +5092,9 @@ async def test_accept_default_tenancy_mode_keeps_fallback() -> None:
 
 
 @pytest.mark.asyncio
-async def test_accept_quarantines_unmarked_events_in_multi_academy_mode(monkeypatch) -> None:
+async def test_accept_quarantines_unmarked_events_in_multi_academy_mode(
+    monkeypatch, caplog
+) -> None:
     """With several tenants behind one /webhooks/stripe endpoint, an event with
     neither marker cannot be attributed. It must be persisted (dedup intact),
     quarantined under a sentinel no per-academy drain ever claims, alerted
@@ -5103,6 +5105,7 @@ async def test_accept_quarantines_unmarked_events_in_multi_academy_mode(monkeypa
         "capture_message",
         lambda msg, **_: alerts.append(msg) or True,
     )
+    caplog.set_level("ERROR", logger=handle_webhook_event_module.log.name)
     dedup = FakeDedup()
     uc = _build_ingest_handler(dedup, tenancy_mode="multi_academy")
 
@@ -5127,6 +5130,13 @@ async def test_accept_quarantines_unmarked_events_in_multi_academy_mode(monkeypa
     assert len(alerts) == 1
     assert "evt_plain" in alerts[0]
     assert QUARANTINE_UNATTRIBUTED in alerts[0]
+    # The structured alert log must name the bucket the row was stored under,
+    # not the boot academy, so ops correlate it with the Mongo filter.
+    quarantine_logs = [
+        r for r in caplog.records if r.getMessage() == "stripe_webhook_event_quarantined"
+    ]
+    assert len(quarantine_logs) == 1
+    assert quarantine_logs[0].academy_id == UNATTRIBUTED_QUARANTINE_ACADEMY
 
 
 @pytest.mark.asyncio

@@ -269,6 +269,9 @@ class HandleWebhookEvent:
             event_type=event_type,
             reason=QUARANTINE_UNATTRIBUTED,
             error=quarantine_reason,
+            # The row lives under the sentinel bucket, not the boot academy;
+            # the alert must point ops at the same academy_id as the row.
+            academy_id=academy_id,
         )
         # 200 on purpose: the event is persisted and needs a human, not a retry.
         return {
@@ -399,7 +402,13 @@ class HandleWebhookEvent:
                 }
 
     def _alert_quarantined(
-        self, *, event_id: str, event_type: str, reason: str, error: str
+        self,
+        *,
+        event_id: str,
+        event_type: str,
+        reason: str,
+        error: str,
+        academy_id: str | None = None,
     ) -> None:
         """Tell someone an event has stopped being retried (issues #437, #428).
 
@@ -413,7 +422,10 @@ class HandleWebhookEvent:
         extra = {
             "event_id": event_id,
             "event_type": event_type,
-            "academy_id": self._academy_id,
+            # Default to the handler's academy (processing-side quarantines are
+            # always its own rows); ingest passes the bucket the row was stored
+            # under so the log never re-attributes an unattributed event.
+            "academy_id": academy_id if academy_id is not None else self._academy_id,
             "quarantine_reason": reason,
         }
         try:
