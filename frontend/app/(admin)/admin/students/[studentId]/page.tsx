@@ -16,6 +16,7 @@ import {
   ArrowLeft,
   CalendarCheck,
   FileCheck,
+  MoreVertical,
   ShieldCheck,
   UserRound,
   Wallet,
@@ -35,6 +36,7 @@ import { Overline } from "@/components/ds/typography";
 import { StopAllClassesDialog } from "@/components/admin/enrollment/stop-all-classes-dialog";
 import { Chip } from "@/components/ds/chip";
 import { ContactLinks } from "@/components/ds/contact-links";
+import { OverflowMenu } from "@/components/ds/menu";
 import { lifecycleLabel, lifecycleVariant } from "@/lib/format/lifecycle-copy";
 import {
   STUDENT_TABS,
@@ -325,8 +327,11 @@ function StudentSummaryStrip({ student }: { student: AdminStudentDetail }) {
       : `${Math.round(Math.max(0, Math.min(student.attendance_rate, 1)) * 100)}%`;
 
   return (
+    // #897: below `sm` this was one column, so four ~110px cards stacked
+    // between the header and the tabs and pushed the tabs off a 400x860
+    // first screen. Two-up on a phone, unchanged from `sm` up.
     <div
-      className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"
+      className="grid grid-cols-2 gap-3 sm:grid-cols-2 xl:grid-cols-4"
       data-testid="admin-student-summary-strip"
     >
       <SummaryMetric
@@ -377,7 +382,7 @@ function SummaryMetric({
   detail: string;
 }) {
   return (
-    <div className="rounded-lg border border-neutral-200 bg-white p-4">
+    <div className="rounded-lg border border-neutral-200 bg-white p-3 sm:p-4">
       <div className="flex items-center gap-2 text-rally-muted">
         {icon}
         <span className="font-mono text-[10px] font-bold uppercase tracking-overline">
@@ -386,7 +391,7 @@ function SummaryMetric({
       </div>
       {/* #896: the figure is a display numeral (Outfit), not a code token —
           only the label above it stays mono, as an Overline caption. */}
-      <div className="mt-3 font-display text-2xl font-semibold tabular-nums text-rally-ink">
+      <div className="mt-2 font-display text-2xl font-semibold tabular-nums text-rally-ink sm:mt-3">
         {value}
       </div>
       <div className="mt-1 truncate text-xs text-rally-muted">{detail}</div>
@@ -405,6 +410,7 @@ function StudentTabs({
     <div
       role="tablist"
       aria-label="Student record sections"
+      data-testid="admin-student-tabs"
       className="flex gap-1 overflow-x-auto border-b border-neutral-200"
     >
       {STUDENT_TABS.map((tab) => {
@@ -645,28 +651,29 @@ function Header({
 }) {
   return (
     <Card p={20}>
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-4 min-w-0">
-          <Avatar name={student.full_name} size={56} />
-          <div className="min-w-0">
-            <h2 className="font-display text-xl font-semibold tracking-[-0.01em] text-rally-ink truncate">
-              {student.full_name}
-            </h2>
-            <div className="mt-1 flex items-center gap-2">
-              {/* Issue #773: the derived lifecycle, with its date. */}
-              {lifecycleLabel(student.lifecycle, student.lifecycle_as_of) && (
-                <Chip
-                  variant={lifecycleVariant(student.lifecycle)}
-                  label={lifecycleLabel(student.lifecycle, student.lifecycle_as_of)}
-                />
-              )}
+      {/* #897: on a phone "Stop all classes" sat directly beside the parent's
+          tel:/mailto: links, one mis-tap from ending every enrollment. It is
+          now an actions menu pinned to the card's top-right; the dialog and
+          everything it does are unchanged. */}
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-1 flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-center gap-4">
+            <Avatar name={student.full_name} size={56} />
+            <div className="min-w-0">
+              <h2 className="truncate font-display text-xl font-semibold tracking-[-0.01em] text-rally-ink">
+                {student.full_name}
+              </h2>
+              <div className="mt-1 flex items-center gap-2">
+                {/* Issue #773: the derived lifecycle, with its date. */}
+                {lifecycleLabel(student.lifecycle, student.lifecycle_as_of) && (
+                  <Chip
+                    variant={lifecycleVariant(student.lifecycle)}
+                    label={lifecycleLabel(student.lifecycle, student.lifecycle_as_of)}
+                  />
+                )}
+              </div>
             </div>
           </div>
-        </div>
-        <div className="flex items-start gap-4">
-          <Button size="sm" variant="ghost" onClick={onStopAllClasses}>
-            Stop all classes
-          </Button>
           <div className="text-sm text-rally-muted">
             {/* #839: the parent was plain text here, so the family — and every
                 invoice on it — was two clicks away via the Billing tab. */}
@@ -693,6 +700,25 @@ function Header({
             />
           </div>
         </div>
+        <OverflowMenu
+          className="shrink-0"
+          triggerLabel={`Actions for ${student.full_name}`}
+          triggerTestId="admin-student-actions"
+          items={[
+            {
+              key: "stop-all-classes",
+              label: "Stop all classes",
+              description: "Ends every enrollment on the date you pick.",
+              danger: true,
+              onSelect: onStopAllClasses,
+            },
+          ]}
+          trigger={
+            <span className="flex min-h-touch min-w-touch items-center justify-center rounded-md text-rally-muted hover:bg-rally-paper">
+              <MoreVertical className="size-5" aria-hidden="true" />
+            </span>
+          }
+        />
       </div>
     </Card>
   );

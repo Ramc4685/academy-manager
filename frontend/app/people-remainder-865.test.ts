@@ -62,15 +62,20 @@ describe("the Students header fits a phone (#865)", () => {
   });
 
   it("scrolls the lifecycle chips in one row rather than wrapping ten of them", () => {
-    const src = page();
-    expect(src).toMatch(/data-testid="admin-students-tabs"[\s\S]{0,320}overflow-x-auto/);
+    // #897: the row is the shared `FilterBar` now — the page names it, the
+    // design system lays it out.
+    expect(page()).toContain('testId="admin-students-tabs"');
+    const toolbar = source("components/ds/list-toolbar.tsx");
+    expect(toolbar).toMatch(/overflow-x-auto[\s\S]{0,80}md:overflow-visible/);
     // The chips must not shrink to fit, or a scrolling row is just a
     // narrower wrap.
-    expect(src).toContain("shrink-0 whitespace-nowrap");
+    expect(toolbar).toContain("shrink-0");
+    expect(toolbar).toContain("whitespace-nowrap");
   });
 
   it("keeps the 44px chip target #847 gave these filters", () => {
-    expect(page()).toContain("inline-flex min-h-touch items-center gap-2 rounded-md px-3");
+    expect(page()).toContain("<FilterChip");
+    expect(source("components/ds/list-toolbar.tsx")).toContain("min-h-touch");
   });
 });
 

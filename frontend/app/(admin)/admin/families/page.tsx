@@ -12,10 +12,12 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Route } from "next";
 import Link from "next/link";
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation } from "@tanstack/react-query";
+import { Mail } from "lucide-react";
 
 import {
   fetchBillingSetup,
+  inviteBillingSetupParent,
   type BillingSetupRegistrationState,
   type BillingSetupRow,
 } from "@/lib/api/admin";
@@ -38,6 +40,14 @@ import { ErrorNotice } from "@/components/ds/error-notice";
 import { Chip } from "@/components/ds/chip";
 import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { BigNum, Overline } from "@/components/ds/typography";
+import {
+  FilterBar,
+  FilterChip,
+  ListToolbar,
+  ToolbarSearch,
+} from "@/components/ds/list-toolbar";
+import { Th } from "@/components/ds/dialog-chrome";
+import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 
 function formatCents(cents: number): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
@@ -113,89 +123,178 @@ export default function FamiliesPage() {
   );
   const hiddenByOwesFilter = owesOnly && loadedRows.length > 0 && rows.length === 0;
 
+  // #897: the one bulk action this list was missing. `no_account` is the
+  // state `LOGIN_LABELS.not_invited` names — a family with no login at all —
+  // and it is computed from the rows already loaded, like the owes filter and
+  // the sort beside it, so the button can never claim more recipients than
+  // this page can see.
+  const notInvited = useMemo(
+    () => loadedRows.filter((row) => row.registration_state === "no_account"),
+    [loadedRows],
+  );
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkNote, setBulkNote] = useState<string | null>(null);
+
+  const bulkInvite = useMutation({
+    // One request per family through the existing per-family endpoint: there
+    // is no bulk invite for parents who already exist (`/users/bulk-invite`
+    // mints new ones), and inventing one is backend work this issue does not
+    // carry.
+    mutationFn: async (parentIds: string[]) => {
+      let sent = 0;
+      let failed = 0;
+      for (const parentId of parentIds) {
+        try {
+          const result = await inviteBillingSetupParent(parentId);
+          if (result.ok) sent += 1;
+          else failed += 1;
+        } catch {
+          failed += 1;
+        }
+      }
+      return { sent, failed };
+    },
+    onSuccess: ({ sent, failed }) => {
+      setBulkOpen(false);
+      setBulkNote(
+        failed === 0
+          ? `Invited ${sent} ${sent === 1 ? "family" : "families"}.`
+          : `Invited ${sent}; ${failed} could not be invited.`,
+      );
+      void refetch();
+    },
+  });
+
   return (
     <div className="flex flex-col gap-6" data-testid="admin-families">
       <p className="text-sm text-rally-muted">
         Families · every parent, their card and autopay state; open one for the full picture
       </p>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
-        <Card p={20}>
+      {/* #897: accent-top cards with a caption, the shape the Students list
+          already uses — these four were the same numbers in a different tile. */}
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <Card p={20} accent="#2563eb">
           <Overline>Families</Overline>
           <BigNum>{summary?.families_total ?? "—"}</BigNum>
+          <p className="mt-1 text-[11px] text-rally-subtle">Everyone on record</p>
         </Card>
-        <Card p={20}>
+        <Card p={20} accent="#10b981">
           <Overline>{CARD_LABELS.on_file}</Overline>
           <BigNum className="text-rally-cobalt-700">{summary?.families_registered ?? "—"}</BigNum>
+          <p className="mt-1 text-[11px] text-rally-subtle">Chargeable today</p>
         </Card>
-        <Card p={20}>
+        <Card p={20} accent="#f59e0b">
           <Overline>{CARD_LABELS.no_card}</Overline>
           <BigNum className="text-rally-volt-700">{summary?.families_no_card ?? "—"}</BigNum>
+          <p className="mt-1 text-[11px] text-rally-subtle">Cannot be charged</p>
         </Card>
-        <Card p={20}>
+        <Card p={20} accent="#ef4444">
           <Overline>Outstanding</Overline>
           {/* #837: "$0.00" for a payload that never arrived reads as "nobody
               owes anything"; the sibling tiles already dash out. */}
           <BigNum size={28}>
             {finiteText(summary?.outstanding_total_cents, formatCents, UNKNOWN_TEXT)}
           </BigNum>
+          <p className="mt-1 text-[11px] text-rally-subtle">Owed across all families</p>
         </Card>
       </div>
 
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex gap-1 rounded-md border border-slate-200 bg-white p-1">
-          {FILTERS.map((f) => (
-            <button
-              key={f.value}
-              onClick={() => setStatus(f.value)}
-              // #847: 44px on a phone, unchanged on desktop.
-              className={`inline-flex min-h-touch items-center rounded px-3 py-1.5 text-sm font-medium md:min-h-0 ${
-                status === f.value ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
-              }`}
-            >
-              {f.label}
-            </button>
-          ))}
-        </div>
-        {/* #865: chasing money was the one thing this list could not be asked
-            for, though every row already carried the balance. */}
-        <button
-          type="button"
-          aria-pressed={owesOnly}
-          data-testid="admin-families-owes-filter"
-          onClick={() => setOwesOnly((on) => !on)}
-          className={`inline-flex min-h-touch items-center rounded-md border px-3 py-1.5 text-sm font-medium md:min-h-0 ${
-            owesOnly
-              ? "border-status-red-800 bg-status-red-50 text-status-red-800"
-              : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
-          }`}
+      {bulkNote && (
+        <p
+          role="status"
+          data-testid="admin-families-bulk-invite-result"
+          className="text-sm text-rally-muted"
         >
-          Owes money
-        </button>
-        <div className="flex items-center gap-2">
-          <label htmlFor="admin-families-sort" className="text-sm text-rally-muted">
-            Sort
-          </label>
-          <select
-            id="admin-families-sort"
-            data-testid="admin-families-sort"
-            value={sort}
-            onChange={(e) => setSort(e.target.value as FamilySort)}
-            className="min-h-touch rounded-md border border-slate-200 bg-white px-2 text-sm md:min-h-0 md:py-1.5"
-          >
-            <option value="default">Default</option>
-            <option value="outstanding_desc">Owed, highest first</option>
-          </select>
-        </div>
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search parent name or email…"
-          className="w-64 rounded-md border border-slate-200 px-3 py-1.5 text-sm"
-        />
-      </div>
+          {bulkNote}
+        </p>
+      )}
+
+      <ConfirmActionDialog
+        open={bulkOpen}
+        onOpenChange={setBulkOpen}
+        overline="Families"
+        title="Invite all not invited"
+        subject={`${notInvited.length} ${notInvited.length === 1 ? "family" : "families"} with no login yet`}
+        consequence={
+          <>
+            <p>
+              Each one is emailed a login invite now. Nothing is charged and no card is
+              asked for.
+            </p>
+            <p>
+              Only the families loaded on this page are included — load more first to
+              reach the rest.
+            </p>
+          </>
+        }
+        confirmLabel="Send invites"
+        confirmVariant="primary"
+        pending={bulkInvite.isPending}
+        onConfirm={() => bulkInvite.mutate(notInvited.map((row) => row.parent_id))}
+      />
 
       <Card p={0}>
+        {/* #897: the Students toolbar's shape, from the design system — this
+            filter row used to be its own bordered slate pill group. */}
+        <ListToolbar>
+          <FilterBar label="Families by registration" testId="admin-families-filters">
+            {FILTERS.map((f) => (
+              <FilterChip
+                key={f.value}
+                active={status === f.value}
+                label={f.label}
+                testId={`admin-families-filter-${f.value}`}
+                onClick={() => setStatus(f.value)}
+              />
+            ))}
+            {/* #865: chasing money was the one thing this list could not be
+                asked for, though every row already carried the balance. */}
+            <FilterChip
+              active={owesOnly}
+              label="Owes money"
+              testId="admin-families-owes-filter"
+              onClick={() => setOwesOnly((on) => !on)}
+            />
+          </FilterBar>
+
+          <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              data-testid="admin-families-bulk-invite"
+              icon={<Mail className="size-4" aria-hidden="true" />}
+              disabled={notInvited.length === 0 || bulkInvite.isPending}
+              onClick={() => setBulkOpen(true)}
+            >
+              Invite all not invited ({notInvited.length})
+            </Button>
+            <label htmlFor="admin-families-sort" className="text-sm text-rally-muted">
+              Sort
+            </label>
+            <select
+              id="admin-families-sort"
+              data-testid="admin-families-sort"
+              value={sort}
+              onChange={(e) => setSort(e.target.value as FamilySort)}
+              className="h-10 rounded-md border border-neutral-200 bg-white px-2 font-body text-sm text-rally-base"
+            >
+              <option value="default">Default</option>
+              <option value="outstanding_desc">Owed, highest first</option>
+            </select>
+            <ToolbarSearch
+              id="admin-families-search"
+              label="Search families"
+              value={q}
+              onChange={setQ}
+              placeholder="Search parent name or email"
+              busy={isFetching && !isFetchingNextPage}
+              busyLabel="Refreshing families"
+            />
+          </div>
+        </ListToolbar>
+
         {isLoading ? (
           <div className="p-8 text-center text-sm text-slate-500">Loading…</div>
         ) : isError ? (
@@ -251,14 +350,16 @@ function FamiliesList({ rows }: { rows: BillingSetupRow[] }) {
     <div className="overflow-x-auto">
       <table className="w-full text-left text-sm">
         <thead>
-          <tr className="border-b border-slate-200 text-xs uppercase text-slate-500">
-            <th className="px-4 py-3">Parent</th>
-            <th className="px-4 py-3">Login</th>
-            <th className="px-4 py-3">Card</th>
-            <th className="px-4 py-3">Autopay</th>
-            <th className="px-4 py-3">Outstanding</th>
-            <th className="px-4 py-3">Invited</th>
-            <th className="px-4 py-3">Actions</th>
+          {/* #897: the mono header the Students and Users tables already
+              share — this row was a third, non-mono style. */}
+          <tr className="border-b border-neutral-200 text-left dark:border-neutral-800">
+            <Th>Parent</Th>
+            <Th>Login</Th>
+            <Th>Card</Th>
+            <Th>Autopay</Th>
+            <Th>Outstanding</Th>
+            <Th>Invited</Th>
+            <Th>Actions</Th>
           </tr>
         </thead>
         <tbody>

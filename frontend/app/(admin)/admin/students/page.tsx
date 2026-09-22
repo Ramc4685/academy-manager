@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import type { Route } from "next";
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { RefreshCw, Search } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 
 import { listAdminStudents, type AdminStudentView } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
@@ -18,6 +18,14 @@ import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { EmptyState } from "@/components/ds/empty-state";
 import { ErrorNotice } from "@/components/ds/error-notice";
 import { BigNum, Overline } from "@/components/ds/typography";
+import {
+  FilterBar,
+  FilterChip,
+  ListToolbar,
+  ToolbarSearch,
+} from "@/components/ds/list-toolbar";
+import { Th } from "@/components/ds/dialog-chrome";
+import { duesChip } from "@/lib/people-status";
 import {
   ALL_LIFECYCLES,
   OPERATIONAL_LIFECYCLES,
@@ -233,78 +241,40 @@ function StudentsToolbar({
   onFilterChange: (value: string) => void;
   isFetching: boolean;
 }) {
+  // #897: this toolbar is the reference shape for all three People lists and
+  // now lives in the design system, so Families and Users cannot drift from it
+  // again.
   return (
-    <div className="flex flex-col gap-3 border-b border-neutral-200 bg-white px-5 py-4 dark:border-neutral-800 dark:bg-neutral-950 lg:flex-row lg:items-center lg:justify-between">
-      <div
-        role="tablist"
-        aria-label="People by lifecycle"
-        data-testid="admin-students-tabs"
-        // #865: ten chips wrapped onto three lines on a phone and pushed the
-        // first student below the fold. One scrolling row below `md:`; the
-        // desktop wrap is unchanged.
-        className="-mx-1 flex items-center gap-2 overflow-x-auto px-1 md:mx-0 md:flex-wrap md:overflow-visible md:px-0"
+    <ListToolbar>
+      <FilterBar
+        variant="tablist"
+        label="People by lifecycle"
+        testId="admin-students-tabs"
       >
-        {LIFECYCLE_FILTERS.map((filter) => {
-          const active = filterId === filter.id;
-          const count = tabCount(filter.states, counts);
-          return (
-            <button
-              key={filter.id}
-              type="button"
-              role="tab"
-              // `aria-selected` is the tab's own selected state; `aria-pressed`
-              // is the toggle-button vocabulary these filters used before they
-              // became a tablist and is not valid on role="tab".
-              aria-selected={active}
-              data-testid={`admin-students-filter-${filter.id}`}
-              onClick={() => onFilterChange(filter.id)}
-              // #847: 32px tall was under the 44px touch minimum on the one
-              // control an admin taps most on a phone. Desktop keeps 32.
-              className={`inline-flex min-h-touch items-center gap-2 rounded-md px-3 font-body text-[13px] font-semibold shrink-0 whitespace-nowrap transition md:h-8 md:min-h-0 ${
-                active
-                  ? "bg-rally-ink text-white"
-                  : "bg-transparent text-rally-muted hover:bg-neutral-100"
-              }`}
-            >
-              {filter.label}
-              {count !== null && (
-                <span
-                  data-testid={`admin-students-filter-count-${filter.id}`}
-                  className={`font-mono text-[11px] tabular-nums ${
-                    active ? "text-white/70" : "text-rally-subtle"
-                  }`}
-                >
-                  {count}
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="relative min-w-0 lg:w-[320px]">
-        <label htmlFor="admin-students-search" className="sr-only">
-          Search students
-        </label>
-        <Search
-          aria-hidden="true"
-          className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-rally-muted"
-        />
-        <input
-          id="admin-students-search"
-          value={search}
-          onChange={(event) => onSearchChange(event.target.value)}
-          placeholder="Search students or parents"
-          className="h-10 w-full rounded-md border border-neutral-200 bg-white pl-9 pr-9 font-body text-sm text-rally-base outline-none transition placeholder:text-rally-subtle focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
-        />
-        {isFetching && (
-          <RefreshCw
-            aria-label="Refreshing students"
-            className="absolute right-3 top-1/2 size-4 -translate-y-1/2 animate-spin text-rally-muted"
+        {LIFECYCLE_FILTERS.map((filter) => (
+          <FilterChip
+            key={filter.id}
+            variant="tab"
+            active={filterId === filter.id}
+            label={filter.label}
+            count={tabCount(filter.states, counts)}
+            testId={`admin-students-filter-${filter.id}`}
+            countTestId={`admin-students-filter-count-${filter.id}`}
+            onClick={() => onFilterChange(filter.id)}
           />
-        )}
-      </div>
-    </div>
+        ))}
+      </FilterBar>
+
+      <ToolbarSearch
+        id="admin-students-search"
+        label="Search students"
+        value={search}
+        onChange={onSearchChange}
+        placeholder="Search students or parents"
+        busy={isFetching}
+        busyLabel="Refreshing students"
+      />
+    </ListToolbar>
   );
 }
 
@@ -421,12 +391,12 @@ function StudentsTable({ students }: { students: AdminStudentView[] }) {
       <table className="w-full min-w-[760px] text-sm">
         <thead>
           <tr className="border-b border-neutral-200 bg-neutral-50 text-left dark:border-neutral-800">
-            <th className="px-5 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Student</th>
-            <th className="px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Parent</th>
-            <th className="px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Sessions</th>
-            <th className="px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Attendance</th>
-            <th className="px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Dues</th>
-            <th className="px-5 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Last attendance</th>
+            <Th padding="px-5 py-3">Student</Th>
+            <Th padding="px-3 py-3">Parent</Th>
+            <Th padding="px-3 py-3">Sessions</Th>
+            <Th padding="px-3 py-3">Attendance</Th>
+            <Th padding="px-3 py-3">Dues</Th>
+            <Th padding="px-5 py-3">Last attendance</Th>
           </tr>
         </thead>
         <tbody>
@@ -569,10 +539,11 @@ function AttendanceCell({ rate }: { rate: number | null }) {
   );
 }
 
+// #897: the labels come from `lib/people-status`, where the Families list
+// already reads its Login and Card words — one `Chip` primitive, one casing.
 function DuesChip({ status }: { status: AdminStudentView["dues_status"] }) {
-  if (status === "current") return <Chip variant="paid" label="CURRENT" />;
-  if (status === "due") return <Chip variant="pending" label="DUE" />;
-  return <Chip variant="overdue" label="OVERDUE" />;
+  const chip = duesChip(status);
+  return <Chip variant={chip.variant} label={chip.label} />;
 }
 
 function StudentsFooter({
