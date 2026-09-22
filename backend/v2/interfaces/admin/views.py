@@ -28,11 +28,11 @@ class AdminUserView(BaseModel):
     display_name: str
     role: Literal["admin", "coach", "assistant_coach", "parent", "owner"]
     status: str
+    roles: list[Literal["admin", "coach", "assistant_coach", "parent", "owner"]] = []
 
 
 class AdminUserDetailView(AdminUserView):
     phone: str | None = None
-    roles: list[Literal["admin", "coach", "assistant_coach", "parent", "owner"]] = []
     linked_student_count: int = 0
     session_count: int = 0
     login_invite_sent_at: datetime | None = None

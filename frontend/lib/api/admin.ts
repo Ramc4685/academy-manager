@@ -1324,9 +1324,12 @@ export interface AdminUserView {
   user_id: string;
   email: string;
   display_name: string;
+  /** Primary role (`roles[0]`). Use `roles` to know every role the user holds. */
   role: AdminUserRole;
   status: string;
   phone?: string | null;
+  /** Every role held, primary first. Optional until every caller's fixture carries it. */
+  roles?: AdminUserRole[];
 }
 
 export interface AdminUserDetail extends AdminUserView {
@@ -1569,8 +1572,26 @@ export interface AdminGatewayView {
 // Directory
 // ---------------------------------------------------------------------------
 
-export function listAdminUsers(role?: AdminUserRole): Promise<AdminUserList> {
-  const q = role ? `?role=${encodeURIComponent(role)}` : "";
+export interface ListAdminUsersOptions {
+  /**
+   * Drop users who hold no role other than this one. A parent who is also a
+   * coach is kept, which a client-side filter on `role` would get wrong.
+   */
+  excludeRole?: "parent";
+  /** Union filter: users holding any of these roles. Sent as repeated `roles=`. */
+  roles?: AdminUserRole[];
+}
+
+export function listAdminUsers(
+  role?: AdminUserRole,
+  options: ListAdminUsersOptions = {},
+): Promise<AdminUserList> {
+  const params = new URLSearchParams();
+  if (role) params.set("role", role);
+  if (options.excludeRole) params.set("exclude_role", options.excludeRole);
+  for (const r of options.roles ?? []) params.append("roles", r);
+  const qs = params.toString();
+  const q = qs ? `?${qs}` : "";
   return apiFetch<AdminUserList>(`/admin/users${q}`, { method: "GET" });
 }
 
