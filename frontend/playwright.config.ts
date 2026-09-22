@@ -52,7 +52,15 @@ export default defineConfig({
     // and deterministically on webkit-mobile in admin-shell.spec.ts). It is a
     // dev-server artifact, not app behaviour: nothing in the shell navigates.
     // Turbopack applies those updates without a full reload.
-    command: "pnpm dev",
+    //
+    // Launch next directly, not via `pnpm dev`. pnpm 11.27.1 (2026-09-20)
+    // changed `pnpm run` to forward signals to the script and then WAIT for
+    // it to finish shutting down; Playwright's webServer teardown killed
+    // pnpm, pnpm waited on `next dev`, the stdio pipes never closed, and
+    // every CI e2e job hung after its last test until timeout-minutes
+    // (CI resolves the floating `pnpm/action-setup` `version: 11`, so the
+    // bump arrived without a lockfile change). Same flags as `pnpm dev`.
+    command: "node_modules/.bin/next dev --turbopack -p ${PORT}",
     url: `http://localhost:${PORT}/login`,
     reuseExistingServer: !process.env.CI,
     // Cold `next dev` in a fresh worktree can exceed 60s before /login responds.
