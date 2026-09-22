@@ -159,8 +159,14 @@ export function FamilyHeader({
             {toggle.hint}
           </p>
           {/* #840: "Last failure: card_declined" was a Stripe developer string
-              with nothing to do about it. Say what happened, then offer the two
-              ways out right here rather than only in the header's action row. */}
+              with nothing to do about it. Say what happened, then offer the way
+              out that belongs to the card — the invite that replaces it.
+
+              #890: this card used to carry a second "Record payment" on the
+              same `onRecordPayment` handler as the header's primary button, so
+              the page offered the action three times (here, the header, and
+              every owing invoice row). Recording a payment is not specific to
+              the autopay failure, so it stays where it is general: the header. */}
           {header.autopay.last_failure && (
             <div className="mt-1" data-testid="family-autopay-failure">
               <p className="text-xs text-status-red-600">
@@ -175,15 +181,6 @@ export function FamilyHeader({
                   disabled={busy}
                 >
                   Resend card invite
-                </Button>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  data-testid="family-failure-record-payment"
-                  onClick={onRecordPayment}
-                  disabled={busy}
-                >
-                  Record payment
                 </Button>
               </div>
             </div>
