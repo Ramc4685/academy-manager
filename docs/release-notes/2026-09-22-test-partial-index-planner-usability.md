@@ -1,6 +1,6 @@
 # test-partial-index-planner-usability
 
-PR: #TBD
+PR: #907
 
 ## What changed
 
