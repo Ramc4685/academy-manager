@@ -104,12 +104,27 @@ async def _seed_directory(db, academy_id: str) -> datetime:
             },
         ]
     )
+    # Each mark joins to the occurrence it was recorded for; the attendance
+    # window is measured on the occurrence's start_at, not on marked_at.
+    await db["session_occurrences"].insert_many(
+        [
+            {
+                "academy_id": academy_id,
+                "occurrence_id": f"occ-{n}",
+                "session_id": f"sess-{n}",
+                "start_at": now - timedelta(days=n),
+                "status": "scheduled",
+            }
+            for n in (1, 2, 3)
+        ]
+    )
     await db["attendance"].insert_many(
         [
             {
                 "academy_id": academy_id,
                 "attendance_id": "att-1",
-                "session_id": "sess-1",
+                "occurrence_id": "occ-3",
+                "session_id": "sess-3",
                 "student_id": "st-alice",
                 "marked_at": now - timedelta(days=3),
                 "status": "present",
@@ -117,6 +132,7 @@ async def _seed_directory(db, academy_id: str) -> datetime:
             {
                 "academy_id": academy_id,
                 "attendance_id": "att-2",
+                "occurrence_id": "occ-2",
                 "session_id": "sess-2",
                 "student_id": "st-alice",
                 "marked_at": now - timedelta(days=2),
@@ -125,7 +141,8 @@ async def _seed_directory(db, academy_id: str) -> datetime:
             {
                 "academy_id": academy_id,
                 "attendance_id": "att-3",
-                "session_id": "sess-3",
+                "occurrence_id": "occ-1",
+                "session_id": "sess-1",
                 "student_id": "st-alice",
                 "marked_at": now - timedelta(days=1),
                 "status": "absent",
@@ -196,7 +213,8 @@ async def test_list_admin_students_returns_rich_default_page_without_per_student
     assert alice.parent_email == "parent1@example.com"
     assert alice.active_session_count == 1
     assert alice.attendance_rate == pytest.approx(2 / 3)
-    _expected_last_seen = (seeded_now - timedelta(days=1)).replace(
+    # Last *attended*: the day -2 "late" mark, not the day -1 absence.
+    _expected_last_seen = (seeded_now - timedelta(days=2)).replace(
         microsecond=(seeded_now.microsecond // 1000) * 1000
     )
     assert alice.last_seen_at == _expected_last_seen
@@ -1774,21 +1792,23 @@ async def test_active_student_who_stopped_showing_up_derives_at_risk(db, acad) -
             for n in (1, 2, 3, 4)
         ]
     )
-    # The regular child attended last week; the ghost's last mark predates the
-    # three-occurrence window.
+    # The regular child attended last week; the ghost's last mark (four
+    # occurrences ago) predates the three-occurrence window.
     await db["attendance"].insert_many(
         [
             {
                 "academy_id": acad,
                 "student_id": "st-regular",
+                "occurrence_id": "occ-1",
                 "status": "present",
                 "marked_at": now - timedelta(days=7),
             },
             {
                 "academy_id": acad,
                 "student_id": "st-ghost",
+                "occurrence_id": "occ-4",
                 "status": "present",
-                "marked_at": now - timedelta(days=40),
+                "marked_at": now - timedelta(days=28),
             },
         ]
     )
@@ -1841,3 +1861,271 @@ async def test_a_brand_new_class_never_calls_anyone_at_risk(db, acad) -> None:
     page = await repo.list_admin_students(search=None, limit=50, cursor=None)
 
     assert page.students[0].lifecycle == "active"
+
+
+# --- attendance read model: occurrence-date window (CRM Phase 0 / PR0) ------
+#
+# The summary behind ``attendance_rate`` / ``last_seen_at`` must window on
+# the date the class actually ran (``session_occurrences.start_at``), not on
+# when the coach tapped the mark, must match the admin UI's "Last 30 days"
+# label, must not count an ABSENT mark as "seen", and must ignore voided marks
+# (#554). Names below are invented fixtures, never real people.
+
+
+def _freeze_repo_clock(monkeypatch, frozen: datetime) -> None:
+    """Pin ``datetime.now(...)`` inside the repo module so window boundaries
+    are exact. ``frozen`` may be naive or aware; ``now`` returns it as-is so
+    the naive-"now" variant genuinely reaches the ``$match``."""
+    import backend.v2.contexts.enrollment.infrastructure.mongo_student_repo as repo_module
+
+    class _FrozenMeta(type):
+        # The repo does ``isinstance(value, datetime)`` on values read back
+        # from Mongo; plain datetimes must still pass once the name is swapped.
+        def __instancecheck__(cls, instance: object) -> bool:
+            return isinstance(instance, datetime)
+
+    class _Frozen(datetime, metaclass=_FrozenMeta):
+        @classmethod
+        def now(cls, tz=None):  # type: ignore[override]
+            return frozen
+
+    monkeypatch.setattr(repo_module, "datetime", _Frozen)
+
+
+async def _seed_student(db, acad: str, student_id: str) -> None:
+    await db["students"].insert_one(
+        {
+            "academy_id": acad,
+            "student_id": student_id,
+            "full_name": f"Student {student_id}",
+            "parent_id": "parent-1",
+            "status": "active",
+        }
+    )
+
+
+async def _seed_mark(
+    db,
+    acad: str,
+    *,
+    student_id: str,
+    occurrence_id: str,
+    start_at: datetime | None,
+    marked_at: datetime,
+    status: str,
+) -> None:
+    """One attendance row plus (unless ``start_at`` is None) its occurrence."""
+    if start_at is not None:
+        await db["session_occurrences"].insert_one(
+            {
+                "academy_id": acad,
+                "occurrence_id": occurrence_id,
+                "session_id": "sess-att",
+                "start_at": start_at,
+                "status": "scheduled",
+            }
+        )
+    await db["attendance"].insert_one(
+        {
+            "academy_id": acad,
+            "attendance_id": f"att-{occurrence_id}-{student_id}",
+            "occurrence_id": occurrence_id,
+            "session_id": "sess-att",
+            "student_id": student_id,
+            "marked_at": marked_at,
+            "status": status,
+        }
+    )
+
+
+async def _summary(db, student_id: str):
+    repo = MongoStudentRepository(db)
+    page = await repo.list_admin_students(search=None, limit=50, cursor=None)
+    return next(s for s in page.students if s.student_id == student_id)
+
+
+@pytest.mark.asyncio
+async def test_attendance_window_uses_occurrence_date_not_marked_at(db, acad) -> None:
+    """A mark tapped yesterday for a class that ran 45 days ago is outside
+    the window; a mark back-filled 45 days later for last week's class is in."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    await _seed_student(db, acad, "st-window")
+    # Old class, recently marked absent: must NOT count.
+    await _seed_mark(
+        db,
+        acad,
+        student_id="st-window",
+        occurrence_id="occ-old-class",
+        start_at=now - timedelta(days=45),
+        marked_at=now - timedelta(days=1),
+        status="absent",
+    )
+    # Recent class, mark recorded long after (legacy import / late entry): counts.
+    await _seed_mark(
+        db,
+        acad,
+        student_id="st-window",
+        occurrence_id="occ-recent-class",
+        start_at=now - timedelta(days=5),
+        marked_at=now - timedelta(days=45),
+        status="present",
+    )
+
+    row = await _summary(db, "st-window")
+
+    assert row.attendance_rate == pytest.approx(1.0)
+    assert row.last_seen_at == now - timedelta(days=45)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("now_is_aware", [True, False], ids=["aware-now", "naive-now"])
+async def test_attendance_window_is_thirty_days_on_occurrence_date(
+    db, acad, monkeypatch, now_is_aware: bool
+) -> None:
+    """Matches the admin UI label "Last 30 days": day -29 is in, day -31 is out,
+    whether the repo's clock is tz-aware or naive."""
+    frozen_aware = datetime(2026, 9, 22, 12, 0, tzinfo=UTC)
+    frozen = frozen_aware if now_is_aware else frozen_aware.replace(tzinfo=None)
+    _freeze_repo_clock(monkeypatch, frozen)
+    await _seed_student(db, acad, "st-edge")
+    # Inside the window, marked on the day.
+    await _seed_mark(
+        db,
+        acad,
+        student_id="st-edge",
+        occurrence_id="occ-day-29",
+        start_at=frozen_aware - timedelta(days=29),
+        marked_at=frozen_aware - timedelta(days=29),
+        status="late",
+    )
+    # Outside the window, but marked more recently than the day -29 class so a
+    # marked_at-based reader would wrongly report it as the last attendance.
+    await _seed_mark(
+        db,
+        acad,
+        student_id="st-edge",
+        occurrence_id="occ-day-31",
+        start_at=frozen_aware - timedelta(days=31),
+        marked_at=frozen_aware - timedelta(days=20),
+        status="present",
+    )
+
+    row = await _summary(db, "st-edge")
+
+    assert row.attendance_rate == pytest.approx(1.0)
+    assert row.last_seen_at == frozen_aware - timedelta(days=29)
+
+
+@pytest.mark.asyncio
+async def test_naive_and_aware_stored_datetimes_summarise_identically(db, acad) -> None:
+    """Legacy rows were stored naive (UTC implied); new rows are aware. The
+    same history must read the same either way, including ``last_seen_at``."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    naive_now = now.replace(tzinfo=None)
+    for student_id, base in (("st-aware", now), ("st-naive", naive_now)):
+        await _seed_student(db, acad, student_id)
+        await _seed_mark(
+            db,
+            acad,
+            student_id=student_id,
+            occurrence_id=f"occ-{student_id}-a",
+            start_at=base - timedelta(days=10),
+            marked_at=base - timedelta(days=10),
+            status="present",
+        )
+        await _seed_mark(
+            db,
+            acad,
+            student_id=student_id,
+            occurrence_id=f"occ-{student_id}-b",
+            start_at=base - timedelta(days=3),
+            marked_at=base - timedelta(days=3),
+            status="absent",
+        )
+
+    aware = await _summary(db, "st-aware")
+    naive = await _summary(db, "st-naive")
+
+    assert aware.attendance_rate == pytest.approx(0.5)
+    assert naive.attendance_rate == aware.attendance_rate
+    assert aware.last_seen_at == now - timedelta(days=10)
+    assert naive.last_seen_at == aware.last_seen_at
+    assert naive.last_seen_at is not None and naive.last_seen_at.tzinfo is UTC
+
+
+@pytest.mark.asyncio
+async def test_absent_only_student_has_no_last_seen(db, acad) -> None:
+    """Being marked absent is not being seen."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    await _seed_student(db, acad, "st-absent")
+    for n in (2, 9):
+        await _seed_mark(
+            db,
+            acad,
+            student_id="st-absent",
+            occurrence_id=f"occ-absent-{n}",
+            start_at=now - timedelta(days=n),
+            marked_at=now - timedelta(days=n),
+            status="absent",
+        )
+
+    row = await _summary(db, "st-absent")
+
+    assert row.attendance_rate == pytest.approx(0.0)
+    assert row.last_seen_at is None
+
+
+@pytest.mark.asyncio
+async def test_voided_marks_are_excluded_from_summary_and_recent_attendance(db, acad) -> None:
+    """A void (#554) annuls the mark: it is neither counted nor "seen", and it
+    does not appear in the student detail's recent-attendance list."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    await _seed_student(db, acad, "st-void")
+    await _seed_mark(
+        db,
+        acad,
+        student_id="st-void",
+        occurrence_id="occ-kept",
+        start_at=now - timedelta(days=8),
+        marked_at=now - timedelta(days=8),
+        status="present",
+    )
+    await _seed_mark(
+        db,
+        acad,
+        student_id="st-void",
+        occurrence_id="occ-voided",
+        start_at=now - timedelta(days=2),
+        marked_at=now - timedelta(days=2),
+        status="voided",
+    )
+    repo = MongoStudentRepository(db)
+
+    detail = await repo.get_admin_student("st-void")
+
+    assert detail is not None
+    assert detail.attendance_rate == pytest.approx(1.0)
+    assert detail.last_seen_at == now - timedelta(days=8)
+    assert [r.status for r in detail.recent_attendance] == ["present"]
+
+
+@pytest.mark.asyncio
+async def test_marks_without_a_matching_occurrence_are_left_out_of_the_window(db, acad) -> None:
+    """No occurrence means no class date to window on, so the row is skipped
+    rather than guessed at from ``marked_at``."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    await _seed_student(db, acad, "st-orphan")
+    await _seed_mark(
+        db,
+        acad,
+        student_id="st-orphan",
+        occurrence_id="occ-missing",
+        start_at=None,
+        marked_at=now - timedelta(days=1),
+        status="present",
+    )
+
+    row = await _summary(db, "st-orphan")
+
+    assert row.attendance_rate is None
+    assert row.last_seen_at is None
