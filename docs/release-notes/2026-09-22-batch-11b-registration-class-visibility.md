@@ -1,6 +1,6 @@
 # batch-11b: registration class visibility
 
-PR: #0
+PR: #906
 
 ## What changed
 - Fixes #891 — Admin registration queue rows now name the class each family asked for, in both the desktop table and the phone card layout. `list_pending()` resolves each distinct `selected_session_id` once per page (mirroring the existing one-read-per-page rule the waiver template already follows), and `session_title` moved up from `AdminRegistrationDetail` onto the shared `AdminRegistrationRow` / `AdminRegistrationRowView` base. The desktop table gains a Class column after Student; the phone row gains a class line in its secondary block.
