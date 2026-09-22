@@ -6,9 +6,14 @@
  * is covered by backend/v2/tests/interface/test_coach_teaching_plan.py).
  *
  * Asserts: the plan renders (lesson card first, then students grouped by
- * level); "Mastered" issues the quick-pass test POST (success_count 1);
+ * level); "Passed" issues the quick-pass test POST (success_count 1);
  * "Needs review" issues the status POST; YouTube hrefs are correct; the PDF
  * citation chip is non-interactive text; error → retry recovers.
+ *
+ * #895: the one-tap buttons speak the same seven-state vocabulary as the
+ * skills page, the passport and the skill board — "Passed", never "Mastered" —
+ * they publish the student's current state through `aria-pressed`, and a
+ * status write can be undone from the row.
  */
 
 import { test, expect } from "../fixtures/mock-api";
@@ -40,14 +45,17 @@ test.describe("Coach teaching plan", () => {
     await expect(page.getByTestId("student-focus-st2")).toContainText("Review");
   });
 
-  test("Mastered issues a quick-pass test POST (success_count 1)", async ({
+  test("Passed issues a quick-pass test POST (success_count 1)", async ({
     page,
     mock,
   }) => {
     await page.goto("/coach/today/plan");
     await expect(page.getByTestId("student-focus-st1")).toBeVisible();
 
-    await page.getByTestId("outcome-st1-mastered").click();
+    const passed = page.getByTestId("outcome-st1-passed");
+    // #895: the button speaks the shared vocabulary, not "Mastered".
+    await expect(passed).toHaveText("Passed");
+    await passed.click();
 
     await expect.poll(() => mock.testCalls.length).toBe(1);
     expect(mock.testCalls[0]).toMatchObject({
@@ -61,9 +69,70 @@ test.describe("Coach teaching plan", () => {
         session_id: "s-today-1",
       },
     });
-    // No status write — Mastered must go through the test endpoint only.
+    // No status write — Passed must go through the test endpoint only.
     expect(mock.statusCalls.length).toBe(0);
-    await expect(page.getByTestId("outcome-done-st1")).toBeVisible();
+    await expect(page.getByTestId("outcome-done-st1")).toContainText("Passed");
+    // Passed has no server-side revert (CoachSettableStatus rejects PASSED),
+    // so the row must NOT offer an Undo it cannot honour.
+    await expect(page.getByTestId("outcome-undo-st1")).toHaveCount(0);
+  });
+
+  test("the current skill state reads as pressed on the one-tap buttons", async ({
+    page,
+    mock,
+  }) => {
+    void mock;
+    await page.goto("/coach/today/plan");
+    await expect(page.getByTestId("student-focus-st1")).toBeVisible();
+
+    // Alice's next skill is PRACTICING; Bob's is NEEDS_REVIEW.
+    await expect(page.getByTestId("outcome-st1-practicing")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(page.getByTestId("outcome-st1-introduced")).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    await expect(page.getByTestId("outcome-st1-passed")).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    await expect(page.getByTestId("outcome-st2-needs-review")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  test("Undo re-sends the status the skill had before the tap", async ({
+    page,
+    mock,
+  }) => {
+    await page.goto("/coach/today/plan");
+    await expect(page.getByTestId("student-focus-st1")).toBeVisible();
+
+    // st1 is PRACTICING; move it to INTRODUCED, then undo.
+    await page.getByTestId("outcome-st1-introduced").click();
+    await expect.poll(() => mock.statusCalls.length).toBe(1);
+    expect(mock.statusCalls[0]?.body).toMatchObject({ status: "INTRODUCED" });
+
+    const undo = page.getByTestId("outcome-undo-st1");
+    await expect(undo).toBeVisible();
+    await undo.click();
+
+    await expect.poll(() => mock.statusCalls.length).toBe(2);
+    expect(mock.statusCalls[1]).toMatchObject({
+      studentId: "st1",
+      skillId: "sk-1",
+      body: {
+        status: "PRACTICING",
+        level_id: "lvl-1",
+        program_id: "prog-badminton",
+      },
+    });
+    // The test endpoint is never touched by an undo.
+    expect(mock.testCalls.length).toBe(0);
+    await expect(undo).toHaveCount(0);
   });
 
   test("Needs review issues the status POST", async ({ page, mock }) => {

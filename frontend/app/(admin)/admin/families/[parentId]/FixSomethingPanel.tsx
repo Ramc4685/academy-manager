@@ -3,8 +3,6 @@
 import { Button, Card, Overline } from "@/components/ds";
 import type { FamilyInvoice, InvoiceAction } from "@/lib/api/admin-families";
 
-import { DisabledFixItem } from "./family-dialogs";
-
 type FixKind = Extract<InvoiceAction, "void" | "refund" | "discount_once" | "charge_card">;
 
 const ITEMS: { kind: FixKind; label: string; ownerOnly: boolean }[] = [
@@ -58,8 +56,10 @@ export function FixSomethingPanel({
             </div>
           );
         })}
-        <DisabledFixItem label="Account credit" hint="coming later" />
-        <DisabledFixItem label="Undo manual payment" hint="coming later" />
+        {/* #890: "Account credit" and "Undo manual payment" sat here as
+            disabled "coming later" placeholders, padding a panel whose job is
+            to say what an admin can do right now. They come back when they do
+            something. */}
       </div>
     </Card>
   );
