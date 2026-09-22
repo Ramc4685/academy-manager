@@ -1245,6 +1245,8 @@ export interface AdminRegistrationRow {
   parent_name: string | null;
   student_name: string | null;
   selected_session_id: string | null;
+  /** Issue #891: the class this family asked for, on the list row itself. */
+  session_title: string | null;
   waiver_required: boolean;
   waiver_satisfied: boolean;
   zero_quote_period: string | null;

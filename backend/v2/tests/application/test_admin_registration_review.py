@@ -157,8 +157,10 @@ class InMemorySessions:
         self.sessions = {session.session_id: session for session in sessions}
         self.reserve_calls = 0
         self.release_calls = 0
+        self.get_calls = 0
 
     async def get(self, session_id: str) -> Session | None:
+        self.get_calls += 1
         return self.sessions.get(session_id)
 
     async def try_reserve_seat(self, session_id: str) -> bool:
@@ -733,6 +735,53 @@ async def test_pending_list_fetches_waiver_template_once_for_whole_page() -> Non
     assert len(rows) == 3
     assert all(row.waiver_required for row in rows)
     assert waiver_templates.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_pending_list_names_the_requested_class_once_per_session() -> None:
+    """Issue #891: the queue row carries the class the family asked for.
+
+    Sessions are Mongo reads, so a page of applications that all want the same
+    class must resolve that class once, the way the waiver template already is.
+    """
+    apps = [
+        _application(application_id="app-1", student_id=None),
+        _application(application_id="app-2", student_id=None),
+        _application(application_id="app-3", session_id="sess-2", student_id=None),
+    ]
+    sessions = InMemorySessions([_session(), _second_session()])
+    review = AdminRegistrationReview(
+        apps=InMemoryApplications(apps),
+        sessions=sessions,
+        students=InMemoryStudents(),
+        enrollments=InMemoryEnrollments(),
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        clock=lambda: NOW,
+    )
+
+    rows = await review.list_pending()
+
+    assert [row.session_title for row in rows] == ["Junior A", "Junior A", "Junior B"]
+    assert sessions.get_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_pending_list_names_no_class_when_the_session_is_gone() -> None:
+    review = AdminRegistrationReview(
+        apps=InMemoryApplications(_application(session_id="sess-missing", student_id=None)),
+        sessions=InMemorySessions([]),
+        students=InMemoryStudents(),
+        enrollments=InMemoryEnrollments(),
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        clock=lambda: NOW,
+    )
+
+    rows = await review.list_pending()
+
+    assert len(rows) == 1
+    assert rows[0].session_title is None
 
 
 @pytest.mark.asyncio

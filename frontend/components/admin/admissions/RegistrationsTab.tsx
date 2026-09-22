@@ -29,10 +29,54 @@ export function RegistrationsTab() {
             No registrations need approval.
           </p>
         ) : (
-          <RegistrationsTable registrations={query.data.registrations} />
+          <RegistrationGroups registrations={query.data.registrations} />
         )}
       </Card>
     </div>
+  );
+}
+
+/**
+ * Issue #891: the feed mixes registrations an admin can decide today with the
+ * ones that are stuck mid-decision — an ambiguous legacy child
+ * (`MANUAL_REVIEW`) or an approve/waitlist/decline whose review claim went
+ * stale. They need different work, so Pending comes first and the rest sit
+ * behind their own heading instead of diluting the queue.
+ *
+ * The split uses the `status` the row already carries: no second derivation,
+ * and the same `RegistrationsTable` renders both groups in whichever layout
+ * the viewport asked for.
+ */
+function RegistrationGroups({ registrations }: { registrations: AdminRegistrationRow[] }) {
+  const pending = registrations.filter((r) => r.status === "PENDING_APPROVAL");
+  const needsAnotherLook = registrations.filter((r) => r.status !== "PENDING_APPROVAL");
+  const bothGroups = pending.length > 0 && needsAnotherLook.length > 0;
+  return (
+    <>
+      {pending.length > 0 && (
+        <section data-testid="admin-registrations-pending">
+          {bothGroups && <GroupHeading>Pending</GroupHeading>}
+          <RegistrationsTable registrations={pending} />
+        </section>
+      )}
+      {needsAnotherLook.length > 0 && (
+        <section
+          data-testid="admin-registrations-needs-another-look"
+          className={pending.length > 0 ? "border-t border-rally-line" : undefined}
+        >
+          <GroupHeading>Needs another look</GroupHeading>
+          <RegistrationsTable registrations={needsAnotherLook} />
+        </section>
+      )}
+    </>
+  );
+}
+
+function GroupHeading({ children }: { children: string }) {
+  return (
+    <h2 className="px-5 pb-2 pt-4 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
+      {children}
+    </h2>
   );
 }
 
@@ -58,10 +102,11 @@ function RegistrationsTable({ registrations }: { registrations: AdminRegistratio
   }
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[860px] text-sm">
+      <table className="w-full min-w-[960px] text-sm">
         <thead>
           <tr className="border-b border-neutral-200 bg-neutral-50 text-left">
             <th className="px-5 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Student</th>
+            <th className="px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Class</th>
             <th className="px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Parent</th>
             <th className="px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Waiver</th>
             <th className="px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Updated</th>
@@ -96,6 +141,11 @@ function RegistrationsTable({ registrations }: { registrations: AdminRegistratio
                     )}
                   </div>
                 </div>
+              </td>
+              {/* Issue #891: the requested class, so the queue answers "who
+                  wants which class" without opening a single row. */}
+              <td className="px-3 py-4 text-rally-base">
+                {registration.session_title || "\u2014"}
               </td>
               <td className="px-3 py-4">
                 <div className="font-semibold text-rally-base">{registration.parent_name || "Parent"}</div>
@@ -157,6 +207,7 @@ function RegistrationPhoneRow({ registration }: { registration: AdminRegistratio
       secondary={
         <>
           <Overline>{registration.status.replaceAll("_", " ")}</Overline>
+          <div className="text-rally-base">{registration.session_title || "\u2014"}</div>
           <div className="flex flex-wrap items-center gap-2">
             {registration.zero_quote_period && (
               <span data-testid={`admin-registration-no-payment-${registration.application_id}`}>
