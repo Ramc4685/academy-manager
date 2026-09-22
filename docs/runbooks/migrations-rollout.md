@@ -39,8 +39,13 @@ changes.
    - "Build and push backend image" prints a `::notice::` with the image
      ref, `registry.fly.io/courtmastr-academy-api:migrate-<sha12>`. Copy it;
      it is also the rollback target for the *previous* deploy next time.
-   - "Dry-run pending migrations on the new image" prints the machine id,
-     then the CLI output, then the machine status. Expected today (0190 is
+   - "Dry-run pending migrations on the new image" prints the machine id
+     and name (`migrate-dry-run-<run id>-<attempt>`), then the CLI output,
+     then the machine status. The exit code is read from the machine's
+     `exit` event in `flyctl machine list --json`, with the text status
+     table as the fallback; the machine is destroyed on every exit path
+     (found by name when the id could not be parsed), so a leftover
+     `migrate-dry-run-*` machine in the app is itself a defect to report. Expected today (0190 is
      the latest and has been applied by hand):
 
      ```

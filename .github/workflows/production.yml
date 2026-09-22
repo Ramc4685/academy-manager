@@ -727,27 +727,59 @@ jobs:
             echo "::error::Could not read DB_NAME from backend/fly.toml"
             exit 1
           fi
+          machine_name="migrate-dry-run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          machine_id=""
+          # The machine is found by its deterministic name through
+          # `machine list --json` (flyctl v0.4.96 has no --json on `machine
+          # run` or `machine status`), so cleanup and the exit-code read do
+          # not depend on flyctl's human-readable text. The trap is armed
+          # BEFORE the machine is created: a failed id parse must never leak
+          # a machine in the production app.
+          find_machine() {
+            flyctl machine list --app "${FLY_APP}" --json \
+              | jq -r --arg name "${machine_name}" '.[] | select(.name == $name) | .id' \
+              | head -n1
+          }
+          cleanup() {
+            local id="${machine_id}"
+            if [ -z "${id}" ]; then
+              id="$(find_machine || true)"
+            fi
+            if [ -n "${id}" ]; then
+              flyctl machine destroy "${id}" --app "${FLY_APP}" --force || true
+            fi
+          }
+          trap cleanup EXIT
           out="$(flyctl machine run "${IMAGE}" --app "${FLY_APP}" --region ord \
-            --name "migrate-dry-run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --name "${machine_name}" \
             --restart no --detach --vm-memory 1024 \
             --env "DB_NAME=${db_name}" \
             -- python -m backend.v2.migrations --dry-run 2>&1 | tee /dev/stderr)"
           machine_id="$(printf '%s\n' "${out}" | sed -n 's/.*Machine ID: *\([0-9a-f]\{14\}\).*/\1/p' | head -n1)"
           if [ -z "${machine_id}" ]; then
-            echo "::error::Could not read the dry-run machine id from flyctl output"
+            machine_id="$(find_machine || true)"
+          fi
+          if [ -z "${machine_id}" ]; then
+            echo "::error::Could not find the dry-run machine ${machine_name} (flyctl output above, machine list by name empty)"
             exit 1
           fi
-          echo "dry-run machine: ${machine_id}"
-          cleanup() { flyctl machine destroy "${machine_id}" --app "${FLY_APP}" --force || true; }
-          trap cleanup EXIT
+          echo "dry-run machine: ${machine_id} (${machine_name})"
           flyctl machine wait "${machine_id}" --app "${FLY_APP}" --state stopped --wait-timeout 10m
           echo "--- dry-run output ---"
           flyctl logs --app "${FLY_APP}" --machine "${machine_id}" --no-tail || true
           echo "--- machine status ---"
           status="$(flyctl machine status "${machine_id}" --app "${FLY_APP}" | tee /dev/stderr)"
-          exit_code="$(printf '%s\n' "${status}" | grep -o 'exit_code=[0-9]*' | tail -n1 | cut -d= -f2)"
+          # Exit code: the machine's newest `exit` event from the JSON machine
+          # list; the text status table is only the fallback.
+          exit_code="$(flyctl machine list --app "${FLY_APP}" --json \
+            | jq -r --arg id "${machine_id}" \
+              '[.[] | select(.id == $id) | (.events // [])[] | select(.type == "exit") | .request.exit_event.exit_code | select(. != null)] | first // empty' \
+            || true)"
           if [ -z "${exit_code}" ]; then
-            echo "::error::Could not read the dry-run exit code from machine status"
+            exit_code="$(printf '%s\n' "${status}" | grep -o 'exit_code=[0-9]*' | tail -n1 | cut -d= -f2)"
+          fi
+          if [ -z "${exit_code}" ]; then
+            echo "::error::Could not read the dry-run exit code from machine list or machine status"
             exit 1
           fi
           if [ "${exit_code}" != "0" ]; then
