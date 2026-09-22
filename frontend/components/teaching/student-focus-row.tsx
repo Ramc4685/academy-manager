@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { ExternalLink } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
@@ -39,36 +40,44 @@ const STATUS_BADGE: Record<string, string> = {
   NEEDS_REVIEW: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300",
 };
 
+/**
+ * The one-tap outcomes, named with the SAME seven-state vocabulary the header
+ * badge, the skills page, the passport and the skill board use (#895). The
+ * quick-pass button used to read "Mastered" while the badge it moved read
+ * "Passed" — one status, two words, on one screen. `PASSED` is deliberately
+ * reached through `recordTestAttempt`, not `updateSkillStatus`: the backend's
+ * CoachSettableStatus rejects PASSED (see the coach passport page).
+ */
 const OUTCOMES: {
   key: string;
   label: string;
   status?: SettableStatus;
-  mastered?: boolean;
+  passed?: boolean;
   className: string;
 }[] = [
   {
     key: "introduced",
-    label: "Introduced",
+    label: STATUS_LABEL.INTRODUCED,
     status: "INTRODUCED",
     className:
       "border-neutral-300 text-neutral-700 dark:border-neutral-700 dark:text-neutral-300",
   },
   {
     key: "practicing",
-    label: "Practicing",
+    label: STATUS_LABEL.PRACTICING,
     status: "PRACTICING",
     className:
       "border-amber-300 text-amber-700 dark:border-amber-800 dark:text-amber-300",
   },
   {
-    key: "mastered",
-    label: "Mastered",
-    mastered: true,
+    key: "passed",
+    label: STATUS_LABEL.PASSED,
+    passed: true,
     className: "border-green-600 bg-green-600 text-white",
   },
   {
     key: "needs-review",
-    label: "Needs review",
+    label: STATUS_LABEL.NEEDS_REVIEW,
     status: "NEEDS_REVIEW",
     className:
       "border-red-300 text-red-700 dark:border-red-800 dark:text-red-300",
@@ -80,6 +89,30 @@ const KEY_OF_STATUS: Record<SettableStatus, string> = {
   PRACTICING: "practicing",
   NEEDS_REVIEW: "needs-review",
 };
+
+/**
+ * Which outcome button, if any, the skill's CURRENT status corresponds to.
+ * LEARNING / TEST_READY / NOT_STARTED have no one-tap button — they are set
+ * from the fuller skills page — so they light nothing up.
+ */
+const KEY_OF_CURRENT_STATUS: Record<string, string> = {
+  INTRODUCED: "introduced",
+  PRACTICING: "practicing",
+  PASSED: "passed",
+  NEEDS_REVIEW: "needs-review",
+};
+
+const SETTABLE: readonly SettableStatus[] = [
+  "INTRODUCED",
+  "PRACTICING",
+  "NEEDS_REVIEW",
+];
+
+function asSettable(status: string): SettableStatus | null {
+  return (SETTABLE as readonly string[]).includes(status)
+    ? (status as SettableStatus)
+    : null;
+}
 
 export function StudentFocusRow({
   student,
@@ -94,12 +127,21 @@ export function StudentFocusRow({
 }) {
   const queryClient = useQueryClient();
   const skill = student.next_skill;
+  /**
+   * The status this skill held just before the coach's last status tap, kept
+   * so the row can offer a one-tap revert (#895). Only a status the coach may
+   * set again is stored: PASSED is recorded through the test endpoint and has
+   * no "un-record", and NOT_STARTED is not coach-settable, so a tap that moved
+   * the skill off either of those simply offers no Undo rather than an Undo
+   * that would 500.
+   */
+  const [undoTo, setUndoTo] = useState<SettableStatus | null>(null);
 
   const invalidate = () => {
     void queryClient.invalidateQueries({
       queryKey: queryKeys.coach.todayPlan(date),
     });
-    // Mastered/status writes also move the session skill board — refresh any
+    // Passed/status writes also move the session skill board — refresh any
     // cached board so a coach toggling between views sees the new PASSED state.
     void queryClient.invalidateQueries({ queryKey: ["coach", "skill-board"] });
   };
@@ -130,13 +172,13 @@ export function StudentFocusRow({
   const pendingKey = statusMutation.isPending
     ? KEY_OF_STATUS[statusMutation.variables as SettableStatus]
     : testMutation.isPending
-      ? "mastered"
+      ? "passed"
       : null;
 
   const doneKey = statusMutation.isSuccess
     ? KEY_OF_STATUS[statusMutation.variables as SettableStatus]
     : testMutation.isSuccess
-      ? "mastered"
+      ? "passed"
       : null;
   const doneLabel = doneKey
     ? (OUTCOMES.find((o) => o.key === doneKey)?.label ?? null)
@@ -144,6 +186,16 @@ export function StudentFocusRow({
   const hasError = statusMutation.isError || testMutation.isError;
 
   if (!skill) return <ReadyForLevelUpRow student={student} />;
+
+  // What the skill is right now, so the buttons read as a state and not only
+  // as four equal commands.
+  const activeKey = KEY_OF_CURRENT_STATUS[skill.status] ?? null;
+
+  function applyStatus(next: SettableStatus) {
+    const previous = asSettable(skill!.status);
+    setUndoTo(previous && previous !== next ? previous : null);
+    statusMutation.mutate(next);
+  }
 
   const { isReview, youtube } = focusRowMeta(student);
 
@@ -154,9 +206,25 @@ export function StudentFocusRow({
       {doneLabel && (
         <p
           data-testid={`outcome-done-${student.student_id}`}
-          className="text-xs font-medium text-green-700 dark:text-green-400"
+          className="flex flex-wrap items-center gap-2 text-xs font-medium text-green-700 dark:text-green-400"
         >
-          ✓ {doneLabel} recorded
+          <span>✓ {doneLabel} recorded</span>
+          {/* Only once the write it reverts has actually landed. */}
+          {undoTo !== null && statusMutation.isSuccess && (
+            <button
+              type="button"
+              disabled={isPending}
+              data-testid={`outcome-undo-${student.student_id}`}
+              onClick={() => {
+                const target = undoTo;
+                setUndoTo(null);
+                if (target) statusMutation.mutate(target);
+              }}
+              className="min-h-touch rounded-lg border border-neutral-300 px-2 text-xs font-semibold text-neutral-700 underline underline-offset-2 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300"
+            >
+              Undo — back to {STATUS_LABEL[undoTo]}
+            </button>
+          )}
         </p>
       )}
       {hasError && (
@@ -171,20 +239,34 @@ export function StudentFocusRow({
       <div className="grid grid-cols-2 gap-2">
         {OUTCOMES.map((o) => {
           const saving = pendingKey === o.key;
+          const active = activeKey === o.key;
           return (
             <button
               key={o.key}
               type="button"
               disabled={isPending}
+              // #895: the buttons are a state, not four equal commands — the
+              // one the skill is already in is pressed. `aria-pressed` carries
+              // that to screen readers; the ring carries it to everyone else,
+              // so it never rests on colour alone.
+              aria-pressed={active}
               data-testid={`outcome-${student.student_id}-${o.key}`}
-              onClick={() =>
-                o.mastered
-                  ? testMutation.mutate()
-                  : statusMutation.mutate(o.status!)
-              }
-              className={`min-h-touch rounded-lg border px-2 text-xs font-semibold transition-all active:scale-95 disabled:opacity-50 ${o.className}`}
+              onClick={() => {
+                if (o.passed) {
+                  setUndoTo(null);
+                  testMutation.mutate();
+                  return;
+                }
+                applyStatus(o.status!);
+              }}
+              className={`min-h-touch rounded-lg border px-2 text-xs font-semibold transition-all active:scale-95 disabled:opacity-50 ${o.className} ${
+                active
+                  ? "ring-2 ring-neutral-900 ring-offset-1 dark:ring-neutral-100 dark:ring-offset-neutral-900"
+                  : ""
+              }`}
             >
               {saving ? "Saving…" : o.label}
+              {active && <span className="sr-only"> — current state</span>}
             </button>
           );
         })}

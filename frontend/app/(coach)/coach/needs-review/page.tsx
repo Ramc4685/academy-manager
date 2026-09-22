@@ -4,13 +4,20 @@ import { useEffect, useState } from "react";
 
 import { listAudit, recordAudit, toCsv } from "@/lib/offline/audit";
 import { describeQueuedMutation } from "@/lib/offline/mutation-label";
-import { dropById, listNeedsReview, type QueuedMutation } from "@/lib/offline/queue";
+import {
+  dropById,
+  getById,
+  listNeedsReview,
+  update,
+  type QueuedMutation,
+} from "@/lib/offline/queue";
+import { onSync, syncNow } from "@/lib/offline/sync";
 
 /**
  * Coach's "Needs review" tray.
  *
  * Lists mutations that failed with a domain error (4xx) and were therefore
- * not applied server-side. For each entry the coach can dismiss, export
+ * not applied server-side. For each entry the coach can retry, dismiss, export
  * their audit log, or — for case #4 (two-device same student) — pick which
  * device's mark to keep.
  */
@@ -18,6 +25,7 @@ import { dropById, listNeedsReview, type QueuedMutation } from "@/lib/offline/qu
 export default function NeedsReviewPage() {
   const [items, setItems] = useState<QueuedMutation[]>([]);
   const [loading, setLoading] = useState(true);
+  const [retrying, setRetrying] = useState<string | null>(null);
 
   async function refresh() {
     setItems(await listNeedsReview());
@@ -27,6 +35,59 @@ export default function NeedsReviewPage() {
   useEffect(() => {
     void refresh();
   }, []);
+
+  // The sync loop writes the queue from outside React (an auto-sync on
+  // reconnect, or the run a Retry kicks off), so the tray follows it instead
+  // of stranding the coach on a list that needs a manual reload to be true.
+  useEffect(() => {
+    return onSync((e) => {
+      if (e.kind === "finished" || e.kind === "paused") void refresh();
+    });
+  }, []);
+
+  /**
+   * Put a failed mark back in the outbox and send it again (#895).
+   *
+   * Deliberately the SAME record: same `mutation_id` — which is also the
+   * server's idempotency key — and the same payload, flipped back to `queued`
+   * so the existing sync loop picks it up. Nothing new is enqueued, so a
+   * retry can never double-apply a mark the server did commit; it replays and
+   * the server answers with the original result. `attempts` resets because the
+   * coach's tap is a fresh decision, not a continuation of the run that gave
+   * up.
+   */
+  async function retry(m: QueuedMutation) {
+    setRetrying(m.mutation_id);
+    try {
+      // Re-read: the record may have been dropped or rewritten since this
+      // list was rendered, and resurrecting a stale copy would send an intent
+      // the coach has already replaced.
+      const current = await getById(m.mutation_id);
+      if (!current) {
+        await refresh();
+        return;
+      }
+      const requeued: QueuedMutation = {
+        ...current,
+        status: "queued",
+        attempts: 0,
+      };
+      delete requeued.error;
+      await update(requeued);
+      await recordAudit({
+        kind: "retried",
+        mutation_id: m.mutation_id,
+        endpoint: m.endpoint,
+        error_code: m.error?.code,
+        ts: new Date().toISOString(),
+      });
+      await refresh();
+      await syncNow();
+    } finally {
+      setRetrying(null);
+      await refresh();
+    }
+  }
 
   async function dismiss(m: QueuedMutation) {
     await dropById(m.mutation_id);
@@ -89,10 +150,27 @@ export default function NeedsReviewPage() {
             <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
               {reviewReason(m)}
             </p>
-            <div className="mt-3 flex gap-2">
+            <div className="mt-3 flex flex-wrap gap-2">
+              {/*
+                The action ids deliberately do NOT extend the row's own
+                `tray-<id>` prefix, so a prefix match for rows never picks up
+                an action (see e2e/helpers/row-actions.ts).
+              */}
               <button
+                type="button"
+                disabled={retrying !== null}
+                data-testid={`tray-retry-${m.mutation_id}`}
+                onClick={() => void retry(m)}
+                className="min-h-touch rounded-md border border-amber-600 bg-amber-600 px-3 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                {retrying === m.mutation_id ? "Retrying…" : "Retry"}
+              </button>
+              <button
+                type="button"
+                disabled={retrying !== null}
+                data-testid={`tray-dismiss-${m.mutation_id}`}
                 onClick={() => void dismiss(m)}
-                className="min-h-touch rounded-md border border-amber-300 px-3 text-sm dark:border-amber-700"
+                className="min-h-touch rounded-md border border-amber-300 px-3 text-sm disabled:opacity-50 dark:border-amber-700"
               >
                 Dismiss
               </button>
@@ -119,5 +197,5 @@ const REVIEW_REASONS: Record<string, string> = {
 function reviewReason(m: QueuedMutation): string {
   const code = m.error?.code;
   if (code && REVIEW_REASONS[code]) return REVIEW_REASONS[code];
-  return "This change couldn’t be saved. Dismiss it, then try again from the session.";
+  return "This change couldn’t be saved. Retry it, or dismiss it and mark again from the session.";
 }

@@ -180,6 +180,15 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   const [noteOpen, setNoteOpen] = useState<string | null>(null);
   const [noteTexts, setNoteTexts] = useState<Record<string, string>>({});
   const [noteShare, setNoteShare] = useState<Record<string, boolean>>({});
+  /**
+   * #895: this is the marking screen. The announcements composer — a 3-row
+   * textarea, an urgency checkbox and a Post button — sat open under the
+   * roster on every visit, so the thing the coach actually came for competed
+   * with a form most visits never use. It now opens on request. The shared
+   * AnnouncementsPanel is untouched, so the admin session page still renders
+   * the composer open, which is right for the surface it is on.
+   */
+  const [announcementsOpen, setAnnouncementsOpen] = useState(false);
 
   const progressNotesKey = queryKeys.coach.progressNotes(sessionId);
   const { data: notesData } = useQuery({
@@ -825,13 +834,33 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
       */}
       {!assistant && (
         <section className="mt-6">
-          <h2
-            className="mb-2 text-sm font-semibold uppercase tracking-wide"
-            style={{ color: "var(--rally-muted)" }}
-          >
-            Announcements
+          <h2 className="mb-2">
+            <button
+              type="button"
+              data-testid="announcements-toggle"
+              aria-expanded={announcementsOpen}
+              aria-controls="coach-session-announcements"
+              onClick={() => setAnnouncementsOpen((open) => !open)}
+              className="min-h-touch w-full rounded-lg border px-3 text-left text-sm font-semibold uppercase tracking-wide"
+              style={{
+                color: "var(--rally-muted)",
+                borderColor: "var(--rally-line)",
+              }}
+            >
+              Announcements
+              <span aria-hidden="true" className="float-right font-normal">
+                {announcementsOpen ? "−" : "+"}
+              </span>
+            </button>
           </h2>
-          <AnnouncementsPanel persona="coach" sessionId={session.session_id} />
+          {announcementsOpen && (
+            <div id="coach-session-announcements">
+              <AnnouncementsPanel
+                persona="coach"
+                sessionId={session.session_id}
+              />
+            </div>
+          )}
         </section>
       )}
 
