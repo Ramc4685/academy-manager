@@ -330,7 +330,7 @@ jobs:
           # Diagnostic: PR-event runs hang after the last test since 2026-09-21
           # (all tests pass, no summary, job hits timeout-minutes). Trace the
           # runner/worker/browser lifecycle to see where teardown stalls.
-          DEBUG: "pw:test,pw:test:protocol,pw:browser"
+          DEBUG: "pw:test*,pw:browser"
         run: |
           timeout -s TERM 420 pnpm exec playwright test --project=chromium-mobile || {
             rc=$?
@@ -415,7 +415,7 @@ jobs:
       - name: Playwright E2E Chromium Desktop
         env:
           CI: "1"
-          DEBUG: "pw:test,pw:test:protocol,pw:browser"
+          DEBUG: "pw:test*,pw:browser"
         run: pnpm exec playwright test --project=chromium-desktop
 
       - name: Upload Playwright report on failure
