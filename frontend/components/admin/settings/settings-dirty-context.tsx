@@ -10,6 +10,8 @@ import {
   type ReactNode,
 } from "react";
 
+import { useReportUnsavedChanges } from "@/components/admin/unsaved-changes-guard";
+
 /**
  * Tracks which settings panels hold unsaved edits (#863).
  *
@@ -22,6 +24,10 @@ import {
  * Keyed by panel id rather than a single boolean because Self-service renders
  * two independent cards (self-service + departure policy) — a shared boolean
  * would let the clean card clear the dirty one's flag.
+ *
+ * #893: the aggregate flag is also published to the shell-wide guard, so the
+ * sidebar, the drawer and a reload confirm before they discard the draft —
+ * not just the tab strip.
  */
 interface SettingsDirtyValue {
   /** True when any mounted panel holds unsaved edits. */
@@ -47,9 +53,12 @@ export function SettingsDirtyProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const dirty = dirtyPanels.size > 0;
+  useReportUnsavedChanges("admin-settings", dirty);
+
   const value = useMemo<SettingsDirtyValue>(
-    () => ({ dirty: dirtyPanels.size > 0, setPanelDirty }),
-    [dirtyPanels, setPanelDirty]
+    () => ({ dirty, setPanelDirty }),
+    [dirty, setPanelDirty]
   );
 
   return <SettingsDirtyContext.Provider value={value}>{children}</SettingsDirtyContext.Provider>;

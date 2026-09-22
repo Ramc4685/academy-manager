@@ -235,4 +235,38 @@ test.describe("admin direct messages (#864)", () => {
     const threadBox = await thread.boundingBox();
     expect(listBox!.x).toBeLessThan(threadBox!.x);
   });
+
+  test("on desktop the open thread is readable and the composer stays in its card", async ({
+    page,
+  }) => {
+    // #893: the DM card was one half of a two-column page AND split itself in
+    // two again, so at 1280 the open thread sat at roughly a quarter of the
+    // content width and the composer's Send button hung out of the card.
+    await page.setViewportSize(DESKTOP);
+    await stubMessagesPage(page);
+
+    await page.goto("/admin/messages");
+    await page.getByTestId("dm-thread-row").click();
+
+    const thread = page.getByTestId("dm-thread-panel");
+    await expect(thread).toBeVisible();
+    const threadBox = await thread.boundingBox();
+    expect(threadBox).not.toBeNull();
+    expect(threadBox!.width).toBeGreaterThanOrEqual(560);
+
+    // Composer and Send inside the thread pane, not past its right edge.
+    const input = thread.getByLabel("DM message body");
+    const send = thread.getByRole("button", { name: "Send", exact: true });
+    const inputBox = await input.boundingBox();
+    const sendBox = await send.boundingBox();
+    const threadRight = threadBox!.x + threadBox!.width;
+    expect(inputBox!.x + inputBox!.width).toBeLessThanOrEqual(threadRight + 1);
+    expect(sendBox!.x + sendBox!.width).toBeLessThanOrEqual(threadRight + 1);
+
+    // And nothing pushes the page itself sideways.
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    expect(overflow).toBeLessThanOrEqual(0);
+  });
 });

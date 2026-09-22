@@ -123,7 +123,16 @@ function AdminMessagesContent() {
       {/* #864: Direct messages leads. A parent's unread reply is the thing an
           admin comes to this page for, and it used to sit below the whole
           broadcast composer and history — a long scroll away on a phone. */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      {/* #893: an open thread takes the full content width. Nesting the
+          list|thread pair inside one half of a two-column page left the open
+          thread at roughly a quarter of a 1280px screen and pushed the
+          composer's Send button out of its card. Broadcast drops below
+          instead; it is not what the admin opened the thread to do. */}
+      <div
+        className={
+          dmRecipientId ? "grid grid-cols-1 gap-5" : "grid grid-cols-1 lg:grid-cols-2 gap-5"
+        }
+      >
         <Card p={20}>
           <LaneHeader index="01" title="Direct messages" />
 
@@ -132,14 +141,21 @@ function AdminMessagesContent() {
           ) : (
             <div
               className={
-                dmRecipientId ? "lg:grid lg:grid-cols-2 lg:gap-4 lg:items-start" : undefined
+                dmRecipientId
+                  // A fixed list track plus a `minmax(0,1fr)` thread track:
+                  // an even split would shrink the thread again, and a
+                  // `minmax(560px,…)` floor would overflow the card between
+                  // `lg` and ~1200px. At 1280 the thread lands well past the
+                  // 560px the issue asks for.
+                  ? "lg:grid lg:grid-cols-[280px_minmax(0,1fr)] lg:gap-4 lg:items-start"
+                  : undefined
               }
             >
               {/* List panel. On a phone an open thread replaces it; from `lg`
                   the two sit side by side. */}
               <div
                 data-testid="dm-list-panel"
-                className={dmRecipientId ? "hidden lg:block" : undefined}
+                className={dmRecipientId ? "hidden min-w-0 lg:block" : undefined}
               >
                 {dmThreads.length === 0 && !dmRecipientId && (
                   <p className="text-sm text-rally-subtle mb-4">No DM threads yet.</p>
@@ -160,7 +176,7 @@ function AdminMessagesContent() {
               </div>
 
               {dmRecipientId && (
-                <div data-testid="dm-thread-panel">
+                <div data-testid="dm-thread-panel" className="min-w-0">
                   <div className="mb-3 flex items-center gap-2">
                     <Button
                       variant="secondary"
@@ -527,12 +543,14 @@ function DmComposer({
           {error}
         </p>
       )}
+      {/* #893 `min-w-0`: an input's default `min-width: auto` is wider than a
+          narrow thread column, which is what pushed Send out of its card. */}
       <input
         type="text"
         value={body}
         onChange={(e) => setBody(e.target.value)}
         placeholder="Type a message..."
-        className="flex-1 rounded-md border border-rally-line bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30"
+        className="min-w-0 flex-1 rounded-md border border-rally-line bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30"
         aria-label="DM message body"
       />
       <Button

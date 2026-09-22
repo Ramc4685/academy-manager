@@ -32,6 +32,7 @@ import {
   AdminActionSlotOutlet,
   AdminActionSlotProvider,
 } from "@/components/admin/admin-action-slot";
+import { UnsavedChangesProvider } from "@/components/admin/unsaved-changes-guard";
 import { PeopleSearch } from "@/components/admin/PeopleSearch";
 import { TenantSwitcher } from "@/components/admin/tenant-switcher";
 import { PersonaSwitcher } from "@/components/persona/persona-switcher";
@@ -121,6 +122,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       <ToastProvider>
       <TenantChangeInvalidator />
       <AdminActionSlotProvider>
+      {/* #893: the unsaved-changes guard wraps the SHELL, not one page, so a
+          sidebar/drawer link or a reload asks before it discards a draft. */}
+      <UnsavedChangesProvider>
       <div className="min-h-screen flex bg-rally-paper">
         {/* Exactly one sidebar tree is mounted at a time. Both carry the
             account controls (switchers, logout) with the same testids, so
@@ -164,6 +168,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           </main>
         </div>
       </div>
+      </UnsavedChangesProvider>
       </AdminActionSlotProvider>
       </ToastProvider>
       </OwnerProvider>

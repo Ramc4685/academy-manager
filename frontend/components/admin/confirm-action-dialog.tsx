@@ -24,6 +24,8 @@ export function ConfirmActionDialog({
   /** What actually happens — seat, invoice/autopay, and what the family is emailed. */
   consequence,
   confirmLabel,
+  /** The "leave it alone" button. #893 needs a "Stay" rather than "Keep as is". */
+  cancelLabel = "Keep as is",
   confirmVariant = "danger",
   pending = false,
   /** When present, the confirm button stays disabled until it is filled in. */
@@ -39,6 +41,7 @@ export function ConfirmActionDialog({
   subject?: ReactNode;
   consequence: ReactNode;
   confirmLabel: string;
+  cancelLabel?: string;
   confirmVariant?: "primary" | "danger";
   pending?: boolean;
   reason?: {
@@ -119,7 +122,7 @@ export function ConfirmActionDialog({
             onClick={() => onOpenChange(false)}
             disabled={pending}
           >
-            Keep as is
+            {cancelLabel}
           </Button>
           <Button
             type="submit"
