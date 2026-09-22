@@ -2491,6 +2491,18 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
                     status="active",
                     roles=("parent", "coach"),
                 ),
+                # A former student who later self-registered as a parent:
+                # ``ensure_parent_user`` merges roles, so the doc carries
+                # ``student`` next to ``parent``. The list view must render
+                # it rather than 500 on a role an admin cannot assign.
+                AdminUserSummary(
+                    user_id="ps-1",
+                    email="parent-student@example.com",
+                    display_name="Parent Student",
+                    role="parent",
+                    status="active",
+                    roles=("parent", "student"),
+                ),
             ]
             out = []
             for u in users:

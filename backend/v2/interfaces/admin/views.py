@@ -16,6 +16,7 @@ from backend.v2.contexts.enrollment.application.use_cases.departure_reasons impo
 from backend.v2.contexts.enrollment.application.use_cases.person_lifecycle import (
     PersonLifecycle,
 )
+from backend.v2.shared.auth.claims import Role
 from backend.v2.shared.comms import MAX_ANNOUNCEMENT_BODY
 from backend.v2.shared.security.external_url import InvalidExternalUrl, validate_external_url
 
@@ -23,12 +24,23 @@ from backend.v2.shared.security.external_url import InvalidExternalUrl, validate
 
 
 class AdminUserView(BaseModel):
+    """One row of the admin user directory.
+
+    ``role``/``roles`` are typed as the full domain ``Role`` (which includes
+    ``student``) rather than the narrower set an admin may *assign*. A
+    ``users`` doc can legitimately hold ``student`` next to ``parent`` or a
+    staff role (a former student who later registered as a parent goes through
+    ``ensure_parent_user`` and ends up with ``roles=["parent", "student"]``),
+    and one such row must not 500 the whole list. The assignable set stays on
+    the request models and query params below.
+    """
+
     user_id: str
     email: EmailStr
     display_name: str
-    role: Literal["admin", "coach", "assistant_coach", "parent", "owner"]
+    role: Role
     status: str
-    roles: list[Literal["admin", "coach", "assistant_coach", "parent", "owner"]] = []
+    roles: list[Role] = []
 
 
 class AdminUserDetailView(AdminUserView):
