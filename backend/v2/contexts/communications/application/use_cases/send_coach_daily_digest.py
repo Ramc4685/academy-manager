@@ -179,12 +179,14 @@ class SendCoachDailyDigest:
             try:
                 plan = await self.plan_provider.execute(coach.user_id, command.digest_date)
             except Exception as exc:  # plan generation must never crash the run
-                await self.digests.mark_failed(claim.digest_id, f"plan generation failed: {exc}")
+                await self.digests.mark_failed(
+                    command.academy_id, claim.digest_id, f"plan generation failed: {exc}"
+                )
                 failed += 1
                 continue
 
             if plan_is_empty(plan):
-                await self.digests.mark_skipped_empty(claim.digest_id)
+                await self.digests.mark_skipped_empty(command.academy_id, claim.digest_id)
                 skipped_empty += 1
                 continue
 
@@ -192,7 +194,9 @@ class SendCoachDailyDigest:
                 # Not retryable: the address is missing from the coach's user
                 # record, so the next tick would regenerate the plan and fail
                 # identically. Fixing it is a data task, not a delivery retry.
-                await self.digests.mark_failed(claim.digest_id, "no email address", retryable=False)
+                await self.digests.mark_failed(
+                    command.academy_id, claim.digest_id, "no email address", retryable=False
+                )
                 failed += 1
                 continue
 
@@ -222,13 +226,18 @@ class SendCoachDailyDigest:
                 category=EmailCategory.DIGEST,
             )
             if outcome.ok:
-                await self.digests.mark_sent(claim.digest_id, outcome.provider_message_id)
+                await self.digests.mark_sent(
+                    command.academy_id, claim.digest_id, outcome.provider_message_id
+                )
                 sent += 1
             elif outcome.suppressed:
                 # Not retryable — see SendParentDailyDigest: a re-claimed
                 # FAILED row would re-hit the same gate every tick.
                 await self.digests.mark_failed(
-                    claim.digest_id, outcome.failed_reason or "blocked", retryable=False
+                    command.academy_id,
+                    claim.digest_id,
+                    outcome.failed_reason or "blocked",
+                    retryable=False,
                 )
                 failed += 1
             else:
@@ -236,6 +245,7 @@ class SendCoachDailyDigest:
                 # failure: retrying it just re-hits the same suppression on
                 # every subsequent run. Same reasoning as "no email address".
                 await self.digests.mark_failed(
+                    command.academy_id,
                     claim.digest_id,
                     outcome.failed_reason or "unknown",
                     retryable=not outcome.suppressed,

@@ -60,16 +60,32 @@ class FakeParentDigestSendRepository:
         self.by_id[digest.digest_id] = digest
         return digest
 
-    async def mark_sent(self, digest_id: str, provider_message_id: str | None) -> None:
-        d = self.by_id[digest_id]
+    def _owned(self, academy_id: str, digest_id: str) -> DigestSend | None:
+        # Mirror Mongo: an update filtered on (academy_id, digest_id) that
+        # matches no row is a silent no-op, never a cross-academy write (#880).
+        d = self.by_id.get(digest_id)
+        return d if d is not None and d.academy_id == academy_id else None
+
+    async def mark_sent(
+        self, academy_id: str, digest_id: str, provider_message_id: str | None
+    ) -> None:
+        d = self._owned(academy_id, digest_id)
+        if d is None:
+            return
         self.by_id[digest_id] = d.mark_sent(provider_message_id=provider_message_id, sent_at="now")
 
-    async def mark_failed(self, digest_id: str, reason: str, *, retryable: bool = True) -> None:
-        d = self.by_id[digest_id]
+    async def mark_failed(
+        self, academy_id: str, digest_id: str, reason: str, *, retryable: bool = True
+    ) -> None:
+        d = self._owned(academy_id, digest_id)
+        if d is None:
+            return
         self.by_id[digest_id] = d.mark_failed(reason=reason, retryable=retryable)
 
-    async def mark_skipped_empty(self, digest_id: str) -> None:
-        d = self.by_id[digest_id]
+    async def mark_skipped_empty(self, academy_id: str, digest_id: str) -> None:
+        d = self._owned(academy_id, digest_id)
+        if d is None:
+            return
         self.by_id[digest_id] = d.mark_skipped_empty()
 
 
@@ -276,3 +292,20 @@ async def test_brand_lookup_failure_does_not_block_send() -> None:
         SendParentDailyDigestCommand(academy_id=ACADEMY_ID, digest_date=DIGEST_DATE)
     )
     assert result.sent == 1
+
+
+@pytest.mark.asyncio
+async def test_fake_mark_calls_from_another_academy_are_no_ops() -> None:
+    """Fake fidelity (#880): a mark issued with another academy's id is a no-op,
+    exactly as the ``(academy_id, digest_id)`` Mongo filter makes it."""
+    repo = FakeParentDigestSendRepository()
+    own = await repo.try_claim(ACADEMY_ID, "parent-1", "2026-07-16")
+    assert own is not None
+
+    await repo.mark_sent("acad-2", own.digest_id, "prov-x")
+    await repo.mark_failed("acad-2", own.digest_id, "boom")
+    await repo.mark_skipped_empty("acad-2", own.digest_id)
+    assert repo.by_id[own.digest_id].status == DigestSendStatus.QUEUED
+
+    await repo.mark_failed(ACADEMY_ID, own.digest_id, "boom", retryable=False)
+    assert repo.by_id[own.digest_id].status == DigestSendStatus.FAILED

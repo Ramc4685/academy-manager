@@ -88,6 +88,18 @@ HOT_LOOKUPS: list[tuple[str, dict[str, Any], str]] = [
         {"academy_id": "acad_0", "stripe_checkout_session_id": "cs"},
         "academy_subscription_checkout_session_unique",
     ),
+    # The digest mark_sent / mark_failed / mark_skipped_empty updates (#880).
+    # 0191 dropped the plain digest_id stopgap, so only this index can serve them.
+    (
+        "coach_digest_sends",
+        {"academy_id": "acad_0", "digest_id": "dg"},
+        "coach_digest_send_id_per_academy_uq",
+    ),
+    (
+        "parent_digest_sends",
+        {"academy_id": "acad_0", "digest_id": "dg"},
+        "parent_digest_send_id_per_academy_uq",
+    ),
 ]
 
 

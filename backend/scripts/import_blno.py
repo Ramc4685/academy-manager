@@ -7,6 +7,14 @@ enrollments, payments, expenses, attendance, lesson_plans, progress_notes,
 coach_payouts, payout_rules, move_log, messages, notifications, invites).
 Keeps only the configured admin account, then adds the two real coaches
 and all parents from the sheet.
+
+HISTORICAL, SINGLE-TENANT (#881): this importer predates tenancy and has no
+``academy_id`` anywhere — not only the ``expenses`` inserts but every
+collection it writes (students, enrollments, payments, sessions, attendance,
+...) lands unscoped, keyed by that one spreadsheet's column names. It must not
+be run for a second academy; a reusable onboarding path needs ``academy_id``
+threaded through every document and selector (see ``apply_blno_mongo.py``,
+whose selectors are tenant-scoped).
 """
 import os
 import re

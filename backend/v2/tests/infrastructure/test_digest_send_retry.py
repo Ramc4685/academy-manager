@@ -74,7 +74,7 @@ async def test_failed_claim_is_reclaimed_on_the_next_tick() -> None:
         first = await repo.try_claim(ACADEMY_ID, "coach-1", DIGEST_DATE)
         assert first is not None
         assert first.attempt_count == 1
-        await repo.mark_failed(first.digest_id, "resend timeout")
+        await repo.mark_failed(ACADEMY_ID, first.digest_id, "resend timeout")
 
         retry = await repo.try_claim(ACADEMY_ID, "coach-1", DIGEST_DATE)
         assert retry is not None
@@ -95,7 +95,7 @@ async def test_sent_claim_is_never_reclaimed() -> None:
 
         claim = await repo.try_claim(ACADEMY_ID, "coach-1", DIGEST_DATE)
         assert claim is not None
-        await repo.mark_sent(claim.digest_id, "prov-1")
+        await repo.mark_sent(ACADEMY_ID, claim.digest_id, "prov-1")
 
         assert await repo.try_claim(ACADEMY_ID, "coach-1", DIGEST_DATE) is None
 
@@ -120,7 +120,7 @@ async def test_fresh_queued_and_skipped_claims_are_never_reclaimed() -> None:
 
         skipped = await repo.try_claim(ACADEMY_ID, "coach-skip", DIGEST_DATE)
         assert skipped is not None
-        await repo.mark_skipped_empty(skipped.digest_id)
+        await repo.mark_skipped_empty(ACADEMY_ID, skipped.digest_id)
         assert await repo.try_claim(ACADEMY_ID, "coach-skip", DIGEST_DATE) is None
 
 
@@ -133,14 +133,14 @@ async def test_retries_stop_at_the_attempt_ceiling() -> None:
         claim = await repo.try_claim(ACADEMY_ID, "coach-1", DIGEST_DATE)
         assert claim is not None
         for expected_attempt in range(2, MAX_DIGEST_SEND_ATTEMPTS + 1):
-            await repo.mark_failed(claim.digest_id, "still broken")
+            await repo.mark_failed(ACADEMY_ID, claim.digest_id, "still broken")
             claim = await repo.try_claim(ACADEMY_ID, "coach-1", DIGEST_DATE)
             assert claim is not None
             assert claim.attempt_count == expected_attempt
 
         # Attempts exhausted: the hourly tick stops burning sends on this row.
         assert claim.attempts_exhausted
-        await repo.mark_failed(claim.digest_id, "still broken")
+        await repo.mark_failed(ACADEMY_ID, claim.digest_id, "still broken")
         assert await repo.try_claim(ACADEMY_ID, "coach-1", DIGEST_DATE) is None
 
 
@@ -153,7 +153,7 @@ async def test_legacy_row_without_attempt_count_retries_after_backfill() -> None
         repo = MongoDigestSendRepository(db)
         claim = await repo.try_claim(ACADEMY_ID, "coach-1", DIGEST_DATE)
         assert claim is not None
-        await repo.mark_failed(claim.digest_id, "boom")
+        await repo.mark_failed(ACADEMY_ID, claim.digest_id, "boom")
         # Simulate a row that predates the field.
         await db["coach_digest_sends"].update_one(
             {"digest_id": claim.digest_id}, {"$unset": {"attempt_count": ""}}
@@ -176,7 +176,7 @@ async def test_parent_digest_failure_is_retried_and_success_is_not() -> None:
 
         failed = await repo.try_claim(ACADEMY_ID, "parent-1", DIGEST_DATE)
         assert failed is not None
-        await repo.mark_failed(failed.digest_id, "smtp 421")
+        await repo.mark_failed(ACADEMY_ID, failed.digest_id, "smtp 421")
         retry = await repo.try_claim(ACADEMY_ID, "parent-1", DIGEST_DATE)
         assert retry is not None
         assert retry.digest_id == failed.digest_id
@@ -184,7 +184,7 @@ async def test_parent_digest_failure_is_retried_and_success_is_not() -> None:
 
         sent = await repo.try_claim(ACADEMY_ID, "parent-2", DIGEST_DATE)
         assert sent is not None
-        await repo.mark_sent(sent.digest_id, "prov-2")
+        await repo.mark_sent(ACADEMY_ID, sent.digest_id, "prov-2")
         assert await repo.try_claim(ACADEMY_ID, "parent-2", DIGEST_DATE) is None
 
         assert await db["parent_digest_sends"].count_documents({}) == 2
@@ -311,7 +311,7 @@ async def test_a_recipient_with_no_email_is_not_retried() -> None:
         repo = MongoDigestSendRepository(db)
         claim = await repo.try_claim(ACADEMY_ID, "coach-1", DIGEST_DATE)
         assert claim is not None
-        await repo.mark_failed(claim.digest_id, "no email address", retryable=False)
+        await repo.mark_failed(ACADEMY_ID, claim.digest_id, "no email address", retryable=False)
 
         assert await repo.try_claim(ACADEMY_ID, "coach-1", DIGEST_DATE) is None
         doc = await db["coach_digest_sends"].find_one({"digest_id": claim.digest_id})
@@ -397,7 +397,7 @@ async def test_a_stale_sent_row_is_still_never_reclaimed() -> None:
 
         claim = await repo.try_claim(ACADEMY_ID, "coach-1", DIGEST_DATE)
         assert claim is not None
-        await repo.mark_sent(claim.digest_id, "prov-1")
+        await repo.mark_sent(ACADEMY_ID, claim.digest_id, "prov-1")
         await db["coach_digest_sends"].update_one(
             {"digest_id": claim.digest_id},
             {"$set": {"created_at": datetime.now(UTC) - timedelta(days=1)}},

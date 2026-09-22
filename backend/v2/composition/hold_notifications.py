@@ -230,13 +230,15 @@ class HoldNotificationAdapter:
 
         if session is None or not parent_id:
             await self._notice_sends.mark_failed(
-                claim["send_id"], "session_or_parent_missing", retryable=False
+                academy_id, claim["send_id"], "session_or_parent_missing", retryable=False
             )
             return
 
         recipient = await self._resolve_parent(parent_id)
         if recipient is None or not recipient.email:
-            await self._notice_sends.mark_failed(claim["send_id"], "no_recipient", retryable=False)
+            await self._notice_sends.mark_failed(
+                academy_id, claim["send_id"], "no_recipient", retryable=False
+            )
             return
 
         subject, body = build(session, student_name)
@@ -249,16 +251,18 @@ class HoldNotificationAdapter:
             )
         except Exception:
             logger.exception("hold_notice_send_failed", extra={"enrollment_id": enrollment_id})
-            await self._notice_sends.mark_failed(claim["send_id"], "send_exception")
+            await self._notice_sends.mark_failed(academy_id, claim["send_id"], "send_exception")
             return
 
         if outcome.ok:
-            await self._notice_sends.mark_sent(claim["send_id"])
+            await self._notice_sends.mark_sent(academy_id, claim["send_id"])
         elif outcome.suppressed:
-            await self._notice_sends.mark_failed(claim["send_id"], "suppressed", retryable=False)
+            await self._notice_sends.mark_failed(
+                academy_id, claim["send_id"], "suppressed", retryable=False
+            )
         else:
             await self._notice_sends.mark_failed(
-                claim["send_id"], outcome.failed_reason or "send_failed"
+                academy_id, claim["send_id"], outcome.failed_reason or "send_failed"
             )
 
     async def _resolve_parent(self, parent_id: str) -> ResolvedRecipient | None:

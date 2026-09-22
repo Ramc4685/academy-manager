@@ -93,7 +93,9 @@ class FakeWinBackSendRepository:
         send_id = f"send-{student_id}-{milestone_key}-{dropped_event_id}"
         return {"send_id": send_id}
 
-    async def mark_sent(self, send_id: str) -> None:
+    async def mark_sent(self, academy_id: str, send_id: str) -> None:
+        if not any(k[0] == academy_id for k in self._claimed):  # (academy_id, send_id) filter
+            return
         self.sent_ids.append(send_id)
 
 

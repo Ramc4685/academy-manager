@@ -57,7 +57,7 @@ class WinBackSendRepository(Protocol):
         self, *, academy_id: str, student_id: str, milestone_key: str, dropped_event_id: str
     ) -> dict[str, Any] | None: ...
 
-    async def mark_sent(self, send_id: str) -> None: ...
+    async def mark_sent(self, academy_id: str, send_id: str) -> None: ...
 
 
 class FamilyBalanceLookup(Protocol):
@@ -185,5 +185,5 @@ class SendWinBackNotices:
             )
             return 0
 
-        await self._send_repo.mark_sent(claim["send_id"])
+        await self._send_repo.mark_sent(academy_id, claim["send_id"])
         return 1

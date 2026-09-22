@@ -58,17 +58,33 @@ class FakeDigestSendRepository:
         self.by_id[digest.digest_id] = digest
         return digest
 
-    async def mark_sent(self, digest_id, provider_message_id):
-        d = self.by_id[digest_id]
+    def _owned(self, academy_id: str, digest_id: str) -> DigestSend | None:
+        # Mirror Mongo: an update filtered on (academy_id, digest_id) that
+        # matches no row is a silent no-op, never a cross-academy write (#880).
+        d = self.by_id.get(digest_id)
+        return d if d is not None and d.academy_id == academy_id else None
+
+    async def mark_sent(
+        self, academy_id: str, digest_id: str, provider_message_id: str | None
+    ) -> None:
+        d = self._owned(academy_id, digest_id)
+        if d is None:
+            return
         self.by_id[digest_id] = d.mark_sent(provider_message_id=provider_message_id, sent_at="now")
 
-    async def mark_failed(self, digest_id, reason, *, retryable: bool = True):
-        self.by_id[digest_id] = self.by_id[digest_id].mark_failed(
-            reason=reason, retryable=retryable
-        )
+    async def mark_failed(
+        self, academy_id: str, digest_id: str, reason: str, *, retryable: bool = True
+    ) -> None:
+        d = self._owned(academy_id, digest_id)
+        if d is None:
+            return
+        self.by_id[digest_id] = d.mark_failed(reason=reason, retryable=retryable)
 
-    async def mark_skipped_empty(self, digest_id):
-        self.by_id[digest_id] = self.by_id[digest_id].mark_skipped_empty()
+    async def mark_skipped_empty(self, academy_id: str, digest_id: str) -> None:
+        d = self._owned(academy_id, digest_id)
+        if d is None:
+            return
+        self.by_id[digest_id] = d.mark_skipped_empty()
 
     async def list_recent(self, academy_id, limit):
         return list(self.by_id.values())[:limit]
@@ -251,3 +267,19 @@ async def test_the_test_send_carries_the_same_unsubscribe_link_as_the_real_diges
         "the admin test send shipped the no-link fallback footer"
     )
     assert "https://blno.courtmastr.com/unsubscribe?t=" in body, body[-400:]
+
+
+@pytest.mark.asyncio
+async def test_fake_mark_calls_from_another_academy_are_no_ops() -> None:
+    """Fake fidelity (#880): test sends are marked under ``(academy_id, digest_id)``
+    too, so another academy's id must not flip the row."""
+    repo = FakeDigestSendRepository()
+    own = await repo.record_test_send(ACADEMY_ID, "coach-1", "2026-06-13")
+
+    await repo.mark_sent("acad-2", own.digest_id, "prov-x")
+    await repo.mark_failed("acad-2", own.digest_id, "boom")
+    await repo.mark_skipped_empty("acad-2", own.digest_id)
+    assert repo.by_id[own.digest_id].status == DigestSendStatus.QUEUED
+
+    await repo.mark_skipped_empty(ACADEMY_ID, own.digest_id)
+    assert repo.by_id[own.digest_id].status == DigestSendStatus.SKIPPED_EMPTY
