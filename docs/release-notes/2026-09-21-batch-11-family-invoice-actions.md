@@ -1,6 +1,6 @@
 # batch-11: family invoice actions
 
-PR: #0
+PR: #901
 
 ## What changed
 - Fixes #890 — the family page now gives each money action exactly one home: invoice rows keep only the two row-specific actions (Record payment, Send) as direct buttons, with a new More menu holding the draft-only Add charge; void, refund, one-time discount and charge-card-now no longer render on the row, so the Fix panel is their single home.
