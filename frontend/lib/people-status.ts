@@ -57,6 +57,31 @@ const CARD_VARIANTS: Record<CardState, ChipVariant> = {
   declined: "failed",
 };
 
+/**
+ * #897: the third fact a People list states — does this family owe us? The
+ * Students list hardcoded "CURRENT" / "DUE" / "OVERDUE" while the Families
+ * list beside it read Title Case labels from this module, so one `Chip`
+ * primitive carried two casings. The labels live here for the same reason
+ * the login and card ones do.
+ */
+export type DuesState = "current" | "due" | "overdue";
+
+export const DUES_LABELS: Record<DuesState, string> = {
+  current: "Current",
+  due: "Due",
+  overdue: "Overdue",
+};
+
+const DUES_VARIANTS: Record<DuesState, ChipVariant> = {
+  current: "paid",
+  due: "pending",
+  overdue: "overdue",
+};
+
+export function duesChip(state: DuesState): PeopleChip {
+  return { label: DUES_LABELS[state], variant: DUES_VARIANTS[state] };
+}
+
 export function loginChip(state: LoginState): PeopleChip {
   return { label: LOGIN_LABELS[state], variant: LOGIN_VARIANTS[state] };
 }

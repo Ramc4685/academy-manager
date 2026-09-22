@@ -266,21 +266,24 @@ describe("the desktop fixes that ship with the phone rows (#847)", () => {
 });
 
 describe("phone filter controls clear 44px (#847)", () => {
+  // #897: the three lists used to carry three copies of this className. They
+  // now share one `FilterChip`, so the 44px rule is asserted once, where it
+  // lives, and each page is checked for using it.
+  it("the shared filter chip is 44px on a phone and 32px from md up", () => {
+    const src = source("components/ds/list-toolbar.tsx");
+    expect(src).toContain("min-h-touch");
+    expect(src).toContain("md:h-8 md:min-h-0");
+  });
+
   it("Students lifecycle tabs", () => {
-    expect(appSource("(admin)/admin/students/page.tsx")).toContain(
-      "inline-flex min-h-touch items-center gap-2 rounded-md px-3",
-    );
+    expect(appSource("(admin)/admin/students/page.tsx")).toContain("<FilterChip");
   });
 
   it("Families status filters", () => {
-    expect(appSource("(admin)/admin/families/page.tsx")).toContain(
-      "inline-flex min-h-touch items-center rounded px-3",
-    );
+    expect(appSource("(admin)/admin/families/page.tsx")).toContain("<FilterChip");
   });
 
   it("Users role tabs", () => {
-    expect(source("components/admin/AdminUsersDirectory.tsx")).toContain(
-      "inline-flex min-h-touch items-center rounded-full px-3",
-    );
+    expect(source("components/admin/AdminUsersDirectory.tsx")).toContain("<FilterChip");
   });
 });

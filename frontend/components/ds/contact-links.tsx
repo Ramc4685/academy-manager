@@ -24,8 +24,16 @@ export interface ContactPoints {
   email?: string | null;
 }
 
+/**
+ * #897: this class had no colour of its own, so each link inherited whatever
+ * muted text its caller set (a Families `<td>`'s slate, a phone row's
+ * secondary slot), underlined only on `:hover` — which a phone cannot do —
+ * and, as inline text, rendered a hit box one line-height tall (~20px),
+ * well under the 44px minimum. Cobalt, always underlined, and 44px tall on a
+ * phone; desktop keeps the normal line height.
+ */
 const LINK_CLASS =
-  "rounded underline-offset-2 hover:underline focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600";
+  "inline-flex min-h-touch items-center rounded text-rally-cobalt-700 underline underline-offset-2 hover:text-rally-cobalt-800 focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600 md:min-h-0";
 
 export function ContactLinks({
   phone,

@@ -233,6 +233,16 @@ test.describe("admin billing health", () => {
     );
 
     await page.goto("/admin/billing-health");
+
+    // #892: the row says what the event was; the raw Stripe id stays on the row
+    // for support but behind a disclosure, not as the row's first word.
+    const row = page.getByTestId("quarantined-row-evt_1Abc123");
+    await expect(row).toContainText("Payment succeeded");
+    await expect(row.getByText("payment_intent.succeeded")).toHaveCount(0);
+    const eventId = page.getByTestId("event-id-evt_1Abc123");
+    await expect(eventId).toContainText("evt_1Abc123");
+    await expect(eventId.getByText("evt_1Abc123")).toBeHidden();
+
     await page.getByTestId("replay-evt_1Abc123").click();
 
     await expect.poll(() => replayed).toBe("evt_1Abc123");

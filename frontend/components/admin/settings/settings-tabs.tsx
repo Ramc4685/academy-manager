@@ -1,12 +1,8 @@
 "use client";
 
-import type { Route } from "next";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { UrlObject } from "url";
-
-import { useSettingsDirty } from "@/components/admin/settings/settings-dirty-context";
 
 export type SettingsPanelKey =
   | "academy"
@@ -55,12 +51,7 @@ interface SettingsTabsProps {
   tabs?: ReadonlyArray<{ key: SettingsPanelKey; label: string }>;
 }
 
-const LEAVE_UNSAVED_PROMPT =
-  "You have unsaved changes on this tab. Leave without saving?";
-
 export function SettingsTabs({ active, hrefFor, tabs = SETTINGS_TABS }: SettingsTabsProps) {
-  const router = useRouter();
-  const { dirty } = useSettingsDirty();
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const activeRef = useRef<HTMLAnchorElement | null>(null);
   const [overflow, setOverflow] = useState({ left: false, right: false });
@@ -88,16 +79,6 @@ export function SettingsTabs({ active, hrefFor, tabs = SETTINGS_TABS }: Settings
     return () => window.removeEventListener("resize", syncOverflow);
   }, [syncOverflow]);
 
-  function onTabClick(event: MouseEvent<HTMLAnchorElement>, key: SettingsPanelKey) {
-    if (!dirty || key === active) return;
-    // Scoped to the tab strip on purpose: a global router/beforeunload guard
-    // would also fire on unrelated navigation out of the settings page.
-    const href = event.currentTarget.getAttribute("href");
-    event.preventDefault();
-    if (!window.confirm(LEAVE_UNSAVED_PROMPT)) return;
-    if (href) router.replace(href as Route, { scroll: false });
-  }
-
   return (
     <div className="relative">
       <div
@@ -115,7 +96,11 @@ export function SettingsTabs({ active, hrefFor, tabs = SETTINGS_TABS }: Settings
                 href={hrefFor(tab.key)}
                 replace
                 scroll={false}
-                onClick={(event) => onTabClick(event, tab.key)}
+                // #893: the shell-wide guard intercepts this click when a
+                // panel holds unsaved edits and shows the DS dialog; the
+                // attribute keeps its navigation a scroll-free replace, so
+                // Back still leaves settings instead of walking the panels.
+                data-unsaved-guard-nav="replace"
                 className={`inline-flex min-h-11 snap-start items-center rounded-md px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-overline transition-colors ${
                   isActive
                     ? "bg-blue-600 text-white"

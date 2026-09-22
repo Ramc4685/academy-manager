@@ -59,8 +59,11 @@ describe("Users directory is searchable (#839)", () => {
   const src = () => source("components/admin/AdminUsersDirectory.tsx");
 
   it("renders a labelled search input", () => {
+    // #897: the markup is the shared `ToolbarSearch`, which owns the <label>;
+    // the directory supplies the id and the label text.
     expect(src()).toContain('id="admin-users-search"');
-    expect(src()).toContain('htmlFor="admin-users-search"');
+    expect(src()).toContain('label="Search users"');
+    expect(source("components/ds/list-toolbar.tsx")).toContain("htmlFor={id}");
   });
 
   it("filters the rows through the shared, tested predicate", () => {

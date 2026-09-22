@@ -135,6 +135,84 @@ async function stubMessagesPage(page: Page): Promise<{ readCalls: string[] }> {
   return { readCalls };
 }
 
+/**
+ * #892: a DM from a family whose contact is NOT in the `role=parent` roster.
+ * The thread list used to title it with the literal word "Parent"; the admin
+ * directory already knows the name.
+ */
+const OTHER_ID = "usr-2";
+const OTHER_NAME = "Priya Menon";
+
+async function stubMessagesWithNonParentContact(page: Page): Promise<void> {
+  const messages = [
+    ...seedMessages(),
+    {
+      message_id: "m-other",
+      kind: "dm",
+      sender_id: OTHER_ID,
+      recipient_id: ADMIN_USER_A.user_id,
+      counterparty_id: OTHER_ID,
+      body: "Is Saturday practice still on?",
+      created_at: "2026-09-19T10:00:00Z",
+      sent_at: "2026-09-19T10:00:00Z",
+      is_broadcast: false,
+      is_read: true,
+    },
+  ];
+
+  await stubMe(page, ADMIN_USER_A);
+  await stubMemberships(page, [
+    { academy_id: ACADEMY_A, academy_name: "Aces Academy", role: "admin" },
+  ]);
+  await stubAcademy(page, ACADEMY_A);
+
+  await page.route("**/api/v2/admin/**", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, {});
+  });
+  await page.route("**/api/v2/admin/inbox/counts*", (route) =>
+    fulfillJson(route, { counts: {}, total: 0 }),
+  );
+  // The parent-role roster has only the one parent; the whole directory knows
+  // the family's other contact. Before #892 the second thread read "Parent".
+  await page.route("**/api/v2/admin/users*", (route) => {
+    const parentOnly = route.request().url().includes("role=parent");
+    return fulfillJson(route, {
+      users: parentOnly
+        ? [
+            {
+              user_id: PARENT_ID,
+              display_name: PARENT_NAME,
+              email: "dana@example.com",
+              roles: ["parent"],
+              status: "active",
+            },
+          ]
+        : [
+            {
+              user_id: PARENT_ID,
+              display_name: PARENT_NAME,
+              email: "dana@example.com",
+              roles: ["parent"],
+              status: "active",
+            },
+            {
+              user_id: OTHER_ID,
+              display_name: OTHER_NAME,
+              email: "priya@example.com",
+              roles: ["guardian"],
+              status: "active",
+            },
+          ],
+    });
+  });
+
+  await page.route("**/api/v2/admin/messages", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, { messages });
+  });
+}
+
 test.describe("admin direct messages (#864)", () => {
   test("thread row shows unread and the LATEST message, and opening clears it", async ({
     page,
@@ -197,6 +275,26 @@ test.describe("admin direct messages (#864)", () => {
     await expect(page.getByTestId("dm-thread-panel")).toHaveCount(0);
   });
 
+  test("a thread from outside the parent roster still shows the family name (#892)", async ({
+    page,
+  }) => {
+    await page.setViewportSize(DESKTOP);
+    await stubMessagesWithNonParentContact(page);
+
+    await page.goto("/admin/messages");
+    await expect(page.getByTestId("admin-messages")).toBeVisible();
+
+    const rows = page.getByTestId("dm-thread-row");
+    await expect(rows).toHaveCount(2);
+    await expect(page.getByTestId("dm-thread-list")).toContainText(PARENT_NAME);
+    await expect(page.getByTestId("dm-thread-list")).toContainText(OTHER_NAME);
+    // The literal fallback is the last resort, not the default for anyone the
+    // parent-role roster happens to miss.
+    await expect(
+      page.getByTestId("dm-thread-list").getByText("Parent", { exact: true }),
+    ).toHaveCount(0);
+  });
+
   test("the ?dm= deep link marks the thread read too, not just a row click", async ({
     page,
   }) => {
@@ -234,5 +332,39 @@ test.describe("admin direct messages (#864)", () => {
     const listBox = await page.getByTestId("dm-list-panel").boundingBox();
     const threadBox = await thread.boundingBox();
     expect(listBox!.x).toBeLessThan(threadBox!.x);
+  });
+
+  test("on desktop the open thread is readable and the composer stays in its card", async ({
+    page,
+  }) => {
+    // #893: the DM card was one half of a two-column page AND split itself in
+    // two again, so at 1280 the open thread sat at roughly a quarter of the
+    // content width and the composer's Send button hung out of the card.
+    await page.setViewportSize(DESKTOP);
+    await stubMessagesPage(page);
+
+    await page.goto("/admin/messages");
+    await page.getByTestId("dm-thread-row").click();
+
+    const thread = page.getByTestId("dm-thread-panel");
+    await expect(thread).toBeVisible();
+    const threadBox = await thread.boundingBox();
+    expect(threadBox).not.toBeNull();
+    expect(threadBox!.width).toBeGreaterThanOrEqual(560);
+
+    // Composer and Send inside the thread pane, not past its right edge.
+    const input = thread.getByLabel("DM message body");
+    const send = thread.getByRole("button", { name: "Send", exact: true });
+    const inputBox = await input.boundingBox();
+    const sendBox = await send.boundingBox();
+    const threadRight = threadBox!.x + threadBox!.width;
+    expect(inputBox!.x + inputBox!.width).toBeLessThanOrEqual(threadRight + 1);
+    expect(sendBox!.x + sendBox!.width).toBeLessThanOrEqual(threadRight + 1);
+
+    // And nothing pushes the page itself sideways.
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    expect(overflow).toBeLessThanOrEqual(0);
   });
 });

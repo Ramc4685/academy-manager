@@ -36,7 +36,12 @@ import {
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
 import { formatCents, parseDollarsToCents } from "@/lib/money";
-import { healthPillTone, truncationLine } from "@/lib/billing-health";
+import {
+  healthPillTone,
+  invoiceStatusLabel,
+  truncationLine,
+  webhookEventLabel,
+} from "@/lib/billing-health";
 
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
@@ -279,12 +284,12 @@ export default function BillingHealthPage() {
                         <PhoneListRow
                           key={evt.event_id}
                           data-testid={`quarantined-row-${evt.event_id}`}
-                          title={<Chip variant="manual" label={evt.event_type} />}
+                          title={
+                            <Chip variant="manual" label={webhookEventLabel(evt.event_type)} />
+                          }
                           secondary={
                             <>
-                              <div className="break-all font-mono text-[11px]">
-                                {evt.event_id}
-                              </div>
+                              <StripeEventIdDetails eventId={evt.event_id} />
                               <div className="break-words">{evt.error_message ?? "—"}</div>
                               {/* Replay stays a direct 44px button rather than
                                   a menu item: it is the row's only action, and
@@ -319,7 +324,7 @@ export default function BillingHealthPage() {
                 >
                   <thead>
                     <tr className="border-b border-rally-line text-left">
-                      <Th>Event ID</Th>
+                      <Th>Stripe id</Th>
                       <Th>Type</Th>
                       <Th>Reason quarantined</Th>
                       <Th>
@@ -337,12 +342,10 @@ export default function BillingHealthPage() {
                           data-testid={`quarantined-row-${evt.event_id}`}
                         >
                           <Td>
-                            <span className="font-mono text-xs text-rally-muted">
-                              {truncate(evt.event_id)}
-                            </span>
+                            <StripeEventIdDetails eventId={evt.event_id} />
                           </Td>
                           <Td>
-                            <Chip variant="manual" label={evt.event_type} />
+                            <Chip variant="manual" label={webhookEventLabel(evt.event_type)} />
                           </Td>
                           <Td>
                             <span className="text-xs text-rally-muted">
@@ -579,7 +582,8 @@ function LinkChargeForm({ onLinked }: { onLinked: () => void }) {
           </Button>
           {mutation.isSuccess && !confirming && (
             <span className="text-sm text-green-700" data-testid="link-charge-success">
-              Linked. Invoice {mutation.data?.invoice_id} is now {mutation.data?.invoice_status}.
+              Linked. Invoice {mutation.data?.invoice_id} is now{" "}
+              {invoiceStatusLabel(mutation.data?.invoice_status)}.
             </span>
           )}
         </div>
@@ -860,3 +864,20 @@ function TableSkeleton() {
 
 const inputClass =
   "w-full rounded-md border border-rally-line bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30";
+
+/**
+ * #892: the raw Stripe event id behind a disclosure, mirroring
+ * `StripeIdDetails` on the Payments invoices table. The id is the only handle
+ * support has in the Stripe dashboard, so it stays on the row and in the DOM —
+ * it just stops being the first thing Billing Health says.
+ */
+function StripeEventIdDetails({ eventId }: { eventId: string }) {
+  return (
+    <details data-testid={`event-id-${eventId}`}>
+      <summary className="cursor-pointer text-xs text-rally-subtle">Stripe id</summary>
+      <div className="mt-1 break-all font-mono text-[11px] text-rally-muted" title={eventId}>
+        {eventId}
+      </div>
+    </details>
+  );
+}

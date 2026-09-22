@@ -7,7 +7,7 @@ import type { Route } from "next";
 import { useRouter, useSearchParams } from "next/navigation";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Search, Users } from "lucide-react";
+import { Plus, Users } from "lucide-react";
 
 import {
   createAdminUser,
@@ -27,6 +27,9 @@ import { Avatar } from "@/components/ds/avatar";
 import { Button } from "@/components/ds/button";
 import { ErrorNotice } from "@/components/ds/error-notice";
 import { ContactLinks } from "@/components/ds/contact-links";
+import { FilterBar, FilterChip, ToolbarSearch } from "@/components/ds/list-toolbar";
+import { Th } from "@/components/ds/dialog-chrome";
+import { userLoginChip } from "@/lib/people-status";
 import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { useIsPhone } from "@/lib/use-is-phone";
 import { CoachEngagementStatsStrip } from "@/components/admin/CoachEngagementStatsStrip";
@@ -109,45 +112,32 @@ export function AdminUsersDirectory({
   return (
     <section data-testid="admin-users" className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        {/* #897: the same ink filter chips the Students list uses — this row
+            was a third pill shape (rounded-full, neutral-900) for no reason. */}
         {!fixedRole ? (
-          <div className="flex flex-wrap gap-2">
+          <FilterBar label="Users by role" testId="admin-users-filters">
             {roles.map((r) => (
-              <button
+              <FilterChip
                 key={r.label}
-                type="button"
+                active={role === r.value}
+                label={r.label}
+                testId={`admin-users-filter-${r.value ?? "all"}`}
                 onClick={() => selectRole(r.value)}
-                // #847: 44px on a phone, unchanged on desktop.
-                className={`inline-flex min-h-touch items-center rounded-full px-3 py-1.5 text-xs font-medium transition-colors md:min-h-0 ${
-                  role === r.value
-                    ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
-                    : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200 dark:bg-neutral-800 dark:text-neutral-400 dark:hover:bg-neutral-700"
-                }`}
-              >
-                {r.label}
-              </button>
+              />
             ))}
-          </div>
+          </FilterBar>
         ) : (
           <div />
         )}
         {/* #839: role tabs were the only way to narrow the directory, so
             finding one person meant scrolling. Same control as Students. */}
-        <div className="relative min-w-0 sm:w-[280px]">
-          <label htmlFor="admin-users-search" className="sr-only">
-            Search users
-          </label>
-          <Search
-            aria-hidden="true"
-            className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-rally-muted"
-          />
-          <input
-            id="admin-users-search"
-            value={searchInput}
-            onChange={(event) => setSearchInput(event.target.value)}
-            placeholder="Search name, email or phone"
-            className="h-10 w-full rounded-md border border-neutral-200 bg-white pl-9 pr-3 font-body text-sm text-rally-base outline-none transition placeholder:text-rally-subtle focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
-          />
-        </div>
+        <ToolbarSearch
+          id="admin-users-search"
+          label="Search users"
+          value={searchInput}
+          onChange={setSearchInput}
+          placeholder="Search name, email or phone"
+        />
         <div className="flex flex-wrap gap-2">
           {canBulkInvite && (
             <Button
@@ -408,8 +398,8 @@ function UsersList({ users }: { users: AdminUserView[] }) {
               titleTestId={`admin-users-link-${user.user_id}`}
               primary={
                 <Chip
-                  variant={user.status === "active" ? "enrolled" : "expired"}
-                  label={user.status.toUpperCase()}
+                  variant={statusChip(user.status).variant}
+                  label={statusChip(user.status).label}
                 />
               }
               actionsLabel={`Actions for ${user.display_name}`}
@@ -419,10 +409,7 @@ function UsersList({ users }: { users: AdminUserView[] }) {
               secondary={
                 <>
                   <div>
-                    <Chip
-                      variant={roleToChipVariant(user.role)}
-                      label={roleLabel(user.role).toUpperCase()}
-                    />
+                    <Chip variant={roleToChipVariant(user.role)} label={roleLabel(user.role)} />
                   </div>
                   {/* #865: the same ContactLinks the desktop cell uses, so the
                       two layouts cannot disagree about what is tappable. */}
@@ -447,17 +434,27 @@ function UsersList({ users }: { users: AdminUserView[] }) {
   );
 }
 
+/**
+ * #897: these chips used to shout the wire value verbatim ("ACTIVE",
+ * "INVITED") and guessed a chip colour from `=== "active"`. The People
+ * vocabulary already maps every known status onto a login state, in the same
+ * Title Case the Families list beside this one uses.
+ */
+function statusChip(status: string) {
+  return userLoginChip(status);
+}
+
 function UsersTable({ users }: { users: AdminUserView[] }) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-neutral-200 text-left dark:border-neutral-800">
-            <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Name</th>
-            <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Email</th>
-            <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Phone</th>
-            <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Role</th>
-            <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Status</th>
+            <Th padding="px-2 pb-3">Name</Th>
+            <Th padding="px-2 pb-3">Email</Th>
+            <Th padding="px-2 pb-3">Phone</Th>
+            <Th padding="px-2 pb-3">Role</Th>
+            <Th padding="px-2 pb-3">Status</Th>
           </tr>
         </thead>
         <tbody>
@@ -484,10 +481,12 @@ function UsersTable({ users }: { users: AdminUserView[] }) {
                 <ContactLinks name={user.display_name} phone={user.phone} fallback="-" />
               </td>
               <td className="px-2 py-3">
-                <Chip variant={roleToChipVariant(user.role)} label={roleLabel(user.role).toUpperCase()} />
+                {/* #897: Title Case, like every other People chip — and the
+                    login state goes through the one shared vocabulary. */}
+                <Chip variant={roleToChipVariant(user.role)} label={roleLabel(user.role)} />
               </td>
               <td className="px-2 py-3">
-                <Chip variant={user.status === "active" ? "enrolled" : "expired"} label={user.status.toUpperCase()} />
+                <Chip variant={statusChip(user.status).variant} label={statusChip(user.status).label} />
               </td>
             </tr>
           ))}

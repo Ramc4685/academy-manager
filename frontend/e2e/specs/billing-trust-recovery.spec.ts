@@ -301,18 +301,32 @@ test.describe("billing trust and recovery surfaces", () => {
     await expect(page.getByTestId("admin-payments")).toBeVisible();
     await expect(page.getByTestId("payments-all-invoices")).toBeVisible();
     await expect(page.getByText("Failed webhook queue")).toBeVisible();
-    await expect(page.getByText("invoice.payment_failed")).toBeVisible();
+    // #892: the recovery queue names the event in words. The raw Stripe type
+    // and ids stay in the row, behind the same disclosure the invoice rows use.
+    await expect(page.getByText("Invoice payment failed")).toBeVisible();
+    const webhookIds = page.getByTestId("webhook-ids-evt_failed_1");
+    await expect(webhookIds).toContainText("invoice.payment_failed");
+    await expect(webhookIds.getByText("evt_failed_1")).toBeHidden();
     await expect(page.getByText("QUARANTINED")).toBeVisible();
     await expect(page.getByText("duplicate obligation")).toBeVisible();
-    await expect(page.getByTestId("payment-row-pmt_failed_1")).toContainText(
-      "in_test_failed_1",
-    );
-    await expect(page.getByTestId("payment-row-pmt_failed_1")).toContainText(
-      "pi_test_failed_1",
-    );
+    // #892: the reconciliation trail stays on the row, but the raw Stripe ids
+    // are no longer the first thing the row says — they sit behind a
+    // disclosure. The note an admin has to act on stays visible.
     await expect(page.getByTestId("payment-row-pmt_failed_1")).toContainText(
       "missing allocation",
     );
+    const stripeIds = page.getByTestId("stripe-ids-pmt_failed_1");
+    await expect(stripeIds).toBeVisible();
+    // Closed disclosure: the ids are in the DOM (and in the trail) but nothing
+    // on the row renders them until an admin asks for them.
+    await expect(stripeIds).toContainText("in_test_failed_1");
+    await expect(stripeIds).toContainText("pi_test_failed_1");
+    await expect(stripeIds.getByText("in_test_failed_1")).toBeHidden();
+    await expect(stripeIds.getByText("pi_test_failed_1")).toBeHidden();
+
+    await stripeIds.getByText("Stripe details").click();
+    await expect(stripeIds.getByText("in_test_failed_1")).toBeVisible();
+    await expect(stripeIds.getByText("pi_test_failed_1")).toBeVisible();
 
     // Payments points at Billing Health rather than carrying the lookup.
     await expect(page.getByTestId("billing-health-pointer")).toBeVisible();

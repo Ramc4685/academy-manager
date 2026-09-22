@@ -1358,33 +1358,88 @@ test.describe("Rally admin shell", () => {
     await expect(displayName).toHaveValue("Academy E2E");
     await displayName.fill("Rally Academy Edited");
 
-    let dialogs = 0;
-    let accepting = false;
+    // #893: the guard is the Rally dialog now, not `window.confirm`, so a
+    // native dialog arriving here would be a regression, not the prompt.
+    const nativeDialogs: string[] = [];
     page.on("dialog", async (dialog) => {
-      dialogs += 1;
-      if (accepting) await dialog.accept();
-      else await dialog.dismiss();
+      nativeDialogs.push(dialog.message());
+      await dialog.dismiss();
     });
+    const guard = page.getByTestId("confirm-action-dialog");
 
     const notifyTab = page.getByRole("link", { name: "Notify", exact: true });
     await notifyTab.click();
-    // Dismissed: the panel stays put and the typed value survives.
-    await expect.poll(() => dialogs).toBe(1);
+    await expect(guard).toBeVisible();
+    await expect(page.getByTestId("unsaved-changes-warning")).toBeVisible();
+
+    // Stay: the panel stays put and the typed value survives.
+    await guard.getByRole("button", { name: "Stay on this page" }).click();
+    await expect(guard).toHaveCount(0);
     await expect(page).toHaveURL(/panel=academy/);
     await expect(page.getByTestId("admin-settings-academy")).toBeVisible();
     await expect(displayName).toHaveValue("Rally Academy Edited");
 
-    accepting = true;
+    await notifyTab.click();
+    await expect(guard).toBeVisible();
     await Promise.all([
       page.waitForURL(/panel=notify/),
-      notifyTab.click(),
+      guard.getByTestId("confirm-action-submit").click(),
     ]);
     await expect(page.getByTestId("admin-settings-notify")).toBeVisible();
-    expect(dialogs).toBe(2);
+    expect(nativeDialogs).toEqual([]);
     expect(
       errors,
       `App console errors on the settings dirty guard: ${errors.join("\n")}`,
     ).toEqual([]);
+  });
+
+  test("settings warns before the shell nav discards unsaved edits", async ({
+    page,
+  }) => {
+    // #893: #863's guard only intercepted the tab strip's own links, so
+    // leaving through the sidebar (or the phone drawer) dropped the draft
+    // with no prompt at all.
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    await page.goto("/admin/settings?panel=academy");
+    await expect(page.getByTestId("admin-settings-academy")).toBeVisible();
+
+    const displayName = page.getByLabel("Display name");
+    // Wait for the loaded value before typing (see the tab-switch test).
+    await expect(displayName).toHaveValue("Academy E2E");
+    await displayName.fill("Rally Academy Edited");
+
+    const drawer = page.getByTestId("admin-mobile-drawer");
+    // The drawer closes itself on a nav click, so re-open it when the shell
+    // is the phone one; on desktop the sidebar is always there.
+    async function shellNav() {
+      if (await drawer.isVisible()) return drawer;
+      return openAdminNav(page);
+    }
+
+    const guard = page.getByTestId("confirm-action-dialog");
+    await (await shellNav()).getByTestId("admin-nav-students").click();
+    await expect(guard).toBeVisible();
+    await expect(page.getByTestId("unsaved-changes-warning")).toBeVisible();
+
+    // Stay: still on settings, with the edit intact.
+    await guard.getByRole("button", { name: "Stay on this page" }).click();
+    await expect(guard).toHaveCount(0);
+    await expect(page).toHaveURL(/\/admin\/settings\?panel=academy$/);
+    await expect(page.getByTestId("admin-settings-academy")).toBeVisible();
+    await expect(displayName).toHaveValue("Rally Academy Edited");
+    expect(
+      errors,
+      `App console errors on the shell dirty guard: ${errors.join("\n")}`,
+    ).toEqual([]);
+
+    // Leaving on purpose still takes one confirm, not a fight.
+    await (await shellNav()).getByTestId("admin-nav-students").click();
+    await expect(guard).toBeVisible();
+    await Promise.all([
+      page.waitForURL(/\/admin\/students/),
+      guard.getByTestId("confirm-action-submit").click(),
+    ]);
   });
 
   test("settings warns before a tab switch discards an in-progress role edit", async ({
@@ -1412,25 +1467,24 @@ test.describe("Rally admin shell", () => {
     await expect(parent).toBeVisible();
     await parent.check();
 
-    let dialogs = 0;
-    let accepting = false;
-    page.on("dialog", async (dialog) => {
-      dialogs += 1;
-      if (accepting) await dialog.accept();
-      else await dialog.dismiss();
-    });
-
+    const guard = page.getByTestId("confirm-action-dialog");
     const notifyTab = page.getByRole("link", { name: "Notify", exact: true });
     await notifyTab.click();
-    // Dismissed: the editor stays open with the tick still applied.
-    await expect.poll(() => dialogs).toBe(1);
+    await expect(guard).toBeVisible();
+
+    // Stay: the editor stays open with the tick still applied.
+    await guard.getByRole("button", { name: "Stay on this page" }).click();
+    await expect(guard).toHaveCount(0);
     await expect(page).toHaveURL(/panel=roles/);
     await expect(parent).toBeChecked();
 
-    accepting = true;
-    await Promise.all([page.waitForURL(/panel=notify/), notifyTab.click()]);
+    await notifyTab.click();
+    await expect(guard).toBeVisible();
+    await Promise.all([
+      page.waitForURL(/panel=notify/),
+      guard.getByTestId("confirm-action-submit").click(),
+    ]);
     await expect(page.getByTestId("admin-settings-notify")).toBeVisible();
-    expect(dialogs).toBe(2);
     expect(
       errors,
       `App console errors on the roles dirty guard: ${errors.join("\n")}`,
@@ -2119,6 +2173,47 @@ test.describe("Rally admin shell", () => {
     await page.goto("/admin");
     await expect(page.getByTestId("admin-dashboard")).toBeVisible();
     await expect(page.getByTestId("shell-back-button")).toHaveCount(0);
+  });
+
+  /**
+   * Issue #896: `NavRow` is the row of BOTH nav surfaces, so the fix
+   * (`min-h-touch lg:min-h-0`) has to be measured on both — a phone drawer
+   * row must clear the 44px touch minimum, and the desktop sidebar must keep
+   * the denser row #842 introduced to fit 17 rows above the 1280x900 fold.
+   * The spec branches on which surface is actually on screen, exactly as
+   * `openAdminNav` does, so it asserts the right thing in either project.
+   */
+  test("nav rows are touch-sized in the phone drawer and dense on desktop", async ({
+    page,
+  }) => {
+    await stubAdminBff(page);
+    await page.goto("/admin");
+    await expect(page.getByTestId("admin-dashboard")).toBeVisible();
+
+    const onPhone = await page.getByTestId("admin-open-drawer").isVisible();
+    const nav = await openAdminNav(page);
+    const rows = nav.locator('[data-testid^="admin-nav-"]');
+    await expect(rows.first()).toBeVisible();
+    const count = await rows.count();
+    expect(count).toBeGreaterThan(0);
+
+    // Counts are stubbed empty, so no badge arrives later to change a row's
+    // height; still settle on the first row's measured height before the
+    // loop rather than measuring mid-layout.
+    await expect
+      .poll(async () => (await rows.first().boundingBox())?.height ?? 0)
+      .toBeGreaterThan(0);
+
+    for (let index = 0; index < count; index += 1) {
+      const box = await rows.nth(index).boundingBox();
+      expect(box, `nav row ${index} has no box`).not.toBeNull();
+      const height = box?.height ?? 0;
+      if (onPhone) {
+        expect(height, `drawer row ${index} is under the 44px minimum`).toBeGreaterThanOrEqual(44);
+      } else {
+        expect(height, `sidebar row ${index} lost #842's density`).toBeLessThan(44);
+      }
+    }
   });
 
   test("admin, coach, and parent shells expose logout", async ({ context }) => {

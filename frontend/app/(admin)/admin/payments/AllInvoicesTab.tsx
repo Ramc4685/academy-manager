@@ -34,9 +34,11 @@ import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { TableSkeleton } from "@/components/ds/skeleton";
 import { Overline } from "@/components/ds/typography";
 import { useIsPhone } from "@/lib/use-is-phone";
+import { webhookEventLabel } from "@/lib/billing-health";
 
 import {
   formatCents,
+  formatPeriodLabel,
   methodChip,
   paidCents,
   paymentDisplayLabel,
@@ -210,7 +212,12 @@ export function AllInvoicesTab() {
                 <div key={event.event_id} className="grid gap-2 py-3 text-sm sm:grid-cols-[1fr_auto]">
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium text-rally-ink">{event.event_type}</span>
+                      {/* #892: Stripe's own event name is a key, not a sentence.
+                          The queue says what happened; the raw type and ids stay
+                          one disclosure away for support. */}
+                      <span className="font-medium text-rally-ink" title={event.event_type}>
+                        {webhookEventLabel(event.event_type)}
+                      </span>
                       <Chip
                         variant={event.status === "quarantined" ? "failed" : "pending"}
                         label={event.status.toUpperCase()}
@@ -220,9 +227,15 @@ export function AllInvoicesTab() {
                       {event.error_message || "No error detail recorded."}
                     </p>
                   </div>
-                  <div className="font-mono text-xs text-rally-subtle sm:text-right">
-                    <div>{event.event_id}</div>
-                    {event.object_id && <div>{event.object_id}</div>}
+                  <div className="text-xs text-rally-subtle sm:text-right">
+                    <details data-testid={`webhook-ids-${event.event_id}`}>
+                      <summary className="cursor-pointer">Stripe details</summary>
+                      <div className="mt-1 break-all font-mono">
+                        <div>{event.event_type}</div>
+                        <div>{event.event_id}</div>
+                        {event.object_id && <div>{event.object_id}</div>}
+                      </div>
+                    </details>
                   </div>
                 </div>
               ))}
@@ -453,7 +466,7 @@ export function AllInvoicesTab() {
                         {label} · {p.parent_name || "Parent on file"}
                       </div>
                       <div>
-                        {p.period || "No period"} · paid{" "}
+                        {formatPeriodLabel(p.period) || "No period"} · paid{" "}
                         {rowPaidCents === null ? "—" : formatCents(rowPaidCents)}
                         {p.discount_cents ? ` · less ${formatCents(p.discount_cents)}` : ""}
                       </div>
@@ -466,9 +479,11 @@ export function AllInvoicesTab() {
                       {/* The Stripe ids and the reconciliation note are the
                           evidence `billing-trust-recovery.spec.ts` reads off
                           the row, so the phone layout carries them too — the
-                          trail must not depend on screen width. */}
+                          trail must not depend on screen width. #892 folds the
+                          ids themselves into a disclosure: the trail stays,
+                          the `pi_…` noise stops being the default reading. */}
                       {stripeSummary && (
-                        <div className="break-all font-mono text-[11px]">{stripeSummary}</div>
+                        <StripeIdDetails summary={stripeSummary} paymentId={p.payment_id} />
                       )}
                       {reconciliation && (
                         <div className="font-medium text-amber-700">{reconciliation}</div>
@@ -533,9 +548,7 @@ export function AllInvoicesTab() {
                         {(stripeSummary || reconciliation) && (
                           <div className="mt-1 max-w-[280px] space-y-0.5 text-xs text-rally-subtle">
                             {stripeSummary && (
-                              <div className="truncate font-mono" title={stripeSummary}>
-                                {stripeSummary}
-                              </div>
+                              <StripeIdDetails summary={stripeSummary} paymentId={p.payment_id} />
                             )}
                             {reconciliation && (
                               <div className="font-medium text-amber-700">
@@ -553,7 +566,9 @@ export function AllInvoicesTab() {
                           {p.parent_name || "Parent on file"}
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-rally-muted">{p.period || "—"}</td>
+                      <td className="px-4 py-3 text-rally-muted">
+                        {formatPeriodLabel(p.period) || "—"}
+                      </td>
                       <td className="px-4 py-3 text-right font-mono tabular-nums">{formatCents(p.amount_cents)}</td>
                       <td className="px-4 py-3 text-right font-mono tabular-nums text-rally-subtle">
                         {p.discount_cents ? formatCents(p.discount_cents) : "—"}
@@ -688,3 +703,20 @@ export function AllInvoicesTab() {
 
 const inputClass =
   "w-full rounded-md border border-rally-line bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30";
+
+/**
+ * #892: the Stripe object ids behind a disclosure. They are the reconciliation
+ * trail `billing-trust-recovery.spec.ts` reads off a row, so they stay in the
+ * row — but "pi_3QwT…" is not what an admin reads an invoice list for, and it
+ * was the first thing the list said. Collapsed by default, one tap away.
+ */
+function StripeIdDetails({ summary, paymentId }: { summary: string; paymentId: string }) {
+  return (
+    <details data-testid={`stripe-ids-${paymentId}`}>
+      <summary className="cursor-pointer text-xs text-rally-subtle">Stripe details</summary>
+      <div className="mt-1 break-all font-mono text-[11px] text-rally-subtle" title={summary}>
+        {summary}
+      </div>
+    </details>
+  );
+}

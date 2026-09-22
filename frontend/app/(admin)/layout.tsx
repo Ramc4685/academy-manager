@@ -32,6 +32,7 @@ import {
   AdminActionSlotOutlet,
   AdminActionSlotProvider,
 } from "@/components/admin/admin-action-slot";
+import { UnsavedChangesProvider } from "@/components/admin/unsaved-changes-guard";
 import { PeopleSearch } from "@/components/admin/PeopleSearch";
 import { TenantSwitcher } from "@/components/admin/tenant-switcher";
 import { PersonaSwitcher } from "@/components/persona/persona-switcher";
@@ -121,6 +122,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       <ToastProvider>
       <TenantChangeInvalidator />
       <AdminActionSlotProvider>
+      {/* #893: the unsaved-changes guard wraps the SHELL, not one page, so a
+          sidebar/drawer link or a reload asks before it discards a draft. */}
+      <UnsavedChangesProvider>
       <div className="min-h-screen flex bg-rally-paper">
         {/* Exactly one sidebar tree is mounted at a time. Both carry the
             account controls (switchers, logout) with the same testids, so
@@ -164,6 +168,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           </main>
         </div>
       </div>
+      </UnsavedChangesProvider>
       </AdminActionSlotProvider>
       </ToastProvider>
       </OwnerProvider>
@@ -295,7 +300,12 @@ function NavRow({ item, active }: { item: AdminNavItem; active: boolean }) {
       // gap at a 1280x900 viewport once the account block below was
       // compacted — the row still clears the icon's own 16px box plus 13px
       // text, well above the app's smallest existing tap targets.
-      className="flex items-center gap-2.5 px-[18px] py-1.5 text-[13px] transition-colors"
+      //
+      // Issue #896: the same component is the phone drawer's row, where 32px
+      // is under the 44px touch minimum. `min-h-touch lg:min-h-0` gives the
+      // drawer (rendered only below lg) a 44px row while the desktop sidebar
+      // (only at lg:) keeps #842's density, with no prop threading.
+      className="flex min-h-touch items-center gap-2.5 px-[18px] py-1.5 text-[13px] transition-colors lg:min-h-0"
       style={{
         background: active ? "var(--rally-night-line)" : "transparent",
         borderLeft: `2px solid ${active ? "var(--rally-volt)" : "transparent"}`,
@@ -311,7 +321,18 @@ function NavRow({ item, active }: { item: AdminNavItem; active: boolean }) {
         <span
           className="font-mono text-[10px] font-bold tracking-[0.05em] px-1.5 rounded-[3px]"
           style={{
-            background: item.urgent ? "var(--rally-volt)" : "rgba(255,255,255,0.08)",
+            // #896: the non-urgent fill was an 8%-white overlay. An alpha
+            // overlay has no contrast ratio of its own — read literally it is
+            // near-white, which is how the critique measured 1.48:1 against
+            // the bright text. Both opaque fills below clear AA against
+            // --rally-bright (night-line 9.9:1, night 12.9:1), and swapping
+            // them by `active` keeps the badge reading as a pill on either
+            // row background (an active row is itself night-line).
+            background: item.urgent
+              ? "var(--rally-volt)"
+              : active
+                ? "var(--rally-night)"
+                : "var(--rally-night-line)",
             color: item.urgent ? "var(--rally-ink)" : "var(--rally-bright)",
             padding: "1px 6px",
           }}

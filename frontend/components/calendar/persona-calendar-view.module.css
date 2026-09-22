@@ -30,3 +30,50 @@
 .wrap :global(.fc-day-today) {
   background-color: color-mix(in srgb, var(--rally-cobalt, #2563eb) 10%, transparent);
 }
+
+/*
+ * #896: the toolbar was stock FullCalendar — ~30px buttons, well under the
+ * 44px touch minimum the rest of the coach/parent surfaces hold to. Every
+ * rule below stays scoped to `.wrap`, so AdminCalendarView (which renders
+ * the same library from its own module) is untouched.
+ */
+.wrap :global(.fc-button) {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/*
+ * Below `md:` the component opens on a single day (see PersonaCalendarView).
+ * The breakpoint is the same 47.999rem query `lib/use-is-phone.ts` uses, in
+ * rem for the same reason: the view choice and its styling must cross
+ * together when a reader enlarges their default font.
+ */
+@media (max-width: 47.999rem) {
+  .wrap :global(.fc-toolbar) {
+    justify-content: space-between;
+    column-gap: 0.5rem;
+  }
+
+  .wrap :global(.fc-toolbar-title) {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--rally-ink, #0f172a);
+  }
+
+  /* A day cell is the whole screen here, so the events inside it get room
+     to wrap instead of being clipped to one 20px line. */
+  .wrap :global(.fc-daygrid-day-frame) {
+    min-height: 44px;
+  }
+
+  .wrap :global(.fc-daygrid-event) {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    white-space: normal;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.875rem;
+  }
+}
