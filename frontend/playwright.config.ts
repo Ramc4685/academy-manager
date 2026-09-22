@@ -52,7 +52,17 @@ export default defineConfig({
     // and deterministically on webkit-mobile in admin-shell.spec.ts). It is a
     // dev-server artifact, not app behaviour: nothing in the shell navigates.
     // Turbopack applies those updates without a full reload.
-    command: "pnpm dev",
+    //
+    // `next` is started directly, NOT through `pnpm dev`. Playwright starts
+    // this command in its own process group and, when the run ends, SIGKILLs
+    // that group and waits for the child's stdio to close. Since pnpm 11.27.1
+    // a `pnpm run` with no controlling terminal (CI, and any child of
+    // Playwright) puts the script in ANOTHER new process group, so the kill
+    // never reached `next dev`; it kept the stdout pipe open and Playwright
+    // waited forever after "N passed", until the job timeout cancelled it
+    // (every CI run from 2026-09-21 21:51Z on; reproduced locally with
+    // pnpm 11.27.1 vs 11.27.0). Keep the flags in step with `pnpm dev`.
+    command: `node node_modules/next/dist/bin/next dev --turbopack -p ${PORT}`,
     url: `http://localhost:${PORT}/login`,
     reuseExistingServer: !process.env.CI,
     // Cold `next dev` in a fresh worktree can exceed 60s before /login responds.
